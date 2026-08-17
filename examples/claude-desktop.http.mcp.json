@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "rag-mcp": {
+      "command": "/opt/homebrew/opt/node@22/bin/npx",
+      "args": [
+        "-y",
+        "--registry=https://registry.npmjs.org/",
+        "mcp-remote@0.1.38",
+        "http://127.0.0.1:7432/mcp"
+      ]
+    }
+  }
+}

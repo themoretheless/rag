@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "rag-mcp-downloader": {
+      "command": "/Users/themoretheless/Documents/Sources/rag/target/release/rag-mcp",
+      "args": [],
+      "env": {
+        "RAG_DB_PATH": "/Users/themoretheless/Documents/Sources/rag/data/downloader.duckdb",
+        "RAG_EMBEDDING_PROVIDER": "mock",
+        "RAG_EMBEDDING_DIMS": "64",
+        "RAG_CHUNK_SIZE": "800",
+        "RAG_CHUNK_OVERLAP": "120",
+        "RAG_DEFAULT_TOP_K": "8",
+        "RAG_DEFAULT_SEARCH_MODE": "hybrid",
+        "RAG_INGEST_ROOTS": "/Users/themoretheless/Documents/Sources/downloader",
+        "RAG_LLM_ENABLED": "false",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}

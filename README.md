@@ -1,0 +1,557 @@
+# rag-mcp
+
+Local **stdio MCP server** for Retrieval-Augmented Generation with an Obsidian-like object graph and a Karpathy-style wiki compile layer. Single Rust binary, DuckDB store, no Python runtime.
+
+**Binary:** `rag-mcp`  
+**License:** MIT
+
+## What it is
+
+`rag-mcp` ingests text and UTF-8 files into a local DuckDB database, chunks them, embeds chunks (mock / OpenAI-compatible / Ollama), and exposes search plus document CRUD over the [Model Context Protocol](https://modelcontextprotocol.io/) (stdio transport).
+
+Beyond plain RAG it maintains:
+
+1. **Document / tag / stub graph** (Obsidian-like wikilinks and tags)
+2. **Hybrid retrieval** (`lex` | `vec` | `hybrid` with RRF; DuckDB FTS when available, term-frequency fallback otherwise)
+3. **Wiki compile layer** (immutable raw sources, wiki pages, schema, index catalog, ops log, optional local LLM compile)
+
+| Obsidian | rag-mcp |
+|----------|---------|
+| Note | Graph node `kind=document` |
+| `[[wikilink]]` | Directed edge `wikilink` (stub if target missing) |
+| `#tag` | Node `kind=tag` + edge `tagged` |
+| Graph / local graph | `get_graph` / `get_neighbors` |
+| Backlinks | `get_backlinks` |
+
+Layout is not computed server-side: tools return pure `{nodes, edges}` JSON for clients or LLMs.
+
+## Features (implemented)
+
+- **Ingest** raw text, UTF-8 files (`RAG_INGEST_ROOTS` allowlist), immutable `ingest_raw`, MemPalace-style `add_drawer` (wing + room required)
+- **Palace placement**: wings / rooms taxonomy (`list_wings`, `list_rooms`, `get_taxonomy`); scoped search by wing/room/layer/source
+- **Fixed-size chunking** with overlap (`RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`)
+- **Embeddings**: `mock` (deterministic), `openai` / `openai_compat`, `ollama` (native or OpenAI-compatible base)
+- **Search modes**: `lex` (BM25 or TF fallback), `vec` (cosine over stored vectors), `hybrid` (RRF fusion)
+- **Search filters**: document_id, wing, room, layer, source_file, include_archived; min_score; diversity (`mmr` | `collapse_by_document`); token packing
+- **Citation-oriented hits**: scores (`score`, `score_vec`, `score_lex`, `score_rrf`), snippet, char offsets when available
+- **Object graph**: wikilinks, tags, stubs, neighbors BFS, backlinks, `link_nodes`, dedicated tunnel tools, `graph_expand_search`, `graph_stats`
+- **Temporal knowledge graph**: `kg_add` / `kg_query` / `kg_invalidate` / `kg_supersede` / `kg_timeline` / `kg_stats`
+- **Agent diary + session**: `diary_write` / `diary_read`, `wake_up`, `checkpoint`, `memories_filed_away`
+- **Wiki layer**: write/get/list wiki pages, schema, index catalog, ops log, `query_with_index`, `search_wiki`, `file_answer`, `lint_wiki`, `consolidate`
+- **Local LLM** (optional): Ollama / LM Studio OpenAI-compatible chat + embeddings (`RAG_LLM_*`, `RAG_EMBEDDING_PROVIDER=ollama`)
+- **Maintenance loop**: `analyze_corpus` → `plan_maintenance` → `apply_maintenance_plan` (dry_run default) → `maintain_organize` / `maintain_compress` / `maintain_refresh`; wiki `compile_source`, `consolidate`, `refresh_stale_wiki`
+- **Integrity**: content_hash / `check_duplicate`, `embedding_manifest`, `reembed_document`, `doctor`, `status`, `vacuum_store`, ops_log
+- **Single-file DuckDB** (bundled crate); embeddings stored as JSON float arrays (portable, no VSS required)
+- **Logging to stderr only** (stdout is reserved for MCP)
+
+## MemPalace-inspired model
+
+Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), implemented on DuckDB with **our tool names** (no `mempalace_*` rename, no AAAK dialect, no Chroma). Design notes: [`docs/MEMPALACE_PARITY.md`](docs/MEMPALACE_PARITY.md).
+
+| MemPalace idea | rag-mcp |
+|----------------|---------|
+| Drawer (verbatim unit) | Document body + chunks; prefer `add_drawer` / `ingest_raw` (no silent summarize on ingest) |
+| Wing | `documents.wing` (top shelf: project, area, person, …) |
+| Room | `documents.room` (sub-area under a wing) |
+| Closet (summary) | Wiki page `kind=source_summary` via compile / wiki tools |
+| Tunnel | Graph edge `rel_type=tunnel` + tunnel CRUD / follow tools |
+| Content-hash id | `content_hash` + `check_duplicate` |
+| Temporal KG | `kg_facts` + `kg_*` tools (half-open validity windows) |
+| Diary | Documents `layer=diary`, `kind=diary`, wing `agents/<name>` |
+| wake-up | `wake_up`: status + recent diary + pinned docs + schema snippet (if present) |
+| Checkpoint | `checkpoint`: ops_log savepoint + optional diary note |
+
+**Wings / rooms.** Placement is first-class metadata, not free-text only. `add_drawer` requires `wing` and `room`. Inventory: `list_wings`, `list_rooms`, `get_taxonomy`. Filters on `search`, `list_documents`, `list_sources`, and related tools take `wing` / `room` / `layer` / `source_file`.
+
+**Verbatim storage.** Ingest and diary write store content as-is. Summaries and synthesis happen only through explicit wiki / consolidate / compile tools, never silently on `ingest_*` / `add_drawer` / `diary_write`.
+
+**Temporal KG.** Subject–predicate–object facts with optional `valid_from` / `valid_to` (half-open). Query active facts or at a point in time; invalidate or supersede when reality changes; timeline per subject; `kg_stats` aggregates.
+
+**Diary and session bootstrap.** Agents append notes with `diary_write` (searchable, embedded). `wake_up` is the session entrypoint (health + memory surface without seeding a default schema). Prefer `checkpoint` at session boundaries over ad-hoc `append_log` + `diary_write`.
+
+**Tool naming honesty.** Tables under [MCP tools](#mcp-tools-implemented) list tools that exist on the binary today. We do **not** expose MemPalace-prefixed aliases. Gaps (directory mine/sync, hallways, AAAK, multi-backend) stay in [Limitations](#limitations-honest) and the parity doc.
+
+## Environment variables
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `RAG_DB_PATH` | `./rag.duckdb` | DuckDB file path |
+| `RAG_EMBEDDING_PROVIDER` | `mock` | `mock` \| `openai` \| `openai_compat` \| `ollama` |
+| `RAG_EMBEDDING_BASE_URL` | OpenAI `https://api.openai.com/v1`; Ollama `http://127.0.0.1:11434` | API root (native Ollama or OpenAI-compatible `/v1`) |
+| `RAG_EMBEDDING_API_KEY` | (empty; local defaults to `ollama`) | Required when `provider=openai` against non-local hosts |
+| `RAG_EMBEDDING_MODEL` | `text-embedding-3-small` (Ollama: `nomic-embed-text`) | Model name |
+| `RAG_EMBEDDING_DIMS` | `1536` (Ollama: `768`) | Vector dimensions (must match model and corpus manifest) |
+| `RAG_CHUNK_SIZE` | `800` | Approx chars per chunk |
+| `RAG_CHUNK_OVERLAP` | `120` | Overlap chars (must be &lt; chunk size) |
+| `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
+| `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
+| `RAG_INGEST_ROOTS` | (empty) | Comma-separated path allowlist for `ingest_file`. **Empty refuses all file paths** |
+| `RAG_MAX_CONTEXT_TOKENS` | `4096` | Default token budget when packing search hits (~4 chars/token) |
+| `RAG_MAX_CHUNKS_PER_DOC` | `3` | Max chunks retained per document under diversity collapse |
+| `RAG_FTS_STEMMER` | `porter` | DuckDB FTS stemmer; use `none` for CJK/code |
+| `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (~25 compile-first tools) or `full` (all tools). See vision §5. |
+| `RAG_LLM_PROVIDER` | `ollama` | Chat preset: `ollama` \| `openai` \| `codex` \| `claude` \| `kimi` \| `deepseek` \| `custom` — see [`docs/LLM_PROVIDERS.md`](docs/LLM_PROVIDERS.md) |
+| `RAG_LLM_ENABLED` | `true` | When false, chat/compile tools refuse |
+| `RAG_LLM_BASE_URL` | provider default | Chat API root (override preset) |
+| `RAG_LLM_MODEL` | provider default | Chat model name |
+| `RAG_LLM_API_KEY` | provider fallbacks | Key; or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` |
+| `RAG_LLM_TIMEOUT_SECS` | `120` | HTTP timeout for chat completions |
+| `RAG_LLM_MAX_TOKENS` | `4096` | Max completion tokens per chat request |
+| `RAG_MAINT_MAX_DOCS` | `50` | Cap for maintenance reembed / graph rebuild / stale wiki recompile |
+| `RAG_MAINT_NEAR_DUP_THRESHOLD` | `0.92` | Cosine threshold for near-duplicate detection in `analyze_corpus` |
+| `RUST_LOG` | `info` | Tracing filter (`tracing-subscriber`, stderr only) |
+
+## Build and run
+
+Requirements: Rust stable (edition 2021), network for first build (DuckDB bundled C++).
+
+```bash
+cargo build --release
+./target/release/rag-mcp
+```
+
+Debug:
+
+```bash
+cargo run
+```
+
+The process speaks MCP on **stdio**. Do not write application logs to stdout.
+
+Default workspace members build **only** `rag-mcp` (no egui). The optional graph inspector is a separate package; see [Optional graph inspector](#optional-graph-inspector-rag-mcp-ui).
+
+### Offline smoke (mock embeddings)
+
+```bash
+export RAG_EMBEDDING_PROVIDER=mock
+export RAG_DB_PATH=./rag.duckdb
+export RAG_DEFAULT_SEARCH_MODE=hybrid
+cargo run
+```
+
+### OpenAI-compatible embeddings
+
+```bash
+export RAG_EMBEDDING_PROVIDER=openai
+export RAG_EMBEDDING_API_KEY=sk-...
+export RAG_EMBEDDING_MODEL=text-embedding-3-small
+export RAG_EMBEDDING_DIMS=1536
+# optional: RAG_EMBEDDING_BASE_URL=https://api.openai.com/v1
+cargo run
+```
+
+### Local Ollama (quick start)
+
+See **[Local LLM + maintenance](#local-llm--maintenance)** below and full guides:
+[`docs/LOCAL_LLM_MAINTENANCE.md`](docs/LOCAL_LLM_MAINTENANCE.md),
+[`docs/LOCAL_LLM_WIKI.md`](docs/LOCAL_LLM_WIKI.md),
+[`docs/ORGANIZE.md`](docs/ORGANIZE.md).
+
+```bash
+# terminal 1
+ollama serve
+ollama pull llama3.2
+ollama pull nomic-embed-text
+
+# terminal 2
+export RAG_DB_PATH=./rag.duckdb
+export RAG_EMBEDDING_PROVIDER=ollama
+export RAG_EMBEDDING_BASE_URL=http://127.0.0.1:11434
+export RAG_EMBEDDING_API_KEY=ollama
+export RAG_EMBEDDING_MODEL=nomic-embed-text
+export RAG_EMBEDDING_DIMS=768
+export RAG_LLM_ENABLED=true
+export RAG_LLM_BASE_URL=http://127.0.0.1:11434/v1
+export RAG_LLM_MODEL=llama3.2
+export RAG_LLM_API_KEY=ollama
+export RAG_INGEST_ROOTS=/absolute/path/to/vault
+cargo run
+```
+
+## Local LLM + maintenance
+
+Chat providers: **Ollama, OpenAI, Codex, Claude, Kimi, DeepSeek** (and any OpenAI-compatible custom URL). Full table: [`docs/LLM_PROVIDERS.md`](docs/LLM_PROVIDERS.md).
+
+```bash
+export RAG_LLM_PROVIDER=claude          # or ollama | openai | codex | kimi | deepseek | custom
+export ANTHROPIC_API_KEY=sk-ant-...     # provider-specific key env also works
+```
+
+Run **embeddings and chat** (local Ollama or cloud), then **analyze → plan → dry_run apply → compress → refresh** wiki and DuckDB.
+
+### Ollama setup
+
+```bash
+# Install from https://ollama.com then:
+ollama serve
+ollama pull llama3.2           # chat / compile / plan
+ollama pull nomic-embed-text   # embeddings (768 dims)
+# alternatives: qwen2.5, mistral, mxbai-embed-large, …
+```
+
+Also works with:
+
+| Provider | Chat base URL | Embeddings |
+|----------|---------------|------------|
+| **Ollama** (recommended) | `http://127.0.0.1:11434/v1` | `RAG_EMBEDDING_PROVIDER=ollama`, base `http://127.0.0.1:11434` (native) or `…/v1` |
+| LM Studio | `http://127.0.0.1:1234/v1` | `openai` / `openai_compat` + same base |
+| llama.cpp server | `http://127.0.0.1:8080/v1` | same OpenAI-compatible path |
+
+Chat API: `POST {RAG_LLM_BASE_URL}/chat/completions`.  
+Embeddings: native Ollama `/api/embed` (or `/api/embeddings`), or OpenAI-compatible `/embeddings` when base ends with `/v1`.
+
+On model/dim change: `vec` / `hybrid` refuse until you reembed (`reembed_document` or `maintain_refresh` with `reembed_all`).
+
+### Env (LLM + maintenance)
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `RAG_EMBEDDING_PROVIDER` | `mock` | Use `ollama` for local vectors |
+| `RAG_EMBEDDING_BASE_URL` | Ollama: `http://127.0.0.1:11434` | Embed API root |
+| `RAG_EMBEDDING_MODEL` | Ollama: `nomic-embed-text` | Embed model tag |
+| `RAG_EMBEDDING_DIMS` | Ollama: `768` | Must match model and corpus manifest |
+| `RAG_EMBEDDING_API_KEY` | local → `ollama` | Dummy key for local hosts |
+| `RAG_LLM_ENABLED` | `true` | When false, chat/compile/plan-LLM tools refuse |
+| `RAG_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible chat base |
+| `RAG_LLM_MODEL` | `llama3.2` | Chat model name |
+| `RAG_LLM_API_KEY` | `ollama` | Chat Bearer (Ollama accepts dummy) |
+| `RAG_LLM_TIMEOUT_SECS` | `120` | HTTP timeout for completions |
+| `RAG_LLM_MAX_TOKENS` | `4096` | Max completion tokens per request |
+| `RAG_MAINT_MAX_DOCS` | `50` | Cap docs touched per maintain / reembed / recompile |
+| `RAG_MAINT_NEAR_DUP_THRESHOLD` | `0.92` | Cosine θ for near-dups in analyze / compress L2 |
+
+Full env table: [Environment variables](#environment-variables).
+
+### Pipeline
+
+```
+llm_status / analyze_corpus
+        │
+        ▼
+plan_maintenance          (LLM or heuristic JSON action list)
+        │
+        ▼
+apply_maintenance_plan    (dry_run=true by default)
+        │
+        ▼
+maintain_organize / maintain_compress / maintain_refresh
+        │
+        ▼
+compile_source · consolidate · refresh_stale_wiki · vacuum_store
+```
+
+Every apply path logs to **ops_log** (`append_log` / `read_log` / `list_recent_ops`).
+
+### Maintenance and LLM tools
+
+| Tool | Params (high level) | Role |
+|------|---------------------|------|
+| `llm_status` | (none) | Chat + embed config and reachability |
+| `analyze_corpus` | `stub_age_days?`, `include_near_dups?`, `near_dup_threshold?`, `archive_min_age_days?`, `log_ops?` | Deterministic health report (no LLM) |
+| `plan_maintenance` | `analysis?`, `max_actions?`, `force_heuristic?`, `log_ops?` | Analysis → validated whitelist action plan (LLM or heuristic) |
+| `apply_maintenance_plan` | `actions[]`, `dry_run?` (**default true**), `max_docs?`, `agent?` | Execute plan; preview unless `dry_run=false` |
+| `maintain_organize` | `dry_run?` (**default true**), `mode?`, `max_docs?`, `min_confidence?`, `rebuild_index?`, `agent?` | Suggest/apply refiles for docs missing wing |
+| `maintain_compress` | `level?` (0–2), `dry_run?` (**default true**), `confirm?`, `allow_raw_delete?`, `near_dup_threshold?`, `max_docs?` | L0 CHECKPOINT+FTS; L1 exact hash merge; L2 near-dup (merge needs `confirm`) |
+| `maintain_refresh` | `reindex_fts?`, `rebuild_graph?`, `graph_dirty_only?`, `rebuild_wiki_index?`, `reembed_all?`, `dry_run?`, `max_docs?` | Actualize FTS / graph / wiki index / reembed |
+| `vacuum_store` | (none) | DuckDB `CHECKPOINT` + size delta; ops_log |
+| `compile_source` | `source_id_or_uri`, `dry_run?`, `agent?` | Local LLM: raw → wiki pages |
+| `consolidate` | `document_ids`, `apply?` (**default false**), `max_docs?`, slug/title/… | Local LLM merge docs → one wiki proposal (or write) |
+| `refresh_stale_wiki` | `dry_run?` (**default true**), `max_docs?`, `agent?` | List or recompile wiki older than linked raw |
+
+Related wiki/search tools: `search_wiki`, `query_with_index`, `file_answer`, `lint_wiki`, `rebuild_index`, `read_index`.
+
+Example agent session after Ollama is up:
+
+1. `llm_status` → ok  
+2. `analyze_corpus` → stubs / dups / stale wiki  
+3. `plan_maintenance` → JSON actions  
+4. `apply_maintenance_plan` with `dry_run=true` → preview  
+5. `apply_maintenance_plan` with `dry_run=false` → apply  
+6. `maintain_compress` `level=1` (still dry_run first)  
+7. `vacuum_store` / `maintain_refresh`  
+
+### Safety (dry_run + whitelist)
+
+1. **Whitelist only:** LLM and plan tools cannot invent SQL or shell; only named actions (refile, pin, archive, set_tags, rebuild_*, reembed, compile_source, merge_exact_dup, vacuum, …).
+2. **`dry_run` defaults true** for multi-action / bulk paths: `apply_maintenance_plan`, `maintain_organize`, `maintain_compress`, `refresh_stale_wiki`. Preview + ops_log, no mutation until you set `dry_run=false`.
+3. **`confirm=true`** required for compress L2 near-dup merges (with `dry_run=false`).
+4. **Budget:** `RAG_MAINT_MAX_DOCS` (default 50) caps docs touched per run; override per-call with `max_docs` where exposed.
+5. **ops_log** on every apply (and most dry_runs with `*_dry_run` op names).
+6. **No silent raw mutation:** `layer=raw` bodies stay immutable; hard-delete of raw needs explicit `allow_raw_delete` (compress/apply). Prefer tombstones.
+7. Offline-first: unreachable LLM → clear error (timeouts via `RAG_LLM_TIMEOUT_SECS`), not an infinite hang.
+
+Design depth: [`docs/LOCAL_LLM_MAINTENANCE.md`](docs/LOCAL_LLM_MAINTENANCE.md) (pipeline, compress levels, phases), [`docs/ORGANIZE.md`](docs/ORGANIZE.md) (place / rank / structure / compile / hygiene).
+
+## MCP client config examples
+
+**Zed** (`~/.config/zed/settings.json`, or Settings → AI → MCP Servers):
+
+```json
+{
+  "context_servers": {
+    "rag-mcp": {
+      "command": "/absolute/path/to/rag-mcp",
+      "args": [],
+      "env": {
+        "RAG_DB_PATH": "/absolute/path/to/rag.duckdb",
+        "RAG_EMBEDDING_PROVIDER": "mock",
+        "RAG_INGEST_ROOTS": "/absolute/path/to/allowed",
+        "RAG_LLM_ENABLED": "false",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
+```
+
+Ready-made snippet: [`examples/zed.settings.json`](examples/zed.settings.json). After edit: open **Settings → AI → MCP Servers** and confirm green indicator for `rag-mcp`. In Agent Panel mention `rag-mcp` or enable its tools.
+
+Claude Desktop / Cursor-style MCP config (adjust the binary path):
+
+```json
+{
+  "mcpServers": {
+    "rag-mcp": {
+      "command": "/absolute/path/to/rag-mcp",
+      "args": [],
+      "env": {
+        "RAG_DB_PATH": "/absolute/path/to/rag.duckdb",
+        "RAG_EMBEDDING_PROVIDER": "mock",
+        "RAG_DEFAULT_SEARCH_MODE": "hybrid",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
+```
+
+With OpenAI embeddings:
+
+```json
+{
+  "mcpServers": {
+    "rag-mcp": {
+      "command": "/absolute/path/to/rag-mcp",
+      "args": [],
+      "env": {
+        "RAG_DB_PATH": "/absolute/path/to/rag.duckdb",
+        "RAG_EMBEDDING_PROVIDER": "openai",
+        "RAG_EMBEDDING_API_KEY": "sk-...",
+        "RAG_EMBEDDING_MODEL": "text-embedding-3-small",
+        "RAG_EMBEDDING_DIMS": "1536",
+        "RAG_INGEST_ROOTS": "/absolute/path/to/vault",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
+```
+
+Also see [`examples/mcp.client.json`](examples/mcp.client.json).
+
+## MCP tools (implemented)
+
+All tools return JSON text content via MCP `CallToolResult`.
+
+### Ingest and raw layer
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `ingest_text` | `text`, `title?`, `uri?`, `metadata_json?` | Chunk, embed, store; upsert by uri; graph extract |
+| `ingest_file` | `path`, `title?`, `uri?`, `metadata_json?` | Read UTF-8 file under `RAG_INGEST_ROOTS` and ingest |
+| `ingest_raw` | `text`, `title?`, `uri?`, `metadata_json?`, `wing?`, `room?`, `source_file?` | Immutable raw layer (`layer=raw`); same uri+hash no-op; content change refused |
+| `add_drawer` | `content`, `wing`, `room`, `source_file?`, `title?`, `uri?`, `metadata_json?` | Verbatim drawer with required placement |
+| `list_sources` | `wing?`, `room?` | List raw-layer sources |
+| `get_source` | `document_id?` \| `uri?`, `include_chunks?` | Fetch one raw source |
+
+### Search and packing
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `search` | `query`, `top_k?`, `mode?`, `document_id?`, `wing?`, `room?`, `layer?`, `source_file?`, `include_archived?`, `min_score?`, `diversity?`, `max_context_tokens?`, `max_chunks_per_document?` | `lex` \| `vec` \| `hybrid` search over chunks |
+| `search_wiki` | `query`, `top_k?`, `mode?`, `min_score?`, `wing?`, `room?`, `diversity?`, … | Search restricted to `layer=wiki` |
+| `graph_expand_search` | `query`, `top_k?`, `document_id?`, `depth?`, `max_nodes?` | Vector search then neighbor expand from hit document nodes |
+| `pack_context` | `hits`, `max_tokens?` | Pack ranked hits under a token budget into a citation block |
+| `query_with_index` | `query`, `top_k?`, `include_content?` | Index-first catalog match (wiki index) |
+
+### Documents, taxonomy, integrity
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `list_documents` | `wing?`, `room?`, `source_file?`, `layer?`, `kind?`, `include_archived?`, `limit?` | Inventory without full body (default skips archived) |
+| `get_document` | `document_id`, `include_chunks?` | Metadata + optional chunk texts (no embeddings) |
+| `update_document_meta` | `document_id`, `wing?`, `room?`, `title?`, `metadata_json?`, `pinned?`, `boost?`, `status?`, `layer?`, `kind?`, `source_file?`, `content?` | Meta update without re-embed unless `content` changes; refused for immutable raw body |
+| `delete_document` | `document_id` | Delete document + chunks + graph cleanup |
+| `delete_by_source` | `source_file` (alias `source`), `dry_run?` | Bulk delete by exact `source_file` |
+| `check_duplicate` | `content?`, `content_hash?`/`hash?`, `uri?` | content_hash / uri idempotency probe |
+| `list_wings` | (none) | Distinct wings with document counts |
+| `list_rooms` | `wing?` | Distinct rooms with counts |
+| `get_taxonomy` | (none) | Wing → room tree + counts |
+| `stats` | (none) | Docs, chunks, nodes, edges + `db_path` |
+| `status` | (none) | Health: counts, FTS readiness, embed dims, `ready_for_search` |
+| `doctor` | (none) | Schema / FTS / embed integrity + ingest roots |
+| `get_embedding_manifest` | (none) | Corpus embedding fingerprint (provider, model, dims) |
+| `reembed_document` | `document_id` | Re-embed all chunks for one document with live config |
+| `llm_status` | (none) | Chat + embed config and reachability |
+| `vacuum_store` | (none) | DuckDB `CHECKPOINT` + file size delta; ops_log |
+
+### Graph (Obsidian-like)
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `get_graph` | `kinds?`, `rel_types?`, `seed_ids?`, `max_nodes?` | Filtered graph export `{nodes, edges}` |
+| `get_neighbors` | `node_id`, `depth?`, `max_nodes?` | Local BFS (undirected traversal) |
+| `get_backlinks` | `node_id` \| `document_id` \| `label` | Incoming edges + source nodes |
+| `link_nodes` | `source_id`, `target_id`, `rel_type?`, `weight?` | Explicit edge (`related` default; `tunnel` allowed) |
+| `create_tunnel` | `source_id`, `target_id`, `weight?`, `context?`/`label?` | Tunnel edge between two nodes (upsert by pair) |
+| `list_tunnels` | `node_id?` | List `rel_type=tunnel` edges |
+| `delete_tunnel` | `tunnel_id` | Delete one tunnel edge by id |
+| `follow_tunnels` | `node_id`, `depth?`, `max_nodes?` | Multi-hop BFS on tunnel edges only |
+| `find_tunnels` | `node_id?`, `other_node_id?`, `wing?`, `limit?` | Filter tunnels by endpoints / wing |
+| `find_node` | `label?`, `document_id?`, `node_id?` | Resolve node metadata |
+| `graph_stats` | (none) | Totals + counts by kind / rel_type |
+
+**Note text conventions:** `[[Target]]` / `[[Target|alias]]` become wikilink edges; `#tag` / `#multi/level` become tag nodes. Images `![[...]]` are not edges. Unresolved wikilink targets become `kind=stub` until a matching document title/uri is ingested. Edge types include `wikilink`, `tagged`, `related`, `mentions`, `tunnel`.
+
+### Temporal knowledge graph
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `kg_add` | `subject`, `predicate`, `object`, `valid_from?`, `valid_to?`, `source_document_id?`, `confidence?`, `metadata_json?` | Add fact; idempotent for open active SPO |
+| `kg_query` | `subject?`, `predicate?`, `object?`, `at_time?` | Active facts, or facts valid at `at_time` |
+| `kg_invalidate` | `subject`, `predicate`, `object`, `ended?` | Close matching open active fact(s) |
+| `kg_supersede` | `subject`, `predicate`, `old_object`, `new_object`, `at?`, `source_document_id?`, `confidence?` | Close old object, open successor |
+| `kg_timeline` | `subject` | All statuses for subject, by `valid_from` |
+| `kg_stats` | (none) | Counts by status + distinct subjects/predicates |
+
+### Diary, wake-up, checkpoint
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `diary_write` | `agent_name` (alias `agent`), `content`, `wing?`, `topic?`, `title?` | Verbatim diary note (`layer=diary`, wing `agents/<name>` by default); chunks + embeds |
+| `diary_read` | `agent_name`, `last_n?` (alias `limit`) | Recent diary entries for one agent (newest first) |
+| `wake_up` | `agent_name?`, `diary_limit?`, `pinned_limit?` | Status + diary slice + pinned docs + existing schema snippet only (does not seed default schema) |
+| `checkpoint` | `summary` (alias `message`), `diary?`, `agent_name?` | Always append `ops_log` (`op=checkpoint`); optional diary body writes a diary entry |
+| `memories_filed_away` | `limit?` | Recent memory-filing ops from ops_log (ingest/drawer/wiki/diary/checkpoint) |
+| `reconnect` | (none) | DuckDB single-process no-op success (parity with MemPalace reconnect) |
+
+### Wiki compile layer
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `write_wiki_page` | `slug`, `title`, `content`, `kind?`, `category?`, `summary?`, `agent?` | Create/overwrite wiki page + graph extract + index touch |
+| `update_wiki_page` | (same as write) | Alias of `write_wiki_page` (upsert by slug) |
+| `get_wiki_page` | `id_or_slug` | Fetch by slug, `wiki://…`, or document id |
+| `list_wiki_pages` | (none) | List `layer=wiki` documents |
+| `get_schema` | `no_default?` | Read agent conventions at `schema://agents` |
+| `update_schema` | `content`, `title?`, `agent?` | Create/replace schema document |
+| `read_index` | `format?` (`json` \| `markdown`) | Wiki content catalog |
+| `update_index_entry` | `slug`, `title?`, `kind?`, `category?`, `summary?`, `page_id?` | Create/merge one catalog row |
+| `rebuild_index` | (none) | Rebuild catalog from all wiki documents |
+| `append_log` | `op`, `message?`, `prefix?`, `entity_id?`, `entity_kind?`, `payload_json?`, `agent_name?` | Append ops_log entry |
+| `read_log` | `id?` \| `seq?`, `limit?` | Read one entry or list recent |
+| `list_recent_ops` | `limit?` | Newest ops_log rows |
+| `file_answer` | `title`, `body`, `slug?`, `citations?`, `agent?` | Persist cited answer as wiki page |
+| `compile_source` | `source_id_or_uri`, `dry_run?`, `agent?` | Local LLM compiles a raw source into wiki pages |
+| `lint_wiki` | (none) | Lint: index gaps, stubs, uncompiled raw |
+| `refresh_stale_wiki` | `dry_run?` (default true), `max_docs?`, `agent?` | List (or recompile) wiki older than linked raw |
+
+### Maintenance (see [Local LLM + maintenance](#local-llm--maintenance))
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `llm_status` | (none) | Chat + embed config and reachability |
+| `analyze_corpus` | `stub_age_days?`, `include_near_dups?`, `near_dup_threshold?`, `archive_min_age_days?`, `log_ops?` | Deterministic health report (no LLM) |
+| `plan_maintenance` | `analysis?`, `max_actions?`, `force_heuristic?`, `log_ops?` | Analysis → whitelist action plan (LLM or heuristic) |
+| `apply_maintenance_plan` | `actions[]`, `dry_run?` (default **true**), `max_docs?`, `agent?` | Execute plan; dry_run previews without mutation |
+| `maintain_organize` | `dry_run?` (default **true**), `mode?`, `max_docs?`, `min_confidence?`, `rebuild_index?`, `agent?` | Suggest/apply refiles for missing wing |
+| `maintain_compress` | `level?`, `dry_run?` (default **true**), `confirm?`, `allow_raw_delete?`, `near_dup_threshold?`, `max_docs?` | L0 FTS+CHECKPOINT; L1 exact merge; L2 near-dup (needs confirm) |
+| `maintain_refresh` | `reindex_fts?`, `rebuild_graph?`, `graph_dirty_only?`, `rebuild_wiki_index?`, `reembed_all?`, `dry_run?`, `max_docs?` | Whitelisted refresh; safe defaults when no flags set |
+| `vacuum_store` | (none) | DuckDB `CHECKPOINT` + file size delta; ops_log |
+| `consolidate` | `document_ids`, `apply?` (default false), `max_docs?`, … | LLM merge → wiki proposal or write |
+| `refresh_stale_wiki` | `dry_run?` (default **true**), `max_docs?`, `agent?` | List or recompile wiki older than linked raw |
+
+## Embeddings providers
+
+| | `mock` | `openai` / `openai_compat` | `ollama` |
+|--|--------|----------------------------|----------|
+| When | Default; tests; offline | Cloud or any OpenAI-compatible `/embeddings` | Local Ollama |
+| How | Deterministic hash → `dims` floats, L2-normalized | `POST {base}/embeddings` with Bearer key | Native Ollama embed API (or OpenAI path if base ends with `/v1`) |
+| Same text | Same vector always | Model-dependent | Model-dependent |
+| API key | Not required | Required except local hosts | Dummy key filled when empty |
+| Use for | Dev, CI, wiring clients | Production / remote | Local semantic quality |
+
+Keep `RAG_EMBEDDING_DIMS` consistent with the model and with vectors already stored. The corpus records an **embedding manifest**; `vec` / `hybrid` refuse when dims mismatch. Use `reembed_document` or `maintain_refresh` with `reembed_all` after model/dim changes.
+
+Compatible servers (LiteLLM, Azure OpenAI, LM Studio, local proxies) work by setting `RAG_EMBEDDING_BASE_URL` and matching model/dims.
+
+## Lexical search (FTS)
+
+Preferred path: DuckDB `fts` extension (`INSTALL`/`LOAD fts` + `PRAGMA create_fts_index`). The inverted index is refreshed on ingest/delete so tools stay read-your-writes.
+
+If the FTS extension is unavailable (offline CI, locked-down hosts), the same `lex` / `hybrid` API falls back to a **term-frequency scorer in Rust**. Scores are not full Okapi BM25; `status` / `doctor` report the active backend (`duckdb_bm25` vs `term_frequency`).
+
+## Limitations (honest)
+
+Tool tables above match the current MCP surface (see also Features and MemPalace-inspired model). Still **not** shipped:
+
+- No MemPalace `mempalace_*` tool renames or AAAK dialect
+- No directory `mine` / `sync_sources` / bulk vault sync (P1–P2 in parity doc)
+- No hallways (named multi-hop path objects) as first-class tools
+- Auto schedule / dedicated CLI `maintain` subcommand and compress L3+ still open (analyze/plan/apply/organize/compress L0–L2/refresh are implemented)
+- No HNSW / DuckDB VSS ANN (full-scan cosine in Rust; fine for personal corpora)
+- No PDF / binary parsers (UTF-8 text only)
+- Stdio MCP only (no HTTP transport)
+- No multi-tenant auth
+- No force-directed layout server-side (clients own visualization; optional `rag-mcp-ui` is RadialLocal only)
+- No block refs `[[note#^block]]` (full-note link only)
+- No YAML property bi-directional sync with Obsidian vault
+- No multi-storage backends (DuckDB only; adapters are planned)
+- `reconnect` is an intentional no-op success on single-process DuckDB (no Chroma-style client cache)
+
+Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md).  
+Roadmap and research: [`SPEC.md`](SPEC.md), [`FEATURES.md`](FEATURES.md), [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/MEMPALACE_PARITY.md`](docs/MEMPALACE_PARITY.md), [`docs/MCP_TOOL_MATRIX.md`](docs/MCP_TOOL_MATRIX.md).  
+Optional UI: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md), design [`docs/EGUI_GRAPH_VIEW.md`](docs/EGUI_GRAPH_VIEW.md).
+
+## Optional graph inspector (`rag-mcp-ui`)
+
+Read-only egui local-graph viewer in **`crates/rag-mcp-ui`**. Separate binary from headless MCP: **zero** egui/eframe deps on the `rag-mcp` package; workspace `default-members = ["."]` so plain `cargo build` stays lean.
+
+Short usage: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md). Design: [`docs/EGUI_GRAPH_VIEW.md`](docs/EGUI_GRAPH_VIEW.md).
+
+### Build and run
+
+```bash
+cargo build -p rag-mcp-ui
+cargo run -p rag-mcp-ui -- --snapshot ./graph.json --seed "Note title"
+# exclusive live DB only when MCP is not holding the file:
+cargo run -p rag-mcp-ui -- --db ./rag.duckdb --seed some-node-id
+```
+
+Flags: `--snapshot` **or** `--db` (XOR), optional `--seed`, `--depth` (default 1), `--max-nodes` (default 100, hard layout cap 300). Logs on **stderr** only. MVP: pan/zoom, select, Expand neighbors, RadialLocal layout; no graph write-back.
+
+### Export snapshot from DuckDB
+
+Mode C dump (topology only, same shape as MCP `get_graph`). Exclusive open; path printed on stdout:
+
+```bash
+# Prefer with MCP stopped, or export from a copy of the DB file.
+cargo run -p rag-mcp-ui -- export --db ./rag.duckdb -o graph.json
+cargo run -p rag-mcp-ui -- export --db ./rag.duckdb --pkb -o pkb-graph.json
+cargo run -p rag-mcp-ui -- --snapshot graph.json --seed "Note title"
+```
+
+### Coexistence with MCP (single writer)
+
+| Mode | Writer | UI | Use |
+|------|--------|-----|-----|
+| **A** Exclusive live | UI `--db` | Live Store | Dev; **MCP off** |
+| **B** Exclusive MCP | MCP | no UI | Normal agent use |
+| **C** Snapshot | MCP (or export) | `--snapshot` read-only | **Default while agent runs** |
+| **D** Dual-live write | - | - | **Forbidden** |
+
+One process owns DuckDB write. Never open UI `--db` on the same file MCP already holds. Refresh = re-export JSON + reload snapshot, not a second live writer.
+
+## License
+
+MIT

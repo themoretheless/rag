@@ -1,0 +1,33 @@
+{
+  "mcpServers": {
+    "rag-mcp": {
+      "command": "target/release/rag-mcp",
+      "args": [],
+      "env": {
+        "RAG_DB_PATH": "./rag.duckdb",
+        "RAG_EMBEDDING_PROVIDER": "mock",
+        "RAG_EMBEDDING_BASE_URL": "https://api.openai.com/v1",
+        "RAG_EMBEDDING_API_KEY": "",
+        "RAG_EMBEDDING_MODEL": "text-embedding-3-small",
+        "RAG_EMBEDDING_DIMS": "1536",
+        "RAG_CHUNK_SIZE": "800",
+        "RAG_CHUNK_OVERLAP": "120",
+        "RAG_DEFAULT_TOP_K": "5",
+        "RAG_INGEST_ROOTS": "",
+        "RAG_MAX_CONTEXT_TOKENS": "4096",
+        "RAG_MAX_CHUNKS_PER_DOC": "3",
+        "RAG_FTS_STEMMER": "porter",
+        "RAG_DEFAULT_SEARCH_MODE": "vec",
+        "RAG_LLM_ENABLED": "true",
+        "RAG_LLM_BASE_URL": "http://127.0.0.1:11434/v1",
+        "RAG_LLM_MODEL": "llama3.2",
+        "RAG_LLM_API_KEY": "ollama",
+        "RAG_LLM_TIMEOUT_SECS": "120",
+        "RAG_LLM_MAX_TOKENS": "4096",
+        "RAG_MAINT_MAX_DOCS": "50",
+        "RAG_MAINT_NEAR_DUP_THRESHOLD": "0.92",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}

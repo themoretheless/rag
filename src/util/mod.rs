@@ -1,0 +1,21 @@
+//! Shared helpers (hashing, path allowlist, wiki URI slug).
+
+pub mod hash;
+
+pub use hash::{
+    check_path_allowlist, content_hash, ingest_roots_from_env, parse_ingest_roots,
+};
+
+/// Extract the slug segment from a `wiki://` URI.
+///
+/// Strips the `wiki://` scheme, then trims whitespace and surrounding `/`.
+/// Returns `None` when the URI is not `wiki://` or the remainder is empty.
+pub fn wiki_slug_from_uri(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("wiki://")?;
+    let s = rest.trim().trim_matches('/');
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}

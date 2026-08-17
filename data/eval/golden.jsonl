@@ -1,0 +1,24 @@
+{"question": "How does rag-mcp map Obsidian notes, wikilinks and backlinks onto graph nodes and tools?", "expect_title": "README.md"}
+{"question": "What does verbatim storage mean for ingest and diary_write?", "expect_title": "README.md"}
+{"question": "Which MemPalace ideas map to wings, rooms, drawers and tunnels in rag-mcp?", "expect_title": "README.md"}
+{"question": "Which Rust crates are chosen for MCP transport, database and async runtime?", "expect_title": "SPEC.md"}
+{"question": "How are unlinked mentions represented until a matching document is ingested?", "expect_title": "SPEC.md"}
+{"question": "What error handling stack is used: thiserror and anyhow at boundaries?", "expect_title": "SPEC.md"}
+{"question": "What was the top conflict between the Karpathy compile-once theme and the retrieval theme, and how was it resolved?", "expect_title": "FEATURES.md"}
+{"question": "What does the adversarial A1-A30 analysis belong to and what scope does the feature research cover?", "expect_title": "FEATURES.md"}
+{"question": "Which features are deferred as non-goals, like Chroma multi-backend and AAAK dialect?", "expect_title": "FEATURES.md"}
+{"question": "What are the north star success metrics such as index coverage and uncompiled raw debt?", "expect_title": "ARCHITECTURE_VISION.md"}
+{"question": "What is the one-sentence definition of what the product is and is not?", "expect_title": "ARCHITECTURE_VISION.md"}
+{"question": "Why must the server ChatClient never be required for the compile loop?", "expect_title": "ARCHITECTURE_VISION.md"}
+{"question": "What must ship together with hybrid search before it is allowed to ship?", "expect_title": "ROADMAP.md"}
+{"question": "Which storage adapters are planned in P1: markdown vault, SQLite, Postgres with pgvector?", "expect_title": "ROADMAP.md"}
+{"question": "What is planned for the egui graph viewer MVP: RadialLocal layout and node caps?", "expect_title": "ROADMAP.md"}
+{"question": "Как подключить rag-mcp к Claude Desktop через mcp-remote и HTTP gateway?", "expect_title": "CONNECT.md"}
+{"question": "Какие транспорты поддерживает сервер и когда выбирать stdio вместо HTTP?", "expect_title": "CONNECT.md"}
+{"question": "Что нужно заранее для подключения: Rust, клиент и опционально Ollama?", "expect_title": "CONNECT.md"}
+{"question": "What is the index-first cascade of tool calls an agent should follow?", "expect_title": "SPINE_TOOLS.md"}
+{"question": "Which tools belong to the L0 cluster of the spine surface?", "expect_title": "SPINE_TOOLS.md"}
+{"question": "Why does the spine mode exist instead of advertising all ~70 tools?", "expect_title": "SPINE_TOOLS.md"}
+{"question": "Какие env-переменные включают semantic search через Ollama с моделью nomic-embed-text?", "expect_title": "PROD_RUN.md"}
+{"question": "Как собрать release-бинарники rag-mcp и rag-mcp-ui одной командой?", "expect_title": "PROD_RUN.md"}
+{"question": "Какой бинарь запускает клиент по stdio в продакшн-режиме вместо cargo run?", "expect_title": "PROD_RUN.md"}

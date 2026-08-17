@@ -1,0 +1,48 @@
+[workspace]
+members = [".", "crates/rag-mcp-ui"]
+default-members = ["."]
+resolver = "2"
+
+[package]
+name = "rag-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "RAG MCP server backed by DuckDB"
+license = "MIT"
+readme = "README.md"
+
+[[bin]]
+name = "rag-mcp"
+path = "src/main.rs"
+
+[[bin]]
+name = "ingest_project"
+path = "src/bin/ingest_project.rs"
+
+[[bin]]
+name = "ingest_file"
+path = "src/bin/ingest_file.rs"
+
+[dependencies]
+walkdir = "2"
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+blake3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+duckdb = { version = "1", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rmcp = { version = "0.11", features = ["server", "transport-io", "transport-streamable-http-server"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }

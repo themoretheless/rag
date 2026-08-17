@@ -1,0 +1,19 @@
+# Build output. `target` alone misses the side-by-side comparison trees
+# (target-fixed, target-mock-check, target-openai-check) — ~40G combined.
+/target
+/target-*
+
+# DuckDB store and everything around it. The .wal and dated .bak-* copies do
+# not end in .duckdb, so they need their own patterns.
+*.duckdb
+*.duckdb.wal
+*.bak-*
+
+# Generated graph export (export_graph_snapshot / rag-mcp-ui export).
+/graph.json
+/pkb-graph.json
+
+# Local runtime state: pending ingest queue, wiki-refresh log and lock.
+.rag/
+
+.DS_Store

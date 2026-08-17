@@ -1,0 +1,21 @@
+// Snippet for ~/.config/zed/settings.json (or Settings → AI → MCP Servers)
+// Docs: https://zed.dev/docs/ai/mcp
+// Merge `context_servers` into your existing settings (do not replace the whole file).
+{
+  "context_servers": {
+    "rag-mcp": {
+      "command": "/Users/themoretheless/Documents/Sources/rag/target/release/rag-mcp",
+      "args": [],
+      "env": {
+        "RAG_DB_PATH": "/Users/themoretheless/Documents/Sources/rag/rag.duckdb",
+        "RAG_EMBEDDING_PROVIDER": "mock",
+        "RAG_INGEST_ROOTS": "/Users/themoretheless/Documents",
+        "RAG_DEFAULT_SEARCH_MODE": "vec",
+        "RAG_DEFAULT_TOP_K": "5",
+        "RAG_LLM_ENABLED": "false",
+        "RAG_TOOLS": "spine",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
