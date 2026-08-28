@@ -10,7 +10,7 @@ use std::f32::consts::TAU;
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use crate::adapter::{edge_color, UiGraph, UiNode};
+use crate::adapter::{edge_color, kind_color, UiGraph, UiNode};
 use crate::layout::{fit_transform, PosCache};
 
 pub struct CanvasOut {
@@ -62,16 +62,28 @@ pub fn draw_canvas(
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll.abs() > 0.0 {
             let factor = (1.0 + scroll * 0.001).clamp(0.9, 1.1);
-            let new_zoom = (*zoom * factor).clamp(0.05, 12.0);
-            if let Some(pointer) = response.hover_pos() {
-                let before = (pointer.to_vec2() - *pan) / *zoom;
-                *zoom = new_zoom;
-                *pan = pointer.to_vec2() - before * *zoom;
-            } else {
-                *zoom = new_zoom;
-            }
+            let pivot = response.hover_pos().unwrap_or(rect.center());
+            zoom_at(zoom, pan, pivot, factor);
         }
     }
+
+    // View controls overlay: Fit + zoom in/out (top-right corner).
+    let ctl_rect = Rect::from_min_size(
+        rect.right_top() + Vec2::new(-132.0, 6.0),
+        Vec2::new(126.0, 24.0),
+    );
+    let mut ctl = ui.new_child(egui::UiBuilder::new().max_rect(ctl_rect));
+    ctl.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui.button("+").on_hover_text("Zoom in").clicked() {
+            zoom_at(zoom, pan, rect.center(), 1.25);
+        }
+        if ui.button("−").on_hover_text("Zoom out").clicked() {
+            zoom_at(zoom, pan, rect.center(), 0.8);
+        }
+        if ui.button("Fit").on_hover_text("Fit graph to view").clicked() {
+            *need_fit = true;
+        }
+    });
 
     let z = *zoom;
     let p = *pan;
@@ -107,6 +119,11 @@ pub fn draw_canvas(
             "tagged" | "mentions" => dashed_line(&painter, sa, sb, stroke, 4.0, 4.0),
             _ => {
                 painter.line_segment([sa, sb], stroke);
+                // Direction arrow for directed rel types (EGUI_GRAPH_VIEW §7.2).
+                if matches!(e.rel_type.as_str(), "wikilink" | "depends_on" | "derived_from" | "supersedes")
+                {
+                    draw_arrowhead(&painter, sa, sb, stroke);
+                }
             }
         }
     }
@@ -167,7 +184,7 @@ pub fn draw_canvas(
         }
     }
 
-    for sn in others.into_iter().chain(selected_draw.into_iter()) {
+    for sn in others.into_iter().chain(selected_draw) {
         let node = sn.node;
         let center = sn.center;
         let radius = sn.radius;
@@ -206,15 +223,26 @@ pub fn draw_canvas(
             || node.depth == 0
             || show_all_labels;
         if show_label {
-            painter.text(
-                center + Vec2::new(0.0, radius + 4.0),
-                egui::Align2::CENTER_TOP,
-                &node.label,
-                egui::FontId::proportional(12.0),
-                Color32::from_gray(230),
+            let font = egui::FontId::proportional(12.0);
+            let text_color = Color32::from_gray(230);
+            let galley = painter.layout_no_wrap(node.label.clone(), font, text_color);
+            // Semi-transparent backing so labels stay readable over edges.
+            let label_pos = center + Vec2::new(0.0, radius + 4.0);
+            let label_rect = Rect::from_center_size(
+                Pos2::new(label_pos.x, label_pos.y + galley.size().y * 0.5),
+                galley.size(),
+            )
+            .expand(2.0);
+            painter.rect_filled(
+                label_rect,
+                2.0,
+                Color32::from_rgba_unmultiplied(18, 18, 24, 180),
             );
+            painter.galley(label_rect.min + Vec2::splat(2.0), galley, text_color);
         }
     }
+
+    draw_legend(&painter, rect, graph);
 
     if let Some(hid) = hover_id.as_deref() {
         if let Some(node) = graph.nodes.iter().find(|n| n.id == hid) {
@@ -242,6 +270,78 @@ pub fn draw_canvas(
         clicked_id,
         clicked_empty,
         hover_id,
+    }
+}
+
+/// Zoom around a pivot point (screen coords), clamped like scroll zoom.
+fn zoom_at(zoom: &mut f32, pan: &mut Vec2, pivot: Pos2, factor: f32) {
+    let before = (pivot.to_vec2() - *pan) / *zoom;
+    *zoom = (*zoom * factor).clamp(0.05, 12.0);
+    *pan = pivot.to_vec2() - before * *zoom;
+}
+
+/// Small arrowhead just before the target node (direction of the relation).
+fn draw_arrowhead(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
+    let d = b - a;
+    let len = d.length();
+    if len < 24.0 {
+        return;
+    }
+    let dir = d / len;
+    let tip = b - dir * 14.0;
+    let side = Vec2::new(-dir.y, dir.x);
+    painter.line_segment([tip, tip - dir * 8.0 + side * 3.5], stroke);
+    painter.line_segment([tip, tip - dir * 8.0 - side * 3.5], stroke);
+}
+
+/// Compact legend of kind / rel_type colors present in the view (bottom-left).
+fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
+    use std::collections::BTreeSet;
+    let kinds: BTreeSet<&str> = graph.nodes.iter().map(|n| n.kind.as_str()).collect();
+    let rels: BTreeSet<&str> = graph.edges.iter().map(|e| e.rel_type.as_str()).collect();
+    let rows = kinds.len() + rels.len();
+    if rows == 0 {
+        return;
+    }
+    let line_h = 16.0;
+    let mut y = rect.max.y - 8.0 - line_h * rows as f32;
+    let x = rect.min.x + 10.0;
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(rect.min.x + 4.0, y - 4.0),
+            Vec2::new(130.0, line_h * rows as f32 + 8.0),
+        ),
+        4.0,
+        Color32::from_rgba_unmultiplied(18, 18, 24, 160),
+    );
+    let font = egui::FontId::proportional(11.0);
+    let text_color = Color32::from_gray(200);
+    for k in kinds {
+        let cy = y + line_h * 0.5;
+        painter.circle_filled(Pos2::new(x + 4.0, cy), 4.0, kind_color(k));
+        painter.text(
+            Pos2::new(x + 14.0, y),
+            egui::Align2::LEFT_TOP,
+            k,
+            font.clone(),
+            text_color,
+        );
+        y += line_h;
+    }
+    for r in rels {
+        let cy = y + line_h * 0.5;
+        painter.line_segment(
+            [Pos2::new(x, cy), Pos2::new(x + 10.0, cy)],
+            Stroke::new(1.5_f32, edge_color(r)),
+        );
+        painter.text(
+            Pos2::new(x + 14.0, y),
+            egui::Align2::LEFT_TOP,
+            r,
+            font.clone(),
+            text_color,
+        );
+        y += line_h;
     }
 }
 

@@ -215,7 +215,10 @@ function selectCategory(cat: string) {
           </button>
         </div>
       </li>
-      <li v-if="!wiki.filtered.length" class="muted empty">{{ ui.t('noPages') }}</li>
+      <li v-if="!wiki.filtered.length" class="muted empty">
+        {{ ui.t('noPages') }}
+        <span v-if="!wiki.filter.trim()" class="hint">{{ ui.t('noPagesHint') }}</span>
+      </li>
     </ul>
   </aside>
 </template>
@@ -388,6 +391,12 @@ function selectCategory(cat: string) {
   color: var(--text-muted);
   padding: 12px;
   font-size: 13px;
+}
+.empty .hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 4px;
 }
 .err {
   color: var(--danger);

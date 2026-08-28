@@ -1,0 +1,17 @@
+{
+  "name": "rag-mcp",
+  "version": "0.2.0",
+  "description": "Local RAG/wiki memory (rag-mcp, DuckDB) as Kimi Code tools, via shared HTTP instance",
+  "author": "local",
+  "interface": {
+    "displayName": "rag-mcp",
+    "shortDescription": "Local knowledge base and wiki over MCP (shared HTTP instance)"
+  },
+  "mcpServers": {
+    "rag": {
+      "url": "http://127.0.0.1:7432/mcp"
+    }
+  },
+  "skills": "./skills/",
+  "systemPromptPath": "./SYSTEM.md"
+}

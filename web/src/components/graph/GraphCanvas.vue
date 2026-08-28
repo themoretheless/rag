@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { select, type Selection } from 'd3-selection'
 import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom'
 import { useGraphStore } from '@/stores/graph'
-import { buildSimulation, nodeColor, type SimLink, type SimNode } from '@/lib/forceLayout'
+import { buildSimulation, createNodeDrag, nodeColor, type SimLink, type SimNode } from '@/lib/forceLayout'
 
 const graph = useGraphStore()
 const host = ref<HTMLDivElement | null>(null)
@@ -144,7 +144,7 @@ function paint() {
     .data(simNodes)
     .join('g')
     .style('cursor', 'grab')
-    .call(createNodeDrag(sim))
+    .call(createNodeDrag(sim) as never)
     .on('click', (event, d) => {
       // d3-drag marks the click as defaultPrevented after a real drag.
       if (event.defaultPrevented) return

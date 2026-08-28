@@ -1,11 +1,16 @@
 //! Obsidian/Notion-style wiki browser: page list + article body with `[[wikilinks]]`.
 //! Supports read view and an in-app editor (Save via HTTP PUT or exclusive `--db`).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use egui::{RichText, Sense, Ui};
 
 use crate::load::{BacklinkItem, DocumentBody, WikiPageMeta};
+
+/// Persistent focus id of the sidebar filter field (Ctrl+F targets it).
+pub fn wiki_filter_id() -> egui::Id {
+    egui::Id::new("wiki_filter_edit")
+}
 
 /// Mutable buffers while the article pane is in edit mode.
 #[derive(Debug, Clone, Default)]
@@ -36,6 +41,8 @@ impl WikiEditBuffers {
 pub struct WikiEditAction {
     pub save: bool,
     pub cancel: bool,
+    /// Discard edits and refetch the current revision (CAS conflict recovery).
+    pub reload: bool,
 }
 
 /// Navigation / mode actions from the read view only (no save/cancel).
@@ -46,14 +53,17 @@ pub struct WikiNavAction {
     /// Prefer opening a backlink by document id when set.
     pub open_id: Option<String>,
     pub start_edit: bool,
+    /// Retry the last failed load (page body or catalog).
+    pub retry: bool,
 }
 
-/// Left sidebar: searchable list of wiki pages (titles).
+/// Left sidebar: searchable list of wiki pages, grouped by `category`.
 pub fn draw_wiki_sidebar(
     ui: &mut Ui,
     pages: &[WikiPageMeta],
     filter: &mut String,
     selected_id: Option<&str>,
+    show_summaries: &mut bool,
 ) -> Option<String> {
     let mut clicked: Option<String> = None;
 
@@ -61,14 +71,41 @@ pub fn draw_wiki_sidebar(
         ui.heading("Wiki");
         ui.weak(format!("({})", pages.len()));
     });
-    ui.add(
-        egui::TextEdit::singleline(filter)
-            .desired_width(f32::INFINITY)
-            .hint_text("Filter pages…"),
-    );
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(filter)
+                .id(wiki_filter_id())
+                .desired_width(f32::INFINITY)
+                .hint_text("Filter pages…  (Ctrl+F)"),
+        );
+        if ui
+            .add_enabled(!filter.is_empty(), egui::Button::new("✕"))
+            .on_hover_text("Clear filter")
+            .clicked()
+        {
+            filter.clear();
+        }
+    });
+    ui.checkbox(show_summaries, "summaries")
+        .on_hover_text("Show one-line summary under each page");
     ui.separator();
 
     let q = filter.trim().to_lowercase();
+    let matches_filter = |p: &WikiPageMeta| {
+        if q.is_empty() {
+            return true;
+        }
+        let hay = format!(
+            "{} {} {} {}",
+            p.title,
+            p.slug,
+            p.summary.as_deref().unwrap_or(""),
+            p.category.as_deref().unwrap_or("")
+        )
+        .to_lowercase();
+        hay.contains(&q)
+    };
+
     egui::ScrollArea::vertical()
         .id_salt("wiki_sidebar_scroll")
         .auto_shrink([false, false])
@@ -78,34 +115,47 @@ pub fn draw_wiki_sidebar(
                 ui.weak("Use write_wiki_page via MCP.");
                 return;
             }
+            if !q.is_empty() {
+                // Filtered: flat list (grouping would hide matches under closed headers).
+                for p in pages.iter().filter(|p| matches_filter(p)) {
+                    draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
+                }
+                return;
+            }
+            // Grouped by category; uncategorized last.
+            let mut groups: BTreeMap<String, Vec<&WikiPageMeta>> = BTreeMap::new();
             for p in pages {
-                if !q.is_empty() {
-                    let hay = format!(
-                        "{} {} {} {}",
-                        p.title,
-                        p.slug,
-                        p.summary.as_deref().unwrap_or(""),
-                        p.category.as_deref().unwrap_or("")
-                    )
-                    .to_lowercase();
-                    if !hay.contains(&q) {
-                        continue;
+                groups
+                    .entry(p.category.clone().unwrap_or_default())
+                    .or_default()
+                    .push(p);
+            }
+            let uncategorized = groups.remove("");
+            for (cat, group) in &groups {
+                egui::CollapsingHeader::new(cat)
+                    .id_salt(format!("wiki_cat_{cat}"))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for p in group {
+                            draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
+                        }
+                    });
+            }
+            if let Some(group) = uncategorized {
+                if groups.is_empty() {
+                    // No categories at all: flat list without a header.
+                    for p in group {
+                        draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
                     }
-                }
-                let selected = selected_id == Some(p.id.as_str());
-                let label = if p.title.is_empty() {
-                    p.slug.as_str()
                 } else {
-                    p.title.as_str()
-                };
-                let resp = ui.selectable_label(selected, label);
-                if resp.clicked() {
-                    clicked = Some(p.id.clone());
-                }
-                if let Some(sum) = p.summary.as_deref() {
-                    if !sum.is_empty() {
-                        ui.weak(truncate(sum, 72));
-                    }
+                    egui::CollapsingHeader::new("Uncategorized")
+                        .id_salt("wiki_cat_uncategorized")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            for p in group {
+                                draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
+                            }
+                        });
                 }
             }
         });
@@ -113,18 +163,59 @@ pub fn draw_wiki_sidebar(
     clicked
 }
 
+fn draw_page_entry(
+    ui: &mut Ui,
+    p: &WikiPageMeta,
+    selected_id: Option<&str>,
+    show_summary: bool,
+    clicked: &mut Option<String>,
+) {
+    let selected = selected_id == Some(p.id.as_str());
+    let label = if p.title.is_empty() {
+        p.slug.as_str()
+    } else {
+        p.title.as_str()
+    };
+    if ui.selectable_label(selected, label).clicked() {
+        *clicked = Some(p.id.clone());
+    }
+    if show_summary {
+        if let Some(sum) = p.summary.as_deref() {
+            if !sum.is_empty() {
+                ui.weak(truncate(sum, 72));
+            }
+        }
+    }
+}
+
 /// Edit mode only: title/content fields + Save/Cancel. No render/link/backlink params.
+///
+/// `saving` disables Save and shows a spinner while a worker save is in flight
+/// (the edit buffers stay editable; a repeated save is ignored).
 pub fn draw_wiki_edit_view(
     ui: &mut Ui,
     page: &DocumentBody,
     error: Option<&str>,
     edit: &mut WikiEditBuffers,
     can_write: bool,
+    saving: bool,
 ) -> WikiEditAction {
     let mut action = WikiEditAction::default();
 
     if let Some(err) = error {
-        ui.colored_label(egui::Color32::from_rgb(220, 100, 100), err);
+        ui.horizontal(|ui| {
+            ui.colored_label(egui::Color32::from_rgb(220, 100, 100), err);
+            // CAS conflict (HTTP 409 / revision mismatch): offer a way out.
+            let conflict = err.contains("conflict") || err.contains("409");
+            if conflict
+                && ui
+                    .button("Reload page")
+                    .on_hover_text("Discard edits and refetch the current revision")
+                    .clicked()
+            {
+                action.reload = true;
+            }
+        });
         ui.separator();
     }
 
@@ -135,8 +226,10 @@ pub fn draw_wiki_edit_view(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .add_enabled(can_write, egui::Button::new("Save"))
-                .on_hover_text(if can_write {
+                .add_enabled(can_write && !saving, egui::Button::new("Save"))
+                .on_hover_text(if saving {
+                    "Save in flight on the worker…"
+                } else if can_write {
                     "Write via HTTP PUT /v1/wiki or exclusive --db"
                 } else {
                     "Read-only source (snapshot has no write path)"
@@ -144,6 +237,9 @@ pub fn draw_wiki_edit_view(
                 .clicked()
             {
                 action.save = true;
+            }
+            if saving {
+                ui.spinner();
             }
             if ui.button("Cancel").clicked() {
                 action.cancel = true;
@@ -187,6 +283,10 @@ pub fn draw_wiki_edit_view(
 }
 
 /// Read mode: rendered markdown, Edit button, backlinks. No edit buffers.
+///
+/// `salt_prefix` ("a" / "b") + page id key the article scroll area, so each
+/// pane keeps its own offset and the offset resets when the page changes.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_wiki_read_view(
     ui: &mut Ui,
     page: Option<&DocumentBody>,
@@ -195,26 +295,42 @@ pub fn draw_wiki_read_view(
     known_slugs: &HashSet<String>,
     backlinks: &[BacklinkItem],
     can_write: bool,
+    salt_prefix: &str,
+    loading: bool,
 ) -> WikiNavAction {
     let mut action = WikiNavAction::default();
 
     if let Some(err) = error {
-        ui.colored_label(egui::Color32::from_rgb(220, 100, 100), err);
+        ui.horizontal(|ui| {
+            ui.colored_label(egui::Color32::from_rgb(220, 100, 100), err);
+            if ui.button("Retry").clicked() {
+                action.retry = true;
+            }
+        });
         ui.separator();
     }
 
     let Some(page) = page else {
         ui.vertical_centered(|ui| {
             ui.add_space(80.0);
-            ui.heading("Select a page");
-            ui.weak("Pick a wiki note in the left sidebar.");
-            ui.weak("Blue [[links]] resolve; grey = missing page.");
+            if loading {
+                ui.spinner();
+                ui.label("Loading page…");
+            } else {
+                ui.heading("Select a page");
+                ui.weak("Pick a wiki note in the left sidebar.");
+                ui.weak("Blue [[links]] resolve; grey = missing page.");
+            }
         });
         return action;
     };
 
     ui.horizontal(|ui| {
         ui.heading(&page.title);
+        if loading {
+            // Next page is on the wire; this one stays visible until it lands.
+            ui.spinner();
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add_enabled(can_write, egui::Button::new("Edit"))
@@ -237,7 +353,7 @@ pub fn draw_wiki_read_view(
     ui.separator();
 
     egui::ScrollArea::vertical()
-        .id_salt("wiki_article_scroll")
+        .id_salt(format!("wiki_article_scroll:{salt_prefix}:{}", page.id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             action.open_link =

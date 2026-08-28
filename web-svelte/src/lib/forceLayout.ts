@@ -199,7 +199,7 @@ export function placeRadialLocal(
     // dedupe
     let w = 0
     for (let r = 0; r < neis.length; r++) {
-      if (r === 0 || neis[r] !== neis[r - 1]) neis[w++] = neis[r]
+      if (r === 0 || neis[r] !== neis[r - 1]) neis[w++] = neis[r]!
     }
     neis.length = w
   }
@@ -242,7 +242,7 @@ export function placeRadialLocal(
     const ring = (rings.get(depth) ?? []).slice().sort()
     if (depth === 0) {
       for (let i = 0; i < ring.length; i++) {
-        const id = ring[i]
+        const id = ring[i]!
         const node = byId.get(id)
         if (!node) continue
         const x = id === seed ? cx : cx + 20 * i
@@ -260,7 +260,7 @@ export function placeRadialLocal(
     const count = Math.max(1, ring.length)
     const r = depth * RING_GAP
     for (let i = 0; i < ring.length; i++) {
-      const id = ring[i]
+      const id = ring[i]!
       const node = byId.get(id)
       if (!node) continue
       const angle = (TAU * i) / count

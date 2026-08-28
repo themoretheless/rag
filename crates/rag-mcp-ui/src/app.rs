@@ -1,4 +1,9 @@
 //! GraphApp: eframe::App - graph inspector + Obsidian/Notion-style wiki browser.
+//!
+//! All blocking IO (HTTP / DuckDB) runs on the worker thread (`crate::worker`);
+//! this file only dispatches [`WorkerCmd`] and applies [`WorkerEvt`] in `update()`.
+//! Each job carries a `seq`; late answers whose seq no longer matches the pending
+//! slot are dropped (race protection per EGUI_GRAPH_VIEW §2.5 / §8.3).
 
 use egui::Vec2;
 use rag_mcp::GraphView;
@@ -6,22 +11,21 @@ use rag_mcp::GraphView;
 use crate::adapter::{adapt, topology_generation, AdaptOptions, UiGraph};
 use crate::layout::{place_missing_near_neighbors, radial_place, PosCache};
 use std::collections::HashSet;
+use std::time::Duration;
 
 use crate::load::{
-    expand_neighbors_local, expand_neighbors_store, fetch_backlinks_http, fetch_document_db,
-    fetch_document_http, fetch_wiki_list_db, fetch_wiki_list_http, load_http, load_live_db,
-    load_snapshot_path, local_neighbors, put_wiki_http, resolve_seed, save_wiki_db, BacklinkItem,
-    CliSource, DocumentBody, GraphSourceKind, LoadedGraph, OpenArgs, UI_HARD_MAX_NODES,
-    WikiPageMeta, WikiPutRequest,
+    local_neighbors, resolve_seed, sort_wiki_pages, CliSource, DocumentBody, GraphSourceKind,
+    LoadedGraph, OpenArgs, UI_HARD_MAX_NODES, WikiPageMeta, WikiPutRequest,
 };
 use crate::ui::canvas::draw_canvas;
 use crate::ui::detail::{draw_detail, DetailAction};
-use crate::ui::empty::{draw_empty_banner, EmptyGraphStats, EmptyKind};
+use crate::ui::empty::{draw_empty_banner, draw_no_source, EmptyGraphStats, EmptyKind, NoSourceAction};
 use crate::ui::status::draw_status;
 use crate::ui::wiki::{
     content_summary_line, draw_wiki_edit_view, draw_wiki_read_view, draw_wiki_sidebar,
-    slug_from_wiki_uri, WikiEditBuffers,
+    slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
 };
+use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 
 /// Top-level UI mode (graph topology vs wiki articles).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,6 +45,20 @@ enum WikiPane {
 
 pub struct GraphApp {
     open: OpenArgs,
+    worker: WorkerHandle,
+    /// Monotonic job counter; every pending slot stores the seq it waits for.
+    seq: u64,
+    pending_graph: Option<u64>,
+    pending_catalog: Option<u64>,
+    pending_page_a: Option<u64>,
+    pending_page_b: Option<u64>,
+    pending_backlinks: Option<u64>,
+    pending_content: Option<u64>,
+    pending_expand: Option<u64>,
+    pending_save: Option<u64>,
+    /// HTTP base URL editable on the no-source start screen.
+    connect_url: String,
+
     full_view: Option<GraphView>,
     source: Option<GraphSourceKind>,
     load_error: Option<String>,
@@ -69,6 +87,11 @@ pub struct GraphApp {
     last_topo: u64,
     /// Banner after expand hit max_nodes or added nothing.
     expand_note: Option<String>,
+    /// True when `local_view` contains Expand merges beyond the plain seed BFS
+    /// (gates the "Reset to seed" confirmation).
+    expanded_dirty: bool,
+    /// "Reset to seed" confirmation popup is open.
+    confirm_reset: bool,
 
     selected: Option<String>,
     /// Full wiki/raw body for the selected node (HTTP or --db).
@@ -80,13 +103,14 @@ pub struct GraphApp {
     // --- Wiki browser state ---
     wiki_pages: Vec<WikiPageMeta>,
     wiki_filter: String,
+    wiki_show_summaries: bool,
     wiki_selected_id: Option<String>,
     wiki_article: Option<DocumentBody>,
     wiki_error: Option<String>,
     wiki_loaded: bool,
     /// History stack of wiki page ids for Back (Obsidian-like).
     wiki_history: Vec<String>,
-    wiki_backlinks: Vec<BacklinkItem>,
+    wiki_backlinks: Vec<crate::load::BacklinkItem>,
     /// In-app editor buffers (None = read mode). Applies to pane A only.
     wiki_edit: Option<WikiEditBuffers>,
     /// Last successful save note (status strip).
@@ -99,16 +123,27 @@ pub struct GraphApp {
     wiki_selected_id_b: Option<String>,
     wiki_article_b: Option<DocumentBody>,
     wiki_error_b: Option<String>,
-    wiki_backlinks_b: Vec<BacklinkItem>,
+    wiki_backlinks_b: Vec<crate::load::BacklinkItem>,
 }
 
 impl GraphApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, open: OpenArgs) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, open: OpenArgs) -> Self {
         let depth = open.depth.clamp(1, 3);
         let max_nodes = open.max_nodes.clamp(1, UI_HARD_MAX_NODES as u32);
         let seed_input = open.seed.clone().unwrap_or_default();
         let mut app = Self {
             open,
+            worker: crate::worker::spawn(cc.egui_ctx.clone()),
+            seq: 0,
+            pending_graph: None,
+            pending_catalog: None,
+            pending_page_a: None,
+            pending_page_b: None,
+            pending_backlinks: None,
+            pending_content: None,
+            pending_expand: None,
+            pending_save: None,
+            connect_url: "http://127.0.0.1:7432".into(),
             full_view: None,
             source: None,
             load_error: None,
@@ -131,6 +166,8 @@ impl GraphApp {
             need_fit: true,
             last_topo: 0,
             expand_note: None,
+            expanded_dirty: false,
+            confirm_reset: false,
             selected: None,
             content: None,
             content_error: None,
@@ -138,6 +175,7 @@ impl GraphApp {
             zoom: 1.0,
             wiki_pages: Vec::new(),
             wiki_filter: String::new(),
+            wiki_show_summaries: false,
             wiki_selected_id: None,
             wiki_article: None,
             wiki_error: None,
@@ -153,32 +191,52 @@ impl GraphApp {
             wiki_error_b: None,
             wiki_backlinks_b: Vec::new(),
         };
-        app.try_initial_load();
+        app.dispatch_graph_load();
         app
     }
 
-    fn try_initial_load(&mut self) {
+    fn next_seq(&mut self) -> u64 {
+        self.seq += 1;
+        self.seq
+    }
+
+    fn any_pending(&self) -> bool {
+        self.pending_graph.is_some()
+            || self.pending_catalog.is_some()
+            || self.pending_page_a.is_some()
+            || self.pending_page_b.is_some()
+            || self.pending_backlinks.is_some()
+            || self.pending_content.is_some()
+            || self.pending_expand.is_some()
+            || self.pending_save.is_some()
+    }
+
+    /// Kick the initial / retry topology load on the worker (no-op without a source).
+    fn dispatch_graph_load(&mut self) {
         let Some(src) = self.open.source.clone() else {
             return;
         };
-        match src {
-            CliSource::Snapshot(path) => match load_snapshot_path(&path) {
-                Ok(loaded) => self.apply_loaded(loaded),
-                Err(e) => self.load_error = Some(e),
-            },
-            CliSource::Db(path) => {
-                match load_live_db(&path, self.open.seed.as_deref(), self.depth) {
-                    Ok(loaded) => self.apply_loaded(loaded),
-                    Err(e) => self.load_error = Some(e),
-                }
-            }
-            CliSource::Http(base) => {
-                match load_http(&base, self.open.seed.as_deref(), self.depth) {
-                    Ok(loaded) => self.apply_loaded(loaded),
-                    Err(e) => self.load_error = Some(e),
-                }
-            }
+        let seq = self.next_seq();
+        self.pending_graph = Some(seq);
+        self.worker.send(WorkerCmd::LoadGraph {
+            seq,
+            source: src,
+            seed: self.open.seed.clone(),
+            depth: self.depth,
+        });
+    }
+
+    /// Switch to an HTTP source from the no-source start screen (no restart).
+    fn connect_http(&mut self) {
+        let url = self.connect_url.trim().to_string();
+        if url.is_empty() {
+            self.load_error = Some("http URL is empty".into());
+            return;
         }
+        self.open.source = Some(CliSource::Http(url));
+        self.load_error = None;
+        self.wiki_loaded = false;
+        self.dispatch_graph_load();
     }
 
     fn apply_loaded(&mut self, loaded: LoadedGraph) {
@@ -205,52 +263,61 @@ impl GraphApp {
 
     fn reload_wiki_catalog(&mut self) {
         self.wiki_error = None;
-        let result = match self.source.as_ref() {
-            Some(GraphSourceKind::HttpService { base }) => fetch_wiki_list_http(base),
-            Some(GraphSourceKind::LiveStore { path }) => fetch_wiki_list_db(path),
-            Some(GraphSourceKind::SnapshotFile { .. } | GraphSourceKind::VaultGraphJson { .. }) => {
-                Err("snapshot mode has no wiki catalog; use --http or --db".into())
-            }
-            None => Err("no data source".into()),
-        };
-        match result {
-            Ok(pages) => {
-                self.wiki_pages = pages;
-                self.wiki_loaded = true;
-                // Open seed title if it matches a wiki page.
-                if self.wiki_selected_id.is_none() && !self.seed_input.trim().is_empty() {
-                    let q = self.seed_input.trim();
-                    if let Some(p) = self.wiki_pages.iter().find(|p| {
-                        p.title.eq_ignore_ascii_case(q)
-                            || p.slug.eq_ignore_ascii_case(q)
-                            || p.id == q
-                    }) {
-                        let id = p.id.clone();
-                        self.open_wiki_page_id(&id);
-                    }
-                } else if self.wiki_selected_id.is_none() {
-                    // Default: first page (often hub / overview).
-                    if let Some(p) = self
-                        .wiki_pages
-                        .iter()
-                        .find(|p| p.title.to_lowercase().contains("обзор") || p.slug.contains("overview"))
-                        .or_else(|| self.wiki_pages.first())
-                    {
-                        let id = p.id.clone();
-                        self.open_wiki_page_id(&id);
-                    }
+        match self.source.as_ref() {
+            Some(s) => match LoadSource::from_graph_source(s) {
+                Some(source) => {
+                    let seq = self.next_seq();
+                    self.pending_catalog = Some(seq);
+                    self.worker.send(WorkerCmd::LoadWikiCatalog { seq, source });
                 }
-            }
-            Err(e) => {
-                self.wiki_error = Some(e);
+                None => {
+                    self.wiki_loaded = true;
+                    self.wiki_error =
+                        Some("snapshot mode has no wiki catalog; use --http or --db".into());
+                }
+            },
+            None => {
                 self.wiki_loaded = true;
+                self.wiki_error = Some("no data source".into());
             }
+        }
+    }
+
+    /// Default page after the catalog lands: seed title match, else overview/first.
+    fn auto_open_initial_page(&mut self) {
+        if self.wiki_selected_id.is_some() {
+            return;
+        }
+        if !self.seed_input.trim().is_empty() {
+            let q = self.seed_input.trim();
+            if let Some(p) = self.wiki_pages.iter().find(|p| {
+                p.title.eq_ignore_ascii_case(q) || p.slug.eq_ignore_ascii_case(q) || p.id == q
+            }) {
+                let id = p.id.clone();
+                self.open_wiki_page_id(&id);
+            }
+        } else if let Some(p) = self
+            .wiki_pages
+            .iter()
+            .find(|p| p.title.to_lowercase().contains("обзор") || p.slug.contains("overview"))
+            .or_else(|| self.wiki_pages.first())
+        {
+            let id = p.id.clone();
+            self.open_wiki_page_id(&id);
         }
     }
 
     fn open_wiki_page_id(&mut self, id: &str) {
         if self.wiki_dual_pane && self.wiki_focus == WikiPane::B {
+            // Re-clicking the page already open in B must not refetch body+backlinks.
+            if self.wiki_selected_id_b.as_deref() == Some(id) && self.wiki_article_b.is_some() {
+                return;
+            }
             self.open_wiki_page_in_b(id);
+            return;
+        }
+        // Same for pane A.
+        if self.wiki_selected_id.as_deref() == Some(id) && self.wiki_article.is_some() {
             return;
         }
         if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
@@ -272,37 +339,60 @@ impl GraphApp {
 
     fn open_wiki_page_id_no_history(&mut self, id: &str) {
         self.wiki_selected_id = Some(id.to_string());
-        self.wiki_article = None;
         self.wiki_error = None;
         self.wiki_edit = None;
         self.wiki_save_note = None;
-        match self.fetch_wiki_body(id) {
-            Ok(body) => {
-                self.wiki_backlinks = self.load_backlinks(&body.id);
-                self.wiki_article = Some(body);
-            }
-            Err(e) => {
-                self.wiki_backlinks.clear();
-                self.wiki_error = Some(e);
-            }
-        }
+        let Some(source) = self
+            .source
+            .as_ref()
+            .and_then(LoadSource::from_graph_source)
+        else {
+            self.wiki_error = Some("wiki articles require --http or --db".into());
+            return;
+        };
+        let Some(meta) = self.wiki_pages.iter().find(|p| p.id == id).cloned() else {
+            self.wiki_error = Some(format!("page id {id} not in catalog"));
+            return;
+        };
+        // Keep the current article visible until the new body arrives.
+        let seq = self.next_seq();
+        self.pending_page_a = Some(seq);
+        self.worker.send(WorkerCmd::OpenPage {
+            seq,
+            pane_b: false,
+            push_history: false,
+            meta: Some(meta),
+            q: None,
+            source,
+        });
     }
 
     /// Load a page into the right (secondary) dual-pane column. No history / edit.
     fn open_wiki_page_in_b(&mut self, id: &str) {
         self.wiki_selected_id_b = Some(id.to_string());
-        self.wiki_article_b = None;
         self.wiki_error_b = None;
-        match self.fetch_wiki_body(id) {
-            Ok(body) => {
-                self.wiki_backlinks_b = self.load_backlinks(&body.id);
-                self.wiki_article_b = Some(body);
-            }
-            Err(e) => {
-                self.wiki_backlinks_b.clear();
-                self.wiki_error_b = Some(e);
-            }
-        }
+        let Some(source) = self
+            .source
+            .as_ref()
+            .and_then(LoadSource::from_graph_source)
+        else {
+            self.wiki_error_b = Some("wiki articles require --http or --db".into());
+            return;
+        };
+        let Some(meta) = self.wiki_pages.iter().find(|p| p.id == id).cloned() else {
+            self.wiki_error_b = Some(format!("page id {id} not in catalog"));
+            return;
+        };
+        let seq = self.next_seq();
+        self.pending_page_b = Some(seq);
+        self.worker.send(WorkerCmd::OpenPage {
+            seq,
+            pane_b: true,
+            push_history: false,
+            meta: Some(meta),
+            q: None,
+            source,
+        });
     }
 
     fn clear_wiki_pane_b(&mut self) {
@@ -310,40 +400,78 @@ impl GraphApp {
         self.wiki_article_b = None;
         self.wiki_error_b = None;
         self.wiki_backlinks_b.clear();
+        self.pending_page_b = None;
     }
 
-    fn fetch_wiki_body(&self, id: &str) -> Result<DocumentBody, String> {
-        let meta = self.wiki_pages.iter().find(|p| p.id == id).cloned();
-        let Some(meta) = meta else {
-            return Err(format!("page id {id} not in catalog"));
-        };
-        match self.source.as_ref() {
-            Some(GraphSourceKind::HttpService { base }) => {
-                fetch_document_http(base, Some(&meta.id), Some(&meta.uri), Some(&meta.title))
+    /// Apply a worker PageOpened result to the target pane.
+    fn apply_page_opened(
+        &mut self,
+        pane_b: bool,
+        push_history: bool,
+        q: Option<&str>,
+        result: Result<(DocumentBody, Vec<crate::load::BacklinkItem>), String>,
+    ) {
+        match result {
+            Ok((body, backlinks)) => {
+                // Unresolved-link fallback may open a page that is not in the
+                // catalog yet; add a row so the sidebar stays consistent.
+                if !self.wiki_pages.iter().any(|p| p.id == body.id) {
+                    let slug = slug_from_wiki_uri(&body.uri);
+                    self.wiki_pages.push(WikiPageMeta {
+                        id: body.id.clone(),
+                        uri: body.uri.clone(),
+                        slug,
+                        title: body.title.clone(),
+                        kind: body.kind.clone(),
+                        summary: None,
+                        category: None,
+                        revision: body.revision.unwrap_or(1),
+                        etag: body.etag.clone(),
+                        updated_at: body.updated_at.clone(),
+                    });
+                    sort_wiki_pages(&mut self.wiki_pages);
+                }
+                if pane_b {
+                    self.wiki_selected_id_b = Some(body.id.clone());
+                    self.wiki_article_b = Some(body);
+                    self.wiki_backlinks_b = backlinks;
+                    self.wiki_error_b = None;
+                } else {
+                    if push_history {
+                        if let Some(prev) = self.wiki_selected_id.clone() {
+                            if prev != body.id {
+                                self.wiki_history.push(prev);
+                                if self.wiki_history.len() > 64 {
+                                    self.wiki_history.remove(0);
+                                }
+                            }
+                        }
+                    }
+                    self.wiki_selected_id = Some(body.id.clone());
+                    self.wiki_article = Some(body);
+                    self.wiki_backlinks = backlinks;
+                    self.wiki_error = None;
+                    self.wiki_save_note = None;
+                }
             }
-            Some(GraphSourceKind::LiveStore { path }) => {
-                fetch_document_db(path, Some(&meta.id), Some(&meta.uri))
-            }
-            _ => Err("wiki articles require --http or --db".into()),
-        }
-    }
-
-    fn load_backlinks(&self, document_id: &str) -> Vec<BacklinkItem> {
-        if let Some(GraphSourceKind::HttpService { base }) = self.source.as_ref() {
-            if let Ok(bl) = fetch_backlinks_http(base, document_id) {
-                return bl;
-            }
-        } else if let Some(GraphSourceKind::LiveStore { path }) = self.source.as_ref() {
-            if let Ok(store) = rag_mcp::Store::open(path) {
-                if let Ok(rows) = store.wiki_backlinks_for_document(document_id) {
-                    return rows
-                        .into_iter()
-                        .map(|(label, id)| BacklinkItem { label, id })
-                        .collect();
+            Err(e) => {
+                let msg = match q {
+                    Some(q) => format!(
+                        "unresolved link [[{q}]] - no page with that title/slug (create via write_wiki_page): {e}"
+                    ),
+                    None => e,
+                };
+                if pane_b {
+                    self.wiki_article_b = None;
+                    self.wiki_backlinks_b.clear();
+                    self.wiki_error_b = Some(msg);
+                } else {
+                    self.wiki_article = None;
+                    self.wiki_backlinks.clear();
+                    self.wiki_error = Some(msg);
                 }
             }
         }
-        Vec::new()
     }
 
     fn wiki_can_write(&self) -> bool {
@@ -371,7 +499,26 @@ impl GraphApp {
         self.wiki_error = None;
     }
 
+    /// Discard edits and refetch the current revision (409 CAS conflict path).
+    fn reload_wiki_page(&mut self) {
+        let id = self
+            .wiki_selected_id
+            .clone()
+            .or_else(|| self.wiki_article.as_ref().map(|a| a.id.clone()));
+        self.cancel_wiki_edit();
+        if let Some(id) = id {
+            self.open_wiki_page_id_no_history(&id);
+        }
+    }
+
+    /// Dispatch the save on the worker (EGUI_GRAPH_VIEW §2.5: no blocking IO on
+    /// the UI thread). Edit buffers stay until `SavedPage` lands, so a 409/CAS
+    /// conflict keeps the user's text; a repeated Save/Ctrl+S is ignored while
+    /// a save is in flight.
     fn save_wiki_edit(&mut self) {
+        if self.pending_save.is_some() {
+            return;
+        }
         let Some(edit) = self.wiki_edit.as_ref() else {
             return;
         };
@@ -379,33 +526,31 @@ impl GraphApp {
             self.wiki_error = Some("no page open to save".into());
             return;
         };
-        let id = art.id.clone();
-        let uri = art.uri.clone();
-        let title = edit.title.clone();
-        let content = edit.content.clone();
-        let if_match_revision = edit.base_revision;
-        let if_match_etag = edit.base_etag.clone();
-
-        let slug = slug_from_wiki_uri(&uri);
-        let result = match self.source.as_ref() {
-            Some(GraphSourceKind::HttpService { base }) => put_wiki_http(
-                base,
-                &WikiPutRequest {
-                    id: id.clone(),
-                    slug,
-                    uri: Some(uri.clone()),
-                    title: title.clone(),
-                    content: content.clone(),
-                    if_match_revision,
-                    if_match_etag,
-                },
-            ),
-            Some(GraphSourceKind::LiveStore { path }) => {
-                save_wiki_db(path, &id, &title, &content, if_match_revision)
-            }
-            _ => Err("wiki save requires --http or --db".into()),
+        let Some(source) = self
+            .source
+            .as_ref()
+            .and_then(LoadSource::from_graph_source)
+        else {
+            self.wiki_error = Some("wiki save requires --http or --db".into());
+            return;
         };
+        let req = WikiPutRequest {
+            id: art.id.clone(),
+            slug: slug_from_wiki_uri(&art.uri),
+            uri: Some(art.uri.clone()),
+            title: edit.title.clone(),
+            content: edit.content.clone(),
+            if_match_revision: edit.base_revision,
+            if_match_etag: edit.base_etag.clone(),
+        };
+        let seq = self.next_seq();
+        self.pending_save = Some(seq);
+        self.worker.send(WorkerCmd::SavePage { seq, req, source });
+    }
 
+    /// Apply a worker SavedPage result (success refreshes catalog + backlinks;
+    /// a conflict error keeps the edit buffers and offers Reload in the edit view).
+    fn apply_save_result(&mut self, result: Result<DocumentBody, String>) {
         match result {
             Ok(body) => {
                 // Refresh catalog row for title/summary/revision.
@@ -418,7 +563,7 @@ impl GraphApp {
                         meta.summary = Some(summary);
                     }
                 }
-                self.wiki_pages.sort_by(|a, b| a.title.cmp(&b.title));
+                sort_wiki_pages(&mut self.wiki_pages);
                 self.refresh_backlinks(&body.id);
                 let rev_note = body
                     .revision
@@ -437,7 +582,20 @@ impl GraphApp {
     }
 
     fn refresh_backlinks(&mut self, document_id: &str) {
-        self.wiki_backlinks = self.load_backlinks(document_id);
+        let Some(source) = self
+            .source
+            .as_ref()
+            .and_then(LoadSource::from_graph_source)
+        else {
+            return;
+        };
+        let seq = self.next_seq();
+        self.pending_backlinks = Some(seq);
+        self.worker.send(WorkerCmd::LoadBacklinks {
+            seq,
+            document_id: document_id.to_string(),
+            source,
+        });
     }
 
     fn wiki_known_keys(&self) -> (HashSet<String>, HashSet<String>) {
@@ -488,71 +646,34 @@ impl GraphApp {
             self.open_wiki_page_id(&id);
             return;
         }
-        // Exact wiki uri only (no fuzzy label pick - avoids wrong page).
-        let result = match self.source.as_ref() {
-            Some(GraphSourceKind::HttpService { base }) => {
-                fetch_document_http(base, None, Some(&format!("wiki://{q}")), None).or_else(|_| {
-                    fetch_document_http(base, None, Some(q), None)
-                })
+        // Exact wiki uri fallback (no fuzzy label pick) - fetched on the worker.
+        let Some(source) = self
+            .source
+            .as_ref()
+            .and_then(LoadSource::from_graph_source)
+        else {
+            let msg = "wiki links require --http or --db".to_string();
+            if into_b {
+                self.wiki_error_b = Some(msg);
+            } else {
+                self.wiki_error = Some(msg);
             }
-            Some(GraphSourceKind::LiveStore { path }) => {
-                fetch_document_db(path, None, Some(&format!("wiki://{q}"))).or_else(|_| {
-                    fetch_document_db(path, None, Some(q))
-                })
-            }
-            _ => Err("no source".into()),
+            return;
         };
-        match result {
-            Ok(body) => {
-                if body.layer != "wiki" && !body.uri.starts_with("wiki://") {
-                    // Allow raw docs linked by exact title from graph, still open.
-                }
-                let id = body.id.clone();
-                if !self.wiki_pages.iter().any(|p| p.id == id) {
-                    let slug = body
-                        .uri
-                        .strip_prefix("wiki://")
-                        .unwrap_or(body.uri.as_str())
-                        .to_string();
-                    self.wiki_pages.push(WikiPageMeta {
-                        id: body.id.clone(),
-                        uri: body.uri.clone(),
-                        slug,
-                        title: body.title.clone(),
-                        kind: body.kind.clone(),
-                        summary: None,
-                        category: None,
-                        revision: body.revision.unwrap_or(1),
-                        etag: body.etag.clone(),
-                        updated_at: body.updated_at.clone(),
-                    });
-                    self.wiki_pages.sort_by(|a, b| a.title.cmp(&b.title));
-                }
-                self.open_wiki_page_id(&id);
-                // open_wiki_page_id reloads; set article from body to avoid double fetch miss
-                if into_b {
-                    if self.wiki_article_b.is_none() {
-                        self.wiki_article_b = Some(body);
-                    }
-                    self.wiki_error_b = None;
-                } else {
-                    if self.wiki_article.is_none() {
-                        self.wiki_article = Some(body);
-                    }
-                    self.wiki_error = None;
-                }
-            }
-            Err(_) => {
-                let msg = format!(
-                    "unresolved link [[{q}]] - no page with that title/slug (create via write_wiki_page)"
-                );
-                if into_b {
-                    self.wiki_error_b = Some(msg);
-                } else {
-                    self.wiki_error = Some(msg);
-                }
-            }
+        let seq = self.next_seq();
+        if into_b {
+            self.pending_page_b = Some(seq);
+        } else {
+            self.pending_page_a = Some(seq);
         }
+        self.worker.send(WorkerCmd::OpenPage {
+            seq,
+            pane_b: into_b,
+            push_history: !into_b,
+            meta: None,
+            q: Some(q.to_string()),
+            source,
+        });
     }
 
     fn open_selected_graph_node_in_wiki(&mut self) {
@@ -622,7 +743,6 @@ impl GraphApp {
 
     /// Load full document body for the current selection (wiki or raw).
     fn load_content_for_selected(&mut self) {
-        self.content = None;
         self.content_error = None;
         let Some(sel) = self.selected.clone() else {
             self.content_error = Some("nothing selected".into());
@@ -643,38 +763,41 @@ impl GraphApp {
             ));
             return;
         }
+        let (doc_id, uri, label) = (
+            node.document_id.clone(),
+            node.uri.clone(),
+            node.label.clone(),
+        );
 
-        let doc_id = node.document_id.as_deref();
-        let uri = node.uri.as_deref();
-        let label = node.label.as_str();
-
-        let result = match self.source.as_ref() {
-            Some(GraphSourceKind::HttpService { base }) => {
-                fetch_document_http(base, doc_id, uri, Some(label))
-            }
-            Some(GraphSourceKind::LiveStore { path }) => fetch_document_db(path, doc_id, uri),
-            Some(GraphSourceKind::SnapshotFile { .. } | GraphSourceKind::VaultGraphJson { .. }) => {
-                Err(
-                    "snapshot mode has no document bodies; use --http or --db".into(),
-                )
-            }
-            None => Err("no data source".into()),
+        let Some(source) = self
+            .source
+            .as_ref()
+            .and_then(LoadSource::from_graph_source)
+        else {
+            self.content_error =
+                Some("snapshot mode has no document bodies; use --http or --db".into());
+            return;
         };
 
-        match result {
-            Ok(body) => {
-                self.content = Some(body);
-                self.content_error = None;
-            }
-            Err(e) => {
-                self.content = None;
-                self.content_error = Some(e);
-            }
-        }
+        // Keep previous content visible while the worker fetches.
+        let seq = self.next_seq();
+        self.pending_content = Some(seq);
+        self.worker.send(WorkerCmd::ReadContent {
+            seq,
+            node_id: sel,
+            doc_id,
+            uri,
+            label,
+            source,
+        });
     }
 
     fn rebuild_ui_graph(&mut self) {
         self.expand_note = None;
+        self.expanded_dirty = false;
+        // Any in-flight Expand merges old topology into the new local view:
+        // invalidate it so the late answer is dropped by seq.
+        self.pending_expand = None;
         let Some(full) = self.full_view.as_ref() else {
             self.local_view = None;
             self.ui_graph = None;
@@ -725,12 +848,8 @@ impl GraphApp {
     }
 
     /// Expand neighbors of the selection: one hop (depth+1 from that node), merge
-    /// into the local view under `max_nodes`.
-    ///
-    /// - Snapshot / vault: client BFS on the loaded `full_view`.
-    /// - `--db`: `Store::neighbors` (exclusive re-open), then merge; cross-edges
-    ///   filled from the in-memory export when available.
-    /// Does not reseed the local view (EGUI_GRAPH_VIEW §5.1 / §6.1).
+    /// into the local view under `max_nodes`. Runs on the worker (EGUI_GRAPH_VIEW
+    /// §5.1 / §6.1); does not reseed the local view.
     fn expand_selected(&mut self) {
         let Some(sel) = self.selected.clone() else {
             return;
@@ -738,7 +857,7 @@ impl GraphApp {
         self.expand_note = None;
         self.seed_error = None;
 
-        // No seed yet: selected becomes seed at depth 1, then paint.
+        // No seed yet: selected becomes seed at depth 1, then paint (no IO).
         if self.seed_id.is_none() {
             self.seed_id = Some(sel.clone());
             self.seed_input = sel;
@@ -767,42 +886,14 @@ impl GraphApp {
             return;
         }
 
-        let before = current.nodes.len();
-        let merged = match self.open.source.clone() {
-            Some(CliSource::Db(path)) => {
-                match expand_neighbors_store(
-                    &path,
-                    &current,
-                    &sel,
-                    self.max_nodes,
-                    self.full_view.as_ref(),
-                ) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        self.expand_note = Some(e);
-                        return;
-                    }
-                }
-            }
-            _ => {
-                let Some(full) = self.full_view.as_ref() else {
-                    self.expand_note = Some("Expand requires a loaded graph".into());
-                    return;
-                };
-                expand_neighbors_local(full, &current, &sel, max_n)
-            }
+        let db_path = match self.open.source.clone() {
+            Some(CliSource::Db(path)) => Some(path),
+            _ => None,
         };
-
-        let after = merged.nodes.len();
-        if after == before {
-            self.expand_note = Some(format!(
-                "No new neighbors for “{sel}” within max_nodes ({max_n})"
-            ));
-            // Still refresh layout in case edges appeared without new nodes (unlikely).
-        } else if after >= max_n {
-            self.expand_note = Some(format!(
-                "Expand filled view to max_nodes ({max_n}); some neighbors may be omitted"
-            ));
+        let full = self.full_view.clone();
+        if db_path.is_none() && full.is_none() {
+            self.expand_note = Some("Expand requires a loaded graph".into());
+            return;
         }
 
         // Status depth: at least selected.depth + 1 (one hop outward), capped at 3.
@@ -811,10 +902,19 @@ impl GraphApp {
                 self.depth = self.depth.max((n.depth + 1).min(3));
             }
         } else {
-            self.depth = self.depth.max(1).min(3);
+            self.depth = self.depth.clamp(1, 3);
         }
 
-        self.apply_local_topology(merged, /*reset_layout=*/ false);
+        let seq = self.next_seq();
+        self.pending_expand = Some(seq);
+        self.worker.send(WorkerCmd::ExpandNeighbors {
+            seq,
+            selected: sel,
+            current,
+            full,
+            db_path,
+            max_nodes: self.max_nodes,
+        });
     }
 
     fn empty_kind(&self) -> Option<(EmptyKind, Option<String>)> {
@@ -880,10 +980,193 @@ impl GraphApp {
         }
         None
     }
+
+    /// Drain worker results; stale seqs are ignored (a newer job superseded them).
+    fn drain_worker_events(&mut self) {
+        while let Ok(evt) = self.worker.rx.try_recv() {
+            match evt {
+                WorkerEvt::GraphLoaded { seq, result } => {
+                    if self.pending_graph != Some(seq) {
+                        continue;
+                    }
+                    self.pending_graph = None;
+                    match result {
+                        Ok(loaded) => self.apply_loaded(loaded),
+                        Err(e) => {
+                            self.load_error = Some(e);
+                            // Catalog may still answer (or fail with a clearer wiki error).
+                            self.ensure_wiki_loaded();
+                        }
+                    }
+                }
+                WorkerEvt::WikiCatalog { seq, result } => {
+                    if self.pending_catalog != Some(seq) {
+                        continue;
+                    }
+                    self.pending_catalog = None;
+                    self.wiki_loaded = true;
+                    match result {
+                        Ok(mut pages) => {
+                            sort_wiki_pages(&mut pages);
+                            self.wiki_pages = pages;
+                            self.auto_open_initial_page();
+                        }
+                        Err(e) => self.wiki_error = Some(e),
+                    }
+                }
+                WorkerEvt::PageOpened {
+                    seq,
+                    pane_b,
+                    push_history,
+                    q,
+                    result,
+                } => {
+                    let pending = if pane_b {
+                        &mut self.pending_page_b
+                    } else {
+                        &mut self.pending_page_a
+                    };
+                    if *pending != Some(seq) {
+                        continue;
+                    }
+                    *pending = None;
+                    self.apply_page_opened(pane_b, push_history, q.as_deref(), result);
+                }
+                WorkerEvt::Backlinks {
+                    seq,
+                    document_id,
+                    result,
+                } => {
+                    if self.pending_backlinks != Some(seq) {
+                        continue;
+                    }
+                    self.pending_backlinks = None;
+                    let Ok(bl) = result else {
+                        continue;
+                    };
+                    if self.wiki_selected_id.as_deref() == Some(document_id.as_str()) {
+                        self.wiki_backlinks = bl;
+                    }
+                }
+                WorkerEvt::Content {
+                    seq,
+                    node_id,
+                    result,
+                } => {
+                    if self.pending_content != Some(seq) {
+                        continue;
+                    }
+                    self.pending_content = None;
+                    // Selection moved on meanwhile: drop the answer.
+                    if self.selected.as_deref() != Some(node_id.as_str()) {
+                        continue;
+                    }
+                    match result {
+                        Ok(body) => {
+                            self.content = Some(body);
+                            self.content_error = None;
+                        }
+                        Err(e) => {
+                            self.content = None;
+                            self.content_error = Some(e);
+                        }
+                    }
+                }
+                WorkerEvt::Expanded {
+                    seq,
+                    selected,
+                    result,
+                } => {
+                    if self.pending_expand != Some(seq) {
+                        continue;
+                    }
+                    self.pending_expand = None;
+                    let merged = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            self.expand_note = Some(e);
+                            continue;
+                        }
+                    };
+                    let before = self
+                        .local_view
+                        .as_ref()
+                        .map(|v| v.nodes.len())
+                        .unwrap_or(0);
+                    let after = merged.nodes.len();
+                    let max_n = self.max_nodes as usize;
+                    if after == before {
+                        self.expand_note = Some(format!(
+                            "No new neighbors for “{selected}” within max_nodes ({max_n})"
+                        ));
+                    } else if after >= max_n {
+                        self.expand_note = Some(format!(
+                            "Expand filled view to max_nodes ({max_n}); some neighbors may be omitted"
+                        ));
+                    }
+                    if after > before {
+                        self.expanded_dirty = true;
+                    }
+                    self.apply_local_topology(merged, /*reset_layout=*/ false);
+                }
+                WorkerEvt::SavedPage { seq, result } => {
+                    if self.pending_save != Some(seq) {
+                        continue;
+                    }
+                    self.pending_save = None;
+                    self.apply_save_result(result);
+                }
+            }
+        }
+    }
+
+    /// Global hotkeys. Plain keys are ignored while a text field has focus;
+    /// Ctrl+S (save) works even while the content editor is focused.
+    fn handle_hotkeys(&mut self, ctx: &egui::Context) {
+        let (esc, save, find, back) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::Escape),
+                i.modifiers.command && i.key_pressed(egui::Key::S),
+                i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft),
+            )
+        });
+        if save
+            && self.mode == ViewMode::Wiki
+            && self.wiki_edit.is_some()
+            && self.wiki_can_write()
+            && self.pending_save.is_none()
+        {
+            self.save_wiki_edit();
+            return;
+        }
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+        if esc {
+            if self.mode == ViewMode::Wiki && self.wiki_edit.is_some() {
+                self.cancel_wiki_edit();
+            } else if self.mode == ViewMode::Graph && self.selected.is_some() {
+                self.selected = None;
+                self.content = None;
+                self.content_error = None;
+                self.pending_content = None;
+            }
+        }
+        if find && self.mode == ViewMode::Wiki {
+            ctx.memory_mut(|m| m.request_focus(wiki_filter_id()));
+        }
+        if back && self.mode == ViewMode::Wiki {
+            self.wiki_go_back();
+        }
+    }
 }
 
 impl eframe::App for GraphApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_worker_events();
+        self.handle_hotkeys(ctx);
+
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("rag-mcp-ui");
@@ -910,6 +1193,7 @@ impl eframe::App for GraphApp {
                     ViewMode::Wiki => {
                         if ui
                             .add_enabled(!self.wiki_history.is_empty(), egui::Button::new("← Back"))
+                            .on_hover_text("Back in page history (Alt+←)")
                             .clicked()
                         {
                             self.wiki_go_back();
@@ -924,6 +1208,14 @@ impl eframe::App for GraphApp {
                                 self.wiki_loaded = false;
                                 self.reload_wiki_catalog();
                             }
+                        }
+                        if self.pending_catalog.is_some() {
+                            ui.spinner();
+                            ui.weak("catalog…");
+                        }
+                        if self.pending_page_a.is_some() || self.pending_page_b.is_some() {
+                            ui.spinner();
+                            ui.weak("page…");
                         }
                         if ui
                             .selectable_label(self.wiki_dual_pane, "Dual pane")
@@ -971,13 +1263,22 @@ impl eframe::App for GraphApp {
                                 self.start_wiki_edit();
                             }
                         } else {
+                            let saving = self.pending_save.is_some();
                             if ui
-                                .add_enabled(self.wiki_can_write(), egui::Button::new("Save"))
+                                .add_enabled(
+                                    self.wiki_can_write() && !saving,
+                                    egui::Button::new("Save"),
+                                )
+                                .on_hover_text("Ctrl+S")
                                 .clicked()
                             {
                                 self.save_wiki_edit();
                             }
-                            if ui.button("Cancel edit").clicked() {
+                            if saving {
+                                ui.spinner();
+                                ui.weak("saving…");
+                            }
+                            if ui.button("Cancel edit").on_hover_text("Esc").clicked() {
                                 self.cancel_wiki_edit();
                             }
                         }
@@ -1005,12 +1306,62 @@ impl eframe::App for GraphApp {
                     }
                     ViewMode::Graph => {
                         ui.label("seed");
-                        let resp = ui.add(
+                        let seed_resp = ui.add(
                             egui::TextEdit::singleline(&mut self.seed_input)
                                 .desired_width(200.0)
                                 .hint_text("id / label / document_id"),
                         );
-                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        // Seed picker: suggestions over full_view (label / id /
+                        // document_id substring, case-insensitive, first 10).
+                        let q = self.seed_input.trim().to_lowercase();
+                        let mut suggestions: Vec<(String, String)> = Vec::new();
+                        if seed_resp.has_focus() && !q.is_empty() {
+                            if let Some(full) = self.full_view.as_ref() {
+                                for n in &full.nodes {
+                                    let doc = n.document_id.as_deref().unwrap_or("");
+                                    if n.label.to_lowercase().contains(&q)
+                                        || n.id.to_lowercase().contains(&q)
+                                        || doc.to_lowercase().contains(&q)
+                                    {
+                                        suggestions.push((n.id.clone(), n.label.clone()));
+                                        if suggestions.len() >= 10 {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let mut picked: Option<String> = None;
+                        if seed_resp.has_focus() && !suggestions.is_empty() {
+                            egui::popup::popup_below_widget(
+                                ui,
+                                ui.make_persistent_id("seed_suggestions"),
+                                &seed_resp,
+                                egui::PopupCloseBehavior::CloseOnClick,
+                                |ui| {
+                                    for (id, label) in &suggestions {
+                                        if ui
+                                            .selectable_label(false, format!("{label} · {id}"))
+                                            .clicked()
+                                        {
+                                            picked = Some(id.clone());
+                                        }
+                                    }
+                                },
+                            );
+                        }
+                        let first_pick = suggestions.first().map(|(id, _)| id.clone());
+                        drop(suggestions);
+                        if seed_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            // Enter: exact input, or first suggestion when one matches.
+                            if let Some(id) = first_pick {
+                                self.seed_input = id;
+                            }
+                            self.apply_seed_from_input();
+                        } else if let Some(id) = picked {
+                            seed_resp.surrender_focus();
+                            self.seed_input = id;
                             self.apply_seed_from_input();
                         }
                         if ui.button("Apply seed").clicked() {
@@ -1028,17 +1379,29 @@ impl eframe::App for GraphApp {
                         }
                         ui.checkbox(&mut self.show_tags, "tags");
                         ui.checkbox(&mut self.show_stubs, "stubs");
-                        if ui.button("Rebuild").clicked() {
-                            self.rebuild_ui_graph();
+                        if ui
+                            .button("Reset to seed")
+                            .on_hover_text("Rebuild the local view from the seed (drops Expand merges)")
+                            .clicked()
+                        {
+                            if self.expanded_dirty {
+                                self.confirm_reset = true;
+                            } else {
+                                self.rebuild_ui_graph();
+                            }
                         }
+                        let expanding = self.pending_expand.is_some();
                         if ui
                             .add_enabled(
-                                self.selected.is_some(),
+                                self.selected.is_some() && !expanding,
                                 egui::Button::new("Expand neighbors"),
                             )
                             .clicked()
                         {
                             self.expand_selected();
+                        }
+                        if expanding {
+                            ui.spinner();
                         }
                         if ui
                             .add_enabled(
@@ -1052,12 +1415,15 @@ impl eframe::App for GraphApp {
                         }
                         if ui
                             .add_enabled(
-                                self.selected.is_some(),
+                                self.selected.is_some() && self.pending_content.is_none(),
                                 egui::Button::new("Read content"),
                             )
                             .clicked()
                         {
                             self.load_content_for_selected();
+                        }
+                        if self.pending_content.is_some() {
+                            ui.spinner();
                         }
                     }
                 }
@@ -1080,6 +1446,9 @@ impl eframe::App for GraphApp {
                         }
                         ui.separator();
                         ui.label(format!("pages={}", self.wiki_pages.len()));
+                        if self.any_pending() {
+                            ui.spinner();
+                        }
                         if self.wiki_dual_pane {
                             ui.separator();
                             ui.label(format!(
@@ -1122,12 +1491,10 @@ impl eframe::App for GraphApp {
                     });
                 }
                 ViewMode::Graph => {
-                    let seed_label = self.seed_id.as_deref().or_else(|| {
-                        if self.seed_input.is_empty() {
-                            None
-                        } else {
-                            Some(self.seed_input.as_str())
-                        }
+                    let seed_label = self.seed_id.as_deref().or(if self.seed_input.is_empty() {
+                        None
+                    } else {
+                        Some(self.seed_input.as_str())
                     });
                     let truncated = self
                         .ui_graph
@@ -1143,6 +1510,7 @@ impl eframe::App for GraphApp {
                         self.layout_ready,
                         truncated,
                         self.status_banner().as_deref(),
+                        self.any_pending(),
                     );
                 }
             }
@@ -1167,6 +1535,7 @@ impl eframe::App for GraphApp {
                             &self.wiki_pages,
                             &mut self.wiki_filter,
                             sel,
+                            &mut self.wiki_show_summaries,
                         ) {
                             self.open_wiki_page_id(&id);
                         }
@@ -1188,6 +1557,9 @@ impl eframe::App for GraphApp {
                                     .clicked()
                                 {
                                     self.wiki_focus = WikiPane::B;
+                                }
+                                if self.pending_page_b.is_some() {
+                                    ui.spinner();
                                 }
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -1213,7 +1585,14 @@ impl eframe::App for GraphApp {
                                 &slugs,
                                 &self.wiki_backlinks_b,
                                 false,
+                                "b",
+                                self.pending_page_b.is_some(),
                             );
+                            if action.retry {
+                                if let Some(id) = self.wiki_selected_id_b.clone() {
+                                    self.open_wiki_page_in_b(&id);
+                                }
+                            }
                             if action.open_id.is_some() || action.open_link.is_some() {
                                 self.wiki_focus = WikiPane::B;
                             }
@@ -1226,6 +1605,31 @@ impl eframe::App for GraphApp {
                 }
 
                 egui::CentralPanel::default().show(ctx, |ui| {
+                    // No source yet (or the initial load failed, e.g. --db on a
+                    // locked file): same start screen as Graph mode, so Retry
+                    // re-runs LoadGraph on `open.source` instead of only
+                    // re-fetching the catalog.
+                    if self.full_view.is_none() {
+                        if self.pending_graph.is_some() {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(80.0);
+                                ui.spinner();
+                                ui.label("Loading…");
+                            });
+                        } else {
+                            match draw_no_source(
+                                ui,
+                                &mut self.connect_url,
+                                self.load_error.as_deref(),
+                                self.open.source.is_some(),
+                            ) {
+                                NoSourceAction::Connect => self.connect_http(),
+                                NoSourceAction::Retry => self.dispatch_graph_load(),
+                                NoSourceAction::None => {}
+                            }
+                        }
+                        return;
+                    }
                     if self.wiki_dual_pane {
                         ui.horizontal(|ui| {
                             let focused = self.wiki_focus == WikiPane::A;
@@ -1240,6 +1644,7 @@ impl eframe::App for GraphApp {
                         ui.separator();
                     }
                     let can_write = self.wiki_can_write();
+                    let saving = self.pending_save.is_some();
                     if self.wiki_edit.is_some() && self.wiki_article.is_some() {
                         // Draw with short-lived field borrows, then handle actions.
                         let action = {
@@ -1251,9 +1656,12 @@ impl eframe::App for GraphApp {
                                 self.wiki_error.as_deref(),
                                 edit,
                                 can_write,
+                                saving,
                             )
                         };
-                        if action.save {
+                        if action.reload {
+                            self.reload_wiki_page();
+                        } else if action.save {
                             self.save_wiki_edit();
                         } else if action.cancel {
                             self.cancel_wiki_edit();
@@ -1268,8 +1676,17 @@ impl eframe::App for GraphApp {
                             &slugs,
                             &self.wiki_backlinks,
                             can_write,
+                            "a",
+                            self.pending_page_a.is_some(),
                         );
-                        if action.start_edit {
+                        if action.retry {
+                            if let Some(id) = self.wiki_selected_id.clone() {
+                                self.open_wiki_page_id_no_history(&id);
+                            } else {
+                                self.wiki_loaded = false;
+                                self.reload_wiki_catalog();
+                            }
+                        } else if action.start_edit {
                             self.wiki_focus = WikiPane::A;
                             self.start_wiki_edit();
                         } else if let Some(id) = action.open_id {
@@ -1297,6 +1714,7 @@ impl eframe::App for GraphApp {
                                     sel,
                                     self.content.as_ref(),
                                     self.content_error.as_deref(),
+                                    self.pending_content.is_some(),
                                 );
                                 match action {
                                     DetailAction::ReadContent => self.load_content_for_selected(),
@@ -1311,9 +1729,35 @@ impl eframe::App for GraphApp {
                 }
 
                 egui::CentralPanel::default().show(ctx, |ui| {
+                    if self.pending_graph.is_some() && self.full_view.is_none() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(ui.available_height() * 0.2);
+                            ui.spinner();
+                            ui.label("Loading graph…");
+                        });
+                        return;
+                    }
                     if let Some((kind, detail)) = self.empty_kind() {
-                        let stats = self.empty_stats();
-                        draw_empty_banner(ui, kind, detail.as_deref(), stats.as_ref());
+                        match kind {
+                            // Start screen with actions: Retry + HTTP connect.
+                            EmptyKind::NoSource | EmptyKind::LoadError => {
+                                let can_retry = self.open.source.is_some();
+                                match draw_no_source(
+                                    ui,
+                                    &mut self.connect_url,
+                                    detail.as_deref(),
+                                    can_retry,
+                                ) {
+                                    NoSourceAction::Retry => self.dispatch_graph_load(),
+                                    NoSourceAction::Connect => self.connect_http(),
+                                    NoSourceAction::None => {}
+                                }
+                            }
+                            _ => {
+                                let stats = self.empty_stats();
+                                draw_empty_banner(ui, kind, detail.as_deref(), stats.as_ref());
+                            }
+                        }
                         return;
                     }
                     let Some(graph) = self.ui_graph.as_ref() else {
@@ -1334,15 +1778,51 @@ impl eframe::App for GraphApp {
                         if self.selected.as_deref() != Some(id.as_str()) {
                             self.content = None;
                             self.content_error = None;
+                            self.pending_content = None;
                         }
                         self.selected = Some(id);
                     } else if out.clicked_empty {
                         self.selected = None;
                         self.content = None;
                         self.content_error = None;
+                        self.pending_content = None;
                     }
                 });
             }
+        }
+
+        // "Reset to seed" confirmation (only when Expand merges would be lost).
+        if self.confirm_reset {
+            let mut do_reset = false;
+            let mut stay = true;
+            egui::Window::new("Reset to seed")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label("Drop nodes merged by Expand neighbors and rebuild from the seed?");
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Reset").clicked() {
+                            do_reset = true;
+                            stay = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            stay = false;
+                        }
+                    });
+                });
+            if !stay {
+                self.confirm_reset = false;
+            }
+            if do_reset {
+                self.rebuild_ui_graph();
+            }
+        }
+
+        // Keep spinner animations / pending states alive while the worker runs.
+        if self.any_pending() {
+            ctx.request_repaint_after(Duration::from_millis(120));
         }
     }
 }

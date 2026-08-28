@@ -27,10 +27,20 @@ export type MessageKey =
   | 'cancel'
   | 'save'
   | 'saveFailed'
-  | 'selectPage'
-  | 'selectPageHint'
-  | 'linksHint'
   | 'untitled'
+  | 'homeGreeting'
+  | 'homeSubtitle'
+  | 'openSearch'
+  | 'openGraph'
+  | 'allPages'
+  | 'recentPages'
+  | 'offlineTitle'
+  | 'offlineHint'
+  | 'retry'
+  | 'emptyWikiTitle'
+  | 'emptyWikiHint'
+  | 'createFirstPage'
+  | 'noPagesHint'
   | 'writeMarkdown'
   | 'casHint'
   | 'backlinks'
@@ -74,10 +84,20 @@ export const messages: Record<Locale, Messages> = {
     cancel: 'Cancel',
     save: 'Save',
     saveFailed: 'Save failed',
-    selectPage: 'Select a page',
-    selectPageHint: 'Pick a note in the sidebar, or press ⌘K to jump.',
-    linksHint: 'Blue [[links]] resolve; grey = missing page.',
     untitled: 'Untitled',
+    homeGreeting: 'Welcome to the wiki',
+    homeSubtitle: 'Your compiled knowledge base. Pick a page below or start a new one.',
+    openSearch: 'Search',
+    openGraph: 'Open graph',
+    allPages: 'All pages',
+    recentPages: 'Recent',
+    offlineTitle: 'Gateway is offline',
+    offlineHint: 'Start the HTTP gateway, then retry:',
+    retry: 'Retry',
+    emptyWikiTitle: 'The wiki is empty',
+    emptyWikiHint: 'Create your first page here, or ingest documents via the rag-mcp tools.',
+    createFirstPage: 'Create the first page',
+    noPagesHint: 'Create a page with the + button above.',
     writeMarkdown: 'Write markdown… Use [[wikilinks]] and #tags',
     casHint: 'CAS: save sends if_match_revision from last load. Conflict → re-open and merge.',
     backlinks: 'Backlinks',
@@ -118,10 +138,20 @@ export const messages: Record<Locale, Messages> = {
     cancel: 'Отмена',
     save: 'Сохранить',
     saveFailed: 'Не удалось сохранить',
-    selectPage: 'Выберите страницу',
-    selectPageHint: 'Выберите заметку в боковой панели или нажмите ⌘K.',
-    linksHint: 'Синие [[ссылки]] ведут на страницы; серые - отсутствуют.',
     untitled: 'Без названия',
+    homeGreeting: 'Добро пожаловать в вики',
+    homeSubtitle: 'Ваша собранная база знаний. Выберите страницу ниже или создайте новую.',
+    openSearch: 'Поиск',
+    openGraph: 'Открыть граф',
+    allPages: 'Все страницы',
+    recentPages: 'Недавние',
+    offlineTitle: 'Гейтвей недоступен',
+    offlineHint: 'Запустите HTTP-гейтвей и повторите:',
+    retry: 'Повторить',
+    emptyWikiTitle: 'Вики пуста',
+    emptyWikiHint: 'Создайте первую страницу здесь или загрузите документы через инструменты rag-mcp.',
+    createFirstPage: 'Создать первую страницу',
+    noPagesHint: 'Создайте страницу кнопкой + выше.',
     writeMarkdown: 'Пишите markdown… [[wikilinks]] и #теги',
     casHint: 'CAS: сохранение шлёт if_match_revision с последней загрузки. Конфликт → переоткройте и слейте.',
     backlinks: 'Обратные ссылки',

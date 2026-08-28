@@ -483,7 +483,9 @@ pub fn fetch_wiki_list_http(base: &str) -> Result<Vec<WikiPageMeta>, String> {
     let body: WikiListResponse = resp
         .json()
         .map_err(|e| format!("parse wiki list from {url}: {e}"))?;
-    Ok(body.pages)
+    let mut pages = body.pages;
+    sort_wiki_pages(&mut pages);
+    Ok(pages)
 }
 
 /// List wiki pages from exclusive DuckDB open (metadata only).
@@ -505,7 +507,7 @@ pub fn fetch_wiki_list_db(db_path: &Path) -> Result<Vec<WikiPageMeta>, String> {
             updated_at: Some(d.updated_at),
         })
         .collect();
-    pages.sort_by(|a, b| a.title.cmp(&b.title));
+    sort_wiki_pages(&mut pages);
     Ok(pages)
 }
 
@@ -1071,8 +1073,7 @@ pub fn export_graph_snapshot(args: &ExportArgs) -> Result<ExportResult, String> 
     })
 }
 
-/// Load from a resolved CLI source (snapshot XOR exclusive db).
-#[allow(dead_code)] // convenience entry; GraphApp still matches sources explicitly
+/// Load from a resolved CLI source (snapshot XOR exclusive db XOR http).
 pub fn load_cli_source(
     source: &CliSource,
     seed: Option<&str>,
@@ -1117,11 +1118,31 @@ pub fn resolve_seed(view: &GraphView, query: &str) -> Result<String, String> {
     match matches.as_slice() {
         [one] => Ok(one.id.clone()),
         [] => Err(format!("No node matches “{q}”")),
-        many => Err(format!(
-            "ambiguous seed “{q}” ({} matches); use exact id",
-            many.len()
-        )),
+        many => {
+            let shown: Vec<String> = many
+                .iter()
+                .take(5)
+                .map(|n| format!("{} ({})", n.label, n.id))
+                .collect();
+            let more = if many.len() > 5 { ", …" } else { "" };
+            Err(format!(
+                "ambiguous seed “{q}” ({} matches): {}{}",
+                many.len(),
+                shown.join(", "),
+                more
+            ))
+        }
     }
+}
+
+/// Case-insensitive title sort for the wiki sidebar catalog.
+pub fn sort_wiki_pages(pages: &mut [WikiPageMeta]) {
+    pages.sort_by(|a, b| {
+        a.title
+            .to_lowercase()
+            .cmp(&b.title.to_lowercase())
+            .then_with(|| a.title.cmp(&b.title))
+    });
 }
 
 /// Client-side undirected BFS neighbors on a loaded snapshot (Mode C expand).

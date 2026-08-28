@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/ui'
 import { renderWikiHtml } from '@/lib/markdown'
 import { pageIcon } from '@/lib/pageIcon'
 import Outline from '@/components/wiki/Outline.vue'
+import WikiHome from '@/components/wiki/WikiHome.vue'
 
 const wiki = useWikiStore()
 const ui = useUiStore()
@@ -130,11 +131,7 @@ function onClick(e: MouseEvent) {
 
 <template>
   <article ref="articleEl" class="article" @scroll.passive="onScroll">
-    <div v-if="!wiki.current && !wiki.loading" class="empty">
-      <h2>{{ ui.t('selectPage') }}</h2>
-      <p>{{ ui.t('selectPageHint') }}</p>
-      <p class="hint">{{ ui.t('linksHint') }}</p>
-    </div>
+    <WikiHome v-if="!wiki.current && !wiki.loading" />
     <div v-else-if="wiki.loading && !wiki.current" class="empty">{{ ui.t('loading') }}</div>
     <div v-else-if="wiki.current" class="page-row">
       <div class="main-col">
@@ -184,10 +181,6 @@ function onClick(e: MouseEvent) {
   padding: 80px 24px;
   text-align: center;
   color: var(--text-muted);
-}
-.hint {
-  font-size: 13px;
-  color: var(--text-faint);
 }
 .title-row {
   display: flex;

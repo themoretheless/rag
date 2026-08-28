@@ -12,6 +12,7 @@ mod app;
 mod layout;
 mod load;
 mod ui;
+mod worker;
 
 use app::GraphApp;
 use clap::Parser;

@@ -34,6 +34,7 @@ pub fn draw_status(
     layout_frozen: bool,
     truncated: bool,
     banner: Option<&str>,
+    pending: bool,
 ) {
     ui.horizontal_wrapped(|ui| {
         // Mode: snapshot | db (XOR open path; dual-live write forbidden).
@@ -90,6 +91,11 @@ pub fn draw_status(
         } else {
             "layout=pending"
         });
+        if pending {
+            ui.separator();
+            ui.spinner();
+            ui.weak("loading…");
+        }
     });
 
     // Secondary line: instructions + optional warning banner.

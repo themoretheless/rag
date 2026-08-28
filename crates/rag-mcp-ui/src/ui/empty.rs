@@ -78,7 +78,7 @@ pub fn draw_empty_banner(
     let (title, hint) = match kind {
         EmptyKind::NoSource => (
             "Open a snapshot or database",
-            "Launch with --snapshot PATH or --db PATH",
+            "Launch with --http URL, --snapshot PATH, or --db PATH",
         ),
         EmptyKind::EmptyGraph => (
             "Graph is empty",
@@ -131,6 +131,75 @@ pub fn draw_empty_banner(
             draw_loaded_stats(ui, s);
         }
     });
+}
+
+/// User action from the no-source / load-error start screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NoSourceAction {
+    #[default]
+    None,
+    /// Retry the CLI-provided source (`--http` / `--snapshot` / `--db`).
+    Retry,
+    /// Connect to the HTTP gateway URL from the input field (no restart).
+    Connect,
+}
+
+/// Start screen shown when no source is loaded (or the initial load failed).
+///
+/// Explains the three launch modes, offers Retry for a failed CLI source, and
+/// an HTTP URL field + Connect to switch to a live gateway without a restart.
+pub fn draw_no_source(
+    ui: &mut Ui,
+    connect_url: &mut String,
+    error: Option<&str>,
+    can_retry: bool,
+) -> NoSourceAction {
+    let mut action = NoSourceAction::None;
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() * 0.15);
+        ui.heading(if error.is_some() {
+            "Load failed"
+        } else {
+            "Open a data source"
+        });
+        if let Some(err) = error {
+            ui.add_space(6.0);
+            ui.colored_label(egui::Color32::from_rgb(220, 120, 100), err);
+        }
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.set_max_width(520.0);
+            ui.label("Three ways to run:");
+            ui.monospace("  rag-mcp-ui --http http://127.0.0.1:7432");
+            ui.weak("    live via HTTP gateway (server: RAG_HTTP_BIND=…)");
+            ui.monospace("  rag-mcp-ui --snapshot graph.json");
+            ui.weak("    read-only Mode C export (safe while MCP holds the DB)");
+            ui.monospace("  rag-mcp-ui --db rag.duckdb");
+            ui.weak("    exclusive DuckDB open (MCP must not be running)");
+        });
+        ui.add_space(10.0);
+        if ui
+            .add_enabled(can_retry, egui::Button::new("Retry"))
+            .on_hover_text("Retry the source given on the command line")
+            .clicked()
+        {
+            action = NoSourceAction::Retry;
+        }
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("HTTP URL");
+            ui.add(
+                egui::TextEdit::singleline(connect_url)
+                    .desired_width(240.0)
+                    .hint_text("http://127.0.0.1:7432"),
+            );
+            if ui.button("Connect").clicked() {
+                action = NoSourceAction::Connect;
+            }
+        });
+        ui.weak("Connect switches to the HTTP gateway without restarting.");
+    });
+    action
 }
 
 fn draw_loaded_stats(ui: &mut Ui, s: &EmptyGraphStats) {

@@ -22,13 +22,15 @@ pub enum DetailAction {
 
 /// Draw the right-hand detail panel for `selected_id` in the current view.
 ///
-/// `body` — loaded wiki/raw content when available; `body_error` — last load failure.
+/// `body` — loaded wiki/raw content when available; `body_error` — last load failure;
+/// `body_loading` — a Read content request is on the wire (previous body stays visible).
 pub fn draw_detail(
     ui: &mut Ui,
     graph: &UiGraph,
     selected_id: &str,
     body: Option<&DocumentBody>,
     body_error: Option<&str>,
+    body_loading: bool,
 ) -> DetailAction {
     let mut action = DetailAction::None;
     let Some(node) = graph.nodes.iter().find(|n| n.id == selected_id) else {
@@ -56,6 +58,10 @@ pub fn draw_detail(
         }
         if !can_read {
             ui.weak("no document_id/uri (stub/tag)");
+        }
+        if body_loading {
+            ui.spinner();
+            ui.weak("loading…");
         }
     });
 
