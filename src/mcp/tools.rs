@@ -5,7 +5,7 @@
 //! # ISP: clustered param surfaces
 //!
 //! Types live in one file but are **section-clustered by tool domain** so a caller
-//! only needs the cluster it invokes. [`crate::mcp::server`] maps each `*Params`
+//! only needs the cluster it invokes. The MCP facade maps each `*Params`
 //! into domain code and JSON; business logic stays in `db` / `wiki` / `graph` /
 //! `search_pack` / `maintain` / etc.
 //!
@@ -29,9 +29,9 @@
 //! fields (wing/room filters, rank options) should become flattenable JsonSchema
 //! fragments later rather than copy-pasted onto every struct.
 //!
-//! Physical submodules per cluster are deferred on purpose: keep types here (or
-//! re-export from this module) so `use crate::mcp::tools::…` and the rmcp
-//! `#[tool_router]` surface stay stable.
+//! Parameter types remain flat (or can later be re-exported from this module) so
+//! `use crate::mcp::tools::…` and the rmcp schema surface stay stable; route
+//! registration itself is split into the sibling domain modules.
 
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,5 @@
-//! MCP surface: tool router ([`server`]) and schemars param structs ([`tools`]).
+//! MCP surface: thin router composition ([`server`]), domain tool clusters,
+//! implementations ([`facade`]), and schemars param structs ([`tools`]).
 //!
 //! Transports (same tools / same DuckDB):
 //! - **stdio** — Claude Desktop/Code local `command` (subprocess)
@@ -12,13 +13,34 @@
 //! - [`crate::util`] — content hash, ingest path allowlist
 //! - [`crate::search_pack`] — token-budgeted context packing
 //!
-//! **ISP (params):** [`tools`] groups `*Params` by domain (ingest, search, wiki,
-//! graph, …). See that module's cluster map; no mass split yet so re-exports stay
-//! flat and tool names / rmcp macro surface unchanged.
+//! Domain modules own route registration while [`tools`] keeps `*Params` flat and
+//! stable for callers. Public tool names and the rmcp schema surface are unchanged.
 
+mod facade;
+mod graph;
+mod ingest;
+mod kg;
+mod maintain;
+mod search;
 pub mod server;
 pub mod surface;
 pub mod tools;
+mod wiki;
+
+use rmcp::handler::server::tool::ToolRouter;
+
+fn take_routes<S: Send + Sync + 'static>(
+    all: &mut ToolRouter<S>,
+    names: &[&str],
+) -> ToolRouter<S> {
+    let mut cluster = ToolRouter::new();
+    for name in names {
+        if let Some(route) = all.map.remove(*name) {
+            cluster.add_route(route);
+        }
+    }
+    cluster
+}
 
 pub use server::RagServer;
 pub use surface::{tool_allowed, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB};
