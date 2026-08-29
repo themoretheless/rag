@@ -27,6 +27,7 @@ pub mod maintain;
 pub mod mcp;
 pub mod models;
 pub mod search_pack;
+pub mod storage;
 pub mod util;
 pub mod wiki;
 
@@ -43,6 +44,7 @@ pub use models::{
     TaxonomyWing, VacuumStoreReport, WakeUpReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
     PKB_NODE_KINDS, PKB_REL_TYPES, UI_GRAPH_EXPORT_MAX_NODES,
 };
+pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
 
 // --- Graph (domain extract/resolve; DB CRUD lives on [`Store`] via `db::graph`) ---
 pub use graph::{
