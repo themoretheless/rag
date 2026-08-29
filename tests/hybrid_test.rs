@@ -84,6 +84,7 @@ async fn ingest_text(
             embedding,
             char_start,
             char_end,
+            metadata_json: "{}".into(),
         });
     }
 

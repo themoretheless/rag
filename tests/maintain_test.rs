@@ -203,6 +203,7 @@ async fn insert_chunk(
             embedding: emb,
             char_start: 0,
             char_end: content.len() as i32,
+            metadata_json: "{}".into(),
         }])
         .expect("insert_chunks");
 }

@@ -8,7 +8,7 @@ use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::chunking::{from_config, Chunker};
+use crate::chunking::{from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
@@ -752,6 +752,7 @@ async fn embed_and_store_chunks(
     }
     let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
     let embeddings = embedder.embed(&texts).await?;
+    let section_metadata = markdown_section_metadata(&doc.content, &pieces);
     if embeddings.len() != pieces.len() {
         return Err(AppError::embeddings(format!(
             "embedder returned {} vectors for {} chunks",
@@ -760,8 +761,11 @@ async fn embed_and_store_chunks(
         )));
     }
     let mut chunks = Vec::with_capacity(pieces.len());
-    for (i, ((content, char_start, char_end), embedding)) in
-        pieces.into_iter().zip(embeddings.into_iter()).enumerate()
+    for (i, (((content, char_start, char_end), embedding), metadata_json)) in pieces
+        .into_iter()
+        .zip(embeddings.into_iter())
+        .zip(section_metadata.into_iter())
+        .enumerate()
     {
         chunks.push(Chunk {
             id: Uuid::new_v4().to_string(),
@@ -771,6 +775,7 @@ async fn embed_and_store_chunks(
             embedding,
             char_start,
             char_end,
+            metadata_json,
         });
     }
     let n = chunks.len();

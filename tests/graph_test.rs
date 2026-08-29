@@ -71,6 +71,7 @@ async fn ingest_with_graph(
                 embedding,
                 char_start,
                 char_end,
+                metadata_json: "{}".into(),
             });
         }
         store.insert_chunks(&chunks).expect("insert_chunks");

@@ -806,6 +806,7 @@ mod tests {
                 embedding: emb,
                 char_start: 0,
                 char_end: content.len() as i32,
+                metadata_json: "{}".into(),
             }])
             .unwrap();
     }

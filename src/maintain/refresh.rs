@@ -654,6 +654,7 @@ mod tests {
                 embedding: vec![0.1; 8],
                 char_start: 0,
                 char_end: content.len() as i32,
+                metadata_json: "{}".into(),
             }])
             .unwrap();
     }

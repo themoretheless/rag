@@ -29,11 +29,12 @@ Layout is not computed server-side: tools return pure `{nodes, edges}` JSON for 
 
 - **Ingest** raw text, UTF-8 files (`RAG_INGEST_ROOTS` allowlist), immutable `ingest_raw`, MemPalace-style `add_drawer` (wing + room required)
 - **Palace placement**: wings / rooms taxonomy (`list_wings`, `list_rooms`, `get_taxonomy`); scoped search by wing/room/layer/source
-- **Fixed-size chunking** with overlap (`RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`)
+- **Fixed-size chunking** with overlap (`RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`); Markdown chunks retain `heading_path` and leaf `section` metadata
 - **Embeddings**: `mock` (deterministic), `openai` / `openai_compat`, `ollama` (native or OpenAI-compatible base)
 - **Search modes**: `lex` (BM25 or TF fallback), `vec` (cosine over stored vectors), `hybrid` (RRF fusion)
 - **Search filters**: document_id, wing, room, layer, source_file, include_archived; min_score; diversity (`mmr` | `collapse_by_document`); token packing
-- **Citation-oriented hits**: scores (`score`, `score_vec`, `score_lex`, `score_rrf`), snippet, char offsets when available
+- **Citation-oriented hits**: scores (`score`, `score_vec`, `score_lex`, `score_rrf`), snippet, char offsets, and Markdown section metadata when available
+- **Opt-in context expansion**: `search` and `pack_context` accept `context_expansion=neighbors|parent_section`; `neighbor_chunks` controls the neighbor radius (default 1)
 - **Object graph**: wikilinks, tags, stubs, neighbors BFS, backlinks, `link_nodes`, dedicated tunnel tools, `graph_expand_search`, `graph_stats`
 - **Temporal knowledge graph**: `kg_add` / `kg_query` / `kg_invalidate` / `kg_supersede` / `kg_timeline` / `kg_stats`
 - **Agent diary + session**: `diary_write` / `diary_read`, `wake_up`, `checkpoint`, `memories_filed_away`

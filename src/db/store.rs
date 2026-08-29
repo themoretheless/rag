@@ -214,9 +214,9 @@ impl Store {
         let mut stmt = conn.prepare(
             r#"
             INSERT INTO chunks
-              (id, document_id, chunk_index, content, embedding_json, char_start, char_end, created_at)
+              (id, document_id, chunk_index, content, embedding_json, char_start, char_end, created_at, metadata_json)
             VALUES
-              (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
+              (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
             "#,
         )?;
 
@@ -231,6 +231,7 @@ impl Store {
                 chunk.char_start,
                 chunk.char_end,
                 now.as_str(),
+                chunk.metadata_json,
             ])?;
         }
 
@@ -862,7 +863,7 @@ impl Store {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end
+            SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
             FROM chunks
             WHERE document_id = ?
             ORDER BY chunk_index ASC
@@ -882,7 +883,7 @@ impl Store {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end
+            SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
             FROM chunks
             ORDER BY document_id ASC, chunk_index ASC
             "#,
@@ -2099,6 +2100,10 @@ fn row_to_chunk(row: &duckdb::Row<'_>) -> Result<Chunk> {
         embedding,
         char_start: row.get(5)?,
         char_end: row.get(6)?,
+        metadata_json: row
+            .get::<_, Option<String>>(7)?
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "{}".into()),
     })
 }
 
@@ -2172,6 +2177,7 @@ mod tests {
             embedding: vec![0.1, 0.2, 0.3],
             char_start: 0,
             char_end: 5,
+            metadata_json: "{}".into(),
         };
         store.insert_chunks(&[chunk]).unwrap();
 
@@ -2654,6 +2660,7 @@ mod tests {
                 embedding: vec![1.0, 0.0, 0.0, 0.0],
                 char_start: 0,
                 char_end: 11,
+                metadata_json: "{}".into(),
             }])
             .unwrap();
 
@@ -2668,6 +2675,7 @@ mod tests {
                     embedding: vec![0.0, 1.0, 0.0, 0.0],
                     char_start: 0,
                     char_end: 11,
+                    metadata_json: "{}".into(),
                 }],
             )
             .unwrap();
@@ -3489,4 +3497,3 @@ mod tests {
             .is_empty());
     }
 }
-

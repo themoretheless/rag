@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 6;
+pub const SCHEMA_VERSION: i32 = 7;
 
 /// Create `documents` table if missing (base v1 columns).
 pub const CREATE_DOCUMENTS: &str = r#"
@@ -286,6 +286,8 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 
     // chunks: optional content_hash for embed cache / dedupe
     add_column_best_effort(conn, "chunks", "content_hash", "VARCHAR")?;
+    // Additive section metadata; old rows read as an empty object.
+    add_column_best_effort(conn, "chunks", "metadata_json", "VARCHAR DEFAULT '{}'")?;
 
     // Indexes that depend on document columns (after columns exist).
     conn.execute_batch(

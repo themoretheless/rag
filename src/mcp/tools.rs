@@ -261,6 +261,12 @@ pub struct SearchParams {
     /// Cap retained chunks per document under diversity (default `RAG_MAX_CHUNKS_PER_DOC`).
     #[serde(default)]
     pub max_chunks_per_document: Option<u32>,
+    /// Optional source context: `neighbors` or `parent_section`.
+    #[serde(default)]
+    pub context_expansion: Option<String>,
+    /// Chunks on each side for neighbor expansion (default 1).
+    #[serde(default)]
+    pub neighbor_chunks: Option<u32>,
 }
 
 /// One hit passed into `pack_context` (same shape as `search` results).
@@ -285,6 +291,10 @@ pub struct PackHitParams {
     pub char_start: Option<i32>,
     #[serde(default)]
     pub char_end: Option<i32>,
+    #[serde(default)]
+    pub heading_path: Option<Vec<String>>,
+    #[serde(default)]
+    pub section: Option<String>,
 }
 
 /// Parameters for `pack_context`.
@@ -295,6 +305,12 @@ pub struct PackContextParams {
     /// Token budget (~4 chars/token). Defaults to `RAG_MAX_CONTEXT_TOKENS`.
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Optional source context: `neighbors` or `parent_section`.
+    #[serde(default)]
+    pub context_expansion: Option<String>,
+    /// Chunks on each side for neighbor expansion (default 1).
+    #[serde(default)]
+    pub neighbor_chunks: Option<u32>,
 }
 
 // --- Documents / integrity ---

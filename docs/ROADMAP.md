@@ -128,7 +128,7 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
 - Tunnels CRUD: `create_tunnel`, `list_tunnels`, `delete_tunnel`, `follow_tunnels` (edge type already valid in P0)
 - Soft-delete / memory lifecycle: `forget` / `undelete`, optional TTL; session/agent scopes on diaries/ops/kg
 - `consolidate_memory` (diary/episode → wiki/kg compression)
-- Retrieval UX: hierarchical parent-child chunks, `expand_chunks`, section-aware MD + `heading_path`, `multi_get`, `find_similar`, multi-query RRF, recency boost, `group_by=document`
+- Retrieval UX: section-aware Markdown + `heading_path` and opt-in neighbor/parent-section expansion shipped as additive `search` / `pack_context` params; dedicated `expand_chunks`, `multi_get`, `find_similar`, multi-query RRF, recency boost, `group_by=document` remain
 - Optional top-N rerank
 - Ops: `sync_sources` directory ingest + explicit deleted-source pruning shipped; `backup_db`, full `doctor`, prune orphans, progress events on bulk ops remain
 - Wiki write conflict: etag / `updated_at` If-Match on `update_wiki_page`

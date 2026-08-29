@@ -376,6 +376,20 @@ pub struct Chunk {
     pub embedding: Vec<f32>,
     pub char_start: i32,
     pub char_end: i32,
+    /// Additive per-chunk metadata (currently Markdown `heading_path` / `section`).
+    #[serde(default = "default_empty_object_json")]
+    pub metadata_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchContextChunk {
+    pub chunk_id: String,
+    pub chunk_index: i32,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
 }
 
 /// One hit from semantic / hybrid search.
@@ -407,6 +421,15 @@ pub struct SearchHit {
     /// Character offset of the hit span in the source document (end).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub char_end: Option<i32>,
+    /// Markdown heading ancestry for this chunk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<Vec<String>>,
+    /// Leaf Markdown heading for this chunk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+    /// Opt-in neighboring or same-section chunks, kept in source order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Vec<SearchContextChunk>>,
 }
 
 /// Lean wiki catalog row for list/sidebar surfaces (`GET /v1/wiki`, UI).

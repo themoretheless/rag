@@ -373,6 +373,7 @@ async fn embed_and_store_chunks(
             embedding,
             char_start,
             char_end,
+            metadata_json: "{}".into(),
         });
     }
     let n = chunks.len();

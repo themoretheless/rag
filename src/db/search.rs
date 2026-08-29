@@ -14,7 +14,7 @@ use tracing::{debug, warn};
 
 use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
-use crate::models::{Chunk, SearchHit, SearchMode};
+use crate::models::{Chunk, SearchContextChunk, SearchHit, SearchMode};
 
 use super::fts::{self, LexFilters};
 use super::store::Store;
@@ -36,6 +36,25 @@ pub enum DiversityMode {
     Mmr,
     /// Keep at most N chunks per document (highest rank first).
     CollapseByDocument,
+}
+
+/// Optional source-aware expansion applied after ranking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextExpansion {
+    Neighbors,
+    ParentSection,
+}
+
+impl ContextExpansion {
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "neighbors" | "neighboring_chunks" => Ok(Self::Neighbors),
+            "parent_section" | "section" => Ok(Self::ParentSection),
+            other => Err(AppError::config(format!(
+                "invalid context_expansion '{other}': expected 'neighbors' or 'parent_section'"
+            ))),
+        }
+    }
 }
 
 impl DiversityMode {
@@ -79,6 +98,10 @@ pub struct SearchQuery {
     pub max_chunks_per_document: Option<usize>,
     /// Optional token budget for packing hit content (~4 chars/token). Applied after rank/diversity.
     pub max_context_tokens: Option<usize>,
+    /// Opt-in source context expansion; absent preserves the ranked chunk body.
+    pub context_expansion: Option<ContextExpansion>,
+    /// Chunks on each side for `neighbors` (default 1).
+    pub neighbor_chunks: usize,
     /// RRF constant `k` in `1 / (k + rank)`. Default [`DEFAULT_RRF_K`].
     pub rrf_k: f32,
     /// Max characters for [`SearchHit::snippet`]. `0` disables snippets.
@@ -104,6 +127,8 @@ impl Default for SearchQuery {
             diversity: None,
             max_chunks_per_document: None,
             max_context_tokens: None,
+            context_expansion: None,
+            neighbor_chunks: 1,
             rrf_k: DEFAULT_RRF_K,
             snippet_max_chars: DEFAULT_SNIPPET_CHARS,
             fts_stemmer: "porter".into(),
@@ -150,11 +175,11 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
         SearchMode::Lex => run_lex(store, query, pool, &filters)?,
         SearchMode::Hybrid => match run_hybrid(store, query, pool, &filters)? {
             HybridOutcome::Fused(h) => h,
-            HybridOutcome::VecOnly(h) => return finalize_hits(h, query),
+            HybridOutcome::VecOnly(h) => return finalize_hits(store, h, query),
         },
     };
 
-    finalize_hits(hits, query)
+    finalize_hits(store, hits, query)
 }
 
 /// Dense vector path (requires `query_embedding`).
@@ -259,7 +284,7 @@ fn run_hybrid(
 }
 
 /// Post-process ranked hits: snippets, min_score, diversity, top_k, token pack.
-fn finalize_hits(mut hits: Vec<SearchHit>, query: &SearchQuery) -> Result<Vec<SearchHit>> {
+fn finalize_hits(store: &Store, mut hits: Vec<SearchHit>, query: &SearchQuery) -> Result<Vec<SearchHit>> {
     // Attach snippets (modes that already set score_* leave those intact).
     let qtext = query.query_text.as_deref();
     for hit in &mut hits {
@@ -301,6 +326,8 @@ fn finalize_hits(mut hits: Vec<SearchHit>, query: &SearchQuery) -> Result<Vec<Se
 
     hits.truncate(query.top_k);
 
+    attach_context(store, &mut hits, query.context_expansion, query.neighbor_chunks)?;
+
     if let Some(budget) = query.max_context_tokens {
         if budget > 0 {
             let packed = crate::search_pack::pack_hits(&hits, budget);
@@ -309,6 +336,64 @@ fn finalize_hits(mut hits: Vec<SearchHit>, query: &SearchQuery) -> Result<Vec<Se
     }
 
     Ok(hits)
+}
+
+pub fn attach_context(
+    store: &Store,
+    hits: &mut [SearchHit],
+    expansion: Option<ContextExpansion>,
+    neighbor_chunks: usize,
+) -> Result<()> {
+    for hit in hits {
+        let chunks = store.list_chunks_for_document(&hit.document_id)?;
+        let Some(current) = chunks.iter().find(|c| c.id == hit.chunk_id) else {
+            continue;
+        };
+        let (heading_path, section) = chunk_section_metadata(current);
+        hit.heading_path = heading_path.clone();
+        hit.section = section.clone();
+
+        let Some(expansion) = expansion else { continue };
+        let selected: Vec<&Chunk> = match expansion {
+            ContextExpansion::Neighbors => {
+                let radius = neighbor_chunks.max(1) as i32;
+                chunks.iter().filter(|c| {
+                    (c.chunk_index - current.chunk_index).abs() <= radius
+                }).collect()
+            }
+            ContextExpansion::ParentSection => chunks.iter().filter(|c| {
+                let (path, _) = chunk_section_metadata(c);
+                heading_path.is_some() && path == heading_path
+            }).collect(),
+        };
+        let selected = if selected.is_empty() { vec![current] } else { selected };
+        hit.context = Some(selected.iter().map(|chunk| {
+            let (heading_path, section) = chunk_section_metadata(chunk);
+            SearchContextChunk {
+                chunk_id: chunk.id.clone(),
+                chunk_index: chunk.chunk_index,
+                content: chunk.content.clone(),
+                heading_path,
+                section,
+            }
+        }).collect());
+        hit.content = selected.iter().map(|c| c.content.as_str()).collect::<Vec<_>>().join("\n");
+    }
+    Ok(())
+}
+
+fn chunk_section_metadata(chunk: &Chunk) -> (Option<Vec<String>>, Option<String>) {
+    let value = serde_json::from_str::<serde_json::Value>(&chunk.metadata_json).ok();
+    let heading_path = value.as_ref()
+        .and_then(|v| v.get("heading_path"))
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+        .filter(|v| !v.is_empty());
+    let section = value.as_ref()
+        .and_then(|v| v.get("section"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|v| !v.is_empty());
+    (heading_path, section)
 }
 
 fn scope_filters(query: &SearchQuery) -> super::fts::LexFilters {
@@ -483,6 +568,9 @@ fn search_vec(
             snippet: None,
             char_start: Some(chunk.char_start),
             char_end: Some(chunk.char_end),
+            heading_path: chunk_section_metadata(chunk).0,
+            section: chunk_section_metadata(chunk).1,
+            context: None,
         });
     }
 
@@ -584,6 +672,9 @@ fn search_lex_tf(
             snippet: None,
             char_start: Some(chunk.char_start),
             char_end: Some(chunk.char_end),
+            heading_path: chunk_section_metadata(chunk).0,
+            section: chunk_section_metadata(chunk).1,
+            context: None,
         });
     }
     Ok(hits)
@@ -802,6 +893,9 @@ mod tests {
             snippet: None,
             char_start: Some(0),
             char_end: Some(10),
+            heading_path: None,
+            section: None,
+            context: None,
         }
     }
 
@@ -851,6 +945,7 @@ mod tests {
             embedding: vec![1.0, 0.0],
             char_start: 0,
             char_end: 5,
+            metadata_json: "{}".into(),
         };
         let hit = hit_from_chunk(&chunk, 0.9, "Title", "uri://x");
         assert_eq!(hit.chunk_id, "c1");
@@ -1009,6 +1104,7 @@ mod tests {
                 embedding: vec![1.0, 0.0, 0.0],
                 char_start: 0,
                 char_end: 32,
+                metadata_json: "{}".into(),
             },
             Chunk {
                 id: "c2".into(),
@@ -1018,6 +1114,7 @@ mod tests {
                 embedding: vec![0.9, 0.1, 0.0],
                 char_start: 33,
                 char_end: 58,
+                metadata_json: "{}".into(),
             },
             Chunk {
                 id: "c3".into(),
@@ -1027,6 +1124,7 @@ mod tests {
                 embedding: vec![0.0, 1.0, 0.0],
                 char_start: 0,
                 char_end: 21,
+                metadata_json: "{}".into(),
             },
         ];
         store.insert_chunks(&chunks).unwrap();
@@ -1162,6 +1260,7 @@ mod tests {
                     embedding: emb.clone(),
                     char_start: 0,
                     char_end: 18,
+                    metadata_json: "{}".into(),
                 },
                 Chunk {
                     id: "c-other".into(),
@@ -1171,6 +1270,7 @@ mod tests {
                     embedding: emb.clone(),
                     char_start: 0,
                     char_end: 15,
+                    metadata_json: "{}".into(),
                 },
                 Chunk {
                     id: "c-arch".into(),
@@ -1180,6 +1280,7 @@ mod tests {
                     embedding: emb.clone(),
                     char_start: 0,
                     char_end: 13,
+                    metadata_json: "{}".into(),
                 },
             ])
             .unwrap();

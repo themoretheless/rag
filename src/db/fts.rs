@@ -695,6 +695,7 @@ mod tests {
                 embedding: vec![0.0; 4],
                 char_start: 0,
                 char_end: content.len() as i32,
+                metadata_json: "{}".into(),
             });
         }
         store.insert_chunks(&batch).unwrap();

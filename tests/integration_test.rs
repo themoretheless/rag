@@ -82,6 +82,7 @@ async fn ingest_text(
             embedding,
             char_start,
             char_end,
+            metadata_json: "{}".into(),
         });
     }
 
@@ -289,6 +290,7 @@ async fn multi_chunk_document_search_still_finds_doc() {
             embedding,
             char_start,
             char_end,
+            metadata_json: "{}".into(),
         })
         .collect();
 

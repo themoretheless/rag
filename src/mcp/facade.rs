@@ -38,10 +38,10 @@ use super::tools::{
     SyncSourcesParams, UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams,
     WakeUpParams, WriteWikiPageParams,
 };
-use crate::chunking::{from_config, Chunker};
+use crate::chunking::{from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
 use crate::db::schema::SCHEMA_VERSION;
-use crate::db::search::{search, search_chunks, DiversityMode, SearchQuery};
+use crate::db::search::{attach_context, search, search_chunks, ContextExpansion, DiversityMode, SearchQuery};
 use crate::db::Store;
 use crate::diary;
 use crate::embeddings::EmbeddingProvider;
@@ -321,6 +321,9 @@ impl RagServer {
 
         let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
         let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, &doc.content);
+        // ATX headings are unambiguous enough to detect for text ingest; plain
+        // text without Markdown headings retains the legacy empty metadata.
+        let section_metadata = markdown_section_metadata(&doc.content, &pieces);
 
         let chunk_count = if pieces.is_empty() {
             0
@@ -337,8 +340,11 @@ impl RagServer {
             }
 
             let mut chunks = Vec::with_capacity(pieces.len());
-            for (i, ((content, char_start, char_end), embedding)) in
-                pieces.into_iter().zip(embeddings.into_iter()).enumerate()
+            for (i, (((content, char_start, char_end), embedding), metadata_json)) in pieces
+                .into_iter()
+                .zip(embeddings.into_iter())
+                .zip(section_metadata.into_iter())
+                .enumerate()
             {
                 chunks.push(Chunk {
                     id: Uuid::new_v4().to_string(),
@@ -348,6 +354,7 @@ impl RagServer {
                     embedding,
                     char_start,
                     char_end,
+                    metadata_json,
                 });
             }
 
@@ -631,6 +638,7 @@ impl RagServer {
             let doc = &applied.document;
             let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
             let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, &doc.content);
+            let section_metadata = markdown_section_metadata(&doc.content, &pieces);
 
             if pieces.is_empty() {
                 self.store.replace_chunks_for_document(&doc.id, &[])?;
@@ -646,8 +654,11 @@ impl RagServer {
                     )));
                 }
                 let mut chunks = Vec::with_capacity(pieces.len());
-                for (i, ((content, char_start, char_end), embedding)) in
-                    pieces.into_iter().zip(embeddings.into_iter()).enumerate()
+                for (i, (((content, char_start, char_end), embedding), metadata_json)) in pieces
+                    .into_iter()
+                    .zip(embeddings.into_iter())
+                    .zip(section_metadata.into_iter())
+                    .enumerate()
                 {
                     chunks.push(Chunk {
                         id: Uuid::new_v4().to_string(),
@@ -657,6 +668,7 @@ impl RagServer {
                         embedding,
                         char_start,
                         char_end,
+                        metadata_json,
                     });
                 }
                 chunk_count = chunks.len();
@@ -1319,7 +1331,7 @@ impl RagServer {
 
     #[tool(
         name = "search",
-        description = "Search stored chunks (mode=lex|vec|hybrid). Supports wing/room/layer/source_file filters, include_archived, min_score, diversity, and token packing. mode=vec works without hybrid/lex."
+        description = "Search stored chunks (mode=lex|vec|hybrid). Supports filters, diversity, token packing, and optional context_expansion=neighbors|parent_section. Markdown hits include heading_path/section."
     )]
     async fn search(
         &self,
@@ -1346,6 +1358,11 @@ impl RagServer {
             .filter(|s| !s.is_empty())
         {
             Some(raw) => Some(DiversityMode::parse(raw).map_err(Self::map_err)?),
+            None => None,
+        };
+
+        let context_expansion = match params.context_expansion.as_deref() {
+            Some(raw) => Some(ContextExpansion::parse(raw).map_err(Self::map_err)?),
             None => None,
         };
 
@@ -1390,6 +1407,8 @@ impl RagServer {
             diversity,
             max_chunks_per_document,
             max_context_tokens,
+            context_expansion,
+            neighbor_chunks: params.neighbor_chunks.unwrap_or(1) as usize,
             fts_stemmer: self.config.fts_stemmer.clone(),
             ..SearchQuery::default()
         };
@@ -2226,7 +2245,7 @@ impl RagServer {
 
     #[tool(
         name = "pack_context",
-        description = "Pack ranked search hits under a token budget (~4 chars/token) into a citation block."
+        description = "Pack ranked search hits under a token budget (~4 chars/token), optionally expanding neighbors or the parent Markdown section."
     )]
     async fn pack_context(
         &self,
@@ -2237,7 +2256,18 @@ impl RagServer {
             .map(|t| t as usize)
             .unwrap_or(self.config.max_context_tokens);
 
-        let hits: Vec<SearchHit> = params.hits.into_iter().map(pack_hit_to_search_hit).collect();
+        let expansion = match params.context_expansion.as_deref() {
+            Some(raw) => Some(ContextExpansion::parse(raw).map_err(Self::map_err)?),
+            None => None,
+        };
+        let mut hits: Vec<SearchHit> = params.hits.into_iter().map(pack_hit_to_search_hit).collect();
+        attach_context(
+            &self.store,
+            &mut hits,
+            expansion,
+            params.neighbor_chunks.unwrap_or(1) as usize,
+        )
+        .map_err(Self::map_err)?;
         let packed = pack_hits(&hits, max_tokens);
 
         let body = PackContextResult {
@@ -3243,6 +3273,9 @@ fn pack_hit_to_search_hit(h: PackHitParams) -> SearchHit {
         snippet: h.snippet,
         char_start: h.char_start,
         char_end: h.char_end,
+        heading_path: h.heading_path,
+        section: h.section,
+        context: None,
     }
 }
 
