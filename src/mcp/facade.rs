@@ -19,17 +19,20 @@ use uuid::Uuid;
 use super::surface::{self, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB};
 
 use super::tools::{
-    AddDrawerParams, AnalyzeCorpusParams, AppendLogParams, CheckDuplicateParams, CheckpointParams,
+    AddDrawerParams, AnalyzeCorpusParams, AppendLogParams, ArchiveMemoryItemsParams,
+    CheckDuplicateParams, CheckpointParams,
     CollectionCreateParams, CollectionEntryParams, CollectionGetParams, CollectionListParams,
     CollectionUpdateParams,
-    CompileSourceParams, ConsolidateParams, CreateTunnelParams, DeleteBySourceParams, DeleteDocumentParams,
+    CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams, CreateTunnelParams,
+    DeleteBySourceParams, DeleteDocumentParams,
     DeleteTunnelParams, DiaryReadParams, DiaryWriteParams, ExportGraphSnapshotParams,
     FileAnswerCitationParams, FileAnswerParams, FindNodeParams, FindTunnelsParams, FollowTunnelsParams,
     GetBacklinksParams, GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams,
     GetSourceParams,
     GetTaxonomyParams, GetWikiPageParams, GraphExpandSearchParams, IngestFileParams,
     IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams, KgQueryParams,
-    KgSupersedeParams, KgTimelineParams, LinkNodesParams, ListDocumentsParams, ListRecentOpsParams,
+    KgSupersedeParams, KgTimelineParams, LinkNodesParams, ListDocumentsParams,
+    ListMemoryLifecycleCandidatesParams, ListRecentOpsParams,
     ApplyMaintenancePlanParams, ListRoomsParams, ListSourcesParams, ListTunnelsParams,
     ListWingsParams, MaintainCompressParams, MaintainOrganizeParams, MaintainRefreshParams,
     MemoriesFiledAwayParams, PackContextParams, PackHitParams, PlanMaintenanceParams,
@@ -51,6 +54,7 @@ use crate::llm::ChatClient;
 use crate::maintain::{
     self, ApplyPlanOptions, CompressOptions, MaintainRefreshFlags, MaintenancePlanItem,
 };
+use crate::memory_lifecycle;
 use crate::models::{
     Chunk, Collection, CollectionEntry, Document, DocumentFilter, DocumentMetaUpdate, DoctorReport, DrawerListItem, GraphEdge,
     GraphFilter, GraphNode, GraphView, IndexQueryPage, IndexQueryResult, IngestResult,
@@ -3202,6 +3206,60 @@ impl RagServer {
         .await
         .map_err(Self::map_err)?;
         Self::json_result(&res)
+    }
+
+    #[tool(
+        name = "list_memory_lifecycle_candidates",
+        description = "List durable memory lifecycle candidates without content. Defaults to active items; optional status/layer/kind filters and limit. Deterministic and does not require an LLM."
+    )]
+    async fn list_memory_lifecycle_candidates(
+        &self,
+        Parameters(params): Parameters<ListMemoryLifecycleCandidatesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let rows = memory_lifecycle::list_candidates(
+            &self.store,
+            params.status.as_deref(),
+            params.layer.as_deref(),
+            params.kind.as_deref(),
+            params.limit.unwrap_or(100) as usize,
+        )
+        .map_err(Self::map_err)?;
+        Self::json_result(&rows)
+    }
+
+    #[tool(
+        name = "consolidate_memory_items",
+        description = "Idempotently mark selected memory documents consolidated into an existing output document. Adds structured provenance to the output and source metadata; no LLM or content rewrite."
+    )]
+    async fn consolidate_memory_items(
+        &self,
+        Parameters(params): Parameters<ConsolidateMemoryItemsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = memory_lifecycle::consolidate_selected(
+            &self.store,
+            &params.document_ids,
+            &params.output_document_id,
+            params.agent.as_deref(),
+        )
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
+    }
+
+    #[tool(
+        name = "archive_memory_items",
+        description = "Idempotently archive selected memory documents. Already archived ids are reported as skipped; missing ids are structured in the result. No LLM required."
+    )]
+    async fn archive_memory_items(
+        &self,
+        Parameters(params): Parameters<ArchiveMemoryItemsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = memory_lifecycle::archive_selected(
+            &self.store,
+            &params.document_ids,
+            params.agent.as_deref(),
+        )
+        .map_err(Self::map_err)?;
+        Self::json_result(&result)
     }
 
     #[tool(

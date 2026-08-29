@@ -419,7 +419,7 @@ pub struct UpdateDocumentMetaParams {
     /// Manual relevance multiplier (must be finite and > 0).
     #[serde(default)]
     pub boost: Option<f64>,
-    /// Lifecycle: `active` | `draft` | `archived` | `tombstone`.
+    /// Lifecycle: `active` | `draft` | `consolidated` | `archived` | `tombstone`.
     #[serde(default)]
     pub status: Option<String>,
     /// Optional layer override (`raw` | `wiki` | `diary` | …).
@@ -962,6 +962,38 @@ pub struct ConsolidateParams {
     #[serde(default)]
     pub max_docs: Option<u32>,
     /// Optional agent name for ops_log.
+    #[serde(default)]
+    pub agent: Option<String>,
+}
+
+/// Parameters for deterministic lifecycle candidate listing.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct ListMemoryLifecycleCandidatesParams {
+    /// Lifecycle status to list (default `active`).
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub layer: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Maximum rows (default 100, max 500).
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// Mark selected memory items consolidated into an existing durable output.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ConsolidateMemoryItemsParams {
+    pub document_ids: Vec<String>,
+    pub output_document_id: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+}
+
+/// Archive selected memory items idempotently.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ArchiveMemoryItemsParams {
+    pub document_ids: Vec<String>,
     #[serde(default)]
     pub agent: Option<String>,
 }

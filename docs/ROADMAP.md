@@ -126,8 +126,12 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
 - Temporal KG: `kg_add`, `kg_query`, `kg_invalidate`, `kg_supersede`, `kg_timeline`, `kg_stats`
 - Agent memory: `wake_up`, `diary_write` / `diary_read`, `checkpoint`
 - Tunnels CRUD: `create_tunnel`, `list_tunnels`, `delete_tunnel`, `follow_tunnels` (edge type already valid in P0)
-- Soft-delete / memory lifecycle: `forget` / `undelete`, optional TTL; session/agent scopes on diaries/ops/kg
-- `consolidate_memory` (diary/episode → wiki/kg compression)
+- Memory lifecycle vertical slice shipped: durable `active` / `consolidated` / `archived`
+  state, deterministic candidate listing, idempotent selected-item consolidation/archive,
+  and structured provenance linking consolidated sources to an existing output document.
+  `forget` / `undelete`, optional TTL, and session/agent scopes on diaries/ops/kg remain.
+- Rich `consolidate_memory` synthesis (diary/episode → wiki/kg compression) remains optional;
+  deterministic lifecycle transitions do not require an LLM.
 - Retrieval UX: section-aware Markdown + `heading_path` and opt-in neighbor/parent-section expansion shipped as additive `search` / `pack_context` params; dedicated `expand_chunks`, `multi_get`, `find_similar`, multi-query RRF, recency boost, `group_by=document` remain
 - Optional top-N rerank
 - Ops: `sync_sources` directory ingest + explicit deleted-source pruning shipped; `backup_db`, full `doctor`, prune orphans, progress events on bulk ops remain

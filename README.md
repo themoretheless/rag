@@ -257,6 +257,9 @@ Every apply path logs to **ops_log** (`append_log` / `read_log` / `list_recent_o
 | `vacuum_store` | (none) | DuckDB `CHECKPOINT` + size delta; ops_log |
 | `compile_source` | `source_id_or_uri`, `dry_run?`, `agent?` | Local LLM: raw → wiki pages |
 | `consolidate` | `document_ids`, `apply?` (**default false**), `max_docs?`, slug/title/… | Local LLM merge docs → one wiki proposal (or write) |
+| `list_memory_lifecycle_candidates` | `status?`, `layer?`, `kind?`, `limit?` | Deterministic candidate list (defaults to `active`) |
+| `consolidate_memory_items` | `document_ids`, `output_document_id`, `agent?` | Mark selected items `consolidated` and attach source/output provenance; idempotent, no LLM |
+| `archive_memory_items` | `document_ids`, `agent?` | Mark selected items `archived`; idempotent, no LLM |
 | `refresh_stale_wiki` | `dry_run?` (**default true**), `max_docs?`, `agent?` | List or recompile wiki older than linked raw |
 
 Related wiki/search tools: `search_wiki`, `query_with_index`, `file_answer`, `lint_wiki`, `rebuild_index`, `read_index`.
@@ -436,6 +439,11 @@ All tools return JSON text content via MCP `CallToolResult`.
 | `checkpoint` | `summary` (alias `message`), `diary?`, `agent_name?` | Always append `ops_log` (`op=checkpoint`); optional diary body writes a diary entry |
 | `memories_filed_away` | `limit?` | Recent memory-filing ops from ops_log (ingest/drawer/wiki/diary/checkpoint) |
 | `reconnect` | (none) | DuckDB single-process no-op success (parity with MemPalace reconnect) |
+
+Memory documents use the existing durable `status` field (`active`, `consolidated`,
+`archived`, plus legacy statuses). Lifecycle consolidation links selected sources to an
+existing output under structured `metadata_json.memory_lifecycle` provenance; it does
+not synthesize or rewrite content.
 
 ### Wiki compile layer
 

@@ -132,7 +132,7 @@ pub struct Document {
     /// Content fingerprint for idempotent ingest / dedupe.
     #[serde(default)]
     pub content_hash: Option<String>,
-    /// Lifecycle: `active` | `draft` | `archived` | `tombstone`.
+    /// Lifecycle: `active` | `draft` | `consolidated` | `archived` | `tombstone`.
     #[serde(default = "default_doc_status")]
     pub status: String,
     /// Surface first in lists / wake_up when true.

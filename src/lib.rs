@@ -24,6 +24,7 @@ pub mod graph;
 pub mod http_api;
 pub mod llm;
 pub mod maintain;
+pub mod memory_lifecycle;
 pub mod mcp;
 pub mod models;
 pub mod search_pack;
@@ -45,6 +46,11 @@ pub use models::{
     PKB_NODE_KINDS, PKB_REL_TYPES, UI_GRAPH_EXPORT_MAX_NODES,
 };
 pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
+pub use memory_lifecycle::{
+    archive_selected as archive_memory_items, consolidate_selected as consolidate_memory_items,
+    list_candidates as list_memory_lifecycle_candidates, LifecycleCandidate,
+    LifecycleMutationResult, STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_CONSOLIDATED,
+};
 
 // --- Graph (domain extract/resolve; DB CRUD lives on [`Store`] via `db::graph`) ---
 pub use graph::{
