@@ -164,8 +164,11 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
 
 ### Other
 
-- DuckDB VSS / HNSW when full-scan is too slow
-- `hyde_search`, retrieval eval harness (MRR, recall@k, nDCG) + feedback export
+- Retrieval evaluation vertical slice shipped: versioned labeled dataset, `eval`
+  CLI over lex/vec/hybrid, recall@k/MRR/nDCG, per-query results, timing/corpus
+  diagnostics, and threshold-based full-scan vs future-ANN guidance
+- DuckDB VSS / HNSW remains a future option when documented thresholds are exceeded
+- `hyde_search` + feedback export
 - File watcher, multi-format ingest (html/pdf/code)
 - HTTP+TLS MCP transport, read-only mode env gate
 - Local embedding provider (e.g. ONNX / MiniLM)

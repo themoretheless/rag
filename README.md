@@ -525,6 +525,9 @@ Tool tables above match the current MCP surface (see also Features and MemPalace
 - No hallways (named multi-hop path objects) as first-class tools
 - Auto schedule / dedicated CLI `maintain` subcommand and compress L3+ still open (analyze/plan/apply/organize/compress L0–L2/refresh are implemented)
 - No HNSW / DuckDB VSS ANN (full-scan cosine in Rust; fine for personal corpora)
+- Versioned retrieval evaluation is available through the `eval` CLI; see
+  [`docs/RETRIEVAL_EVALUATION.md`](docs/RETRIEVAL_EVALUATION.md) for dataset,
+  metrics, diagnostics, and threshold-based future ANN guidance.
 - No PDF / binary parsers (UTF-8 text only)
 - Stdio MCP only (no HTTP transport)
 - No multi-tenant auth

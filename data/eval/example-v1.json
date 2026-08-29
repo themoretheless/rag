@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "rag-mcp documentation example",
+  "corpus": ["README.md", "SPEC.md", "docs/ROADMAP.md"],
+  "queries": [
+    {
+      "id": "search-modes",
+      "query": "Which lexical, vector, and hybrid retrieval modes are supported?",
+      "relevant": [
+        { "document_title": "README.md", "relevance": 3 },
+        { "document_title": "SPEC.md", "relevance": 1 }
+      ]
+    },
+    {
+      "id": "scale-path",
+      "query": "When should full-scan vectors be replaced with ANN?",
+      "relevant": [
+        { "document_title": "ROADMAP.md", "relevance": 3 },
+        { "document_title": "README.md", "relevance": 1 }
+      ]
+    }
+  ]
+}

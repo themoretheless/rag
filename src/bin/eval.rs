@@ -1,268 +1,207 @@
-//! Retrieval eval harness: golden Q&A set → recall@k / MRR per search mode.
-//!
-//! Builds a throwaway DuckDB store, ingests the referenced docs with the
-//! configured embedding provider, then answers every golden question in
-//! `lex` / `vec` / `hybrid` mode and scores document-level relevance.
-//!
-//! Example (from rag repo root):
-//! ```bash
-//! RAG_EMBEDDING_PROVIDER=mock cargo run --release --bin eval
-//! RAG_EMBEDDING_PROVIDER=ollama RAG_EMBEDDING_DIMS=768 cargo run --release --bin eval
-//! ```
+//! Versioned retrieval evaluation for the existing lex / vec / hybrid paths.
 
 use anyhow::{bail, Context, Result};
 use rag_mcp::db::search::{search, SearchQuery};
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
-use rag_mcp::models::SearchMode;
+use rag_mcp::models::{SearchHit, SearchMode};
 use rag_mcp::wiki;
 use rag_mcp::{Config, Store};
-use serde::Deserialize;
-use std::collections::BTreeSet;
-use std::path::PathBuf;
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use std::{collections::{HashMap, HashSet}, path::{Path, PathBuf}, sync::Arc, time::Instant};
 
-/// Docs the default golden set references, relative to `--root`.
-const DEFAULT_DOCS: &[&str] = &[
-    "README.md",
-    "SPEC.md",
-    "FEATURES.md",
-    "docs/CONNECT.md",
-    "docs/SPINE_TOOLS.md",
-    "docs/ARCHITECTURE_VISION.md",
-    "docs/ROADMAP.md",
-    "docs/PROD_RUN.md",
-];
+const VERSION: u32 = 1;
+const DEFAULT_DATASET: &str = "data/eval/example-v1.json";
+const ANN_CHUNKS: u64 = 50_000;
+const ANN_P95_MS: f64 = 200.0;
 
-#[derive(Debug, Deserialize)]
-struct GoldenItem {
-    question: String,
-    /// Substring the correct hit's `document_title` must contain.
-    expect_title: String,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Dataset { version: u32, name: String, corpus: Vec<String>, queries: Vec<LabeledQuery> }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LabeledQuery { id: String, query: String, relevant: Vec<Label> }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Label { document_title: String, relevance: u32 }
+
+#[derive(Serialize)]
+struct Report {
+    dataset_version: u32, dataset_name: String, top_k: usize,
+    corpus: CorpusDiagnostics, modes: Vec<ModeReport>, scale_recommendation: Recommendation,
 }
-
-struct Args {
-    root: PathBuf,
-    golden: PathBuf,
-    top_k: usize,
-    modes: Vec<SearchMode>,
-    verbose: bool,
+#[derive(Serialize)]
+struct CorpusDiagnostics { documents: u64, chunks: u64, ingest_ms: f64 }
+#[derive(Serialize)]
+struct ModeReport {
+    mode: String, recall_at_k: f64, mrr: f64, ndcg_at_k: f64,
+    mean_search_ms: f64, p95_search_ms: f64, queries: Vec<QueryReport>,
 }
+#[derive(Serialize)]
+struct QueryReport {
+    id: String, recall_at_k: f64, reciprocal_rank: f64, ndcg_at_k: f64,
+    embedding_ms: f64, search_ms: f64, results: Vec<ResultItem>,
+}
+#[derive(Serialize)]
+struct ResultItem { rank: usize, document_title: String, relevance: u32, score: f32 }
+#[derive(Serialize)]
+struct Recommendation { path: String, reason: String, chunk_threshold: u64, p95_search_ms_threshold: f64 }
+
+struct Args { root: PathBuf, dataset: PathBuf, top_k: usize, modes: Vec<SearchMode>, json: bool }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
-
+    tracing_subscriber::fmt().with_writer(std::io::stderr).with_env_filter(
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+    ).init();
     let args = parse_args()?;
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run(args))
+    tokio::runtime::Runtime::new()?.block_on(run(args))
 }
 
 fn parse_args() -> Result<Args> {
     let mut root = PathBuf::from(".");
-    let mut golden = None;
-    let mut top_k = 5usize;
+    let mut dataset = None;
+    let mut top_k = 5;
     let mut modes = vec![SearchMode::Lex, SearchMode::Vec, SearchMode::Hybrid];
-    let mut verbose = false;
+    let mut json = false;
     let mut it = std::env::args().skip(1);
-    while let Some(a) = it.next() {
-        match a.as_str() {
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
             "--root" => root = PathBuf::from(it.next().context("--root needs path")?),
-            "--golden" => golden = Some(PathBuf::from(it.next().context("--golden needs path")?)),
+            "--dataset" | "--golden" => dataset = Some(PathBuf::from(it.next().context("--dataset needs path")?)),
             "--top-k" => top_k = it.next().context("--top-k needs value")?.parse()?,
-            "--modes" => {
-                let list = it.next().context("--modes needs csv (lex,vec,hybrid)")?;
-                modes = list
-                    .split(',')
-                    .map(|s| SearchMode::parse(s.trim()))
-                    .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(anyhow::Error::msg)?;
-            }
-            "--verbose" => verbose = true,
-            "-h" | "--help" => {
-                eprintln!(
-                    "Usage: eval [--root DIR] [--golden FILE.jsonl] [--top-k N] \\\n\
-                     \t[--modes lex,vec,hybrid] [--verbose]\n\
-                     Env: RAG_EMBEDDING_* selects the provider under test (mock|openai|ollama).\n\
-                     Uses a throwaway DB; never touches RAG_DB_PATH."
-                );
-                std::process::exit(0);
-            }
+            "--modes" => modes = it.next().context("--modes needs csv (lex,vec,hybrid)")?
+                .split(',').map(|m| SearchMode::parse(m.trim()))
+                .collect::<std::result::Result<Vec<_>, _>>().map_err(anyhow::Error::msg)?,
+            "--json" => json = true,
+            "-h" | "--help" => { eprintln!(
+                "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N] \\\n+                 \t[--modes lex,vec,hybrid] [--json]\n\
+                 Uses a throwaway database. --golden remains a --dataset alias."
+            ); std::process::exit(0); }
             other => bail!("unknown arg: {other} (try --help)"),
         }
     }
+    if top_k == 0 { bail!("--top-k must be greater than zero"); }
     let root = root.canonicalize().unwrap_or(root);
-    let golden = golden.unwrap_or_else(|| root.join("data/eval/golden.jsonl"));
-    Ok(Args {
-        root,
-        golden,
-        top_k,
-        modes,
-        verbose,
-    })
+    Ok(Args { dataset: dataset.unwrap_or_else(|| root.join(DEFAULT_DATASET)), root, top_k, modes, json })
 }
 
 async fn run(args: Args) -> Result<()> {
-    let golden = load_golden(&args.golden)?;
-    if golden.is_empty() {
-        bail!("golden set is empty: {}", args.golden.display());
-    }
-
-    // Throwaway DB so eval never fights the live server for the file lock.
+    let dataset = load_dataset(&args.dataset)?;
     let db_path = std::env::temp_dir().join(format!("rag-eval-{}.duckdb", std::process::id()));
     let _ = std::fs::remove_file(&db_path);
-
-    let mut config = Config::from_env().context("Config::from_env")?;
-    config.db_path = db_path.clone();
-
-    let store = Store::open(&config.db_path).context("open throwaway DuckDB")?;
-    store.ensure_embedding_manifest(&config)?;
-    let embedder: Arc<dyn EmbeddingProvider> =
-        build_provider(&config).context("embedding provider")?;
-
-    println!(
-        "eval: provider={:?} model={} dims={} top_k={} golden={} ({} questions)",
-        config.embedding_provider,
-        config.embedding_model,
-        config.embedding_dims,
-        args.top_k,
-        args.golden.display(),
-        golden.len()
-    );
-
-    ingest_docs(&store, &embedder, &config, &args, &golden).await?;
-
-    println!("\n{:<8} {:>10} {:>8} {:>7}", "mode", "recall@k", "mrr", "miss");
-    for mode in &args.modes {
-        let (recall, mrr, misses) =
-            eval_mode(&store, &embedder, &config, &golden, *mode, args.top_k).await?;
-        println!(
-            "{:<8} {:>10.3} {:>8.3} {:>7}",
-            mode.as_str(),
-            recall,
-            mrr,
-            misses.len()
-        );
-        if args.verbose {
-            for (q, expect) in &misses {
-                println!("    MISS [{expect}] {q}");
-            }
-        }
-    }
-
+    let result = evaluate(&args, dataset, &db_path).await;
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
+    let report = result?;
+    if args.json { println!("{}", serde_json::to_string_pretty(&report)?); } else { print_report(&report); }
     Ok(())
 }
 
-fn load_golden(path: &PathBuf) -> Result<Vec<GoldenItem>> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read golden set {}", path.display()))?;
-    let mut out = Vec::new();
-    for (i, line) in raw.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let item: GoldenItem = serde_json::from_str(line)
-            .with_context(|| format!("{}:{} bad golden line", path.display(), i + 1))?;
-        out.push(item);
+async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Report> {
+    let mut config = Config::from_env()?;
+    config.db_path = db_path.to_path_buf();
+    let store = Store::open(&config.db_path)?;
+    store.ensure_embedding_manifest(&config)?;
+    let embedder: Arc<dyn EmbeddingProvider> = build_provider(&config)?;
+    let started = Instant::now();
+    for relative in &dataset.corpus {
+        let path = args.root.join(relative);
+        let text = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let title = path.file_name().and_then(|n| n.to_str()).context("non-UTF-8 corpus filename")?.to_string();
+        wiki::ingest_raw(&store, &embedder, &config, text, Some(title), Some(format!("eval://{relative}")),
+            None, None, Some(path.display().to_string())).await.with_context(|| format!("ingest {relative}"))?;
     }
-    Ok(out)
+    let ingest_ms = ms(started);
+    let (documents, chunks, _, _) = store.stats()?;
+    let mut modes = Vec::new();
+    for mode in &args.modes {
+        modes.push(eval_mode(&store, &embedder, &config, &dataset.queries, *mode, args.top_k).await?);
+    }
+    let worst_p95 = modes.iter().filter(|m| m.mode != "lex").map(|m| m.p95_search_ms).fold(0.0, f64::max);
+    Ok(Report { dataset_version: dataset.version, dataset_name: dataset.name, top_k: args.top_k,
+        corpus: CorpusDiagnostics { documents, chunks, ingest_ms }, modes,
+        scale_recommendation: recommend(chunks, worst_p95) })
 }
 
-async fn ingest_docs(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    args: &Args,
-    golden: &[GoldenItem],
-) -> Result<()> {
-    // Every doc the golden set expects must be present; DEFAULT_DOCS is the base corpus.
-    let mut wanted: BTreeSet<String> = DEFAULT_DOCS.iter().map(|s| (*s).to_string()).collect();
-    for g in golden {
-        if !wanted.iter().any(|d| d.ends_with(&g.expect_title)) {
-            eprintln!(
-                "warning: golden expects '{}' which is not in the ingest list",
-                g.expect_title
-            );
+fn load_dataset(path: &Path) -> Result<Dataset> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("read dataset {}", path.display()))?;
+    let data: Dataset = serde_json::from_str(&raw).with_context(|| format!("parse dataset {}", path.display()))?;
+    if data.version != VERSION { bail!("unsupported dataset version {}; expected {VERSION}", data.version); }
+    if data.corpus.is_empty() || data.queries.is_empty() { bail!("dataset corpus and queries must not be empty"); }
+    for q in &data.queries {
+        if q.id.trim().is_empty() || q.query.trim().is_empty() || q.relevant.is_empty() {
+            bail!("each query needs a non-empty id, query, and relevant labels");
         }
+        if q.relevant.iter().any(|l| l.relevance == 0) { bail!("query '{}' contains relevance 0; omit non-relevant documents", q.id); }
+        let unique: HashSet<_> = q.relevant.iter().map(|l| &l.document_title).collect();
+        if unique.len() != q.relevant.len() { bail!("query '{}' contains duplicate document labels", q.id); }
     }
-    let mut total_chunks = 0usize;
-    for rel in std::mem::take(&mut wanted) {
-        let path = args.root.join(&rel);
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("read doc {}", path.display()))?;
-        let title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("doc")
-            .to_string();
-        let r = wiki::ingest_raw(
-            store,
-            embedder,
-            config,
-            text,
-            Some(title),
-            Some(format!("eval://{rel}")),
-            None,
-            None,
-            Some(path.display().to_string()),
-        )
-        .await
-        .with_context(|| format!("ingest {rel}"))?;
-        total_chunks += r.chunk_count;
-    }
-    println!("ingested {} docs, {} chunks", DEFAULT_DOCS.len(), total_chunks);
-    Ok(())
+    Ok(data)
 }
 
-async fn eval_mode(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    golden: &[GoldenItem],
-    mode: SearchMode,
-    top_k: usize,
-) -> Result<(f64, f64, Vec<(String, String)>)> {
-    let mut hits = 0usize;
-    let mut rr_sum = 0f64;
-    let mut misses = Vec::new();
+async fn eval_mode(store: &Store, embedder: &Arc<dyn EmbeddingProvider>, config: &Config,
+    queries: &[LabeledQuery], mode: SearchMode, top_k: usize) -> Result<ModeReport> {
+    let mut reports = Vec::new();
+    for q in queries {
+        let embedding_started = Instant::now();
+        let query_embedding = if mode.needs_embedding() { Some(embedder.embed(&[q.query.clone()]).await?.remove(0)) } else { None };
+        let embedding_ms = ms(embedding_started);
+        let search_started = Instant::now();
+        let hits = search(store, &SearchQuery { mode, top_k, query_text: Some(q.query.clone()), query_embedding,
+            fts_stemmer: config.fts_stemmer.clone(), ..SearchQuery::default() })?;
+        reports.push(score(q, hits, embedding_ms, ms(search_started), top_k));
+    }
+    let n = reports.len() as f64;
+    let mut timings: Vec<_> = reports.iter().map(|q| q.search_ms).collect();
+    timings.sort_by(f64::total_cmp);
+    Ok(ModeReport { mode: mode.as_str().into(),
+        recall_at_k: reports.iter().map(|q| q.recall_at_k).sum::<f64>() / n,
+        mrr: reports.iter().map(|q| q.reciprocal_rank).sum::<f64>() / n,
+        ndcg_at_k: reports.iter().map(|q| q.ndcg_at_k).sum::<f64>() / n,
+        mean_search_ms: timings.iter().sum::<f64>() / n, p95_search_ms: percentile(&timings), queries: reports })
+}
 
-    for g in golden {
-        let query_embedding = if mode.needs_embedding() {
-            let mut vecs = embedder.embed(&[g.question.clone()]).await?;
-            Some(vecs.remove(0))
-        } else {
-            None
-        };
-        let results = search(
-            store,
-            &SearchQuery {
-                mode,
-                top_k,
-                query_text: Some(g.question.clone()),
-                query_embedding,
-                fts_stemmer: config.fts_stemmer.clone(),
-                ..SearchQuery::default()
-            },
-        )?;
-        let rank = results
-            .iter()
-            .position(|h| h.document_title.contains(&g.expect_title));
-        match rank {
-            Some(r) => {
-                hits += 1;
-                rr_sum += 1.0 / (r as f64 + 1.0);
-            }
-            None => misses.push((g.question.clone(), g.expect_title.clone())),
+fn score(query: &LabeledQuery, hits: Vec<SearchHit>, embedding_ms: f64, search_ms: f64, top_k: usize) -> QueryReport {
+    let labels: HashMap<&str, u32> = query.relevant.iter().map(|l| (l.document_title.as_str(), l.relevance)).collect();
+    let mut seen = HashSet::new();
+    let results: Vec<_> = hits.into_iter().take(top_k).enumerate().map(|(i, h)| ResultItem {
+        rank: i + 1, relevance: if seen.insert(h.document_title.clone()) {
+            labels.get(h.document_title.as_str()).copied().unwrap_or(0)
+        } else { 0 },
+        document_title: h.document_title, score: h.score }).collect();
+    let reciprocal_rank = results.iter().find(|h| h.relevance > 0).map(|h| 1.0 / h.rank as f64).unwrap_or(0.0);
+    let dcg = gain(results.iter().map(|h| h.relevance));
+    let mut ideal: Vec<_> = query.relevant.iter().map(|l| l.relevance).collect();
+    ideal.sort_unstable_by(|a, b| b.cmp(a)); ideal.truncate(top_k);
+    let idcg = gain(ideal.into_iter());
+    QueryReport { id: query.id.clone(),
+        recall_at_k: results.iter().filter(|h| h.relevance > 0).count() as f64 / query.relevant.len() as f64,
+        reciprocal_rank, ndcg_at_k: if idcg == 0.0 { 0.0 } else { dcg / idcg },
+        embedding_ms, search_ms, results }
+}
+
+fn gain(values: impl Iterator<Item=u32>) -> f64 { values.enumerate().map(|(i, r)| (2_f64.powi(r as i32) - 1.0) / ((i + 2) as f64).log2()).sum() }
+fn percentile(sorted: &[f64]) -> f64 { sorted[(((sorted.len() - 1) as f64 * 0.95).ceil() as usize)] }
+fn ms(started: Instant) -> f64 { started.elapsed().as_secs_f64() * 1_000.0 }
+
+fn recommend(chunks: u64, p95: f64) -> Recommendation {
+    let full_scan = chunks <= ANN_CHUNKS && p95 <= ANN_P95_MS;
+    Recommendation { path: if full_scan { "full_scan" } else { "investigate_future_ann" }.into(),
+        reason: format!("{} chunks and {:.2} ms worst vector/hybrid p95; profile before any backend change", chunks, p95),
+        chunk_threshold: ANN_CHUNKS, p95_search_ms_threshold: ANN_P95_MS }
+}
+
+fn print_report(r: &Report) {
+    println!("dataset={} version={} top_k={} corpus={} docs/{} chunks ingest={:.2}ms",
+        r.dataset_name, r.dataset_version, r.top_k, r.corpus.documents, r.corpus.chunks, r.corpus.ingest_ms);
+    for mode in &r.modes {
+        println!("\n{} recall@{}={:.3} MRR={:.3} nDCG@{}={:.3} search_mean={:.2}ms search_p95={:.2}ms",
+            mode.mode, r.top_k, mode.recall_at_k, mode.mrr, r.top_k, mode.ndcg_at_k, mode.mean_search_ms, mode.p95_search_ms);
+        for q in &mode.queries {
+            println!("  {} recall={:.3} rr={:.3} ndcg={:.3} embed={:.2}ms search={:.2}ms",
+                q.id, q.recall_at_k, q.reciprocal_rank, q.ndcg_at_k, q.embedding_ms, q.search_ms);
+            for h in &q.results { println!("    {:>2}. rel={} score={:.4} {}", h.rank, h.relevance, h.score, h.document_title); }
         }
     }
-
-    let n = golden.len() as f64;
-    Ok((hits as f64 / n, rr_sum / n, misses))
+    println!("\nscale={} — {}", r.scale_recommendation.path, r.scale_recommendation.reason);
 }
