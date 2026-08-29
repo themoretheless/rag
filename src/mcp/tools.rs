@@ -76,6 +76,23 @@ pub struct IngestFileParams {
     pub room: Option<String>,
 }
 
+/// Parameters for `sync_sources` (incremental directory ingest).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct SyncSourcesParams {
+    /// Directory to scan recursively. Must be under `RAG_INGEST_ROOTS`.
+    pub path: String,
+    /// Remove records whose previously ingested source files disappeared.
+    /// Defaults to false; deletion never happens implicitly.
+    #[serde(default)]
+    pub remove_deleted: Option<bool>,
+    /// Optional project shelf applied to newly added or updated files.
+    #[serde(default)]
+    pub wing: Option<String>,
+    /// Optional room applied to newly added or updated files.
+    #[serde(default)]
+    pub room: Option<String>,
+}
+
 /// Parameters for `ingest_raw` (immutable raw layer register).
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct IngestRawParams {

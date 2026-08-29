@@ -1,6 +1,7 @@
 //! MCP tool implementations and `ServerHandler` wiring.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -32,8 +33,8 @@ use super::tools::{
     MemoriesFiledAwayParams, PackContextParams, PackHitParams, PlanMaintenanceParams,
     QueryWithIndexParams, ReadIndexParams, ReadLogParams, RebuildIndexParams, ReconnectParams,
     ReembedDocumentParams, RefreshStaleWikiParams, SearchParams, SearchWikiParams,
-    UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams,
-    WriteWikiPageParams,
+    SyncSourcesParams, UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams,
+    WakeUpParams, WriteWikiPageParams,
 };
 use crate::chunking::{from_config, Chunker};
 use crate::config::Config;
@@ -62,6 +63,47 @@ use crate::wiki::FileAnswerCitation;
 /// Empty / whitespace-only optional strings become `None` (ingest wing/room/source_file).
 fn nonempty_opt(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
+}
+
+fn is_supported_source(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt"))
+        .unwrap_or(false)
+}
+
+fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let path = entry.path();
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if file_type.is_file() && is_supported_source(&path) {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+#[derive(Debug, Serialize)]
+struct SyncSourceError {
+    path: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SyncSourcesSummary {
+    added: Vec<String>,
+    updated: Vec<String>,
+    skipped: Vec<String>,
+    deleted: Vec<String>,
+    errors: Vec<SyncSourceError>,
 }
 
 /// RAG MCP server holding store, embedder, optional chat client, and config.
@@ -739,6 +781,157 @@ impl RagServer {
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
+    }
+
+    #[tool(
+        name = "sync_sources",
+        description = "Recursively sync supported text/Markdown files from an allowlisted directory. Adds new files, updates changed files, skips unchanged content, and removes missing sources only when remove_deleted=true."
+    )]
+    async fn sync_sources(
+        &self,
+        Parameters(params): Parameters<SyncSourcesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let requested_root = Path::new(&params.path);
+        check_path_allowlist(requested_root, &self.config.ingest_roots)
+            .map_err(Self::map_err)?;
+        let root = requested_root.canonicalize().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                Self::map_err(AppError::not_found(format!(
+                    "directory not found: {}",
+                    params.path
+                )))
+            } else {
+                Self::map_err(AppError::from(e))
+            }
+        })?;
+        if !root.is_dir() {
+            return Err(Self::map_err(AppError::config(format!(
+                "sync_sources path is not a directory: {}",
+                root.display()
+            ))));
+        }
+
+        let files = collect_supported_sources(&root).map_err(|e| Self::map_err(e.into()))?;
+        let mut seen = BTreeSet::new();
+        let mut summary = SyncSourcesSummary {
+            added: Vec::new(),
+            updated: Vec::new(),
+            skipped: Vec::new(),
+            deleted: Vec::new(),
+            errors: Vec::new(),
+        };
+
+        for path in files {
+            let canonical = match path.canonicalize() {
+                Ok(path) => path,
+                Err(error) => {
+                    summary.errors.push(SyncSourceError {
+                        path: path.display().to_string(),
+                        error: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            let source_file = canonical.display().to_string();
+            seen.insert(source_file.clone());
+            let uri = format!("file://{}", canonical.display());
+            let text = match std::fs::read_to_string(&canonical) {
+                Ok(text) => text,
+                Err(error) => {
+                    summary.errors.push(SyncSourceError {
+                        path: source_file,
+                        error: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            let existing = match self.store.find_by_uri(&uri) {
+                Ok(existing) => existing,
+                Err(error) => {
+                    summary.errors.push(SyncSourceError {
+                        path: source_file,
+                        error: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            let hash = content_hash(&text);
+            if existing.as_ref().is_some_and(|doc| {
+                doc.content_hash
+                    .as_deref()
+                    .map(|stored| stored == hash)
+                    .unwrap_or_else(|| content_hash(&doc.content) == hash)
+            }) {
+                summary.skipped.push(source_file);
+                continue;
+            }
+
+            let title = canonical
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string);
+            let metadata_json = existing.as_ref().map(|doc| doc.metadata_json.clone());
+            let wing = params
+                .wing
+                .clone()
+                .or_else(|| existing.as_ref().and_then(|doc| doc.wing.clone()));
+            let room = params
+                .room
+                .clone()
+                .or_else(|| existing.as_ref().and_then(|doc| doc.room.clone()));
+            match self
+                .ingest_pipeline(
+                    text,
+                    title,
+                    Some(uri),
+                    metadata_json,
+                    wing,
+                    room,
+                    Some(source_file.clone()),
+                    "raw",
+                    "document",
+                    false,
+                )
+                .await
+            {
+                Ok(result) if result.op == "inserted" => summary.added.push(source_file),
+                Ok(_) => summary.updated.push(source_file),
+                Err(error) => summary.errors.push(SyncSourceError {
+                    path: source_file,
+                    error: error.to_string(),
+                }),
+            }
+        }
+
+        if params.remove_deleted.unwrap_or(false) {
+            let documents = self.store.list_documents().map_err(Self::map_err)?;
+            let mut missing = BTreeSet::new();
+            for document in documents {
+                let Some(source) = document.source_file else {
+                    continue;
+                };
+                let source_path = Path::new(&source);
+                if source_path.starts_with(&root)
+                    && is_supported_source(source_path)
+                    && !seen.contains(&source)
+                    && !source_path.exists()
+                {
+                    missing.insert(source);
+                }
+            }
+            for source in missing {
+                match self.store.delete_by_source(&source) {
+                    Ok(count) if count > 0 => summary.deleted.push(source),
+                    Ok(_) => {}
+                    Err(error) => summary.errors.push(SyncSourceError {
+                        path: source,
+                        error: error.to_string(),
+                    }),
+                }
+            }
+        }
+
+        Self::json_result(&summary)
     }
 
     #[tool(

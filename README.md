@@ -359,6 +359,7 @@ All tools return JSON text content via MCP `CallToolResult`.
 |------|--------|----------|
 | `ingest_text` | `text`, `title?`, `uri?`, `metadata_json?` | Chunk, embed, store; upsert by uri; graph extract |
 | `ingest_file` | `path`, `title?`, `uri?`, `metadata_json?` | Read UTF-8 file under `RAG_INGEST_ROOTS` and ingest |
+| `sync_sources` | `path`, `remove_deleted?`, `wing?`, `room?` | Recursively ingest new/changed Markdown and text files, skip unchanged content, optionally prune deleted sources |
 | `ingest_raw` | `text`, `title?`, `uri?`, `metadata_json?`, `wing?`, `room?`, `source_file?` | Immutable raw layer (`layer=raw`); same uri+hash no-op; content change refused |
 | `add_drawer` | `content`, `wing`, `room`, `source_file?`, `title?`, `uri?`, `metadata_json?` | Verbatim drawer with required placement |
 | `list_sources` | `wing?`, `room?` | List raw-layer sources |
@@ -496,7 +497,7 @@ If the FTS extension is unavailable (offline CI, locked-down hosts), the same `l
 Tool tables above match the current MCP surface (see also Features and MemPalace-inspired model). Still **not** shipped:
 
 - No MemPalace `mempalace_*` tool renames or AAAK dialect
-- No directory `mine` / `sync_sources` / bulk vault sync (P1–P2 in parity doc)
+- No file watcher or bulk multi-format vault sync (P2 in parity doc); `sync_sources` supports incremental Markdown/text directory ingest
 - No hallways (named multi-hop path objects) as first-class tools
 - Auto schedule / dedicated CLI `maintain` subcommand and compress L3+ still open (analyze/plan/apply/organize/compress L0–L2/refresh are implemented)
 - No HNSW / DuckDB VSS ANN (full-scan cosine in Rust; fine for personal corpora)

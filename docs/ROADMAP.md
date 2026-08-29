@@ -130,7 +130,7 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
 - `consolidate_memory` (diary/episode → wiki/kg compression)
 - Retrieval UX: hierarchical parent-child chunks, `expand_chunks`, section-aware MD + `heading_path`, `multi_get`, `find_similar`, multi-query RRF, recency boost, `group_by=document`
 - Optional top-N rerank
-- Ops: `backup_db`, full `doctor`, `ingest_directory`, `sync_sources` / prune orphans; progress events on bulk ops
+- Ops: `sync_sources` directory ingest + explicit deleted-source pruning shipped; `backup_db`, full `doctor`, prune orphans, progress events on bulk ops remain
 - Wiki write conflict: etag / `updated_at` If-Match on `update_wiki_page`
 - Graph edge provenance: `chunk_id` / char offsets on edges
 - Export: `export_vault` / markdown wiki+index+log, graph JSON
