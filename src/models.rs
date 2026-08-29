@@ -693,6 +693,42 @@ pub struct OpsLogEntry {
     pub agent_name: Option<String>,
 }
 
+/// Named ordered set of documents, optionally shaped as an outline and dependency graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub metadata_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One document's placement and prerequisites inside a collection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionEntry {
+    pub document_id: String,
+    pub position: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_document_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+}
+
+/// Full collection including its ordered outline entries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionDetail {
+    #[serde(flatten)]
+    pub collection: Collection,
+    pub entries: Vec<CollectionEntry>,
+    /// Stable topological order (reading order breaks ties). Empty when dependencies cycle.
+    pub dependency_order: Vec<String>,
+    /// Members left in dependency cycles; empty when the dependency graph is acyclic.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependency_cycle_members: Vec<String>,
+}
+
 /// Catalog row for the wiki `index.md`-style content index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiIndexEntry {

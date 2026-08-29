@@ -17,6 +17,7 @@
 //! stable for callers. Public tool names and the rmcp schema surface are unchanged.
 
 mod facade;
+mod collections;
 mod graph;
 mod ingest;
 mod kg;

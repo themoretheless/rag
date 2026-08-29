@@ -63,9 +63,9 @@ See [`ORGANIZE.md`](ORGANIZE.md).
 
 | Tool | Purpose | Karpathy | MemPalace | Priority |
 |------|---------|----------|-----------|----------|
-| `collection_*` / `pack_context` | Ordered curated packs | Reading lists / query packs | Multi-drawer pack | P1 |
-| `build_outline` / `get_outline` / `move_to_parent` | Hierarchical order | Wiki outline pages | Taxonomy tree | P1 |
-| `topo_order` | Dependency reading/build order | Concept prerequisites | Traverse order | P1 |
+| `collection_create` / `collection_list` / `collection_get` / `collection_update` | Durable ordered document sets; update array order is read order | Reading lists / query packs | Multi-drawer pack | P1 shipped |
+| collection entry `parent_document_id` | Hierarchical outline within an ordered collection | Wiki outline pages | Taxonomy tree | P1 shipped |
+| collection entry `depends_on` | Optional prerequisite links alongside reading order | Concept prerequisites | Traverse order | P1 shipped |
 | `consolidate` / `merge_*` / `lint_organization` | Compile + hygiene | Lint + synthesize | repair / dedupe | P1 |
 | `lint_wiki` (+ orphans, missing backlinks, contradictions, stale, gaps) | Health-check compiled graph | **Lint** operation | — (no wiki lint suite) | P1 |
 | `resolve_stub` / `link_health` | Promote stubs; edge hygiene | Fix missing concept pages | Reconnect after mine/sync | P1 |

@@ -14,6 +14,7 @@
 //! Graph *extract/resolve* (wikilinks, tags, stubs) lives in crate-root [`crate::graph`].
 
 pub mod fts;
+pub mod collections;
 pub mod graph;
 pub mod kg;
 pub mod schema;

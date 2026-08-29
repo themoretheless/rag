@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// Create `documents` table if missing (base v1 columns).
 pub const CREATE_DOCUMENTS: &str = r#"
@@ -188,6 +188,45 @@ CREATE TABLE IF NOT EXISTS meta (
 )
 "#;
 
+/// Named, durable reading lists / outlines.
+pub const CREATE_COLLECTIONS: &str = r#"
+CREATE TABLE IF NOT EXISTS collections (
+  id VARCHAR PRIMARY KEY,
+  name VARCHAR NOT NULL,
+  description VARCHAR,
+  metadata_json VARCHAR NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL
+)
+"#;
+
+/// Ordered document membership. `parent_document_id` supplies outline nesting.
+pub const CREATE_COLLECTION_ENTRIES: &str = r#"
+CREATE TABLE IF NOT EXISTS collection_entries (
+  collection_id VARCHAR NOT NULL,
+  document_id VARCHAR NOT NULL,
+  position INTEGER NOT NULL,
+  parent_document_id VARCHAR,
+  PRIMARY KEY (collection_id, document_id)
+)
+"#;
+
+/// Optional prerequisite links scoped to a collection.
+pub const CREATE_COLLECTION_DEPENDENCIES: &str = r#"
+CREATE TABLE IF NOT EXISTS collection_dependencies (
+  collection_id VARCHAR NOT NULL,
+  document_id VARCHAR NOT NULL,
+  depends_on_document_id VARCHAR NOT NULL,
+  PRIMARY KEY (collection_id, document_id, depends_on_document_id)
+)
+"#;
+
+pub const CREATE_IDX_COLLECTION_ENTRIES_ORDER: &str =
+    "CREATE INDEX IF NOT EXISTS idx_collection_entries_order ON collection_entries(collection_id, position)";
+
+pub const CREATE_IDX_COLLECTION_DEPENDENCIES_DOCUMENT: &str =
+    "CREATE INDEX IF NOT EXISTS idx_collection_dependencies_document ON collection_dependencies(collection_id, document_id)";
+
 /// Optional index helpers for document scope / dedupe / organize columns.
 pub const CREATE_IDX_DOCUMENTS_CONTENT_HASH: &str =
     "CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)";
@@ -268,6 +307,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_EMBEDDING_MANIFEST,
             CREATE_SCHEMA_VERSION,
             CREATE_META,
+            CREATE_COLLECTIONS,
+            CREATE_COLLECTION_ENTRIES,
+            CREATE_COLLECTION_DEPENDENCIES,
+            CREATE_IDX_COLLECTION_ENTRIES_ORDER,
+            CREATE_IDX_COLLECTION_DEPENDENCIES_DOCUMENT,
             CREATE_KG_FACTS,
             CREATE_IDX_KG_FACTS_SUBJECT,
             CREATE_IDX_KG_FACTS_PREDICATE,
