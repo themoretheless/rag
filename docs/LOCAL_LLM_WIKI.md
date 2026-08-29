@@ -72,7 +72,7 @@ export RAG_LLM_ENABLED=false
 | `append_log` / `read_log` / `list_recent_ops` | Timeline |
 | `search_wiki` / `query_with_index` | Index-first + wiki search |
 | `file_answer` | Persist cited answer into wiki |
-| `lint_wiki` | Orphans, stale index, stubs, uncompiled raw |
+| `lint_wiki` | Structured index + link health: broken/duplicate/self links, unresolved stubs, orphan pages/documents, aggregate counts |
 
 ## Typical agent loop
 

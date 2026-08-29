@@ -3176,7 +3176,7 @@ impl RagServer {
 
     #[tool(
         name = "lint_wiki",
-        description = "Lint compiled wiki: missing/stale index, unresolved stubs, uncompiled raw."
+        description = "Lint compiled wiki and graph link health: missing/stale index, broken or duplicate wikilinks, unresolved stubs, orphan pages/documents, self-links, uncompiled raw, and aggregate health counts."
     )]
     async fn lint_wiki(&self) -> Result<CallToolResult, McpError> {
         let report = wiki::lint_wiki(&self.store).map_err(Self::map_err)?;

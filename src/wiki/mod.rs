@@ -17,6 +17,7 @@ use crate::graph::rebuild_document_graph;
 use crate::llm::{ChatClient, CompileResult, ConsolidateProposal};
 use crate::models::{Chunk, Document, OpsLogEntry, WikiIndexEntry};
 use crate::util::content_hash;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// Document layer for immutable raw sources.
@@ -160,6 +161,36 @@ pub struct LintIssue {
     /// Labels (or ids) of nodes that link to this entity (backlinks).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub referenced_by: Vec<String>,
+    /// Graph source node for link-specific findings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// Graph target node for link-specific findings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    /// Graph relation type for link-specific findings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rel_type: Option<String>,
+    /// Number of equivalent occurrences, primarily for duplicate links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrences: Option<usize>,
+}
+
+/// Aggregate wiki/link health counters. Counts are deterministic and make the
+/// lint response useful for dashboards without parsing issue messages.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct LinkHealthCounts {
+    pub documents: usize,
+    pub wiki_pages: usize,
+    pub graph_nodes: usize,
+    pub graph_edges: usize,
+    pub wikilinks: usize,
+    pub broken_wikilinks: usize,
+    pub unresolved_targets: usize,
+    pub orphan_documents: usize,
+    pub orphan_wiki_pages: usize,
+    pub self_links: usize,
+    pub duplicate_link_groups: usize,
+    pub duplicate_link_occurrences: usize,
 }
 
 /// Lint report.
@@ -167,6 +198,9 @@ pub struct LintIssue {
 pub struct LintReport {
     pub issue_count: usize,
     pub issues: Vec<LintIssue>,
+    /// True when no warning/error link-health findings were found.
+    pub healthy: bool,
+    pub health: LinkHealthCounts,
 }
 
 /// Compile apply result.
@@ -1739,11 +1773,117 @@ pub async fn file_answer(
     .await
 }
 
-/// Lint wiki graph/catalog for orphans and empty index.
+/// Lint wiki catalog and graph link health.
 pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     let mut issues = Vec::new();
+    let documents = store.list_documents()?;
     let wiki_docs = store.list_documents_by_layer("wiki")?;
     let index = store.list_wiki_index()?;
+    let graph = store.get_graph_view(crate::models::GraphFilter {
+        max_nodes: Some(u32::MAX),
+        ..Default::default()
+    })?;
+    let all_edges = store.list_graph_edges()?;
+    let node_by_id: HashMap<&str, &crate::models::GraphNode> = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
+    let mut incident_nodes = HashSet::new();
+    let mut duplicate_wikilinks: BTreeMap<(&str, &str), Vec<&crate::models::GraphEdge>> =
+        BTreeMap::new();
+    let mut health = LinkHealthCounts {
+        documents: documents.len(),
+        wiki_pages: wiki_docs.len(),
+        graph_nodes: graph.nodes.len(),
+        graph_edges: all_edges.len(),
+        ..Default::default()
+    };
+
+    for edge in &all_edges {
+        let source = node_by_id.get(edge.source_id.as_str()).copied();
+        let target = node_by_id.get(edge.target_id.as_str()).copied();
+        if source.is_some() {
+            incident_nodes.insert(edge.source_id.as_str());
+        }
+        if target.is_some() {
+            incident_nodes.insert(edge.target_id.as_str());
+        }
+        if edge.rel_type != crate::graph::REL_WIKILINK {
+            continue;
+        }
+        health.wikilinks += 1;
+        if source.is_none() || target.is_none() {
+            health.broken_wikilinks += 1;
+            let missing = match (source.is_none(), target.is_none()) {
+                (true, true) => "source and target nodes",
+                (true, false) => "source node",
+                (false, true) => "target node",
+                (false, false) => unreachable!(),
+            };
+            issues.push(LintIssue {
+                code: "broken_wikilink".into(),
+                severity: "error".into(),
+                message: format!(
+                    "wikilink edge {} references missing {}; rebuild or remove this edge",
+                    edge.id, missing
+                ),
+                entity_id: Some(edge.id.clone()),
+                source_id: Some(edge.source_id.clone()),
+                target_id: Some(edge.target_id.clone()),
+                rel_type: Some(edge.rel_type.clone()),
+                ..Default::default()
+            });
+        }
+        if edge.source_id == edge.target_id {
+            health.self_links += 1;
+            let label = source.map(|n| n.label.as_str()).unwrap_or(&edge.source_id);
+            issues.push(LintIssue {
+                code: "self_link".into(),
+                severity: "warn".into(),
+                message: format!("'{label}' links to itself; remove the redundant wikilink"),
+                entity_id: Some(edge.id.clone()),
+                source_id: Some(edge.source_id.clone()),
+                target_id: Some(edge.target_id.clone()),
+                rel_type: Some(edge.rel_type.clone()),
+                ..Default::default()
+            });
+        }
+        duplicate_wikilinks
+            .entry((edge.source_id.as_str(), edge.target_id.as_str()))
+            .or_default()
+            .push(edge);
+    }
+
+    for ((source_id, target_id), edges) in duplicate_wikilinks {
+        if edges.len() < 2 {
+            continue;
+        }
+        health.duplicate_link_groups += 1;
+        health.duplicate_link_occurrences += edges.len() - 1;
+        let source_label = node_by_id
+            .get(source_id)
+            .map(|n| n.label.as_str())
+            .unwrap_or(source_id);
+        let target_label = node_by_id
+            .get(target_id)
+            .map(|n| n.label.as_str())
+            .unwrap_or(target_id);
+        issues.push(LintIssue {
+            code: "duplicate_wikilink".into(),
+            severity: "warn".into(),
+            message: format!(
+                "'{source_label}' links to '{target_label}' {} times; keep one occurrence unless repetition is intentional",
+                edges.len()
+            ),
+            entity_id: Some(edges[0].id.clone()),
+            source_id: Some(source_id.to_string()),
+            target_id: Some(target_id.to_string()),
+            rel_type: Some(crate::graph::REL_WIKILINK.into()),
+            occurrences: Some(edges.len()),
+            ..Default::default()
+        });
+    }
 
     if wiki_docs.is_empty() {
         issues.push(LintIssue {
@@ -1785,12 +1925,9 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     }
 
     // Unresolved stubs in graph (include who links + expected label)
-    let graph = store.get_graph_view(crate::models::GraphFilter {
-        kinds: Some(vec!["stub".into()]),
-        ..Default::default()
-    })?;
-    for n in graph.nodes {
+    for n in graph.nodes.iter().filter(|n| n.kind == "stub") {
         if !n.resolved {
+            health.unresolved_targets += 1;
             let bl = store.backlinks(&n.id).unwrap_or_else(|_| crate::models::GraphView {
                 nodes: vec![],
                 edges: vec![],
@@ -1819,11 +1956,43 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
                     "stub node '{}' unresolved ({}); write wiki/document with title or wiki:// slug matching this label",
                     n.label, refs_note
                 ),
-                entity_id: Some(n.id),
+                entity_id: Some(n.id.clone()),
                 expected_label: Some(n.label.clone()),
                 referenced_by,
+                ..Default::default()
             });
         }
+    }
+
+    // Documents with no graph node, or document nodes with no incident edges.
+    let node_by_document: HashMap<&str, &crate::models::GraphNode> = graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.document_id.as_deref().map(|id| (id, node)))
+        .collect();
+    for doc in &documents {
+        let node = node_by_document.get(doc.id.as_str()).copied();
+        if node
+            .map(|n| incident_nodes.contains(n.id.as_str()))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let is_wiki = doc.layer == LAYER_WIKI;
+        health.orphan_documents += 1;
+        if is_wiki {
+            health.orphan_wiki_pages += 1;
+        }
+        issues.push(LintIssue {
+            code: if is_wiki { "orphan_wiki_page" } else { "orphan_document" }.into(),
+            severity: "info".into(),
+            message: format!(
+                "{} has no incoming or outgoing graph links; add a relevant wikilink or archive it",
+                doc.uri
+            ),
+            entity_id: Some(doc.id.clone()),
+            ..Default::default()
+        });
     }
 
     // Raw without any related wiki (soft)
@@ -1839,12 +2008,18 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             entity_id: None,
             expected_label: None,
             referenced_by: vec![],
+            ..Default::default()
         });
     }
 
+    let healthy = !issues
+        .iter()
+        .any(|issue| issue.severity == "warn" || issue.severity == "error");
     Ok(LintReport {
         issue_count: issues.len(),
         issues,
+        healthy,
+        health,
     })
 }
 

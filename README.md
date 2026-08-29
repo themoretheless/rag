@@ -454,7 +454,7 @@ All tools return JSON text content via MCP `CallToolResult`.
 | `list_recent_ops` | `limit?` | Newest ops_log rows |
 | `file_answer` | `title`, `body`, `slug?`, `citations?`, `agent?` | Persist cited answer as wiki page |
 | `compile_source` | `source_id_or_uri`, `dry_run?`, `agent?` | Local LLM compiles a raw source into wiki pages |
-| `lint_wiki` | (none) | Lint: index gaps, stubs, uncompiled raw |
+| `lint_wiki` | (none) | Structured wiki/link health: index gaps, broken/duplicate/self wikilinks, unresolved stubs, orphan pages/documents, uncompiled raw, aggregate counts |
 | `refresh_stale_wiki` | `dry_run?` (default true), `max_docs?`, `agent?` | List (or recompile) wiki older than linked raw |
 
 ### Maintenance (see [Local LLM + maintenance](#local-llm--maintenance))

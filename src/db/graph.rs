@@ -341,6 +341,27 @@ impl Store {
         Ok(GraphView { nodes, edges })
     }
 
+    /// Return every graph edge, including edges whose endpoint node is missing.
+    ///
+    /// Most graph views intentionally omit dangling edges because they cannot be
+    /// rendered. Integrity diagnostics use this raw view to report broken links.
+    pub fn list_graph_edges(&self) -> Result<Vec<GraphEdge>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, source_id, target_id, rel_type, weight, context
+            FROM graph_edges
+            ORDER BY id ASC
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut edges = Vec::new();
+        while let Some(row) = rows.next()? {
+            edges.push(row_to_edge(row)?);
+        }
+        Ok(edges)
+    }
+
     /// Undirected BFS neighborhood of `node_id` up to `depth`, capped at `max_nodes`.
     ///
     /// Edges are followed in both directions. Returns visited nodes and edges whose
