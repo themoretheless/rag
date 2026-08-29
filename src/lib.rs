@@ -20,6 +20,7 @@ pub mod db;
 pub mod diary;
 pub mod embeddings;
 pub mod error;
+pub mod file_ingest;
 pub mod graph;
 pub mod http_api;
 pub mod llm;

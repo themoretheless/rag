@@ -151,7 +151,7 @@ pub struct IngestTextParams {
 /// Parameters for `ingest_file`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct IngestFileParams {
-    /// Filesystem path to a UTF-8 text file.
+    /// Filesystem path to text, Markdown, HTML, PDF, or a common source-code file.
     pub path: String,
     /// Optional document title (defaults to file name).
     #[serde(default)]

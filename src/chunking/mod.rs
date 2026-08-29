@@ -20,6 +20,34 @@ pub fn from_config(chunk_size: usize, overlap: usize) -> FixedChunker {
     FixedChunker::new(chunk_size, overlap)
 }
 
+/// Split source code while preferring line and block boundaries near the end
+/// of each configured window. Offsets retain the existing character semantics.
+pub fn code_chunks(text: &str, chunk_size: usize, overlap: usize) -> Vec<(String, i32, i32)> {
+    if text.is_empty() { return Vec::new(); }
+    let chars: Vec<char> = text.chars().collect();
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let ideal_end = (start + chunk_size.max(1)).min(chars.len());
+        let mut end = ideal_end;
+        if ideal_end < chars.len() {
+            let search_from = start + ((ideal_end - start) * 60 / 100);
+            if let Some(relative) = chars[search_from..ideal_end].windows(2)
+                .rposition(|pair| pair == ['\n', '\n'] || pair == ['}', '\n']) {
+                end = search_from + relative + 2;
+            } else if let Some(relative) = chars[search_from..ideal_end].iter().rposition(|c| *c == '\n') {
+                end = search_from + relative + 1;
+            }
+        }
+        let content = chars[start..end].iter().collect();
+        chunks.push((content, start as i32, end as i32));
+        if end == chars.len() { break; }
+        let next = end.saturating_sub(overlap.min(end - start - 1));
+        start = next.max(start + 1);
+    }
+    chunks
+}
+
 /// Return Markdown heading metadata active at each chunk start offset.
 ///
 /// The result follows the input chunk order. Each item is `(heading_path, section)`,

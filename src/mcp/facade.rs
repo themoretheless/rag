@@ -41,7 +41,7 @@ use super::tools::{
     SyncSourcesParams, UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams,
     WakeUpParams, WriteWikiPageParams,
 };
-use crate::chunking::{from_config, markdown_section_metadata, Chunker};
+use crate::chunking::{code_chunks, from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::search::{attach_context, search, search_chunks, ContextExpansion, DiversityMode, SearchQuery};
@@ -50,6 +50,7 @@ use crate::db::recovery::{BundleDocument, BundleExportReport, ConflictPolicy, Re
 use crate::diary;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
+use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
 use crate::graph::rebuild_document_graph;
 use crate::llm::ChatClient;
 use crate::maintain::{
@@ -70,13 +71,6 @@ use crate::wiki::FileAnswerCitation;
 /// Empty / whitespace-only optional strings become `None` (ingest wing/room/source_file).
 fn nonempty_opt(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
-}
-
-fn is_supported_source(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt"))
-        .unwrap_or(false)
 }
 
 fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
@@ -324,8 +318,14 @@ impl RagServer {
 
         let revision = self.store.upsert_document_cas(&doc, None)?;
 
-        let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
-        let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, &doc.content);
+        let is_code = serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok()
+            .and_then(|value| value.get("language").cloned()).is_some();
+        let pieces: Vec<(String, i32, i32)> = if is_code {
+            code_chunks(&doc.content, self.config.chunk_size, self.config.chunk_overlap)
+        } else {
+            let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
+            Chunker::chunk(&chunker, &doc.content)
+        };
         // ATX headings are unambiguous enough to detect for text ingest; plain
         // text without Markdown headings retains the legacy empty metadata.
         let section_metadata = markdown_section_metadata(&doc.content, &pieces);
@@ -852,7 +852,7 @@ impl RagServer {
 
     #[tool(
         name = "ingest_file",
-        description = "Read a UTF-8 file from disk and ingest it (chunk, embed, store). Path must be under RAG_INGEST_ROOTS. Upserts by uri."
+        description = "Read text, Markdown, HTML, PDF, or source code from disk and ingest it. Path must be under RAG_INGEST_ROOTS. Upserts by uri."
     )]
     async fn ingest_file(
         &self,
@@ -861,16 +861,18 @@ impl RagServer {
         let path = Path::new(&params.path);
         check_path_allowlist(path, &self.config.ingest_roots).map_err(Self::map_err)?;
 
-        let text = std::fs::read_to_string(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
+        let extracted = extract_file(path).map_err(|e| {
+            if path.try_exists().ok() == Some(false) {
                 Self::map_err(AppError::not_found(format!(
                     "file not found: {}",
                     params.path
                 )))
             } else {
-                Self::map_err(AppError::from(e))
+                Self::map_err(AppError::config(e.to_string()))
             }
         })?;
+        let metadata_json = merge_metadata(params.metadata_json, extracted.metadata)
+            .map_err(|e| Self::map_err(AppError::config(format!("metadata_json is not valid JSON: {e}"))))?;
 
         let default_uri = path
             .canonicalize()
@@ -890,10 +892,10 @@ impl RagServer {
 
         let result = self
             .ingest_pipeline(
-                text,
+                extracted.text,
                 params.title.or(default_title),
                 params.uri.or(Some(default_uri)),
-                params.metadata_json,
+                Some(metadata_json),
                 params.wing,
                 params.room,
                 source_file,
@@ -908,7 +910,7 @@ impl RagServer {
 
     #[tool(
         name = "sync_sources",
-        description = "Recursively sync supported text/Markdown files from an allowlisted directory. Adds new files, updates changed files, skips unchanged content, and removes missing sources only when remove_deleted=true."
+        description = "Recursively sync supported text, Markdown, HTML, PDF, and source-code files from an allowlisted directory. Adds or updates changed files and removes missing sources only when requested."
     )]
     async fn sync_sources(
         &self,
@@ -958,8 +960,8 @@ impl RagServer {
             let source_file = canonical.display().to_string();
             seen.insert(source_file.clone());
             let uri = format!("file://{}", canonical.display());
-            let text = match std::fs::read_to_string(&canonical) {
-                Ok(text) => text,
+            let extracted = match extract_file(&canonical) {
+                Ok(extracted) => extracted,
                 Err(error) => {
                     summary.errors.push(SyncSourceError {
                         path: source_file,
@@ -978,7 +980,7 @@ impl RagServer {
                     continue;
                 }
             };
-            let hash = content_hash(&text);
+            let hash = content_hash(&extracted.text);
             if existing.as_ref().is_some_and(|doc| {
                 doc.content_hash
                     .as_deref()
@@ -993,7 +995,13 @@ impl RagServer {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .map(str::to_string);
-            let metadata_json = existing.as_ref().map(|doc| doc.metadata_json.clone());
+            let metadata_json = match merge_metadata(existing.as_ref().map(|doc| doc.metadata_json.clone()), extracted.metadata) {
+                Ok(metadata) => Some(metadata),
+                Err(error) => {
+                    summary.errors.push(SyncSourceError { path: source_file, error: error.to_string() });
+                    continue;
+                }
+            };
             let wing = params
                 .wing
                 .clone()
@@ -1004,7 +1012,7 @@ impl RagServer {
                 .or_else(|| existing.as_ref().and_then(|doc| doc.room.clone()));
             match self
                 .ingest_pipeline(
-                    text,
+                    extracted.text,
                     title,
                     Some(uri),
                     metadata_json,

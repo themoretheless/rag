@@ -10,6 +10,7 @@
 use anyhow::{bail, Context, Result};
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
 use rag_mcp::wiki;
+use rag_mcp::file_ingest::extract_file;
 use rag_mcp::{check_path_allowlist, Config, Store};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,7 +59,7 @@ fn parse_args() -> Result<Args> {
             "-h" | "--help" => {
                 eprintln!(
                     "Usage: ingest_file --path FILE [--wing WING] [--room ROOM] [--db PATH]\n\
-                     Read a UTF-8 file, chunk, embed, and upsert into DuckDB (file:// URI).\n\
+                     Read text, Markdown, HTML, PDF, or source code and upsert into DuckDB.\n\
                      Path must be under RAG_INGEST_ROOTS (same as MCP ingest_file).\n\
                      Env: RAG_DB_PATH (overridden by --db), RAG_INGEST_ROOTS, RAG_EMBEDDING_*"
                 );
@@ -106,11 +107,7 @@ async fn run(args: Args) -> Result<()> {
         .map(|s| s.to_string());
     let source_file = Some(canon.display().to_string());
 
-    let text = std::fs::read_to_string(&args.path)
-        .with_context(|| format!("read {}", args.path.display()))?;
-    if text.chars().any(|c| c == '\0') {
-        bail!("file looks binary (contains NUL): {}", args.path.display());
-    }
+    let extracted = extract_file(&args.path).with_context(|| format!("extract {}", args.path.display()))?;
 
     eprintln!(
         "ingest_file: path={} wing={:?} room={:?} db={} uri={}",
@@ -125,7 +122,7 @@ async fn run(args: Args) -> Result<()> {
         &store,
         &embedder,
         &config,
-        text,
+        extracted.text,
         title,
         Some(uri),
         args.wing,
