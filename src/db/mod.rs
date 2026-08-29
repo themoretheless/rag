@@ -17,6 +17,7 @@ pub mod fts;
 pub mod collections;
 pub mod graph;
 pub mod kg;
+pub mod recovery;
 pub mod schema;
 pub mod search;
 pub mod store;

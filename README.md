@@ -400,6 +400,16 @@ All tools return JSON text content via MCP `CallToolResult`.
 | `llm_status` | (none) | Chat + embed config and reachability |
 | `vacuum_store` | (none) | DuckDB `CHECKPOINT` + file size delta; ops_log |
 
+### Backup and recovery
+
+| Tool | Params | Behavior |
+|------|--------|----------|
+| `backup_db` | `path`, `dry_run?`, `overwrite?` | Consistent checkpointed DuckDB copy; no overwrite by default |
+| `export_bundle` | `path`, `format?`, `dry_run?`, `overwrite?` | Portable JSON/JSONL documents, metadata, and chunks |
+| `import_bundle` | `path`, `format?`, `dry_run?`, `conflict_policy?` | Transactional import; `error`, `skip`, or explicit `overwrite` |
+
+All paths must be under `RAG_INGEST_ROOTS`. Imports default to dry-run. See [Backup and recovery](docs/RECOVERY.md).
+
 ### Graph (Obsidian-like)
 
 | Tool | Params | Behavior |

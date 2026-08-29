@@ -2,7 +2,7 @@
 
 use rmcp::handler::server::tool::ToolRouter;
 
-use super::{collections, graph, ingest, kg, maintain, search, wiki};
+use super::{collections, graph, ingest, kg, maintain, recovery, search, wiki};
 pub use super::facade::RagServer;
 
 /// Compose the public MCP facade from domain-owned tool registrations.
@@ -15,6 +15,7 @@ pub(super) fn compose_tool_router(mut all: ToolRouter<RagServer>) -> ToolRouter<
     router.merge(wiki::router(&mut all));
     router.merge(kg::router(&mut all));
     router.merge(maintain::router(&mut all));
+    router.merge(recovery::router(&mut all));
 
     debug_assert!(all.map.is_empty(), "every MCP tool must belong to a domain cluster");
     router.merge(all);

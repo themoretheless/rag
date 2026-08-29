@@ -134,10 +134,10 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
   deterministic lifecycle transitions do not require an LLM.
 - Retrieval UX: section-aware Markdown + `heading_path` and opt-in neighbor/parent-section expansion shipped as additive `search` / `pack_context` params; dedicated `expand_chunks`, `multi_get`, `find_similar`, multi-query RRF, recency boost, `group_by=document` remain
 - Optional top-N rerank
-- Ops: `sync_sources` directory ingest + explicit deleted-source pruning shipped; `backup_db`, full `doctor`, prune orphans, progress events on bulk ops remain
+- Ops: `sync_sources` directory ingest + explicit deleted-source pruning and `backup_db` consistent snapshots shipped; full `doctor`, prune orphans, progress events on bulk ops remain
 - Wiki write conflict: etag / `updated_at` If-Match on `update_wiki_page`
 - Graph edge provenance: `chunk_id` / char offsets on edges
-- Export: `export_vault` / markdown wiki+index+log, graph JSON
+- Export: portable JSON/JSONL `export_bundle` / `import_bundle` recovery shipped; `export_vault` / markdown wiki+index+log and graph JSON remain
 - MCP resources (doc/chunk/graph) + prompts (cited answer, ingest)
 - Optional: `dry_run` / idempotency keys, pin/boost documents, `record_feedback` schema
 

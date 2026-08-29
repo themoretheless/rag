@@ -22,6 +22,7 @@ mod graph;
 mod ingest;
 mod kg;
 mod maintain;
+mod recovery;
 mod search;
 pub mod server;
 pub mod surface;

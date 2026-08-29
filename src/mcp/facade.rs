@@ -19,10 +19,10 @@ use uuid::Uuid;
 use super::surface::{self, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB};
 
 use super::tools::{
-    AddDrawerParams, AnalyzeCorpusParams, AppendLogParams, ArchiveMemoryItemsParams,
+    AddDrawerParams, AnalyzeCorpusParams, AppendLogParams, ArchiveMemoryItemsParams, BackupDbParams,
     CheckDuplicateParams, CheckpointParams,
     CollectionCreateParams, CollectionEntryParams, CollectionGetParams, CollectionListParams,
-    CollectionUpdateParams,
+    CollectionUpdateParams, ExportBundleParams,
     CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams, CreateTunnelParams,
     DeleteBySourceParams, DeleteDocumentParams,
     DeleteTunnelParams, DiaryReadParams, DiaryWriteParams, ExportGraphSnapshotParams,
@@ -30,7 +30,7 @@ use super::tools::{
     GetBacklinksParams, GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams,
     GetSourceParams,
     GetTaxonomyParams, GetWikiPageParams, GraphExpandSearchParams, IngestFileParams,
-    IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams, KgQueryParams,
+    ImportBundleParams, IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams, KgQueryParams,
     KgSupersedeParams, KgTimelineParams, LinkNodesParams, ListDocumentsParams,
     ListMemoryLifecycleCandidatesParams, ListRecentOpsParams,
     ApplyMaintenancePlanParams, ListRoomsParams, ListSourcesParams, ListTunnelsParams,
@@ -46,6 +46,7 @@ use crate::config::Config;
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::search::{attach_context, search, search_chunks, ContextExpansion, DiversityMode, SearchQuery};
 use crate::db::Store;
+use crate::db::recovery::{BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION};
 use crate::diary;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
@@ -3314,6 +3315,147 @@ impl RagServer {
         let report: VacuumStoreReport = self.store.vacuum_store().map_err(Self::map_err)?;
         Self::json_result(&report)
     }
+
+    #[tool(
+        name = "backup_db",
+        description = "Create a consistent DuckDB file backup after CHECKPOINT. path must be under RAG_INGEST_ROOTS. dry_run=false writes; overwrite defaults to false."
+    )]
+    async fn backup_db(
+        &self,
+        Parameters(params): Parameters<BackupDbParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
+        refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
+        let report = self.store.backup_database(
+            &path,
+            params.dry_run.unwrap_or(false),
+            params.overwrite.unwrap_or(false),
+        ).map_err(Self::map_err)?;
+        Self::json_result(&report)
+    }
+
+    #[tool(
+        name = "export_bundle",
+        description = "Export documents, essential metadata, and chunks as a portable JSON or JSONL recovery bundle. path must be under RAG_INGEST_ROOTS; never overwrites unless overwrite=true."
+    )]
+    async fn export_bundle(
+        &self,
+        Parameters(params): Parameters<ExportBundleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
+        refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
+        let format = recovery_format(params.format.as_deref(), &path).map_err(Self::map_err)?;
+        let overwrite = params.overwrite.unwrap_or(false);
+        let dry_run = params.dry_run.unwrap_or(false);
+        let existed = path.exists();
+        if existed && !overwrite {
+            return Err(Self::map_err(AppError::conflict(format!(
+                "bundle destination '{}' already exists; set overwrite=true explicitly", path.display()
+            ))));
+        }
+        let bundle = self.store.recovery_bundle().map_err(Self::map_err)?;
+        let documents = bundle.documents.len() as u64;
+        let chunks = bundle.documents.iter().map(|d| d.chunks.len() as u64).sum();
+        let encoded = encode_recovery_bundle(&bundle, format).map_err(Self::map_err)?;
+        if !dry_run {
+            std::fs::write(&path, &encoded).map_err(|e| Self::map_err(e.into()))?;
+        }
+        let report = BundleExportReport {
+            success: true, dry_run, path: path.display().to_string(), format: format.into(),
+            overwritten: existed && overwrite, documents, chunks,
+            bytes: Some(encoded.len() as u64), errors: Vec::new(),
+        };
+        Self::json_result(&report)
+    }
+
+    #[tool(
+        name = "import_bundle",
+        description = "Import a portable JSON/JSONL recovery bundle from RAG_INGEST_ROOTS. dry_run defaults true. conflict_policy is error (default), skip, or overwrite; overwrite must be explicit. Returns structured counts/conflicts/errors."
+    )]
+    async fn import_bundle(
+        &self,
+        Parameters(params): Parameters<ImportBundleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
+        if !path.is_file() {
+            return Err(Self::map_err(AppError::not_found(format!("bundle file '{}'", path.display()))));
+        }
+        let format = recovery_format(params.format.as_deref(), &path).map_err(Self::map_err)?;
+        let policy = ConflictPolicy::parse(params.conflict_policy.as_deref()).map_err(Self::map_err)?;
+        let input = std::fs::read_to_string(&path).map_err(|e| Self::map_err(e.into()))?;
+        let bundle = decode_recovery_bundle(&input, format).map_err(Self::map_err)?;
+        let report = self.store.import_recovery_bundle(
+            &bundle, policy, params.dry_run.unwrap_or(true), &path, format,
+        ).map_err(Self::map_err)?;
+        Self::json_result(&report)
+    }
+}
+
+fn recovery_path(raw: &str, roots: &[PathBuf]) -> Result<PathBuf, AppError> {
+    let raw = raw.trim();
+    if raw.is_empty() { return Err(AppError::config("path must be non-empty")); }
+    let path = PathBuf::from(raw);
+    check_path_allowlist(&path, roots)?;
+    let parent = path.parent().unwrap_or(Path::new("."));
+    if !parent.is_dir() {
+        return Err(AppError::config(format!("parent directory '{}' does not exist", parent.display())));
+    }
+    let parent = std::fs::canonicalize(parent)?;
+    Ok(parent.join(path.file_name().ok_or_else(|| AppError::config("path must name a file"))?))
+}
+
+fn recovery_format(requested: Option<&str>, path: &Path) -> Result<&'static str, AppError> {
+    let value = requested.map(str::trim).filter(|s| !s.is_empty()).map(str::to_ascii_lowercase)
+        .or_else(|| path.extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase))
+        .unwrap_or_else(|| "json".into());
+    match value.as_str() {
+        "json" => Ok("json"),
+        "jsonl" | "ndjson" => Ok("jsonl"),
+        other => Err(AppError::config(format!("invalid bundle format '{other}': expected json or jsonl"))),
+    }
+}
+
+fn refuse_live_db_target(path: &Path, db_path: &Path) -> Result<(), AppError> {
+    let db = std::fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
+    if path == db {
+        return Err(AppError::forbidden("recovery output path must not be the live DuckDB file"));
+    }
+    Ok(())
+}
+
+fn encode_recovery_bundle(bundle: &RecoveryBundle, format: &str) -> Result<Vec<u8>, AppError> {
+    if format == "json" { return Ok(serde_json::to_vec_pretty(bundle)?); }
+    let mut lines = Vec::with_capacity(bundle.documents.len() + 1);
+    lines.push(serde_json::to_string(&serde_json::json!({
+        "record_type": "manifest", "format": bundle.format, "version": bundle.version,
+        "exported_at": bundle.exported_at,
+    }))?);
+    for item in &bundle.documents {
+        lines.push(serde_json::to_string(&serde_json::json!({"record_type": "document", "value": item}))?);
+    }
+    Ok((lines.join("\n") + "\n").into_bytes())
+}
+
+fn decode_recovery_bundle(input: &str, format: &str) -> Result<RecoveryBundle, AppError> {
+    if format == "json" { return Ok(serde_json::from_str(input)?); }
+    let mut format_name = String::new();
+    let mut version = 0;
+    let mut exported_at = Utc::now();
+    let mut documents = Vec::<BundleDocument>::new();
+    for (index, line) in input.lines().enumerate() {
+        if line.trim().is_empty() { continue; }
+        let value: serde_json::Value = serde_json::from_str(line).map_err(|e| AppError::config(format!("invalid JSONL line {}: {e}", index + 1)))?;
+        match value.get("record_type").and_then(|v| v.as_str()) {
+            Some("manifest") => {
+                format_name = value.get("format").and_then(|v| v.as_str()).unwrap_or_default().into();
+                version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                exported_at = serde_json::from_value(value.get("exported_at").cloned().unwrap_or_default())?;
+            }
+            Some("document") => documents.push(serde_json::from_value(value.get("value").cloned().unwrap_or_default())?),
+            other => return Err(AppError::config(format!("invalid JSONL record_type {:?} at line {}", other, index + 1))),
+        }
+    }
+    Ok(RecoveryBundle { format: format_name, version: if version == 0 { BUNDLE_VERSION } else { version }, exported_at, documents })
 }
 
 fn pack_hit_to_search_hit(h: PackHitParams) -> SearchHit {

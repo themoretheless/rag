@@ -36,6 +36,50 @@
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
+// --- Backup / recovery ---
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct BackupDbParams {
+    /// Destination DuckDB file under `RAG_INGEST_ROOTS`.
+    pub path: String,
+    /// Report the intended copy without writing it.
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+    /// Replace an existing destination. Defaults to false.
+    #[serde(default)]
+    pub overwrite: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ExportBundleParams {
+    /// Destination `.json` or `.jsonl` file under `RAG_INGEST_ROOTS`.
+    pub path: String,
+    /// `json` or `jsonl`; inferred from the extension when omitted.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Report counts without writing a file.
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+    /// Replace an existing destination. Defaults to false.
+    #[serde(default)]
+    pub overwrite: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ImportBundleParams {
+    /// Source `.json` or `.jsonl` file under `RAG_INGEST_ROOTS`.
+    pub path: String,
+    /// `json` or `jsonl`; inferred from the extension when omitted.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// `error` (default), `skip`, or `overwrite` for document id/URI conflicts.
+    #[serde(default)]
+    pub conflict_policy: Option<String>,
+    /// Parse and report the import without changing DuckDB. Defaults to true.
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+}
+
 // --- Collections / outlines / dependency order ---
 
 /// One ordered document entry supplied to collection create/update.
