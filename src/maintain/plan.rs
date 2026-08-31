@@ -1058,6 +1058,8 @@ mod tests {
                 ingest_roots_configured: false,
                 db_path: ":memory:".into(),
                 wal_bytes: 0,
+                wal_warn_bytes: 256 * 1024 * 1024,
+                wal_too_large: false,
                 documents_without_chunks: 0,
                 orphan_chunks: 0,
                 orphan_document_nodes: 0,

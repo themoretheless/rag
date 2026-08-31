@@ -606,6 +606,8 @@ pub struct DoctorReport {
     pub ingest_roots_configured: bool,
     pub db_path: String,
     pub wal_bytes: u64,
+    pub wal_warn_bytes: u64,
+    pub wal_too_large: bool,
     pub documents_without_chunks: u64,
     pub orphan_chunks: u64,
     pub orphan_document_nodes: u64,

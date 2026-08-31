@@ -80,6 +80,16 @@ pub struct ImportBundleParams {
     pub dry_run: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct DoctorRepairParams {
+    /// Preview only by default. Set false to reingest missing chunks and prune orphan rows.
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+    /// Maximum documents without chunks to repair in one call.
+    #[serde(default)]
+    pub max_docs: Option<usize>,
+}
+
 // --- Collections / outlines / dependency order ---
 
 /// One ordered document entry supplied to collection create/update.

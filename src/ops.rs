@@ -7,6 +7,13 @@ use std::time::{Duration, SystemTime};
 use chrono::Utc;
 
 use crate::db::Store;
+
+pub fn wal_warn_bytes() -> u64 {
+    std::env::var("RAG_WAL_WARN_BYTES").ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(256 * 1024 * 1024)
+}
 use crate::error::{AppError, Result};
 
 const BACKUP_PREFIX: &str = "rag-auto-";

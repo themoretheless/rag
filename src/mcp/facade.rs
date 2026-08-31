@@ -24,7 +24,7 @@ use super::tools::{
     CollectionCreateParams, CollectionEntryParams, CollectionGetParams, CollectionListParams,
     CollectionUpdateParams, ExportBundleParams,
     CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams, CreateTunnelParams,
-    DeleteBySourceParams, DeleteDocumentParams,
+    DeleteBySourceParams, DeleteDocumentParams, DoctorRepairParams,
     DeleteTunnelParams, DiaryReadParams, DiaryWriteParams, ExportGraphSnapshotParams,
     FileAnswerCitationParams, FileAnswerParams, FindNodeParams, FindTunnelsParams, FollowTunnelsParams,
     GetBacklinksParams, GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams,
@@ -130,6 +130,19 @@ struct SyncSourcesSummary {
     skipped: Vec<String>,
     deleted: Vec<String>,
     errors: Vec<SyncSourceError>,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorRepairReport {
+    dry_run: bool,
+    documents_considered: usize,
+    documents_repaired: Vec<String>,
+    documents_failed: Vec<SyncSourceError>,
+    orphan_chunks_pruned: u64,
+    orphan_document_nodes_pruned: u64,
+    orphan_edges_pruned: u64,
+    before: DoctorReport,
+    after: DoctorReport,
 }
 
 /// RAG MCP server holding store, embedder, optional chat client, and config.
@@ -537,10 +550,15 @@ impl RagServer {
         let (documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents) =
             self.store.integrity_counts()?;
         let relational_integrity_ok = orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
+        let wal_bytes = self.store.wal_file_size_bytes();
+        let wal_warn_bytes = crate::ops::wal_warn_bytes();
+        let wal_too_large = wal_bytes >= wal_warn_bytes;
         let repair_hint = if !relational_integrity_ok {
             Some("Create a backup, then run db_repair offline and maintain_refresh.".to_string())
         } else if documents_without_chunks > 0 {
             Some("Reingest documents without chunks; sync_sources repairs unchanged file documents too.".to_string())
+        } else if wal_too_large {
+            Some("WAL exceeds the configured warning threshold; run a checkpointed backup or vacuum_store.".to_string())
         } else { None };
         let ok = schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0;
         Ok(DoctorReport {
@@ -558,7 +576,9 @@ impl RagServer {
             ready_for_search,
             ingest_roots_configured,
             db_path: self.store.path().display().to_string(),
-            wal_bytes: self.store.wal_file_size_bytes(),
+            wal_bytes,
+            wal_warn_bytes,
+            wal_too_large,
             documents_without_chunks,
             orphan_chunks,
             orphan_document_nodes,
@@ -1731,6 +1751,76 @@ impl RagServer {
     async fn doctor(&self) -> Result<CallToolResult, McpError> {
         let body = self.doctor_report().map_err(Self::map_err)?;
         Self::json_result(&body)
+    }
+
+    #[tool(
+        name = "doctor_repair",
+        description = "Preview or repair doctor findings. Defaults to dry_run=true. Reingests non-schema documents missing chunks, prunes orphan chunks/nodes/edges transactionally, checkpoints, and returns before/after doctor reports."
+    )]
+    async fn doctor_repair(
+        &self,
+        Parameters(params): Parameters<DoctorRepairParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let dry_run = params.dry_run.unwrap_or(true);
+        let max_docs = params.max_docs.unwrap_or(self.config.maint_max_docs).max(1)
+            .min(self.config.maint_max_docs.max(1));
+        let before = self.doctor_report().map_err(Self::map_err)?;
+        let documents = self.store.list_documents().map_err(Self::map_err)?;
+        let mut missing = Vec::new();
+        for document in documents {
+            if document.layer == "schema" {
+                continue;
+            }
+            let chunks = self.store.list_chunks_for_document(&document.id).map_err(Self::map_err)?;
+            if chunks.is_empty() {
+                missing.push(document);
+                if missing.len() >= max_docs {
+                    break;
+                }
+            }
+        }
+
+        let mut documents_repaired = Vec::new();
+        let mut documents_failed = Vec::new();
+        if !dry_run {
+            for document in &missing {
+                match self.ingest_pipeline(
+                    document.content.clone(),
+                    Some(document.title.clone()),
+                    Some(document.uri.clone()),
+                    Some(document.metadata_json.clone()),
+                    document.wing.clone(),
+                    document.room.clone(),
+                    document.source_file.clone(),
+                    &document.layer,
+                    &document.kind,
+                    false,
+                ).await {
+                    Ok(_) => documents_repaired.push(document.id.clone()),
+                    Err(error) => documents_failed.push(SyncSourceError {
+                        path: document.uri.clone(),
+                        error: error.to_string(),
+                    }),
+                }
+            }
+        }
+        let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) = self
+            .store.prune_orphans(dry_run).map_err(Self::map_err)?;
+        if !dry_run {
+            self.store.checkpoint().map_err(Self::map_err)?;
+        }
+        let after = if dry_run { before.clone() } else { self.doctor_report().map_err(Self::map_err)? };
+        Self::json_result(&DoctorRepairReport {
+            dry_run,
+            documents_considered: missing.len(),
+            documents_repaired,
+            documents_failed,
+            orphan_chunks_pruned,
+            orphan_document_nodes_pruned,
+            orphan_edges_pruned,
+            before,
+            after,
+        })
     }
 
     #[tool(
@@ -3880,6 +3970,44 @@ mod tests {
         assert_eq!(doctor.expected_schema_version, SCHEMA_VERSION);
         // Server start records embedding_manifest from config when missing.
         assert_eq!(doctor.manifest_dims, Some(dims as i32));
+    }
+
+    #[tokio::test]
+    async fn doctor_repair_rebuilds_missing_chunks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("doctor-repair.duckdb");
+        let store = Store::open(&path).expect("open");
+        let dims = 16usize;
+        let config = test_config(path, Vec::new(), dims);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
+        let server = RagServer::new(store, embedder, config);
+        let now = Utc::now();
+        server.store.upsert_document(&Document {
+            id: "missing-chunks".into(),
+            uri: "file://missing.md".into(),
+            title: "Missing chunks".into(),
+            content: "This document must become searchable after repair.".into(),
+            metadata_json: "{}".into(),
+            created_at: now,
+            updated_at: now,
+            layer: "raw".into(),
+            kind: "document".into(),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(server.doctor_report().unwrap().documents_without_chunks, 1);
+
+        server.doctor_repair(Parameters(DoctorRepairParams {
+            dry_run: Some(true),
+            max_docs: Some(10),
+        })).await.unwrap();
+        assert!(server.store.list_chunks_for_document("missing-chunks").unwrap().is_empty());
+
+        server.doctor_repair(Parameters(DoctorRepairParams {
+            dry_run: Some(false),
+            max_docs: Some(10),
+        })).await.unwrap();
+        assert!(!server.store.list_chunks_for_document("missing-chunks").unwrap().is_empty());
+        assert_eq!(server.doctor_report().unwrap().documents_without_chunks, 0);
     }
 
     #[tokio::test]

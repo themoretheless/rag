@@ -971,6 +971,29 @@ impl Store {
         Ok((documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents))
     }
 
+    /// Remove rows whose referenced parent/endpoints no longer exist.
+    /// Returns the counts observed before pruning: chunks, document nodes, edges.
+    pub fn prune_orphans(&self, dry_run: bool) -> Result<(u64, u64, u64)> {
+        let (_, chunks, nodes, edges, _) = self.integrity_counts()?;
+        if dry_run || (chunks == 0 && nodes == 0 && edges == 0) {
+            return Ok((chunks, nodes, edges));
+        }
+        let conn = self.lock()?;
+        conn.execute_batch(
+            "BEGIN TRANSACTION;
+             DELETE FROM graph_edges WHERE NOT EXISTS
+               (SELECT 1 FROM graph_nodes n WHERE n.id = graph_edges.source_id)
+               OR NOT EXISTS
+               (SELECT 1 FROM graph_nodes n WHERE n.id = graph_edges.target_id);
+             DELETE FROM graph_nodes WHERE document_id IS NOT NULL AND NOT EXISTS
+               (SELECT 1 FROM documents d WHERE d.id = graph_nodes.document_id);
+             DELETE FROM chunks WHERE NOT EXISTS
+               (SELECT 1 FROM documents d WHERE d.id = chunks.document_id);
+             COMMIT;",
+        )?;
+        Ok((chunks, nodes, edges))
+    }
+
     /// Run DuckDB `CHECKPOINT` and report main-file size before/after when possible.
     ///
     /// Safe L0 maintenance: flushes the WAL into the main database file. Does not

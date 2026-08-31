@@ -82,6 +82,7 @@ static SPINE: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         // control
         "status",
         "doctor",
+        "doctor_repair",
     ])
 });
 

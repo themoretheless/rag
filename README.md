@@ -88,6 +88,7 @@ Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), im
 | `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
 | `RAG_INGEST_ROOTS` | (empty) | Comma-separated path allowlist for `ingest_file`. **Empty refuses all file paths** |
 | `RAG_CHECKPOINT_ON_START` | `true` | Flush and validate DuckDB WAL before serving |
+| `RAG_WAL_WARN_BYTES` | `268435456` | Doctor warning threshold for an uncheckpointed WAL |
 | `RAG_AUTO_BACKUP_DIR` | (empty/off) | Directory for periodic checkpointed snapshots |
 | `RAG_AUTO_BACKUP_INTERVAL_SECS` | `86400` | Minimum age before the next automatic snapshot |
 | `RAG_AUTO_BACKUP_KEEP` | `7` | Number of automatic snapshots retained |

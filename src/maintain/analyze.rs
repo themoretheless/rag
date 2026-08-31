@@ -432,10 +432,15 @@ fn build_doctor(store: &Store, config: &Config) -> Result<DoctorReport> {
     let (documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents) =
         store.integrity_counts()?;
     let relational_integrity_ok = orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
+    let wal_bytes = store.wal_file_size_bytes();
+    let wal_warn_bytes = crate::ops::wal_warn_bytes();
+    let wal_too_large = wal_bytes >= wal_warn_bytes;
     let repair_hint = if !relational_integrity_ok {
         Some("Create a backup, run maintain_refresh, and use offline db_repair for fatal DuckDB index errors.".to_string())
     } else if documents_without_chunks > 0 {
         Some("Reingest documents without chunks before relying on retrieval.".to_string())
+    } else if wal_too_large {
+        Some("WAL exceeds the configured warning threshold; checkpoint the store.".to_string())
     } else { None };
     let ok = schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0;
     Ok(DoctorReport {
@@ -453,7 +458,9 @@ fn build_doctor(store: &Store, config: &Config) -> Result<DoctorReport> {
         ready_for_search,
         ingest_roots_configured,
         db_path: store.path().display().to_string(),
-        wal_bytes: store.wal_file_size_bytes(),
+        wal_bytes,
+        wal_warn_bytes,
+        wal_too_large,
         documents_without_chunks,
         orphan_chunks,
         orphan_document_nodes,
