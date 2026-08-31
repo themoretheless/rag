@@ -600,6 +600,7 @@ mod tests {
             .unwrap();
 
         let status = StatusReport {
+            storage_capabilities: crate::storage::duckdb_capability_names(),
             backend: "duckdb".into(),
             schema_version: 4,
             fts_ready: false,

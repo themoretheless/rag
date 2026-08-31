@@ -85,6 +85,7 @@ Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), im
 | `RAG_CHUNK_SIZE` | `800` | Approx chars per chunk |
 | `RAG_CHUNK_OVERLAP` | `120` | Overlap chars (must be &lt; chunk size) |
 | `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
+| `RAG_STORAGE_BACKEND` | `duckdb` | Storage adapter. DuckDB is implemented; recognized future adapters fail explicitly at startup instead of silently using DuckDB |
 | `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
 | `RAG_INGEST_ROOTS` | (empty) | Comma-separated path allowlist for `ingest_file`. **Empty refuses all file paths** |
 | `RAG_CHECKPOINT_ON_START` | `true` | Flush and validate DuckDB WAL before serving |
@@ -545,7 +546,7 @@ Tool tables above match the current MCP surface (see also Features and MemPalace
 - No force-directed layout server-side (clients own visualization; optional `rag-mcp-ui` is RadialLocal only)
 - No block refs `[[note#^block]]` (full-note link only)
 - No YAML property bi-directional sync with Obsidian vault
-- No multi-storage backends (DuckDB only; adapters are planned)
+- DuckDB is the only implemented storage adapter. The backend factory, capability diagnostics, portable bundle, and Markdown vault migration path are present; selecting an unimplemented adapter fails explicitly at startup.
 - `reconnect` is an intentional no-op success on single-process DuckDB (no Chroma-style client cache)
 
 Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md).  

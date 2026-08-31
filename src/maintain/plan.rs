@@ -1043,6 +1043,8 @@ mod tests {
             counts: CorpusCounts::default(),
             size: SizeStats::default(),
             doctor: DoctorReport {
+                backend: "duckdb".into(),
+                storage_capabilities: crate::storage::duckdb_capability_names(),
                 schema_version: 1,
                 expected_schema_version: 1,
                 schema_ok: true,

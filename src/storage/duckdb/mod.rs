@@ -9,7 +9,7 @@ use crate::{AppError, Document};
 
 use super::{BackendKind, BackendMetadata, Storage, StorageCapability};
 
-const CAPABILITIES: &[StorageCapability] = &[
+pub(super) const CAPABILITIES: &[StorageCapability] = &[
     StorageCapability::Documents,
     StorageCapability::FullTextSearch,
     StorageCapability::VectorSearch,

@@ -513,6 +513,8 @@ pub struct VacuumStoreReport {
 pub struct StatusReport {
     /// Storage backend kind (`duckdb` today).
     pub backend: String,
+    #[serde(default)]
+    pub storage_capabilities: Vec<String>,
     pub schema_version: i32,
     pub fts_ready: bool,
     pub document_count: u64,
@@ -588,6 +590,9 @@ pub struct LlmStatusReport {
 /// Minimal integrity report for the `doctor` MCP tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoctorReport {
+    pub backend: String,
+    #[serde(default)]
+    pub storage_capabilities: Vec<String>,
     pub schema_version: i32,
     pub expected_schema_version: i32,
     pub schema_ok: bool,

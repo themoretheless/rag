@@ -504,6 +504,7 @@ async fn diary_write_read_and_wake_up() {
         .expect("pin doc");
 
     let status = StatusReport {
+        storage_capabilities: rag_mcp::storage::duckdb_capability_names(),
         backend: "duckdb".into(),
         schema_version: store.schema_version().ok().flatten().unwrap_or(0),
         fts_ready: store.fts_ready().unwrap_or(false),
@@ -537,6 +538,7 @@ async fn diary_write_read_and_wake_up() {
     let report_claude = wake_up(
         &store,
         StatusReport {
+            storage_capabilities: rag_mcp::storage::duckdb_capability_names(),
             backend: "duckdb".into(),
             schema_version: 0,
             fts_ready: false,

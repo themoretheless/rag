@@ -556,6 +556,7 @@ impl RagServer {
 
         Ok(StatusReport {
             backend: "duckdb".to_string(),
+            storage_capabilities: crate::storage::duckdb_capability_names(),
             schema_version,
             fts_ready,
             document_count,
@@ -616,6 +617,8 @@ impl RagServer {
         };
         let ok = schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0;
         Ok(DoctorReport {
+            backend: "duckdb".to_string(),
+            storage_capabilities: crate::storage::duckdb_capability_names(),
             schema_version,
             expected_schema_version: SCHEMA_VERSION,
             schema_ok,

@@ -4,18 +4,50 @@
 //! small document slice lets callers migrate behind [`Storage`] gradually
 //! without changing the existing `db::Store` API.
 
-use crate::{AppError, Document};
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{AppError, Document, Store};
 
 pub mod duckdb;
 
 /// Stable identifier used by configuration and diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BackendKind {
     DuckDb,
+    Sqlite,
+    Postgres,
+    Markdown,
+    Memory,
+}
+
+impl BackendKind {
+    pub fn parse(value: &str) -> Result<Self, AppError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "duckdb" | "duck_db" => Ok(Self::DuckDb),
+            "sqlite" => Ok(Self::Sqlite),
+            "postgres" | "postgresql" => Ok(Self::Postgres),
+            "markdown" | "vault" => Ok(Self::Markdown),
+            "memory" => Ok(Self::Memory),
+            other => Err(AppError::config(format!(
+                "unknown RAG_STORAGE_BACKEND '{other}'; expected duckdb, sqlite, postgres, markdown, or memory"
+            ))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DuckDb => "duckdb", Self::Sqlite => "sqlite", Self::Postgres => "postgres",
+            Self::Markdown => "markdown", Self::Memory => "memory",
+        }
+    }
 }
 
 /// Operations a backend can implement natively.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageCapability {
     Documents,
     FullTextSearch,
@@ -23,6 +55,16 @@ pub enum StorageCapability {
     Transactions,
     Graph,
     TemporalKnowledgeGraph,
+}
+
+impl StorageCapability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Documents => "documents", Self::FullTextSearch => "full_text_search",
+            Self::VectorSearch => "vector_search", Self::Transactions => "transactions",
+            Self::Graph => "graph", Self::TemporalKnowledgeGraph => "temporal_knowledge_graph",
+        }
+    }
 }
 
 /// Backend identity and an honest capability declaration.
@@ -51,4 +93,39 @@ pub trait Storage: Send + Sync {
     fn get_document(&self, id: &str) -> Result<Option<Document>, AppError>;
     fn list_documents(&self) -> Result<Vec<Document>, AppError>;
     fn delete_document(&self, id: &str) -> Result<bool, AppError>;
+}
+
+pub fn configured_backend() -> Result<BackendKind, AppError> {
+    BackendKind::parse(&std::env::var("RAG_STORAGE_BACKEND").unwrap_or_else(|_| "duckdb".into()))
+}
+
+/// Open the configured adapter. Unsupported adapters fail at startup rather
+/// than silently pointing another backend name at DuckDB.
+pub fn open_configured(path: &Path) -> Result<Store, AppError> {
+    let backend = configured_backend()?;
+    match backend {
+        BackendKind::DuckDb => Store::open(path),
+        other => Err(AppError::config(format!(
+            "storage backend '{}' is recognized but not implemented; export_bundle/export_vault before migrating",
+            other.as_str()
+        ))),
+    }
+}
+
+pub fn duckdb_capability_names() -> Vec<String> {
+    duckdb::CAPABILITIES.iter().map(|cap| cap.as_str().to_string()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_parser_is_explicit_and_capabilities_are_stable() {
+        assert_eq!(BackendKind::parse("vault").unwrap(), BackendKind::Markdown);
+        assert!(BackendKind::parse("surprise").is_err());
+        let caps = duckdb_capability_names();
+        assert!(caps.contains(&"documents".to_string()));
+        assert!(caps.contains(&"graph".to_string()));
+    }
 }

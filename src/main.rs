@@ -16,7 +16,8 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let config = Config::from_env().context("failed to load config from environment")?;
-    let store = Store::open(&config.db_path).context("failed to open DuckDB store")?;
+    let store = rag_mcp::storage::open_configured(&config.db_path)
+        .context("failed to open configured storage backend")?;
 
     if env_truthy_default("RAG_CHECKPOINT_ON_START", true) {
         store.checkpoint().context(
