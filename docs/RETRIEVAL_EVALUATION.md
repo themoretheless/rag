@@ -7,7 +7,7 @@ ingests only the dataset corpus, and never modifies `RAG_DB_PATH`.
 ```bash
 RAG_EMBEDDING_PROVIDER=mock cargo run --bin eval
 cargo run --bin eval -- --dataset path/to/eval-v1.json --top-k 10 --json
-cargo run --release --bin eval -- --min-recall-at-k 0.5 --min-mrr 0.5 --max-p95-ms 300
+cargo run --release --bin eval -- --min-recall-at-k 0.5 --min-mrr 0.4 --max-p95-ms 300
 ```
 
 `--modes lex,hybrid` selects a subset. `--golden` remains an alias for
