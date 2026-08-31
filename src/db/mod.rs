@@ -21,6 +21,7 @@ pub mod recovery;
 pub mod schema;
 pub mod search;
 pub mod store;
+pub mod vault;
 
 pub use fts::{
     ensure_fts, ensure_fts_with_stemmer, fts_index_present, fts_status, load_fts_extension,

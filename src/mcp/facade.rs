@@ -25,6 +25,7 @@ use super::tools::{
     CollectionUpdateParams, CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams,
     CreateTunnelParams, DeleteBySourceParams, DeleteDocumentParams, DeleteTunnelParams,
     DiaryReadParams, DiaryWriteParams, DoctorRepairParams, ExpandChunksParams, ExportBundleParams,
+    ExportVaultParams,
     ExportGraphSnapshotParams, FileAnswerCitationParams, FileAnswerParams, FindNodeParams,
     FindSimilarParams, FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams,
     GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams, GetSourceParams,
@@ -3823,6 +3824,24 @@ impl RagServer {
             bytes: Some(encoded.len() as u64),
             errors: Vec::new(),
         };
+        Self::json_result(&report)
+    }
+
+    #[tool(
+        name = "export_vault",
+        description = "Export a git-friendly Markdown vault partitioned by projects/<wing>/<room>/<layer>, with .rag graph, ops log, and embedding manifest JSON. path must be under RAG_INGEST_ROOTS. dry_run defaults true; overwrite retains the prior vault as a dated sibling."
+    )]
+    async fn export_vault(
+        &self,
+        Parameters(params): Parameters<ExportVaultParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
+        refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
+        let report = self.store.export_vault(
+            &path,
+            params.dry_run.unwrap_or(true),
+            params.overwrite.unwrap_or(false),
+        ).map_err(Self::map_err)?;
         Self::json_result(&report)
     }
 

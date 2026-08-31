@@ -66,6 +66,18 @@ pub struct ExportBundleParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ExportVaultParams {
+    /// Destination directory under `RAG_INGEST_ROOTS`.
+    pub path: String,
+    /// Preview document/file counts without writing. Defaults to true.
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+    /// Replace an existing vault, retaining it as a dated `.previous-*` sibling.
+    #[serde(default)]
+    pub overwrite: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ImportBundleParams {
     /// Source `.json` or `.jsonl` file under `RAG_INGEST_ROOTS`.
     pub path: String,

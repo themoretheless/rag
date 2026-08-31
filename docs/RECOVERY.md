@@ -4,6 +4,7 @@ Recovery filesystem paths must be beneath `RAG_INGEST_ROOTS`. Existing files are
 
 - `backup_db(path, dry_run?, overwrite?)` checkpoints DuckDB while holding the store lock, then copies the consistent database file.
 - `export_bundle(path, format?, dry_run?, overwrite?)` writes portable `json` or line-delimited `jsonl` containing documents, document metadata, stable IDs/timestamps, and chunks.
+- `export_vault(path, dry_run?, overwrite?)` writes readable Markdown under `projects/<wing>/<room>/<layer>/` and machine-readable `.rag/graph.json`, `.rag/ops-log.json`, and `.rag/manifest.json`. It defaults to dry-run. Explicit overwrite moves the previous vault to a dated `.previous-*` sibling before publishing the new one.
 - `import_bundle(path, format?, dry_run?, conflict_policy?)` restores a bundle transactionally. Conflict policy is `error` (default, rolls back), `skip`, or explicit `overwrite`.
 
-Recommended flow: create `backup_db`, export a bundle, run `import_bundle` with `dry_run=true`, inspect counts/conflicts/errors, then repeat with `dry_run=false`. A DuckDB backup restores the complete store. A portable bundle restores documents and retrieval chunks; derived graph/index data can be rebuilt with existing maintenance tools.
+Recommended flow: create `backup_db`, export a bundle and vault, run `import_bundle` with `dry_run=true`, inspect counts/conflicts/errors, then repeat with `dry_run=false`. A DuckDB backup restores the complete store. A portable bundle restores documents and retrieval chunks; derived graph/index data can be rebuilt with existing maintenance tools. The Markdown vault is intended for human inspection, Git history, and interoperability rather than lossless database restore.

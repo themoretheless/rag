@@ -421,6 +421,7 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 |------|--------|----------|
 | `backup_db` | `path`, `dry_run?`, `overwrite?` | Consistent checkpointed DuckDB copy; no overwrite by default |
 | `export_bundle` | `path`, `format?`, `dry_run?`, `overwrite?` | Portable JSON/JSONL documents, metadata, and chunks |
+| `export_vault` | `path`, `dry_run?`, `overwrite?` | Git-friendly Markdown grouped by wing/room/layer plus `.rag` graph, ops log, and manifest; dry-run by default |
 | `import_bundle` | `path`, `format?`, `dry_run?`, `conflict_policy?` | Transactional import; `error`, `skip`, or explicit `overwrite` |
 
 All paths must be under `RAG_INGEST_ROOTS`. Imports default to dry-run. See [Backup and recovery](docs/RECOVERY.md).
