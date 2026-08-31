@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use crate::load::{
     local_neighbors, resolve_seed, sort_wiki_pages, CliSource, DocumentBody, GraphSourceKind,
-    LoadedGraph, OpenArgs, UI_HARD_MAX_NODES, WikiPageMeta, WikiPutRequest,
+    GatewayHealth, LoadedGraph, OpenArgs, UI_HARD_MAX_NODES, WikiPageMeta, WikiPutRequest,
 };
 use crate::ui::canvas::draw_canvas;
 use crate::ui::detail::{draw_detail, DetailAction};
@@ -26,6 +26,11 @@ use crate::ui::wiki::{
     slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
 };
 use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
+
+fn nonempty(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
 
 /// Top-level UI mode (graph topology vs wiki articles).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -64,6 +69,7 @@ pub struct GraphApp {
     load_error: Option<String>,
     raw_truncated: bool,
     raw_node_count: usize,
+    ops_health: Option<GatewayHealth>,
 
     mode: ViewMode,
 
@@ -77,6 +83,10 @@ pub struct GraphApp {
     show_stubs: bool,
     prev_show_tags: bool,
     prev_show_stubs: bool,
+    filter_wing: String,
+    filter_room: String,
+    prev_filter_wing: String,
+    prev_filter_room: String,
 
     /// Local topology (seed BFS and/or Expand merges) before adapter filters.
     local_view: Option<GraphView>,
@@ -149,6 +159,7 @@ impl GraphApp {
             load_error: None,
             raw_truncated: false,
             raw_node_count: 0,
+            ops_health: None,
             mode: ViewMode::Wiki,
             seed_input,
             seed_id: None,
@@ -159,6 +170,10 @@ impl GraphApp {
             show_stubs: true,
             prev_show_tags: false,
             prev_show_stubs: true,
+            filter_wing: String::new(),
+            filter_room: String::new(),
+            prev_filter_wing: String::new(),
+            prev_filter_room: String::new(),
             local_view: None,
             ui_graph: None,
             positions: PosCache::default(),
@@ -243,6 +258,7 @@ impl GraphApp {
         self.load_error = None;
         self.raw_truncated = loaded.truncated;
         self.raw_node_count = loaded.raw_node_count;
+        self.ops_health = loaded.health;
         self.source = Some(loaded.source);
         self.full_view = Some(loaded.view);
         if !self.seed_input.is_empty() {
@@ -824,6 +840,8 @@ impl GraphApp {
             show_tags: self.show_tags,
             show_stubs: self.show_stubs,
             pkb_rels_only: true,
+            wing: nonempty(&self.filter_wing),
+            room: nonempty(&self.filter_room),
         };
         let ui_graph = adapt(&local, &opts);
         let topo = topology_generation(&local);
@@ -1379,6 +1397,15 @@ impl eframe::App for GraphApp {
                         }
                         ui.checkbox(&mut self.show_tags, "tags");
                         ui.checkbox(&mut self.show_stubs, "stubs");
+                        ui.separator();
+                        ui.label("project");
+                        ui.add(egui::TextEdit::singleline(&mut self.filter_wing).desired_width(90.0).hint_text("all wings"));
+                        ui.label("room");
+                        ui.add(egui::TextEdit::singleline(&mut self.filter_room).desired_width(80.0).hint_text("all rooms"));
+                        if ui.button("Clear filters").clicked() {
+                            self.filter_wing.clear();
+                            self.filter_room.clear();
+                        }
                         if ui
                             .button("Reset to seed")
                             .on_hover_text("Rebuild the local view from the seed (drops Expand merges)")
@@ -1430,9 +1457,12 @@ impl eframe::App for GraphApp {
             });
         });
 
-        if self.show_tags != self.prev_show_tags || self.show_stubs != self.prev_show_stubs {
+        if self.show_tags != self.prev_show_tags || self.show_stubs != self.prev_show_stubs
+            || self.filter_wing != self.prev_filter_wing || self.filter_room != self.prev_filter_room {
             self.prev_show_tags = self.show_tags;
             self.prev_show_stubs = self.show_stubs;
+            self.prev_filter_wing = self.filter_wing.clone();
+            self.prev_filter_room = self.filter_room.clone();
             self.rebuild_ui_graph();
         }
 
@@ -1513,6 +1543,26 @@ impl eframe::App for GraphApp {
                         self.any_pending(),
                     );
                 }
+            }
+            if let Some(health) = &self.ops_health {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong("ops");
+                    let healthy = health.fts_ready && health.relational_integrity_ok
+                        && !health.wal_too_large && health.documents_without_chunks == 0;
+                    ui.colored_label(
+                        if healthy { egui::Color32::from_rgb(100, 180, 120) }
+                        else { egui::Color32::from_rgb(220, 120, 80) },
+                        if healthy { "healthy" } else { "attention" },
+                    );
+                    ui.label(format!("backend={} schema={} docs={} chunks={}",
+                        health.backend, health.schema_version, health.documents, health.chunks));
+                    ui.label(format!("wal={}/{} MiB", health.wal_bytes / 1_048_576,
+                        health.wal_warn_bytes / 1_048_576));
+                    if health.documents_without_chunks > 0 {
+                        ui.colored_label(egui::Color32::from_rgb(220, 120, 80),
+                            format!("missing_chunks={}", health.documents_without_chunks));
+                    }
+                });
             }
         });
 

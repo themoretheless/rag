@@ -62,6 +62,8 @@ pub struct AdaptOptions {
     pub show_stubs: bool,
     /// PKB defaults: only wikilink + related when true.
     pub pkb_rels_only: bool,
+    pub wing: Option<String>,
+    pub room: Option<String>,
 }
 
 impl Default for AdaptOptions {
@@ -71,6 +73,8 @@ impl Default for AdaptOptions {
             show_tags: false,
             show_stubs: true,
             pkb_rels_only: true,
+            wing: None,
+            room: None,
         }
     }
 }
@@ -91,6 +95,11 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
             "tag" => opts.show_tags,
             "stub" => opts.show_stubs,
             _ => true,
+        })
+        .filter(|n| {
+            let (_, wing, room) = parse_placement_meta(&n.metadata_json);
+            opts.wing.as_deref().is_none_or(|wanted| wing.as_deref() == Some(wanted))
+                && opts.room.as_deref().is_none_or(|wanted| room.as_deref() == Some(wanted))
         })
         .collect();
 
@@ -827,5 +836,29 @@ mod tests {
         assert_eq!(hidden.nodes.len(), 1);
         assert_eq!(hidden.nodes[0].id, "d");
         assert!(hidden.edges.is_empty());
+    }
+
+    #[test]
+    fn project_and_room_filters_keep_matching_nodes_and_edges() {
+        let mut a = node("a", "document", "A");
+        a.metadata_json = r#"{"wing":"alpha","room":"docs"}"#.into();
+        let mut b = node("b", "document", "B");
+        b.metadata_json = r#"{"wing":"beta","room":"docs"}"#.into();
+        let mut c = node("c", "document", "C");
+        c.metadata_json = r#"{"wing":"alpha","room":"code"}"#.into();
+        let view = GraphView {
+            nodes: vec![a, b, c],
+            edges: vec![
+                edge("ab", "a", "b", "related", 1.0),
+                edge("ac", "a", "c", "related", 1.0),
+            ],
+        };
+        let filtered = adapt(&view, &AdaptOptions {
+            wing: Some("alpha".into()), room: Some("docs".into()),
+            ..Default::default()
+        });
+        assert_eq!(filtered.nodes.len(), 1);
+        assert_eq!(filtered.nodes[0].id, "a");
+        assert!(filtered.edges.is_empty());
     }
 }

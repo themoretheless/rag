@@ -557,6 +557,8 @@ Optional UI: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md), design [`docs/EGUI_GRAP
 
 Read-only egui local-graph viewer in **`crates/rag-mcp-ui`**. Separate binary from headless MCP: **zero** egui/eframe deps on the `rag-mcp` package; workspace `default-members = ["."]` so plain `cargo build` stays lean.
 
+The Graph toolbar can filter nodes by project wing and room, and **Open as wiki** navigates a selected document node into the article view. HTTP mode also shows live backend/schema/FTS/WAL/integrity health from `/health`.
+
 Short usage: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md). Design: [`docs/EGUI_GRAPH_VIEW.md`](docs/EGUI_GRAPH_VIEW.md).
 
 ### Build and run

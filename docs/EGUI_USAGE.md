@@ -141,7 +141,7 @@ HTTP surface used by the UI:
 
 | Method | Path | Role |
 |--------|------|------|
-| GET | `/health` | Liveness |
+| GET | `/health` | Liveness plus backend/schema/FTS, corpus counts, WAL threshold, and relational integrity used by the UI ops strip |
 | GET | `/v1/graph` | Topology (UI load / export parity) |
 | GET | `/v1/neighbors` | Neighbor expansion (live paths) |
 | GET | `/v1/find` | Seed resolve helpers |

@@ -212,6 +212,21 @@ pub struct LoadedGraph {
     pub source: GraphSourceKind,
     pub truncated: bool,
     pub raw_node_count: usize,
+    pub health: Option<GatewayHealth>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct GatewayHealth {
+    pub backend: String,
+    pub schema_version: i32,
+    pub fts_ready: bool,
+    pub documents: u64,
+    pub chunks: u64,
+    pub wal_bytes: u64,
+    pub wal_warn_bytes: u64,
+    pub wal_too_large: bool,
+    pub documents_without_chunks: u64,
+    pub relational_integrity_ok: bool,
 }
 
 /// Optional envelope around bare `GraphView` (EGUI_GRAPH_VIEW §10.1).
@@ -264,6 +279,7 @@ pub fn load_snapshot_path(path: &Path) -> Result<LoadedGraph, String> {
         source,
         truncated,
         raw_node_count,
+        health: None,
     })
 }
 
@@ -824,6 +840,9 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
+    let health = client.get(http_join(base, "health")).send().ok()
+        .filter(|response| response.status().is_success())
+        .and_then(|response| response.json::<GatewayHealth>().ok());
     let resp = client.get(&url).send().map_err(|e| {
         format!(
             "HTTP GET {url} failed: {e}. Is rag-mcp running with RAG_HTTP_BIND set?"
@@ -849,6 +868,7 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
         },
         truncated,
         raw_node_count,
+        health,
     })
 }
 
@@ -907,6 +927,7 @@ pub fn load_live_db(
         },
         truncated,
         raw_node_count: total_nodes,
+        health: None,
     })
 }
 
