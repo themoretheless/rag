@@ -18,6 +18,12 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().context("failed to load config from environment")?;
     let store = Store::open(&config.db_path).context("failed to open DuckDB store")?;
 
+    if env_truthy_default("RAG_CHECKPOINT_ON_START", true) {
+        store.checkpoint().context(
+            "startup DuckDB CHECKPOINT failed; run db_repair offline if this is an ART/index error",
+        )?;
+    }
+
     // FTS / BM25 (or TF fallback) before serving tools so lex/hybrid is ready.
     let fts_state = store
         .ensure_fts(&config.fts_stemmer)
@@ -62,6 +68,8 @@ async fn run_serve_modes(
     embedder: Arc<dyn EmbeddingProvider>,
     config: Config,
 ) -> anyhow::Result<()> {
+    rag_mcp::ops::spawn_auto_backup(store.clone());
+    RagServer::new(store.clone(), embedder.clone(), config.clone()).spawn_auto_sync();
     let http_only = env_flag("RAG_HTTP_ONLY");
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
     let mcp_http_enabled = env_truthy_default("RAG_MCP_HTTP", true);

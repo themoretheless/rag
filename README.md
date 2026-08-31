@@ -87,6 +87,12 @@ Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), im
 | `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
 | `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
 | `RAG_INGEST_ROOTS` | (empty) | Comma-separated path allowlist for `ingest_file`. **Empty refuses all file paths** |
+| `RAG_CHECKPOINT_ON_START` | `true` | Flush and validate DuckDB WAL before serving |
+| `RAG_AUTO_BACKUP_DIR` | (empty/off) | Directory for periodic checkpointed snapshots |
+| `RAG_AUTO_BACKUP_INTERVAL_SECS` | `86400` | Minimum age before the next automatic snapshot |
+| `RAG_AUTO_BACKUP_KEEP` | `7` | Number of automatic snapshots retained |
+| `RAG_AUTO_SYNC_ROOTS` | (empty/off) | `;`-separated allowlisted directories for incremental background sync |
+| `RAG_AUTO_SYNC_INTERVAL_SECS` | `3600` | Background sync interval; the first pass runs at startup |
 | `RAG_MAX_CONTEXT_TOKENS` | `4096` | Default token budget when packing search hits (~4 chars/token) |
 | `RAG_MAX_CHUNKS_PER_DOC` | `3` | Max chunks retained per document under diversity collapse |
 | `RAG_FTS_STEMMER` | `porter` | DuckDB FTS stemmer; use `none` for CJK/code |
@@ -399,7 +405,7 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `get_taxonomy` | (none) | Wing → room tree + counts |
 | `stats` | (none) | Docs, chunks, nodes, edges + `db_path` |
 | `status` | (none) | Health: counts, FTS readiness, embed dims, `ready_for_search` |
-| `doctor` | (none) | Schema / FTS / embed integrity + ingest roots |
+| `doctor` | (none) | Schema / FTS / embedding manifest, WAL size, orphan references, missing chunks, and scope integrity |
 | `get_embedding_manifest` | (none) | Corpus embedding fingerprint (provider, model, dims) |
 | `reembed_document` | `document_id` | Re-embed all chunks for one document with live config |
 | `llm_status` | (none) | Chat + embed config and reachability |
@@ -521,15 +527,15 @@ If the FTS extension is unavailable (offline CI, locked-down hosts), the same `l
 Tool tables above match the current MCP surface (see also Features and MemPalace-inspired model). Still **not** shipped:
 
 - No MemPalace `mempalace_*` tool renames or AAAK dialect
-- No file watcher; `sync_sources` supports incremental text, Markdown, HTML, PDF, and source-code directory ingest
+- No OS file watcher; optional `RAG_AUTO_SYNC_ROOTS` runs safe incremental background scans with build/cache directories excluded
 - No hallways (named multi-hop path objects) as first-class tools
-- Auto schedule / dedicated CLI `maintain` subcommand and compress L3+ still open (analyze/plan/apply/organize/compress L0–L2/refresh are implemented)
+- Dedicated CLI `maintain` subcommand and compress L3+ remain open; backup and source-sync schedules are built into the gateway
 - No HNSW / DuckDB VSS ANN (full-scan cosine in Rust; fine for personal corpora)
 - Versioned retrieval evaluation is available through the `eval` CLI; see
   [`docs/RETRIEVAL_EVALUATION.md`](docs/RETRIEVAL_EVALUATION.md) for dataset,
   metrics, diagnostics, and threshold-based future ANN guidance.
-- No PDF / binary parsers (UTF-8 text only)
-- Stdio MCP only (no HTTP transport)
+- Binary formats other than PDF are not parsed
+- Streamable HTTP MCP and stdio transports are both available
 - No multi-tenant auth
 - No force-directed layout server-side (clients own visualization; optional `rag-mcp-ui` is RadialLocal only)
 - No block refs `[[note#^block]]` (full-note link only)

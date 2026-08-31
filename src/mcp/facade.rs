@@ -74,6 +74,10 @@ fn nonempty_opt(s: Option<String>) -> Option<String> {
 }
 
 fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    const SKIP_DIRECTORIES: &[&str] = &[
+        ".git", ".agents", ".codex", ".idea", ".vscode", ".zed", "target",
+        "node_modules", "dist", "build", "coverage", "vendor", "backups",
+    ];
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
@@ -82,7 +86,10 @@ fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
             let file_type = entry.file_type()?;
             let path = entry.path();
             if file_type.is_dir() {
-                pending.push(path);
+                let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                if !SKIP_DIRECTORIES.contains(&name) {
+                    pending.push(path);
+                }
             } else if file_type.is_file() && is_supported_source(&path) {
                 files.push(path);
             }
@@ -90,6 +97,24 @@ fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     }
     files.sort();
     Ok(files)
+}
+
+fn inferred_scope(root: &Path, path: &Path) -> (String, String) {
+    let root_name = root.file_name().and_then(|name| name.to_str()).unwrap_or("project");
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let mut components = relative.components().filter_map(|part| part.as_os_str().to_str());
+    if root_name.eq_ignore_ascii_case("sources") {
+        let wing = components.next().unwrap_or("project").to_string();
+        let room = components.next().unwrap_or("root").to_string();
+        (wing, room)
+    } else {
+        let room = relative.parent()
+            .and_then(|parent| parent.components().next())
+            .and_then(|part| part.as_os_str().to_str())
+            .unwrap_or("root")
+            .to_string();
+        (root_name.to_string(), room)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -119,6 +144,30 @@ pub struct RagServer {
 }
 
 impl RagServer {
+    /// Start optional incremental source synchronization. Disabled unless
+    /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
+    pub fn spawn_auto_sync(self) {
+        let Ok(raw_roots) = std::env::var("RAG_AUTO_SYNC_ROOTS") else { return; };
+        let roots: Vec<String> = raw_roots.split(';').map(str::trim)
+            .filter(|root| !root.is_empty()).map(str::to_string).collect();
+        if roots.is_empty() { return; }
+        let interval = std::env::var("RAG_AUTO_SYNC_INTERVAL_SECS").ok()
+            .and_then(|value| value.parse::<u64>().ok()).filter(|value| *value > 0)
+            .unwrap_or(3600);
+        tokio::spawn(async move {
+            loop {
+                for path in &roots {
+                    let params = SyncSourcesParams { path: path.clone(), remove_deleted: Some(false), wing: None, room: None };
+                    match self.sync_sources(Parameters(params)).await {
+                        Ok(_) => tracing::info!(path, "automatic source sync completed"),
+                        Err(error) => tracing::error!(path, error = %error, "automatic source sync failed"),
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            }
+        });
+    }
+
     fn collection_entries(params: Vec<CollectionEntryParams>) -> Vec<CollectionEntry> {
         params
             .into_iter()
@@ -485,7 +534,15 @@ impl RagServer {
         };
         let ingest_roots_configured = !self.config.ingest_roots.is_empty();
         let ready_for_search = chunk_count > 0 && schema_ok && embed_ok;
-        let ok = schema_ok && embed_ok;
+        let (documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents) =
+            self.store.integrity_counts()?;
+        let relational_integrity_ok = orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
+        let repair_hint = if !relational_integrity_ok {
+            Some("Create a backup, then run db_repair offline and maintain_refresh.".to_string())
+        } else if documents_without_chunks > 0 {
+            Some("Reingest documents without chunks; sync_sources repairs unchanged file documents too.".to_string())
+        } else { None };
+        let ok = schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0;
         Ok(DoctorReport {
             schema_version,
             expected_schema_version: SCHEMA_VERSION,
@@ -501,6 +558,14 @@ impl RagServer {
             ready_for_search,
             ingest_roots_configured,
             db_path: self.store.path().display().to_string(),
+            wal_bytes: self.store.wal_file_size_bytes(),
+            documents_without_chunks,
+            orphan_chunks,
+            orphan_document_nodes,
+            orphan_edges,
+            unscoped_documents,
+            relational_integrity_ok,
+            repair_hint,
             ok,
         })
     }
@@ -981,12 +1046,16 @@ impl RagServer {
                 }
             };
             let hash = content_hash(&extracted.text);
-            if existing.as_ref().is_some_and(|doc| {
+            let unchanged = existing.as_ref().is_some_and(|doc| {
                 doc.content_hash
                     .as_deref()
                     .map(|stored| stored == hash)
                     .unwrap_or_else(|| content_hash(&doc.content) == hash)
-            }) {
+            });
+            let has_chunks = existing.as_ref()
+                .and_then(|doc| self.store.list_chunks_for_document(&doc.id).ok())
+                .is_some_and(|chunks| !chunks.is_empty());
+            if unchanged && has_chunks {
                 summary.skipped.push(source_file);
                 continue;
             }
@@ -1002,14 +1071,17 @@ impl RagServer {
                     continue;
                 }
             };
+            let (inferred_wing, inferred_room) = inferred_scope(&root, &canonical);
             let wing = params
                 .wing
                 .clone()
-                .or_else(|| existing.as_ref().and_then(|doc| doc.wing.clone()));
+                .or_else(|| existing.as_ref().and_then(|doc| doc.wing.clone()))
+                .or(Some(inferred_wing));
             let room = params
                 .room
                 .clone()
-                .or_else(|| existing.as_ref().and_then(|doc| doc.room.clone()));
+                .or_else(|| existing.as_ref().and_then(|doc| doc.room.clone()))
+                .or(Some(inferred_room));
             match self
                 .ingest_pipeline(
                     extracted.text,

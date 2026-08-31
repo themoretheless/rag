@@ -163,9 +163,32 @@ impl Store {
             }
         };
 
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO documents
+        let boost = if doc.boost.is_finite() && doc.boost > 0.0 { doc.boost } else { 1.0 };
+        if current_rev.is_some() {
+            // DuckDB implements INSERT OR REPLACE as delete+insert. Repeated
+            // autosync updates can hit an ART index delete bug and invalidate
+            // the whole connection. UPDATE preserves the indexed row identity.
+            conn.execute(
+                r#"
+                UPDATE documents SET
+                  uri = ?, title = ?, content = ?, metadata_json = ?,
+                  content_hash = ?, wing = ?, room = ?, source_file = ?,
+                  layer = ?, kind = ?, status = ?, pinned = ?, boost = ?,
+                  revision = ?, created_at = CAST(? AS TIMESTAMP),
+                  updated_at = CAST(? AS TIMESTAMP)
+                WHERE id = ?
+                "#,
+                params![
+                    doc.uri, doc.title, doc.content, doc.metadata_json, hash,
+                    doc.wing, doc.room, doc.source_file, layer, kind, status,
+                    doc.pinned, boost, new_rev, format_ts(doc.created_at),
+                    format_ts(doc.updated_at), doc.id,
+                ],
+            )?;
+        } else {
+            conn.execute(
+                r#"
+            INSERT INTO documents
               (id, uri, title, content, metadata_json,
                content_hash, wing, room, source_file, layer, kind, status,
                pinned, boost, revision,
@@ -190,16 +213,13 @@ impl Store {
                 kind,
                 status,
                 doc.pinned,
-                if doc.boost.is_finite() && doc.boost > 0.0 {
-                    doc.boost
-                } else {
-                    1.0
-                },
+                boost,
                 new_rev,
                 format_ts(doc.created_at),
                 format_ts(doc.updated_at),
             ],
-        )?;
+            )?;
+        }
         Ok(new_rev)
     }
 
@@ -910,6 +930,45 @@ impl Store {
     /// Filesystem size of the main DuckDB file, when readable.
     pub fn db_file_size_bytes(&self) -> Option<u64> {
         std::fs::metadata(&self.path).ok().map(|m| m.len())
+    }
+
+    pub fn wal_file_size_bytes(&self) -> u64 {
+        let wal = PathBuf::from(format!("{}.wal", self.path.display()));
+        std::fs::metadata(wal).map(|m| m.len()).unwrap_or(0)
+    }
+
+    pub fn checkpoint(&self) -> Result<()> {
+        self.lock()?.execute_batch("CHECKPOINT")?;
+        Ok(())
+    }
+
+    /// Counts for relationships that DuckDB does not enforce with foreign keys.
+    pub fn integrity_counts(&self) -> Result<(u64, u64, u64, u64, u64)> {
+        let conn = self.lock()?;
+        let scalar = |sql: &str| -> Result<u64> {
+            let count: i64 = conn.query_row(sql, [], |row| row.get(0))?;
+            Ok(count.max(0) as u64)
+        };
+        let documents_without_chunks = scalar(
+            "SELECT COUNT(*) FROM documents d WHERE COALESCE(d.layer, '') <> 'schema' AND NOT EXISTS \
+             (SELECT 1 FROM chunks c WHERE c.document_id = d.id)",
+        )?;
+        let orphan_chunks = scalar(
+            "SELECT COUNT(*) FROM chunks c WHERE NOT EXISTS \
+             (SELECT 1 FROM documents d WHERE d.id = c.document_id)",
+        )?;
+        let orphan_document_nodes = scalar(
+            "SELECT COUNT(*) FROM graph_nodes n WHERE n.document_id IS NOT NULL AND NOT EXISTS \
+             (SELECT 1 FROM documents d WHERE d.id = n.document_id)",
+        )?;
+        let orphan_edges = scalar(
+            "SELECT COUNT(*) FROM graph_edges e WHERE NOT EXISTS \
+             (SELECT 1 FROM graph_nodes n WHERE n.id = e.source_id) OR NOT EXISTS \
+             (SELECT 1 FROM graph_nodes n WHERE n.id = e.target_id)",
+        )?;
+        let unscoped_documents =
+            scalar("SELECT COUNT(*) FROM documents WHERE wing IS NULL OR trim(wing) = ''")?;
+        Ok((documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents))
     }
 
     /// Run DuckDB `CHECKPOINT` and report main-file size before/after when possible.
@@ -2198,6 +2257,33 @@ mod tests {
         assert!(store.get_document("d1").unwrap().is_none());
         assert!(store.list_chunks_for_document("d1").unwrap().is_empty());
         assert!(!store.delete_document("d1").unwrap());
+    }
+
+    #[test]
+    fn repeated_indexed_document_updates_survive_checkpoint_and_reopen() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("art-regression.duckdb");
+        {
+            let store = Store::open(&path).expect("open store");
+            let mut doc = sample_doc("stable-id", "file://project/README.md");
+            for revision in 0..50 {
+                doc.title = format!("Title {revision}");
+                doc.content = format!("content revision {revision}");
+                doc.content_hash = Some(content_hash(&doc.content));
+                doc.wing = Some(format!("project-{}", revision % 3));
+                doc.room = Some(format!("room-{}", revision % 5));
+                doc.updated_at = Utc::now();
+                store.upsert_document(&doc).expect("indexed UPDATE");
+            }
+            store.checkpoint().expect("checkpoint");
+        }
+
+        let reopened = Store::open(&path).expect("reopen after repeated updates");
+        let doc = reopened.get_document("stable-id").unwrap().expect("document");
+        assert_eq!(doc.title, "Title 49");
+        assert_eq!(doc.content, "content revision 49");
+        assert_eq!(doc.revision, 50);
+        assert_eq!(reopened.integrity_counts().unwrap().1, 0);
     }
 
     #[test]

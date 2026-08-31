@@ -28,6 +28,7 @@ pub mod maintain;
 pub mod memory_lifecycle;
 pub mod mcp;
 pub mod models;
+pub mod ops;
 pub mod search_pack;
 pub mod storage;
 pub mod util;

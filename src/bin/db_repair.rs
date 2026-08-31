@@ -49,6 +49,35 @@ fn main() -> Result<()> {
         dst.execute_batch(&format!("IMPORT DATABASE '{dump}';"))
             .context("IMPORT DATABASE")?;
         dst.execute_batch("CHECKPOINT;").context("CHECKPOINT")?;
+
+        let count = |table: &str| -> Result<i64> {
+            let sql = format!("SELECT COUNT(*) FROM {table}");
+            dst.query_row(&sql, [], |row| row.get(0))
+                .with_context(|| format!("verify {table}"))
+        };
+        let documents = count("documents")?;
+        let chunks = count("chunks")?;
+        let nodes = count("graph_nodes")?;
+        let edges = count("graph_edges")?;
+        let orphan_chunks: i64 = dst.query_row(
+            "SELECT COUNT(*) FROM chunks c WHERE NOT EXISTS \
+             (SELECT 1 FROM documents d WHERE d.id = c.document_id)",
+            [],
+            |row| row.get(0),
+        ).context("verify orphan chunks")?;
+        let orphan_edges: i64 = dst.query_row(
+            "SELECT COUNT(*) FROM graph_edges e WHERE NOT EXISTS \
+             (SELECT 1 FROM graph_nodes n WHERE n.id = e.source_id) OR NOT EXISTS \
+             (SELECT 1 FROM graph_nodes n WHERE n.id = e.target_id)",
+            [],
+            |row| row.get(0),
+        ).context("verify orphan edges")?;
+        if orphan_chunks != 0 || orphan_edges != 0 {
+            bail!("rebuilt database failed integrity verification: orphan_chunks={orphan_chunks}, orphan_edges={orphan_edges}");
+        }
+        eprintln!(
+            "verified: documents={documents} chunks={chunks} nodes={nodes} edges={edges} orphan_chunks=0 orphan_edges=0"
+        );
     }
 
     let _ = std::fs::remove_dir_all(&dump_dir);

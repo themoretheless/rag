@@ -181,7 +181,7 @@ fn score(query: &LabeledQuery, hits: Vec<SearchHit>, embedding_ms: f64, search_m
 }
 
 fn gain(values: impl Iterator<Item=u32>) -> f64 { values.enumerate().map(|(i, r)| (2_f64.powi(r as i32) - 1.0) / ((i + 2) as f64).log2()).sum() }
-fn percentile(sorted: &[f64]) -> f64 { sorted[(((sorted.len() - 1) as f64 * 0.95).ceil() as usize)] }
+fn percentile(sorted: &[f64]) -> f64 { sorted[((sorted.len() - 1) as f64 * 0.95).ceil() as usize] }
 fn ms(started: Instant) -> f64 { started.elapsed().as_secs_f64() * 1_000.0 }
 
 fn recommend(chunks: u64, p95: f64) -> Recommendation {

@@ -605,6 +605,15 @@ pub struct DoctorReport {
     pub ready_for_search: bool,
     pub ingest_roots_configured: bool,
     pub db_path: String,
+    pub wal_bytes: u64,
+    pub documents_without_chunks: u64,
+    pub orphan_chunks: u64,
+    pub orphan_document_nodes: u64,
+    pub orphan_edges: u64,
+    pub unscoped_documents: u64,
+    pub relational_integrity_ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_hint: Option<String>,
     /// Critical integrity gate: schema current and embed dims consistent.
     pub ok: bool,
 }
