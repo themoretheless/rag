@@ -96,6 +96,8 @@ pub struct SearchQuery {
     pub diversity: Option<DiversityMode>,
     /// Cap retained hits per `document_id`. `None` = no cap (unless diversity needs a default).
     pub max_chunks_per_document: Option<usize>,
+    /// Optional freshness boost half-life. `None` keeps ranking unchanged.
+    pub recency_half_life_days: Option<f64>,
     /// Optional token budget for packing hit content (~4 chars/token). Applied after rank/diversity.
     pub max_context_tokens: Option<usize>,
     /// Opt-in source context expansion; absent preserves the ranked chunk body.
@@ -126,6 +128,7 @@ impl Default for SearchQuery {
             min_score: None,
             diversity: None,
             max_chunks_per_document: None,
+            recency_half_life_days: None,
             max_context_tokens: None,
             context_expansion: None,
             neighbor_chunks: 1,
@@ -284,7 +287,11 @@ fn run_hybrid(
 }
 
 /// Post-process ranked hits: snippets, min_score, diversity, top_k, token pack.
-fn finalize_hits(store: &Store, mut hits: Vec<SearchHit>, query: &SearchQuery) -> Result<Vec<SearchHit>> {
+fn finalize_hits(
+    store: &Store,
+    mut hits: Vec<SearchHit>,
+    query: &SearchQuery,
+) -> Result<Vec<SearchHit>> {
     // Attach snippets (modes that already set score_* leave those intact).
     let qtext = query.query_text.as_deref();
     for hit in &mut hits {
@@ -295,6 +302,25 @@ fn finalize_hits(store: &Store, mut hits: Vec<SearchHit>, query: &SearchQuery) -
 
     if let Some(min) = query.min_score {
         hits = apply_min_score(hits, min);
+    }
+
+    if let Some(half_life_days) = query
+        .recency_half_life_days
+        .filter(|days| days.is_finite() && *days > 0.0)
+    {
+        let now = chrono::Utc::now();
+        for hit in &mut hits {
+            if let Some(document) = store.get_document(&hit.document_id)? {
+                let age_days = now
+                    .signed_duration_since(document.updated_at)
+                    .num_seconds()
+                    .max(0) as f64
+                    / 86_400.0;
+                let freshness = 2f64.powf(-age_days / half_life_days) as f32;
+                hit.score *= 1.0 + freshness;
+            }
+        }
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
     }
 
     let max_per_doc = query.max_chunks_per_document.unwrap_or(usize::MAX);
@@ -326,7 +352,12 @@ fn finalize_hits(store: &Store, mut hits: Vec<SearchHit>, query: &SearchQuery) -
 
     hits.truncate(query.top_k);
 
-    attach_context(store, &mut hits, query.context_expansion, query.neighbor_chunks)?;
+    attach_context(
+        store,
+        &mut hits,
+        query.context_expansion,
+        query.neighbor_chunks,
+    )?;
 
     if let Some(budget) = query.max_context_tokens {
         if budget > 0 {
@@ -357,38 +388,57 @@ pub fn attach_context(
         let selected: Vec<&Chunk> = match expansion {
             ContextExpansion::Neighbors => {
                 let radius = neighbor_chunks.max(1) as i32;
-                chunks.iter().filter(|c| {
-                    (c.chunk_index - current.chunk_index).abs() <= radius
-                }).collect()
+                chunks
+                    .iter()
+                    .filter(|c| (c.chunk_index - current.chunk_index).abs() <= radius)
+                    .collect()
             }
-            ContextExpansion::ParentSection => chunks.iter().filter(|c| {
-                let (path, _) = chunk_section_metadata(c);
-                heading_path.is_some() && path == heading_path
-            }).collect(),
+            ContextExpansion::ParentSection => chunks
+                .iter()
+                .filter(|c| {
+                    let (path, _) = chunk_section_metadata(c);
+                    heading_path.is_some() && path == heading_path
+                })
+                .collect(),
         };
-        let selected = if selected.is_empty() { vec![current] } else { selected };
-        hit.context = Some(selected.iter().map(|chunk| {
-            let (heading_path, section) = chunk_section_metadata(chunk);
-            SearchContextChunk {
-                chunk_id: chunk.id.clone(),
-                chunk_index: chunk.chunk_index,
-                content: chunk.content.clone(),
-                heading_path,
-                section,
-            }
-        }).collect());
-        hit.content = selected.iter().map(|c| c.content.as_str()).collect::<Vec<_>>().join("\n");
+        let selected = if selected.is_empty() {
+            vec![current]
+        } else {
+            selected
+        };
+        hit.context = Some(
+            selected
+                .iter()
+                .map(|chunk| {
+                    let (heading_path, section) = chunk_section_metadata(chunk);
+                    SearchContextChunk {
+                        chunk_id: chunk.id.clone(),
+                        chunk_index: chunk.chunk_index,
+                        content: chunk.content.clone(),
+                        heading_path,
+                        section,
+                    }
+                })
+                .collect(),
+        );
+        hit.content = selected
+            .iter()
+            .map(|c| c.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
     }
     Ok(())
 }
 
 fn chunk_section_metadata(chunk: &Chunk) -> (Option<Vec<String>>, Option<String>) {
     let value = serde_json::from_str::<serde_json::Value>(&chunk.metadata_json).ok();
-    let heading_path = value.as_ref()
+    let heading_path = value
+        .as_ref()
         .and_then(|v| v.get("heading_path"))
         .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
         .filter(|v| !v.is_empty());
-    let section = value.as_ref()
+    let section = value
+        .as_ref()
         .and_then(|v| v.get("section"))
         .and_then(|v| v.as_str())
         .map(str::to_string)
@@ -409,11 +459,28 @@ fn scope_filters(query: &SearchQuery) -> super::fts::LexFilters {
 }
 
 fn has_equality_scope(filters: &super::fts::LexFilters) -> bool {
-    filters.wing.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
-        || filters.room.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
-        || filters.layer.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
-        || filters.kind.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
-        || filters.source_file
+    filters
+        .wing
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+        || filters
+            .room
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        || filters
+            .layer
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        || filters
+            .kind
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        || filters
+            .source_file
             .as_ref()
             .map(|s| !s.is_empty())
             .unwrap_or(false)
@@ -517,7 +584,9 @@ fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<
 }
 
 fn candidate_pool_size(top_k: usize) -> usize {
-    top_k.saturating_mul(CANDIDATE_MULTIPLIER).max(CANDIDATE_FLOOR)
+    top_k
+        .saturating_mul(CANDIDATE_MULTIPLIER)
+        .max(CANDIDATE_FLOOR)
 }
 
 // ---------------------------------------------------------------------------
@@ -592,14 +661,11 @@ fn search_lex(
         return Ok(Vec::new());
     }
 
-    let hits = fts::search_bm25_with_stemmer(
-        store,
-        query_text,
-        top_k,
-        filters,
-        Some(fts_stemmer),
-    )?;
-    debug!(count = hits.len(), "lex search via db::fts (BM25 or TF fallback)");
+    let hits = fts::search_bm25_with_stemmer(store, query_text, top_k, filters, Some(fts_stemmer))?;
+    debug!(
+        count = hits.len(),
+        "lex search via db::fts (BM25 or TF fallback)"
+    );
     Ok(hits)
 }
 
@@ -727,11 +793,7 @@ pub fn fuse_rrf(vec_hits: &[SearchHit], lex_hits: &[SearchHit], rrf_k: f32) -> V
     out
 }
 
-fn accumulate_rrf_list(
-    fused: &mut HashMap<String, (f32, SearchHit)>,
-    hits: &[SearchHit],
-    k: f32,
-) {
+fn accumulate_rrf_list(fused: &mut HashMap<String, (f32, SearchHit)>, hits: &[SearchHit], k: f32) {
     for (rank0, hit) in hits.iter().enumerate() {
         let rank = (rank0 + 1) as f32;
         let contrib = 1.0 / (k + rank);
@@ -875,8 +937,8 @@ fn resolve_doc(
 mod tests {
     use super::*;
     use crate::models::Chunk;
-    use chrono::Utc;
     use crate::models::Document;
+    use chrono::Utc;
 
     fn sample_hit(chunk_id: &str, doc_id: &str, score: f32) -> SearchHit {
         SearchHit {
@@ -1194,6 +1256,52 @@ mod tests {
         let legacy = search_chunks(&store, &[1.0, 0.0, 0.0], 3, None).unwrap();
         assert!(!legacy.is_empty());
         assert!(legacy[0].score_vec.is_some());
+    }
+
+    #[test]
+    fn recency_half_life_boosts_newer_document() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Store::open(&dir.path().join("recency.duckdb")).unwrap();
+        let now = Utc::now();
+        for (id, age_days) in [("old", 120), ("new", 0)] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("uri://{id}"),
+                    title: id.into(),
+                    content: "same relevance".into(),
+                    metadata_json: "{}".into(),
+                    created_at: now - chrono::Duration::days(age_days),
+                    updated_at: now - chrono::Duration::days(age_days),
+                    ..Default::default()
+                })
+                .unwrap();
+            store
+                .insert_chunks(&[Chunk {
+                    id: format!("chunk-{id}"),
+                    document_id: id.into(),
+                    chunk_index: 0,
+                    content: "same relevance".into(),
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: 14,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+        let hits = search(
+            &store,
+            &SearchQuery {
+                mode: SearchMode::Vec,
+                top_k: 2,
+                query_embedding: Some(vec![1.0, 0.0]),
+                recency_half_life_days: Some(30.0),
+                ..SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(hits[0].document_id, "new");
+        assert!(hits[0].score > hits[1].score);
     }
 
     #[test]

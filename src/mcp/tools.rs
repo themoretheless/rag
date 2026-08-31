@@ -309,6 +309,12 @@ pub struct SearchParams {
     /// Result diversity: `mmr` | `collapse_by_document`.
     #[serde(default)]
     pub diversity: Option<String>,
+    /// Alias for document-level grouping. `document` selects collapse_by_document.
+    #[serde(default)]
+    pub group_by: Option<String>,
+    /// Optional exponential freshness boost in days. Disabled when omitted.
+    #[serde(default)]
+    pub recency_half_life_days: Option<f64>,
     /// Token budget when packing hit content (approx chars/4; default `RAG_MAX_CONTEXT_TOKENS`).
     #[serde(default)]
     pub max_context_tokens: Option<u32>,
@@ -403,6 +409,32 @@ pub struct GetDocumentParams {
     /// When true, include chunk texts (no embeddings).
     #[serde(default)]
     pub include_chunks: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct MultiGetParams {
+    pub document_ids: Vec<String>,
+    #[serde(default)]
+    pub include_chunks: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct FindSimilarParams {
+    pub document_id: String,
+    #[serde(default)]
+    pub top_k: Option<u32>,
+    #[serde(default)]
+    pub wing: Option<String>,
+    #[serde(default)]
+    pub room: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ExpandChunksParams {
+    pub document_id: String,
+    pub chunk_index: i32,
+    #[serde(default)]
+    pub radius: Option<u32>,
 }
 
 /// Parameters for `delete_document`.

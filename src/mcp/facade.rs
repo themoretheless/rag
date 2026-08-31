@@ -19,34 +19,36 @@ use uuid::Uuid;
 use super::surface::{self, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB};
 
 use super::tools::{
-    AddDrawerParams, AnalyzeCorpusParams, AppendLogParams, ArchiveMemoryItemsParams, BackupDbParams,
-    CheckDuplicateParams, CheckpointParams,
+    AddDrawerParams, AnalyzeCorpusParams, AppendLogParams, ApplyMaintenancePlanParams,
+    ArchiveMemoryItemsParams, BackupDbParams, CheckDuplicateParams, CheckpointParams,
     CollectionCreateParams, CollectionEntryParams, CollectionGetParams, CollectionListParams,
-    CollectionUpdateParams, ExportBundleParams,
-    CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams, CreateTunnelParams,
-    DeleteBySourceParams, DeleteDocumentParams, DoctorRepairParams,
-    DeleteTunnelParams, DiaryReadParams, DiaryWriteParams, ExportGraphSnapshotParams,
-    FileAnswerCitationParams, FileAnswerParams, FindNodeParams, FindTunnelsParams, FollowTunnelsParams,
-    GetBacklinksParams, GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams,
-    GetSourceParams,
-    GetTaxonomyParams, GetWikiPageParams, GraphExpandSearchParams, IngestFileParams,
-    ImportBundleParams, IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams, KgQueryParams,
-    KgSupersedeParams, KgTimelineParams, LinkNodesParams, ListDocumentsParams,
-    ListMemoryLifecycleCandidatesParams, ListRecentOpsParams,
-    ApplyMaintenancePlanParams, ListRoomsParams, ListSourcesParams, ListTunnelsParams,
-    ListWingsParams, MaintainCompressParams, MaintainOrganizeParams, MaintainRefreshParams,
-    MemoriesFiledAwayParams, PackContextParams, PackHitParams, PlanMaintenanceParams,
-    QueryWithIndexParams, ReadIndexParams, ReadLogParams, RebuildIndexParams, ReconnectParams,
-    ReembedDocumentParams, RefreshStaleWikiParams, SearchParams, SearchWikiParams,
-    SyncSourcesParams, UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams,
-    WakeUpParams, WriteWikiPageParams,
+    CollectionUpdateParams, CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams,
+    CreateTunnelParams, DeleteBySourceParams, DeleteDocumentParams, DeleteTunnelParams,
+    DiaryReadParams, DiaryWriteParams, DoctorRepairParams, ExpandChunksParams, ExportBundleParams,
+    ExportGraphSnapshotParams, FileAnswerCitationParams, FileAnswerParams, FindNodeParams,
+    FindSimilarParams, FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams,
+    GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams, GetSourceParams,
+    GetTaxonomyParams, GetWikiPageParams, GraphExpandSearchParams, ImportBundleParams,
+    IngestFileParams, IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams,
+    KgQueryParams, KgSupersedeParams, KgTimelineParams, LinkNodesParams, ListDocumentsParams,
+    ListMemoryLifecycleCandidatesParams, ListRecentOpsParams, ListRoomsParams, ListSourcesParams,
+    ListTunnelsParams, ListWingsParams, MaintainCompressParams, MaintainOrganizeParams,
+    MaintainRefreshParams, MemoriesFiledAwayParams, MultiGetParams, PackContextParams,
+    PackHitParams, PlanMaintenanceParams, QueryWithIndexParams, ReadIndexParams, ReadLogParams,
+    RebuildIndexParams, ReconnectParams, ReembedDocumentParams, RefreshStaleWikiParams,
+    SearchParams, SearchWikiParams, SyncSourcesParams, UpdateDocumentMetaParams,
+    UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams, WriteWikiPageParams,
 };
 use crate::chunking::{code_chunks, from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
+use crate::db::recovery::{
+    BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
+};
 use crate::db::schema::SCHEMA_VERSION;
-use crate::db::search::{attach_context, search, search_chunks, ContextExpansion, DiversityMode, SearchQuery};
+use crate::db::search::{
+    attach_context, search, search_chunks, ContextExpansion, DiversityMode, SearchQuery,
+};
 use crate::db::Store;
-use crate::db::recovery::{BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION};
 use crate::diary;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
@@ -58,10 +60,10 @@ use crate::maintain::{
 };
 use crate::memory_lifecycle;
 use crate::models::{
-    Chunk, Collection, CollectionEntry, Document, DocumentFilter, DocumentMetaUpdate, DoctorReport, DrawerListItem, GraphEdge,
-    GraphFilter, GraphNode, GraphView, IndexQueryPage, IndexQueryResult, IngestResult,
-    LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats, StatusReport, VacuumStoreReport,
-    WikiIndexEntry,
+    Chunk, Collection, CollectionEntry, DoctorReport, Document, DocumentFilter, DocumentMetaUpdate,
+    DrawerListItem, GraphEdge, GraphFilter, GraphNode, GraphView, IndexQueryPage, IndexQueryResult,
+    IngestResult, LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats, StatusReport,
+    VacuumStoreReport, WikiIndexEntry,
 };
 use crate::search_pack::pack_hits;
 use crate::util::{check_path_allowlist, content_hash};
@@ -75,8 +77,19 @@ fn nonempty_opt(s: Option<String>) -> Option<String> {
 
 fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     const SKIP_DIRECTORIES: &[&str] = &[
-        ".git", ".agents", ".codex", ".idea", ".vscode", ".zed", "target",
-        "node_modules", "dist", "build", "coverage", "vendor", "backups",
+        ".git",
+        ".agents",
+        ".codex",
+        ".idea",
+        ".vscode",
+        ".zed",
+        "target",
+        "node_modules",
+        "dist",
+        "build",
+        "coverage",
+        "vendor",
+        "backups",
     ];
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
@@ -86,7 +99,10 @@ fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
             let file_type = entry.file_type()?;
             let path = entry.path();
             if file_type.is_dir() {
-                let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
                 if !SKIP_DIRECTORIES.contains(&name) {
                     pending.push(path);
                 }
@@ -100,15 +116,21 @@ fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
 }
 
 fn inferred_scope(root: &Path, path: &Path) -> (String, String) {
-    let root_name = root.file_name().and_then(|name| name.to_str()).unwrap_or("project");
+    let root_name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
     let relative = path.strip_prefix(root).unwrap_or(path);
-    let mut components = relative.components().filter_map(|part| part.as_os_str().to_str());
+    let mut components = relative
+        .components()
+        .filter_map(|part| part.as_os_str().to_str());
     if root_name.eq_ignore_ascii_case("sources") {
         let wing = components.next().unwrap_or("project").to_string();
         let room = components.next().unwrap_or("root").to_string();
         (wing, room)
     } else {
-        let room = relative.parent()
+        let room = relative
+            .parent()
             .and_then(|parent| parent.components().next())
             .and_then(|part| part.as_os_str().to_str())
             .unwrap_or("root")
@@ -160,20 +182,37 @@ impl RagServer {
     /// Start optional incremental source synchronization. Disabled unless
     /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
     pub fn spawn_auto_sync(self) {
-        let Ok(raw_roots) = std::env::var("RAG_AUTO_SYNC_ROOTS") else { return; };
-        let roots: Vec<String> = raw_roots.split(';').map(str::trim)
-            .filter(|root| !root.is_empty()).map(str::to_string).collect();
-        if roots.is_empty() { return; }
-        let interval = std::env::var("RAG_AUTO_SYNC_INTERVAL_SECS").ok()
-            .and_then(|value| value.parse::<u64>().ok()).filter(|value| *value > 0)
+        let Ok(raw_roots) = std::env::var("RAG_AUTO_SYNC_ROOTS") else {
+            return;
+        };
+        let roots: Vec<String> = raw_roots
+            .split(';')
+            .map(str::trim)
+            .filter(|root| !root.is_empty())
+            .map(str::to_string)
+            .collect();
+        if roots.is_empty() {
+            return;
+        }
+        let interval = std::env::var("RAG_AUTO_SYNC_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
             .unwrap_or(3600);
         tokio::spawn(async move {
             loop {
                 for path in &roots {
-                    let params = SyncSourcesParams { path: path.clone(), remove_deleted: Some(false), wing: None, room: None };
+                    let params = SyncSourcesParams {
+                        path: path.clone(),
+                        remove_deleted: Some(false),
+                        wing: None,
+                        room: None,
+                    };
                     match self.sync_sources(Parameters(params)).await {
                         Ok(_) => tracing::info!(path, "automatic source sync completed"),
-                        Err(error) => tracing::error!(path, error = %error, "automatic source sync failed"),
+                        Err(error) => {
+                            tracing::error!(path, error = %error, "automatic source sync failed")
+                        }
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
@@ -244,9 +283,7 @@ impl RagServer {
             ));
         }
         self.llm.as_ref().ok_or_else(|| {
-            AppError::llm(
-                "ChatClient is not configured; check RAG_LLM_BASE_URL and RAG_LLM_MODEL",
-            )
+            AppError::llm("ChatClient is not configured; check RAG_LLM_BASE_URL and RAG_LLM_MODEL")
         })
     }
 
@@ -298,15 +335,13 @@ impl RagServer {
             .filter(|u| !u.trim().is_empty())
             .unwrap_or_else(|| format!("text://{}", Uuid::new_v4()));
 
-        let title = title
-            .filter(|t| !t.trim().is_empty())
-            .unwrap_or_else(|| {
-                uri.rsplit('/')
-                    .next()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("untitled")
-                    .to_string()
-            });
+        let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| {
+            uri.rsplit('/')
+                .next()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("untitled")
+                .to_string()
+        });
 
         let layer = if layer.trim().is_empty() {
             "raw".to_string()
@@ -380,10 +415,16 @@ impl RagServer {
 
         let revision = self.store.upsert_document_cas(&doc, None)?;
 
-        let is_code = serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok()
-            .and_then(|value| value.get("language").cloned()).is_some();
+        let is_code = serde_json::from_str::<serde_json::Value>(&doc.metadata_json)
+            .ok()
+            .and_then(|value| value.get("language").cloned())
+            .is_some();
         let pieces: Vec<(String, i32, i32)> = if is_code {
-            code_chunks(&doc.content, self.config.chunk_size, self.config.chunk_overlap)
+            code_chunks(
+                &doc.content,
+                self.config.chunk_size,
+                self.config.chunk_overlap,
+            )
         } else {
             let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
             Chunker::chunk(&chunker, &doc.content)
@@ -463,7 +504,11 @@ impl RagServer {
         let index_entry_count = index.len() as u64;
         let indexed_pages = wiki_docs
             .iter()
-            .filter(|d| index.iter().any(|e| e.page_id.as_deref() == Some(d.id.as_str())))
+            .filter(|d| {
+                index
+                    .iter()
+                    .any(|e| e.page_id.as_deref() == Some(d.id.as_str()))
+            })
             .count() as u64;
         let index_coverage = if wiki_count == 0 {
             0.0
@@ -547,9 +592,15 @@ impl RagServer {
         };
         let ingest_roots_configured = !self.config.ingest_roots.is_empty();
         let ready_for_search = chunk_count > 0 && schema_ok && embed_ok;
-        let (documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents) =
-            self.store.integrity_counts()?;
-        let relational_integrity_ok = orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
+        let (
+            documents_without_chunks,
+            orphan_chunks,
+            orphan_document_nodes,
+            orphan_edges,
+            unscoped_documents,
+        ) = self.store.integrity_counts()?;
+        let relational_integrity_ok =
+            orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
         let wal_bytes = self.store.wal_file_size_bytes();
         let wal_warn_bytes = crate::ops::wal_warn_bytes();
         let wal_too_large = wal_bytes >= wal_warn_bytes;
@@ -559,7 +610,9 @@ impl RagServer {
             Some("Reingest documents without chunks; sync_sources repairs unchanged file documents too.".to_string())
         } else if wal_too_large {
             Some("WAL exceeds the configured warning threshold; run a checkpointed backup or vacuum_store.".to_string())
-        } else { None };
+        } else {
+            None
+        };
         let ok = schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0;
         Ok(DoctorReport {
             schema_version,
@@ -595,11 +648,7 @@ impl RagServer {
         let (reachable, error) = match &self.llm {
             Some(client) => {
                 let probe = client.llm_status().await;
-                let error = if probe.ok {
-                    None
-                } else {
-                    Some(probe.detail)
-                };
+                let error = if probe.ok { None } else { Some(probe.detail) };
                 (probe.ok, error)
             }
             None => (
@@ -668,8 +717,7 @@ impl RagServer {
             for (chunk, emb) in chunks.iter_mut().zip(embeddings.into_iter()) {
                 chunk.embedding = emb;
             }
-            self.store
-                .replace_chunks_for_document(&doc.id, &chunks)?;
+            self.store.replace_chunks_for_document(&doc.id, &chunks)?;
         }
 
         let manifest = self
@@ -712,9 +760,7 @@ impl RagServer {
         let applied = self
             .store
             .update_document_meta(document_id, &update)?
-            .ok_or_else(|| {
-                AppError::not_found(format!("document not found: {document_id}"))
-            })?;
+            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
 
         let mut reembedded = false;
         let mut chunk_count = self
@@ -762,8 +808,7 @@ impl RagServer {
                     });
                 }
                 chunk_count = chunks.len();
-                self.store
-                    .replace_chunks_for_document(&doc.id, &chunks)?;
+                self.store.replace_chunks_for_document(&doc.id, &chunks)?;
             }
             rebuild_document_graph(&self.store, doc)?;
             reembedded = true;
@@ -845,9 +890,14 @@ impl RagServer {
             .create_collection(&collection, &entries)
             .map_err(Self::map_err)?;
         let _ = self.store.append_ops_log(&OpsLogEntry {
-            id: String::new(), seq: 0, ts: now, op: "collection_create".into(),
-            prefix: Some("COLLECTION".into()), message: detail.collection.name.clone(),
-            entity_id: Some(detail.collection.id.clone()), entity_kind: Some("collection".into()),
+            id: String::new(),
+            seq: 0,
+            ts: now,
+            op: "collection_create".into(),
+            prefix: Some("COLLECTION".into()),
+            message: detail.collection.name.clone(),
+            entity_id: Some(detail.collection.id.clone()),
+            entity_kind: Some("collection".into()),
             payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
             agent_name: None,
         });
@@ -873,9 +923,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionGetParams>,
     ) -> Result<CallToolResult, McpError> {
-        let detail = self.store.get_collection(params.collection_id.trim())
+        let detail = self
+            .store
+            .get_collection(params.collection_id.trim())
             .map_err(Self::map_err)?
-            .ok_or_else(|| Self::map_err(AppError::not_found(format!("collection not found: {}", params.collection_id))))?;
+            .ok_or_else(|| {
+                Self::map_err(AppError::not_found(format!(
+                    "collection not found: {}",
+                    params.collection_id
+                )))
+            })?;
         Self::json_result(&detail)
     }
 
@@ -890,19 +947,31 @@ impl RagServer {
         let entries = params.entries.map(Self::collection_entries);
         let description = params.description.as_deref().map(|value| {
             let trimmed = value.trim();
-            if trimmed.is_empty() { None } else { Some(trimmed) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
         });
-        let detail = self.store.update_collection(
-            params.collection_id.trim(),
-            params.name.as_deref(),
-            description,
-            params.metadata_json.as_deref(),
-            entries.as_deref(),
-        ).map_err(Self::map_err)?;
+        let detail = self
+            .store
+            .update_collection(
+                params.collection_id.trim(),
+                params.name.as_deref(),
+                description,
+                params.metadata_json.as_deref(),
+                entries.as_deref(),
+            )
+            .map_err(Self::map_err)?;
         let _ = self.store.append_ops_log(&OpsLogEntry {
-            id: String::new(), seq: 0, ts: Utc::now(), op: "collection_update".into(),
-            prefix: Some("COLLECTION".into()), message: detail.collection.name.clone(),
-            entity_id: Some(detail.collection.id.clone()), entity_kind: Some("collection".into()),
+            id: String::new(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "collection_update".into(),
+            prefix: Some("COLLECTION".into()),
+            message: detail.collection.name.clone(),
+            entity_id: Some(detail.collection.id.clone()),
+            entity_kind: Some("collection".into()),
             payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
             agent_name: None,
         });
@@ -956,8 +1025,12 @@ impl RagServer {
                 Self::map_err(AppError::config(e.to_string()))
             }
         })?;
-        let metadata_json = merge_metadata(params.metadata_json, extracted.metadata)
-            .map_err(|e| Self::map_err(AppError::config(format!("metadata_json is not valid JSON: {e}"))))?;
+        let metadata_json =
+            merge_metadata(params.metadata_json, extracted.metadata).map_err(|e| {
+                Self::map_err(AppError::config(format!(
+                    "metadata_json is not valid JSON: {e}"
+                )))
+            })?;
 
         let default_uri = path
             .canonicalize()
@@ -1002,8 +1075,7 @@ impl RagServer {
         Parameters(params): Parameters<SyncSourcesParams>,
     ) -> Result<CallToolResult, McpError> {
         let requested_root = Path::new(&params.path);
-        check_path_allowlist(requested_root, &self.config.ingest_roots)
-            .map_err(Self::map_err)?;
+        check_path_allowlist(requested_root, &self.config.ingest_roots).map_err(Self::map_err)?;
         let root = requested_root.canonicalize().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 Self::map_err(AppError::not_found(format!(
@@ -1072,7 +1144,8 @@ impl RagServer {
                     .map(|stored| stored == hash)
                     .unwrap_or_else(|| content_hash(&doc.content) == hash)
             });
-            let has_chunks = existing.as_ref()
+            let has_chunks = existing
+                .as_ref()
                 .and_then(|doc| self.store.list_chunks_for_document(&doc.id).ok())
                 .is_some_and(|chunks| !chunks.is_empty());
             if unchanged && has_chunks {
@@ -1084,10 +1157,16 @@ impl RagServer {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .map(str::to_string);
-            let metadata_json = match merge_metadata(existing.as_ref().map(|doc| doc.metadata_json.clone()), extracted.metadata) {
+            let metadata_json = match merge_metadata(
+                existing.as_ref().map(|doc| doc.metadata_json.clone()),
+                extracted.metadata,
+            ) {
                 Ok(metadata) => Some(metadata),
                 Err(error) => {
-                    summary.errors.push(SyncSourceError { path: source_file, error: error.to_string() });
+                    summary.errors.push(SyncSourceError {
+                        path: source_file,
+                        error: error.to_string(),
+                    });
                     continue;
                 }
             };
@@ -1200,9 +1279,7 @@ impl RagServer {
             return Err(Self::map_err(AppError::config("room must be non-empty")));
         }
         if params.content.is_empty() {
-            return Err(Self::map_err(AppError::config(
-                "content must be non-empty",
-            )));
+            return Err(Self::map_err(AppError::config("content must be non-empty")));
         }
 
         let result = self
@@ -1447,7 +1524,12 @@ impl RagServer {
             .map(|k| k as usize)
             .unwrap_or(self.config.default_top_k);
 
-        let mode = match params.mode.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let mode = match params
+            .mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(raw) => SearchMode::parse(raw).map_err(|e| Self::map_err(AppError::config(e)))?,
             None => self.config.default_search_mode,
         };
@@ -1456,7 +1538,7 @@ impl RagServer {
             self.require_vec_compatible().map_err(Self::map_err)?;
         }
 
-        let diversity = match params
+        let mut diversity = match params
             .diversity
             .as_deref()
             .map(str::trim)
@@ -1465,6 +1547,30 @@ impl RagServer {
             Some(raw) => Some(DiversityMode::parse(raw).map_err(Self::map_err)?),
             None => None,
         };
+        if let Some(group_by) = params
+            .group_by
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            match group_by.to_ascii_lowercase().as_str() {
+                "document" | "document_id" => diversity = Some(DiversityMode::CollapseByDocument),
+                "none" => {}
+                other => {
+                    return Err(Self::map_err(AppError::config(format!(
+                        "invalid group_by '{other}': expected document or none"
+                    ))))
+                }
+            }
+        }
+        if params
+            .recency_half_life_days
+            .is_some_and(|days| !days.is_finite() || days <= 0.0)
+        {
+            return Err(Self::map_err(AppError::config(
+                "recency_half_life_days must be finite and greater than zero",
+            )));
+        }
 
         let context_expansion = match params.context_expansion.as_deref() {
             Some(raw) => Some(ContextExpansion::parse(raw).map_err(Self::map_err)?),
@@ -1511,6 +1617,7 @@ impl RagServer {
             min_score: params.min_score,
             diversity,
             max_chunks_per_document,
+            recency_half_life_days: params.recency_half_life_days,
             max_context_tokens,
             context_expansion,
             neighbor_chunks: params.neighbor_chunks.unwrap_or(1) as usize,
@@ -1527,10 +1634,7 @@ impl RagServer {
         description = "Return the corpus embedding fingerprint (provider, model, dims). Empty object fields when none recorded yet."
     )]
     async fn get_embedding_manifest(&self) -> Result<CallToolResult, McpError> {
-        let manifest = self
-            .store
-            .get_embedding_manifest()
-            .map_err(Self::map_err)?;
+        let manifest = self.store.get_embedding_manifest().map_err(Self::map_err)?;
         match manifest {
             Some(m) => Self::json_result(&m),
             None => Self::json_result(&serde_json::json!({
@@ -1636,6 +1740,160 @@ impl RagServer {
             chunks,
         };
         Self::json_result(&body)
+    }
+
+    #[tool(
+        name = "multi_get",
+        description = "Get several documents by id in request order. Returns found documents plus missing ids; optionally includes chunk texts."
+    )]
+    async fn multi_get(
+        &self,
+        Parameters(params): Parameters<MultiGetParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if params.document_ids.is_empty() || params.document_ids.len() > 100 {
+            return Err(Self::map_err(AppError::config(
+                "document_ids must contain between 1 and 100 ids",
+            )));
+        }
+        let include_chunks = params.include_chunks.unwrap_or(false);
+        let mut documents = Vec::new();
+        let mut missing = Vec::new();
+        for id in params.document_ids {
+            let Some(doc) = self.store.get_document(id.trim()).map_err(Self::map_err)? else {
+                missing.push(id);
+                continue;
+            };
+            let chunks = if include_chunks {
+                Some(
+                    self.store
+                        .list_chunks_for_document(&doc.id)
+                        .map_err(Self::map_err)?
+                        .into_iter()
+                        .map(|chunk| ChunkView {
+                            id: chunk.id,
+                            chunk_index: chunk.chunk_index,
+                            content: chunk.content,
+                            char_start: chunk.char_start,
+                            char_end: chunk.char_end,
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
+            documents.push(DocumentDetail {
+                id: doc.id,
+                uri: doc.uri,
+                title: doc.title,
+                content: doc.content,
+                metadata_json: doc.metadata_json,
+                created_at: doc.created_at.to_rfc3339(),
+                updated_at: doc.updated_at.to_rfc3339(),
+                chunks,
+            });
+        }
+        Self::json_result(&serde_json::json!({ "documents": documents, "missing": missing }))
+    }
+
+    #[tool(
+        name = "expand_chunks",
+        description = "Return the selected chunk and neighboring chunks from the same document, ordered by chunk_index."
+    )]
+    async fn expand_chunks(
+        &self,
+        Parameters(params): Parameters<ExpandChunksParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let radius = params.radius.unwrap_or(1).min(20) as i32;
+        let start = params.chunk_index.saturating_sub(radius);
+        let end = params.chunk_index.saturating_add(radius);
+        let chunks: Vec<ChunkView> = self
+            .store
+            .list_chunks_for_document(&params.document_id)
+            .map_err(Self::map_err)?
+            .into_iter()
+            .filter(|chunk| chunk.chunk_index >= start && chunk.chunk_index <= end)
+            .map(|chunk| ChunkView {
+                id: chunk.id,
+                chunk_index: chunk.chunk_index,
+                content: chunk.content,
+                char_start: chunk.char_start,
+                char_end: chunk.char_end,
+            })
+            .collect();
+        if chunks.is_empty() {
+            return Err(Self::map_err(AppError::not_found(format!(
+                "no chunks around document_id={} chunk_index={}",
+                params.document_id, params.chunk_index
+            ))));
+        }
+        Self::json_result(&chunks)
+    }
+
+    #[tool(
+        name = "find_similar",
+        description = "Find documents with chunk embeddings similar to a seed document. Uses the normalized mean of its existing chunk vectors and excludes the seed."
+    )]
+    async fn find_similar(
+        &self,
+        Parameters(params): Parameters<FindSimilarParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.require_vec_compatible().map_err(Self::map_err)?;
+        let document = self
+            .store
+            .get_document(&params.document_id)
+            .map_err(Self::map_err)?
+            .ok_or_else(|| {
+                Self::map_err(AppError::not_found(format!(
+                    "document not found: {}",
+                    params.document_id
+                )))
+            })?;
+        let chunks = self
+            .store
+            .list_chunks_for_document(&params.document_id)
+            .map_err(Self::map_err)?;
+        let dims = chunks
+            .first()
+            .map(|chunk| chunk.embedding.len())
+            .unwrap_or(0);
+        if dims == 0 {
+            return Err(Self::map_err(AppError::config(
+                "seed document has no chunk embeddings; run doctor_repair first",
+            )));
+        }
+        let mut centroid = vec![0.0f32; dims];
+        for chunk in &chunks {
+            if chunk.embedding.len() != dims {
+                continue;
+            }
+            for (dst, value) in centroid.iter_mut().zip(&chunk.embedding) {
+                *dst += *value;
+            }
+        }
+        crate::embeddings::l2_normalize(&mut centroid);
+        let top_k = params
+            .top_k
+            .unwrap_or(self.config.default_top_k as u32)
+            .max(1) as usize;
+        let mut hits = search(
+            &self.store,
+            &SearchQuery {
+                mode: SearchMode::Vec,
+                top_k: top_k.saturating_add(1),
+                query_text: Some(document.title),
+                query_embedding: Some(centroid),
+                wing: params.wing.filter(|value| !value.trim().is_empty()),
+                room: params.room.filter(|value| !value.trim().is_empty()),
+                diversity: Some(DiversityMode::CollapseByDocument),
+                max_chunks_per_document: Some(1),
+                fts_stemmer: self.config.fts_stemmer.clone(),
+                ..SearchQuery::default()
+            },
+        )
+        .map_err(Self::map_err)?;
+        hits.retain(|hit| hit.document_id != params.document_id);
+        hits.truncate(top_k);
+        Self::json_result(&hits)
     }
 
     #[tool(
@@ -1762,7 +2020,10 @@ impl RagServer {
         Parameters(params): Parameters<DoctorRepairParams>,
     ) -> Result<CallToolResult, McpError> {
         let dry_run = params.dry_run.unwrap_or(true);
-        let max_docs = params.max_docs.unwrap_or(self.config.maint_max_docs).max(1)
+        let max_docs = params
+            .max_docs
+            .unwrap_or(self.config.maint_max_docs)
+            .max(1)
             .min(self.config.maint_max_docs.max(1));
         let before = self.doctor_report().map_err(Self::map_err)?;
         let documents = self.store.list_documents().map_err(Self::map_err)?;
@@ -1771,7 +2032,10 @@ impl RagServer {
             if document.layer == "schema" {
                 continue;
             }
-            let chunks = self.store.list_chunks_for_document(&document.id).map_err(Self::map_err)?;
+            let chunks = self
+                .store
+                .list_chunks_for_document(&document.id)
+                .map_err(Self::map_err)?;
             if chunks.is_empty() {
                 missing.push(document);
                 if missing.len() >= max_docs {
@@ -1784,18 +2048,21 @@ impl RagServer {
         let mut documents_failed = Vec::new();
         if !dry_run {
             for document in &missing {
-                match self.ingest_pipeline(
-                    document.content.clone(),
-                    Some(document.title.clone()),
-                    Some(document.uri.clone()),
-                    Some(document.metadata_json.clone()),
-                    document.wing.clone(),
-                    document.room.clone(),
-                    document.source_file.clone(),
-                    &document.layer,
-                    &document.kind,
-                    false,
-                ).await {
+                match self
+                    .ingest_pipeline(
+                        document.content.clone(),
+                        Some(document.title.clone()),
+                        Some(document.uri.clone()),
+                        Some(document.metadata_json.clone()),
+                        document.wing.clone(),
+                        document.room.clone(),
+                        document.source_file.clone(),
+                        &document.layer,
+                        &document.kind,
+                        false,
+                    )
+                    .await
+                {
                     Ok(_) => documents_repaired.push(document.id.clone()),
                     Err(error) => documents_failed.push(SyncSourceError {
                         path: document.uri.clone(),
@@ -1804,12 +2071,16 @@ impl RagServer {
                 }
             }
         }
-        let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) = self
-            .store.prune_orphans(dry_run).map_err(Self::map_err)?;
+        let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) =
+            self.store.prune_orphans(dry_run).map_err(Self::map_err)?;
         if !dry_run {
             self.store.checkpoint().map_err(Self::map_err)?;
         }
-        let after = if dry_run { before.clone() } else { self.doctor_report().map_err(Self::map_err)? };
+        let after = if dry_run {
+            before.clone()
+        } else {
+            self.doctor_report().map_err(Self::map_err)?
+        };
         Self::json_result(&DoctorRepairReport {
             dry_run,
             documents_considered: missing.len(),
@@ -1926,12 +2197,10 @@ impl RagServer {
                 )))
             })?;
         }
-        let json = serde_json::to_string_pretty(&view).map_err(|e| {
-            Self::map_err(AppError::db(format!("serialize GraphView: {e}")))
-        })?;
-        std::fs::write(&out, json.as_bytes()).map_err(|e| {
-            Self::map_err(AppError::db(format!("write {}: {e}", out.display())))
-        })?;
+        let json = serde_json::to_string_pretty(&view)
+            .map_err(|e| Self::map_err(AppError::db(format!("serialize GraphView: {e}"))))?;
+        std::fs::write(&out, json.as_bytes())
+            .map_err(|e| Self::map_err(AppError::db(format!("write {}: {e}", out.display()))))?;
 
         #[derive(Serialize)]
         struct ExportSnapResult {
@@ -1986,9 +2255,7 @@ impl RagServer {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            self.store
-                .find_node_by_id(id)
-                .map_err(Self::map_err)?
+            self.store.find_node_by_id(id).map_err(Self::map_err)?
         } else if let Some(doc_id) = params
             .document_id
             .as_deref()
@@ -2019,10 +2286,7 @@ impl RagServer {
                 "graph node not found (provide node_id, document_id, or label)",
             ))
         })?;
-        let view = self
-            .store
-            .backlinks(&target.id)
-            .map_err(Self::map_err)?;
+        let view = self.store.backlinks(&target.id).map_err(Self::map_err)?;
         Self::json_result(&view)
     }
 
@@ -2214,12 +2478,7 @@ impl RagServer {
         let ended = parse_optional_ts(params.ended.as_deref()).map_err(Self::map_err)?;
         let facts = self
             .store
-            .kg_invalidate(
-                &params.subject,
-                &params.predicate,
-                &params.object,
-                ended,
-            )
+            .kg_invalidate(&params.subject, &params.predicate, &params.object, ended)
             .map_err(Self::map_err)?;
         Self::json_result(&facts)
     }
@@ -2280,13 +2539,21 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FindNodeParams>,
     ) -> Result<CallToolResult, McpError> {
-        if params.node_id.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+        if params
+            .node_id
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
             && params
                 .document_id
                 .as_ref()
                 .map(|s| s.trim().is_empty())
                 .unwrap_or(true)
-            && params.label.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+            && params
+                .label
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
         {
             return Err(Self::map_err(AppError::config(
                 "find_node requires node_id, document_id, or label",
@@ -2294,7 +2561,11 @@ impl RagServer {
         }
 
         // When label is the only key, return all label matches; otherwise single resolve.
-        let only_label = params.node_id.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+        let only_label = params
+            .node_id
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
             && params
                 .document_id
                 .as_ref()
@@ -2404,8 +2675,7 @@ impl RagServer {
         if nodes.len() > max_nodes as usize {
             nodes.truncate(max_nodes as usize);
         }
-        let keep: std::collections::HashSet<String> =
-            nodes.iter().map(|n| n.id.clone()).collect();
+        let keep: std::collections::HashSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
         let edges: Vec<_> = merged_edges
             .into_values()
             .filter(|e| keep.contains(&e.source_id) && keep.contains(&e.target_id))
@@ -2435,7 +2705,11 @@ impl RagServer {
             Some(raw) => Some(ContextExpansion::parse(raw).map_err(Self::map_err)?),
             None => None,
         };
-        let mut hits: Vec<SearchHit> = params.hits.into_iter().map(pack_hit_to_search_hit).collect();
+        let mut hits: Vec<SearchHit> = params
+            .hits
+            .into_iter()
+            .map(pack_hit_to_search_hit)
+            .collect();
         attach_context(
             &self.store,
             &mut hits,
@@ -2543,8 +2817,8 @@ impl RagServer {
         Parameters(params): Parameters<DiaryReadParams>,
     ) -> Result<CallToolResult, McpError> {
         let last_n = params.last_n.unwrap_or(10) as usize;
-        let entries = diary::diary_read(&self.store, &params.agent_name, last_n)
-            .map_err(Self::map_err)?;
+        let entries =
+            diary::diary_read(&self.store, &params.agent_name, last_n).map_err(Self::map_err)?;
         Self::json_result(&entries)
     }
 
@@ -2665,10 +2939,7 @@ impl RagServer {
         Parameters(params): Parameters<ListRecentOpsParams>,
     ) -> Result<CallToolResult, McpError> {
         let limit = params.limit.unwrap_or(20) as usize;
-        let ops = self
-            .store
-            .list_recent_ops(limit)
-            .map_err(Self::map_err)?;
+        let ops = self.store.list_recent_ops(limit).map_err(Self::map_err)?;
         Self::json_result(&ops)
     }
 
@@ -2800,7 +3071,12 @@ impl RagServer {
             .map(|k| k as usize)
             .unwrap_or(self.config.default_top_k);
 
-        let mode = match params.mode.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let mode = match params
+            .mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(raw) => SearchMode::parse(raw).map_err(|e| Self::map_err(AppError::config(e)))?,
             None => self.config.default_search_mode,
         };
@@ -3035,8 +3311,8 @@ impl RagServer {
         if let Some(v) = params.log_ops {
             opts.log_ops = v;
         }
-        let report = maintain::analyze_corpus(&self.store, &self.config, &opts)
-            .map_err(Self::map_err)?;
+        let report =
+            maintain::analyze_corpus(&self.store, &self.config, &opts).map_err(Self::map_err)?;
         Self::json_result(&report)
     }
 
@@ -3210,8 +3486,8 @@ impl RagServer {
         if let Some(n) = params.max_docs {
             opts.max_docs = (n as usize).max(1);
         }
-        let report = maintain::maintain_compress(&self.store, &self.config, &opts)
-            .map_err(Self::map_err)?;
+        let report =
+            maintain::maintain_compress(&self.store, &self.config, &opts).map_err(Self::map_err)?;
         Self::json_result(&report)
     }
 
@@ -3224,9 +3500,11 @@ impl RagServer {
         Parameters(params): Parameters<WriteWikiPageParams>,
     ) -> Result<CallToolResult, McpError> {
         self.require_vec_compatible().map_err(Self::map_err)?;
-        let if_match =
-            crate::models::resolve_if_match(params.if_match_revision, params.if_match_etag.as_deref())
-                .map_err(Self::map_err)?;
+        let if_match = crate::models::resolve_if_match(
+            params.if_match_revision,
+            params.if_match_etag.as_deref(),
+        )
+        .map_err(Self::map_err)?;
         let res = wiki::write_wiki_page_with_opts(
             &self.store,
             &self.embedder,
@@ -3496,11 +3774,14 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
         refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
-        let report = self.store.backup_database(
-            &path,
-            params.dry_run.unwrap_or(false),
-            params.overwrite.unwrap_or(false),
-        ).map_err(Self::map_err)?;
+        let report = self
+            .store
+            .backup_database(
+                &path,
+                params.dry_run.unwrap_or(false),
+                params.overwrite.unwrap_or(false),
+            )
+            .map_err(Self::map_err)?;
         Self::json_result(&report)
     }
 
@@ -3520,7 +3801,8 @@ impl RagServer {
         let existed = path.exists();
         if existed && !overwrite {
             return Err(Self::map_err(AppError::conflict(format!(
-                "bundle destination '{}' already exists; set overwrite=true explicitly", path.display()
+                "bundle destination '{}' already exists; set overwrite=true explicitly",
+                path.display()
             ))));
         }
         let bundle = self.store.recovery_bundle().map_err(Self::map_err)?;
@@ -3531,9 +3813,15 @@ impl RagServer {
             std::fs::write(&path, &encoded).map_err(|e| Self::map_err(e.into()))?;
         }
         let report = BundleExportReport {
-            success: true, dry_run, path: path.display().to_string(), format: format.into(),
-            overwritten: existed && overwrite, documents, chunks,
-            bytes: Some(encoded.len() as u64), errors: Vec::new(),
+            success: true,
+            dry_run,
+            path: path.display().to_string(),
+            format: format.into(),
+            overwritten: existed && overwrite,
+            documents,
+            chunks,
+            bytes: Some(encoded.len() as u64),
+            errors: Vec::new(),
         };
         Self::json_result(&report)
     }
@@ -3548,84 +3836,145 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
         if !path.is_file() {
-            return Err(Self::map_err(AppError::not_found(format!("bundle file '{}'", path.display()))));
+            return Err(Self::map_err(AppError::not_found(format!(
+                "bundle file '{}'",
+                path.display()
+            ))));
         }
         let format = recovery_format(params.format.as_deref(), &path).map_err(Self::map_err)?;
-        let policy = ConflictPolicy::parse(params.conflict_policy.as_deref()).map_err(Self::map_err)?;
+        let policy =
+            ConflictPolicy::parse(params.conflict_policy.as_deref()).map_err(Self::map_err)?;
         let input = std::fs::read_to_string(&path).map_err(|e| Self::map_err(e.into()))?;
         let bundle = decode_recovery_bundle(&input, format).map_err(Self::map_err)?;
-        let report = self.store.import_recovery_bundle(
-            &bundle, policy, params.dry_run.unwrap_or(true), &path, format,
-        ).map_err(Self::map_err)?;
+        let report = self
+            .store
+            .import_recovery_bundle(
+                &bundle,
+                policy,
+                params.dry_run.unwrap_or(true),
+                &path,
+                format,
+            )
+            .map_err(Self::map_err)?;
         Self::json_result(&report)
     }
 }
 
 fn recovery_path(raw: &str, roots: &[PathBuf]) -> Result<PathBuf, AppError> {
     let raw = raw.trim();
-    if raw.is_empty() { return Err(AppError::config("path must be non-empty")); }
+    if raw.is_empty() {
+        return Err(AppError::config("path must be non-empty"));
+    }
     let path = PathBuf::from(raw);
     check_path_allowlist(&path, roots)?;
     let parent = path.parent().unwrap_or(Path::new("."));
     if !parent.is_dir() {
-        return Err(AppError::config(format!("parent directory '{}' does not exist", parent.display())));
+        return Err(AppError::config(format!(
+            "parent directory '{}' does not exist",
+            parent.display()
+        )));
     }
     let parent = std::fs::canonicalize(parent)?;
-    Ok(parent.join(path.file_name().ok_or_else(|| AppError::config("path must name a file"))?))
+    Ok(parent.join(
+        path.file_name()
+            .ok_or_else(|| AppError::config("path must name a file"))?,
+    ))
 }
 
 fn recovery_format(requested: Option<&str>, path: &Path) -> Result<&'static str, AppError> {
-    let value = requested.map(str::trim).filter(|s| !s.is_empty()).map(str::to_ascii_lowercase)
-        .or_else(|| path.extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase))
+    let value = requested
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .or_else(|| {
+            path.extension()
+                .and_then(|s| s.to_str())
+                .map(str::to_ascii_lowercase)
+        })
         .unwrap_or_else(|| "json".into());
     match value.as_str() {
         "json" => Ok("json"),
         "jsonl" | "ndjson" => Ok("jsonl"),
-        other => Err(AppError::config(format!("invalid bundle format '{other}': expected json or jsonl"))),
+        other => Err(AppError::config(format!(
+            "invalid bundle format '{other}': expected json or jsonl"
+        ))),
     }
 }
 
 fn refuse_live_db_target(path: &Path, db_path: &Path) -> Result<(), AppError> {
     let db = std::fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
     if path == db {
-        return Err(AppError::forbidden("recovery output path must not be the live DuckDB file"));
+        return Err(AppError::forbidden(
+            "recovery output path must not be the live DuckDB file",
+        ));
     }
     Ok(())
 }
 
 fn encode_recovery_bundle(bundle: &RecoveryBundle, format: &str) -> Result<Vec<u8>, AppError> {
-    if format == "json" { return Ok(serde_json::to_vec_pretty(bundle)?); }
+    if format == "json" {
+        return Ok(serde_json::to_vec_pretty(bundle)?);
+    }
     let mut lines = Vec::with_capacity(bundle.documents.len() + 1);
     lines.push(serde_json::to_string(&serde_json::json!({
         "record_type": "manifest", "format": bundle.format, "version": bundle.version,
         "exported_at": bundle.exported_at,
     }))?);
     for item in &bundle.documents {
-        lines.push(serde_json::to_string(&serde_json::json!({"record_type": "document", "value": item}))?);
+        lines.push(serde_json::to_string(
+            &serde_json::json!({"record_type": "document", "value": item}),
+        )?);
     }
     Ok((lines.join("\n") + "\n").into_bytes())
 }
 
 fn decode_recovery_bundle(input: &str, format: &str) -> Result<RecoveryBundle, AppError> {
-    if format == "json" { return Ok(serde_json::from_str(input)?); }
+    if format == "json" {
+        return Ok(serde_json::from_str(input)?);
+    }
     let mut format_name = String::new();
     let mut version = 0;
     let mut exported_at = Utc::now();
     let mut documents = Vec::<BundleDocument>::new();
     for (index, line) in input.lines().enumerate() {
-        if line.trim().is_empty() { continue; }
-        let value: serde_json::Value = serde_json::from_str(line).map_err(|e| AppError::config(format!("invalid JSONL line {}: {e}", index + 1)))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line)
+            .map_err(|e| AppError::config(format!("invalid JSONL line {}: {e}", index + 1)))?;
         match value.get("record_type").and_then(|v| v.as_str()) {
             Some("manifest") => {
-                format_name = value.get("format").and_then(|v| v.as_str()).unwrap_or_default().into();
+                format_name = value
+                    .get("format")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .into();
                 version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                exported_at = serde_json::from_value(value.get("exported_at").cloned().unwrap_or_default())?;
+                exported_at =
+                    serde_json::from_value(value.get("exported_at").cloned().unwrap_or_default())?;
             }
-            Some("document") => documents.push(serde_json::from_value(value.get("value").cloned().unwrap_or_default())?),
-            other => return Err(AppError::config(format!("invalid JSONL record_type {:?} at line {}", other, index + 1))),
+            Some("document") => documents.push(serde_json::from_value(
+                value.get("value").cloned().unwrap_or_default(),
+            )?),
+            other => {
+                return Err(AppError::config(format!(
+                    "invalid JSONL record_type {:?} at line {}",
+                    other,
+                    index + 1
+                )))
+            }
         }
     }
-    Ok(RecoveryBundle { format: format_name, version: if version == 0 { BUNDLE_VERSION } else { version }, exported_at, documents })
+    Ok(RecoveryBundle {
+        format: format_name,
+        version: if version == 0 {
+            BUNDLE_VERSION
+        } else {
+            version
+        },
+        exported_at,
+        documents,
+    })
 }
 
 fn pack_hit_to_search_hit(h: PackHitParams) -> SearchHit {
@@ -3982,32 +4331,119 @@ mod tests {
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
         let server = RagServer::new(store, embedder, config);
         let now = Utc::now();
-        server.store.upsert_document(&Document {
-            id: "missing-chunks".into(),
-            uri: "file://missing.md".into(),
-            title: "Missing chunks".into(),
-            content: "This document must become searchable after repair.".into(),
-            metadata_json: "{}".into(),
-            created_at: now,
-            updated_at: now,
-            layer: "raw".into(),
-            kind: "document".into(),
-            ..Default::default()
-        }).unwrap();
+        server
+            .store
+            .upsert_document(&Document {
+                id: "missing-chunks".into(),
+                uri: "file://missing.md".into(),
+                title: "Missing chunks".into(),
+                content: "This document must become searchable after repair.".into(),
+                metadata_json: "{}".into(),
+                created_at: now,
+                updated_at: now,
+                layer: "raw".into(),
+                kind: "document".into(),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(server.doctor_report().unwrap().documents_without_chunks, 1);
 
-        server.doctor_repair(Parameters(DoctorRepairParams {
-            dry_run: Some(true),
-            max_docs: Some(10),
-        })).await.unwrap();
-        assert!(server.store.list_chunks_for_document("missing-chunks").unwrap().is_empty());
+        server
+            .doctor_repair(Parameters(DoctorRepairParams {
+                dry_run: Some(true),
+                max_docs: Some(10),
+            }))
+            .await
+            .unwrap();
+        assert!(server
+            .store
+            .list_chunks_for_document("missing-chunks")
+            .unwrap()
+            .is_empty());
 
-        server.doctor_repair(Parameters(DoctorRepairParams {
-            dry_run: Some(false),
-            max_docs: Some(10),
-        })).await.unwrap();
-        assert!(!server.store.list_chunks_for_document("missing-chunks").unwrap().is_empty());
+        server
+            .doctor_repair(Parameters(DoctorRepairParams {
+                dry_run: Some(false),
+                max_docs: Some(10),
+            }))
+            .await
+            .unwrap();
+        assert!(!server
+            .store
+            .list_chunks_for_document("missing-chunks")
+            .unwrap()
+            .is_empty());
         assert_eq!(server.doctor_report().unwrap().documents_without_chunks, 0);
+    }
+
+    #[tokio::test]
+    async fn retrieval_helpers_multi_get_expand_and_find_similar() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("retrieval-helpers.duckdb");
+        let store = Store::open(&path).expect("open");
+        let dims = 16usize;
+        let config = test_config(path, Vec::new(), dims);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
+        let server = RagServer::new(store, embedder, config);
+        let first = server
+            .ingest_pipeline(
+                "alpha architecture and duckdb reliability ".repeat(80),
+                Some("Alpha".into()),
+                Some("file://alpha.md".into()),
+                None,
+                Some("rag".into()),
+                Some("docs".into()),
+                None,
+                "raw",
+                "document",
+                false,
+            )
+            .await
+            .unwrap();
+        let second = server
+            .ingest_pipeline(
+                "alpha architecture with database recovery ".repeat(80),
+                Some("Beta".into()),
+                Some("file://beta.md".into()),
+                None,
+                Some("rag".into()),
+                Some("docs".into()),
+                None,
+                "raw",
+                "document",
+                false,
+            )
+            .await
+            .unwrap();
+
+        server
+            .multi_get(Parameters(MultiGetParams {
+                document_ids: vec![
+                    first.document_id.clone(),
+                    second.document_id.clone(),
+                    "missing".into(),
+                ],
+                include_chunks: Some(false),
+            }))
+            .await
+            .unwrap();
+        server
+            .expand_chunks(Parameters(ExpandChunksParams {
+                document_id: first.document_id.clone(),
+                chunk_index: 0,
+                radius: Some(1),
+            }))
+            .await
+            .unwrap();
+        server
+            .find_similar(Parameters(FindSimilarParams {
+                document_id: first.document_id,
+                top_k: Some(2),
+                wing: Some("rag".into()),
+                room: None,
+            }))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -4058,11 +4494,7 @@ mod tests {
             .expect("manifest");
 
         let dims = 32usize;
-        let config = test_config(
-            path.clone(),
-            vec![PathBuf::from("/allowed")],
-            dims,
-        );
+        let config = test_config(path.clone(), vec![PathBuf::from("/allowed")], dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
         let server = RagServer::new(store, embedder, config);
 
@@ -4159,7 +4591,9 @@ mod tests {
             .list_rooms(Some("research"))
             .expect("list_rooms");
         assert_eq!(rooms.len(), 2);
-        assert!(rooms.iter().any(|r| r.room == "rag" && r.document_count == 1));
+        assert!(rooms
+            .iter()
+            .any(|r| r.room == "rag" && r.document_count == 1));
         assert!(rooms
             .iter()
             .any(|r| r.room == "eval" && r.document_count == 1));
@@ -4353,13 +4787,13 @@ mod tests {
         assert!(by_uri.is_duplicate);
         assert_eq!(by_uri.matches[0].match_reason, "uri");
 
-        let deleted = server.store.delete_by_source(src).expect("delete_by_source");
+        let deleted = server
+            .store
+            .delete_by_source(src)
+            .expect("delete_by_source");
         assert_eq!(deleted, 2);
         assert_eq!(server.store.list_documents().expect("list").len(), 0);
-        assert_eq!(
-            server.store.delete_by_source(src).expect("again"),
-            0
-        );
+        assert_eq!(server.store.delete_by_source(src).expect("again"), 0);
     }
 
     #[tokio::test]
@@ -4594,11 +5028,13 @@ mod tests {
             .get_document(&ing.document_id)
             .expect("get after")
             .is_none());
-        assert!(!server
-            .store
-            .check_duplicate(Some(body), None, None)
-            .expect("after delete")
-            .is_duplicate);
+        assert!(
+            !server
+                .store
+                .check_duplicate(Some(body), None, None)
+                .expect("after delete")
+                .is_duplicate
+        );
     }
 
     #[tokio::test]
@@ -4656,7 +5092,9 @@ mod tests {
         assert!(result.chunk_count >= 1);
         assert_eq!(result.dims, dims as i32);
 
-        server.require_vec_compatible().expect("compatible after reembed");
+        server
+            .require_vec_compatible()
+            .expect("compatible after reembed");
         let chunks = server
             .store
             .list_chunks_for_document(&ingest.document_id)
@@ -4670,7 +5108,9 @@ mod tests {
         assert!(parse_optional_ts(Some("  ")).unwrap().is_none());
         let d = parse_optional_ts(Some("2024-03-15")).unwrap().unwrap();
         assert_eq!(d.date_naive().to_string(), "2024-03-15");
-        let r = parse_optional_ts(Some("2024-03-15T12:00:00Z")).unwrap().unwrap();
+        let r = parse_optional_ts(Some("2024-03-15T12:00:00Z"))
+            .unwrap()
+            .unwrap();
         assert_eq!(r.timestamp(), 1_710_504_000);
         let err = parse_optional_ts(Some("not-a-date")).unwrap_err();
         assert!(matches!(err, AppError::Config(_)));

@@ -385,7 +385,10 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 
 | Tool | Params | Behavior |
 |------|--------|----------|
-| `search` | `query`, `top_k?`, `mode?`, `document_id?`, `wing?`, `room?`, `layer?`, `source_file?`, `include_archived?`, `min_score?`, `diversity?`, `max_context_tokens?`, `max_chunks_per_document?` | `lex` \| `vec` \| `hybrid` search over chunks |
+| `search` | `query`, `top_k?`, `mode?`, `document_id?`, `wing?`, `room?`, `layer?`, `source_file?`, `include_archived?`, `min_score?`, `diversity?`, `group_by?`, `recency_half_life_days?`, `max_context_tokens?`, `max_chunks_per_document?` | `lex` \| `vec` \| `hybrid` search over chunks; optional document grouping and recency boost |
+| `multi_get` | `document_ids`, `include_chunks?` | Fetch up to 100 documents in one call and report missing IDs |
+| `expand_chunks` | `document_id`, `chunk_index`, `radius?` | Read the neighboring chunk window around a known hit |
+| `find_similar` | `document_id`, `chunk_indices?`, `top_k?`, filters… | Find chunks nearest to an existing document or selected chunks |
 | `search_wiki` | `query`, `top_k?`, `mode?`, `min_score?`, `wing?`, `room?`, `diversity?`, … | Search restricted to `layer=wiki` |
 | `graph_expand_search` | `query`, `top_k?`, `document_id?`, `depth?`, `max_nodes?` | Vector search then neighbor expand from hit document nodes |
 | `pack_context` | `hits`, `max_tokens?` | Pack ranked hits under a token budget into a citation block |

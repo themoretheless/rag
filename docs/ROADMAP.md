@@ -132,7 +132,7 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
   `forget` / `undelete`, optional TTL, and session/agent scopes on diaries/ops/kg remain.
 - Rich `consolidate_memory` synthesis (diary/episode → wiki/kg compression) remains optional;
   deterministic lifecycle transitions do not require an LLM.
-- Retrieval UX: section-aware Markdown + `heading_path` and opt-in neighbor/parent-section expansion shipped as additive `search` / `pack_context` params; dedicated `expand_chunks`, `multi_get`, `find_similar`, multi-query RRF, recency boost, `group_by=document` remain
+- Retrieval UX: section-aware Markdown + `heading_path`, neighbor/parent-section expansion, `expand_chunks`, `multi_get`, `find_similar`, recency boost, and `group_by=document` shipped; multi-query RRF remains
 - Optional top-N rerank
 - Ops: `sync_sources` directory ingest + explicit deleted-source pruning and `backup_db` consistent snapshots shipped; full `doctor`, prune orphans, progress events on bulk ops remain
 - Wiki write conflict: etag / `updated_at` If-Match on `update_wiki_page`
