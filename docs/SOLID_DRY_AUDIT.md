@@ -33,22 +33,44 @@ analysis use the stricter database form.
 
 Principles improved: DRY without erasing domain-specific policy.
 
+### Ingest application service
+
+`IngestService` owns normalization, immutable-source policy, chunking,
+embedding, persistence, graph refresh, and document re-embedding. The MCP
+facade delegates to this service instead of implementing the workflow.
+
+Principles improved: SRP, DIP. Ingest behavior is now transport-independent and
+accepts an `IngestCommand` rather than accumulating more facade parameters.
+
+### Wiki commands and maintenance context
+
+Wiki writes expose `WikiWriteCommand`; MCP and HTTP use it while legacy
+functions remain compatibility adapters. Maintenance plan execution carries
+shared dependencies and execution policy in `MaintenanceExecutionContext`
+instead of forwarding the same six arguments through every action handler.
+
+Principles improved: ISP, SRP, DRY.
+
+### Explicit slug policies
+
+Shared slug mechanics now require a named `SlugPolicy`. Wiki pages, index
+fallbacks, and graph link targets retain their different slash, punctuation,
+and empty-value behavior without maintaining three loop implementations.
+
+Principles improved: DRY while keeping policy differences explicit.
+
 ## Highest-priority remaining debt
 
-1. `mcp/facade.rs` is still a large composition root and tool adapter. Move
-   ingest/re-embed orchestration into an application service with request
-   objects; keep MCP-specific error and response mapping in the facade.
-2. Wiki write/update/ingest functions and maintenance action handlers still
-   have long parameter lists. Introduce command objects and small execution
-   contexts before adding more flags.
-3. Slug functions in store, wiki, and graph look similar but have different
-   policies (fallback value, slash handling, preserved punctuation). Model the
-   policy explicitly before sharing code; a blind helper merge would change
-   identifiers.
-4. `db/store.rs` combines persistence operations and row mapping for many
+1. `mcp/facade.rs` remains a large composition root. Move status/doctor and
+   metadata-update orchestration into application services; retain only MCP
+   parameter and error mapping in the facade.
+2. Wiki update/compile/consolidate compatibility functions still have long
+   parameter lists. Migrate internal callers to command APIs before deprecating
+   the old library surface.
+3. `db/store.rs` combines persistence operations and row mapping for many
    aggregates. Extract row codecs by aggregate first; do not split transaction
    ownership across repositories.
-5. Search construction is repeated across several tools. Add a validated search
+4. Search construction is repeated across several tools. Add a validated search
    request builder only after transport defaults are recorded as compatibility
    tests.
 
