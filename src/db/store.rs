@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
 
 use super::schema;
+use super::rows;
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::models::{
@@ -19,7 +20,7 @@ use crate::util::{
     slugify as shared_slugify, wiki_slug_from_uri, SlugPolicy,
 };
 
-/// Shared SELECT list for document rows (order matches [`row_to_document`]).
+/// Shared SELECT list for document rows (order matches [`rows::document`]).
 const DOCUMENT_SELECT: &str = r#"
     id, uri, title, content, metadata_json,
     content_hash, wing, room, source_file, layer, kind,
@@ -267,7 +268,7 @@ impl Store {
         ))?;
         let mut rows = stmt.query(params![document_id.trim()])?;
         let mut out = Vec::new();
-        while let Some(row) = rows.next()? { out.push(row_to_document(row)?); }
+        while let Some(row) = rows.next()? { out.push(rows::document(row)?); }
         Ok(out)
     }
 
@@ -362,7 +363,7 @@ impl Store {
 
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_document(row)?)),
+            Some(row) => Ok(Some(rows::document(row)?)),
             None => Ok(None),
         }
     }
@@ -375,7 +376,7 @@ impl Store {
 
         let mut rows = stmt.query(params![uri])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_document(row)?)),
+            Some(row) => Ok(Some(rows::document(row)?)),
             None => Ok(None),
         }
     }
@@ -396,7 +397,7 @@ impl Store {
         let mut rows = stmt.query(params![hash])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_document(row)?);
+            out.push(rows::document(row)?);
         }
         Ok(out)
     }
@@ -497,7 +498,7 @@ impl Store {
         let mut rows = stmt.query([])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_document(row)?);
+            out.push(rows::document(row)?);
         }
         Ok(out)
     }
@@ -513,7 +514,7 @@ impl Store {
         let mut rows = stmt.query(params![layer])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_document(row)?);
+            out.push(rows::document(row)?);
         }
         Ok(out)
     }
@@ -583,7 +584,7 @@ impl Store {
         let mut rows = stmt.query(params![wing])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_document(row)?);
+            out.push(rows::document(row)?);
         }
         Ok(out)
     }
@@ -654,7 +655,7 @@ impl Store {
         let mut rows = stmt.query(params_dyn.as_slice())?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_document(row)?);
+            out.push(rows::document(row)?);
         }
         Ok(out)
     }
@@ -929,7 +930,7 @@ impl Store {
         let mut rows = stmt.query(params![doc_id])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_chunk(row)?);
+            out.push(rows::chunk(row)?);
         }
         Ok(out)
     }
@@ -948,7 +949,7 @@ impl Store {
         let mut rows = stmt.query([])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_chunk(row)?);
+            out.push(rows::chunk(row)?);
         }
         Ok(out)
     }
@@ -1135,7 +1136,7 @@ impl Store {
 
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_embedding_manifest(row)?)),
+            Some(row) => Ok(Some(rows::embedding_manifest(row)?)),
             None => Ok(None),
         }
     }
@@ -1692,7 +1693,7 @@ impl Store {
             let mut stmt = conn.prepare(&sql)?;
             let mut rows = stmt.query(params![name, wing])?;
             while let Some(row) = rows.next()? {
-                let doc = row_to_document(row)?;
+                let doc = rows::document(row)?;
                 out.push(DiaryEntry::from_document(&doc));
             }
         } else {
@@ -1706,7 +1707,7 @@ impl Store {
             let mut stmt = conn.prepare(&sql)?;
             let mut rows = stmt.query([])?;
             while let Some(row) = rows.next()? {
-                let doc = row_to_document(row)?;
+                let doc = rows::document(row)?;
                 out.push(DiaryEntry::from_document(&doc));
             }
         }
@@ -1730,7 +1731,7 @@ impl Store {
         let mut rows = stmt.query([])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            out.push(row_to_document(row)?);
+            out.push(rows::document(row)?);
         }
         Ok(out)
     }
@@ -2131,78 +2132,6 @@ pub fn embedding_manifest_from_config(config: &Config) -> EmbeddingManifest {
 fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
     parse_db_timestamp(s)
         .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
-}
-
-fn row_to_document(row: &duckdb::Row<'_>) -> Result<Document> {
-    let content_hash: Option<String> = row.get(5)?;
-    let wing: Option<String> = row.get(6)?;
-    let room: Option<String> = row.get(7)?;
-    let source_file: Option<String> = row.get(8)?;
-    let layer: Option<String> = row.get(9)?;
-    let kind: Option<String> = row.get(10)?;
-    let created_raw: String = row.get(11)?;
-    let updated_raw: String = row.get(12)?;
-    let status: String = row
-        .get::<_, Option<String>>(13)?
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "active".into());
-    let pinned: bool = row.get::<_, Option<bool>>(14)?.unwrap_or(false);
-    let boost: f64 = row.get::<_, Option<f64>>(15)?.unwrap_or(1.0);
-    let revision: i64 = row.get::<_, Option<i64>>(16)?.unwrap_or(1);
-    Ok(Document {
-        id: row.get(0)?,
-        uri: row.get(1)?,
-        title: row.get(2)?,
-        content: row.get(3)?,
-        metadata_json: row.get(4)?,
-        content_hash,
-        wing,
-        room,
-        source_file,
-        layer: layer
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "raw".into()),
-        kind: kind
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "document".into()),
-        created_at: parse_ts(&created_raw)?,
-        updated_at: parse_ts(&updated_raw)?,
-        status,
-        pinned,
-        boost,
-        revision,
-    })
-}
-
-fn row_to_chunk(row: &duckdb::Row<'_>) -> Result<Chunk> {
-    let embedding_json: String = row.get(4)?;
-    let embedding: Vec<f32> = serde_json::from_str(&embedding_json)?;
-    Ok(Chunk {
-        id: row.get(0)?,
-        document_id: row.get(1)?,
-        chunk_index: row.get(2)?,
-        content: row.get(3)?,
-        embedding,
-        char_start: row.get(5)?,
-        char_end: row.get(6)?,
-        metadata_json: row
-            .get::<_, Option<String>>(7)?
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "{}".into()),
-    })
-}
-
-fn row_to_embedding_manifest(row: &duckdb::Row<'_>) -> Result<EmbeddingManifest> {
-    let updated_raw: String = row.get(6)?;
-    Ok(EmbeddingManifest {
-        id: row.get(0)?,
-        provider: row.get(1)?,
-        model: row.get(2)?,
-        dims: row.get(3)?,
-        base_url: row.get(4)?,
-        content_fingerprint: row.get(5)?,
-        updated_at: parse_ts(&updated_raw)?,
-    })
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ pub mod collections;
 pub mod graph;
 pub mod kg;
 pub mod recovery;
+mod rows;
 pub mod schema;
 pub mod search;
 pub mod store;
