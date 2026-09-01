@@ -51,6 +51,10 @@ async fn main() -> anyhow::Result<()> {
         .ensure_embedding_manifest(&config)
         .context("failed to record embedding_manifest")?;
     rag_mcp::ops::set_startup_timing("manifest", phase.elapsed());
+    // Persist migration, FTS DDL, and manifest writes before accepting traffic.
+    // Otherwise a SIGTERM/restart can leave FTS catalog DDL in WAL that DuckDB
+    // cannot replay on the next open because extension objects depend on it.
+    store.checkpoint().context("post-initialization DuckDB CHECKPOINT failed")?;
 
     let schema_version = store.schema_version().context("schema_version")?.unwrap_or(0);
     let fts_ready = store.fts_ready().context("fts_ready")?;
@@ -133,7 +137,7 @@ async fn run_serve_modes(
                 result = http_api::serve(addr, store_http, mcp_svc) => {
                     result.context("HTTP API server error")?;
                 }
-                signal = tokio::signal::ctrl_c() => {
+                signal = shutdown_signal() => {
                     signal.context("shutdown signal handler failed")?;
                     tracing::info!("shutdown signal received");
                 }
@@ -175,6 +179,19 @@ async fn run_serve_modes(
     }
 
     Ok(())
+}
+
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result,
+            _ = terminate.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await
 }
 
 fn init_tracing() {
