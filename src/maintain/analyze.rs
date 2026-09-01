@@ -16,6 +16,7 @@ use crate::db::Store;
 use crate::embeddings::cosine_similarity;
 use crate::error::Result;
 use crate::models::{DoctorReport, OpsLogEntry};
+use crate::util::parse_db_timestamp;
 
 /// Default age (days) after which an unresolved stub is "aging".
 const DEFAULT_STUB_AGE_DAYS: u32 = 14;
@@ -257,7 +258,8 @@ pub fn analyze_corpus(
     let (orphan_nodes, orphan_wiki_pages) = find_orphans(store)?;
     let (unresolved_stubs, aging_stubs) = find_stubs(store, opts.stub_age_days, generated_at)?;
     let stale_wiki = find_stale_wiki(store)?;
-    let archive_candidates = find_archive_candidates(store, opts.archive_min_age_days, generated_at)?;
+    let archive_candidates =
+        find_archive_candidates(store, opts.archive_min_age_days, generated_at)?;
 
     let mut issues = Vec::new();
     push_doctor_issues(&mut issues, &doctor);
@@ -317,11 +319,7 @@ pub fn analyze_corpus(
             } else {
                 "unresolved_stub".into()
             },
-            severity: if aging {
-                "warn".into()
-            } else {
-                "info".into()
-            },
+            severity: if aging { "warn".into() } else { "info".into() },
             message: format!(
                 "unresolved stub '{}'{}",
                 s.label,
@@ -429,9 +427,15 @@ fn build_doctor(store: &Store, config: &Config) -> Result<DoctorReport> {
     };
     let ingest_roots_configured = !config.ingest_roots.is_empty();
     let ready_for_search = chunk_count > 0 && schema_ok && embed_ok;
-    let (documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents) =
-        store.integrity_counts()?;
-    let relational_integrity_ok = orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
+    let (
+        documents_without_chunks,
+        orphan_chunks,
+        orphan_document_nodes,
+        orphan_edges,
+        unscoped_documents,
+    ) = store.integrity_counts()?;
+    let relational_integrity_ok =
+        orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
     let wal_bytes = store.wal_file_size_bytes();
     let wal_warn_bytes = crate::ops::wal_warn_bytes();
     let wal_too_large = wal_bytes >= wal_warn_bytes;
@@ -441,7 +445,9 @@ fn build_doctor(store: &Store, config: &Config) -> Result<DoctorReport> {
         Some("Reingest documents without chunks before relying on retrieval.".to_string())
     } else if wal_too_large {
         Some("WAL exceeds the configured warning threshold; checkpoint the store.".to_string())
-    } else { None };
+    } else {
+        None
+    };
     let ok = schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0;
     Ok(DoctorReport {
         backend: "duckdb".to_string(),
@@ -678,7 +684,6 @@ fn find_near_duplicates(store: &Store, threshold: f64) -> Result<Vec<NearDuplica
     Ok(pairs)
 }
 
-
 fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<OrphanNode>)> {
     let conn = store.lock()?;
 
@@ -775,9 +780,7 @@ fn find_stubs(
         let node_id: String = row.get(0)?;
         let label: String = row.get(1)?;
         let created_raw: Option<String> = row.get(2)?;
-        let created_at = created_raw
-            .as_deref()
-            .and_then(parse_ts);
+        let created_at = created_raw.as_deref().and_then(parse_ts);
         let age_days = created_at.map(|t| (now - t).num_days());
         let info = StubInfo {
             node_id,
@@ -889,21 +892,7 @@ fn short_hash(h: &str) -> String {
 }
 
 fn parse_ts(raw: &str) -> Option<DateTime<Utc>> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return None;
-    }
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.with_timezone(&Utc));
-    }
-    // DuckDB CAST(ts AS VARCHAR) often yields "YYYY-MM-DD HH:MM:SS" or with fractional.
-    let naive = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"));
-    naive
-        .ok()
-        .map(|n| DateTime::<Utc>::from_naive_utc_and_offset(n, Utc))
+    parse_db_timestamp(raw)
 }
 
 #[cfg(test)]

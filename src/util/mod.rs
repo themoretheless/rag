@@ -1,10 +1,10 @@
 //! Shared helpers (hashing, path allowlist, wiki URI slug).
 
 pub mod hash;
+pub mod time;
 
-pub use hash::{
-    check_path_allowlist, content_hash, ingest_roots_from_env, parse_ingest_roots,
-};
+pub use hash::{check_path_allowlist, content_hash, ingest_roots_from_env, parse_ingest_roots};
+pub use time::{format_db_timestamp, parse_db_timestamp, parse_flexible_timestamp};
 
 /// Extract the slug segment from a `wiki://` URI.
 ///

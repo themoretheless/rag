@@ -1,12 +1,13 @@
 //! Temporal knowledge-graph facts (`kg_facts`): add, query, invalidate, supersede, timeline, stats.
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use duckdb::params;
 use uuid::Uuid;
 
 use super::store::Store;
 use crate::error::{AppError, Result};
 use crate::models::{KgFact, KgStats};
+use crate::util::{format_db_timestamp as format_ts, parse_flexible_timestamp};
 
 /// Shared SELECT list for kg_facts rows (order matches [`row_to_kg_fact`]).
 const KG_FACT_SELECT: &str = r#"
@@ -154,10 +155,8 @@ impl Store {
 
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn duckdb::ToSql> = binds
-            .iter()
-            .map(|s| s as &dyn duckdb::ToSql)
-            .collect();
+        let param_refs: Vec<&dyn duckdb::ToSql> =
+            binds.iter().map(|s| s as &dyn duckdb::ToSql).collect();
         let mut rows = stmt.query(param_refs.as_slice())?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
@@ -404,22 +403,19 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
-        let distinct_subjects: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT subject) FROM kg_facts",
-            [],
-            |r| r.get(0),
-        )?;
-        let distinct_predicates: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT predicate) FROM kg_facts",
-            [],
-            |r| r.get(0),
-        )?;
+        let distinct_subjects: i64 =
+            conn.query_row("SELECT COUNT(DISTINCT subject) FROM kg_facts", [], |r| {
+                r.get(0)
+            })?;
+        let distinct_predicates: i64 =
+            conn.query_row("SELECT COUNT(DISTINCT predicate) FROM kg_facts", [], |r| {
+                r.get(0)
+            })?;
 
         let mut relationship_types = Vec::new();
         {
-            let mut stmt = conn.prepare(
-                "SELECT DISTINCT predicate FROM kg_facts ORDER BY predicate ASC",
-            )?;
+            let mut stmt =
+                conn.prepare("SELECT DISTINCT predicate FROM kg_facts ORDER BY predicate ASC")?;
             let mut rows = stmt.query([])?;
             while let Some(row) = rows.next()? {
                 relationship_types.push(row.get::<_, String>(0)?);
@@ -513,10 +509,7 @@ fn opt_trim(s: Option<&str>) -> Option<String> {
         .map(|x| x.to_string())
 }
 
-fn check_window(
-    valid_from: Option<DateTime<Utc>>,
-    valid_to: Option<DateTime<Utc>>,
-) -> Result<()> {
+fn check_window(valid_from: Option<DateTime<Utc>>, valid_to: Option<DateTime<Utc>>) -> Result<()> {
     if let (Some(from), Some(to)) = (valid_from, valid_to) {
         if to < from {
             return Err(AppError::config(format!(
@@ -529,10 +522,6 @@ fn check_window(
     Ok(())
 }
 
-fn format_ts(dt: DateTime<Utc>) -> String {
-    dt.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
-}
-
 fn opt_parse_ts(raw: Option<String>) -> Result<Option<DateTime<Utc>>> {
     match raw {
         Some(s) if !s.trim().is_empty() => Ok(Some(parse_ts(&s)?)),
@@ -541,30 +530,8 @@ fn opt_parse_ts(raw: Option<String>) -> Result<Option<DateTime<Utc>>> {
 }
 
 fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
-    let s = s.trim();
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.with_timezone(&Utc));
-    }
-    const FORMATS: &[&str] = &[
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d",
-    ];
-    for fmt in FORMATS {
-        if let Ok(naive) = NaiveDateTime::parse_from_str(s, fmt) {
-            return Ok(naive.and_utc());
-        }
-        if *fmt == "%Y-%m-%d" {
-            if let Ok(d) = chrono::NaiveDate::parse_from_str(s, fmt) {
-                if let Some(ndt) = d.and_hms_opt(0, 0, 0) {
-                    return Ok(ndt.and_utc());
-                }
-            }
-        }
-    }
-    Err(AppError::db(format!("invalid timestamp value: {s}")))
+    parse_flexible_timestamp(s)
+        .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
 }
 
 #[cfg(test)]
@@ -588,7 +555,16 @@ mod tests {
     fn kg_add_query_active_and_idempotent() {
         let store = open_temp();
         let f1 = store
-            .kg_add("Alice", "works_at", "Acme", Some(ts(2020, 1, 1)), None, Some("doc:1"), None, None)
+            .kg_add(
+                "Alice",
+                "works_at",
+                "Acme",
+                Some(ts(2020, 1, 1)),
+                None,
+                Some("doc:1"),
+                None,
+                None,
+            )
             .expect("add");
         assert_eq!(f1.subject, "Alice");
         assert_eq!(f1.predicate, "works_at");
@@ -707,9 +683,7 @@ mod tests {
         store
             .kg_add("X", "rel_b", "Z", None, None, None, None, None)
             .unwrap();
-        store
-            .kg_invalidate("X", "rel_a", "Y", None)
-            .unwrap();
+        store.kg_invalidate("X", "rel_a", "Y", None).unwrap();
 
         let s = store.kg_stats().expect("stats");
         assert_eq!(s.total_facts, 2);
@@ -724,7 +698,9 @@ mod tests {
     #[test]
     fn kg_add_rejects_empty_and_inverted() {
         let store = open_temp();
-        assert!(store.kg_add("", "p", "o", None, None, None, None, None).is_err());
+        assert!(store
+            .kg_add("", "p", "o", None, None, None, None, None)
+            .is_err());
         assert!(store
             .kg_add(
                 "s",

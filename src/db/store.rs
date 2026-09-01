@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
 
 use super::schema;
@@ -14,7 +14,9 @@ use crate::models::{
     DuplicateCheckResult, DuplicateMatch, EmbeddingManifest, OpsLogEntry, PlacementUpdate,
     RoomCount, Taxonomy, TaxonomyRoom, TaxonomyWing, VacuumStoreReport, WikiIndexEntry, WingCount,
 };
-use crate::util::{content_hash, wiki_slug_from_uri};
+use crate::util::{
+    content_hash, format_db_timestamp as format_ts, parse_db_timestamp, wiki_slug_from_uri,
+};
 
 /// Shared SELECT list for document rows (order matches [`row_to_document`]).
 const DOCUMENT_SELECT: &str = r#"
@@ -163,7 +165,11 @@ impl Store {
             }
         };
 
-        let boost = if doc.boost.is_finite() && doc.boost > 0.0 { doc.boost } else { 1.0 };
+        let boost = if doc.boost.is_finite() && doc.boost > 0.0 {
+            doc.boost
+        } else {
+            1.0
+        };
         if current_rev.is_some() {
             // DuckDB implements INSERT OR REPLACE as delete+insert. Repeated
             // autosync updates can hit an ART index delete bug and invalidate
@@ -179,10 +185,23 @@ impl Store {
                 WHERE id = ?
                 "#,
                 params![
-                    doc.uri, doc.title, doc.content, doc.metadata_json, hash,
-                    doc.wing, doc.room, doc.source_file, layer, kind, status,
-                    doc.pinned, boost, new_rev, format_ts(doc.created_at),
-                    format_ts(doc.updated_at), doc.id,
+                    doc.uri,
+                    doc.title,
+                    doc.content,
+                    doc.metadata_json,
+                    hash,
+                    doc.wing,
+                    doc.room,
+                    doc.source_file,
+                    layer,
+                    kind,
+                    status,
+                    doc.pinned,
+                    boost,
+                    new_rev,
+                    format_ts(doc.created_at),
+                    format_ts(doc.updated_at),
+                    doc.id,
                 ],
             )?;
         } else {
@@ -199,25 +218,25 @@ impl Store {
                ?, ?, ?,
                CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))
             "#,
-            params![
-                doc.id,
-                doc.uri,
-                doc.title,
-                doc.content,
-                doc.metadata_json,
-                hash,
-                doc.wing,
-                doc.room,
-                doc.source_file,
-                layer,
-                kind,
-                status,
-                doc.pinned,
-                boost,
-                new_rev,
-                format_ts(doc.created_at),
-                format_ts(doc.updated_at),
-            ],
+                params![
+                    doc.id,
+                    doc.uri,
+                    doc.title,
+                    doc.content,
+                    doc.metadata_json,
+                    hash,
+                    doc.wing,
+                    doc.room,
+                    doc.source_file,
+                    layer,
+                    kind,
+                    status,
+                    doc.pinned,
+                    boost,
+                    new_rev,
+                    format_ts(doc.created_at),
+                    format_ts(doc.updated_at),
+                ],
             )?;
         }
         Ok(new_rev)
@@ -288,9 +307,7 @@ impl Store {
         let conn = self.lock()?;
         let mut ids: Vec<String> = Vec::new();
         {
-            let mut stmt = conn.prepare(
-                "SELECT id FROM documents WHERE source_file = ?",
-            )?;
+            let mut stmt = conn.prepare("SELECT id FROM documents WHERE source_file = ?")?;
             let mut rows = stmt.query(params![source])?;
             while let Some(row) = rows.next()? {
                 ids.push(row.get(0)?);
@@ -311,9 +328,7 @@ impl Store {
     /// Fetch a document by id.
     pub fn get_document(&self, id: &str) -> Result<Option<Document>> {
         let conn = self.lock()?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents WHERE id = ?"
-        );
+        let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE id = ?");
         let mut stmt = conn.prepare(&sql)?;
 
         let mut rows = stmt.query(params![id])?;
@@ -326,9 +341,7 @@ impl Store {
     /// Fetch a document by stable URI (re-ingest lookup).
     pub fn find_by_uri(&self, uri: &str) -> Result<Option<Document>> {
         let conn = self.lock()?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents WHERE uri = ? LIMIT 1"
-        );
+        let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE uri = ? LIMIT 1");
         let mut stmt = conn.prepare(&sql)?;
 
         let mut rows = stmt.query(params![uri])?;
@@ -449,9 +462,7 @@ impl Store {
     /// List all documents ordered by `created_at` ascending.
     pub fn list_documents(&self) -> Result<Vec<Document>> {
         let conn = self.lock()?;
-        let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents ORDER BY created_at ASC"
-        );
+        let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents ORDER BY created_at ASC");
         let mut stmt = conn.prepare(&sql)?;
 
         let mut rows = stmt.query([])?;
@@ -524,10 +535,7 @@ impl Store {
             let Some(src) = bl.nodes.iter().find(|n| n.id == e.source_id) else {
                 continue;
             };
-            let key = src
-                .document_id
-                .clone()
-                .unwrap_or_else(|| src.id.clone());
+            let key = src.document_id.clone().unwrap_or_else(|| src.id.clone());
             out.push((src.label.clone(), key));
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -579,9 +587,7 @@ impl Store {
                 binds.push(s.clone());
             }
         } else if !filter.include_archived.unwrap_or(false) {
-            sql.push_str(
-                " AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')",
-            );
+            sql.push_str(" AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')");
         }
         if let Some(ref layer) = filter.layer {
             if !layer.is_empty() {
@@ -769,18 +775,10 @@ impl Store {
         let mut title_changed = false;
 
         if let Some(ref w) = update.wing {
-            doc.wing = if w.is_empty() {
-                None
-            } else {
-                Some(w.clone())
-            };
+            doc.wing = if w.is_empty() { None } else { Some(w.clone()) };
         }
         if let Some(ref r) = update.room {
-            doc.room = if r.is_empty() {
-                None
-            } else {
-                Some(r.clone())
-            };
+            doc.room = if r.is_empty() { None } else { Some(r.clone()) };
         }
         if let Some(ref s) = update.status {
             let s = s.trim();
@@ -873,9 +871,7 @@ impl Store {
         id: &str,
         update: &PlacementUpdate,
     ) -> Result<Option<Document>> {
-        Ok(self
-            .update_document_meta(id, update)?
-            .map(|r| r.document))
+        Ok(self.update_document_meta(id, update)?.map(|r| r.document))
     }
 
     /// List chunks for a document ordered by `chunk_index`.
@@ -968,7 +964,13 @@ impl Store {
         )?;
         let unscoped_documents =
             scalar("SELECT COUNT(*) FROM documents WHERE wing IS NULL OR trim(wing) = ''")?;
-        Ok((documents_without_chunks, orphan_chunks, orphan_document_nodes, orphan_edges, unscoped_documents))
+        Ok((
+            documents_without_chunks,
+            orphan_chunks,
+            orphan_document_nodes,
+            orphan_edges,
+            unscoped_documents,
+        ))
     }
 
     /// Remove rows whose referenced parent/endpoints no longer exist.
@@ -1141,7 +1143,10 @@ impl Store {
     }
 
     /// Overwrite the default embedding manifest to match live config (e.g. after reembed).
-    pub fn write_embedding_manifest_from_config(&self, config: &Config) -> Result<EmbeddingManifest> {
+    pub fn write_embedding_manifest_from_config(
+        &self,
+        config: &Config,
+    ) -> Result<EmbeddingManifest> {
         let manifest = embedding_manifest_from_config(config);
         self.set_embedding_manifest(&manifest)?;
         Ok(manifest)
@@ -1586,10 +1591,7 @@ impl Store {
         let mut by_cat: std::collections::BTreeMap<String, Vec<&WikiIndexEntry>> =
             std::collections::BTreeMap::new();
         for e in &entries {
-            let cat = e
-                .category
-                .clone()
-                .unwrap_or_else(|| "uncategorized".into());
+            let cat = e.category.clone().unwrap_or_else(|| "uncategorized".into());
             by_cat.entry(cat).or_default().push(e);
         }
         for (cat, rows) in by_cat {
@@ -1710,10 +1712,7 @@ impl Store {
             return Ok(entries
                 .into_iter()
                 .take(limit)
-                .map(|entry| crate::models::IndexQueryMatch {
-                    entry,
-                    score: 1.0,
-                })
+                .map(|entry| crate::models::IndexQueryMatch { entry, score: 1.0 })
                 .collect());
         }
 
@@ -1766,11 +1765,7 @@ fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32 {
 
     let slug_lc = entry.slug.to_ascii_lowercase();
     let title_lc = entry.title.to_ascii_lowercase();
-    let summary_lc = entry
-        .summary
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let summary_lc = entry.summary.as_deref().unwrap_or("").to_ascii_lowercase();
 
     let mut score = 0.0f32;
     let mut terms_hit = 0u32;
@@ -2108,28 +2103,9 @@ pub fn embedding_manifest_from_config(config: &Config) -> EmbeddingManifest {
     }
 }
 
-fn format_ts(dt: DateTime<Utc>) -> String {
-    dt.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
-}
-
 fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
-    let s = s.trim();
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.with_timezone(&Utc));
-    }
-    // DuckDB CAST(ts AS VARCHAR) common forms
-    const FORMATS: &[&str] = &[
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%S",
-    ];
-    for fmt in FORMATS {
-        if let Ok(naive) = NaiveDateTime::parse_from_str(s, fmt) {
-            return Ok(naive.and_utc());
-        }
-    }
-    Err(AppError::db(format!("invalid timestamp value: {s}")))
+    parse_db_timestamp(s)
+        .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
 }
 
 fn row_to_document(row: &duckdb::Row<'_>) -> Result<Document> {
@@ -2158,7 +2134,9 @@ fn row_to_document(row: &duckdb::Row<'_>) -> Result<Document> {
         wing,
         room,
         source_file,
-        layer: layer.filter(|s| !s.is_empty()).unwrap_or_else(|| "raw".into()),
+        layer: layer
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "raw".into()),
         kind: kind
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "document".into()),
@@ -2302,7 +2280,10 @@ mod tests {
         }
 
         let reopened = Store::open(&path).expect("reopen after repeated updates");
-        let doc = reopened.get_document("stable-id").unwrap().expect("document");
+        let doc = reopened
+            .get_document("stable-id")
+            .unwrap()
+            .expect("document");
         assert_eq!(doc.title, "Title 49");
         assert_eq!(doc.content, "content revision 49");
         assert_eq!(doc.revision, 50);
@@ -2372,9 +2353,7 @@ mod tests {
             .expect("hash hit");
         assert_eq!(by_hash.id, "d1");
 
-        let dup = store
-            .check_duplicate(Some(text), None, None)
-            .unwrap();
+        let dup = store.check_duplicate(Some(text), None, None).unwrap();
         assert!(dup.is_duplicate);
         assert_eq!(dup.content_hash.as_deref(), Some(hash.as_str()));
         assert_eq!(dup.matches.len(), 1);
@@ -2470,8 +2449,12 @@ mod tests {
 
         let rooms = store.list_rooms(Some("research")).unwrap();
         assert_eq!(rooms.len(), 2);
-        assert!(rooms.iter().any(|r| r.room == "rag" && r.document_count == 2));
-        assert!(rooms.iter().any(|r| r.room == "eval" && r.document_count == 1));
+        assert!(rooms
+            .iter()
+            .any(|r| r.room == "rag" && r.document_count == 2));
+        assert!(rooms
+            .iter()
+            .any(|r| r.room == "eval" && r.document_count == 1));
 
         let tax = store.get_taxonomy().unwrap();
         assert_eq!(tax.total_documents, 5);
@@ -2910,7 +2893,9 @@ mod tests {
     #[test]
     fn vacuum_store_checkpoint_and_size_stats() {
         let store = open_temp();
-        store.upsert_document(&sample_doc("d1", "file://vac.md")).unwrap();
+        store
+            .upsert_document(&sample_doc("d1", "file://vac.md"))
+            .unwrap();
 
         let report = store.vacuum_store().expect("vacuum_store");
         assert!(report.checkpointed);
@@ -3103,10 +3088,7 @@ mod tests {
             .unwrap()
             .expect("beta");
         assert_eq!(beta.title, "Beta Page");
-        assert_eq!(
-            beta.summary.as_deref(),
-            Some("Beta intro without heading.")
-        );
+        assert_eq!(beta.summary.as_deref(), Some("Beta intro without heading."));
 
         let updated = store
             .update_wiki_index_entry_fields(
@@ -3119,10 +3101,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(updated.title, "Beta Page");
-        assert_eq!(
-            updated.summary.as_deref(),
-            Some("Updated one-line summary")
-        );
+        assert_eq!(updated.summary.as_deref(), Some("Updated one-line summary"));
         assert_eq!(updated.category.as_deref(), Some("concepts"));
 
         let md = store.render_wiki_index_markdown().unwrap();
@@ -3145,7 +3124,10 @@ mod tests {
 
         let n2 = store.rebuild_wiki_index_from_docs().unwrap();
         assert_eq!(n2, 2);
-        assert!(store.get_wiki_index_by_slug("manual-note").unwrap().is_none());
+        assert!(store
+            .get_wiki_index_by_slug("manual-note")
+            .unwrap()
+            .is_none());
         assert!(store.get_wiki_index_by_slug("alpha").unwrap().is_some());
     }
 
@@ -3238,9 +3220,7 @@ mod tests {
         assert_eq!(alice[0].wing, "agents/alice");
         assert_eq!(alice[1].id, "diary-1");
 
-        let limited = store
-            .list_diary_entries(Some("alice"), 1)
-            .expect("limit 1");
+        let limited = store.list_diary_entries(Some("alice"), 1).expect("limit 1");
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].id, "diary-2");
 
@@ -3586,10 +3566,12 @@ mod tests {
             .link_nodes("n-src-a", "n-target", "wikilink", 0.5)
             .unwrap();
 
-        let bl = store
-            .wiki_backlinks_for_document("doc-target")
-            .unwrap();
-        assert_eq!(bl.len(), 3, "expected 3 unique wikilink sources, got {bl:?}");
+        let bl = store.wiki_backlinks_for_document("doc-target").unwrap();
+        assert_eq!(
+            bl.len(),
+            3,
+            "expected 3 unique wikilink sources, got {bl:?}"
+        );
         // Sorted by label ASC.
         assert_eq!(
             bl.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(),
