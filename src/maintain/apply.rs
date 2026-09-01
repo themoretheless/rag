@@ -160,17 +160,15 @@ pub async fn apply_maintenance_plan(
             continue;
         }
 
-        let step = execute_one(
+        let context = MaintenanceExecutionContext {
             store,
             embedder,
             config,
             llm,
-            &action,
-            index,
             dry_run,
             agent,
-        )
-        .await;
+        };
+        let step = execute_one(&context, &action, index).await;
 
         let mut outcome = step.outcome;
         let docs_delta = step.docs_delta;
@@ -236,16 +234,28 @@ struct StepResult {
     docs_delta: usize,
 }
 
+struct MaintenanceExecutionContext<'a> {
+    store: &'a Store,
+    embedder: &'a Arc<dyn EmbeddingProvider>,
+    config: &'a Config,
+    llm: Option<&'a ChatClient>,
+    dry_run: bool,
+    agent: Option<&'a str>,
+}
+
 async fn execute_one(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    llm: Option<&ChatClient>,
+    context: &MaintenanceExecutionContext<'_>,
     action: &MaintenancePlanItem,
     index: usize,
-    dry_run: bool,
-    agent: Option<&str>,
 ) -> StepResult {
+    let MaintenanceExecutionContext {
+        store,
+        embedder,
+        config,
+        dry_run,
+        ..
+    } = context;
+    let dry_run = *dry_run;
     let name = action.action.as_str();
     let target = action.target_id.as_deref();
     let params = &action.params;
@@ -281,10 +291,7 @@ async fn execute_one(
             apply_reembed_all(store, embedder, config, index, name, params, dry_run).await
         }
         MaintenanceAction::CompileSource => {
-            apply_compile_source(
-                store, embedder, config, llm, index, name, target, params, dry_run, agent,
-            )
-            .await
+            apply_compile_source(context, index, name, target, params).await
         }
         MaintenanceAction::ConsolidatePropose => Ok(StepResult {
             outcome: skip_outcome(
@@ -296,19 +303,13 @@ async fn execute_one(
             docs_delta: 0,
         }),
         MaintenanceAction::Consolidate => {
-            apply_consolidate(
-                store, embedder, config, index, name, target, params, dry_run, agent,
-            )
-            .await
+            apply_consolidate(context, index, name, target, params).await
         }
         MaintenanceAction::RefreshStaleWiki => {
-            apply_refresh_stale(
-                store, embedder, config, llm, index, name, params, dry_run, agent,
-            )
-            .await
+            apply_refresh_stale(context, index, name, params).await
         }
         MaintenanceAction::FileAnswer => {
-            apply_file_answer(store, embedder, config, index, name, params, dry_run, agent).await
+            apply_file_answer(context, index, name, params).await
         }
         MaintenanceAction::ResolveStub
         | MaintenanceAction::LintAndFixLinks
@@ -1152,17 +1153,18 @@ async fn apply_reembed_all(
 }
 
 async fn apply_compile_source(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    llm: Option<&ChatClient>,
+    context: &MaintenanceExecutionContext<'_>,
     index: usize,
     name: &str,
     target: Option<&str>,
     params: &serde_json::Value,
-    dry_run: bool,
-    agent: Option<&str>,
 ) -> Result<StepResult> {
+    let store = context.store;
+    let embedder = context.embedder;
+    let config = context.config;
+    let llm = context.llm;
+    let dry_run = context.dry_run;
+    let agent = context.agent;
     let id = target
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -1237,16 +1239,17 @@ async fn apply_compile_source(
 }
 
 async fn apply_consolidate(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
+    context: &MaintenanceExecutionContext<'_>,
     index: usize,
     name: &str,
     target: Option<&str>,
     params: &serde_json::Value,
-    dry_run: bool,
-    agent: Option<&str>,
 ) -> Result<StepResult> {
+    let store = context.store;
+    let embedder = context.embedder;
+    let config = context.config;
+    let dry_run = context.dry_run;
+    let agent = context.agent;
     // Persist a pre-synthesized page (title+content). Full LLM consolidate is
     // agent/MCP-side; apply only writes when body is present.
     let title = match param_str(params, "title") {
@@ -1328,16 +1331,17 @@ async fn apply_consolidate(
 }
 
 async fn apply_refresh_stale(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    llm: Option<&ChatClient>,
+    context: &MaintenanceExecutionContext<'_>,
     index: usize,
     name: &str,
     params: &serde_json::Value,
-    dry_run: bool,
-    agent: Option<&str>,
 ) -> Result<StepResult> {
+    let store = context.store;
+    let embedder = context.embedder;
+    let config = context.config;
+    let llm = context.llm;
+    let dry_run = context.dry_run;
+    let agent = context.agent;
     let max_docs = param_f64(params, "max_docs").map(|n| n as usize);
     let nested_dry = param_bool(params, "dry_run").unwrap_or(dry_run);
     let llm_ref = if !nested_dry && config.llm_enabled {
@@ -1372,15 +1376,16 @@ async fn apply_refresh_stale(
 }
 
 async fn apply_file_answer(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
+    context: &MaintenanceExecutionContext<'_>,
     index: usize,
     name: &str,
     params: &serde_json::Value,
-    dry_run: bool,
-    agent: Option<&str>,
 ) -> Result<StepResult> {
+    let store = context.store;
+    let embedder = context.embedder;
+    let config = context.config;
+    let dry_run = context.dry_run;
+    let agent = context.agent;
     let title = param_str(params, "title")
         .ok_or_else(|| AppError::config("file_answer requires params.title"))?;
     let body = param_str(params, "body")
