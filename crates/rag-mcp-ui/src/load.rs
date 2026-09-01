@@ -11,6 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::gateway::{GatewayClient, Method, Request, ReqwestGatewayClient, Response};
+
 /// Hard layout caps (EGUI_GRAPH_VIEW §8.1).
 pub const UI_HARD_MAX_NODES: usize = 300;
 pub const UI_MAX_DRAW_EDGES: usize = 2000;
@@ -461,16 +463,29 @@ struct BacklinksResponse {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP transport seam (DIP)
-//
-// Free helpers below (`fetch_*_http`, `put_wiki_http`, `load_http`) are the
-// application-facing API. They currently own reqwest::blocking directly.
-//
-// Future: introduce a small `HttpClient` trait (get/put JSON + status/body)
-// above these helpers, with a reqwest impl as default and a fake for tests.
-// Public function signatures stay stable; only the transport injection point
-// moves. Do not split modules until that trait lands and call sites need it.
+// HTTP gateway adapters (transport is injected in `_with_client` helpers).
 // ---------------------------------------------------------------------------
+
+fn gateway_client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
+    ReqwestGatewayClient::new(std::time::Duration::from_secs(timeout_secs))
+}
+
+fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {
+    client.execute(Request {
+        method: Method::Get,
+        url,
+        body: None,
+        headers: Vec::new(),
+    })
+}
+
+fn response_error(response: Response, limit: usize) -> String {
+    format!(
+        "HTTP {}: {}",
+        response.status,
+        response.body.chars().take(limit).collect::<String>()
+    )
+}
 
 /// Normalize gateway base URL (trim whitespace and trailing `/`).
 fn normalize_http_base(base: &str) -> &str {
@@ -486,27 +501,25 @@ fn http_join(base: &str, path_and_query: &str) -> String {
 
 /// Fetch incoming links for a document id.
 pub fn fetch_backlinks_http(base: &str, document_id: &str) -> Result<Vec<BacklinkItem>, String> {
+    let client = gateway_client(15)?;
+    fetch_backlinks_http_with_client(&client, base, document_id)
+}
+
+fn fetch_backlinks_http_with_client(
+    client: &dyn GatewayClient,
+    base: &str,
+    document_id: &str,
+) -> Result<Vec<BacklinkItem>, String> {
     let url = http_join(
         base,
         &format!("v1/backlinks?id={}", urlencoding_minimal(document_id)),
     );
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-    let resp = client
-        .get(&url)
-        .send()
-        .map_err(|e| format!("HTTP GET {url}: {e}"))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(format!(
-            "HTTP {status}: {}",
-            body.chars().take(200).collect::<String>()
-        ));
+    let response = get(client, url)?;
+    if !response.is_success() {
+        return Err(response_error(response, 200));
     }
-    let body: BacklinksResponse = resp.json().map_err(|e| format!("parse backlinks: {e}"))?;
+    let body: BacklinksResponse =
+        serde_json::from_str(&response.body).map_err(|e| format!("parse backlinks: {e}"))?;
     Ok(body.backlinks)
 }
 
@@ -515,26 +528,22 @@ pub fn fetch_wiki_list_http(
     base: &str,
     project: Option<&str>,
 ) -> Result<Vec<WikiPageMeta>, String> {
+    let client = gateway_client(30)?;
+    fetch_wiki_list_http_with_client(&client, base, project)
+}
+
+fn fetch_wiki_list_http_with_client(
+    client: &dyn GatewayClient,
+    base: &str,
+    project: Option<&str>,
+) -> Result<Vec<WikiPageMeta>, String> {
     let path = wiki_catalog_path(project);
     let url = http_join(base, &path);
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-    let resp = client
-        .get(&url)
-        .send()
-        .map_err(|e| format!("HTTP GET {url} failed: {e}"))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(format!(
-            "HTTP {status}: {}",
-            body.chars().take(300).collect::<String>()
-        ));
+    let response = get(client, url.clone())?;
+    if !response.is_success() {
+        return Err(response_error(response, 300));
     }
-    let body: WikiListResponse = resp
-        .json()
+    let body: WikiListResponse = serde_json::from_str(&response.body)
         .map_err(|e| format!("parse wiki list from {url}: {e}"))?;
     let mut pages = body.pages;
     sort_wiki_pages(&mut pages);
@@ -585,6 +594,17 @@ pub fn fetch_document_http(
     uri: Option<&str>,
     q: Option<&str>,
 ) -> Result<DocumentBody, String> {
+    let client = gateway_client(30)?;
+    fetch_document_http_with_client(&client, base, document_id, uri, q)
+}
+
+fn fetch_document_http_with_client(
+    client: &dyn GatewayClient,
+    base: &str,
+    document_id: Option<&str>,
+    uri: Option<&str>,
+    q: Option<&str>,
+) -> Result<DocumentBody, String> {
     if normalize_http_base(base).is_empty() {
         return Err("http base URL is empty".into());
     }
@@ -600,23 +620,12 @@ pub fn fetch_document_http(
     }
     let url = http_join(base, &format!("v1/document?{}", parts.join("&")));
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-    let resp = client.get(&url).send().map_err(|e| {
-        format!("HTTP GET {url} failed: {e}. Is rag-mcp running with RAG_HTTP_BIND?")
-    })?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(format!(
-            "HTTP {status}: {}",
-            body.chars().take(400).collect::<String>()
-        ));
+    let response = get(client, url.clone())
+        .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
+    if !response.is_success() {
+        return Err(response_error(response, 400));
     }
-    let v: serde_json::Value = resp
-        .json()
+    let v: serde_json::Value = serde_json::from_str(&response.body)
         .map_err(|e| format!("parse DocumentBody from {url}: {e}"))?;
     document_body_from_json(&v, DocumentBodyJsonDefaults::default())
         .ok_or_else(|| format!("parse DocumentBody from {url}: missing document fields"))
@@ -686,55 +695,57 @@ pub struct WikiPutRequest {
 /// Sends CAS fields when known. On 404/405, returns a clear message that the
 /// server is read-only and the user should use `--db` or MCP `update_wiki_page`.
 pub fn put_wiki_http(base: &str, req: &WikiPutRequest) -> Result<DocumentBody, String> {
+    let client = gateway_client(60)?;
+    put_wiki_http_with_client(&client, base, req)
+}
+
+fn put_wiki_http_with_client(
+    client: &dyn GatewayClient,
+    base: &str,
+    req: &WikiPutRequest,
+) -> Result<DocumentBody, String> {
     let base = normalize_http_base(base);
     if base.is_empty() {
         return Err("http base URL is empty".into());
     }
     let url = http_join(base, "v1/wiki");
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-
-    let mut builder = client.put(&url).json(req);
+    let mut headers = Vec::new();
     if let Some(etag) = req
         .if_match_etag
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        builder = builder.header("If-Match", etag);
+        headers.push(("If-Match".to_string(), etag.to_string()));
     } else if let Some(rev) = req.if_match_revision {
-        builder = builder.header("If-Match", format!("W/\"{rev}\""));
+        headers.push(("If-Match".to_string(), format!("W/\"{rev}\"")));
     }
-
-    let resp = builder.send().map_err(|e| {
-        format!("HTTP PUT {url} failed: {e}. Is rag-mcp running with RAG_HTTP_BIND?")
-    })?;
-    let status = resp.status();
-    if status.as_u16() == 404 || status.as_u16() == 405 {
-        let body = resp.text().unwrap_or_default();
+    let response = client
+        .execute(Request {
+            method: Method::Put,
+            url: url.clone(),
+            body: Some(serde_json::to_string(req).map_err(|e| format!("serialize wiki: {e}"))?),
+            headers,
+        })
+        .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
+    if response.status == 404 || response.status == 405 {
         return Err(format!(
-            "HTTP {status}: wiki write not available on this gateway (need PUT /v1/wiki). Use --db exclusive mode or MCP update_wiki_page. {}",
-            body.chars().take(200).collect::<String>()
+            "HTTP {}: wiki write not available on this gateway (need PUT /v1/wiki). Use --db exclusive mode or MCP update_wiki_page. {}",
+            response.status,
+            response.body.chars().take(200).collect::<String>()
         ));
     }
-    if status.as_u16() == 409 {
-        let body = resp.text().unwrap_or_default();
+    if response.status == 409 {
         return Err(format!(
             "conflict (revision mismatch): {}",
-            body.chars().take(300).collect::<String>()
+            response.body.chars().take(300).collect::<String>()
         ));
     }
-    if !status.is_success() {
-        let body = resp.text().unwrap_or_default();
-        return Err(format!(
-            "HTTP {status}: {}",
-            body.chars().take(400).collect::<String>()
-        ));
+    if !response.is_success() {
+        return Err(response_error(response, 400));
     }
     // Accept full DocumentBody or a write-result envelope with document fields.
-    let text = resp.text().map_err(|e| format!("read PUT response: {e}"))?;
+    let text = response.body;
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
         let defaults = DocumentBodyJsonDefaults {
             content: Some(req.content.as_str()),
@@ -747,7 +758,7 @@ pub fn put_wiki_http(base: &str, req: &WikiPutRequest) -> Result<DocumentBody, S
         }
     }
     // Server accepted write but returned no body: re-fetch document.
-    fetch_document_http(base, Some(&req.id), req.uri.as_deref(), None)
+    fetch_document_http_with_client(client, base, Some(&req.id), req.uri.as_deref(), None)
 }
 
 /// Save wiki page via exclusive DuckDB (`--db`). Uses CAS when `if_match_revision` is set.
@@ -876,6 +887,11 @@ fn urlencoding_minimal(s: &str) -> String {
 /// Server: `RAG_HTTP_BIND=127.0.0.1:7432`  
 /// UI: `--http http://127.0.0.1:7432`
 pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedGraph, String> {
+    let client = gateway_client(30)?;
+    load_http_with_client(&client, base)
+}
+
+fn load_http_with_client(client: &dyn GatewayClient, base: &str) -> Result<LoadedGraph, String> {
     let base = normalize_http_base(base);
     if base.is_empty() {
         return Err("--http base URL is empty".into());
@@ -884,22 +900,14 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
         base,
         &format!("v1/graph?max_nodes={UI_GRAPH_EXPORT_MAX_NODES}&include_tags=false"),
     );
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-    let health = client
-        .get(http_join(base, "health"))
-        .send()
+    let health = get(client, http_join(base, "health"))
         .ok()
-        .filter(|response| response.status().is_success())
-        .and_then(|response| response.json::<GatewayHealth>().ok());
-    let projects = client
-        .get(http_join(base, "v1/projects"))
-        .send()
+        .filter(Response::is_success)
+        .and_then(|response| serde_json::from_str::<GatewayHealth>(&response.body).ok());
+    let projects = get(client, http_join(base, "v1/projects"))
         .ok()
-        .filter(|response| response.status().is_success())
-        .and_then(|response| response.json::<ProjectCatalogResponse>().ok())
+        .filter(Response::is_success)
+        .and_then(|response| serde_json::from_str::<ProjectCatalogResponse>(&response.body).ok())
         .map(|catalog| {
             catalog
                 .items
@@ -907,19 +915,16 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
                 .map(|item| item.project_id)
                 .collect::<Vec<_>>()
         });
-    let resp = client.get(&url).send().map_err(|e| {
-        format!("HTTP GET {url} failed: {e}. Is rag-mcp running with RAG_HTTP_BIND set?")
-    })?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
+    let response = get(client, url.clone())
+        .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND set?"))?;
+    if !response.is_success() {
         return Err(format!(
-            "HTTP {status} from {url}: {}",
-            body.chars().take(300).collect::<String>()
+            "HTTP {} from {url}: {}",
+            response.status,
+            response.body.chars().take(300).collect::<String>()
         ));
     }
-    let view: GraphView = resp
-        .json()
+    let view: GraphView = serde_json::from_str(&response.body)
         .map_err(|e| format!("parse GraphView from {url}: {e}"))?;
     let raw_node_count = view.nodes.len();
     let truncated = raw_node_count > UI_HARD_MAX_NODES;
@@ -1401,6 +1406,31 @@ fn subgraph_from_keep(full: &GraphView, keep: &HashSet<String>) -> GraphView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    struct FakeGateway {
+        response: Response,
+        requests: Mutex<Vec<Request>>,
+    }
+
+    impl FakeGateway {
+        fn ok(body: &str) -> Self {
+            Self {
+                response: Response {
+                    status: 200,
+                    body: body.to_string(),
+                },
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl GatewayClient for FakeGateway {
+        fn execute(&self, request: Request) -> Result<Response, String> {
+            self.requests.lock().unwrap().push(request);
+            Ok(self.response.clone())
+        }
+    }
 
     #[test]
     fn wiki_catalog_path_scopes_and_encodes_project() {
@@ -1409,6 +1439,40 @@ mod tests {
             wiki_catalog_path(Some("Project A/B")),
             "v1/wiki?wing=Project%20A%2FB"
         );
+    }
+
+    #[test]
+    fn wiki_catalog_uses_injected_transport() {
+        let gateway = FakeGateway::ok(
+            r#"{"pages":[{"id":"1","uri":"wiki://a","slug":"a","title":"Alpha","kind":"page","summary":"","category":null,"revision":1,"etag":null,"updated_at":null}],"count":1}"#,
+        );
+        let pages =
+            fetch_wiki_list_http_with_client(&gateway, "http://gateway/", Some("Project A/B"))
+                .unwrap();
+
+        assert_eq!(pages[0].title, "Alpha");
+        let requests = gateway.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, Method::Get);
+        assert_eq!(
+            requests[0].url,
+            "http://gateway/v1/wiki?wing=Project%20A%2FB"
+        );
+    }
+
+    #[test]
+    fn transport_errors_keep_status_and_truncated_body() {
+        let gateway = FakeGateway {
+            response: Response {
+                status: 503,
+                body: "temporarily unavailable".to_string(),
+            },
+            requests: Mutex::new(Vec::new()),
+        };
+
+        let error =
+            fetch_backlinks_http_with_client(&gateway, "http://gateway", "doc").unwrap_err();
+        assert_eq!(error, "HTTP 503: temporarily unavailable");
     }
 
     #[test]

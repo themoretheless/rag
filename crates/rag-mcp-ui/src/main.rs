@@ -9,6 +9,7 @@
 
 mod adapter;
 mod app;
+mod gateway;
 mod layout;
 mod load;
 mod ui;
