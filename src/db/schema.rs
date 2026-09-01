@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 8;
 
 /// Create `documents` table if missing (base v1 columns).
 pub const CREATE_DOCUMENTS: &str = r#"
@@ -227,6 +227,34 @@ pub const CREATE_IDX_COLLECTION_ENTRIES_ORDER: &str =
 pub const CREATE_IDX_COLLECTION_DEPENDENCIES_DOCUMENT: &str =
     "CREATE INDEX IF NOT EXISTS idx_collection_dependencies_document ON collection_dependencies(collection_id, document_id)";
 
+/// Immutable snapshots captured before each document update.
+pub const CREATE_DOCUMENT_REVISIONS: &str = r#"
+CREATE TABLE IF NOT EXISTS document_revisions (
+  document_id VARCHAR NOT NULL,
+  revision BIGINT NOT NULL,
+  uri VARCHAR NOT NULL,
+  title VARCHAR NOT NULL,
+  content TEXT NOT NULL,
+  metadata_json VARCHAR NOT NULL,
+  content_hash VARCHAR,
+  wing VARCHAR,
+  room VARCHAR,
+  source_file VARCHAR,
+  layer VARCHAR,
+  kind VARCHAR,
+  status VARCHAR,
+  pinned BOOLEAN,
+  boost DOUBLE,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  superseded_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (document_id, revision)
+)
+"#;
+
+pub const CREATE_IDX_DOCUMENT_REVISIONS_DOCUMENT: &str =
+    "CREATE INDEX IF NOT EXISTS idx_document_revisions_document ON document_revisions(document_id, revision)";
+
 /// Optional index helpers for document scope / dedupe / organize columns.
 pub const CREATE_IDX_DOCUMENTS_CONTENT_HASH: &str =
     "CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)";
@@ -314,6 +342,8 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_COLLECTION_DEPENDENCIES,
             CREATE_IDX_COLLECTION_ENTRIES_ORDER,
             CREATE_IDX_COLLECTION_DEPENDENCIES_DOCUMENT,
+            CREATE_DOCUMENT_REVISIONS,
+            CREATE_IDX_DOCUMENT_REVISIONS_DOCUMENT,
             CREATE_KG_FACTS,
             CREATE_IDX_KG_FACTS_SUBJECT,
             CREATE_IDX_KG_FACTS_PREDICATE,
@@ -448,7 +478,7 @@ fn record_schema_version(conn: &Connection) -> Result<()> {
         "#,
         duckdb::params![
             SCHEMA_VERSION,
-            "MemPalace parity: documents pinned/boost/status; kg_facts + indexes; schema v4"
+            "Document revision snapshots before mutation; schema v8"
         ],
     )?;
 

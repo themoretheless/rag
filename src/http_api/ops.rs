@@ -43,5 +43,6 @@ async fn route_inventory() -> impl IntoResponse { api_ok(json!({"openapi":"3.1-s
     {"method":"GET","path":"/v1/status"},{"method":"GET","path":"/v1/doctor"},{"method":"POST","path":"/v1/search"},
     {"method":"POST","path":"/v1/multi-get"},{"method":"GET","path":"/v1/expand-chunks"},{"method":"GET","path":"/v1/find-similar"},
     {"method":"GET","path":"/v1/documents"},{"method":"GET","path":"/v1/wiki"},{"method":"PUT","path":"/v1/wiki"},
+    {"method":"GET","path":"/v1/revisions"},
     {"method":"GET","path":"/v1/projects"},{"method":"GET","path":"/v1/capabilities"},{"method":"GET","path":"/v1/version"},{"method":"GET","path":"/v1/routes"}
 ]})) }

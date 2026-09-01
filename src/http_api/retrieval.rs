@@ -22,6 +22,17 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/expand-chunks", get(expand_chunks))
         .route("/v1/find-similar", get(find_similar))
         .route("/v1/documents", get(documents))
+        .route("/v1/revisions", get(revisions))
+}
+
+#[derive(Deserialize)]
+struct RevisionsQuery { document_id: String }
+
+async fn revisions(State(state): State<HttpState>, Query(query): Query<RevisionsQuery>) -> impl IntoResponse {
+    match state.store.list_document_revisions(&query.document_id) {
+        Ok(items) => api_ok(json!({"ok":true, "items":items})),
+        Err(error) => api_err(error),
+    }
 }
 
 #[derive(Deserialize)]

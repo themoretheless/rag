@@ -129,9 +129,10 @@ impl Store {
         } else {
             doc.status.as_str()
         };
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
 
-        let current_rev: Option<i64> = conn
+        let current_rev: Option<i64> = tx
             .query_row(
                 "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
                 params![doc.id],
@@ -172,10 +173,24 @@ impl Store {
             1.0
         };
         if current_rev.is_some() {
+            tx.execute(
+                r#"
+                INSERT INTO document_revisions
+                  (document_id, revision, uri, title, content, metadata_json, content_hash,
+                   wing, room, source_file, layer, kind, status, pinned, boost,
+                   created_at, updated_at, superseded_at)
+                SELECT id, COALESCE(revision, 1), uri, title, content, metadata_json, content_hash,
+                       wing, room, source_file, layer, kind, status, pinned, boost,
+                       created_at, updated_at, CURRENT_TIMESTAMP
+                FROM documents WHERE id = ?
+                ON CONFLICT (document_id, revision) DO NOTHING
+                "#,
+                params![doc.id],
+            )?;
             // DuckDB implements INSERT OR REPLACE as delete+insert. Repeated
             // autosync updates can hit an ART index delete bug and invalidate
             // the whole connection. UPDATE preserves the indexed row identity.
-            conn.execute(
+            tx.execute(
                 r#"
                 UPDATE documents SET
                   uri = ?, title = ?, content = ?, metadata_json = ?,
@@ -206,7 +221,7 @@ impl Store {
                 ],
             )?;
         } else {
-            conn.execute(
+            tx.execute(
                 r#"
             INSERT INTO documents
               (id, uri, title, content, metadata_json,
@@ -240,7 +255,20 @@ impl Store {
                 ],
             )?;
         }
+        tx.commit()?;
         Ok(new_rev)
+    }
+
+    /// Historical document snapshots, newest revision first.
+    pub fn list_document_revisions(&self, document_id: &str) -> Result<Vec<Document>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), revision FROM document_revisions WHERE document_id = ? ORDER BY revision DESC"
+        ))?;
+        let mut rows = stmt.query(params![document_id.trim()])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? { out.push(row_to_document(row)?); }
+        Ok(out)
     }
 
     /// Insert chunk rows. Embeddings are stored as JSON float arrays in `embedding_json`.
@@ -2942,6 +2970,10 @@ mod tests {
         let loaded = store.get_document("d1").unwrap().unwrap();
         assert_eq!(loaded.revision, 3);
         assert_eq!(loaded.content, "v3");
+        let history = store.list_document_revisions("d1").unwrap();
+        assert_eq!(history.iter().map(|doc| doc.revision).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(history[0].content, "v2");
+        assert_eq!(history[1].content, "v1");
     }
 
     #[test]
