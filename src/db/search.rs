@@ -1050,7 +1050,7 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
 
     let mut snippet: String = chars[start..end].iter().collect();
     if start > 0 {
-        snippet.insert_str(0, "…");
+        snippet.insert(0, '…');
     }
     if end < chars.len() {
         snippet.push('…');

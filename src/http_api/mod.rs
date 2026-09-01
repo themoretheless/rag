@@ -99,12 +99,8 @@ pub async fn serve(
             format!("HTTP wiki write config: {e}"),
         )
     })?;
-    let embedder = build_provider(&config).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("HTTP wiki write embedder: {e}"),
-        )
-    })?;
+    let embedder = build_provider(&config)
+        .map_err(|e| std::io::Error::other(format!("HTTP wiki write embedder: {e}")))?;
     let api = api_router(HttpState { store, mcp_http, config, embedder });
 
     let app = if let Some(mcp_svc) = mcp {
@@ -160,6 +156,9 @@ fn loopback_origin(origin: &str) -> bool {
         .iter().any(|prefix| origin == *prefix || origin.strip_prefix(prefix).is_some_and(|tail| tail.starts_with(':')))
 }
 
+#[allow(dead_code)]
+pub type GraphJson = GraphView;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,7 +167,7 @@ mod tests {
 
     fn app() -> Router {
         let root = tempfile::tempdir().unwrap().keep();
-        let mut config = Config::default(); config.db_path = root.join("http.duckdb");
+        let config = Config { db_path: root.join("http.duckdb"), ..Config::default() };
         let store = Arc::new(Store::open(&config.db_path).unwrap());
         let embedder = build_provider(&config).unwrap();
         api_router(HttpState { store, mcp_http: false, config, embedder })
@@ -223,6 +222,3 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(1), task).await.unwrap().unwrap();
     }
 }
-
-#[allow(dead_code)]
-pub type GraphJson = GraphView;

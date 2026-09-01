@@ -20,7 +20,7 @@ async fn search_http(State(st): State<HttpState>, Json(body): Json<SearchBody>) 
     if body.query.chars().count() > MAX_QUERY_CHARS { return api_err(AppError::config(format!("query exceeds {MAX_QUERY_CHARS} characters"))); }
     let mode = match SearchMode::parse(body.mode.as_deref().unwrap_or("hybrid")) { Ok(v) => v, Err(e) => return api_err(AppError::config(e)) };
     let embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
-        match st.embedder.embed(&[body.query.clone()]).await { Ok(v) => match v.into_iter().next() { Some(v) => Some(v), None => return api_err(AppError::embeddings("embedder returned no vector")) }, Err(e) => return api_err(e) }
+        match st.embedder.embed(std::slice::from_ref(&body.query)).await { Ok(v) => match v.into_iter().next() { Some(v) => Some(v), None => return api_err(AppError::embeddings("embedder returned no vector")) }, Err(e) => return api_err(e) }
     } else { None };
     let query = SearchQuery { mode, top_k: body.top_k.unwrap_or(st.config.default_top_k), query_text: Some(body.query), query_embedding: embedding,
         wing: clean(body.wing), room: clean(body.room), layer: clean(body.layer), source_file: clean(body.source_file), include_archived: body.include_archived,

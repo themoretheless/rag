@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn spine_is_bounded() {
         let n = spine_tool_names().len();
-        assert!(n >= 15 && n <= 33, "spine size {n}");
+        assert!((15..=33).contains(&n), "spine size {n}");
         assert!(tool_allowed(ToolSurface::Spine, "search"));
         assert!(tool_allowed(ToolSurface::Spine, "multi_query_search"));
         assert!(tool_allowed(ToolSurface::Spine, "query_with_index"));

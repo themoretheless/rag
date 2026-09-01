@@ -1683,7 +1683,7 @@ impl RagServer {
             let embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
                 Some(
                     self.embedder
-                        .embed(&[text.clone()])
+                        .embed(std::slice::from_ref(&text))
                         .await
                         .map_err(Self::map_err)?
                         .into_iter()
