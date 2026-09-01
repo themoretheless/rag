@@ -2,14 +2,136 @@
 
 use serde::Serialize;
 
-use crate::db::search::{search, DiversityMode, SearchQuery, MAX_TOP_K};
+use crate::db::search::{
+    search, ContextExpansion, DiversityMode, SearchQuery, MAX_QUERY_CHARS, MAX_TOP_K,
+};
 use crate::db::Store;
-use crate::embeddings::l2_normalize;
+use crate::embeddings::{l2_normalize, EmbeddingProvider};
 use crate::error::AppError;
 use crate::models::{Chunk, Document, SearchHit, SearchMode};
 
 pub const MAX_MULTI_GET_DOCUMENTS: usize = 100;
 pub const MAX_NEIGHBOR_RADIUS: u32 = 20;
+
+#[derive(Debug, Clone)]
+pub struct SearchCommand {
+    pub query: String,
+    pub mode: Option<String>,
+    pub default_mode: SearchMode,
+    pub top_k: Option<usize>,
+    pub default_top_k: usize,
+    pub document_id: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub layer: Option<String>,
+    pub source_file: Option<String>,
+    pub include_archived: bool,
+    pub min_score: Option<f32>,
+    pub diversity: Option<String>,
+    pub group_by: Option<String>,
+    pub recency_half_life_days: Option<f64>,
+    pub max_context_tokens: Option<usize>,
+    pub max_chunks_per_document: Option<usize>,
+    pub context_expansion: Option<String>,
+    pub neighbor_chunks: Option<usize>,
+    pub timeout_ms: Option<u64>,
+    pub fts_stemmer: String,
+}
+
+pub async fn execute_search(
+    store: &Store,
+    embedder: &dyn EmbeddingProvider,
+    command: SearchCommand,
+) -> Result<Vec<SearchHit>, AppError> {
+    let query = prepare_search(embedder, command).await?;
+    search(store, &query)
+}
+
+pub async fn prepare_search(
+    embedder: &dyn EmbeddingProvider,
+    command: SearchCommand,
+) -> Result<SearchQuery, AppError> {
+    let text = command.query.trim();
+    if text.is_empty() {
+        return Err(AppError::config("search query must not be empty"));
+    }
+    if text.chars().count() > MAX_QUERY_CHARS {
+        return Err(AppError::config(format!(
+            "query exceeds {MAX_QUERY_CHARS} characters"
+        )));
+    }
+    let mode = match nonempty(command.mode) {
+        Some(raw) => SearchMode::parse(&raw).map_err(AppError::config)?,
+        None => command.default_mode,
+    };
+    let mut diversity = command
+        .diversity
+        .as_deref()
+        .map(DiversityMode::parse)
+        .transpose()?;
+    if let Some(group_by) = command
+        .group_by
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        match group_by.to_ascii_lowercase().as_str() {
+            "document" | "document_id" => diversity = Some(DiversityMode::CollapseByDocument),
+            "none" => {}
+            other => {
+                return Err(AppError::config(format!(
+                    "invalid group_by '{other}': expected document or none"
+                )))
+            }
+        }
+    }
+    if command
+        .recency_half_life_days
+        .is_some_and(|days| !days.is_finite() || days <= 0.0)
+    {
+        return Err(AppError::config(
+            "recency_half_life_days must be finite and greater than zero",
+        ));
+    }
+    let context_expansion = command
+        .context_expansion
+        .as_deref()
+        .map(ContextExpansion::parse)
+        .transpose()?;
+    let query_embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
+        embedder
+            .embed(&[text.to_owned()])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::embeddings("embedder returned no vector"))
+            .map(Some)?
+    } else {
+        None
+    };
+    Ok(SearchQuery {
+        mode,
+        top_k: command.top_k.unwrap_or(command.default_top_k),
+        query_text: Some(text.to_owned()),
+        query_embedding,
+        document_id: nonempty(command.document_id),
+        wing: nonempty(command.wing),
+        room: nonempty(command.room),
+        layer: nonempty(command.layer),
+        source_file: nonempty(command.source_file),
+        include_archived: command.include_archived,
+        min_score: command.min_score,
+        diversity,
+        max_chunks_per_document: command.max_chunks_per_document,
+        recency_half_life_days: command.recency_half_life_days,
+        max_context_tokens: command.max_context_tokens,
+        context_expansion,
+        neighbor_chunks: command.neighbor_chunks.unwrap_or(1),
+        timeout_ms: command.timeout_ms.or(Some(5_000)),
+        fts_stemmer: command.fts_stemmer,
+        ..SearchQuery::default()
+    })
+}
 
 #[derive(Debug, Serialize)]
 pub struct DocumentWithChunks {
@@ -148,4 +270,47 @@ pub fn find_similar(
 
 fn nonempty(value: Option<String>) -> Option<String> {
     value.filter(|item| !item.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::embeddings::MockEmbedder;
+
+    fn command(query: &str) -> SearchCommand {
+        SearchCommand {
+            query: query.into(), mode: Some("lex".into()), default_mode: SearchMode::Hybrid,
+            top_k: None, default_top_k: 7, document_id: Some(" ".into()), wing: Some(" rag ".into()),
+            room: None, layer: None, source_file: None, include_archived: false, min_score: None,
+            diversity: None, group_by: Some("document".into()), recency_half_life_days: None,
+            max_context_tokens: Some(500), max_chunks_per_document: Some(2),
+            context_expansion: Some("neighbors".into()), neighbor_chunks: Some(3), timeout_ms: None,
+            fts_stemmer: "porter".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn search_command_preserves_adapter_defaults_and_normalizes_filters() {
+        let query = prepare_search(&MockEmbedder::new(8), command("  architecture  ")).await.unwrap();
+        assert_eq!(query.mode, SearchMode::Lex);
+        assert_eq!(query.top_k, 7);
+        assert_eq!(query.query_text.as_deref(), Some("architecture"));
+        assert_eq!(query.wing.as_deref(), Some(" rag "));
+        assert!(query.document_id.is_none());
+        assert_eq!(query.diversity, Some(DiversityMode::CollapseByDocument));
+        assert_eq!(query.context_expansion, Some(ContextExpansion::Neighbors));
+        assert!(query.query_embedding.is_none());
+    }
+
+    #[tokio::test]
+    async fn search_command_validates_before_embedding() {
+        let embedder = MockEmbedder::new(8);
+        assert!(prepare_search(&embedder, command("   ")).await.is_err());
+        let mut invalid = command("valid");
+        invalid.recency_half_life_days = Some(0.0);
+        assert!(prepare_search(&embedder, invalid).await.is_err());
+        let mut invalid = command("valid");
+        invalid.group_by = Some("chunk".into());
+        assert!(prepare_search(&embedder, invalid).await.is_err());
+    }
 }

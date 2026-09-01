@@ -11,10 +11,9 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
-use crate::db::search::{search, SearchQuery, MAX_QUERY_CHARS};
 use crate::error::AppError;
-use crate::models::{DocumentFilter, DrawerListItem, SearchMode};
-use crate::retrieval::{self, SimilarDocumentsQuery};
+use crate::models::{DocumentFilter, DrawerListItem};
+use crate::retrieval::{self, SearchCommand, SimilarDocumentsQuery};
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -50,45 +49,30 @@ async fn search_http(
     State(state): State<HttpState>,
     Json(body): Json<SearchBody>,
 ) -> impl IntoResponse {
-    if body.query.chars().count() > MAX_QUERY_CHARS {
-        return api_err(AppError::config(format!(
-            "query exceeds {MAX_QUERY_CHARS} characters"
-        )));
-    }
-    let mode = match SearchMode::parse(body.mode.as_deref().unwrap_or("hybrid")) {
-        Ok(value) => value,
-        Err(error) => return api_err(AppError::config(error)),
-    };
-    let embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
-        match state
-            .embedder
-            .embed(std::slice::from_ref(&body.query))
-            .await
-        {
-            Ok(values) => match values.into_iter().next() {
-                Some(value) => Some(value),
-                None => return api_err(AppError::embeddings("embedder returned no vector")),
-            },
-            Err(error) => return api_err(error),
-        }
-    } else {
-        None
-    };
-    let query = SearchQuery {
-        mode,
-        top_k: body.top_k.unwrap_or(state.config.default_top_k),
-        query_text: Some(body.query),
-        query_embedding: embedding,
+    let command = SearchCommand {
+        query: body.query,
+        mode: body.mode,
+        default_mode: state.config.default_search_mode,
+        top_k: body.top_k,
+        default_top_k: state.config.default_top_k,
+        document_id: None,
         wing: clean(body.wing),
         room: clean(body.room),
         layer: clean(body.layer),
         source_file: clean(body.source_file),
         include_archived: body.include_archived,
+        min_score: None,
+        diversity: None,
+        group_by: None,
+        recency_half_life_days: None,
+        max_context_tokens: None,
+        max_chunks_per_document: None,
+        context_expansion: None,
+        neighbor_chunks: None,
         timeout_ms: body.timeout_ms.or(Some(5_000)),
         fts_stemmer: state.config.fts_stemmer.clone(),
-        ..SearchQuery::default()
     };
-    match search(&state.store, &query) {
+    match retrieval::execute_search(&state.store, state.embedder.as_ref(), command).await {
         Ok(hits) => api_ok(json!({"ok": true, "count": hits.len(), "items": hits})),
         Err(error) => api_err(error),
     }

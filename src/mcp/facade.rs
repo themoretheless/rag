@@ -51,8 +51,8 @@ use crate::db::search::{
     SearchQuery,
 };
 use crate::db::Store;
-use crate::diary;
 use crate::diagnostics::DiagnosticsService;
+use crate::diary;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
@@ -65,14 +65,15 @@ use crate::maintain::{
     self, ApplyPlanOptions, CompressOptions, MaintainRefreshFlags, MaintenancePlanItem,
 };
 use crate::memory_lifecycle;
+#[cfg(test)]
+use crate::models::StatusReport;
 use crate::models::{
     Chunk, Collection, CollectionEntry, DoctorReport, Document, DocumentFilter, DocumentMetaUpdate,
     DrawerListItem, GraphEdge, GraphFilter, GraphNode, GraphView, IndexQueryPage, IndexQueryResult,
-    IngestResult, LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats,
-    VacuumStoreReport, WikiIndexEntry,
+    IngestResult, LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats, VacuumStoreReport,
+    WikiIndexEntry,
 };
-#[cfg(test)]
-use crate::models::StatusReport;
+use crate::retrieval::SearchCommand;
 use crate::retrieval::{self, DocumentWithChunks, SimilarDocumentsQuery};
 use crate::search_pack::pack_hits;
 use crate::util::{check_path_allowlist, content_hash};
@@ -607,7 +608,6 @@ impl RagServer {
             })
             .await
     }
-
 }
 
 #[tool_router(router = all_tools_router, vis = "pub(super)")]
@@ -1254,11 +1254,6 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let top_k = params
-            .top_k
-            .map(|k| k as usize)
-            .unwrap_or(self.config.default_top_k);
-
         let mode = match params
             .mode
             .as_deref()
@@ -1272,96 +1267,38 @@ impl RagServer {
         if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
             self.require_vec_compatible().map_err(Self::map_err)?;
         }
-
-        let mut diversity = match params
-            .diversity
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            Some(raw) => Some(DiversityMode::parse(raw).map_err(Self::map_err)?),
-            None => None,
-        };
-        if let Some(group_by) = params
-            .group_by
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            match group_by.to_ascii_lowercase().as_str() {
-                "document" | "document_id" => diversity = Some(DiversityMode::CollapseByDocument),
-                "none" => {}
-                other => {
-                    return Err(Self::map_err(AppError::config(format!(
-                        "invalid group_by '{other}': expected document or none"
-                    ))))
-                }
-            }
-        }
-        if params
-            .recency_half_life_days
-            .is_some_and(|days| !days.is_finite() || days <= 0.0)
-        {
-            return Err(Self::map_err(AppError::config(
-                "recency_half_life_days must be finite and greater than zero",
-            )));
-        }
-
-        let context_expansion = match params.context_expansion.as_deref() {
-            Some(raw) => Some(ContextExpansion::parse(raw).map_err(Self::map_err)?),
-            None => None,
-        };
-
-        let max_context_tokens = params
-            .max_context_tokens
-            .map(|n| n as usize)
-            .or(Some(self.config.max_context_tokens));
-
-        let max_chunks_per_document = params
-            .max_chunks_per_document
-            .map(|n| n as usize)
-            .or(Some(self.config.max_chunks_per_doc));
-
-        let query_embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
-            let query_vecs = self
-                .embedder
-                .embed(&[params.query.clone()])
-                .await
-                .map_err(Self::map_err)?;
-            let emb = query_vecs.into_iter().next().ok_or_else(|| {
-                McpError::internal_error("embedder returned no vector for query", None)
-            })?;
-            Some(emb)
-        } else {
-            None
-        };
-
-        let nonempty = |s: Option<String>| s.filter(|v| !v.trim().is_empty());
-
-        let opts = SearchQuery {
-            mode,
-            top_k,
-            query_text: Some(params.query),
-            query_embedding,
-            document_id: nonempty(params.document_id),
-            wing: nonempty(params.wing),
-            room: nonempty(params.room),
-            layer: nonempty(params.layer),
-            source_file: nonempty(params.source_file),
+        let command = SearchCommand {
+            query: params.query,
+            mode: params.mode,
+            default_mode: self.config.default_search_mode,
+            top_k: params.top_k.map(|value| value as usize),
+            default_top_k: self.config.default_top_k,
+            document_id: params.document_id,
+            wing: params.wing,
+            room: params.room,
+            layer: params.layer,
+            source_file: params.source_file,
             include_archived: params.include_archived.unwrap_or(false),
             min_score: params.min_score,
-            diversity,
-            max_chunks_per_document,
+            diversity: params.diversity,
+            group_by: params.group_by,
             recency_half_life_days: params.recency_half_life_days,
-            max_context_tokens,
-            context_expansion,
-            neighbor_chunks: params.neighbor_chunks.unwrap_or(1) as usize,
+            max_context_tokens: params
+                .max_context_tokens
+                .map(|value| value as usize)
+                .or(Some(self.config.max_context_tokens)),
+            max_chunks_per_document: params
+                .max_chunks_per_document
+                .map(|value| value as usize)
+                .or(Some(self.config.max_chunks_per_doc)),
+            context_expansion: params.context_expansion,
+            neighbor_chunks: params.neighbor_chunks.map(|value| value as usize),
             timeout_ms: params.timeout_ms.or(Some(5_000)),
             fts_stemmer: self.config.fts_stemmer.clone(),
-            ..SearchQuery::default()
         };
-
-        let hits = search(&self.store, &opts).map_err(Self::map_err)?;
+        let hits = crate::retrieval::execute_search(&self.store, self.embedder.as_ref(), command)
+            .await
+            .map_err(Self::map_err)?;
         Self::json_result(&hits)
     }
 
