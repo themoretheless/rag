@@ -205,7 +205,10 @@ pub fn spawn_auto_backup(store: Store) {
     {
         let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
         state.auto_backup_enabled = true;
-        state.auto_backup_next_run_at = Some(Utc::now());
+        state.auto_backup_last_completed_at = latest_auto_backup_at(&dir).ok().flatten();
+        state.auto_backup_next_run_at = state.auto_backup_last_completed_at
+            .map(|completed| completed + chrono::Duration::from_std(interval).unwrap_or_default())
+            .or_else(|| Some(Utc::now()));
     }
     tokio::spawn(async move {
         loop {
@@ -315,6 +318,10 @@ fn list_backups(dir: &Path) -> Result<Vec<(PathBuf, SystemTime)>> {
     Ok(out)
 }
 
+fn latest_auto_backup_at(dir: &Path) -> Result<Option<DateTime<Utc>>> {
+    Ok(list_backups(dir)?.first().map(|(_, modified)| DateTime::<Utc>::from(*modified)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +342,8 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        let completed = latest_auto_backup_at(&backups).unwrap().expect("latest backup time");
+        assert!(completed <= Utc::now());
     }
 
     #[test]
