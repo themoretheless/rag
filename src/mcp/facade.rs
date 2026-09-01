@@ -40,7 +40,6 @@ use super::tools::{
     UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams,
     WriteWikiPageParams,
 };
-use crate::chunking::{from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
 use crate::db::recovery::{
     BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
@@ -57,8 +56,10 @@ use crate::diagnostics::DiagnosticsService;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
-use crate::graph::rebuild_document_graph;
-use crate::ingest::{IngestCommand, IngestService, ReembedDocumentResult};
+use crate::ingest::{
+    IngestCommand, IngestService, ReembedDocumentResult, UpdateDocumentCommand,
+    UpdateDocumentResult,
+};
 use crate::llm::ChatClient;
 use crate::maintain::{
     self, ApplyPlanOptions, CompressOptions, MaintainRefreshFlags, MaintenancePlanItem,
@@ -583,135 +584,30 @@ impl RagServer {
     }
 
     /// Apply document meta update; re-chunk + re-embed only when body text changes.
-    async fn update_document_meta_pipeline(
+    async fn update_document_via_service(
         &self,
         params: UpdateDocumentMetaParams,
-    ) -> Result<UpdateDocumentMetaResult, AppError> {
-        let document_id = params.document_id.trim();
-        if document_id.is_empty() {
-            return Err(AppError::config("document_id must be non-empty"));
-        }
-
-        let update = DocumentMetaUpdate {
-            wing: params.wing,
-            room: params.room,
-            status: params.status,
-            layer: params.layer,
-            kind: params.kind,
-            source_file: params.source_file,
-            title: params.title,
-            metadata_json: params.metadata_json,
-            pinned: params.pinned,
-            boost: params.boost,
-            content: params.content,
-        };
-
-        let applied = self
-            .store
-            .update_document_meta(document_id, &update)?
-            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-
-        let mut reembedded = false;
-        let mut chunk_count = self
-            .store
-            .list_chunks_for_document(&applied.document.id)?
-            .len();
-
-        if applied.content_changed {
-            // Body changed: re-chunk + re-embed + rebuild graph (same as content re-ingest).
-            self.require_vec_compatible()?;
-            let doc = &applied.document;
-            let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
-            let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, &doc.content);
-            let section_metadata = markdown_section_metadata(&doc.content, &pieces);
-
-            if pieces.is_empty() {
-                self.store.replace_chunks_for_document(&doc.id, &[])?;
-                chunk_count = 0;
-            } else {
-                let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
-                let embeddings = self.embedder.embed(&texts).await?;
-                if embeddings.len() != pieces.len() {
-                    return Err(AppError::embeddings(format!(
-                        "embedder returned {} vectors for {} chunks",
-                        embeddings.len(),
-                        pieces.len()
-                    )));
-                }
-                let mut chunks = Vec::with_capacity(pieces.len());
-                for (i, (((content, char_start, char_end), embedding), metadata_json)) in pieces
-                    .into_iter()
-                    .zip(embeddings.into_iter())
-                    .zip(section_metadata.into_iter())
-                    .enumerate()
-                {
-                    chunks.push(Chunk {
-                        id: Uuid::new_v4().to_string(),
-                        document_id: doc.id.clone(),
-                        chunk_index: i as i32,
-                        content,
-                        embedding,
-                        char_start,
-                        char_end,
-                        metadata_json,
-                    });
-                }
-                chunk_count = chunks.len();
-                self.store.replace_chunks_for_document(&doc.id, &chunks)?;
-            }
-            rebuild_document_graph(&self.store, doc)?;
-            reembedded = true;
-        } else if applied.title_changed {
-            // Title-only: sync graph node label without rewriting edges / embeddings.
-            if let Some(mut node) = self.store.find_node_by_document_id(&applied.document.id)? {
-                node.label = applied.document.title.clone();
-                self.store.upsert_graph_node(&node)?;
-            }
-        }
-
-        let doc = applied.document;
-        let payload = serde_json::json!({
-            "content_changed": applied.content_changed,
-            "title_changed": applied.title_changed,
-            "reembedded": reembedded,
-            "wing": doc.wing,
-            "room": doc.room,
-            "status": doc.status,
-            "pinned": doc.pinned,
-            "boost": doc.boost,
-        });
-        let _ = self.store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "update_document_meta".into(),
-            prefix: Some("META".into()),
-            message: format!("updated document meta for {}", doc.id),
-            entity_id: Some(doc.id.clone()),
-            entity_kind: Some("document".into()),
-            payload_json: payload.to_string(),
-            agent_name: None,
-        });
-
-        Ok(UpdateDocumentMetaResult {
-            document_id: doc.id,
-            uri: doc.uri,
-            title: doc.title,
-            wing: doc.wing,
-            room: doc.room,
-            status: doc.status,
-            pinned: doc.pinned,
-            boost: doc.boost,
-            metadata_json: doc.metadata_json,
-            layer: doc.layer,
-            kind: doc.kind,
-            source_file: doc.source_file,
-            content_changed: applied.content_changed,
-            reembedded,
-            chunk_count,
-            updated_at: doc.updated_at.to_rfc3339(),
-        })
+    ) -> Result<UpdateDocumentResult, AppError> {
+        IngestService::new(&self.store, &self.embedder, &self.config)
+            .update_document(UpdateDocumentCommand {
+                document_id: params.document_id,
+                update: DocumentMetaUpdate {
+                    wing: params.wing,
+                    room: params.room,
+                    status: params.status,
+                    layer: params.layer,
+                    kind: params.kind,
+                    source_file: params.source_file,
+                    title: params.title,
+                    metadata_json: params.metadata_json,
+                    pinned: params.pinned,
+                    boost: params.boost,
+                    content: params.content,
+                },
+            })
+            .await
     }
+
 }
 
 #[tool_router(router = all_tools_router, vis = "pub(super)")]
@@ -1722,7 +1618,7 @@ impl RagServer {
         Parameters(params): Parameters<UpdateDocumentMetaParams>,
     ) -> Result<CallToolResult, McpError> {
         let result = self
-            .update_document_meta_pipeline(params)
+            .update_document_via_service(params)
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -3944,29 +3840,6 @@ impl ServerHandler for RagServer {
 }
 
 #[derive(Debug, Serialize)]
-struct UpdateDocumentMetaResult {
-    document_id: String,
-    uri: String,
-    title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    wing: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    room: Option<String>,
-    status: String,
-    pinned: bool,
-    boost: f64,
-    metadata_json: String,
-    layer: String,
-    kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source_file: Option<String>,
-    content_changed: bool,
-    reembedded: bool,
-    chunk_count: usize,
-    updated_at: String,
-}
-
-#[derive(Debug, Serialize)]
 struct ReadIndexResult {
     entries: Vec<WikiIndexEntry>,
     count: usize,
@@ -4504,7 +4377,7 @@ mod tests {
 
         // Meta-only: must not re-embed.
         let meta = server
-            .update_document_meta_pipeline(UpdateDocumentMetaParams {
+            .update_document_via_service(UpdateDocumentMetaParams {
                 document_id: ing.document_id.clone(),
                 wing: Some("ops".into()),
                 room: Some("runbooks".into()),
@@ -4540,7 +4413,7 @@ mod tests {
 
         // Content change: re-embed + rebuild.
         let body = server
-            .update_document_meta_pipeline(UpdateDocumentMetaParams {
+            .update_document_via_service(UpdateDocumentMetaParams {
                 document_id: ing.document_id.clone(),
                 content: Some("revised wiki body about hybrid search and ranking".into()),
                 ..Default::default()
@@ -4568,7 +4441,7 @@ mod tests {
             .await
             .expect("raw ingest");
         let refuse = server
-            .update_document_meta_pipeline(UpdateDocumentMetaParams {
+            .update_document_via_service(UpdateDocumentMetaParams {
                 document_id: raw.document_id,
                 content: Some("mutated".into()),
                 ..Default::default()

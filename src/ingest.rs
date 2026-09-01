@@ -12,7 +12,7 @@ use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::graph::rebuild_document_graph;
-use crate::models::{Chunk, Document, IngestResult};
+use crate::models::{Chunk, Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
 use crate::util::content_hash;
 
 #[derive(Debug, Clone)]
@@ -36,6 +36,35 @@ pub struct ReembedDocumentResult {
     pub dims: i32,
     pub provider: String,
     pub model: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateDocumentCommand {
+    pub document_id: String,
+    pub update: DocumentMetaUpdate,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateDocumentResult {
+    pub document_id: String,
+    pub uri: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wing: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
+    pub status: String,
+    pub pinned: bool,
+    pub boost: f64,
+    pub metadata_json: String,
+    pub layer: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
+    pub content_changed: bool,
+    pub reembedded: bool,
+    pub chunk_count: usize,
+    pub updated_at: String,
 }
 
 pub struct IngestService<'a> {
@@ -176,6 +205,82 @@ impl<'a> IngestService<'a> {
         })
     }
 
+    pub async fn update_document(
+        &self,
+        command: UpdateDocumentCommand,
+    ) -> Result<UpdateDocumentResult, AppError> {
+        let document_id = command.document_id.trim();
+        if document_id.is_empty() {
+            return Err(AppError::config("document_id must be non-empty"));
+        }
+        let applied = self
+            .store
+            .update_document_meta(document_id, &command.update)?
+            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
+        let mut reembedded = false;
+        let mut chunk_count = self
+            .store
+            .list_chunks_for_document(&applied.document.id)?
+            .len();
+
+        if applied.content_changed {
+            self.ensure_vector_compatibility()?;
+            let chunks = self.build_plain_chunks(&applied.document).await?;
+            chunk_count = chunks.len();
+            self.store
+                .replace_chunks_for_document(&applied.document.id, &chunks)?;
+            rebuild_document_graph(self.store, &applied.document)?;
+            reembedded = true;
+        } else if applied.title_changed {
+            if let Some(mut node) = self.store.find_node_by_document_id(&applied.document.id)? {
+                node.label = applied.document.title.clone();
+                self.store.upsert_graph_node(&node)?;
+            }
+        }
+
+        let document = applied.document;
+        let _ = self.store.append_ops_log(&OpsLogEntry {
+            id: String::new(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "update_document_meta".into(),
+            prefix: Some("META".into()),
+            message: format!("updated document meta for {}", document.id),
+            entity_id: Some(document.id.clone()),
+            entity_kind: Some("document".into()),
+            payload_json: serde_json::json!({
+                "content_changed": applied.content_changed,
+                "title_changed": applied.title_changed,
+                "reembedded": reembedded,
+                "wing": document.wing,
+                "room": document.room,
+                "status": document.status,
+                "pinned": document.pinned,
+                "boost": document.boost,
+            })
+            .to_string(),
+            agent_name: None,
+        });
+        Ok(UpdateDocumentResult {
+            document_id: document.id,
+            uri: document.uri,
+            title: document.title,
+            wing: document.wing,
+            room: document.room,
+            status: document.status,
+            pinned: document.pinned,
+            boost: document.boost,
+            metadata_json: document.metadata_json,
+            layer: document.layer,
+            kind: document.kind,
+            source_file: document.source_file,
+            content_changed: applied.content_changed,
+            reembedded,
+            chunk_count,
+            updated_at: document.updated_at.to_rfc3339(),
+        })
+    }
+
     fn ensure_vector_compatibility(&self) -> Result<(), AppError> {
         self.store.ensure_embedding_manifest(self.config)?;
         self.store
@@ -197,6 +302,39 @@ impl<'a> IngestService<'a> {
             let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
             Chunker::chunk(&chunker, &document.content)
         };
+        if pieces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let section_metadata = markdown_section_metadata(&document.content, &pieces);
+        let texts = pieces
+            .iter()
+            .map(|(content, _, _)| content.clone())
+            .collect::<Vec<_>>();
+        let embeddings = self.embedder.embed(&texts).await?;
+        ensure_vector_count(embeddings.len(), pieces.len())?;
+        Ok(pieces
+            .into_iter()
+            .zip(embeddings)
+            .zip(section_metadata)
+            .enumerate()
+            .map(
+                |(index, (((content, char_start, char_end), embedding), metadata_json))| Chunk {
+                    id: Uuid::new_v4().to_string(),
+                    document_id: document.id.clone(),
+                    chunk_index: index as i32,
+                    content,
+                    embedding,
+                    char_start,
+                    char_end,
+                    metadata_json,
+                },
+            )
+            .collect())
+    }
+
+    async fn build_plain_chunks(&self, document: &Document) -> Result<Vec<Chunk>, AppError> {
+        let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
+        let pieces = Chunker::chunk(&chunker, &document.content);
         if pieces.is_empty() {
             return Ok(Vec::new());
         }
