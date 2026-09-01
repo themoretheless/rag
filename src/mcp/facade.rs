@@ -40,7 +40,7 @@ use super::tools::{
     UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams,
     WriteWikiPageParams,
 };
-use crate::chunking::{code_chunks, from_config, markdown_section_metadata, Chunker};
+use crate::chunking::{from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
 use crate::db::recovery::{
     BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
@@ -56,6 +56,7 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
 use crate::graph::rebuild_document_graph;
+use crate::ingest::{IngestCommand, IngestService, ReembedDocumentResult};
 use crate::llm::ChatClient;
 use crate::maintain::{
     self, ApplyPlanOptions, CompressOptions, MaintainRefreshFlags, MaintenancePlanItem,
@@ -343,173 +344,20 @@ impl RagServer {
         kind: &str,
         immutable: bool,
     ) -> Result<IngestResult, AppError> {
-        // First ingest (or any ingest) records manifest if missing; refuse dim drift.
-        self.require_vec_compatible()?;
-
-        let now = Utc::now();
-        let metadata_json = metadata_json
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "{}".to_string());
-
-        // Validate metadata is JSON object-ish (best-effort; accept any JSON value string).
-        if let Err(e) = serde_json::from_str::<serde_json::Value>(&metadata_json) {
-            return Err(AppError::config(format!(
-                "metadata_json is not valid JSON: {e}"
-            )));
-        }
-
-        let uri = uri
-            .filter(|u| !u.trim().is_empty())
-            .unwrap_or_else(|| format!("text://{}", Uuid::new_v4()));
-
-        let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| {
-            uri.rsplit('/')
-                .next()
-                .filter(|s| !s.is_empty())
-                .unwrap_or("untitled")
-                .to_string()
-        });
-
-        let layer = if layer.trim().is_empty() {
-            "raw".to_string()
-        } else {
-            layer.trim().to_string()
-        };
-        let kind = if kind.trim().is_empty() {
-            "document".to_string()
-        } else {
-            kind.trim().to_string()
-        };
-
-        let new_hash = content_hash(&text);
-
-        // Upsert by uri: clear previous chunks only so document id + graph node stay stable.
-        let (document_id, created_at, op) = if let Some(existing) = self.store.find_by_uri(&uri)? {
-            if immutable {
-                let existing_hash = existing
-                    .content_hash
-                    .clone()
-                    .unwrap_or_else(|| content_hash(&existing.content));
-                if existing_hash == new_hash {
-                    // Idempotent re-register: return existing without rewriting content.
-                    let chunk_count = self.store.list_chunks_for_document(&existing.id)?.len();
-                    let node_id = self
-                        .store
-                        .find_node_by_document_id(&existing.id)?
-                        .map(|n| n.id)
-                        .unwrap_or_default();
-                    return Ok(IngestResult {
-                        document_id: existing.id.clone(),
-                        chunk_count,
-                        node_id,
-                        edge_count: 0,
-                        content_hash: existing_hash,
-                        op: "unchanged".into(),
-                        revision: existing.revision,
-                        etag: existing.etag(),
-                    });
-                }
-                return Err(AppError::conflict(format!(
-                    "raw source uri '{uri}' is immutable; content differs from registered source (document_id={})",
-                    existing.id
-                )));
-            }
-            let id = existing.id.clone();
-            let created = existing.created_at;
-            self.store.delete_chunks_for_document(&id)?;
-            (id, created, "updated")
-        } else {
-            (Uuid::new_v4().to_string(), now, "inserted")
-        };
-
-        // Single place: empty wing/room/source_file Options become None before Document build.
-        let doc = Document {
-            id: document_id.clone(),
-            uri,
-            title,
-            content: text,
-            metadata_json,
-            created_at,
-            updated_at: now,
-            wing: nonempty_opt(wing),
-            room: nonempty_opt(room),
-            source_file: nonempty_opt(source_file),
-            layer,
-            kind,
-            content_hash: Some(new_hash.clone()),
-            ..Default::default()
-        };
-
-        let revision = self.store.upsert_document_cas(&doc, None)?;
-
-        let is_code = serde_json::from_str::<serde_json::Value>(&doc.metadata_json)
-            .ok()
-            .and_then(|value| value.get("language").cloned())
-            .is_some();
-        let pieces: Vec<(String, i32, i32)> = if is_code {
-            code_chunks(
-                &doc.content,
-                self.config.chunk_size,
-                self.config.chunk_overlap,
-            )
-        } else {
-            let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
-            Chunker::chunk(&chunker, &doc.content)
-        };
-        // ATX headings are unambiguous enough to detect for text ingest; plain
-        // text without Markdown headings retains the legacy empty metadata.
-        let section_metadata = markdown_section_metadata(&doc.content, &pieces);
-
-        let chunk_count = if pieces.is_empty() {
-            0
-        } else {
-            let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
-            let embeddings = self.embedder.embed(&texts).await?;
-
-            if embeddings.len() != pieces.len() {
-                return Err(AppError::embeddings(format!(
-                    "embedder returned {} vectors for {} chunks",
-                    embeddings.len(),
-                    pieces.len()
-                )));
-            }
-
-            let mut chunks = Vec::with_capacity(pieces.len());
-            for (i, (((content, char_start, char_end), embedding), metadata_json)) in pieces
-                .into_iter()
-                .zip(embeddings.into_iter())
-                .zip(section_metadata.into_iter())
-                .enumerate()
-            {
-                chunks.push(Chunk {
-                    id: Uuid::new_v4().to_string(),
-                    document_id: document_id.clone(),
-                    chunk_index: i as i32,
-                    content,
-                    embedding,
-                    char_start,
-                    char_end,
-                    metadata_json,
-                });
-            }
-
-            let n = chunks.len();
-            self.store.insert_chunks(&chunks)?;
-            n
-        };
-
-        let (node_id, edge_count) = rebuild_document_graph(&self.store, &doc)?;
-
-        Ok(IngestResult {
-            document_id,
-            chunk_count,
-            node_id,
-            edge_count,
-            content_hash: new_hash,
-            op: op.into(),
-            revision,
-            etag: crate::models::format_document_etag(revision),
-        })
+        IngestService::new(&self.store, &self.embedder, &self.config)
+            .ingest(IngestCommand {
+                text,
+                title,
+                uri,
+                metadata_json,
+                wing,
+                room,
+                source_file,
+                layer: layer.to_string(),
+                kind: kind.to_string(),
+                immutable,
+            })
+            .await
     }
 
     /// Build the MemPalace-style `status` health payload (vision §5.5 layer health).
@@ -723,44 +571,9 @@ impl RagServer {
         &self,
         document_id: &str,
     ) -> Result<ReembedDocumentResult, AppError> {
-        if document_id.is_empty() {
-            return Err(AppError::config("document_id must be non-empty"));
-        }
-        let doc = self
-            .store
-            .get_document(document_id)?
-            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-
-        let mut chunks = self.store.list_chunks_for_document(&doc.id)?;
-        let chunk_count = chunks.len();
-
-        if !chunks.is_empty() {
-            let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-            let embeddings = self.embedder.embed(&texts).await?;
-            if embeddings.len() != chunks.len() {
-                return Err(AppError::embeddings(format!(
-                    "embedder returned {} vectors for {} chunks",
-                    embeddings.len(),
-                    chunks.len()
-                )));
-            }
-            for (chunk, emb) in chunks.iter_mut().zip(embeddings.into_iter()) {
-                chunk.embedding = emb;
-            }
-            self.store.replace_chunks_for_document(&doc.id, &chunks)?;
-        }
-
-        let manifest = self
-            .store
-            .write_embedding_manifest_from_config(&self.config)?;
-
-        Ok(ReembedDocumentResult {
-            document_id: doc.id,
-            chunk_count,
-            dims: manifest.dims,
-            provider: manifest.provider,
-            model: manifest.model,
-        })
+        IngestService::new(&self.store, &self.embedder, &self.config)
+            .reembed_document(document_id)
+            .await
     }
 
     /// Apply document meta update; re-chunk + re-embed only when body text changes.
@@ -4110,15 +3923,6 @@ impl ServerHandler for RagServer {
         let tcc = ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
-}
-
-#[derive(Debug, Serialize)]
-struct ReembedDocumentResult {
-    document_id: String,
-    chunk_count: usize,
-    dims: i32,
-    provider: String,
-    model: String,
 }
 
 #[derive(Debug, Serialize)]
