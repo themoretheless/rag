@@ -217,10 +217,35 @@ impl GraphSourceKind {
 #[derive(Debug, Clone)]
 pub struct LoadedGraph {
     pub view: GraphView,
+    pub projects: Vec<String>,
     pub source: GraphSourceKind,
     pub truncated: bool,
     pub raw_node_count: usize,
     pub health: Option<GatewayHealth>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ProjectCatalogResponse {
+    #[serde(default)]
+    items: Vec<ProjectCatalogItem>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ProjectCatalogItem {
+    project_id: String,
+}
+
+fn projects_from_view(view: &GraphView) -> Vec<String> {
+    let mut projects: Vec<_> = view
+        .nodes
+        .iter()
+        .filter_map(|node| serde_json::from_str::<serde_json::Value>(&node.metadata_json).ok())
+        .filter_map(|meta| meta.get("wing")?.as_str().map(str::to_owned))
+        .filter(|project| !project.trim().is_empty())
+        .collect();
+    projects.sort();
+    projects.dedup();
+    projects
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -279,6 +304,7 @@ pub fn load_snapshot_path(path: &Path) -> Result<LoadedGraph, String> {
         }
     };
     Ok(LoadedGraph {
+        projects: projects_from_view(&view),
         view,
         source,
         truncated,
@@ -868,6 +894,19 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
         .ok()
         .filter(|response| response.status().is_success())
         .and_then(|response| response.json::<GatewayHealth>().ok());
+    let projects = client
+        .get(http_join(base, "v1/projects"))
+        .send()
+        .ok()
+        .filter(|response| response.status().is_success())
+        .and_then(|response| response.json::<ProjectCatalogResponse>().ok())
+        .map(|catalog| {
+            catalog
+                .items
+                .into_iter()
+                .map(|item| item.project_id)
+                .collect::<Vec<_>>()
+        });
     let resp = client.get(&url).send().map_err(|e| {
         format!("HTTP GET {url} failed: {e}. Is rag-mcp running with RAG_HTTP_BIND set?")
     })?;
@@ -884,8 +923,10 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
         .map_err(|e| format!("parse GraphView from {url}: {e}"))?;
     let raw_node_count = view.nodes.len();
     let truncated = raw_node_count > UI_HARD_MAX_NODES;
+    let projects = projects.unwrap_or_else(|| projects_from_view(&view));
     Ok(LoadedGraph {
         view,
+        projects,
         source: GraphSourceKind::HttpService {
             base: base.to_string(),
         },
@@ -939,8 +980,16 @@ pub fn load_live_db(path: &Path, _seed: Option<&str>, _depth: u32) -> Result<Loa
         || view.nodes.len() >= UI_HARD_MAX_NODES
         || view.nodes.len() as u32 >= UI_GRAPH_EXPORT_MAX_NODES;
 
+    let projects = store
+        .list_projects()
+        .map_err(|e| format!("list projects from {}: {e}", path.display()))?
+        .into_iter()
+        .map(|project| project.project_id.as_str().to_owned())
+        .collect();
+
     Ok(LoadedGraph {
         view,
+        projects,
         source: GraphSourceKind::LiveStore {
             path: path.to_path_buf(),
         },

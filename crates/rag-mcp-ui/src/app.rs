@@ -10,7 +10,7 @@ use rag_mcp::GraphView;
 
 use crate::adapter::{adapt, topology_generation, AdaptOptions, UiGraph};
 use crate::layout::{place_missing_near_neighbors, radial_place, PosCache};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::load::{
@@ -32,21 +32,6 @@ use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 fn nonempty(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
-}
-
-fn project_options(view: Option<&GraphView>) -> Vec<String> {
-    view.into_iter()
-        .flat_map(|graph| &graph.nodes)
-        .filter_map(|node| serde_json::from_str::<serde_json::Value>(&node.metadata_json).ok())
-        .filter_map(|meta| {
-            meta.get("wing")
-                .and_then(|value| value.as_str())
-                .map(str::to_owned)
-        })
-        .filter(|project| !project.trim().is_empty())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 /// Top-level UI mode (graph topology vs wiki articles).
@@ -82,6 +67,7 @@ pub struct GraphApp {
     connect_url: String,
 
     full_view: Option<GraphView>,
+    project_catalog: Vec<String>,
     source: Option<GraphSourceKind>,
     load_error: Option<String>,
     raw_truncated: bool,
@@ -195,6 +181,7 @@ impl GraphApp {
             pending_save: None,
             connect_url: "http://127.0.0.1:7432".into(),
             full_view: None,
+            project_catalog: Vec::new(),
             source: None,
             load_error: None,
             raw_truncated: false,
@@ -301,6 +288,7 @@ impl GraphApp {
         self.raw_truncated = loaded.truncated;
         self.raw_node_count = loaded.raw_node_count;
         self.ops_health = loaded.health;
+        self.project_catalog = loaded.projects;
         self.source = Some(loaded.source);
         self.full_view = Some(loaded.view);
         if !self.seed_input.is_empty() {
@@ -1210,7 +1198,7 @@ impl eframe::App for GraphApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_worker_events();
         self.handle_hotkeys(ctx);
-        let project_options = project_options(self.full_view.as_ref());
+        let project_options = self.project_catalog.clone();
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
