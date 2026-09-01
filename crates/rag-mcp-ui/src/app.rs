@@ -10,7 +10,7 @@ use rag_mcp::GraphView;
 
 use crate::adapter::{adapt, topology_generation, AdaptOptions, UiGraph};
 use crate::layout::{place_missing_near_neighbors, radial_place, PosCache};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::time::Duration;
 
 use crate::load::{
@@ -32,6 +32,14 @@ use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 fn nonempty(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
+}
+
+fn project_options(view: Option<&GraphView>) -> Vec<String> {
+    view.into_iter().flat_map(|graph| &graph.nodes)
+        .filter_map(|node| serde_json::from_str::<serde_json::Value>(&node.metadata_json).ok())
+        .filter_map(|meta| meta.get("wing").and_then(|value| value.as_str()).map(str::to_owned))
+        .filter(|project| !project.trim().is_empty())
+        .collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 /// Top-level UI mode (graph topology vs wiki articles).
@@ -1155,6 +1163,7 @@ impl eframe::App for GraphApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_worker_events();
         self.handle_hotkeys(ctx);
+        let project_options = project_options(self.full_view.as_ref());
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -1380,11 +1389,15 @@ impl eframe::App for GraphApp {
                         ui.checkbox(&mut self.show_stubs, "stubs");
                         ui.separator();
                         ui.label("project");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.filter_wing)
-                                .desired_width(90.0)
-                                .hint_text("all wings"),
-                        );
+                        egui::ComboBox::from_id_salt("project_filter")
+                            .selected_text(if self.filter_wing.is_empty() { "All projects" } else { &self.filter_wing })
+                            .width(120.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.filter_wing, String::new(), "All projects");
+                                for project in &project_options {
+                                    ui.selectable_value(&mut self.filter_wing, project.clone(), project);
+                                }
+                            });
                         ui.label("room");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.filter_room)
