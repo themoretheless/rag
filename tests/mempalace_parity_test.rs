@@ -11,9 +11,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use rag_mcp::config::EmbeddingProviderKind;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Document, GraphNode, SearchMode, StatusReport};
-use rag_mcp::{
-    content_hash, diary_read, diary_write, wake_up, Config, Store, REL_TUNNEL,
-};
+use rag_mcp::{content_hash, diary_read, diary_write, wake_up, Config, Store, REL_TUNNEL};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -53,7 +51,7 @@ fn test_config(db_path: PathBuf, dims: usize) -> Config {
         maint_near_dup_threshold: 0.92,
         tool_surface: rag_mcp::mcp::ToolSurface::Full,
         http_bind: None,
-            wiki_require_if_match: false,
+        wiki_require_if_match: false,
     }
 }
 
@@ -189,8 +187,14 @@ fn wing_room_taxonomy() {
         .expect("research wing");
     assert_eq!(research.document_count, 3);
     assert_eq!(research.rooms.len(), 2);
-    assert!(research.rooms.iter().any(|r| r.room == "rag" && r.document_count == 2));
-    assert!(research.rooms.iter().any(|r| r.room == "llm" && r.document_count == 1));
+    assert!(research
+        .rooms
+        .iter()
+        .any(|r| r.room == "rag" && r.document_count == 2));
+    assert!(research
+        .rooms
+        .iter()
+        .any(|r| r.room == "llm" && r.document_count == 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -377,12 +381,7 @@ fn kg_add_query_invalidate_supersede() {
 
     // Point-in-time before boundary sees Acme.
     let before = store
-        .kg_query(
-            Some("Alice"),
-            Some("works_at"),
-            None,
-            Some(ts(2021, 1, 1)),
-        )
+        .kg_query(Some("Alice"), Some("works_at"), None, Some(ts(2021, 1, 1)))
         .expect("at_time before");
     assert_eq!(before.len(), 1);
     assert_eq!(before[0].object, "Acme");
@@ -446,12 +445,14 @@ async fn diary_write_read_and_wake_up() {
         &store,
         &embedder,
         &config,
-        "Claude",
-        "noticed the FTS index was empty",
-        None,
-        Some("observations"),
-        None,
-        true,
+        rag_mcp::DiaryWriteCommand {
+            agent_name: "Claude".into(),
+            content: "noticed the FTS index was empty".into(),
+            wing: None,
+            topic: Some("observations".into()),
+            title: None,
+            log_ops: true,
+        },
     )
     .await
     .expect("diary_write 1");
@@ -466,12 +467,14 @@ async fn diary_write_read_and_wake_up() {
         &store,
         &embedder,
         &config,
-        "claude",
-        "second note same agent",
-        None,
-        None,
-        None,
-        true,
+        rag_mcp::DiaryWriteCommand {
+            agent_name: "claude".into(),
+            content: "second note same agent".into(),
+            wing: None,
+            topic: None,
+            title: None,
+            log_ops: true,
+        },
     )
     .await
     .expect("diary_write 2");
@@ -479,7 +482,9 @@ async fn diary_write_read_and_wake_up() {
 
     let read = diary_read(&store, "CLAUDE", 10).expect("diary_read");
     assert!(read.len() >= 2);
-    assert!(read.iter().any(|e| e.content == "noticed the FTS index was empty"));
+    assert!(read
+        .iter()
+        .any(|e| e.content == "noticed the FTS index was empty"));
     assert!(read.iter().any(|e| e.id == w2.entry.id));
     // Newest first.
     assert!(read[0].created_at >= read[1].created_at);

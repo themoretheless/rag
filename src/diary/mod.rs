@@ -91,6 +91,16 @@ pub fn agent_wing(agent_name: &str) -> String {
     format!("agents/{agent_name}")
 }
 
+#[derive(Debug, Clone)]
+pub struct DiaryWriteCommand {
+    pub agent_name: String,
+    pub content: String,
+    pub wing: Option<String>,
+    pub topic: Option<String>,
+    pub title: Option<String>,
+    pub log_ops: bool,
+}
+
 /// Write a verbatim diary entry for `agent_name`.
 ///
 /// Stores a new document each call (`layer=diary`, `kind=diary`, wing
@@ -100,25 +110,24 @@ pub async fn diary_write(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    agent_name: &str,
-    content: &str,
-    wing: Option<&str>,
-    topic: Option<&str>,
-    title: Option<&str>,
-    log_ops: bool,
+    command: DiaryWriteCommand,
 ) -> Result<DiaryWriteResult> {
-    let agent = normalize_agent_name(agent_name)?;
-    let body = content.trim();
+    let agent = normalize_agent_name(&command.agent_name)?;
+    let body = command.content.trim();
     if body.is_empty() {
         return Err(AppError::config("diary content must be non-empty"));
     }
 
-    let topic = topic
+    let topic = command
+        .topic
+        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("general")
         .to_string();
-    let wing = wing
+    let wing = command
+        .wing
+        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
@@ -128,7 +137,9 @@ pub async fn diary_write(
     let short = &hash[..12.min(hash.len())];
     let stamp = now.format("%Y%m%d_%H%M%S%.3f");
     let uri = format!("diary://{agent}/{stamp}-{short}");
-    let title = title
+    let title = command
+        .title
+        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
@@ -165,7 +176,7 @@ pub async fn diary_write(
     let (node_id, edge_count) = rebuild_document_graph(store, &doc)?;
 
     let mut ops_log_id = None;
-    if log_ops {
+    if command.log_ops {
         let written = store.append_ops_log(&OpsLogEntry {
             id: String::new(),
             seq: 0,
@@ -273,20 +284,20 @@ pub async fn checkpoint(
     let diary_body = diary.map(str::trim).filter(|s| !s.is_empty());
 
     let diary_result = if let Some(body) = diary_body {
-        let agent = agent_opt
-            .clone()
-            .unwrap_or_else(|| "agent".to_string());
+        let agent = agent_opt.clone().unwrap_or_else(|| "agent".to_string());
         Some(
             diary_write(
                 store,
                 embedder,
                 config,
-                &agent,
-                body,
-                None,
-                Some("session-checkpoint"),
-                Some(&format!("checkpoint: {}", first_line(summary, 80))),
-                true,
+                DiaryWriteCommand {
+                    agent_name: agent,
+                    content: body.to_string(),
+                    wing: None,
+                    topic: Some("session-checkpoint".into()),
+                    title: Some(format!("checkpoint: {}", first_line(summary, 80))),
+                    log_ops: true,
+                },
             )
             .await?,
         )
@@ -304,10 +315,8 @@ pub async fn checkpoint(
     });
     if let Some(ref d) = diary_result {
         payload["diary_id"] = serde_json::Value::String(d.entry.id.clone());
-        payload["diary_uri"] = serde_json::Value::String(format!(
-            "diary://{}/{}",
-            d.entry.agent_name, d.entry.id
-        ));
+        payload["diary_uri"] =
+            serde_json::Value::String(format!("diary://{}/{}", d.entry.agent_name, d.entry.id));
     }
 
     let ops_log = store.append_ops_log(&OpsLogEntry {
@@ -422,7 +431,10 @@ mod tests {
     #[test]
     fn normalize_agent_name_rules() {
         assert_eq!(normalize_agent_name("Claude").unwrap(), "claude");
-        assert_eq!(normalize_agent_name("  cursor-ide  ").unwrap(), "cursor-ide");
+        assert_eq!(
+            normalize_agent_name("  cursor-ide  ").unwrap(),
+            "cursor-ide"
+        );
         assert_eq!(normalize_agent_name("My Agent").unwrap(), "my_agent");
         assert!(normalize_agent_name("   ").is_err());
         assert!(normalize_agent_name("@@@").is_err());
@@ -441,12 +453,14 @@ mod tests {
             &store,
             &embedder,
             &config,
-            "Claude",
-            "noticed the FTS index was empty",
-            None,
-            Some("observations"),
-            None,
-            true,
+            DiaryWriteCommand {
+                agent_name: "Claude".into(),
+                content: "noticed the FTS index was empty".into(),
+                wing: None,
+                topic: Some("observations".into()),
+                title: None,
+                log_ops: true,
+            },
         )
         .await
         .expect("write1");
@@ -459,12 +473,14 @@ mod tests {
             &store,
             &embedder,
             &config,
-            "claude",
-            "second note same agent",
-            None,
-            None,
-            None,
-            true,
+            DiaryWriteCommand {
+                agent_name: "claude".into(),
+                content: "second note same agent".into(),
+                wing: None,
+                topic: None,
+                title: None,
+                log_ops: true,
+            },
         )
         .await
         .expect("write2");
@@ -474,12 +490,14 @@ mod tests {
             &store,
             &embedder,
             &config,
-            "claude",
-            "custom wing note",
-            Some("custom/wings/claude"),
-            Some("custom"),
-            None,
-            true,
+            DiaryWriteCommand {
+                agent_name: "claude".into(),
+                content: "custom wing note".into(),
+                wing: Some("custom/wings/claude".into()),
+                topic: Some("custom".into()),
+                title: None,
+                log_ops: true,
+            },
         )
         .await
         .expect("write3");
@@ -571,12 +589,14 @@ mod tests {
             &store,
             &embedder,
             &config,
-            "alice",
-            "session start notes",
-            None,
-            None,
-            None,
-            true,
+            DiaryWriteCommand {
+                agent_name: "alice".into(),
+                content: "session start notes".into(),
+                wing: None,
+                topic: None,
+                title: None,
+                log_ops: true,
+            },
         )
         .await
         .expect("diary");
@@ -633,11 +653,6 @@ mod tests {
         crate::wiki::update_schema(&store, "# conventions\n- be kind\n", None, None).unwrap();
         let report2 = wake_up(&store, status, Some("alice"), 5, 20).expect("wake2");
         assert!(report2.schema.is_some());
-        assert!(report2
-            .schema
-            .as_ref()
-            .unwrap()
-            .content
-            .contains("be kind"));
+        assert!(report2.schema.as_ref().unwrap().content.contains("be kind"));
     }
 }

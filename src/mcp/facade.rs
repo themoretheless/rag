@@ -2203,12 +2203,14 @@ impl RagServer {
             &self.store,
             &self.embedder,
             &self.config,
-            &params.agent_name,
-            &params.content,
-            params.wing.as_deref(),
-            params.topic.as_deref(),
-            params.title.as_deref(),
-            true,
+            diary::DiaryWriteCommand {
+                agent_name: params.agent_name,
+                content: params.content,
+                wing: params.wing,
+                topic: params.topic,
+                title: params.title,
+                log_ops: true,
+            },
         )
         .await
         .map_err(Self::map_err)?;

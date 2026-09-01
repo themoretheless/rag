@@ -86,7 +86,7 @@ pub use wiki::{
 // --- Agent diary / session checkpoint / wake_up ---
 pub use diary::{
     agent_wing, checkpoint, diary_read, diary_write, normalize_agent_name, wake_up,
-    CheckpointResult, DiaryWriteResult, KIND_DIARY, LAYER_DIARY, ROOM_DIARY,
+    CheckpointResult, DiaryWriteCommand, DiaryWriteResult, KIND_DIARY, LAYER_DIARY, ROOM_DIARY,
 };
 
 // --- Search packing ---
