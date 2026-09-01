@@ -15,7 +15,8 @@ use crate::models::{
     RoomCount, Taxonomy, TaxonomyRoom, TaxonomyWing, VacuumStoreReport, WikiIndexEntry, WingCount,
 };
 use crate::util::{
-    content_hash, format_db_timestamp as format_ts, parse_db_timestamp, wiki_slug_from_uri,
+    content_hash, format_db_timestamp as format_ts, parse_db_timestamp,
+    slugify as shared_slugify, wiki_slug_from_uri, SlugPolicy,
 };
 
 /// Shared SELECT list for document rows (order matches [`row_to_document`]).
@@ -1828,22 +1829,7 @@ fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32 {
 }
 
 fn slugify(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
-        } else if c.is_whitespace() || c == '-' || c == '_' {
-            if !out.ends_with('-') && !out.is_empty() {
-                out.push('-');
-            }
-        }
-    }
-    let out = out.trim_matches('-').to_string();
-    if out.is_empty() {
-        "page".into()
-    } else {
-        out
-    }
+    shared_slugify(s, SlugPolicy::IndexLookup)
 }
 
 fn first_line_summary(content: &str, max: usize) -> String {

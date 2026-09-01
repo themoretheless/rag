@@ -6,7 +6,7 @@ use crate::db::Store;
 use crate::error::Result;
 use crate::graph::extract::{extract_links, ExtractedLink};
 use crate::models::{Document, GraphEdge, GraphNode};
-use crate::util::wiki_slug_from_uri;
+use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 
 /// Rebuild the object-graph slice for `doc`.
 ///
@@ -266,17 +266,7 @@ fn upsert_stub(store: &Store, label: &str) -> Result<String> {
 
 /// Light slug for link targets (keep dots for file names; collapse spaces).
 fn slugify_link(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-            out.push(c.to_ascii_lowercase());
-        } else if c.is_whitespace() || c == '/' {
-            if !out.ends_with('-') {
-                out.push('-');
-            }
-        }
-    }
-    out.trim_matches('-').to_string()
+    slugify(s, SlugPolicy::LinkTarget)
 }
 
 #[cfg(test)]

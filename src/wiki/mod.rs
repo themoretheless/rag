@@ -16,7 +16,7 @@ use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
 use crate::llm::{ChatClient, CompileResult, ConsolidateProposal};
 use crate::models::{Chunk, Document, OpsLogEntry, WikiIndexEntry};
-use crate::util::content_hash;
+use crate::util::{content_hash, slugify as shared_slugify, SlugPolicy};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -2120,17 +2120,7 @@ fn resolve_doc(store: &Store, id_or_uri: &str) -> Result<Document> {
 }
 
 fn slugify(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
-        } else if c.is_whitespace() || c == '-' || c == '_' || c == '/' {
-            if !out.ends_with('-') && !out.is_empty() {
-                out.push('-');
-            }
-        }
-    }
-    out.trim_matches('-').to_string()
+    shared_slugify(s, SlugPolicy::WikiPage)
 }
 
 fn first_line(content: &str, max: usize) -> String {
