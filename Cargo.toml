@@ -24,7 +24,6 @@ name = "ingest_file"
 path = "src/bin/ingest_file.rs"
 
 [dependencies]
-walkdir = "2"
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"

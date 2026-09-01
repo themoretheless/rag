@@ -76,6 +76,7 @@ use crate::models::{
 use crate::retrieval::SearchCommand;
 use crate::retrieval::{self, DocumentWithChunks, SimilarDocumentsQuery};
 use crate::search_pack::pack_hits;
+use crate::source_scan::{collect_source_files, SourceScanPolicy};
 use crate::util::{check_path_allowlist, content_hash};
 use crate::wiki;
 use crate::wiki::FileAnswerCitation;
@@ -86,53 +87,7 @@ fn nonempty_opt(s: Option<String>) -> Option<String> {
 }
 
 fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
-    const SKIP_DIRECTORIES: &[&str] = &[
-        ".git",
-        ".agents",
-        ".codex",
-        ".idea",
-        ".vscode",
-        ".zed",
-        "target",
-        "node_modules",
-        "bin",
-        "obj",
-        "dist",
-        "build",
-        "out",
-        "coverage",
-        "vendor",
-        "backups",
-        ".yarn",
-        ".turbo",
-        ".next",
-        ".nuxt",
-        ".svelte-kit",
-        "TestResults",
-        "worktrees",
-    ];
-    let mut pending = vec![root.to_path_buf()];
-    let mut files = Vec::new();
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(directory)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            let path = entry.path();
-            if file_type.is_dir() {
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("");
-                if !SKIP_DIRECTORIES.contains(&name) {
-                    pending.push(path);
-                }
-            } else if file_type.is_file() && is_supported_source(&path) {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
+    collect_source_files(root, &SourceScanPolicy::default())
 }
 
 fn inferred_scope(root: &Path, path: &Path) -> (String, String) {

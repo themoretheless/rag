@@ -9,43 +9,11 @@
 
 use anyhow::{bail, Context, Result};
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
+use rag_mcp::source_scan::{collect_source_files, SourceScanPolicy};
 use rag_mcp::wiki;
 use rag_mcp::{Config, Store};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use walkdir::WalkDir;
-
-const DEFAULT_EXTS: &[&str] = &[
-    "rs", "md", "toml", "txt", "json", "yml", "yaml", "js", "ts", "html", "css", "sh", "rhai",
-];
-
-const SKIP_DIR_NAMES: &[&str] = &[
-    "target",
-    ".git",
-    "node_modules",
-    ".grok",
-    ".agents",
-    ".codex",
-    ".claude",
-    "dist",
-    "build",
-    "out",
-    "bin",
-    "obj",
-    "coverage",
-    "vendor",
-    "backups",
-    ".yarn",
-    ".turbo",
-    ".next",
-    ".nuxt",
-    ".svelte-kit",
-    "TestResults",
-    "worktrees",
-    ".idea",
-    ".vscode",
-    ".zed",
-];
 
 fn main() -> Result<()> {
     // stderr logging only (same convention as rag-mcp)
@@ -68,7 +36,7 @@ struct Args {
     room: String,
     max_bytes: u64,
     dry_run: bool,
-    exts: Vec<String>,
+    exts: Option<Vec<String>>,
 }
 
 fn parse_args() -> Result<Args> {
@@ -128,7 +96,7 @@ fn parse_args() -> Result<Args> {
         room,
         max_bytes,
         dry_run,
-        exts: exts.unwrap_or_else(|| DEFAULT_EXTS.iter().map(|s| (*s).to_string()).collect()),
+        exts,
     })
 }
 
@@ -149,8 +117,11 @@ async fn run(args: Args) -> Result<()> {
         args.dry_run
     );
 
-    let mut files = collect_files(&args.root, &args.exts, args.max_bytes)?;
-    files.sort();
+    let mut policy = SourceScanPolicy::default().with_max_bytes(args.max_bytes);
+    if let Some(exts) = &args.exts {
+        policy = policy.with_extensions(exts);
+    }
+    let files = collect_source_files(&args.root, &policy)?;
     eprintln!("files to ingest: {}", files.len());
 
     let mut ok = 0u32;
@@ -223,10 +194,7 @@ async fn run(args: Args) -> Result<()> {
                     doc.title = title;
                     let _ = store.upsert_document(&doc);
                 }
-                eprintln!(
-                    "  OK {} chunks={} id={}",
-                    rel, r.chunk_count, r.document_id
-                );
+                eprintln!("  OK {} chunks={} id={}", rel, r.chunk_count, r.document_id);
                 ok += 1;
             }
             Err(e) => {
@@ -244,48 +212,4 @@ async fn run(args: Args) -> Result<()> {
         std::process::exit(2);
     }
     Ok(())
-}
-
-fn collect_files(root: &Path, exts: &[String], max_bytes: u64) -> Result<Vec<PathBuf>> {
-    let mut out = Vec::new();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| {
-            if e.file_type().is_dir() {
-                let name = e.file_name().to_string_lossy();
-                !SKIP_DIR_NAMES.iter().any(|s| *s == name)
-            } else {
-                true
-            }
-        })
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.path();
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_ascii_lowercase())
-            .unwrap_or_default();
-        if !exts.iter().any(|e| e == &ext) {
-            continue;
-        }
-        let meta = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if meta.len() > max_bytes {
-            eprintln!(
-                "  SKIP large ({} > {}): {}",
-                meta.len(),
-                max_bytes,
-                path.display()
-            );
-            continue;
-        }
-        out.push(path.to_path_buf());
-    }
-    Ok(out)
 }

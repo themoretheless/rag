@@ -33,6 +33,7 @@ pub mod models;
 pub mod ops;
 pub mod retrieval;
 pub mod search_pack;
+pub mod source_scan;
 pub mod storage;
 pub mod util;
 pub mod wiki;
