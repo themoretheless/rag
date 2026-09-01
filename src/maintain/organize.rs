@@ -638,7 +638,7 @@ fn heuristic_path(
                 suggested_room: room.or_else(|| doc.room.clone()),
                 confidence: 0.9,
                 method: "heuristic_path".into(),
-                reason: format!("path/uri segment matched existing wing"),
+                reason: "path/uri segment matched existing wing".to_string(),
             });
         }
     }

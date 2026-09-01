@@ -181,7 +181,7 @@ mod tests {
         let emb = MockEmbedder::new(48);
         for x in emb.embed_one("finite check") {
             assert!(x.is_finite());
-            assert!(x >= -1.0 - 1e-5 && x <= 1.0 + 1e-5);
+            assert!((-1.0 - 1e-5..=1.0 + 1e-5).contains(&x));
         }
     }
 

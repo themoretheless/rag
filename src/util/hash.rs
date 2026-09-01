@@ -93,11 +93,8 @@ fn normalize_lexically(path: &Path) -> PathBuf {
             Component::CurDir => {}
             Component::ParentDir => {
                 // Do not pop past root / prefix.
-                match out.components().next_back() {
-                    Some(Component::Normal(_)) => {
-                        out.pop();
-                    }
-                    _ => {}
+                if let Some(Component::Normal(_)) = out.components().next_back() {
+                    out.pop();
                 }
             }
             Component::Normal(c) => out.push(c),

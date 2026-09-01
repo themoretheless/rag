@@ -834,8 +834,6 @@ fn validate_consolidate_proposal(mut p: ConsolidateProposal) -> Result<Consolida
             .map(|c| {
                 if c.is_ascii_alphanumeric() {
                     c.to_ascii_lowercase()
-                } else if c.is_whitespace() || c == '-' || c == '_' {
-                    '-'
                 } else {
                     '-'
                 }

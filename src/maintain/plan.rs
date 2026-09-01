@@ -361,7 +361,7 @@ impl PlanOptions {
     /// Build from config (`maint_max_docs` as soft upper bound on action count).
     pub fn from_config(config: &Config) -> Self {
         Self {
-            max_actions: config.maint_max_docs.max(1).min(DEFAULT_MAX_ACTIONS * 2),
+            max_actions: config.maint_max_docs.clamp(1, DEFAULT_MAX_ACTIONS * 2),
             force_heuristic: false,
             log_ops: true,
         }
@@ -555,7 +555,7 @@ fn filter_raw_plan(raw: Vec<RawPlanItem>) -> (Vec<MaintenancePlanItem>, Vec<Reje
     let mut rejected = Vec::new();
     for r in raw {
         let name = r.action.clone();
-        let raw_json = serde_json::to_value(&serde_json::json!({
+        let raw_json = serde_json::to_value(serde_json::json!({
             "action": r.action,
             "reason": r.reason,
             "target_id": r.target_id,

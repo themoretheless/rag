@@ -509,7 +509,7 @@ impl Store {
             weight,
             context: None,
         };
-        self.insert_graph_edges(&[edge.clone()])?;
+        self.insert_graph_edges(std::slice::from_ref(&edge))?;
         Ok(edge)
     }
 
@@ -654,7 +654,7 @@ impl Store {
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
         };
-        self.insert_graph_edges(&[edge.clone()])?;
+        self.insert_graph_edges(std::slice::from_ref(&edge))?;
         Ok(edge)
     }
 

@@ -2519,7 +2519,7 @@ impl RagServer {
         let query_embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
             let query_vecs = self
                 .embedder
-                .embed(&[params.query.clone()])
+                .embed(std::slice::from_ref(&params.query))
                 .await
                 .map_err(Self::map_err)?;
             let emb = query_vecs.into_iter().next().ok_or_else(|| {

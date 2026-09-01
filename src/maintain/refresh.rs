@@ -417,7 +417,7 @@ async fn reembed_one_document(
             chunks.len()
         )));
     }
-    for (chunk, emb) in chunks.iter_mut().zip(embeddings.into_iter()) {
+    for (chunk, emb) in chunks.iter_mut().zip(embeddings) {
         chunk.embedding = emb;
     }
     store.replace_chunks_for_document(&doc.id, &chunks)?;

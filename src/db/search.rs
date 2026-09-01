@@ -1141,7 +1141,7 @@ mod tests {
         let b = [0.0f32, 1.0, 0.0];
         let c = [-1.0f32, 0.0, 0.0];
 
-        let mut scores = vec![
+        let mut scores = [
             (cosine_similarity(&q, &b), "b"),
             (cosine_similarity(&q, &c), "c"),
             (cosine_similarity(&q, &a), "a"),

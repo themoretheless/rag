@@ -372,7 +372,7 @@ async fn embed_and_store_chunks(
     }
     let mut chunks = Vec::with_capacity(pieces.len());
     for (i, ((content, char_start, char_end), embedding)) in
-        pieces.into_iter().zip(embeddings.into_iter()).enumerate()
+        pieces.into_iter().zip(embeddings).enumerate()
     {
         chunks.push(Chunk {
             id: Uuid::new_v4().to_string(),

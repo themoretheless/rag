@@ -658,13 +658,14 @@ mod tests {
         assert!(docs.iter().any(|c| c == "status"));
 
         // Existing row still readable; new columns defaulted.
-        let (layer, kind, pinned, boost, status): (
+        type PlacementColumns = (
             Option<String>,
             Option<String>,
             Option<bool>,
             Option<f64>,
             Option<String>,
-        ) = conn
+        );
+        let (layer, kind, pinned, boost, status): PlacementColumns = conn
             .query_row(
                 "SELECT layer, kind, pinned, boost, status FROM documents WHERE id = 'd1'",
                 [],

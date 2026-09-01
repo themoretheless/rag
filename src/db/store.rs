@@ -263,9 +263,9 @@ impl Store {
     /// Historical document snapshots, newest revision first.
     pub fn list_document_revisions(&self, document_id: &str) -> Result<Vec<Document>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(&format!(
+        let mut stmt = conn.prepare(
             "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), revision FROM document_revisions WHERE document_id = ? ORDER BY revision DESC"
-        ))?;
+        )?;
         let mut rows = stmt.query(params![document_id.trim()])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? { out.push(rows::document(row)?); }

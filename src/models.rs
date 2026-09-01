@@ -1210,8 +1210,7 @@ mod tests {
 
     #[test]
     fn document_etag_roundtrips_through_parse() {
-        let mut doc = Document::default();
-        doc.revision = 5;
+        let doc = Document { revision: 5, ..Document::default() };
         let tag = doc.etag();
         assert_eq!(tag, format_document_etag(5));
         assert_eq!(parse_document_etag(&tag), Some(5));
