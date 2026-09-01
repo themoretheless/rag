@@ -278,6 +278,13 @@ claude mcp add-from-claude-desktop
 |------|-------|------------|
 | `/mcp` | streamable HTTP | MCP clients |
 | `/health` | GET | counts, integrity, WAL and nested runtime/startup/autosync/backup state |
+| `/live`, `/ready` | GET | process liveness and store readiness |
+| `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports |
+| `/v1/search` | POST | lex/vector/hybrid retrieval with filters and diagnostics |
+| `/v1/multi-get` | POST | ordered batch document retrieval |
+| `/v1/expand-chunks`, `/v1/find-similar` | GET | retrieval helpers |
+| `/v1/documents`, `/v1/wiki` | GET | cursor-paginated catalogs; read responses include ETags |
+| `/v1/capabilities`, `/v1/version`, `/v1/routes` | GET | feature, version, deprecation, and route discovery |
 | `/live` | GET | process liveness, PID and uptime |
 | `/ready` | GET | readiness; 503 until startup and store/FTS checks pass |
 | `/v1/graph` | GET | graph UI |

@@ -181,6 +181,7 @@ pub struct RagServer {
 }
 
 impl RagServer {
+    pub(crate) fn tool_count(&self) -> usize { self.tool_router.map.len() }
     /// Start optional incremental source synchronization. Disabled unless
     /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
     pub fn spawn_auto_sync(self) {
@@ -264,13 +265,16 @@ impl RagServer {
                 None
             }
         };
-        Self {
+        let server = Self {
             store: Arc::new(store),
             embedder,
             llm,
             config,
             tool_router: super::server::compose_tool_router(Self::all_tools_router()),
-        }
+        };
+        let advertised_tool_count = match server.config.tool_surface { ToolSurface::Spine => crate::mcp::surface::spine_tool_names().len(), ToolSurface::Full => server.tool_router.map.len() };
+        tracing::info!(tool_surface = server.config.tool_surface.as_str(), advertised_tool_count, registered_tool_count = server.tool_router.map.len(), "MCP tool surface initialized");
+        server
     }
 
     fn map_err(err: AppError) -> McpError {
@@ -498,7 +502,7 @@ impl RagServer {
     }
 
     /// Build the MemPalace-style `status` health payload (vision §5.5 layer health).
-    fn status_report(&self) -> Result<StatusReport, AppError> {
+    pub(crate) fn status_report(&self) -> Result<StatusReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let fts_ready = self.store.fts_ready()?;
         let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
@@ -591,7 +595,7 @@ impl RagServer {
     }
 
     /// Build the minimal `doctor` integrity payload.
-    fn doctor_report(&self) -> Result<DoctorReport, AppError> {
+    pub(crate) fn doctor_report(&self) -> Result<DoctorReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let schema_ok = schema_version >= SCHEMA_VERSION;
         let fts_ready = self.store.fts_ready()?;

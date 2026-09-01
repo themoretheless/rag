@@ -88,31 +88,31 @@ Generated from the post-roadmap production audit. Items 1–100 are the committe
 
 ## HTTP and MCP ergonomics
 
-- [ ] 76. Add HTTP status endpoint parity.
-- [ ] 77. Add HTTP doctor endpoint.
-- [ ] 78. Add HTTP search endpoint.
-- [ ] 79. Add HTTP multi-get endpoint.
-- [ ] 80. Add HTTP expand-chunks endpoint.
-- [ ] 81. Add HTTP find-similar endpoint.
-- [ ] 82. Add request-id response header.
-- [ ] 83. Propagate request-id into logs.
-- [ ] 84. Add JSON error code field.
-- [ ] 85. Add retry-after for store busy.
-- [ ] 86. Add body-size limit diagnostics.
-- [ ] 87. Add query length HTTP validation.
-- [ ] 88. Add endpoint capability discovery.
-- [ ] 89. Add API version endpoint.
-- [ ] 90. Add OpenAPI-style route inventory JSON.
-- [ ] 91. Add MCP server instructions text.
-- [ ] 92. Add tool deprecation metadata.
-- [ ] 93. Add tool surface count to initialize logs.
-- [ ] 94. Add consistent pagination envelope.
-- [ ] 95. Add cursor pagination for document list.
-- [ ] 96. Add cursor pagination for wiki list.
-- [ ] 97. Add HTTP cache ETags to read endpoints.
-- [ ] 98. Add conditional GET for wiki catalog.
-- [ ] 99. Add CORS loopback policy tests.
-- [ ] 100. Add HTTP shutdown cancellation test.
+- [x] 76. Add HTTP status endpoint parity.
+- [x] 77. Add HTTP doctor endpoint.
+- [x] 78. Add HTTP search endpoint.
+- [x] 79. Add HTTP multi-get endpoint.
+- [x] 80. Add HTTP expand-chunks endpoint.
+- [x] 81. Add HTTP find-similar endpoint.
+- [x] 82. Add request-id response header.
+- [x] 83. Propagate request-id into logs.
+- [x] 84. Add JSON error code field.
+- [x] 85. Add retry-after for store busy.
+- [x] 86. Add body-size limit diagnostics.
+- [x] 87. Add query length HTTP validation.
+- [x] 88. Add endpoint capability discovery.
+- [x] 89. Add API version endpoint.
+- [x] 90. Add OpenAPI-style route inventory JSON.
+- [x] 91. Add MCP server instructions text.
+- [x] 92. Add tool deprecation metadata.
+- [x] 93. Add tool surface count to initialize logs.
+- [x] 94. Add consistent pagination envelope.
+- [x] 95. Add cursor pagination for document list.
+- [x] 96. Add cursor pagination for wiki list.
+- [x] 97. Add HTTP cache ETags to read endpoints.
+- [x] 98. Add conditional GET for wiki catalog.
+- [x] 99. Add CORS loopback policy tests.
+- [x] 100. Add HTTP shutdown cancellation test.
 
 ## Ingestion pipeline
 

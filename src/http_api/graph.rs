@@ -1,7 +1,8 @@
 //! Graph + document HTTP handlers (`/v1/graph`, neighbors, find, document).
 
 use axum::extract::{Query, State};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
@@ -113,9 +114,13 @@ struct DocumentQuery {
 async fn document(
     State(st): State<HttpState>,
     Query(q): Query<DocumentQuery>,
-) -> impl IntoResponse {
+    headers: HeaderMap,
+) -> Response {
     match resolve_document(&st.store, &q) {
-        Ok(doc) => api_ok(json!({
+        Ok(doc) => {
+            let etag = doc.etag();
+            if headers.get(axum::http::header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) == Some(etag.as_str()) { return StatusCode::NOT_MODIFIED.into_response(); }
+            let mut response = api_ok(json!({
             "id": doc.id,
             "uri": doc.uri,
             "title": doc.title,
@@ -129,7 +134,9 @@ async fn document(
             "updated_at": doc.updated_at.to_rfc3339(),
             "revision": doc.revision,
             "etag": doc.etag(),
-        })),
+            }));
+            response.headers_mut().insert(axum::http::header::ETAG, etag.parse().unwrap()); response
+        },
         Err(e) => api_err(e),
     }
 }

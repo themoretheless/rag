@@ -1,7 +1,8 @@
 //! Wiki catalog, write (CAS), and backlinks HTTP handlers.
 
 use axum::extract::{Query, State};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -34,6 +35,8 @@ struct WikiListQuery {
     #[serde(default)]
     offset: Option<u32>,
     #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
     category: Option<String>,
@@ -49,7 +52,13 @@ struct WikiListQuery {
 async fn wiki_list(
     State(st): State<HttpState>,
     Query(q): Query<WikiListQuery>,
-) -> impl IntoResponse {
+    headers: HeaderMap,
+) -> Response {
+    wiki_list_with_headers(st, q, headers).await
+}
+
+async fn wiki_list_with_headers(st: HttpState, q: WikiListQuery, headers: HeaderMap) -> Response {
+    let cursor_offset = match super::retrieval::decode_cursor(q.cursor.as_deref()) { Ok(v) => v, Err(e) => return api_err(e) };
     let filter = WikiPageMetaFilter {
         q: q.q
             .as_deref()
@@ -57,7 +66,7 @@ async fn wiki_list(
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string()),
         limit: q.limit.map(|n| (n as usize).clamp(1, 10_000)),
-        offset: q.offset.map(|n| n as usize),
+        offset: Some(q.offset.map(|n| n as usize).unwrap_or(cursor_offset)),
         kind: q
             .kind
             .as_deref()
@@ -84,14 +93,24 @@ async fn wiki_list(
             .map(|s| s.to_string()),
     };
     match st.store.list_wiki_page_metas_filtered(&filter) {
-        Ok((pages, total)) => api_ok(json!({
+        Ok((pages, total)) => {
+            let etag = format!("\"{}\"", blake3::hash(&serde_json::to_vec(&pages).unwrap_or_default()).to_hex());
+            if headers.get(axum::http::header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) == Some(etag.as_str()) {
+                return StatusCode::NOT_MODIFIED.into_response();
+            }
+            let offset = filter.offset.unwrap_or(0); let next = (offset + pages.len() < total).then(|| super::retrieval::encode_cursor(offset + pages.len()));
+            let mut response = api_ok(json!({
             "ok": true,
             "count": pages.len(),
             "total": total,
             "limit": filter.limit,
-            "offset": filter.offset.unwrap_or(0),
+            "offset": offset,
+            "items": pages.clone(),
             "pages": pages,
-        })),
+            "page": {"limit":filter.limit,"next_cursor":next,"total":total},
+        }));
+            response.headers_mut().insert(axum::http::header::ETAG, etag.parse().unwrap()); response
+        },
         Err(e) => api_err(e),
     }
 }
@@ -131,6 +150,7 @@ struct WikiPutBody {
 ///
 /// Optional `if_match_revision` / `if_match_etag` enforce CAS; mismatch → **409**.
 async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) -> impl IntoResponse {
+    if body.content.len() > super::MAX_HTTP_BODY_BYTES as usize { return api_err(AppError::config("wiki content exceeds HTTP body limit")); }
     let if_match = match resolve_if_match(
         body.if_match_revision,
         body.if_match_etag.as_deref(),
