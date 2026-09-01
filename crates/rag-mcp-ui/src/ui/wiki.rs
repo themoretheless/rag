@@ -77,15 +77,17 @@ pub fn draw_wiki_sidebar(
     let mut clicked: Option<String> = None;
 
     ui.horizontal(|ui| {
-        ui.heading("Wiki");
-        ui.weak(format!("({})", pages.len()));
+        ui.heading("Library");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.weak(format!("{} pages", pages.len()));
+        });
     });
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(filter)
                 .id(wiki_filter_id())
                 .desired_width(f32::INFINITY)
-                .hint_text("Filter pages…  (Ctrl+F)"),
+                .hint_text("Search pages…  (Ctrl+F)"),
         );
         if ui
             .add_enabled(!filter.is_empty(), egui::Button::new("✕"))
@@ -95,8 +97,8 @@ pub fn draw_wiki_sidebar(
             filter.clear();
         }
     });
-    ui.checkbox(show_summaries, "summaries")
-        .on_hover_text("Show one-line summary under each page");
+    ui.checkbox(show_summaries, "Show summaries")
+        .on_hover_text("Show a short description under each page");
     ui.separator();
 
     let q = filter.trim().to_lowercase();
@@ -120,13 +122,24 @@ pub fn draw_wiki_sidebar(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if pages.is_empty() {
-                ui.weak("No wiki pages yet.");
-                ui.weak("Use write_wiki_page via MCP.");
+                ui.add_space(24.0);
+                ui.vertical_centered(|ui| {
+                    ui.strong("No pages in this project");
+                    ui.weak("Choose another project or create a wiki page.");
+                });
                 return;
             }
             if !q.is_empty() {
                 // Filtered: flat list (grouping would hide matches under closed headers).
-                for p in pages.iter().filter(|p| matches_filter(p)) {
+                let matches: Vec<_> = pages.iter().filter(|p| matches_filter(p)).collect();
+                if matches.is_empty() {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        ui.strong("Nothing found");
+                        ui.weak("Try a shorter or different search.");
+                    });
+                }
+                for p in matches {
                     draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
                 }
                 return;
@@ -331,12 +344,19 @@ pub fn draw_wiki_read_view(
         return action;
     };
 
-    ui.horizontal(|ui| {
-        ui.heading(&page.title);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(&page.title).size(28.0).strong());
         if context.loading {
             // Next page is on the wire; this one stays visible until it lands.
             ui.spinner();
         }
+    });
+    ui.horizontal(|ui| {
+        ui.weak(format!(
+            "{} · revision {}",
+            page.layer,
+            page.revision.unwrap_or(1)
+        ));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add_enabled(context.can_write, egui::Button::new("Edit"))
@@ -349,13 +369,8 @@ pub fn draw_wiki_read_view(
             {
                 action.start_edit = true;
             }
-            ui.weak(&page.kind);
-            if let Some(r) = page.revision {
-                ui.weak(format!("r{r}"));
-            }
         });
     });
-    ui.weak(format!("{} · {}", page.layer, page.uri));
     ui.separator();
 
     egui::ScrollArea::vertical()
@@ -365,11 +380,11 @@ pub fn draw_wiki_read_view(
         ))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let padding = ((ui.available_width() - 860.0) / 2.0).max(0.0);
+            let padding = ((ui.available_width() - 780.0) / 2.0).max(0.0);
             ui.horizontal(|ui| {
                 ui.add_space(padding);
                 ui.vertical(|ui| {
-                    ui.set_max_width(860.0);
+                    ui.set_max_width(780.0);
                     action.open_link = render_wiki_markdown(
                         ui,
                         &page.content,

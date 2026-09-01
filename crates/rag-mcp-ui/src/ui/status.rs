@@ -1,4 +1,4 @@
-//! Always-on status bar: mode, seed, counts, caps, layout, and read-only instructions.
+//! Compact status bar. Diagnostic details stay available on hover.
 //!
 //! Spec (EGUI_GRAPH_VIEW §6.3 / §2.6): always show source · seed · depth · nodes/edges ·
 //! truncated · frozen/layout. Caps are code constants (300 nodes / 2000 draw edges).
@@ -20,6 +20,20 @@ fn mode_label(source: Option<&GraphSourceKind>) -> &'static str {
     }
 }
 
+fn source_detail(source: Option<&GraphSourceKind>) -> String {
+    match source {
+        Some(GraphSourceKind::HttpService { base }) => format!("HTTP gateway: {base}"),
+        Some(source) => {
+            let mut detail = format!("{}: {}", source.label(), source.path().display());
+            if let Some(age) = source.mtime().and_then(|modified| modified.elapsed().ok()) {
+                detail.push_str(&format!(" · updated {}s ago", age.as_secs()));
+            }
+            detail
+        }
+        None => "No data source".into(),
+    }
+}
+
 /// Draw the bottom status bar (read-only inspector chrome).
 ///
 /// Shows: mode, detailed source, file/mtime, seed, depth, node/edge counts vs hard caps,
@@ -37,70 +51,52 @@ pub fn draw_status(
     pending: bool,
 ) {
     ui.horizontal_wrapped(|ui| {
-        // Mode: snapshot | db (XOR open path; dual-live write forbidden).
-        ui.strong(format!("mode={}", mode_label(source)));
-
-        let src = source.map(|s| s.label()).unwrap_or("none");
-        ui.label(format!("source={src}"));
-
-        if let Some(s) = source {
-            match s {
-                GraphSourceKind::HttpService { base } => {
-                    ui.label(format!("url={base}"));
-                }
-                _ => {
-                    let path = s.path();
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_else(|| path.to_str().unwrap_or("?"));
-                    ui.label(format!("file={name}"));
-                    if let Some(mtime) = s.mtime() {
-                        if let Ok(elapsed) = mtime.elapsed() {
-                            ui.label(format!("age={}s", elapsed.as_secs()));
-                        }
-                    }
-                }
-            }
-        }
-
+        let connected = source.is_some();
+        ui.colored_label(
+            if connected {
+                egui::Color32::from_rgb(90, 190, 125)
+            } else {
+                egui::Color32::from_rgb(220, 105, 90)
+            },
+            if connected {
+                "● Connected"
+            } else {
+                "● Offline"
+            },
+        )
+        .on_hover_text(source_detail(source));
         ui.separator();
-        ui.label(format!("seed={}", seed_label.unwrap_or("-")));
-        ui.separator();
-        ui.label(format!("depth={depth}"));
-        ui.separator();
-
-        // Counts + hard caps (EGUI_GRAPH_VIEW §8.1).
+        ui.label(
+            seed_label
+                .map(|seed| format!("Focus: {seed}"))
+                .unwrap_or_else(|| "No focus selected".into()),
+        );
         let (n, e) = match graph {
             Some(g) => (g.nodes.len(), g.edges.len()),
             None => (0, 0),
         };
-        ui.label(format!(
-            "nodes={n}/{UI_HARD_MAX_NODES} edges={e}/{UI_MAX_DRAW_EDGES}"
-        ));
+        ui.separator();
+        ui.label(format!("{n} items · {e} connections"));
 
-        let capped = truncated
-            || graph.is_some_and(|g| g.truncated_nodes || g.truncated_edges);
+        let capped = truncated || graph.is_some_and(|g| g.truncated_nodes || g.truncated_edges);
         if capped {
             ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "capped");
         }
 
-        ui.separator();
-        ui.label(if layout_frozen {
-            "layout=RadialLocal/frozen"
-        } else {
-            "layout=pending"
-        });
         if pending {
             ui.separator();
             ui.spinner();
-            ui.weak("loading…");
+            ui.weak("Updating…");
         }
-    });
-
-    // Secondary line: instructions + optional warning banner.
-    ui.horizontal_wrapped(|ui| {
-        ui.weak("read-only · pan drag · scroll zoom · click select · Expand / Open in toolbar");
+        let details = format!(
+            "mode={} · depth={} · caps={}/{} · layout={}",
+            mode_label(source),
+            depth,
+            UI_HARD_MAX_NODES,
+            UI_MAX_DRAW_EDGES,
+            if layout_frozen { "ready" } else { "pending" }
+        );
+        ui.weak("ⓘ").on_hover_text(details);
         if let Some(msg) = banner {
             ui.separator();
             ui.colored_label(egui::Color32::from_rgb(230, 180, 80), msg);

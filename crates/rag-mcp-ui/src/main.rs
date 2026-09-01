@@ -32,7 +32,11 @@ fn main() {
         Some(Commands::Export(args)) => {
             match export_graph_snapshot(&args) {
                 Ok(res) => {
-                    let trunc = if res.truncated { " (truncated at max_nodes)" } else { "" };
+                    let trunc = if res.truncated {
+                        " (truncated at max_nodes)"
+                    } else {
+                        ""
+                    };
                     eprintln!(
                         "export_graph_snapshot: wrote {} ({} nodes, {} edges){}",
                         res.output.display(),
@@ -66,8 +70,9 @@ fn main() {
 fn run_gui(open: load::OpenArgs) -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("rag-mcp-ui — wiki + graph")
-            .with_inner_size([1280.0, 800.0]),
+            .with_title("Knowledge Base — Library + Connections")
+            .with_inner_size([1280.0, 800.0])
+            .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
 

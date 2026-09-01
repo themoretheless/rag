@@ -49,7 +49,11 @@ pub enum WorkerCmd {
         depth: u32,
     },
     /// Wiki catalog list for the sidebar.
-    LoadWikiCatalog { seq: u64, source: LoadSource },
+    LoadWikiCatalog {
+        seq: u64,
+        source: LoadSource,
+        project: Option<String>,
+    },
     /// Open a wiki page body + its backlinks.
     ///
     /// `meta` set: fetch by catalog id/uri. `meta` None + `q`: unresolved
@@ -197,11 +201,15 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             seq,
             result: load_cli_source(&source, seed.as_deref(), depth),
         },
-        WorkerCmd::LoadWikiCatalog { seq, source } => WorkerEvt::WikiCatalog {
+        WorkerCmd::LoadWikiCatalog {
+            seq,
+            source,
+            project,
+        } => WorkerEvt::WikiCatalog {
             seq,
             result: match &source {
-                LoadSource::Http(base) => fetch_wiki_list_http(base),
-                LoadSource::Db(path) => fetch_wiki_list_db(path),
+                LoadSource::Http(base) => fetch_wiki_list_http(base, project.as_deref()),
+                LoadSource::Db(path) => fetch_wiki_list_db(path, project.as_deref()),
             },
         },
         WorkerCmd::OpenPage {
@@ -284,9 +292,13 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
         WorkerCmd::SavePage { seq, req, source } => {
             let result = match &source {
                 LoadSource::Http(base) => put_wiki_http(base, &req),
-                LoadSource::Db(path) => {
-                    save_wiki_db(path, &req.id, &req.title, &req.content, req.if_match_revision)
-                }
+                LoadSource::Db(path) => save_wiki_db(
+                    path,
+                    &req.id,
+                    &req.title,
+                    &req.content,
+                    req.if_match_revision,
+                ),
             };
             WorkerEvt::SavedPage { seq, result }
         }

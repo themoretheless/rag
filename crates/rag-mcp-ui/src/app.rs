@@ -35,11 +35,18 @@ fn nonempty(value: &str) -> Option<String> {
 }
 
 fn project_options(view: Option<&GraphView>) -> Vec<String> {
-    view.into_iter().flat_map(|graph| &graph.nodes)
+    view.into_iter()
+        .flat_map(|graph| &graph.nodes)
         .filter_map(|node| serde_json::from_str::<serde_json::Value>(&node.metadata_json).ok())
-        .filter_map(|meta| meta.get("wing").and_then(|value| value.as_str()).map(str::to_owned))
+        .filter_map(|meta| {
+            meta.get("wing")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        })
         .filter(|project| !project.trim().is_empty())
-        .collect::<BTreeSet<_>>().into_iter().collect()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Top-level UI mode (graph topology vs wiki articles).
@@ -150,6 +157,27 @@ pub struct GraphApp {
 
 impl GraphApp {
     pub fn new(cc: &eframe::CreationContext<'_>, open: OpenArgs) -> Self {
+        cc.egui_ctx.style_mut(|style| {
+            style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+            style.spacing.button_padding = egui::vec2(12.0, 7.0);
+            style.spacing.interact_size.y = 30.0;
+            style.text_styles.insert(
+                egui::TextStyle::Heading,
+                egui::FontId::new(24.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Body,
+                egui::FontId::new(16.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Button,
+                egui::FontId::new(15.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Small,
+                egui::FontId::new(13.0, egui::FontFamily::Proportional),
+            );
+        });
         let depth = open.depth.clamp(1, 3);
         let max_nodes = open.max_nodes.clamp(1, UI_HARD_MAX_NODES as u32);
         let seed_input = open.seed.clone().unwrap_or_default();
@@ -298,7 +326,11 @@ impl GraphApp {
                 Some(source) => {
                     let seq = self.next_seq();
                     self.pending_catalog = Some(seq);
-                    self.worker.send(WorkerCmd::LoadWikiCatalog { seq, source });
+                    self.worker.send(WorkerCmd::LoadWikiCatalog {
+                        seq,
+                        source,
+                        project: nonempty(&self.filter_wing),
+                    });
                 }
                 None => {
                     self.wiki_loaded = true;
@@ -422,6 +454,21 @@ impl GraphApp {
         self.wiki_error_b = None;
         self.wiki_backlinks_b.clear();
         self.pending_page_b = None;
+    }
+
+    fn reset_wiki_for_project(&mut self) {
+        self.wiki_pages.clear();
+        self.wiki_selected_id = None;
+        self.wiki_article = None;
+        self.wiki_backlinks.clear();
+        self.wiki_history.clear();
+        self.wiki_error = None;
+        self.wiki_edit = None;
+        self.wiki_save_note = None;
+        self.pending_page_a = None;
+        self.clear_wiki_pane_b();
+        self.wiki_loaded = false;
+        self.reload_wiki_catalog();
     }
 
     /// Apply a worker PageOpened result to the target pane.
@@ -1167,11 +1214,11 @@ impl eframe::App for GraphApp {
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("rag-mcp-ui");
+                ui.strong(egui::RichText::new("Knowledge Base").size(18.0));
                 ui.separator();
                 // Mode tabs (Notion/Obsidian-like)
                 if ui
-                    .selectable_label(self.mode == ViewMode::Wiki, "Wiki")
+                    .selectable_label(self.mode == ViewMode::Wiki, "Library")
                     .on_hover_text("Articles / notes (Obsidian-style)")
                     .clicked()
                 {
@@ -1179,12 +1226,41 @@ impl eframe::App for GraphApp {
                     self.ensure_wiki_loaded();
                 }
                 if ui
-                    .selectable_label(self.mode == ViewMode::Graph, "Graph")
+                    .selectable_label(self.mode == ViewMode::Graph, "Connections")
                     .on_hover_text("Local object graph")
                     .clicked()
                 {
                     self.mode = ViewMode::Graph;
                 }
+                ui.separator();
+
+                ui.weak("Project");
+                ui.add_enabled_ui(
+                    !self.wiki_edit.as_ref().is_some_and(|edit| edit.dirty),
+                    |ui| {
+                        egui::ComboBox::from_id_salt("global_project")
+                            .selected_text(if self.filter_wing.is_empty() {
+                                "All projects"
+                            } else {
+                                &self.filter_wing
+                            })
+                            .width(150.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.filter_wing,
+                                    String::new(),
+                                    "All projects",
+                                );
+                                for project in &project_options {
+                                    ui.selectable_value(
+                                        &mut self.filter_wing,
+                                        project.clone(),
+                                        project,
+                                    );
+                                }
+                            });
+                    },
+                );
                 ui.separator();
 
                 match self.mode {
@@ -1317,11 +1393,11 @@ impl eframe::App for GraphApp {
                         }
                     }
                     ViewMode::Graph => {
-                        ui.label("seed");
+                        ui.weak("Focus");
                         let seed_resp = ui.add(
                             egui::TextEdit::singleline(&mut self.seed_input)
-                                .desired_width(200.0)
-                                .hint_text("id / label / document_id"),
+                                .desired_width(180.0)
+                                .hint_text("Search an item…"),
                         );
                         // Seed picker: suggestions over full_view (label / id /
                         // document_id substring, case-insensitive, first 10).
@@ -1375,41 +1451,40 @@ impl eframe::App for GraphApp {
                             self.seed_input = id;
                             self.apply_seed_from_input();
                         }
-                        if ui.button("Apply seed").clicked() {
+                        if ui.button("Show").clicked() {
                             self.apply_seed_from_input();
                         }
-                        ui.separator();
-                        ui.label("depth");
-                        let mut d = self.depth as i32;
-                        if ui.add(egui::DragValue::new(&mut d).range(1..=3)).changed() {
-                            self.depth = d as u32;
-                            self.rebuild_ui_graph();
-                        }
-                        ui.checkbox(&mut self.show_tags, "tags");
-                        ui.checkbox(&mut self.show_stubs, "stubs");
-                        ui.separator();
-                        ui.label("project");
-                        egui::ComboBox::from_id_salt("project_filter")
-                            .selected_text(if self.filter_wing.is_empty() { "All projects" } else { &self.filter_wing })
-                            .width(120.0)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.filter_wing, String::new(), "All projects");
-                                for project in &project_options {
-                                    ui.selectable_value(&mut self.filter_wing, project.clone(), project);
+                        ui.menu_button("View options", |ui| {
+                            ui.set_min_width(220.0);
+                            ui.horizontal(|ui| {
+                                ui.label("Connection depth");
+                                let mut d = self.depth as i32;
+                                if ui.add(egui::DragValue::new(&mut d).range(1..=3)).changed() {
+                                    self.depth = d as u32;
+                                    self.rebuild_ui_graph();
                                 }
                             });
-                        ui.label("room");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.filter_room)
-                                .desired_width(80.0)
-                                .hint_text("all rooms"),
-                        );
-                        if ui.button("Clear filters").clicked() {
-                            self.filter_wing.clear();
-                            self.filter_room.clear();
-                        }
+                            ui.checkbox(&mut self.show_tags, "Show tags");
+                            ui.checkbox(&mut self.show_stubs, "Show unresolved items");
+                            ui.separator();
+                            ui.label("Room");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.filter_room)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("All rooms"),
+                            );
+                            if ui
+                                .add_enabled(
+                                    !self.filter_room.is_empty(),
+                                    egui::Button::new("Clear room filter"),
+                                )
+                                .clicked()
+                            {
+                                self.filter_room.clear();
+                            }
+                        });
                         if ui
-                            .button("Reset to seed")
+                            .button("Reset view")
                             .on_hover_text(
                                 "Rebuild the local view from the seed (drops Expand merges)",
                             )
@@ -1425,7 +1500,7 @@ impl eframe::App for GraphApp {
                         if ui
                             .add_enabled(
                                 self.selected.is_some() && !expanding,
-                                egui::Button::new("Expand neighbors"),
+                                egui::Button::new("Expand"),
                             )
                             .clicked()
                         {
@@ -1435,7 +1510,7 @@ impl eframe::App for GraphApp {
                             ui.spinner();
                         }
                         if ui
-                            .add_enabled(self.selected.is_some(), egui::Button::new("Open as wiki"))
+                            .add_enabled(self.selected.is_some(), egui::Button::new("Open page"))
                             .on_hover_text("Open selected node as article")
                             .clicked()
                         {
@@ -1444,7 +1519,7 @@ impl eframe::App for GraphApp {
                         if ui
                             .add_enabled(
                                 self.selected.is_some() && self.pending_content.is_none(),
-                                egui::Button::new("Read content"),
+                                egui::Button::new("Preview"),
                             )
                             .clicked()
                         {
@@ -1458,9 +1533,10 @@ impl eframe::App for GraphApp {
             });
         });
 
+        let project_changed = self.filter_wing != self.prev_filter_wing;
         if self.show_tags != self.prev_show_tags
             || self.show_stubs != self.prev_show_stubs
-            || self.filter_wing != self.prev_filter_wing
+            || project_changed
             || self.filter_room != self.prev_filter_room
         {
             self.prev_show_tags = self.show_tags;
@@ -1468,45 +1544,48 @@ impl eframe::App for GraphApp {
             self.prev_filter_wing = self.filter_wing.clone();
             self.prev_filter_room = self.filter_room.clone();
             self.rebuild_ui_graph();
+            if project_changed {
+                self.reset_wiki_for_project();
+            }
         }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             match self.mode {
                 ViewMode::Wiki => {
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong("mode=wiki");
-                        if let Some(s) = self.source.as_ref() {
-                            ui.label(format!("source={}", s.label()));
-                        }
+                        let connected = self.source.is_some();
+                        ui.colored_label(
+                            if connected {
+                                egui::Color32::from_rgb(90, 190, 125)
+                            } else {
+                                egui::Color32::from_rgb(220, 105, 90)
+                            },
+                            if connected {
+                                "● Connected"
+                            } else {
+                                "● Offline"
+                            },
+                        )
+                        .on_hover_text(
+                            self.source
+                                .as_ref()
+                                .map(|source| source.label())
+                                .unwrap_or("No data source"),
+                        );
                         ui.separator();
-                        ui.label(format!("pages={}", self.wiki_pages.len()));
+                        ui.label(format!("{} pages", self.wiki_pages.len()));
                         if self.any_pending() {
+                            ui.separator();
                             ui.spinner();
+                            ui.weak("Updating…");
                         }
                         if self.wiki_dual_pane {
                             ui.separator();
-                            ui.label(format!(
-                                "dual focus={}",
-                                match self.wiki_focus {
-                                    WikiPane::A => "A",
-                                    WikiPane::B => "B",
-                                }
-                            ));
-                        }
-                        if let Some(art) = &self.wiki_article {
-                            ui.separator();
-                            ui.label(format!("A={}", art.title));
-                            if let Some(r) = art.revision {
-                                ui.weak(format!("r{r}"));
-                            }
-                        }
-                        if let Some(art) = &self.wiki_article_b {
-                            ui.separator();
-                            ui.label(format!("B={}", art.title));
+                            ui.label("Split view");
                         }
                         if self.wiki_edit.is_some() {
                             ui.separator();
-                            ui.strong("editing");
+                            ui.strong("Editing");
                             if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
                                 ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "unsaved");
                             }
@@ -1515,8 +1594,6 @@ impl eframe::App for GraphApp {
                             ui.separator();
                             ui.colored_label(egui::Color32::from_rgb(100, 180, 120), note);
                         }
-                        ui.separator();
-                        ui.weak("Dual pane · A/B focus · Edit · [[wikilinks]] · sidebar · Reload");
                     });
                 }
                 ViewMode::Graph => {

@@ -1,6 +1,7 @@
 //! Snapshot / vault graph.json loaders (Mode C) and exclusive live Store open (Mode A).
 //! Dual-live DuckDB write with MCP is forbidden forever.
 
+use rag_mcp::db::store::WikiPageMetaFilter;
 use rag_mcp::{
     GraphEdge, GraphFilter, GraphNode, GraphView, Store, PKB_REL_TYPES, UI_GRAPH_EXPORT_MAX_NODES,
 };
@@ -145,7 +146,10 @@ impl OpenArgs {
         self.source = match (
             &self.snapshot,
             &self.db,
-            self.http.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()),
+            self.http
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty()),
         ) {
             (Some(p), None, None) => Some(CliSource::Snapshot(p.clone())),
             (None, Some(p), None) => Some(CliSource::Db(p.clone())),
@@ -159,7 +163,9 @@ impl OpenArgs {
 /// Where the topology came from (status line).
 #[derive(Debug, Clone)]
 pub enum GraphSourceKind {
-    LiveStore { path: PathBuf },
+    LiveStore {
+        path: PathBuf,
+    },
     SnapshotFile {
         path: PathBuf,
         mtime: Option<SystemTime>,
@@ -169,7 +175,9 @@ pub enum GraphSourceKind {
         mtime: Option<SystemTime>,
     },
     /// Loaded via rag-mcp HTTP API (same process as DuckDB writer).
-    HttpService { base: String },
+    HttpService {
+        base: String,
+    },
 }
 
 /// PKB default edge types for live Store load (EGUI_GRAPH_VIEW §7.1 / GRAPH_DESIGN §7.1).
@@ -253,12 +261,8 @@ pub fn load_snapshot_path(path: &Path) -> Result<LoadedGraph, String> {
             path.display()
         ));
     }
-    let bytes = fs::read(path).map_err(|e| {
-        format!(
-            "cannot open snapshot {}: {e}",
-            path.display()
-        )
-    })?;
+    let bytes =
+        fs::read(path).map_err(|e| format!("cannot open snapshot {}: {e}", path.display()))?;
     let view = parse_graph_json(&bytes).map_err(|e| format!("parse {}: {e}", path.display()))?;
     let raw_node_count = view.nodes.len();
     let truncated = raw_node_count > UI_HARD_MAX_NODES;
@@ -471,15 +475,22 @@ pub fn fetch_backlinks_http(base: &str, document_id: &str) -> Result<Vec<Backlin
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().unwrap_or_default();
-        return Err(format!("HTTP {status}: {}", body.chars().take(200).collect::<String>()));
+        return Err(format!(
+            "HTTP {status}: {}",
+            body.chars().take(200).collect::<String>()
+        ));
     }
     let body: BacklinksResponse = resp.json().map_err(|e| format!("parse backlinks: {e}"))?;
     Ok(body.backlinks)
 }
 
 /// Fetch wiki page catalog via `GET /v1/wiki`.
-pub fn fetch_wiki_list_http(base: &str) -> Result<Vec<WikiPageMeta>, String> {
-    let url = http_join(base, "v1/wiki");
+pub fn fetch_wiki_list_http(
+    base: &str,
+    project: Option<&str>,
+) -> Result<Vec<WikiPageMeta>, String> {
+    let path = wiki_catalog_path(project);
+    let url = http_join(base, &path);
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -504,10 +515,24 @@ pub fn fetch_wiki_list_http(base: &str) -> Result<Vec<WikiPageMeta>, String> {
     Ok(pages)
 }
 
+fn wiki_catalog_path(project: Option<&str>) -> String {
+    project
+        .map(|value| format!("v1/wiki?wing={}", urlencoding_minimal(value)))
+        .unwrap_or_else(|| "v1/wiki".to_string())
+}
+
 /// List wiki pages from exclusive DuckDB open (metadata only).
-pub fn fetch_wiki_list_db(db_path: &Path) -> Result<Vec<WikiPageMeta>, String> {
+pub fn fetch_wiki_list_db(
+    db_path: &Path,
+    project: Option<&str>,
+) -> Result<Vec<WikiPageMeta>, String> {
     let store = Store::open(db_path).map_err(|e| format!("open db: {e}"))?;
-    let items = store.list_wiki_page_metas().map_err(|e| e.to_string())?;
+    let (items, _) = store
+        .list_wiki_page_metas_filtered(&WikiPageMetaFilter {
+            wing: project.map(str::to_owned),
+            ..WikiPageMetaFilter::default()
+        })
+        .map_err(|e| e.to_string())?;
     let mut pages: Vec<WikiPageMeta> = items
         .into_iter()
         .map(|d| WikiPageMeta {
@@ -567,9 +592,8 @@ pub fn fetch_document_http(
     let v: serde_json::Value = resp
         .json()
         .map_err(|e| format!("parse DocumentBody from {url}: {e}"))?;
-    document_body_from_json(&v, DocumentBodyJsonDefaults::default()).ok_or_else(|| {
-        format!("parse DocumentBody from {url}: missing document fields")
-    })
+    document_body_from_json(&v, DocumentBodyJsonDefaults::default())
+        .ok_or_else(|| format!("parse DocumentBody from {url}: missing document fields"))
 }
 
 /// Load document body via exclusive DuckDB open (Mode A `--db` only).
@@ -684,9 +708,7 @@ pub fn put_wiki_http(base: &str, req: &WikiPutRequest) -> Result<DocumentBody, S
         ));
     }
     // Accept full DocumentBody or a write-result envelope with document fields.
-    let text = resp
-        .text()
-        .map_err(|e| format!("read PUT response: {e}"))?;
+    let text = resp.text().map_err(|e| format!("read PUT response: {e}"))?;
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
         let defaults = DocumentBodyJsonDefaults {
             content: Some(req.content.as_str()),
@@ -840,13 +862,14 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
-    let health = client.get(http_join(base, "health")).send().ok()
+    let health = client
+        .get(http_join(base, "health"))
+        .send()
+        .ok()
         .filter(|response| response.status().is_success())
         .and_then(|response| response.json::<GatewayHealth>().ok());
     let resp = client.get(&url).send().map_err(|e| {
-        format!(
-            "HTTP GET {url} failed: {e}. Is rag-mcp running with RAG_HTTP_BIND set?"
-        )
+        format!("HTTP GET {url} failed: {e}. Is rag-mcp running with RAG_HTTP_BIND set?")
     })?;
     if !resp.status().is_success() {
         let status = resp.status();
@@ -882,11 +905,7 @@ pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedG
 ///
 /// `seed` / `depth` are not applied here; the full filtered topology is returned
 /// and local seed BFS is done client-side (same as snapshot path).
-pub fn load_live_db(
-    path: &Path,
-    _seed: Option<&str>,
-    _depth: u32,
-) -> Result<LoadedGraph, String> {
+pub fn load_live_db(path: &Path, _seed: Option<&str>, _depth: u32) -> Result<LoadedGraph, String> {
     if !path.exists() {
         return Err(format!(
             "cannot open database: path does not exist: {}. Dual-live write with MCP is forbidden; use --snapshot if the agent holds the file.",
@@ -984,12 +1003,8 @@ pub fn write_graph_snapshot(path: &Path, view: &GraphView) -> Result<(), String>
 fn write_snapshot_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
-            fs::create_dir_all(parent).map_err(|e| {
-                format!(
-                    "create snapshot parent {}: {e}",
-                    parent.display()
-                )
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("create snapshot parent {}: {e}", parent.display()))?;
         }
     }
     fs::write(path, bytes).map_err(|e| format!("write snapshot {}: {e}", path.display()))
@@ -1124,11 +1139,7 @@ pub fn resolve_seed(view: &GraphView, query: &str) -> Result<String, String> {
         return Ok(n.id.clone());
     }
     let lower = q.to_lowercase();
-    if let Some(n) = view
-        .nodes
-        .iter()
-        .find(|n| n.label.to_lowercase() == lower)
-    {
+    if let Some(n) = view.nodes.iter().find(|n| n.label.to_lowercase() == lower) {
         return Ok(n.id.clone());
     }
     let matches: Vec<&GraphNode> = view
@@ -1167,12 +1178,7 @@ pub fn sort_wiki_pages(pages: &mut [WikiPageMeta]) {
 }
 
 /// Client-side undirected BFS neighbors on a loaded snapshot (Mode C expand).
-pub fn local_neighbors(
-    full: &GraphView,
-    seed_id: &str,
-    depth: u32,
-    max_nodes: usize,
-) -> GraphView {
+pub fn local_neighbors(full: &GraphView, seed_id: &str, depth: u32, max_nodes: usize) -> GraphView {
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for e in &full.edges {
         adj.entry(e.source_id.clone())
@@ -1348,6 +1354,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wiki_catalog_path_scopes_and_encodes_project() {
+        assert_eq!(wiki_catalog_path(None), "v1/wiki");
+        assert_eq!(
+            wiki_catalog_path(Some("Project A/B")),
+            "v1/wiki?wing=Project%20A%2FB"
+        );
+    }
+
+    #[test]
     fn parse_bare_graph_view() {
         let json = r#"{"nodes":[{"id":"a","kind":"document","label":"A","document_id":null,"uri":null,"resolved":true,"metadata_json":"{}"}],"edges":[]}"#;
         let v = parse_graph_json(json.as_bytes()).unwrap();
@@ -1369,10 +1384,7 @@ mod tests {
 
     #[test]
     fn export_graph_snapshot_from_store() {
-        let dir = std::env::temp_dir().join(format!(
-            "rag-mcp-ui-export-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("rag-mcp-ui-export-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let db = dir.join("t.duckdb");
         let out = dir.join("graph.json");
@@ -1446,15 +1458,8 @@ mod tests {
     #[test]
     fn local_neighbors_depth1() {
         let view = GraphView {
-            nodes: vec![
-                node("a", "A"),
-                node("b", "B"),
-                node("c", "C"),
-            ],
-            edges: vec![
-                edge("e1", "a", "b"),
-                edge("e2", "b", "c"),
-            ],
+            nodes: vec![node("a", "A"), node("b", "B"), node("c", "C")],
+            edges: vec![edge("e1", "a", "b"), edge("e2", "b", "c")],
         };
         let local = local_neighbors(&view, "a", 1, 100);
         let ids: HashSet<_> = local.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -1467,7 +1472,12 @@ mod tests {
     fn expand_neighbors_local_merges_one_hop() {
         // seed a depth-1: {a,b}; expand b → pulls c
         let full = GraphView {
-            nodes: vec![node("a", "A"), node("b", "B"), node("c", "C"), node("d", "D")],
+            nodes: vec![
+                node("a", "A"),
+                node("b", "B"),
+                node("c", "C"),
+                node("d", "D"),
+            ],
             edges: vec![
                 edge("e1", "a", "b"),
                 edge("e2", "b", "c"),
@@ -1509,10 +1519,7 @@ mod tests {
 
     #[test]
     fn expand_neighbors_store_one_hop() {
-        let dir = std::env::temp_dir().join(format!(
-            "rag-mcp-ui-expand-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("rag-mcp-ui-expand-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let db = dir.join("t.duckdb");
         let _ = fs::remove_file(&db);
@@ -1530,8 +1537,7 @@ mod tests {
             nodes: vec![node("a", "A"), node("b", "B")],
             edges: vec![edge("e1", "a", "b")],
         };
-        let expanded =
-            expand_neighbors_store(&db, &current, "b", 100, None).expect("expand store");
+        let expanded = expand_neighbors_store(&db, &current, "b", 100, None).expect("expand store");
         let ids: HashSet<_> = expanded.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("a"));
         assert!(ids.contains("b"));
