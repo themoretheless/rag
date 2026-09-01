@@ -95,11 +95,21 @@ fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
         ".zed",
         "target",
         "node_modules",
+        "bin",
+        "obj",
         "dist",
         "build",
+        "out",
         "coverage",
         "vendor",
         "backups",
+        ".yarn",
+        ".turbo",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        "TestResults",
+        "worktrees",
     ];
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
@@ -3916,6 +3926,20 @@ mod tests {
     use crate::embeddings::MockEmbedder;
     use crate::models::SearchMode;
     use std::path::PathBuf;
+
+    #[test]
+    fn source_collection_skips_generated_and_worktree_directories() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(root.path().join("keep.rs"), "fn main() {}").unwrap();
+        for directory in ["bin", "obj", ".yarn", ".turbo", "TestResults", "worktrees"] {
+            let generated = root.path().join(directory);
+            std::fs::create_dir_all(&generated).unwrap();
+            std::fs::write(generated.join("duplicate.rs"), "fn duplicate() {}").unwrap();
+        }
+
+        let files = collect_supported_sources(root.path()).expect("collect");
+        assert_eq!(files, vec![root.path().join("keep.rs")]);
+    }
 
     fn test_config(db_path: PathBuf, roots: Vec<PathBuf>, dims: usize) -> Config {
         Config {
