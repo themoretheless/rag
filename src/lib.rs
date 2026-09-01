@@ -25,10 +25,11 @@ pub mod graph;
 pub mod http_api;
 pub mod llm;
 pub mod maintain;
-pub mod memory_lifecycle;
 pub mod mcp;
+pub mod memory_lifecycle;
 pub mod models;
 pub mod ops;
+pub mod retrieval;
 pub mod search_pack;
 pub mod storage;
 pub mod util;
@@ -38,9 +39,14 @@ pub mod wiki;
 pub use config::Config;
 pub use db::Store;
 pub use error::AppError;
+pub use memory_lifecycle::{
+    archive_selected as archive_memory_items, consolidate_selected as consolidate_memory_items,
+    list_candidates as list_memory_lifecycle_candidates, LifecycleCandidate,
+    LifecycleMutationResult, STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_CONSOLIDATED,
+};
 pub use models::{
-    Chunk, DiaryEntry, Document, DocumentFilter, DocumentMetaApplyResult, DocumentMetaUpdate,
-    DoctorReport, DrawerListItem, DuplicateCheckResult, DuplicateMatch, EmbeddingManifest,
+    Chunk, DiaryEntry, DoctorReport, Document, DocumentFilter, DocumentMetaApplyResult,
+    DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult, DuplicateMatch, EmbeddingManifest,
     GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, IndexQueryMatch, IndexQueryPage,
     IndexQueryResult, IngestResult, KgFact, KgStats, LlmStatusReport, OpsLogEntry, PlacementUpdate,
     RoomCount, SearchHit, SearchMode, Stats, StatusReport, Taxonomy, TaxonomyNode, TaxonomyRoom,
@@ -48,11 +54,6 @@ pub use models::{
     PKB_NODE_KINDS, PKB_REL_TYPES, UI_GRAPH_EXPORT_MAX_NODES,
 };
 pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
-pub use memory_lifecycle::{
-    archive_selected as archive_memory_items, consolidate_selected as consolidate_memory_items,
-    list_candidates as list_memory_lifecycle_candidates, LifecycleCandidate,
-    LifecycleMutationResult, STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_CONSOLIDATED,
-};
 
 // --- Graph (domain extract/resolve; DB CRUD lives on [`Store`] via `db::graph`) ---
 pub use graph::{
@@ -66,9 +67,7 @@ pub use db::{
 };
 
 // --- Util (hash + ingest path allowlist) ---
-pub use util::{
-    check_path_allowlist, content_hash, ingest_roots_from_env, parse_ingest_roots,
-};
+pub use util::{check_path_allowlist, content_hash, ingest_roots_from_env, parse_ingest_roots};
 
 // --- Wiki compile layer ---
 pub use wiki::{
@@ -81,8 +80,8 @@ pub use wiki::{
 
 // --- Agent diary / session checkpoint / wake_up ---
 pub use diary::{
-    agent_wing, checkpoint, diary_read, diary_write, normalize_agent_name, wake_up, CheckpointResult,
-    DiaryWriteResult, KIND_DIARY, LAYER_DIARY, ROOM_DIARY,
+    agent_wing, checkpoint, diary_read, diary_write, normalize_agent_name, wake_up,
+    CheckpointResult, DiaryWriteResult, KIND_DIARY, LAYER_DIARY, ROOM_DIARY,
 };
 
 // --- Search packing ---

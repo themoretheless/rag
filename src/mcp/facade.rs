@@ -67,6 +67,7 @@ use crate::models::{
     IngestResult, LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats, StatusReport,
     VacuumStoreReport, WikiIndexEntry,
 };
+use crate::retrieval::{self, DocumentWithChunks, SimilarDocumentsQuery};
 use crate::search_pack::pack_hits;
 use crate::util::{check_path_allowlist, content_hash};
 use crate::wiki;
@@ -181,7 +182,9 @@ pub struct RagServer {
 }
 
 impl RagServer {
-    pub(crate) fn tool_count(&self) -> usize { self.tool_router.map.len() }
+    pub(crate) fn tool_count(&self) -> usize {
+        self.tool_router.map.len()
+    }
     /// Start optional incremental source synchronization. Disabled unless
     /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
     pub fn spawn_auto_sync(self) {
@@ -272,8 +275,16 @@ impl RagServer {
             config,
             tool_router: super::server::compose_tool_router(Self::all_tools_router()),
         };
-        let advertised_tool_count = match server.config.tool_surface { ToolSurface::Spine => crate::mcp::surface::spine_tool_names().len(), ToolSurface::Full => server.tool_router.map.len() };
-        tracing::info!(tool_surface = server.config.tool_surface.as_str(), advertised_tool_count, registered_tool_count = server.tool_router.map.len(), "MCP tool surface initialized");
+        let advertised_tool_count = match server.config.tool_surface {
+            ToolSurface::Spine => crate::mcp::surface::spine_tool_names().len(),
+            ToolSurface::Full => server.tool_router.map.len(),
+        };
+        tracing::info!(
+            tool_surface = server.config.tool_surface.as_str(),
+            advertised_tool_count,
+            registered_tool_count = server.tool_router.map.len(),
+            "MCP tool surface initialized"
+        );
         server
     }
 
@@ -1496,17 +1507,7 @@ impl RagServer {
                 .store
                 .list_chunks_for_document(&doc.id)
                 .map_err(Self::map_err)?;
-            Some(
-                raw.into_iter()
-                    .map(|c| ChunkView {
-                        id: c.id,
-                        chunk_index: c.chunk_index,
-                        content: c.content,
-                        char_start: c.char_start,
-                        char_end: c.char_end,
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            Some(raw.into_iter().map(ChunkView::from).collect())
         } else {
             None
         };
@@ -1790,48 +1791,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<GetDocumentParams>,
     ) -> Result<CallToolResult, McpError> {
-        let doc = self
-            .store
-            .get_document(&params.document_id)
-            .map_err(Self::map_err)?
-            .ok_or_else(|| {
-                Self::map_err(AppError::not_found(format!(
-                    "document not found: {}",
-                    params.document_id
-                )))
-            })?;
-
-        let include_chunks = params.include_chunks.unwrap_or(false);
-        let chunks = if include_chunks {
-            let raw = self
-                .store
-                .list_chunks_for_document(&doc.id)
-                .map_err(Self::map_err)?;
-            Some(
-                raw.into_iter()
-                    .map(|c| ChunkView {
-                        id: c.id,
-                        chunk_index: c.chunk_index,
-                        content: c.content,
-                        char_start: c.char_start,
-                        char_end: c.char_end,
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        };
-
-        let body = DocumentDetail {
-            id: doc.id,
-            uri: doc.uri,
-            title: doc.title,
-            content: doc.content,
-            metadata_json: doc.metadata_json,
-            created_at: doc.created_at.to_rfc3339(),
-            updated_at: doc.updated_at.to_rfc3339(),
-            chunks,
-        };
+        let body = retrieval::get_document(
+            &self.store,
+            &params.document_id,
+            params.include_chunks.unwrap_or(false),
+        )
+        .map(DocumentDetail::from)
+        .map_err(Self::map_err)?;
         Self::json_result(&body)
     }
 
@@ -1843,49 +1809,21 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<MultiGetParams>,
     ) -> Result<CallToolResult, McpError> {
-        if params.document_ids.is_empty() || params.document_ids.len() > 100 {
-            return Err(Self::map_err(AppError::config(
-                "document_ids must contain between 1 and 100 ids",
-            )));
-        }
-        let include_chunks = params.include_chunks.unwrap_or(false);
-        let mut documents = Vec::new();
-        let mut missing = Vec::new();
-        for id in params.document_ids {
-            let Some(doc) = self.store.get_document(id.trim()).map_err(Self::map_err)? else {
-                missing.push(id);
-                continue;
-            };
-            let chunks = if include_chunks {
-                Some(
-                    self.store
-                        .list_chunks_for_document(&doc.id)
-                        .map_err(Self::map_err)?
-                        .into_iter()
-                        .map(|chunk| ChunkView {
-                            id: chunk.id,
-                            chunk_index: chunk.chunk_index,
-                            content: chunk.content,
-                            char_start: chunk.char_start,
-                            char_end: chunk.char_end,
-                        })
-                        .collect(),
-                )
-            } else {
-                None
-            };
-            documents.push(DocumentDetail {
-                id: doc.id,
-                uri: doc.uri,
-                title: doc.title,
-                content: doc.content,
-                metadata_json: doc.metadata_json,
-                created_at: doc.created_at.to_rfc3339(),
-                updated_at: doc.updated_at.to_rfc3339(),
-                chunks,
-            });
-        }
-        Self::json_result(&serde_json::json!({ "documents": documents, "missing": missing }))
+        let result = retrieval::multi_get(
+            &self.store,
+            params.document_ids,
+            params.include_chunks.unwrap_or(false),
+        )
+        .map_err(Self::map_err)?;
+        let documents = result
+            .documents
+            .into_iter()
+            .map(DocumentDetail::from)
+            .collect::<Vec<_>>();
+        Self::json_result(&serde_json::json!({
+            "documents": documents,
+            "missing": result.missing,
+        }))
     }
 
     #[tool(
@@ -1896,29 +1834,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExpandChunksParams>,
     ) -> Result<CallToolResult, McpError> {
-        let radius = params.radius.unwrap_or(1).min(20) as i32;
-        let start = params.chunk_index.saturating_sub(radius);
-        let end = params.chunk_index.saturating_add(radius);
-        let chunks: Vec<ChunkView> = self
-            .store
-            .list_chunks_for_document(&params.document_id)
-            .map_err(Self::map_err)?
-            .into_iter()
-            .filter(|chunk| chunk.chunk_index >= start && chunk.chunk_index <= end)
-            .map(|chunk| ChunkView {
-                id: chunk.id,
-                chunk_index: chunk.chunk_index,
-                content: chunk.content,
-                char_start: chunk.char_start,
-                char_end: chunk.char_end,
-            })
-            .collect();
-        if chunks.is_empty() {
-            return Err(Self::map_err(AppError::not_found(format!(
-                "no chunks around document_id={} chunk_index={}",
-                params.document_id, params.chunk_index
-            ))));
-        }
+        let chunks = retrieval::expand_chunks(
+            &self.store,
+            &params.document_id,
+            params.chunk_index,
+            params.radius.unwrap_or(1),
+        )
+        .map_err(Self::map_err)?
+        .into_iter()
+        .map(ChunkView::from)
+        .collect::<Vec<_>>();
         Self::json_result(&chunks)
     }
 
@@ -1931,61 +1856,17 @@ impl RagServer {
         Parameters(params): Parameters<FindSimilarParams>,
     ) -> Result<CallToolResult, McpError> {
         self.require_vec_compatible().map_err(Self::map_err)?;
-        let document = self
-            .store
-            .get_document(&params.document_id)
-            .map_err(Self::map_err)?
-            .ok_or_else(|| {
-                Self::map_err(AppError::not_found(format!(
-                    "document not found: {}",
-                    params.document_id
-                )))
-            })?;
-        let chunks = self
-            .store
-            .list_chunks_for_document(&params.document_id)
-            .map_err(Self::map_err)?;
-        let dims = chunks
-            .first()
-            .map(|chunk| chunk.embedding.len())
-            .unwrap_or(0);
-        if dims == 0 {
-            return Err(Self::map_err(AppError::config(
-                "seed document has no chunk embeddings; run doctor_repair first",
-            )));
-        }
-        let mut centroid = vec![0.0f32; dims];
-        for chunk in &chunks {
-            if chunk.embedding.len() != dims {
-                continue;
-            }
-            for (dst, value) in centroid.iter_mut().zip(&chunk.embedding) {
-                *dst += *value;
-            }
-        }
-        crate::embeddings::l2_normalize(&mut centroid);
-        let top_k = params
-            .top_k
-            .unwrap_or(self.config.default_top_k as u32)
-            .max(1) as usize;
-        let mut hits = search(
+        let hits = retrieval::find_similar(
             &self.store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: top_k.saturating_add(1),
-                query_text: Some(document.title),
-                query_embedding: Some(centroid),
+            SimilarDocumentsQuery {
+                document_id: params.document_id,
+                top_k: params.top_k.unwrap_or(self.config.default_top_k as u32) as usize,
                 wing: params.wing.filter(|value| !value.trim().is_empty()),
                 room: params.room.filter(|value| !value.trim().is_empty()),
-                diversity: Some(DiversityMode::CollapseByDocument),
-                max_chunks_per_document: Some(1),
                 fts_stemmer: self.config.fts_stemmer.clone(),
-                ..SearchQuery::default()
             },
         )
         .map_err(Self::map_err)?;
-        hits.retain(|hit| hit.document_id != params.document_id);
-        hits.truncate(top_k);
         Self::json_result(&hits)
     }
 
@@ -4305,6 +4186,18 @@ struct ChunkView {
     char_end: i32,
 }
 
+impl From<Chunk> for ChunkView {
+    fn from(chunk: Chunk) -> Self {
+        Self {
+            id: chunk.id,
+            chunk_index: chunk.chunk_index,
+            content: chunk.content,
+            char_start: chunk.char_start,
+            char_end: chunk.char_end,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct DocumentDetail {
     id: String,
@@ -4316,6 +4209,24 @@ struct DocumentDetail {
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     chunks: Option<Vec<ChunkView>>,
+}
+
+impl From<DocumentWithChunks> for DocumentDetail {
+    fn from(value: DocumentWithChunks) -> Self {
+        let document = value.document;
+        Self {
+            id: document.id,
+            uri: document.uri,
+            title: document.title,
+            content: document.content,
+            metadata_json: document.metadata_json,
+            created_at: document.created_at.to_rfc3339(),
+            updated_at: document.updated_at.to_rfc3339(),
+            chunks: value
+                .chunks
+                .map(|chunks| chunks.into_iter().map(ChunkView::from).collect()),
+        }
+    }
 }
 
 /// Full raw-layer source for `get_source`.
