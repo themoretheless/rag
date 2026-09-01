@@ -4,31 +4,31 @@ Generated from the post-roadmap production audit. Items 1–100 are the committe
 
 ## Production reliability
 
-- [ ] 1. Expose startup phase in health.
-- [ ] 2. Add dedicated liveness endpoint.
-- [ ] 3. Add dedicated readiness endpoint.
-- [ ] 4. Include process uptime in health.
-- [ ] 5. Include build commit in health.
-- [ ] 6. Include binary version in health.
-- [ ] 7. Report autosync state in health.
-- [ ] 8. Report last autosync completion.
-- [ ] 9. Report last autosync error.
-- [ ] 10. Report auto-backup state.
-- [ ] 11. Report last backup completion.
-- [ ] 12. Report next scheduled maintenance.
-- [ ] 13. Add startup timeout diagnostics.
-- [ ] 14. Detect stale PID metadata.
-- [ ] 15. Detect DB path permission failures early.
-- [ ] 16. Validate writable backup directory on startup.
-- [ ] 17. Validate ingest roots on startup.
-- [ ] 18. Report active tool surface.
-- [ ] 19. Report active HTTP bind policy.
-- [ ] 20. Expose checkpoint duration.
-- [ ] 21. Expose FTS initialization duration.
-- [ ] 22. Expose manifest validation duration.
-- [ ] 23. Add graceful shutdown checkpoint.
-- [ ] 24. Add shutdown completion log.
-- [ ] 25. Add machine-readable startup summary.
+- [x] 1. Expose startup phase in health.
+- [x] 2. Add dedicated liveness endpoint.
+- [x] 3. Add dedicated readiness endpoint.
+- [x] 4. Include process uptime in health.
+- [x] 5. Include build commit in health.
+- [x] 6. Include binary version in health.
+- [x] 7. Report autosync state in health.
+- [x] 8. Report last autosync completion.
+- [x] 9. Report last autosync error.
+- [x] 10. Report auto-backup state.
+- [x] 11. Report last backup completion.
+- [x] 12. Report next scheduled maintenance.
+- [x] 13. Add startup timeout diagnostics.
+- [x] 14. Detect stale PID metadata.
+- [x] 15. Detect DB path permission failures early.
+- [x] 16. Validate writable backup directory on startup.
+- [x] 17. Validate ingest roots on startup.
+- [x] 18. Report active tool surface.
+- [x] 19. Report active HTTP bind policy.
+- [x] 20. Expose checkpoint duration.
+- [x] 21. Expose FTS initialization duration.
+- [x] 22. Expose manifest validation duration.
+- [x] 23. Add graceful shutdown checkpoint.
+- [x] 24. Add shutdown completion log.
+- [x] 25. Add machine-readable startup summary.
 
 ## Backup and recovery
 
@@ -561,5 +561,4 @@ Generated from the post-roadmap production audit. Items 1–100 are the committe
 - [ ] 498. Add pagination support for testing strategy.
 - [ ] 499. Add export support for testing strategy.
 - [ ] 500. Add import support for testing strategy.
-
 

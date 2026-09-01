@@ -277,7 +277,9 @@ claude mcp add-from-claude-desktop
 | Path | Метод | Назначение |
 |------|-------|------------|
 | `/mcp` | streamable HTTP | MCP clients |
-| `/health` | GET | ok, counts, `mcp_http` |
+| `/health` | GET | counts, integrity, WAL and nested runtime/startup/autosync/backup state |
+| `/live` | GET | process liveness, PID and uptime |
+| `/ready` | GET | readiness; 503 until startup and store/FTS checks pass |
 | `/v1/graph` | GET | graph UI |
 | `/v1/neighbors` | GET | neighbors by seed |
 | `/v1/find` | GET | find node |

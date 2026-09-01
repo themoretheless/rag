@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Context;
 use rag_mcp::config::Config;
@@ -14,26 +15,42 @@ use tracing_subscriber::EnvFilter;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
+    let startup_started = Instant::now();
+    rag_mcp::ops::set_startup_phase("loading_config");
 
     let config = Config::from_env().context("failed to load config from environment")?;
+    rag_mcp::ops::configure_runtime(config.tool_surface.as_str(), config.http_bind.clone());
+    rag_mcp::ops::set_startup_phase("validating_paths");
+    rag_mcp::ops::validate_runtime_paths(&config.db_path, &config.ingest_roots)
+        .context("runtime path validation failed")?;
+    rag_mcp::ops::set_startup_phase("opening_store");
     let store = rag_mcp::storage::open_configured(&config.db_path)
         .context("failed to open configured storage backend")?;
 
     if env_truthy_default("RAG_CHECKPOINT_ON_START", true) {
+        rag_mcp::ops::set_startup_phase("checkpoint");
+        let phase = Instant::now();
         store.checkpoint().context(
             "startup DuckDB CHECKPOINT failed; run db_repair offline if this is an ART/index error",
         )?;
+        rag_mcp::ops::set_startup_timing("checkpoint", phase.elapsed());
     }
 
     // FTS / BM25 (or TF fallback) before serving tools so lex/hybrid is ready.
+    rag_mcp::ops::set_startup_phase("fts");
+    let phase = Instant::now();
     let fts_state = store
         .ensure_fts(&config.fts_stemmer)
         .context("failed to ensure FTS index")?;
+    rag_mcp::ops::set_startup_timing("fts", phase.elapsed());
 
     // Corpus embedding fingerprint (does not overwrite an existing row).
+    rag_mcp::ops::set_startup_phase("embedding_manifest");
+    let phase = Instant::now();
     let manifest = store
         .ensure_embedding_manifest(&config)
         .context("failed to record embedding_manifest")?;
+    rag_mcp::ops::set_startup_timing("manifest", phase.elapsed());
 
     let schema_version = store.schema_version().context("schema_version")?.unwrap_or(0);
     let fts_ready = store.fts_ready().context("fts_ready")?;
@@ -59,8 +76,20 @@ async fn main() -> anyhow::Result<()> {
         "rag-mcp store ready"
     );
 
+    rag_mcp::ops::set_startup_phase("embedding_provider");
     let embedder = build_provider(&config).context("failed to build embedding provider")?;
-    run_serve_modes(store, embedder, config).await
+    rag_mcp::ops::set_startup_timing("total", startup_started.elapsed());
+    rag_mcp::ops::mark_ready();
+    tracing::info!(startup = %serde_json::to_string(&rag_mcp::ops::runtime_snapshot()).unwrap_or_default(), "startup summary");
+    let result = run_serve_modes(store.clone(), embedder, config).await;
+    rag_mcp::ops::set_startup_phase("shutdown_checkpoint");
+    let checkpointed = match store.checkpoint() {
+        Ok(()) => true,
+        Err(error) => { tracing::error!(error = %error, "shutdown checkpoint failed"); false }
+    };
+    rag_mcp::ops::mark_shutdown(checkpointed);
+    tracing::info!(checkpointed, shutdown = %serde_json::to_string(&rag_mcp::ops::runtime_snapshot()).unwrap_or_default(), "rag-mcp shutdown complete");
+    result
 }
 
 /// HTTP-only, dual (HTTP + stdio), or stdio-only selection and hang-on-stdio-fail.
@@ -100,9 +129,15 @@ async fn run_serve_modes(
                 "RAG_HTTP_ONLY: HTTP gateway only (no stdio); MCP URL http://{}/mcp",
                 addr
             );
-            http_api::serve(addr, store_http, mcp_svc)
-                .await
-                .context("HTTP API server error")?;
+            tokio::select! {
+                result = http_api::serve(addr, store_http, mcp_svc) => {
+                    result.context("HTTP API server error")?;
+                }
+                signal = tokio::signal::ctrl_c() => {
+                    signal.context("shutdown signal handler failed")?;
+                    tracing::info!("shutdown signal received");
+                }
+            }
             return Ok(());
         }
 

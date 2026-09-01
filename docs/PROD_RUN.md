@@ -65,6 +65,8 @@ command = /Users/themoretheless/Documents/Sources/rag/target/release/rag-mcp
 |-----|------------|
 | `http://127.0.0.1:7432/mcp` | Claude / ChatGPT / streamable-HTTP MCP client |
 | `http://127.0.0.1:7432/health` | health + backend/schema/FTS, counts, WAL/integrity, `mcp_http` |
+| `http://127.0.0.1:7432/live` | process liveness, PID, uptime; no DuckDB query |
+| `http://127.0.0.1:7432/ready` | readiness gate; HTTP 503 until startup completes and FTS/store respond |
 | `http://127.0.0.1:7432/v1/graph` | rag-mcp-ui graph (`?max_nodes=&include_tags=`) |
 | `http://127.0.0.1:7432/v1/neighbors` | neighborhood (`?seed=&depth=&max_nodes=`) |
 | `http://127.0.0.1:7432/v1/find` | resolve node (`?q=`) |

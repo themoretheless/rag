@@ -2,6 +2,7 @@
 
 use axum::extract::State;
 use axum::response::IntoResponse;
+use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Router;
 use serde_json::json;
@@ -11,7 +12,19 @@ use super::HttpState;
 
 /// `/health` only.
 pub(super) fn routes() -> Router<HttpState> {
-    Router::new().route("/health", get(health))
+    Router::new().route("/health", get(health)).route("/live", get(live)).route("/ready", get(ready))
+}
+
+async fn live() -> impl IntoResponse {
+    (StatusCode::OK, axum::Json(json!({"ok": true, "pid": std::process::id(), "uptime_seconds": crate::ops::runtime_snapshot().uptime_seconds})))
+}
+
+async fn ready(State(st): State<HttpState>) -> impl IntoResponse {
+    let runtime = crate::ops::runtime_snapshot();
+    let store_ok = st.store.stats().is_ok() && st.store.fts_ready().unwrap_or(false);
+    let ok = runtime.ready && store_ok;
+    let status = if ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    (status, axum::Json(json!({"ok": ok, "phase": runtime.startup_phase, "store_ok": store_ok})))
 }
 
 async fn health(State(st): State<HttpState>) -> impl IntoResponse {
@@ -24,6 +37,7 @@ async fn health(State(st): State<HttpState>) -> impl IntoResponse {
             let relational_integrity_ok = orphan_chunks == 0 && orphan_nodes == 0 && orphan_edges == 0;
             let wal_bytes = st.store.wal_file_size_bytes();
             let wal_warn_bytes = crate::ops::wal_warn_bytes();
+            let runtime = crate::ops::runtime_snapshot();
             api_ok(json!({
             "ok": true,
             "backend": "duckdb",
@@ -44,6 +58,7 @@ async fn health(State(st): State<HttpState>) -> impl IntoResponse {
             "wal_bytes": wal_bytes,
             "wal_warn_bytes": wal_warn_bytes,
             "wal_too_large": wal_bytes >= wal_warn_bytes,
+            "runtime": runtime,
             "mcp_http": st.mcp_http,
             "mcp_path": if st.mcp_http { Some("/mcp") } else { None::<&str> },
         }))

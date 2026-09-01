@@ -200,8 +200,12 @@ impl RagServer {
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(3600);
+        let interval_duration = std::time::Duration::from_secs(interval);
+        crate::ops::configure_autosync(interval_duration);
         tokio::spawn(async move {
             loop {
+                crate::ops::mark_autosync_running();
+                let mut cycle_error = None;
                 for path in &roots {
                     let params = SyncSourcesParams {
                         path: path.clone(),
@@ -212,11 +216,14 @@ impl RagServer {
                     match self.sync_sources(Parameters(params)).await {
                         Ok(_) => tracing::info!(path, "automatic source sync completed"),
                         Err(error) => {
+                            cycle_error = Some(error.to_string());
                             tracing::error!(path, error = %error, "automatic source sync failed")
                         }
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+                if let Some(error) = cycle_error { crate::ops::mark_autosync_error(&error, interval_duration); }
+                else { crate::ops::mark_autosync_success(interval_duration); }
+                tokio::time::sleep(interval_duration).await;
             }
         });
     }
