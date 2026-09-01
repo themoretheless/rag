@@ -3292,20 +3292,22 @@ impl RagServer {
             params.if_match_etag.as_deref(),
         )
         .map_err(Self::map_err)?;
-        let res = wiki::write_wiki_page_with_opts(
+        let res = wiki::write_wiki_page_command(
             &self.store,
             &self.embedder,
             &self.config,
-            &params.slug,
-            &params.title,
-            &params.content,
-            params.kind.as_deref().unwrap_or("wiki"),
-            params.category.as_deref(),
-            params.summary.as_deref(),
-            params.agent.as_deref(),
-            wiki::WriteWikiOpts {
-                if_match_revision: if_match,
-                ..Default::default()
+            wiki::WikiWriteCommand {
+                slug: params.slug,
+                title: params.title,
+                content: params.content,
+                kind: params.kind.unwrap_or_else(|| "wiki".into()),
+                category: params.category,
+                summary: params.summary,
+                agent: params.agent,
+                options: wiki::WriteWikiOpts {
+                    if_match_revision: if_match,
+                    ..Default::default()
+                },
             },
         )
         .await

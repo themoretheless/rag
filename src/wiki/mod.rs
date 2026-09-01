@@ -382,6 +382,19 @@ pub struct WriteWikiOpts {
     pub if_match_revision: Option<i64>,
 }
 
+/// Transport-neutral command for creating or replacing a wiki page.
+#[derive(Debug, Clone)]
+pub struct WikiWriteCommand {
+    pub slug: String,
+    pub title: String,
+    pub content: String,
+    pub kind: String,
+    pub category: Option<String>,
+    pub summary: Option<String>,
+    pub agent: Option<String>,
+    pub options: WriteWikiOpts,
+}
+
 /// Write/update a wiki page by slug (`wiki://{slug}`), chunk+embed+graph.
 pub async fn write_wiki_page(
     store: &Store,
@@ -425,7 +438,42 @@ pub async fn write_wiki_page_with_opts(
     agent: Option<&str>,
     opts: WriteWikiOpts,
 ) -> Result<WikiWriteResult> {
-    let slug = slugify(slug);
+    write_wiki_page_command(
+        store,
+        embedder,
+        config,
+        WikiWriteCommand {
+            slug: slug.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            kind: kind.to_string(),
+            category: category.map(str::to_string),
+            summary: summary.map(str::to_string),
+            agent: agent.map(str::to_string),
+            options: opts,
+        },
+    )
+    .await
+}
+
+/// Command-object entrypoint used by transports and application services.
+pub async fn write_wiki_page_command(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    command: WikiWriteCommand,
+) -> Result<WikiWriteResult> {
+    let WikiWriteCommand {
+        slug,
+        title,
+        content,
+        kind,
+        category,
+        summary,
+        agent,
+        options: opts,
+    } = command;
+    let slug = slugify(&slug);
     if slug.is_empty() {
         return Err(AppError::config("wiki slug must not be empty"));
     }
@@ -476,10 +524,10 @@ pub async fn write_wiki_page_with_opts(
     };
 
     let mut meta = serde_json::Map::new();
-    if let Some(c) = category {
+    if let Some(c) = category.as_deref() {
         meta.insert("category".into(), serde_json::Value::String(c.to_string()));
     }
-    if let Some(s) = summary {
+    if let Some(s) = summary.as_deref() {
         meta.insert("summary".into(), serde_json::Value::String(s.to_string()));
     }
     if let Some(extra) = opts.extra_metadata {
@@ -496,13 +544,13 @@ pub async fn write_wiki_page_with_opts(
         id: document_id.clone(),
         uri: uri.clone(),
         title: title.clone(),
-        content: content.to_string(),
+        content: content.clone(),
         metadata_json: serde_json::Value::Object(meta).to_string(),
         created_at,
         updated_at: now,
         layer: LAYER_WIKI.into(),
         kind: kind.to_string(),
-        content_hash: Some(content_hash(content)),
+        content_hash: Some(content_hash(&content)),
         ..Default::default()
     };
     let revision = store.upsert_document_cas(&doc, if_match)?;
@@ -513,16 +561,14 @@ pub async fn write_wiki_page_with_opts(
     let chunk_count = embed_and_store_chunks(store, embedder, config, &doc).await?;
     let (node_id, edge_count) = rebuild_document_graph(store, &doc)?;
 
-    let summary = summary
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| first_line(content, 240));
+    let summary = summary.unwrap_or_else(|| first_line(&content, 240));
     let index_id = format!("idx-{document_id}");
     store.upsert_wiki_index_entry(&WikiIndexEntry {
         id: index_id.clone(),
         slug: slug.clone(),
         title: title.clone(),
         kind: kind.to_string(),
-        category: category.map(|s| s.to_string()),
+        category,
         summary: Some(summary),
         page_id: Some(document_id.clone()),
         updated_at: now,
@@ -554,7 +600,7 @@ pub async fn write_wiki_page_with_opts(
         entity_id: Some(document_id.clone()),
         entity_kind: Some(LAYER_WIKI.into()),
         payload_json: payload.to_string(),
-        agent_name: agent.map(|s| s.to_string()),
+        agent_name: agent,
     })?;
 
     Ok(WikiWriteResult {

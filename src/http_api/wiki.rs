@@ -172,20 +172,22 @@ async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) ->
         return api_err(AppError::config("slug required (or uri=wiki://slug)"));
     }
     let _ = body.id; // accepted for UI payloads; write is slug-keyed
-    match wiki::write_wiki_page_with_opts(
+    match wiki::write_wiki_page_command(
         &st.store,
         &st.embedder,
         &st.config,
-        slug,
-        &body.title,
-        &body.content,
-        body.kind.as_deref().unwrap_or("wiki"),
-        body.category.as_deref(),
-        body.summary.as_deref(),
-        body.agent.as_deref(),
-        WriteWikiOpts {
-            if_match_revision: if_match,
-            ..Default::default()
+        wiki::WikiWriteCommand {
+            slug: slug.to_string(),
+            title: body.title,
+            content: body.content,
+            kind: body.kind.unwrap_or_else(|| "wiki".into()),
+            category: body.category,
+            summary: body.summary,
+            agent: body.agent,
+            options: WriteWikiOpts {
+                if_match_revision: if_match,
+                ..Default::default()
+            },
         },
     )
     .await

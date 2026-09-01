@@ -74,9 +74,10 @@ pub use util::{check_path_allowlist, content_hash, ingest_roots_from_env, parse_
 pub use wiki::{
     apply_consolidate_proposal, consolidate, file_answer, find_stale_wiki, get_schema,
     get_wiki_page, list_wiki_pages, refresh_stale_wiki, update_schema, update_wiki_page,
-    write_wiki_page, ConsolidateOpts, ConsolidateResult, FileAnswerCitation, RawRefreshTarget,
-    RefreshError, RefreshStaleWikiResult, SchemaDocumentView, StaleWikiItem, WikiWriteResult,
-    LAYER_RAW, LAYER_SCHEMA, LAYER_WIKI, SCHEMA_URI,
+    write_wiki_page, write_wiki_page_command, ConsolidateOpts, ConsolidateResult,
+    FileAnswerCitation, RawRefreshTarget, RefreshError, RefreshStaleWikiResult,
+    SchemaDocumentView, StaleWikiItem, WikiWriteCommand, WikiWriteResult, LAYER_RAW, LAYER_SCHEMA,
+    LAYER_WIKI, SCHEMA_URI,
 };
 
 // --- Agent diary / session checkpoint / wake_up ---
