@@ -100,6 +100,8 @@ struct Args {
     min_recall_at_k: Option<f64>,
     min_mrr: Option<f64>,
     max_p95_ms: Option<f64>,
+    feedback_jsonl: Option<PathBuf>,
+    history_jsonl: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -123,6 +125,8 @@ fn parse_args() -> Result<Args> {
     let mut min_recall_at_k: Option<f64> = None;
     let mut min_mrr: Option<f64> = None;
     let mut max_p95_ms: Option<f64> = None;
+    let mut feedback_jsonl = None;
+    let mut history_jsonl = None;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -152,11 +156,22 @@ fn parse_args() -> Result<Args> {
             "--max-p95-ms" => {
                 max_p95_ms = Some(it.next().context("--max-p95-ms needs value")?.parse()?)
             }
+            "--feedback-jsonl" => {
+                feedback_jsonl = Some(PathBuf::from(
+                    it.next().context("--feedback-jsonl needs path")?,
+                ))
+            }
+            "--history-jsonl" => {
+                history_jsonl = Some(PathBuf::from(
+                    it.next().context("--history-jsonl needs path")?,
+                ))
+            }
             "-h" | "--help" => {
                 eprintln!(
                     "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N]\n\
                      \t[--modes lex,vec,hybrid] [--json] [--min-recall-at-k N]\n\
-                     \t[--min-mrr N] [--max-p95-ms N]\n\
+                     \t[--min-mrr N] [--max-p95-ms N] [--feedback-jsonl FILE]\n\
+                     \t[--history-jsonl FILE]\n\
                      Uses a throwaway database. --golden remains a --dataset alias."
                 );
                 std::process::exit(0);
@@ -185,6 +200,8 @@ fn parse_args() -> Result<Args> {
         min_recall_at_k,
         min_mrr,
         max_p95_ms,
+        feedback_jsonl,
+        history_jsonl,
     })
 }
 
@@ -196,6 +213,12 @@ async fn run(args: Args) -> Result<()> {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
     let report = result?;
+    if let Some(path) = &args.feedback_jsonl {
+        append_feedback(path, &report)?;
+    }
+    if let Some(path) = &args.history_jsonl {
+        append_jsonl(path, &report)?;
+    }
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -229,6 +252,42 @@ async fn run(args: Args) -> Result<()> {
                 mode.p95_search_ms,
                 args.max_p95_ms.unwrap()
             );
+        }
+    }
+    Ok(())
+}
+
+fn append_jsonl(path: &Path, value: &impl Serialize) -> Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open JSONL output {}", path.display()))?;
+    serde_json::to_writer(&mut file, value)?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn append_feedback(path: &Path, report: &Report) -> Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open feedback output {}", path.display()))?;
+    for mode in &report.modes {
+        for query in &mode.queries {
+            serde_json::to_writer(
+                &mut file,
+                &serde_json::json!({
+                    "dataset": report.dataset_name, "mode": mode.mode, "top_k": report.top_k,
+                    "query_id": query.id, "recall_at_k": query.recall_at_k,
+                    "reciprocal_rank": query.reciprocal_rank, "ndcg_at_k": query.ndcg_at_k,
+                    "results": query.results,
+                }),
+            )?;
+            file.write_all(b"\n")?;
         }
     }
     Ok(())

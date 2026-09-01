@@ -60,31 +60,31 @@ Generated from the post-roadmap production audit. Items 1–100 are the committe
 
 ## Retrieval quality
 
-- [ ] 51. Add multi-query RRF tool.
-- [ ] 52. Add query rewrite hook without LLM default.
-- [ ] 53. Add exact-title boost.
-- [ ] 54. Add URI match boost.
-- [ ] 55. Add heading match boost.
-- [ ] 56. Add pinned-document boost tests.
-- [ ] 57. Add boost-field ranking tests.
-- [ ] 58. Add archive exclusion regression test.
-- [ ] 59. Add wing filter regression test.
-- [ ] 60. Add room filter regression test.
-- [ ] 61. Add layer filter regression test.
-- [ ] 62. Add source-file filter regression test.
-- [ ] 63. Add group-by-document regression test.
-- [ ] 64. Add recency boost boundary tests.
-- [ ] 65. Add recency boost clock injection.
-- [ ] 66. Add deterministic tie breaking.
-- [ ] 67. Add search explanation payload.
-- [ ] 68. Add per-stage retrieval timings.
-- [ ] 69. Add result deduplication reason.
-- [ ] 70. Add empty-query validation.
-- [ ] 71. Add maximum query length guard.
-- [ ] 72. Add top-k hard cap diagnostics.
-- [ ] 73. Add search timeout budget.
-- [ ] 74. Add retrieval feedback export.
-- [ ] 75. Add benchmark history JSONL.
+- [x] 51. Add multi-query RRF tool.
+- [x] 52. Add query rewrite hook without LLM default.
+- [x] 53. Add exact-title boost.
+- [x] 54. Add URI match boost.
+- [x] 55. Add heading match boost.
+- [x] 56. Add pinned-document boost tests.
+- [x] 57. Add boost-field ranking tests.
+- [x] 58. Add archive exclusion regression test.
+- [x] 59. Add wing filter regression test.
+- [x] 60. Add room filter regression test.
+- [x] 61. Add layer filter regression test.
+- [x] 62. Add source-file filter regression test.
+- [x] 63. Add group-by-document regression test.
+- [x] 64. Add recency boost boundary tests.
+- [x] 65. Add recency boost clock injection.
+- [x] 66. Add deterministic tie breaking.
+- [x] 67. Add search explanation payload.
+- [x] 68. Add per-stage retrieval timings.
+- [x] 69. Add result deduplication reason.
+- [x] 70. Add empty-query validation.
+- [x] 71. Add maximum query length guard.
+- [x] 72. Add top-k hard cap diagnostics.
+- [x] 73. Add search timeout budget.
+- [x] 74. Add retrieval feedback export.
+- [x] 75. Add benchmark history JSONL.
 
 ## HTTP and MCP ergonomics
 

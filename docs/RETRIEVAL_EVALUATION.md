@@ -8,6 +8,7 @@ ingests only the dataset corpus, and never modifies `RAG_DB_PATH`.
 RAG_EMBEDDING_PROVIDER=mock cargo run --bin eval
 cargo run --bin eval -- --dataset path/to/eval-v1.json --top-k 10 --json
 cargo run --release --bin eval -- --min-recall-at-k 0.5 --min-mrr 0.4 --max-p95-ms 300
+cargo run --bin eval -- --feedback-jsonl retrieval-feedback.jsonl --history-jsonl benchmark-history.jsonl
 ```
 
 `--modes lex,hybrid` selects a subset. `--golden` remains an alias for
@@ -62,3 +63,5 @@ exceeded, the CLI recommends `investigate_future_ann`: profile and evaluate a
 future optional ANN path such as DuckDB VSS/HNSW. It does not add or select an
 external backend. Lexical-only runs use the corpus-size threshold because they
 do not measure vector scan latency.
+
+`--feedback-jsonl` appends one record per evaluated query and mode for later relevance analysis. `--history-jsonl` appends the complete versioned run report, making performance and quality changes comparable across commits.

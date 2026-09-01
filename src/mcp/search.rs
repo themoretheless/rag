@@ -6,6 +6,7 @@ use rmcp::handler::server::tool::ToolRouter;
 
 const TOOLS: &[&str] = &[
     "search",
+    "multi_query_search",
     "get_embedding_manifest",
     "reembed_document",
     "pack_context",

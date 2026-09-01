@@ -25,20 +25,20 @@ use super::tools::{
     CollectionUpdateParams, CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams,
     CreateTunnelParams, DeleteBySourceParams, DeleteDocumentParams, DeleteTunnelParams,
     DiaryReadParams, DiaryWriteParams, DoctorRepairParams, ExpandChunksParams, ExportBundleParams,
-    ExportVaultParams,
-    ExportGraphSnapshotParams, FileAnswerCitationParams, FileAnswerParams, FindNodeParams,
-    FindSimilarParams, FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams,
+    ExportGraphSnapshotParams, ExportVaultParams, FileAnswerCitationParams, FileAnswerParams,
+    FindNodeParams, FindSimilarParams, FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams,
     GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams, GetSourceParams,
     GetTaxonomyParams, GetWikiPageParams, GraphExpandSearchParams, ImportBundleParams,
     IngestFileParams, IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams,
     KgQueryParams, KgSupersedeParams, KgTimelineParams, LinkNodesParams, ListDocumentsParams,
     ListMemoryLifecycleCandidatesParams, ListRecentOpsParams, ListRoomsParams, ListSourcesParams,
     ListTunnelsParams, ListWingsParams, MaintainCompressParams, MaintainOrganizeParams,
-    MaintainRefreshParams, MemoriesFiledAwayParams, MultiGetParams, PackContextParams,
-    PackHitParams, PlanMaintenanceParams, QueryWithIndexParams, ReadIndexParams, ReadLogParams,
-    RebuildIndexParams, ReconnectParams, ReembedDocumentParams, RefreshStaleWikiParams,
-    SearchParams, SearchWikiParams, SyncSourcesParams, UpdateDocumentMetaParams,
-    UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams, WriteWikiPageParams,
+    MaintainRefreshParams, MemoriesFiledAwayParams, MultiGetParams, MultiQuerySearchParams,
+    PackContextParams, PackHitParams, PlanMaintenanceParams, QueryWithIndexParams, ReadIndexParams,
+    ReadLogParams, RebuildIndexParams, ReconnectParams, ReembedDocumentParams,
+    RefreshStaleWikiParams, SearchParams, SearchWikiParams, SyncSourcesParams,
+    UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams,
+    WriteWikiPageParams,
 };
 use crate::chunking::{code_chunks, from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
@@ -47,7 +47,8 @@ use crate::db::recovery::{
 };
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::search::{
-    attach_context, search, search_chunks, ContextExpansion, DiversityMode, SearchQuery,
+    attach_context, fuse_rrf_many, search, search_chunks, ContextExpansion, DiversityMode,
+    SearchQuery,
 };
 use crate::db::Store;
 use crate::diary;
@@ -221,8 +222,11 @@ impl RagServer {
                         }
                     }
                 }
-                if let Some(error) = cycle_error { crate::ops::mark_autosync_error(&error, interval_duration); }
-                else { crate::ops::mark_autosync_success(interval_duration); }
+                if let Some(error) = cycle_error {
+                    crate::ops::mark_autosync_error(&error, interval_duration);
+                } else {
+                    crate::ops::mark_autosync_success(interval_duration);
+                }
                 tokio::time::sleep(interval_duration).await;
             }
         });
@@ -1632,12 +1636,86 @@ impl RagServer {
             max_context_tokens,
             context_expansion,
             neighbor_chunks: params.neighbor_chunks.unwrap_or(1) as usize,
+            timeout_ms: params.timeout_ms.or(Some(5_000)),
             fts_stemmer: self.config.fts_stemmer.clone(),
             ..SearchQuery::default()
         };
 
         let hits = search(&self.store, &opts).map_err(Self::map_err)?;
         Self::json_result(&hits)
+    }
+
+    #[tool(
+        name = "multi_query_search",
+        description = "Fuse an original query and caller-supplied rewrites with RRF. No LLM rewrite is performed implicitly."
+    )]
+    async fn multi_query_search(
+        &self,
+        Parameters(params): Parameters<MultiQuerySearchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if params.queries.is_empty() || params.queries.len() > 16 {
+            return Err(Self::map_err(AppError::config(
+                "queries must contain 1..=16 entries",
+            )));
+        }
+        let top_k = params
+            .top_k
+            .map(|v| v as usize)
+            .unwrap_or(self.config.default_top_k);
+        let mode = match params
+            .mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            Some(raw) => SearchMode::parse(raw).map_err(|e| Self::map_err(AppError::config(e)))?,
+            None => self.config.default_search_mode,
+        };
+        if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
+            self.require_vec_compatible().map_err(Self::map_err)?;
+        }
+        let mut lists = Vec::with_capacity(params.queries.len());
+        for text in params.queries {
+            let embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
+                Some(
+                    self.embedder
+                        .embed(&[text.clone()])
+                        .await
+                        .map_err(Self::map_err)?
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| {
+                            McpError::internal_error("embedder returned no vector for query", None)
+                        })?,
+                )
+            } else {
+                None
+            };
+            lists.push(
+                search(
+                    &self.store,
+                    &SearchQuery {
+                        mode,
+                        top_k,
+                        query_text: Some(text),
+                        query_embedding: embedding,
+                        wing: nonempty_opt(params.wing.clone()),
+                        room: nonempty_opt(params.room.clone()),
+                        layer: nonempty_opt(params.layer.clone()),
+                        source_file: nonempty_opt(params.source_file.clone()),
+                        timeout_ms: params.timeout_ms.or(Some(5_000)),
+                        fts_stemmer: self.config.fts_stemmer.clone(),
+                        ..SearchQuery::default()
+                    },
+                )
+                .map_err(Self::map_err)?,
+            );
+        }
+        Self::json_result(&fuse_rrf_many(
+            &lists,
+            crate::db::search::DEFAULT_RRF_K,
+            top_k,
+        ))
     }
 
     #[tool(
@@ -3847,11 +3925,14 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
         refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
-        let report = self.store.export_vault(
-            &path,
-            params.dry_run.unwrap_or(true),
-            params.overwrite.unwrap_or(false),
-        ).map_err(Self::map_err)?;
+        let report = self
+            .store
+            .export_vault(
+                &path,
+                params.dry_run.unwrap_or(true),
+                params.overwrite.unwrap_or(false),
+            )
+            .map_err(Self::map_err)?;
         Self::json_result(&report)
     }
 
@@ -4024,6 +4105,7 @@ fn pack_hit_to_search_hit(h: PackHitParams) -> SearchHit {
         heading_path: h.heading_path,
         section: h.section,
         context: None,
+        explanation: None,
     }
 }
 

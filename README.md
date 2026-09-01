@@ -414,6 +414,7 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `status` | (none) | Health: counts, FTS readiness, embed dims, `ready_for_search` |
 | `doctor` | (none) | Schema / FTS / embedding manifest, WAL size, orphan references, missing chunks, and scope integrity |
 | `get_embedding_manifest` | (none) | Corpus embedding fingerprint (provider, model, dims) |
+| `multi_query_search` | `queries`, `top_k?`, `mode?`, filters | Caller-supplied query rewrites fused with deterministic RRF; no implicit LLM call |
 | `reembed_document` | `document_id` | Re-embed all chunks for one document with live config |
 | `llm_status` | (none) | Chat + embed config and reachability |
 | `vacuum_store` | (none) | DuckDB `CHECKPOINT` + file size delta; ops_log |

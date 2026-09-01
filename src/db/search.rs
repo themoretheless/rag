@@ -8,13 +8,14 @@
 //! Post-processing: `min_score` filter, document diversity collapse
 //! (`max_chunks_per_document`), and citation snippets on each hit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
 
 use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
-use crate::models::{Chunk, SearchContextChunk, SearchHit, SearchMode};
+use crate::models::{Chunk, SearchContextChunk, SearchExplanation, SearchHit, SearchMode};
 
 use super::fts::{self, LexFilters};
 use super::store::Store;
@@ -28,6 +29,8 @@ pub const DEFAULT_SNIPPET_CHARS: usize = 200;
 /// Extra candidates pulled from each list before fusion / collapse.
 const CANDIDATE_MULTIPLIER: usize = 5;
 const CANDIDATE_FLOOR: usize = 50;
+pub const MAX_TOP_K: usize = 100;
+pub const MAX_QUERY_CHARS: usize = 4096;
 
 /// Result diversity strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +113,10 @@ pub struct SearchQuery {
     pub snippet_max_chars: usize,
     /// DuckDB FTS stemmer (`porter`, language name, or `none`). Default `porter`.
     pub fts_stemmer: String,
+    /// Injectable clock for deterministic freshness tests.
+    pub now: Option<chrono::DateTime<chrono::Utc>>,
+    /// Synchronous search budget checked between retrieval stages.
+    pub timeout_ms: Option<u64>,
 }
 
 impl Default for SearchQuery {
@@ -135,6 +142,8 @@ impl Default for SearchQuery {
             rrf_k: DEFAULT_RRF_K,
             snippet_max_chars: DEFAULT_SNIPPET_CHARS,
             fts_stemmer: "porter".into(),
+            now: None,
+            timeout_ms: Some(5_000),
         }
     }
 }
@@ -168,6 +177,8 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
         return Ok(Vec::new());
     }
 
+    validate_query(query)?;
+    let started = Instant::now();
     let pool = candidate_pool_size(query.top_k);
     let filters = scope_filters(query);
 
@@ -178,11 +189,56 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
         SearchMode::Lex => run_lex(store, query, pool, &filters)?,
         SearchMode::Hybrid => match run_hybrid(store, query, pool, &filters)? {
             HybridOutcome::Fused(h) => h,
-            HybridOutcome::VecOnly(h) => return finalize_hits(store, h, query),
+            HybridOutcome::VecOnly(h) => h,
         },
     };
 
-    finalize_hits(store, hits, query)
+    enforce_timeout(started, query.timeout_ms, "retrieval")?;
+    let retrieval_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    let post_started = Instant::now();
+    let mut hits = finalize_hits(store, hits, query)?;
+    enforce_timeout(started, query.timeout_ms, "post-processing")?;
+    let postprocess_ms = post_started.elapsed().as_secs_f64() * 1_000.0;
+    let total_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    for hit in &mut hits {
+        let explanation = hit
+            .explanation
+            .get_or_insert_with(SearchExplanation::default);
+        explanation.retrieval_ms = retrieval_ms;
+        explanation.postprocess_ms = postprocess_ms;
+        explanation.total_ms = total_ms;
+    }
+    Ok(hits)
+}
+
+fn validate_query(query: &SearchQuery) -> Result<()> {
+    if query.top_k > MAX_TOP_K {
+        return Err(AppError::config(format!(
+            "top_k {} exceeds hard cap {MAX_TOP_K}",
+            query.top_k
+        )));
+    }
+    if let Some(text) = query.query_text.as_deref() {
+        if text.trim().is_empty() {
+            return Err(AppError::config("search query must not be empty"));
+        }
+        let chars = text.chars().count();
+        if chars > MAX_QUERY_CHARS {
+            return Err(AppError::config(format!(
+                "search query has {chars} characters; maximum is {MAX_QUERY_CHARS}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn enforce_timeout(started: Instant, timeout_ms: Option<u64>, stage: &str) -> Result<()> {
+    if timeout_ms.is_some_and(|ms| started.elapsed() > Duration::from_millis(ms.max(1))) {
+        return Err(AppError::config(format!(
+            "search timeout budget exceeded after {stage}"
+        )));
+    }
+    Ok(())
 }
 
 /// Dense vector path (requires `query_embedding`).
@@ -308,7 +364,7 @@ fn finalize_hits(
         .recency_half_life_days
         .filter(|days| days.is_finite() && *days > 0.0)
     {
-        let now = chrono::Utc::now();
+        let now = query.now.unwrap_or_else(chrono::Utc::now);
         for hit in &mut hits {
             if let Some(document) = store.get_document(&hit.document_id)? {
                 let age_days = now
@@ -320,7 +376,28 @@ fn finalize_hits(
                 hit.score *= 1.0 + freshness;
             }
         }
-        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        hits.sort_by(stable_score_order);
+    }
+
+    apply_field_boosts(store, &mut hits, query.query_text.as_deref())?;
+    hits.sort_by(stable_score_order);
+
+    let mut seen = HashSet::new();
+    let mut duplicate_ids = HashSet::new();
+    hits.retain(|hit| {
+        if seen.insert(hit.chunk_id.clone()) {
+            true
+        } else {
+            duplicate_ids.insert(hit.chunk_id.clone());
+            false
+        }
+    });
+    for hit in &mut hits {
+        if duplicate_ids.contains(&hit.chunk_id) {
+            hit.explanation
+                .get_or_insert_with(SearchExplanation::default)
+                .deduplication = Some("duplicate_chunk_id_removed".into());
+        }
     }
 
     let max_per_doc = query.max_chunks_per_document.unwrap_or(usize::MAX);
@@ -367,6 +444,83 @@ fn finalize_hits(
     }
 
     Ok(hits)
+}
+
+fn stable_score_order(a: &SearchHit, b: &SearchHit) -> std::cmp::Ordering {
+    b.score
+        .total_cmp(&a.score)
+        .then_with(|| a.document_id.cmp(&b.document_id))
+        .then_with(|| a.chunk_index.cmp(&b.chunk_index))
+        .then_with(|| a.chunk_id.cmp(&b.chunk_id))
+}
+
+fn apply_field_boosts(store: &Store, hits: &mut [SearchHit], query: Option<&str>) -> Result<()> {
+    let Some(raw) = query.map(str::trim).filter(|q| !q.is_empty()) else {
+        return Ok(());
+    };
+    let needle = raw.to_lowercase();
+    for hit in hits {
+        let mut reasons = Vec::new();
+        if let Some(document) = store.get_document(&hit.document_id)? {
+            if document.title.trim().eq_ignore_ascii_case(raw) {
+                hit.score *= 1.35;
+                reasons.push("exact_title_boost".into());
+            }
+            let uri = document.uri.to_lowercase();
+            if tokenize(&needle)
+                .into_iter()
+                .all(|term| uri.contains(&term))
+            {
+                hit.score *= 1.15;
+                reasons.push("uri_match_boost".into());
+            }
+            if document.pinned {
+                hit.score *= 1.20;
+                reasons.push("pinned_document_boost".into());
+            }
+            if (document.boost - 1.0).abs() > f64::EPSILON {
+                hit.score *= document.boost.max(0.0) as f32;
+                reasons.push("document_boost".into());
+            }
+        }
+        if hit
+            .heading_path
+            .as_ref()
+            .is_some_and(|path| path.iter().any(|h| h.to_lowercase().contains(&needle)))
+        {
+            hit.score *= 1.15;
+            reasons.push("heading_match_boost".into());
+        }
+        let explanation = hit
+            .explanation
+            .get_or_insert_with(SearchExplanation::default);
+        explanation.reasons.extend(reasons);
+    }
+    Ok(())
+}
+
+/// Fuse any number of independently ranked query result lists with RRF.
+pub fn fuse_rrf_many(lists: &[Vec<SearchHit>], rrf_k: f32, top_k: usize) -> Vec<SearchHit> {
+    let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
+    let mut fused = HashMap::new();
+    for list in lists {
+        accumulate_rrf_list(&mut fused, list, k);
+    }
+    let mut out: Vec<_> = fused
+        .into_values()
+        .map(|(rrf, mut hit)| {
+            hit.score = rrf;
+            hit.score_rrf = Some(rrf);
+            hit.explanation
+                .get_or_insert_with(SearchExplanation::default)
+                .reasons
+                .push("multi_query_rrf".into());
+            hit
+        })
+        .collect();
+    out.sort_by(stable_score_order);
+    out.truncate(top_k.min(MAX_TOP_K));
+    out
 }
 
 pub fn attach_context(
@@ -640,6 +794,7 @@ fn search_vec(
             heading_path: chunk_section_metadata(chunk).0,
             section: chunk_section_metadata(chunk).1,
             context: None,
+            explanation: None,
         });
     }
 
@@ -741,6 +896,7 @@ fn search_lex_tf(
             heading_path: chunk_section_metadata(chunk).0,
             section: chunk_section_metadata(chunk).1,
             context: None,
+            explanation: None,
         });
     }
     Ok(hits)
@@ -958,6 +1114,7 @@ mod tests {
             heading_path: None,
             section: None,
             context: None,
+            explanation: None,
         }
     }
 
@@ -1296,6 +1453,7 @@ mod tests {
                 top_k: 2,
                 query_embedding: Some(vec![1.0, 0.0]),
                 recency_half_life_days: Some(30.0),
+                now: Some(now),
                 ..SearchQuery::default()
             },
         )
@@ -1322,6 +1480,7 @@ mod tests {
             wing: Some("research".into()),
             room: Some("rag".into()),
             source_file: Some("/vault/active.md".into()),
+            layer: "raw".into(),
             status: "active".into(),
             ..Default::default()
         };
@@ -1336,6 +1495,7 @@ mod tests {
             wing: Some("ops".into()),
             room: Some("runbooks".into()),
             source_file: Some("/vault/other.md".into()),
+            layer: "wiki".into(),
             status: "active".into(),
             ..Default::default()
         };
@@ -1439,6 +1599,20 @@ mod tests {
         assert_eq!(by_src.len(), 1);
         assert_eq!(by_src[0].document_id, "other");
 
+        let by_layer = search(
+            &store,
+            &SearchQuery {
+                mode: SearchMode::Vec,
+                top_k: 10,
+                query_embedding: Some(emb.clone()),
+                layer: Some("raw".into()),
+                ..SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(by_layer.len(), 1);
+        assert_eq!(by_layer[0].document_id, "active");
+
         // include_archived + wing.
         let with_arch = search(
             &store,
@@ -1458,5 +1632,95 @@ mod tests {
         assert!(arch_ids.contains("active"));
         assert!(arch_ids.contains("arch"));
         assert!(!arch_ids.contains("other"));
+    }
+
+    #[test]
+    fn query_guards_and_multi_rrf_are_deterministic() {
+        let empty = SearchQuery {
+            mode: SearchMode::Lex,
+            query_text: Some("  ".into()),
+            ..SearchQuery::default()
+        };
+        assert!(validate_query(&empty)
+            .unwrap_err()
+            .to_string()
+            .contains("must not be empty"));
+        let too_long = SearchQuery {
+            mode: SearchMode::Lex,
+            query_text: Some("x".repeat(MAX_QUERY_CHARS + 1)),
+            ..SearchQuery::default()
+        };
+        assert!(validate_query(&too_long).is_err());
+        let too_many = SearchQuery {
+            top_k: MAX_TOP_K + 1,
+            ..SearchQuery::default()
+        };
+        assert!(validate_query(&too_many)
+            .unwrap_err()
+            .to_string()
+            .contains("hard cap"));
+
+        let lists = vec![
+            vec![sample_hit("b", "d2", 1.0), sample_hit("a", "d1", 1.0)],
+            vec![sample_hit("a", "d1", 1.0), sample_hit("b", "d2", 1.0)],
+        ];
+        let first = fuse_rrf_many(&lists, DEFAULT_RRF_K, 10);
+        let second = fuse_rrf_many(&lists, DEFAULT_RRF_K, 10);
+        assert_eq!(
+            first.iter().map(|h| &h.chunk_id).collect::<Vec<_>>(),
+            second.iter().map(|h| &h.chunk_id).collect::<Vec<_>>()
+        );
+        assert_eq!(first[0].chunk_id, "a");
+        assert!(first[0]
+            .explanation
+            .as_ref()
+            .unwrap()
+            .reasons
+            .contains(&"multi_query_rrf".into()));
+    }
+
+    #[test]
+    fn field_boosts_explain_title_uri_heading_pin_and_document_boost() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("boosts.duckdb")).unwrap();
+        let document = Document {
+            id: "d".into(),
+            uri: "rag://exact-topic".into(),
+            title: "Exact Topic".into(),
+            content: "body".into(),
+            metadata_json: "{}".into(),
+            pinned: true,
+            boost: 2.0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            ..Default::default()
+        };
+        store.upsert_document(&document).unwrap();
+        let mut hits = vec![SearchHit {
+            chunk_id: "c".into(),
+            document_id: "d".into(),
+            document_title: document.title.clone(),
+            document_uri: document.uri.clone(),
+            chunk_index: 0,
+            content: "body".into(),
+            score: 1.0,
+            heading_path: Some(vec!["Exact Topic".into()]),
+            ..Default::default()
+        }];
+        apply_field_boosts(&store, &mut hits, Some("Exact Topic")).unwrap();
+        let reasons = &hits[0].explanation.as_ref().unwrap().reasons;
+        for expected in [
+            "exact_title_boost",
+            "uri_match_boost",
+            "heading_match_boost",
+            "pinned_document_boost",
+            "document_boost",
+        ] {
+            assert!(
+                reasons.iter().any(|reason| reason == expected),
+                "missing {expected}"
+            );
+        }
+        assert!(hits[0].score > 3.0);
     }
 }

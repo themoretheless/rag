@@ -339,6 +339,30 @@ pub struct SearchParams {
     /// Chunks on each side for neighbor expansion (default 1).
     #[serde(default)]
     pub neighbor_chunks: Option<u32>,
+    /// End-to-end synchronous retrieval budget (default 5000 ms).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+/// Explicit multi-query rewrite/RRF. Callers provide rewrites; no LLM is invoked by default.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct MultiQuerySearchParams {
+    /// Original query followed by optional deterministic/manual rewrites.
+    pub queries: Vec<String>,
+    #[serde(default)]
+    pub top_k: Option<u32>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub wing: Option<String>,
+    #[serde(default)]
+    pub room: Option<String>,
+    #[serde(default)]
+    pub layer: Option<String>,
+    #[serde(default)]
+    pub source_file: Option<String>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 /// One hit passed into `pack_context` (same shape as `search` results).

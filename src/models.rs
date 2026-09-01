@@ -170,7 +170,10 @@ pub fn parse_document_etag(raw: &str) -> Option<i64> {
         .unwrap_or(s)
         .trim();
     let s = s.trim_matches('"').trim();
-    let s = s.strip_prefix('r').or_else(|| s.strip_prefix('R')).unwrap_or(s);
+    let s = s
+        .strip_prefix('r')
+        .or_else(|| s.strip_prefix('R'))
+        .unwrap_or(s);
     s.parse::<i64>().ok().filter(|n| *n >= 0)
 }
 
@@ -392,6 +395,17 @@ pub struct SearchContextChunk {
     pub section: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SearchExplanation {
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    pub retrieval_ms: f64,
+    pub postprocess_ms: f64,
+    pub total_ms: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deduplication: Option<String>,
+}
+
 /// One hit from semantic / hybrid search.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SearchHit {
@@ -430,6 +444,9 @@ pub struct SearchHit {
     /// Opt-in neighboring or same-section chunks, kept in source order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Vec<SearchContextChunk>>,
+    /// Ranking factors and stage timings for audit/debugging.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<SearchExplanation>,
 }
 
 /// Lean wiki catalog row for list/sidebar surfaces (`GET /v1/wiki`, UI).
@@ -1107,8 +1124,15 @@ mod tests {
             assert!(
                 matches!(
                     key.as_str(),
-                    "id" | "uri" | "slug" | "title" | "kind"
-                        | "summary" | "category" | "revision" | "etag" | "updated_at"
+                    "id" | "uri"
+                        | "slug"
+                        | "title"
+                        | "kind"
+                        | "summary"
+                        | "category"
+                        | "revision"
+                        | "etag"
+                        | "updated_at"
                 ),
                 "unexpected fat or unknown list field: {key}"
             );

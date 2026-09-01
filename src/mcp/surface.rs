@@ -71,6 +71,7 @@ static SPINE: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "lint_wiki",
         // L1 escape hatch + pack
         "search",
+        "multi_query_search",
         "pack_context",
         // L2 structure (+ snapshot for concurrent UI)
         "get_neighbors",
@@ -127,7 +128,7 @@ pub const SPINE_TOOLS_BLURB: &str = r#"Spine tools (RAG_TOOLS=spine, default):
 L0: ingest_raw, ingest_text, ingest_file, list_sources, get_source, list_documents, get_document
 L3: write/update/get/list_wiki_page(s), get/update_schema, read/rebuild_index, append/read_log,
     query_with_index, search_wiki, file_answer, lint_wiki
-L1: search, pack_context
+L1: search, multi_query_search, pack_context
 L2: get_neighbors, get_backlinks, link_nodes, find_node
 Control: status, doctor
 Set RAG_TOOLS=full for MemPalace kg/diary/tunnels, maintain_*, graph_expand, etc.
@@ -140,8 +141,9 @@ mod tests {
     #[test]
     fn spine_is_bounded() {
         let n = spine_tool_names().len();
-        assert!(n >= 15 && n <= 32, "spine size {n}");
+        assert!(n >= 15 && n <= 33, "spine size {n}");
         assert!(tool_allowed(ToolSurface::Spine, "search"));
+        assert!(tool_allowed(ToolSurface::Spine, "multi_query_search"));
         assert!(tool_allowed(ToolSurface::Spine, "query_with_index"));
         assert!(!tool_allowed(ToolSurface::Spine, "kg_add"));
         assert!(!tool_allowed(ToolSurface::Spine, "wake_up"));
