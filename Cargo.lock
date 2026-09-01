@@ -3413,6 +3413,7 @@ dependencies = [
  "chrono",
  "duckdb",
  "reqwest",
+ "ring",
  "rmcp",
  "schemars 0.8.22",
  "serde",

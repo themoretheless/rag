@@ -256,7 +256,15 @@ pub fn run_auto_backup_if_due(
         "{BACKUP_PREFIX}{}{BACKUP_SUFFIX}",
         Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
     );
-    let destination = dir.join(name);
+    let mut destination = dir.join(&name);
+    let mut suffix = 1u32;
+    while destination.exists() {
+        destination = dir.join(format!(
+            "{}-{suffix}{BACKUP_SUFFIX}",
+            name.trim_end_matches(BACKUP_SUFFIX)
+        ));
+        suffix += 1;
+    }
     store.backup_database(&destination, false, false)?;
 
     existing = list_backups(dir)?;
@@ -267,6 +275,19 @@ pub fn run_auto_backup_if_due(
                 path.display()
             ))
         })?;
+        for sidecar in [
+            PathBuf::from(format!("{}.sha256", path.display())),
+            PathBuf::from(format!("{}.metadata.json", path.display())),
+        ] {
+            if sidecar.exists() {
+                fs::remove_file(&sidecar).map_err(|error| {
+                    AppError::db(format!(
+                        "failed to prune automatic backup sidecar '{}': {error}",
+                        sidecar.display()
+                    ))
+                })?;
+            }
+        }
     }
     Ok(Some(destination))
 }

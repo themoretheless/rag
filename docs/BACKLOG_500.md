@@ -32,31 +32,31 @@ Generated from the post-roadmap production audit. Items 1–100 are the committe
 
 ## Backup and recovery
 
-- [ ] 26. Add backup CLI command.
-- [ ] 27. Add vault export CLI command.
-- [ ] 28. Add bundle export CLI command.
-- [ ] 29. Add bundle import CLI dry-run command.
-- [ ] 30. Write SHA-256 sidecar for backups.
-- [ ] 31. Write backup metadata sidecar.
-- [ ] 32. Verify backup by reopening it.
-- [ ] 33. Verify backup table counts.
-- [ ] 34. Verify backup relational integrity.
-- [ ] 35. Verify backup embedding manifest.
-- [ ] 36. Add backup retention dry-run.
-- [ ] 37. Protect newest backup from pruning.
-- [ ] 38. Protect named final backups from pruning.
-- [ ] 39. Report backup free-space requirement.
-- [ ] 40. Refuse backup onto live DB inode.
-- [ ] 41. Detect backup destination filesystem errors.
-- [ ] 42. Make backup filenames collision-safe.
-- [ ] 43. Add restore drill command.
-- [ ] 44. Compare restored counts with source.
-- [ ] 45. Compare restored schema version.
-- [ ] 46. Compare restored manifest with source.
-- [ ] 47. Support backup inventory listing.
-- [ ] 48. Support backup verification-only mode.
-- [ ] 49. Document disaster recovery RTO steps.
-- [ ] 50. Add recovery smoke test fixture.
+- [x] 26. Add backup CLI command.
+- [x] 27. Add vault export CLI command.
+- [x] 28. Add bundle export CLI command.
+- [x] 29. Add bundle import CLI dry-run command.
+- [x] 30. Write SHA-256 sidecar for backups.
+- [x] 31. Write backup metadata sidecar.
+- [x] 32. Verify backup by reopening it.
+- [x] 33. Verify backup table counts.
+- [x] 34. Verify backup relational integrity.
+- [x] 35. Verify backup embedding manifest.
+- [x] 36. Add backup retention dry-run.
+- [x] 37. Protect newest backup from pruning.
+- [x] 38. Protect named final backups from pruning.
+- [x] 39. Report backup free-space requirement.
+- [x] 40. Refuse backup onto live DB inode.
+- [x] 41. Detect backup destination filesystem errors.
+- [x] 42. Make backup filenames collision-safe.
+- [x] 43. Add restore drill command.
+- [x] 44. Compare restored counts with source.
+- [x] 45. Compare restored schema version.
+- [x] 46. Compare restored manifest with source.
+- [x] 47. Support backup inventory listing.
+- [x] 48. Support backup verification-only mode.
+- [x] 49. Document disaster recovery RTO steps.
+- [x] 50. Add recovery smoke test fixture.
 
 ## Retrieval quality
 
@@ -561,4 +561,3 @@ Generated from the post-roadmap production audit. Items 1–100 are the committe
 - [ ] 498. Add pagination support for testing strategy.
 - [ ] 499. Add export support for testing strategy.
 - [ ] 500. Add import support for testing strategy.
-
