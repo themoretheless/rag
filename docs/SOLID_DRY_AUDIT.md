@@ -59,11 +59,21 @@ and empty-value behavior without maintaining three loop implementations.
 
 Principles improved: DRY while keeping policy differences explicit.
 
+### Diagnostics and document updates
+
+`DiagnosticsService` now supplies HTTP and MCP status/doctor payloads without
+constructing or depending on an MCP server. Document metadata and body updates
+run through `IngestService`, including conditional re-chunking, re-embedding,
+graph synchronization, title-only node updates, and operation logging.
+
+Principles improved: SRP and DIP. Transport code no longer owns diagnostics or
+document mutation workflows.
+
 ## Highest-priority remaining debt
 
-1. `mcp/facade.rs` remains a large composition root. Move status/doctor and
-   metadata-update orchestration into application services; retain only MCP
-   parameter and error mapping in the facade.
+1. `mcp/facade.rs` remains a large composition root because tool registration
+   and several recovery/collection adapters still share one implementation.
+   Split registration by bounded capability without duplicating tool policy.
 2. Wiki update/compile/consolidate compatibility functions still have long
    parameter lists. Migrate internal callers to command APIs before deprecating
    the old library surface.
