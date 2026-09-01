@@ -163,7 +163,9 @@ pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Resul
     if fs::metadata(parent)?.permissions().readonly() { return Err(AppError::config(format!("database directory is read-only: {}", parent.display()))); }
     for root in ingest_roots {
         if !root.is_dir() { return Err(AppError::config(format!("ingest root is not a readable directory: {}", root.display()))); }
-        fs::read_dir(root).map_err(|e| AppError::config(format!("cannot read ingest root '{}': {e}", root.display())))?;
+        // Do not enumerate protected macOS folders during launchd startup: TCC can
+        // block a background process indefinitely before the HTTP listener opens.
+        // Individual sync/ingest calls still perform and report the real read.
     }
     if let Some(dir) = auto_backup_dir() {
         fs::create_dir_all(&dir)?;
