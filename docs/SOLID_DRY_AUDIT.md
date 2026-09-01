@@ -69,20 +69,42 @@ graph synchronization, title-only node updates, and operation logging.
 Principles improved: SRP and DIP. Transport code no longer owns diagnostics or
 document mutation workflows.
 
-## Highest-priority remaining debt
+### Validated search commands
 
-1. `mcp/facade.rs` remains a large composition root because tool registration
-   and several recovery/collection adapters still share one implementation.
-   Split registration by bounded capability without duplicating tool policy.
-2. Wiki update/compile/consolidate compatibility functions still have long
-   parameter lists. Migrate internal callers to command APIs before deprecating
-   the old library surface.
-3. `db/store.rs` combines persistence operations and row mapping for many
-   aggregates. Extract row codecs by aggregate first; do not split transaction
-   ownership across repositories.
-4. Search construction is repeated across several tools. Add a validated search
-   request builder only after transport defaults are recorded as compatibility
-   tests.
+`SearchCommand` and the retrieval application service now own mode parsing,
+filter normalization, diversity/grouping policy, limits, context expansion,
+and embedding preparation. HTTP and MCP retain their compatibility defaults
+without constructing independent `SearchQuery` values.
+
+### Projects, revisions, and safe ingest preparation
+
+Project ids are validated domain values and `/v1/projects` exposes the catalog
+without breaking the existing `wing` wire alias. The native viewer uses a
+project picker. Schema v8 preserves immutable document snapshots before each
+successful update and `/v1/revisions` exposes history. Ingest prepares chunks
+and embeddings before it removes active chunks.
+
+### Persistence codecs and operational state
+
+Document, chunk, and embedding-manifest row codecs live in `db::rows`, leaving
+transaction ownership in `Store`. Automatic backup status is reconstructed
+from retained snapshots after process restart instead of reporting a false
+`null` completion time.
+
+## Deliberate compatibility boundaries
+
+These are not active refactor tasks without a versioned compatibility decision:
+
+1. `mcp/facade.rs` remains the macro-owned tool implementation/composition
+   root. Capability registration is already split into bounded routers. Moving
+   individual macro methods should wait until rmcp supports composable handler
+   implementations or a v2 tool surface justifies the churn.
+2. Long-form wiki functions remain public compatibility adapters over command
+   APIs. Removing them requires a major-version deprecation window; new internal
+   transport code must use command APIs.
+3. `wing` remains the v1 persistence/wire alias for `ProjectId`. A physical
+   `project_id NOT NULL` column belongs to a v2 migration with dual-write and
+   rollback, not a silent schema rename.
 
 ## Guardrails
 
