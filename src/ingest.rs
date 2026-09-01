@@ -124,7 +124,6 @@ impl<'a> IngestService<'a> {
                         command.uri, existing.id
                     )));
             }
-            self.store.delete_chunks_for_document(&existing.id)?;
             (existing.id, existing.created_at, "updated")
         } else {
             (Uuid::new_v4().to_string(), now, "inserted")
@@ -146,9 +145,12 @@ impl<'a> IngestService<'a> {
             content_hash: Some(new_hash.clone()),
             ..Default::default()
         };
-        let revision = self.store.upsert_document_cas(&document, None)?;
         let chunks = self.build_chunks(&document).await?;
         let chunk_count = chunks.len();
+        if operation == "updated" {
+            self.store.delete_chunks_for_document(&document_id)?;
+        }
+        let revision = self.store.upsert_document_cas(&document, None)?;
         if !chunks.is_empty() {
             self.store.insert_chunks(&chunks)?;
         }
