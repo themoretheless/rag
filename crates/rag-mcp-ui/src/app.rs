@@ -14,16 +14,18 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::load::{
-    local_neighbors, resolve_seed, sort_wiki_pages, CliSource, DocumentBody, GraphSourceKind,
-    GatewayHealth, LoadedGraph, OpenArgs, UI_HARD_MAX_NODES, WikiPageMeta, WikiPutRequest,
+    local_neighbors, resolve_seed, sort_wiki_pages, CliSource, DocumentBody, GatewayHealth,
+    GraphSourceKind, LoadedGraph, OpenArgs, WikiPageMeta, WikiPutRequest, UI_HARD_MAX_NODES,
 };
 use crate::ui::canvas::draw_canvas;
 use crate::ui::detail::{draw_detail, DetailAction};
-use crate::ui::empty::{draw_empty_banner, draw_no_source, EmptyGraphStats, EmptyKind, NoSourceAction};
+use crate::ui::empty::{
+    draw_empty_banner, draw_no_source, EmptyGraphStats, EmptyKind, NoSourceAction,
+};
 use crate::ui::status::draw_status;
 use crate::ui::wiki::{
-    content_summary_line, draw_wiki_edit_view, draw_wiki_read_view, draw_wiki_sidebar,
-    slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
+    content_summary_line, draw_wiki_edit_view, draw_wiki_info_panel, draw_wiki_read_view,
+    draw_wiki_sidebar, slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers, WikiReadContext,
 };
 use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 
@@ -114,6 +116,8 @@ pub struct GraphApp {
     wiki_pages: Vec<WikiPageMeta>,
     wiki_filter: String,
     wiki_show_summaries: bool,
+    wiki_sidebar_visible: bool,
+    wiki_info_visible: bool,
     wiki_selected_id: Option<String>,
     wiki_article: Option<DocumentBody>,
     wiki_error: Option<String>,
@@ -191,6 +195,8 @@ impl GraphApp {
             wiki_pages: Vec::new(),
             wiki_filter: String::new(),
             wiki_show_summaries: false,
+            wiki_sidebar_visible: true,
+            wiki_info_visible: true,
             wiki_selected_id: None,
             wiki_article: None,
             wiki_error: None,
@@ -337,9 +343,8 @@ impl GraphApp {
             return;
         }
         if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some(
-                "unsaved edits: Save or Cancel before opening another page".into(),
-            );
+            self.wiki_error =
+                Some("unsaved edits: Save or Cancel before opening another page".into());
             return;
         }
         if let Some(prev) = self.wiki_selected_id.clone() {
@@ -358,11 +363,7 @@ impl GraphApp {
         self.wiki_error = None;
         self.wiki_edit = None;
         self.wiki_save_note = None;
-        let Some(source) = self
-            .source
-            .as_ref()
-            .and_then(LoadSource::from_graph_source)
-        else {
+        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
             self.wiki_error = Some("wiki articles require --http or --db".into());
             return;
         };
@@ -387,11 +388,7 @@ impl GraphApp {
     fn open_wiki_page_in_b(&mut self, id: &str) {
         self.wiki_selected_id_b = Some(id.to_string());
         self.wiki_error_b = None;
-        let Some(source) = self
-            .source
-            .as_ref()
-            .and_then(LoadSource::from_graph_source)
-        else {
+        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
             self.wiki_error_b = Some("wiki articles require --http or --db".into());
             return;
         };
@@ -542,11 +539,7 @@ impl GraphApp {
             self.wiki_error = Some("no page open to save".into());
             return;
         };
-        let Some(source) = self
-            .source
-            .as_ref()
-            .and_then(LoadSource::from_graph_source)
-        else {
+        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
             self.wiki_error = Some("wiki save requires --http or --db".into());
             return;
         };
@@ -598,11 +591,7 @@ impl GraphApp {
     }
 
     fn refresh_backlinks(&mut self, document_id: &str) {
-        let Some(source) = self
-            .source
-            .as_ref()
-            .and_then(LoadSource::from_graph_source)
-        else {
+        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
             return;
         };
         let seq = self.next_seq();
@@ -626,9 +615,7 @@ impl GraphApp {
 
     fn wiki_go_back(&mut self) {
         if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some(
-                "unsaved edits: Save or Cancel before going back".into(),
-            );
+            self.wiki_error = Some("unsaved edits: Save or Cancel before going back".into());
             return;
         }
         if let Some(prev) = self.wiki_history.pop() {
@@ -641,9 +628,7 @@ impl GraphApp {
     fn open_wiki_link(&mut self, link: &str) {
         let into_b = self.wiki_dual_pane && self.wiki_focus == WikiPane::B;
         if !into_b && self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some(
-                "unsaved edits: Save or Cancel before following a link".into(),
-            );
+            self.wiki_error = Some("unsaved edits: Save or Cancel before following a link".into());
             return;
         }
         let q = link.trim();
@@ -663,11 +648,7 @@ impl GraphApp {
             return;
         }
         // Exact wiki uri fallback (no fuzzy label pick) - fetched on the worker.
-        let Some(source) = self
-            .source
-            .as_ref()
-            .and_then(LoadSource::from_graph_source)
-        else {
+        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
             let msg = "wiki links require --http or --db".to_string();
             if into_b {
                 self.wiki_error_b = Some(msg);
@@ -785,11 +766,7 @@ impl GraphApp {
             node.label.clone(),
         );
 
-        let Some(source) = self
-            .source
-            .as_ref()
-            .and_then(LoadSource::from_graph_source)
-        else {
+        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
             self.content_error =
                 Some("snapshot mode has no document bodies; use --http or --db".into());
             return;
@@ -898,9 +875,7 @@ impl GraphApp {
         };
 
         if current.nodes.len() >= max_n {
-            self.expand_note = Some(format!(
-                "Expand blocked: already at max_nodes ({max_n})"
-            ));
+            self.expand_note = Some(format!("Expand blocked: already at max_nodes ({max_n})"));
             return;
         }
 
@@ -1106,11 +1081,7 @@ impl GraphApp {
                             continue;
                         }
                     };
-                    let before = self
-                        .local_view
-                        .as_ref()
-                        .map(|v| v.nodes.len())
-                        .unwrap_or(0);
+                    let before = self.local_view.as_ref().map(|v| v.nodes.len()).unwrap_or(0);
                     let after = merged.nodes.len();
                     let max_n = self.max_nodes as usize;
                     if after == before {
@@ -1210,6 +1181,13 @@ impl eframe::App for GraphApp {
                 match self.mode {
                     ViewMode::Wiki => {
                         if ui
+                            .selectable_label(self.wiki_sidebar_visible, "☰ Pages")
+                            .on_hover_text("Show or hide the page catalog")
+                            .clicked()
+                        {
+                            self.wiki_sidebar_visible = !self.wiki_sidebar_visible;
+                        }
+                        if ui
                             .add_enabled(!self.wiki_history.is_empty(), egui::Button::new("← Back"))
                             .on_hover_text("Back in page history (Alt+←)")
                             .clicked()
@@ -1218,9 +1196,8 @@ impl eframe::App for GraphApp {
                         }
                         if ui.button("Reload wiki").clicked() {
                             if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-                                self.wiki_error = Some(
-                                    "unsaved edits: Save or Cancel before reload".into(),
-                                );
+                                self.wiki_error =
+                                    Some("unsaved edits: Save or Cancel before reload".into());
                             } else {
                                 self.wiki_edit = None;
                                 self.wiki_loaded = false;
@@ -1250,6 +1227,14 @@ impl eframe::App for GraphApp {
                                 self.clear_wiki_pane_b();
                                 self.wiki_focus = WikiPane::A;
                             }
+                        }
+                        if !self.wiki_dual_pane
+                            && ui
+                                .selectable_label(self.wiki_info_visible, "Info")
+                                .on_hover_text("Show page metadata and backlinks")
+                                .clicked()
+                        {
+                            self.wiki_info_visible = !self.wiki_info_visible;
                         }
                         if self.wiki_dual_pane {
                             if ui
@@ -1370,8 +1355,7 @@ impl eframe::App for GraphApp {
                         }
                         let first_pick = suggestions.first().map(|(id, _)| id.clone());
                         drop(suggestions);
-                        if seed_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        {
+                        if seed_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             // Enter: exact input, or first suggestion when one matches.
                             if let Some(id) = first_pick {
                                 self.seed_input = id;
@@ -1388,10 +1372,7 @@ impl eframe::App for GraphApp {
                         ui.separator();
                         ui.label("depth");
                         let mut d = self.depth as i32;
-                        if ui
-                            .add(egui::DragValue::new(&mut d).range(1..=3))
-                            .changed()
-                        {
+                        if ui.add(egui::DragValue::new(&mut d).range(1..=3)).changed() {
                             self.depth = d as u32;
                             self.rebuild_ui_graph();
                         }
@@ -1399,16 +1380,26 @@ impl eframe::App for GraphApp {
                         ui.checkbox(&mut self.show_stubs, "stubs");
                         ui.separator();
                         ui.label("project");
-                        ui.add(egui::TextEdit::singleline(&mut self.filter_wing).desired_width(90.0).hint_text("all wings"));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.filter_wing)
+                                .desired_width(90.0)
+                                .hint_text("all wings"),
+                        );
                         ui.label("room");
-                        ui.add(egui::TextEdit::singleline(&mut self.filter_room).desired_width(80.0).hint_text("all rooms"));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.filter_room)
+                                .desired_width(80.0)
+                                .hint_text("all rooms"),
+                        );
                         if ui.button("Clear filters").clicked() {
                             self.filter_wing.clear();
                             self.filter_room.clear();
                         }
                         if ui
                             .button("Reset to seed")
-                            .on_hover_text("Rebuild the local view from the seed (drops Expand merges)")
+                            .on_hover_text(
+                                "Rebuild the local view from the seed (drops Expand merges)",
+                            )
                             .clicked()
                         {
                             if self.expanded_dirty {
@@ -1431,10 +1422,7 @@ impl eframe::App for GraphApp {
                             ui.spinner();
                         }
                         if ui
-                            .add_enabled(
-                                self.selected.is_some(),
-                                egui::Button::new("Open as wiki"),
-                            )
+                            .add_enabled(self.selected.is_some(), egui::Button::new("Open as wiki"))
                             .on_hover_text("Open selected node as article")
                             .clicked()
                         {
@@ -1457,8 +1445,11 @@ impl eframe::App for GraphApp {
             });
         });
 
-        if self.show_tags != self.prev_show_tags || self.show_stubs != self.prev_show_stubs
-            || self.filter_wing != self.prev_filter_wing || self.filter_room != self.prev_filter_room {
+        if self.show_tags != self.prev_show_tags
+            || self.show_stubs != self.prev_show_stubs
+            || self.filter_wing != self.prev_filter_wing
+            || self.filter_room != self.prev_filter_room
+        {
             self.prev_show_tags = self.show_tags;
             self.prev_show_stubs = self.show_stubs;
             self.prev_filter_wing = self.filter_wing.clone();
@@ -1504,10 +1495,7 @@ impl eframe::App for GraphApp {
                             ui.separator();
                             ui.strong("editing");
                             if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(220, 160, 60),
-                                    "unsaved",
-                                );
+                                ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "unsaved");
                             }
                         }
                         if let Some(note) = &self.wiki_save_note {
@@ -1515,9 +1503,7 @@ impl eframe::App for GraphApp {
                             ui.colored_label(egui::Color32::from_rgb(100, 180, 120), note);
                         }
                         ui.separator();
-                        ui.weak(
-                            "Dual pane · A/B focus · Edit · [[wikilinks]] · sidebar · Reload",
-                        );
+                        ui.weak("Dual pane · A/B focus · Edit · [[wikilinks]] · sidebar · Reload");
                     });
                 }
                 ViewMode::Graph => {
@@ -1547,20 +1533,32 @@ impl eframe::App for GraphApp {
             if let Some(health) = &self.ops_health {
                 ui.horizontal_wrapped(|ui| {
                     ui.strong("ops");
-                    let healthy = health.fts_ready && health.relational_integrity_ok
-                        && !health.wal_too_large && health.documents_without_chunks == 0;
+                    let healthy = health.fts_ready
+                        && health.relational_integrity_ok
+                        && !health.wal_too_large
+                        && health.documents_without_chunks == 0;
                     ui.colored_label(
-                        if healthy { egui::Color32::from_rgb(100, 180, 120) }
-                        else { egui::Color32::from_rgb(220, 120, 80) },
+                        if healthy {
+                            egui::Color32::from_rgb(100, 180, 120)
+                        } else {
+                            egui::Color32::from_rgb(220, 120, 80)
+                        },
                         if healthy { "healthy" } else { "attention" },
                     );
-                    ui.label(format!("backend={} schema={} docs={} chunks={}",
-                        health.backend, health.schema_version, health.documents, health.chunks));
-                    ui.label(format!("wal={}/{} MiB", health.wal_bytes / 1_048_576,
-                        health.wal_warn_bytes / 1_048_576));
+                    ui.label(format!(
+                        "backend={} schema={} docs={} chunks={}",
+                        health.backend, health.schema_version, health.documents, health.chunks
+                    ));
+                    ui.label(format!(
+                        "wal={}/{} MiB",
+                        health.wal_bytes / 1_048_576,
+                        health.wal_warn_bytes / 1_048_576
+                    ));
                     if health.documents_without_chunks > 0 {
-                        ui.colored_label(egui::Color32::from_rgb(220, 120, 80),
-                            format!("missing_chunks={}", health.documents_without_chunks));
+                        ui.colored_label(
+                            egui::Color32::from_rgb(220, 120, 80),
+                            format!("missing_chunks={}", health.documents_without_chunks),
+                        );
                     }
                 });
             }
@@ -1569,27 +1567,30 @@ impl eframe::App for GraphApp {
         match self.mode {
             ViewMode::Wiki => {
                 // Left: catalog (polished dual-pane nav column).
-                egui::SidePanel::left("wiki_nav")
-                    .default_width(280.0)
-                    .width_range(200.0..=480.0)
-                    .resizable(true)
-                    .show_separator_line(true)
-                    .show(ctx, |ui| {
-                        let sel = if self.wiki_dual_pane && self.wiki_focus == WikiPane::B {
-                            self.wiki_selected_id_b.as_deref()
-                        } else {
-                            self.wiki_selected_id.as_deref()
-                        };
-                        if let Some(id) = draw_wiki_sidebar(
-                            ui,
-                            &self.wiki_pages,
-                            &mut self.wiki_filter,
-                            sel,
-                            &mut self.wiki_show_summaries,
-                        ) {
-                            self.open_wiki_page_id(&id);
-                        }
-                    });
+                if self.wiki_sidebar_visible {
+                    egui::SidePanel::left("wiki_nav")
+                        .default_width(250.0)
+                        .width_range(190.0..=420.0)
+                        .resizable(true)
+                        .show_separator_line(false)
+                        .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(12.0))
+                        .show(ctx, |ui| {
+                            let sel = if self.wiki_dual_pane && self.wiki_focus == WikiPane::B {
+                                self.wiki_selected_id_b.as_deref()
+                            } else {
+                                self.wiki_selected_id.as_deref()
+                            };
+                            if let Some(id) = draw_wiki_sidebar(
+                                ui,
+                                &self.wiki_pages,
+                                &mut self.wiki_filter,
+                                sel,
+                                &mut self.wiki_show_summaries,
+                            ) {
+                                self.open_wiki_page_id(&id);
+                            }
+                        });
+                }
 
                 // Right: secondary article when dual-pane is on.
                 if self.wiki_dual_pane {
@@ -1631,12 +1632,13 @@ impl eframe::App for GraphApp {
                                 ui,
                                 self.wiki_article_b.as_ref(),
                                 self.wiki_error_b.as_deref(),
-                                &titles,
-                                &slugs,
-                                &self.wiki_backlinks_b,
-                                false,
-                                "b",
-                                self.pending_page_b.is_some(),
+                                WikiReadContext {
+                                    known_titles: &titles,
+                                    known_slugs: &slugs,
+                                    can_write: false,
+                                    salt_prefix: "b",
+                                    loading: self.pending_page_b.is_some(),
+                                },
                             );
                             if action.retry {
                                 if let Some(id) = self.wiki_selected_id_b.clone() {
@@ -1646,6 +1648,27 @@ impl eframe::App for GraphApp {
                             if action.open_id.is_some() || action.open_link.is_some() {
                                 self.wiki_focus = WikiPane::B;
                             }
+                            if let Some(id) = action.open_id {
+                                self.open_wiki_page_id(&id);
+                            } else if let Some(link) = action.open_link {
+                                self.open_wiki_link(&link);
+                            }
+                        });
+                }
+
+                if !self.wiki_dual_pane && self.wiki_info_visible {
+                    egui::SidePanel::right("wiki_info")
+                        .default_width(260.0)
+                        .width_range(220.0..=380.0)
+                        .resizable(true)
+                        .show_separator_line(false)
+                        .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(14.0))
+                        .show(ctx, |ui| {
+                            let action = draw_wiki_info_panel(
+                                ui,
+                                self.wiki_article.as_ref(),
+                                &self.wiki_backlinks,
+                            );
                             if let Some(id) = action.open_id {
                                 self.open_wiki_page_id(&id);
                             } else if let Some(link) = action.open_link {
@@ -1722,12 +1745,13 @@ impl eframe::App for GraphApp {
                             ui,
                             self.wiki_article.as_ref(),
                             self.wiki_error.as_deref(),
-                            &titles,
-                            &slugs,
-                            &self.wiki_backlinks,
-                            can_write,
-                            "a",
-                            self.pending_page_a.is_some(),
+                            WikiReadContext {
+                                known_titles: &titles,
+                                known_slugs: &slugs,
+                                can_write,
+                                salt_prefix: "a",
+                                loading: self.pending_page_a.is_some(),
+                            },
                         );
                         if action.retry {
                             if let Some(id) = self.wiki_selected_id.clone() {

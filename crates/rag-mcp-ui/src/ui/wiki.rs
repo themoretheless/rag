@@ -57,6 +57,15 @@ pub struct WikiNavAction {
     pub retry: bool,
 }
 
+/// Read-pane dependencies grouped separately from navigation results.
+pub struct WikiReadContext<'a> {
+    pub known_titles: &'a HashSet<String>,
+    pub known_slugs: &'a HashSet<String>,
+    pub can_write: bool,
+    pub salt_prefix: &'a str,
+    pub loading: bool,
+}
+
 /// Left sidebar: searchable list of wiki pages, grouped by `category`.
 pub fn draw_wiki_sidebar(
     ui: &mut Ui,
@@ -268,7 +277,10 @@ pub fn draw_wiki_edit_view(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let content_resp = ui.add_sized(
-                [ui.available_width(), (ui.available_height() - 8.0).max(200.0)],
+                [
+                    ui.available_width(),
+                    (ui.available_height() - 8.0).max(200.0),
+                ],
                 egui::TextEdit::multiline(&mut edit.content)
                     .desired_width(f32::INFINITY)
                     .font(egui::TextStyle::Monospace)
@@ -286,17 +298,11 @@ pub fn draw_wiki_edit_view(
 ///
 /// `salt_prefix` ("a" / "b") + page id key the article scroll area, so each
 /// pane keeps its own offset and the offset resets when the page changes.
-#[allow(clippy::too_many_arguments)]
 pub fn draw_wiki_read_view(
     ui: &mut Ui,
     page: Option<&DocumentBody>,
     error: Option<&str>,
-    known_titles: &HashSet<String>,
-    known_slugs: &HashSet<String>,
-    backlinks: &[BacklinkItem],
-    can_write: bool,
-    salt_prefix: &str,
-    loading: bool,
+    context: WikiReadContext<'_>,
 ) -> WikiNavAction {
     let mut action = WikiNavAction::default();
 
@@ -313,7 +319,7 @@ pub fn draw_wiki_read_view(
     let Some(page) = page else {
         ui.vertical_centered(|ui| {
             ui.add_space(80.0);
-            if loading {
+            if context.loading {
                 ui.spinner();
                 ui.label("Loading page…");
             } else {
@@ -327,14 +333,14 @@ pub fn draw_wiki_read_view(
 
     ui.horizontal(|ui| {
         ui.heading(&page.title);
-        if loading {
+        if context.loading {
             // Next page is on the wire; this one stays visible until it lands.
             ui.spinner();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .add_enabled(can_write, egui::Button::new("Edit"))
-                .on_hover_text(if can_write {
+                .add_enabled(context.can_write, egui::Button::new("Edit"))
+                .on_hover_text(if context.can_write {
                     "Edit this page (Save uses HTTP PUT or --db)"
                 } else {
                     "Editing requires --http or --db"
@@ -353,38 +359,77 @@ pub fn draw_wiki_read_view(
     ui.separator();
 
     egui::ScrollArea::vertical()
-        .id_salt(format!("wiki_article_scroll:{salt_prefix}:{}", page.id))
+        .id_salt(format!(
+            "wiki_article_scroll:{}:{}",
+            context.salt_prefix, page.id
+        ))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            action.open_link =
-                render_wiki_markdown(ui, &page.content, known_titles, known_slugs);
-            ui.add_space(16.0);
-            ui.separator();
-            ui.strong("Backlinks");
-            if backlinks.is_empty() {
-                ui.weak("No incoming wikilinks.");
-            } else {
-                for b in backlinks {
-                    let resp = ui.add(
-                        egui::Label::new(
-                            RichText::new(&b.label)
-                                .color(egui::Color32::from_rgb(100, 160, 255))
-                                .underline(),
-                        )
-                        .sense(Sense::click()),
+            let padding = ((ui.available_width() - 860.0) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(padding);
+                ui.vertical(|ui| {
+                    ui.set_max_width(860.0);
+                    action.open_link = render_wiki_markdown(
+                        ui,
+                        &page.content,
+                        context.known_titles,
+                        context.known_slugs,
                     );
-                    if resp.clicked() {
-                        // Prefer document id so catalog open is exact.
-                        if !b.id.is_empty() {
-                            action.open_id = Some(b.id.clone());
-                        } else {
-                            action.open_link = Some(b.label.clone());
-                        }
-                    }
-                }
-            }
+                    ui.add_space(24.0);
+                });
+            });
         });
 
+    action
+}
+
+/// Secondary information panel: page identity and incoming links stay out of
+/// the reading flow and can be hidden independently by the shell.
+pub fn draw_wiki_info_panel(
+    ui: &mut Ui,
+    page: Option<&DocumentBody>,
+    backlinks: &[BacklinkItem],
+) -> WikiNavAction {
+    let mut action = WikiNavAction::default();
+    ui.heading("Page info");
+    ui.separator();
+    let Some(page) = page else {
+        ui.weak("Select a page to see its details.");
+        return action;
+    };
+
+    ui.weak("Location");
+    ui.monospace(&page.uri);
+    ui.add_space(10.0);
+    ui.weak("Type");
+    ui.label(format!("{} · {}", page.layer, page.kind));
+    if let Some(revision) = page.revision {
+        ui.label(format!("Revision {revision}"));
+    }
+
+    ui.add_space(18.0);
+    ui.strong(format!("Backlinks · {}", backlinks.len()));
+    ui.separator();
+    if backlinks.is_empty() {
+        ui.weak("No incoming links.");
+    } else {
+        for backlink in backlinks {
+            let response = ui.add(
+                egui::Label::new(
+                    RichText::new(&backlink.label).color(egui::Color32::from_rgb(100, 160, 255)),
+                )
+                .sense(Sense::click()),
+            );
+            if response.clicked() {
+                if backlink.id.is_empty() {
+                    action.open_link = Some(backlink.label.clone());
+                } else {
+                    action.open_id = Some(backlink.id.clone());
+                }
+            }
+        }
+    }
     action
 }
 
@@ -464,8 +509,7 @@ fn render_wiki_markdown(
         if let Some(rest) = trimmed.strip_prefix("> ") {
             ui.horizontal(|ui| {
                 ui.weak("│");
-                if let Some(link) =
-                    draw_inline_with_wikilinks(ui, rest, known_titles, known_slugs)
+                if let Some(link) = draw_inline_with_wikilinks(ui, rest, known_titles, known_slugs)
                 {
                     open_link = Some(link);
                 }
@@ -473,7 +517,9 @@ fn render_wiki_markdown(
             continue;
         }
 
-        let bullet = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* "));
+        let bullet = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "));
         let numbered = if bullet.is_none() {
             let mut chars = trimmed.chars();
             if chars.next().is_some_and(|c| c.is_ascii_digit()) {
@@ -500,11 +546,8 @@ fn render_wiki_markdown(
             } else if let Some((n, _)) = numbered {
                 ui.label(format!("{n}."));
             }
-            let text = bullet
-                .or(numbered.map(|(_, r)| r))
-                .unwrap_or(trimmed);
-            if let Some(link) = draw_inline_with_wikilinks(ui, text, known_titles, known_slugs)
-            {
+            let text = bullet.or(numbered.map(|(_, r)| r)).unwrap_or(trimmed);
+            if let Some(link) = draw_inline_with_wikilinks(ui, text, known_titles, known_slugs) {
                 open_link = Some(link);
             }
         });
@@ -596,9 +639,11 @@ fn emit_rich_plain(ui: &mut Ui, text: &str) {
             }
             let after = &rest[c0 + 1..];
             if let Some(c1) = after.find('`') {
-                ui.label(RichText::new(&after[..c1]).monospace().background_color(
-                    egui::Color32::from_rgb(40, 40, 48),
-                ));
+                ui.label(
+                    RichText::new(&after[..c1])
+                        .monospace()
+                        .background_color(egui::Color32::from_rgb(40, 40, 48)),
+                );
                 rest = &after[c1 + 1..];
                 continue;
             }
@@ -648,9 +693,7 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
             rest = after;
             continue;
         }
-        ui.label(
-            RichText::new(format!("#{tag}")).color(egui::Color32::from_rgb(180, 140, 220)),
-        );
+        ui.label(RichText::new(format!("#{tag}")).color(egui::Color32::from_rgb(180, 140, 220)));
         rest = &after[tag_end..];
     }
     if !rest.is_empty() {
@@ -682,7 +725,10 @@ mod tests {
 
     #[test]
     fn content_summary_line_first_nonempty() {
-        assert_eq!(content_summary_line("\n\nHello\nWorld"), Some("Hello".into()));
+        assert_eq!(
+            content_summary_line("\n\nHello\nWorld"),
+            Some("Hello".into())
+        );
         assert_eq!(content_summary_line("   \n  "), None);
     }
 }
