@@ -655,6 +655,17 @@ impl Store {
         Ok(out)
     }
 
+    /// First-class project catalog backed by the compatible `wing` storage key.
+    pub fn list_projects(&self) -> Result<Vec<crate::models::ProjectSummary>> {
+        self.get_taxonomy()?.wings.into_iter().map(|wing| {
+            Ok(crate::models::ProjectSummary {
+                project_id: crate::models::ProjectId::parse(wing.wing)?,
+                document_count: wing.document_count,
+                rooms: wing.rooms,
+            })
+        }).collect()
+    }
+
     /// Distinct rooms with document counts.
     ///
     /// When `wing` is `Some`, only rooms under that wing are returned (with wing set).

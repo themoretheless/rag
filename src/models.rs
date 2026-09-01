@@ -305,6 +305,38 @@ pub struct WingCount {
     pub document_count: u64,
 }
 
+/// Stable project scope identifier. Persisted as the legacy `wing` value until
+/// the v2 wire format removes that compatibility alias.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProjectId(String);
+
+impl ProjectId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, AppError> {
+        let value = value.into();
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.len() > 128 {
+            return Err(AppError::config("project_id must contain 1..=128 bytes"));
+        }
+        if !trimmed.chars().all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/')) {
+            return Err(AppError::config(
+                "project_id may contain letters, numbers, dash, underscore, dot, or slash",
+            ));
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str { &self.0 }
+}
+
+/// Project catalog item exposed to native and HTTP clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectSummary {
+    pub project_id: ProjectId,
+    pub document_count: u64,
+    pub rooms: Vec<TaxonomyRoom>,
+}
+
 /// One room (optionally under a wing) with document count (for `list_rooms`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomCount {
@@ -1093,7 +1125,15 @@ impl Default for KgFact {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_document_etag, parse_document_etag, Document, WikiPageListItem};
+    use super::{format_document_etag, parse_document_etag, Document, ProjectId, WikiPageListItem};
+
+    #[test]
+    fn project_id_is_trimmed_and_rejects_ambiguous_values() {
+        assert_eq!(ProjectId::parse("  rag-mcp  ").unwrap().as_str(), "rag-mcp");
+        assert_eq!(ProjectId::parse("agents/claude").unwrap().as_str(), "agents/claude");
+        assert!(ProjectId::parse("").is_err());
+        assert!(ProjectId::parse("two projects").is_err());
+    }
 
     #[test]
     fn wiki_page_list_item_serde_stays_lean_no_content() {

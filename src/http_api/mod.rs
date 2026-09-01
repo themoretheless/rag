@@ -188,7 +188,7 @@ mod tests {
     #[tokio::test]
     async fn operational_routes_pagination_errors_and_conditional_get_work() {
         let app = app();
-        for uri in ["/v1/status", "/v1/doctor", "/v1/capabilities", "/v1/routes", "/v1/documents?limit=1"] {
+        for uri in ["/v1/status", "/v1/doctor", "/v1/projects", "/v1/capabilities", "/v1/routes", "/v1/documents?limit=1"] {
             let response = app.clone().oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
             assert_eq!(response.status(), axum::http::StatusCode::OK, "{uri}");
         }
