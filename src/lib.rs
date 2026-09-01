@@ -18,6 +18,7 @@ pub mod chunking;
 pub mod config;
 pub mod db;
 pub mod diary;
+pub mod diagnostics;
 pub mod embeddings;
 pub mod error;
 pub mod file_ingest;

@@ -45,6 +45,7 @@ use crate::config::Config;
 use crate::db::recovery::{
     BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
 };
+#[cfg(test)]
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::search::{
     attach_context, fuse_rrf_many, search, search_chunks, ContextExpansion, DiversityMode,
@@ -52,6 +53,7 @@ use crate::db::search::{
 };
 use crate::db::Store;
 use crate::diary;
+use crate::diagnostics::DiagnosticsService;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
@@ -65,9 +67,11 @@ use crate::memory_lifecycle;
 use crate::models::{
     Chunk, Collection, CollectionEntry, DoctorReport, Document, DocumentFilter, DocumentMetaUpdate,
     DrawerListItem, GraphEdge, GraphFilter, GraphNode, GraphView, IndexQueryPage, IndexQueryResult,
-    IngestResult, LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats, StatusReport,
+    IngestResult, LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats,
     VacuumStoreReport, WikiIndexEntry,
 };
+#[cfg(test)]
+use crate::models::StatusReport;
 use crate::retrieval::{self, DocumentWithChunks, SimilarDocumentsQuery};
 use crate::search_pack::pack_hits;
 use crate::util::{check_path_allowlist, content_hash};
@@ -361,6 +365,7 @@ impl RagServer {
     }
 
     /// Build the MemPalace-style `status` health payload (vision §5.5 layer health).
+    #[cfg(test)]
     pub(crate) fn status_report(&self) -> Result<StatusReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let fts_ready = self.store.fts_ready()?;
@@ -454,6 +459,7 @@ impl RagServer {
     }
 
     /// Build the minimal `doctor` integrity payload.
+    #[cfg(test)]
     pub(crate) fn doctor_report(&self) -> Result<DoctorReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let schema_ok = schema_version >= SCHEMA_VERSION;
@@ -1785,7 +1791,9 @@ impl RagServer {
         description = "Index health: backend=duckdb, docs/chunks/nodes/edges, wings summary, ready_for_search, fts_ready, embed_dims, db path."
     )]
     async fn status(&self) -> Result<CallToolResult, McpError> {
-        let body = self.status_report().map_err(Self::map_err)?;
+        let body = DiagnosticsService::new(&self.store, &self.config)
+            .status()
+            .map_err(Self::map_err)?;
         Self::json_result(&body)
     }
 
@@ -1794,7 +1802,9 @@ impl RagServer {
         description = "Minimal integrity: schema_version vs expected, FTS ready, embed dims vs manifest, ingest_roots, ready_for_search."
     )]
     async fn doctor(&self) -> Result<CallToolResult, McpError> {
-        let body = self.doctor_report().map_err(Self::map_err)?;
+        let body = DiagnosticsService::new(&self.store, &self.config)
+            .doctor()
+            .map_err(Self::map_err)?;
         Self::json_result(&body)
     }
 
@@ -1812,7 +1822,9 @@ impl RagServer {
             .unwrap_or(self.config.maint_max_docs)
             .max(1)
             .min(self.config.maint_max_docs.max(1));
-        let before = self.doctor_report().map_err(Self::map_err)?;
+        let before = DiagnosticsService::new(&self.store, &self.config)
+            .doctor()
+            .map_err(Self::map_err)?;
         let documents = self.store.list_documents().map_err(Self::map_err)?;
         let mut missing = Vec::new();
         for document in documents {
@@ -1866,7 +1878,9 @@ impl RagServer {
         let after = if dry_run {
             before.clone()
         } else {
-            self.doctor_report().map_err(Self::map_err)?
+            DiagnosticsService::new(&self.store, &self.config)
+                .doctor()
+                .map_err(Self::map_err)?
         };
         Self::json_result(&DoctorRepairReport {
             dry_run,
@@ -2617,7 +2631,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<WakeUpParams>,
     ) -> Result<CallToolResult, McpError> {
-        let status = self.status_report().map_err(Self::map_err)?;
+        let status = DiagnosticsService::new(&self.store, &self.config)
+            .status()
+            .map_err(Self::map_err)?;
         let diary_limit = params.diary_limit.unwrap_or(5) as usize;
         let pinned_limit = params.pinned_limit.unwrap_or(20) as usize;
         let body = diary::wake_up(
