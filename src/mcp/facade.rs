@@ -1,6 +1,5 @@
 //! MCP tool implementations and `ServerHandler` wiring.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -55,7 +54,7 @@ use crate::diagnostics::DiagnosticsService;
 use crate::diary;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
-use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
+use crate::file_ingest::{extract_file, merge_metadata};
 use crate::ingest::{
     IngestCommand, IngestService, ReembedDocumentResult, UpdateDocumentCommand,
     UpdateDocumentResult,
@@ -76,8 +75,10 @@ use crate::models::{
 use crate::retrieval::SearchCommand;
 use crate::retrieval::{self, DocumentWithChunks, SimilarDocumentsQuery};
 use crate::search_pack::pack_hits;
-use crate::source_scan::{collect_source_files, SourceScanPolicy};
-use crate::util::{check_path_allowlist, content_hash};
+use crate::source_sync::{SourceSyncCommand, SourceSyncError, SourceSyncService};
+use crate::util::check_path_allowlist;
+#[cfg(test)]
+use crate::util::content_hash;
 use crate::wiki;
 use crate::wiki::FileAnswerCitation;
 
@@ -86,55 +87,12 @@ fn nonempty_opt(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
 }
 
-fn collect_supported_sources(root: &Path) -> std::io::Result<Vec<PathBuf>> {
-    collect_source_files(root, &SourceScanPolicy::default())
-}
-
-fn inferred_scope(root: &Path, path: &Path) -> (String, String) {
-    let root_name = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("project");
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    let mut components = relative
-        .components()
-        .filter_map(|part| part.as_os_str().to_str());
-    if root_name.eq_ignore_ascii_case("sources") {
-        let wing = components.next().unwrap_or("project").to_string();
-        let room = components.next().unwrap_or("root").to_string();
-        (wing, room)
-    } else {
-        let room = relative
-            .parent()
-            .and_then(|parent| parent.components().next())
-            .and_then(|part| part.as_os_str().to_str())
-            .unwrap_or("root")
-            .to_string();
-        (root_name.to_string(), room)
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct SyncSourceError {
-    path: String,
-    error: String,
-}
-
-#[derive(Debug, Serialize)]
-struct SyncSourcesSummary {
-    added: Vec<String>,
-    updated: Vec<String>,
-    skipped: Vec<String>,
-    deleted: Vec<String>,
-    errors: Vec<SyncSourceError>,
-}
-
 #[derive(Debug, Serialize)]
 struct DoctorRepairReport {
     dry_run: bool,
     documents_considered: usize,
     documents_repaired: Vec<String>,
-    documents_failed: Vec<SyncSourceError>,
+    documents_failed: Vec<SourceSyncError>,
     orphan_chunks_pruned: u64,
     orphan_document_nodes_pruned: u64,
     orphan_edges_pruned: u64,
@@ -784,166 +742,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<SyncSourcesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let requested_root = Path::new(&params.path);
-        check_path_allowlist(requested_root, &self.config.ingest_roots).map_err(Self::map_err)?;
-        let root = requested_root.canonicalize().map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                Self::map_err(AppError::not_found(format!(
-                    "directory not found: {}",
-                    params.path
-                )))
-            } else {
-                Self::map_err(AppError::from(e))
-            }
-        })?;
-        if !root.is_dir() {
-            return Err(Self::map_err(AppError::config(format!(
-                "sync_sources path is not a directory: {}",
-                root.display()
-            ))));
-        }
-
-        let files = collect_supported_sources(&root).map_err(|e| Self::map_err(e.into()))?;
-        let mut seen = BTreeSet::new();
-        let mut summary = SyncSourcesSummary {
-            added: Vec::new(),
-            updated: Vec::new(),
-            skipped: Vec::new(),
-            deleted: Vec::new(),
-            errors: Vec::new(),
-        };
-
-        for path in files {
-            let canonical = match path.canonicalize() {
-                Ok(path) => path,
-                Err(error) => {
-                    summary.errors.push(SyncSourceError {
-                        path: path.display().to_string(),
-                        error: error.to_string(),
-                    });
-                    continue;
-                }
-            };
-            let source_file = canonical.display().to_string();
-            seen.insert(source_file.clone());
-            let uri = format!("file://{}", canonical.display());
-            let extracted = match extract_file(&canonical) {
-                Ok(extracted) => extracted,
-                Err(error) => {
-                    summary.errors.push(SyncSourceError {
-                        path: source_file,
-                        error: error.to_string(),
-                    });
-                    continue;
-                }
-            };
-            let existing = match self.store.find_by_uri(&uri) {
-                Ok(existing) => existing,
-                Err(error) => {
-                    summary.errors.push(SyncSourceError {
-                        path: source_file,
-                        error: error.to_string(),
-                    });
-                    continue;
-                }
-            };
-            let hash = content_hash(&extracted.text);
-            let unchanged = existing.as_ref().is_some_and(|doc| {
-                doc.content_hash
-                    .as_deref()
-                    .map(|stored| stored == hash)
-                    .unwrap_or_else(|| content_hash(&doc.content) == hash)
-            });
-            let has_chunks = existing
-                .as_ref()
-                .and_then(|doc| self.store.list_chunks_for_document(&doc.id).ok())
-                .is_some_and(|chunks| !chunks.is_empty());
-            if unchanged && has_chunks {
-                summary.skipped.push(source_file);
-                continue;
-            }
-
-            let title = canonical
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_string);
-            let metadata_json = match merge_metadata(
-                existing.as_ref().map(|doc| doc.metadata_json.clone()),
-                extracted.metadata,
-            ) {
-                Ok(metadata) => Some(metadata),
-                Err(error) => {
-                    summary.errors.push(SyncSourceError {
-                        path: source_file,
-                        error: error.to_string(),
-                    });
-                    continue;
-                }
-            };
-            let (inferred_wing, inferred_room) = inferred_scope(&root, &canonical);
-            let wing = params
-                .wing
-                .clone()
-                .or_else(|| existing.as_ref().and_then(|doc| doc.wing.clone()))
-                .or(Some(inferred_wing));
-            let room = params
-                .room
-                .clone()
-                .or_else(|| existing.as_ref().and_then(|doc| doc.room.clone()))
-                .or(Some(inferred_room));
-            match self
-                .ingest_pipeline(
-                    extracted.text,
-                    title,
-                    Some(uri),
-                    metadata_json,
-                    wing,
-                    room,
-                    Some(source_file.clone()),
-                    "raw",
-                    "document",
-                    false,
-                )
-                .await
-            {
-                Ok(result) if result.op == "inserted" => summary.added.push(source_file),
-                Ok(_) => summary.updated.push(source_file),
-                Err(error) => summary.errors.push(SyncSourceError {
-                    path: source_file,
-                    error: error.to_string(),
-                }),
-            }
-        }
-
-        if params.remove_deleted.unwrap_or(false) {
-            let documents = self.store.list_documents().map_err(Self::map_err)?;
-            let mut missing = BTreeSet::new();
-            for document in documents {
-                let Some(source) = document.source_file else {
-                    continue;
-                };
-                let source_path = Path::new(&source);
-                if source_path.starts_with(&root)
-                    && is_supported_source(source_path)
-                    && !seen.contains(&source)
-                    && !source_path.exists()
-                {
-                    missing.insert(source);
-                }
-            }
-            for source in missing {
-                match self.store.delete_by_source(&source) {
-                    Ok(count) if count > 0 => summary.deleted.push(source),
-                    Ok(_) => {}
-                    Err(error) => summary.errors.push(SyncSourceError {
-                        path: source,
-                        error: error.to_string(),
-                    }),
-                }
-            }
-        }
-
-        Self::json_result(&summary)
+        let report = SourceSyncService::new(&self.store, &self.embedder, &self.config)
+            .sync(SourceSyncCommand {
+                path: PathBuf::from(params.path),
+                remove_deleted: params.remove_deleted.unwrap_or(false),
+                wing: params.wing,
+                room: params.room,
+            })
+            .await
+            .map_err(Self::map_err)?;
+        Self::json_result(&report)
     }
 
     #[tool(
@@ -1661,7 +1469,7 @@ impl RagServer {
                     .await
                 {
                     Ok(_) => documents_repaired.push(document.id.clone()),
-                    Err(error) => documents_failed.push(SyncSourceError {
+                    Err(error) => documents_failed.push(SourceSyncError {
                         path: document.uri.clone(),
                         error: error.to_string(),
                     }),
@@ -3881,20 +3689,6 @@ mod tests {
     use crate::embeddings::MockEmbedder;
     use crate::models::SearchMode;
     use std::path::PathBuf;
-
-    #[test]
-    fn source_collection_skips_generated_and_worktree_directories() {
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::write(root.path().join("keep.rs"), "fn main() {}").unwrap();
-        for directory in ["bin", "obj", ".yarn", ".turbo", "TestResults", "worktrees"] {
-            let generated = root.path().join(directory);
-            std::fs::create_dir_all(&generated).unwrap();
-            std::fs::write(generated.join("duplicate.rs"), "fn duplicate() {}").unwrap();
-        }
-
-        let files = collect_supported_sources(root.path()).expect("collect");
-        assert_eq!(files, vec![root.path().join("keep.rs")]);
-    }
 
     fn test_config(db_path: PathBuf, roots: Vec<PathBuf>, dims: usize) -> Config {
         Config {
