@@ -3,7 +3,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::gateway::{GatewayClient, Method, Request, ReqwestGatewayClient, Response};
+use crate::gateway::{format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient};
 use crate::load::DocumentBody;
 
 pub const REVISION_PAGE_SIZE: usize = 50;
@@ -222,7 +222,7 @@ fn send_json<T: DeserializeOwned>(
         headers: Vec::new(),
     })?;
     if !response.is_success() {
-        return Err(response_error(response, &url));
+        return Err(format_http_error(&response, revision_context(path)));
     }
     serde_json::from_str(&response.body)
         .map_err(|error| format!("parse response from {url}: {error}"))
@@ -236,12 +236,16 @@ fn join(base: &str, path: &str) -> Result<String, String> {
     Ok(format!("{base}/{}", path.trim_start_matches('/')))
 }
 
-fn response_error(response: Response, url: &str) -> String {
-    format!(
-        "HTTP {} from {url}: {}",
-        response.status,
-        response.body.chars().take(400).collect::<String>()
-    )
+fn revision_context(path: &str) -> &'static str {
+    if path.starts_with("v1/revisions/snapshot") {
+        "Revision snapshot"
+    } else if path.starts_with("v1/revisions/diff") {
+        "Revision comparison"
+    } else if path == "v1/revisions/restore" {
+        "Revision restore"
+    } else {
+        "Revision history"
+    }
 }
 
 fn encode_query(value: &str) -> String {
@@ -259,6 +263,7 @@ fn encode_query(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Response;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -363,5 +368,22 @@ mod tests {
         let body = requests[0].body.as_deref().unwrap();
         assert!(body.contains(r#""revision":2"#));
         assert!(body.contains(r#""if_match_revision":3"#));
+    }
+
+    #[test]
+    fn revision_errors_use_specific_safe_context() {
+        assert_eq!(
+            revision_context("v1/revisions?document_id=private-id"),
+            "Revision history"
+        );
+        assert_eq!(
+            revision_context("v1/revisions/snapshot?document_id=private-id"),
+            "Revision snapshot"
+        );
+        assert_eq!(
+            revision_context("v1/revisions/diff?document_id=private-id"),
+            "Revision comparison"
+        );
+        assert_eq!(revision_context("v1/revisions/restore"), "Revision restore");
     }
 }

@@ -4,7 +4,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 
-use crate::gateway::{GatewayClient, Method, Request, ReqwestGatewayClient, Response};
+use crate::gateway::{format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StatusSnapshot {
@@ -271,7 +271,7 @@ fn send_json<T: DeserializeOwned>(
         headers: Vec::new(),
     })?;
     if !response.is_success() {
-        return Err(response_error(response, &url));
+        return Err(format_http_error(&response, operation_context(path)));
     }
     serde_json::from_str(&response.body)
         .map_err(|error| format!("parse response from {url}: {error}"))
@@ -285,12 +285,18 @@ fn join(base: &str, path: &str) -> Result<String, String> {
     Ok(format!("{base}/{}", path.trim_start_matches('/')))
 }
 
-fn response_error(response: Response, url: &str) -> String {
-    format!(
-        "HTTP {} from {url}: {}",
-        response.status,
-        response.body.chars().take(400).collect::<String>()
-    )
+fn operation_context(path: &str) -> &'static str {
+    if path == "v1/status" {
+        "System status"
+    } else if path == "v1/doctor" {
+        "Diagnostics"
+    } else if path == "v1/operations/checkpoint" {
+        "Checkpoint"
+    } else if path == "v1/operations/backup" {
+        "Backup"
+    } else {
+        "Sync jobs"
+    }
 }
 
 fn encode_segment(value: &str) -> String {
@@ -308,6 +314,7 @@ fn encode_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Response;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -375,5 +382,13 @@ mod tests {
         .job;
         assert_eq!(cancelled.id, "j1");
         assert_eq!(gateway.requests.lock().unwrap()[1].method, Method::Delete);
+    }
+
+    #[test]
+    fn operation_errors_use_specific_safe_context() {
+        assert_eq!(operation_context("v1/status"), "System status");
+        assert_eq!(operation_context("v1/doctor"), "Diagnostics");
+        assert_eq!(operation_context("v1/jobs/private-job-id"), "Sync jobs");
+        assert_eq!(operation_context("v1/operations/backup"), "Backup");
     }
 }

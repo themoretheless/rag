@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::gateway::{GatewayClient, Method, Request, ReqwestGatewayClient, Response};
+use crate::gateway::{format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SearchRequest {
@@ -103,7 +103,7 @@ fn fetch_search_with_client(
         headers: Vec::new(),
     })?;
     if !response.is_success() {
-        return Err(response_error(response, &url));
+        return Err(format_http_error(&response, "Search"));
     }
     serde_json::from_str::<SearchEnvelope>(&response.body)
         .map(|envelope| SearchResults {
@@ -112,17 +112,10 @@ fn fetch_search_with_client(
         .map_err(|error| format!("parse search results from {url}: {error}"))
 }
 
-fn response_error(response: Response, url: &str) -> String {
-    format!(
-        "HTTP {} from {url}: {}",
-        response.status,
-        response.body.chars().take(300).collect::<String>()
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Response;
     use std::sync::Mutex;
 
     struct FakeGateway {
@@ -181,5 +174,35 @@ mod tests {
             .unwrap_err();
         assert_eq!(error, "enter a search query");
         assert!(gateway.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_json_error_omits_url_and_envelope_metadata() {
+        let gateway = FakeGateway {
+            response: Response {
+                status: 400,
+                body: r#"{"ok":false,"code":"INVALID_QUERY","error":"Query is required","request_id":"private-id"}"#
+                    .to_string(),
+            },
+            requests: Mutex::new(Vec::new()),
+        };
+
+        let error = fetch_search_with_client(
+            &gateway,
+            "http://gateway/private-base",
+            &SearchRequest {
+                query: "needle".to_string(),
+                ..SearchRequest::default()
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "HTTP 400 · Search: Query is required (INVALID_QUERY)"
+        );
+        assert!(!error.contains("gateway/private-base"));
+        assert!(!error.contains("private-id"));
+        assert!(!error.contains('{'));
     }
 }

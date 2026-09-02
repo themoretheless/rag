@@ -1,6 +1,7 @@
 //! Search workspace for lexical, vector and hybrid retrieval.
 
 use crate::search::{SearchRequest, SearchResults};
+use crate::ui::closing_selectable_value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SearchAction {
@@ -64,17 +65,20 @@ pub fn draw_search_workspace(
                         egui::ComboBox::from_id_salt("search_mode")
                             .selected_text(mode_label(&request.mode))
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
+                                closing_selectable_value(
+                                    ui,
                                     &mut request.mode,
                                     "hybrid".to_string(),
                                     "Hybrid",
                                 );
-                                ui.selectable_value(
+                                closing_selectable_value(
+                                    ui,
                                     &mut request.mode,
                                     "lex".to_string(),
                                     "Lexical",
                                 );
-                                ui.selectable_value(
+                                closing_selectable_value(
+                                    ui,
                                     &mut request.mode,
                                     "vec".to_string(),
                                     "Semantic",
@@ -98,9 +102,10 @@ pub fn draw_search_workspace(
                             .selected_text(selected_layer)
                             .width(88.0)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut request.layer, None, "Any");
+                                closing_selectable_value(ui, &mut request.layer, None, "Any");
                                 for layer in ["raw", "wiki", "diary"] {
-                                    ui.selectable_value(
+                                    closing_selectable_value(
+                                        ui,
                                         &mut request.layer,
                                         Some(layer.to_string()),
                                         layer,

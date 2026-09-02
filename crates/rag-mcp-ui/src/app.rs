@@ -2311,13 +2311,15 @@ impl eframe::App for GraphApp {
                             })
                             .width(150.0)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
+                                crate::ui::closing_selectable_value(
+                                    ui,
                                     &mut self.filter_wing,
                                     String::new(),
                                     "All projects",
                                 );
                                 for project in &project_options {
-                                    ui.selectable_value(
+                                    crate::ui::closing_selectable_value(
+                                        ui,
                                         &mut self.filter_wing,
                                         project.clone(),
                                         project,
@@ -2462,7 +2464,8 @@ impl eframe::App for GraphApp {
                                             ("http", "HTTP"),
                                             ("mcp_tool", "MCP tool"),
                                         ] {
-                                            ui.selectable_value(
+                                            crate::ui::closing_selectable_value(
+                                                ui,
                                                 &mut self.activity_kind_filter,
                                                 value.to_string(),
                                                 label,
@@ -2482,7 +2485,8 @@ impl eframe::App for GraphApp {
                                             ("success", "Success"),
                                             ("error", "Errors"),
                                         ] {
-                                            ui.selectable_value(
+                                            crate::ui::closing_selectable_value(
+                                                ui,
                                                 &mut self.activity_status_filter,
                                                 value.to_string(),
                                                 label,

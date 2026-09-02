@@ -7,7 +7,9 @@
 use serde::Deserialize;
 use std::time::Duration;
 
-use crate::gateway::{GatewayClient, Method, Request, ReqwestGatewayClient, Response};
+use crate::gateway::{
+    format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient, Response,
+};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ProjectHome {
@@ -169,7 +171,7 @@ fn fetch_project_home_with_client(
         &format!("v1/project-home?project={}", encode_query(project)),
     )?;
     let response = get(client, url.clone())?;
-    ensure_success(response, &url).and_then(|body| {
+    ensure_success(response, "Project Home").and_then(|body| {
         serde_json::from_str::<ProjectHomeEnvelope>(&body)
             .map(|envelope| envelope.project)
             .map_err(|error| format!("parse Project Home from {url}: {error}"))
@@ -188,7 +190,7 @@ fn fetch_library_with_client(
 ) -> Result<LibraryPage, String> {
     let url = join_url(base, &library_path(request))?;
     let response = get(client, url.clone())?;
-    ensure_success(response, &url).and_then(|body| {
+    ensure_success(response, "Library").and_then(|body| {
         serde_json::from_str::<LibraryEnvelope>(&body)
             .map(|envelope| LibraryPage {
                 items: envelope.items,
@@ -242,15 +244,11 @@ fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {
     })
 }
 
-fn ensure_success(response: Response, url: &str) -> Result<String, String> {
+fn ensure_success(response: Response, context: &str) -> Result<String, String> {
     if response.is_success() {
         Ok(response.body)
     } else {
-        Err(format!(
-            "HTTP {} from {url}: {}",
-            response.status,
-            response.body.chars().take(300).collect::<String>()
-        ))
+        Err(format_http_error(&response, context))
     }
 }
 
@@ -379,7 +377,6 @@ mod tests {
         };
         let error =
             fetch_project_home_with_client(&gateway, "http://gateway", "alpha").unwrap_err();
-        assert!(error.contains("HTTP 503"));
-        assert!(error.contains("temporarily unavailable"));
+        assert_eq!(error, "HTTP 503 · Project Home: temporarily unavailable");
     }
 }

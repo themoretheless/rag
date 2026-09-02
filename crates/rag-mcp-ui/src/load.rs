@@ -11,7 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::gateway::{GatewayClient, Method, Request, ReqwestGatewayClient, Response};
+use crate::gateway::{
+    format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient, Response,
+};
 
 /// Hard layout caps (EGUI_GRAPH_VIEW §8.1).
 pub const UI_HARD_MAX_NODES: usize = 300;
@@ -287,7 +289,7 @@ pub fn fetch_activity_http(base: &str) -> Result<Vec<ActivityEvent>, String> {
     let url = http_join(normalize_http_base(base), "v1/activity");
     let response = get(&client, url.clone())?;
     if !response.is_success() {
-        return Err(format!("HTTP {} from {url}", response.status));
+        return Err(format_http_error(&response, "Activity"));
     }
     serde_json::from_str::<ActivityResponse>(&response.body)
         .map(|response| response.items)
@@ -509,14 +511,6 @@ fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {
     })
 }
 
-fn response_error(response: Response, limit: usize) -> String {
-    format!(
-        "HTTP {}: {}",
-        response.status,
-        response.body.chars().take(limit).collect::<String>()
-    )
-}
-
 /// Normalize gateway base URL (trim whitespace and trailing `/`).
 fn normalize_http_base(base: &str) -> &str {
     base.trim().trim_end_matches('/')
@@ -546,7 +540,7 @@ fn fetch_backlinks_http_with_client(
     );
     let response = get(client, url)?;
     if !response.is_success() {
-        return Err(response_error(response, 200));
+        return Err(format_http_error(&response, "Backlinks"));
     }
     let body: BacklinksResponse =
         serde_json::from_str(&response.body).map_err(|e| format!("parse backlinks: {e}"))?;
@@ -571,7 +565,7 @@ fn fetch_wiki_list_http_with_client(
     let url = http_join(base, &path);
     let response = get(client, url.clone())?;
     if !response.is_success() {
-        return Err(response_error(response, 300));
+        return Err(format_http_error(&response, "Wiki catalog"));
     }
     let body: WikiListResponse = serde_json::from_str(&response.body)
         .map_err(|e| format!("parse wiki list from {url}: {e}"))?;
@@ -653,7 +647,7 @@ fn fetch_document_http_with_client(
     let response = get(client, url.clone())
         .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
     if !response.is_success() {
-        return Err(response_error(response, 400));
+        return Err(format_http_error(&response, "Document"));
     }
     let v: serde_json::Value = serde_json::from_str(&response.body)
         .map_err(|e| format!("parse DocumentBody from {url}: {e}"))?;
@@ -760,19 +754,18 @@ fn put_wiki_http_with_client(
         .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
     if response.status == 404 || response.status == 405 {
         return Err(format!(
-            "HTTP {}: wiki write not available on this gateway (need PUT /v1/wiki). Use --db exclusive mode or MCP update_wiki_page. {}",
-            response.status,
-            response.body.chars().take(200).collect::<String>()
+            "{}. Wiki writing is not available on this gateway; use a newer gateway or MCP update_wiki_page.",
+            format_http_error(&response, "Wiki save")
         ));
     }
     if response.status == 409 {
         return Err(format!(
-            "conflict (revision mismatch): {}",
-            response.body.chars().take(300).collect::<String>()
+            "{}. Reload the latest revision before saving again.",
+            format_http_error(&response, "Wiki save conflict")
         ));
     }
     if !response.is_success() {
-        return Err(response_error(response, 400));
+        return Err(format_http_error(&response, "Wiki save"));
     }
     // Accept full DocumentBody or a write-result envelope with document fields.
     let text = response.body;
@@ -958,11 +951,7 @@ fn load_http_with_client(
     let response = get(client, url.clone())
         .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND set?"))?;
     if !response.is_success() {
-        return Err(format!(
-            "HTTP {} from {url}: {}",
-            response.status,
-            response.body.chars().take(300).collect::<String>()
-        ));
+        return Err(format_http_error(&response, "Project graph"));
     }
     let view: GraphView = serde_json::from_str(&response.body)
         .map_err(|e| format!("parse GraphView from {url}: {e}"))?;
@@ -1530,11 +1519,7 @@ fn expand_neighbors_http_with_client(
     );
     let response = get(client, url.clone())?;
     if !response.is_success() {
-        return Err(format!(
-            "HTTP {} from {url}: {}",
-            response.status,
-            response.body.chars().take(300).collect::<String>()
-        ));
+        return Err(format_http_error(&response, "Graph expansion"));
     }
     let extra: GraphView = serde_json::from_str(&response.body)
         .map_err(|error| format!("parse GraphView from {url}: {error}"))?;
@@ -1740,7 +1725,7 @@ mod tests {
     }
 
     #[test]
-    fn transport_errors_keep_status_and_truncated_body() {
+    fn transport_errors_keep_status_and_safe_context() {
         let gateway = FakeGateway {
             response: Response {
                 status: 503,
@@ -1751,7 +1736,7 @@ mod tests {
 
         let error =
             fetch_backlinks_http_with_client(&gateway, "http://gateway", "doc").unwrap_err();
-        assert_eq!(error, "HTTP 503: temporarily unavailable");
+        assert_eq!(error, "HTTP 503 · Backlinks: temporarily unavailable");
     }
 
     #[test]

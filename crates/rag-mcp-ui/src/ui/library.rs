@@ -2,6 +2,7 @@
 
 use crate::load::DocumentBody;
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest};
+use crate::ui::closing_selectable_value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum LibraryAction {
@@ -300,9 +301,9 @@ fn filter_combo(
         .selected_text(selected)
         .width(94.0)
         .show_ui(ui, |ui| {
-            ui.selectable_value(value, String::new(), empty_label);
+            closing_selectable_value(ui, value, String::new(), empty_label);
             for (key, label) in choices {
-                ui.selectable_value(value, (*key).to_string(), *label);
+                closing_selectable_value(ui, value, (*key).to_string(), *label);
             }
         });
 }
