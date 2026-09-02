@@ -19,9 +19,13 @@ const SIDECAR_SCHEMA_VERSION: u32 = 1;
 const SIDECAR_DIRECTORY: &str = ".rag";
 const SIDECAR_FILE: &str = "documents.v1.jsonl";
 
+mod watcher;
+
+pub use watcher::{VaultWatchConfig, VaultWatchReport};
+
 pub(super) const CAPABILITIES: &[StorageCapability] = &[StorageCapability::Documents];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MarkdownVaultStorage {
     root: PathBuf,
 }
@@ -126,9 +130,34 @@ impl MarkdownVaultStorage {
             ));
         }
 
+        let destination = self.write_sidecar(&entries)?;
+
+        Ok(VaultReindexReport {
+            index_path: destination,
+            documents_indexed: entries.len(),
+            schema_version: SIDECAR_SCHEMA_VERSION,
+        })
+    }
+
+    /// Watch the vault and keep the JSONL sidecar current until `stop` returns
+    /// true. This is an explicit, blocking opt-in API; opening a Markdown or
+    /// DuckDB backend never starts a watcher.
+    pub fn watch_sidecar(
+        &self,
+        config: VaultWatchConfig,
+        stop: impl Fn() -> bool,
+    ) -> Result<VaultWatchReport, AppError> {
+        watcher::watch(self, config, stop)
+    }
+
+    fn sidecar_path(&self) -> PathBuf {
+        self.root.join(SIDECAR_DIRECTORY).join(SIDECAR_FILE)
+    }
+
+    fn write_sidecar(&self, entries: &[VaultIndexEntry]) -> Result<PathBuf, AppError> {
         let sidecar_directory = self.root.join(SIDECAR_DIRECTORY);
         fs::create_dir_all(&sidecar_directory)?;
-        let destination = sidecar_directory.join(SIDECAR_FILE);
+        let destination = self.sidecar_path();
         let temporary = sidecar_directory.join(format!(
             ".{SIDECAR_FILE}.{}.tmp",
             uuid::Uuid::new_v4()
@@ -136,7 +165,7 @@ impl MarkdownVaultStorage {
         let write_result = (|| -> Result<(), AppError> {
             let file = fs::File::create(&temporary)?;
             let mut writer = BufWriter::new(file);
-            for entry in &entries {
+            for entry in entries {
                 serde_json::to_writer(&mut writer, entry)?;
                 writer.write_all(b"\n")?;
             }
@@ -149,12 +178,7 @@ impl MarkdownVaultStorage {
             let _ = fs::remove_file(&temporary);
         }
         write_result?;
-
-        Ok(VaultReindexReport {
-            index_path: destination,
-            documents_indexed: entries.len(),
-            schema_version: SIDECAR_SCHEMA_VERSION,
-        })
+        Ok(destination)
     }
 
     fn document_path(&self, document: &Document) -> PathBuf {
