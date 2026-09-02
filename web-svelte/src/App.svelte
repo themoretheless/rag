@@ -8,6 +8,9 @@
   import WikiView from '@/views/WikiView.svelte'
   import GraphView from '@/views/GraphView.svelte'
   import SearchView from '@/views/SearchView.svelte'
+  import ConsoleView from '@/views/ConsoleView.svelte'
+  import CorpusView from '@/views/CorpusView.svelte'
+  import DataView from '@/views/DataView.svelte'
 
   onMount(() => {
     ui.hydrateTheme()
@@ -20,12 +23,18 @@
 </script>
 
 <AppShell>
-  {#if route.name === 'wiki'}
+  {#if route.name === 'console'}
+    <ConsoleView />
+  {:else if route.name === 'corpus'}
+    <CorpusView />
+  {:else if route.name === 'wiki'}
     <WikiView />
   {:else if route.name === 'graph'}
     <GraphView />
-  {:else}
+  {:else if route.name === 'search'}
     <SearchView />
+  {:else}
+    <DataView kind={route.name} />
   {/if}
 </AppShell>
 <CommandPalette />

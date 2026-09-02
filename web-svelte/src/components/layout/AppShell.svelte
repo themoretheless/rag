@@ -22,12 +22,9 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="shell" class:collapsed={ui.sidebarCollapsed}>
-  <TopBar />
   <div class="body">
     <SideNav />
-    <main class="main">
-      {@render children()}
-    </main>
+    <div class="workspace"><TopBar /><main class="main">{@render children()}</main></div>
   </div>
 </div>
 
@@ -43,6 +40,7 @@
     flex: 1;
     min-height: 0;
   }
+  .workspace { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; }
   .main {
     flex: 1;
     min-width: 0;

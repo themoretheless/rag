@@ -1,7 +1,7 @@
 /* Theme tokens. Dark is the default; [data-theme='light'] overrides. */
 
 :root {
-  --font: 'Inter', system-ui, -apple-system, sans-serif;
+  --font: 'Golos Text', 'Inter', system-ui, -apple-system, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --sidebar-w: 264px;
   --right-w: 280px;
@@ -9,15 +9,18 @@
   --radius: 10px;
 
   /* Dark palette (default): Notion-like night */
-  --bg: #191919;
-  --bg-elevated: #202020;
-  --bg-sidebar: #1a1a1a;
+  --bg: #0e1117;
+  --bg-elevated: #141821;
+  --bg-sidebar: #0b0d12;
+  --surface: #141821;
+  --surface-2: #191e29;
   --bg-hover: rgba(255, 255, 255, 0.055);
   --bg-active: rgba(35, 131, 226, 0.24);
   --text: #e3e2de;
   --text-muted: #9b9a97;
   --text-faint: #6f6e69;
   --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255,255,255,.15);
   --accent: #529cca;
   --accent-soft: rgba(82, 156, 202, 0.16);
   --danger: #ff7369;
@@ -26,6 +29,7 @@
   --link-missing: #6f6e69;
   --star: #e2b340;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --l0:#6ea8ff;--l1:#2dd4bf;--l2:#f0b64a;--l3:#a78bfa;--l4:#f472b6;--warn:#f0b64a;
 
   /* Dark graph palette: deep night stage, bright nodes, light labels */
   --graph-bg: #0a0e18;

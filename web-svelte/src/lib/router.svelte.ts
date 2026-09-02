@@ -5,7 +5,7 @@
  *   /graph?seed= → graph view
  *   /search      → search view
  */
-export type RouteName = 'wiki' | 'graph' | 'search'
+export type RouteName = 'console' | 'corpus' | 'search' | 'graph' | 'wiki' | 'agents' | 'evaluation' | 'models'
 
 export interface RouteState {
   name: RouteName
@@ -25,7 +25,7 @@ interface Parsed {
 function parseLocation(pathname: string, search: string): Parsed {
   const query = new URLSearchParams(search)
   if (pathname === '/' || pathname === '') {
-    return { redirect: '/wiki', state: { name: 'wiki', pageId: null, path: '/wiki', query: new URLSearchParams() } }
+    return { redirect: '/console', state: { name: 'console', pageId: null, path: '/console', query: new URLSearchParams() } }
   }
   if (pathname === '/wiki' || pathname.startsWith('/wiki/')) {
     const rest = pathname.slice('/wiki'.length).replace(/^\//, '')
@@ -38,7 +38,11 @@ function parseLocation(pathname: string, search: string): Parsed {
   if (pathname === '/search') {
     return { redirect: null, state: { name: 'search', pageId: null, path: pathname, query } }
   }
-  return { redirect: '/wiki', state: { name: 'wiki', pageId: null, path: '/wiki', query: new URLSearchParams() } }
+  const simple = pathname.slice(1) as RouteName
+  if (['console', 'corpus', 'agents', 'evaluation', 'models'].includes(simple)) {
+    return { redirect: null, state: { name: simple, pageId: null, path: pathname, query } }
+  }
+  return { redirect: '/console', state: { name: 'console', pageId: null, path: '/console', query: new URLSearchParams() } }
 }
 
 export const route = $state<RouteState>({
@@ -105,6 +109,10 @@ export function goGraph(seed?: string | null, opts?: { replace?: boolean }) {
 
 export function goSearch() {
   navigate('/search')
+}
+
+export function go(name: RouteName) {
+  navigate(`/${name}`)
 }
 
 /** Seed param of the current /graph location (trimmed, null when absent). */

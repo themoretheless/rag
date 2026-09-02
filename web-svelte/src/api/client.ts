@@ -88,4 +88,8 @@ export const api = {
 
   findNode: (q: string) =>
     request<unknown>(`/v1/find?q=${encodeURIComponent(q)}`),
+
+  get: <T = Record<string, unknown>>(path: string) => request<T>(path),
+  post: <T = Record<string, unknown>>(path: string, body: unknown = {}) =>
+    request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
 }
