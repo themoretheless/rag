@@ -8,14 +8,15 @@ use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::chunking::{from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
+use crate::db::store::DocumentDerivedWrite;
 use crate::db::Store;
+use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
 use crate::llm::{ChatClient, CompileResult, ConsolidateProposal};
-use crate::models::{Chunk, Document, OpsLogEntry, WikiIndexEntry};
+use crate::models::{Document, OpsLogEntry, WikiIndexEntry};
 use crate::util::{content_hash, slugify as shared_slugify, SlugPolicy};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -553,13 +554,19 @@ pub async fn write_wiki_page_command(
         content_hash: Some(content_hash(&content)),
         ..Default::default()
     };
-    let revision = store.upsert_document_cas(&doc, if_match)?;
+    let chunks = DocumentIndexer::new(embedder.as_ref(), config)
+        .build_plain_chunks(&doc)
+        .await?;
+    let chunk_count = chunks.len();
+    let write = store.write_document_atomic(
+        &doc,
+        if_match,
+        DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+    )?;
+    let revision = write.revision;
     doc.revision = revision;
-
-    // Replace chunks only after a successful CAS upsert.
-    store.delete_chunks_for_document(&doc.id)?;
-    let chunk_count = embed_and_store_chunks(store, embedder, config, &doc).await?;
-    let (node_id, edge_count) = rebuild_document_graph(store, &doc)?;
+    let node_id = write.node_id.unwrap_or_default();
+    let edge_count = write.edge_count;
 
     let summary = summary.unwrap_or_else(|| first_line(&content, 240));
     let index_id = format!("idx-{document_id}");
@@ -785,50 +792,6 @@ fn slug_from_wiki_doc(doc: &Document) -> String {
     slugify(&doc.title)
 }
 
-async fn embed_and_store_chunks(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    doc: &Document,
-) -> Result<usize> {
-    let chunker = from_config(config.chunk_size, config.chunk_overlap);
-    let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, &doc.content);
-    if pieces.is_empty() {
-        return Ok(0);
-    }
-    let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
-    let embeddings = embedder.embed(&texts).await?;
-    let section_metadata = markdown_section_metadata(&doc.content, &pieces);
-    if embeddings.len() != pieces.len() {
-        return Err(AppError::embeddings(format!(
-            "embedder returned {} vectors for {} chunks",
-            embeddings.len(),
-            pieces.len()
-        )));
-    }
-    let mut chunks = Vec::with_capacity(pieces.len());
-    for (i, (((content, char_start, char_end), embedding), metadata_json)) in pieces
-        .into_iter()
-        .zip(embeddings)
-        .zip(section_metadata)
-        .enumerate()
-    {
-        chunks.push(Chunk {
-            id: Uuid::new_v4().to_string(),
-            document_id: doc.id.clone(),
-            chunk_index: i as i32,
-            content,
-            embedding,
-            char_start,
-            char_end,
-            metadata_json,
-        });
-    }
-    let n = chunks.len();
-    store.insert_chunks(&chunks)?;
-    Ok(n)
-}
-
 /// Ingest immutable raw text (layer=raw). Re-ingest same uri replaces chunks but keeps raw policy.
 pub async fn ingest_raw(
     store: &Store,
@@ -857,7 +820,6 @@ pub async fn ingest_raw(
         });
 
     let (document_id, created_at) = if let Some(existing) = store.find_by_uri(&uri)? {
-        store.delete_chunks_for_document(&existing.id)?;
         (existing.id, existing.created_at)
     } else {
         (Uuid::new_v4().to_string(), now)
@@ -879,10 +841,16 @@ pub async fn ingest_raw(
         content_hash: None,
         ..Default::default()
     };
+    let chunks = DocumentIndexer::new(embedder.as_ref(), config)
+        .build_plain_chunks(&doc)
+        .await?;
+    let chunk_count = chunks.len();
     // Re-ingest replace path: intentionally does not call assert_content_mutable.
-    store.upsert_document(&doc)?;
-    let chunk_count = embed_and_store_chunks(store, embedder, config, &doc).await?;
-    let (node_id, edge_count) = rebuild_document_graph(store, &doc)?;
+    let write = store.write_document_atomic(
+        &doc,
+        None,
+        DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+    )?;
     let _ = store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
@@ -895,12 +863,12 @@ pub async fn ingest_raw(
         payload_json: "{}".into(),
         agent_name: None,
     })?;
-    let rev = store.get_document(&document_id)?.map(|d| d.revision).unwrap_or(1);
+    let rev = write.revision;
     Ok(crate::models::IngestResult {
         document_id,
         chunk_count,
-        node_id,
-        edge_count,
+        node_id: write.node_id.unwrap_or_default(),
+        edge_count: write.edge_count,
         content_hash: content_hash(&doc.content),
         op: "inserted".into(),
         revision: rev,
@@ -2145,7 +2113,45 @@ fn _touch_compile_page(_: &crate::llm::CompilePage) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use tempfile::tempdir;
+
+    struct FailingEmbedder {
+        dims: usize,
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct ChunkState {
+        id: String,
+        index: i32,
+        content: String,
+        embedding: Vec<f32>,
+        char_start: i32,
+        char_end: i32,
+        metadata_json: String,
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct WikiIndexState {
+        id: String,
+        title: String,
+        kind: String,
+        category: Option<String>,
+        summary: Option<String>,
+        page_id: Option<String>,
+        updated_at: chrono::DateTime<Utc>,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for FailingEmbedder {
+        async fn embed(&self, _texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            Err(AppError::embeddings("injected wiki embedding failure"))
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
 
     fn open_store() -> Store {
         let dir = tempdir().unwrap();
@@ -2238,6 +2244,53 @@ mod tests {
             http_bind: None,
             wiki_require_if_match: false,
         }
+    }
+
+    fn chunk_state(store: &Store, document_id: &str) -> Vec<ChunkState> {
+        store
+            .list_chunks_for_document(document_id)
+            .expect("chunks")
+            .into_iter()
+            .map(|chunk| ChunkState {
+                id: chunk.id,
+                index: chunk.chunk_index,
+                content: chunk.content,
+                embedding: chunk.embedding,
+                char_start: chunk.char_start,
+                char_end: chunk.char_end,
+                metadata_json: chunk.metadata_json,
+            })
+            .collect()
+    }
+
+    fn outgoing_edge_state(
+        store: &Store,
+        node_id: &str,
+    ) -> Vec<(String, String, String, Option<String>)> {
+        let mut state = store
+            .list_graph_edges()
+            .expect("graph edges")
+            .into_iter()
+            .filter(|edge| edge.source_id == node_id)
+            .map(|edge| (edge.id, edge.target_id, edge.rel_type, edge.context))
+            .collect::<Vec<_>>();
+        state.sort();
+        state
+    }
+
+    fn wiki_index_state(store: &Store, slug: &str) -> Option<WikiIndexState> {
+        store
+            .get_wiki_index_by_slug(slug)
+            .expect("wiki index")
+            .map(|entry| WikiIndexState {
+                id: entry.id,
+                title: entry.title,
+                kind: entry.kind,
+                category: entry.category,
+                summary: entry.summary,
+                page_id: entry.page_id,
+                updated_at: entry.updated_at,
+            })
     }
 
     #[tokio::test]
@@ -2601,6 +2654,181 @@ mod tests {
         assert_eq!(fa.prefix.as_deref(), Some("FILE"));
         assert_eq!(fa.entity_id.as_deref(), Some(wr.document_id.as_str()));
         assert_eq!(fa.agent_name.as_deref(), Some("agent-test"));
+    }
+
+    #[tokio::test]
+    async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_effects() {
+        let store = open_store();
+        let dims = 16usize;
+        let config = sample_config(dims);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(dims));
+
+        let written = file_answer(
+            &store,
+            &embedder,
+            &config,
+            "Atomic Answer",
+            "Original answer links to [[Old target]].",
+            Some("atomic-answer"),
+            None,
+            Some("agent-test"),
+        )
+        .await
+        .expect("initial file_answer");
+        let original_document = store
+            .get_document(&written.document_id)
+            .unwrap()
+            .expect("original document");
+        let original_chunks = chunk_state(&store, &written.document_id);
+        let original_node = store
+            .find_node_by_document_id(&written.document_id)
+            .unwrap()
+            .expect("original graph node");
+        let original_edges = outgoing_edge_state(&store, &original_node.id);
+        let original_index = wiki_index_state(&store, "atomic-answer");
+        let original_ops_count = store.list_ops_log(100).unwrap().len();
+
+        let failing_embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(FailingEmbedder { dims });
+        let error = file_answer(
+            &store,
+            &failing_embedder,
+            &config,
+            "Changed Answer",
+            "Changed answer links to [[New target]].",
+            Some("atomic-answer"),
+            None,
+            Some("agent-test"),
+        )
+        .await
+        .expect_err("embedding must fail before persistence");
+        assert!(error
+            .to_string()
+            .contains("injected wiki embedding failure"));
+
+        let persisted_document = store
+            .get_document(&written.document_id)
+            .unwrap()
+            .expect("document after embedding failure");
+        assert_eq!(persisted_document.revision, original_document.revision);
+        assert_eq!(persisted_document.title, original_document.title);
+        assert_eq!(persisted_document.content, original_document.content);
+        assert_eq!(chunk_state(&store, &written.document_id), original_chunks);
+        let persisted_node = store
+            .find_node_by_document_id(&written.document_id)
+            .unwrap()
+            .expect("graph node after embedding failure");
+        assert_eq!(persisted_node.id, original_node.id);
+        assert_eq!(persisted_node.label, original_node.label);
+        assert_eq!(
+            outgoing_edge_state(&store, &persisted_node.id),
+            original_edges
+        );
+        assert!(store.find_nodes_by_label("New target").unwrap().is_empty());
+        assert_eq!(wiki_index_state(&store, "atomic-answer"), original_index);
+        assert_eq!(store.list_ops_log(100).unwrap().len(), original_ops_count);
+    }
+
+    #[tokio::test]
+    async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
+        let store = open_store();
+        let dims = 16usize;
+        let config = sample_config(dims);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(dims));
+
+        let written = write_wiki_page(
+            &store,
+            &embedder,
+            &config,
+            "atomic-wiki-update",
+            "Original Wiki Title",
+            "Original body links to [[Old target]].",
+            "wiki",
+            Some("tests"),
+            Some("original summary"),
+            Some("agent-test"),
+        )
+        .await
+        .expect("initial wiki write");
+        let original_document = store
+            .get_document(&written.document_id)
+            .unwrap()
+            .expect("original document");
+        let original_chunks = chunk_state(&store, &written.document_id);
+        let original_node = store
+            .find_node_by_document_id(&written.document_id)
+            .unwrap()
+            .expect("original graph node");
+        let original_edges = outgoing_edge_state(&store, &original_node.id);
+        let original_index = wiki_index_state(&store, "atomic-wiki-update");
+        let original_ops_count = store.list_ops_log(100).unwrap().len();
+
+        // Test-only fault injector: the graph rebuild inserts the first edge,
+        // then the duplicate violates this constraint after doc/chunk writes.
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "CREATE UNIQUE INDEX wiki_rollback_edge_key ON graph_edges(source_id, target_id, rel_type)",
+                [],
+            )
+            .expect("fault index");
+
+        let error = update_wiki_page_cas(
+            &store,
+            &embedder,
+            &config,
+            "atomic-wiki-update",
+            Some("Changed Wiki Title"),
+            "Changed body [[Repeated target]] and [[Repeated target]].",
+            None,
+            None,
+            Some("changed summary"),
+            Some("agent-test"),
+            Some(written.revision),
+        )
+        .await
+        .expect_err("duplicate graph edge must fail the wiki transaction");
+        assert!(
+            error.to_string().contains("duplicate")
+                || error.to_string().contains("constraint")
+                || error.to_string().contains("unique"),
+            "unexpected fault: {error}"
+        );
+
+        let persisted_document = store
+            .get_document(&written.document_id)
+            .unwrap()
+            .expect("document after graph rollback");
+        assert_eq!(persisted_document.revision, original_document.revision);
+        assert_eq!(persisted_document.title, original_document.title);
+        assert_eq!(persisted_document.content, original_document.content);
+        assert_eq!(chunk_state(&store, &written.document_id), original_chunks);
+        let persisted_node = store
+            .find_node_by_document_id(&written.document_id)
+            .unwrap()
+            .expect("graph node after rollback");
+        assert_eq!(persisted_node.id, original_node.id);
+        assert_eq!(persisted_node.label, original_node.label);
+        assert_eq!(
+            outgoing_edge_state(&store, &persisted_node.id),
+            original_edges
+        );
+        assert!(store
+            .find_nodes_by_label("Repeated target")
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .list_document_revisions(&written.document_id)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            wiki_index_state(&store, "atomic-wiki-update"),
+            original_index
+        );
+        assert_eq!(store.list_ops_log(100).unwrap().len(), original_ops_count);
     }
 
     #[tokio::test]

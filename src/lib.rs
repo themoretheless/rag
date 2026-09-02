@@ -19,6 +19,7 @@ pub mod config;
 pub mod db;
 pub mod diagnostics;
 pub mod diary;
+pub mod document_indexer;
 pub mod embeddings;
 pub mod error;
 pub mod file_ingest;

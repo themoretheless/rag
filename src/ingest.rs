@@ -6,13 +6,13 @@ use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::chunking::{code_chunks, from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
 use crate::db::store::DocumentDerivedWrite;
 use crate::db::Store;
+use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
-use crate::models::{Chunk, Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
+use crate::models::{Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
 use crate::util::content_hash;
 
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ pub struct UpdateDocumentResult {
 
 pub struct IngestService<'a> {
     store: &'a Store,
-    embedder: &'a Arc<dyn EmbeddingProvider>,
+    indexer: DocumentIndexer<'a>,
     config: &'a Config,
 }
 
@@ -81,7 +81,7 @@ impl<'a> IngestService<'a> {
     ) -> Self {
         Self {
             store,
-            embedder,
+            indexer: DocumentIndexer::new(embedder.as_ref(), config),
             config,
         }
     }
@@ -145,7 +145,7 @@ impl<'a> IngestService<'a> {
             content_hash: Some(new_hash.clone()),
             ..Default::default()
         };
-        let chunks = self.build_chunks(&document).await?;
+        let chunks = self.indexer.build_chunks(&document).await?;
         let chunk_count = chunks.len();
         let write = self.store.write_document_atomic(
             &document,
@@ -180,15 +180,7 @@ impl<'a> IngestService<'a> {
         let mut chunks = self.store.list_chunks_for_document(&document.id)?;
         let chunk_count = chunks.len();
         if !chunks.is_empty() {
-            let texts = chunks
-                .iter()
-                .map(|chunk| chunk.content.clone())
-                .collect::<Vec<_>>();
-            let embeddings = self.embedder.embed(&texts).await?;
-            ensure_vector_count(embeddings.len(), chunks.len())?;
-            for (chunk, embedding) in chunks.iter_mut().zip(embeddings) {
-                chunk.embedding = embedding;
-            }
+            self.indexer.reembed_chunks(&mut chunks).await?;
             self.store
                 .replace_chunks_for_document(&document.id, &chunks)?;
         }
@@ -220,7 +212,7 @@ impl<'a> IngestService<'a> {
 
         let (write, chunk_count, reembedded) = if applied.content_changed {
             self.ensure_vector_compatibility()?;
-            let chunks = self.build_plain_chunks(&applied.document).await?;
+            let chunks = self.indexer.build_plain_chunks(&applied.document).await?;
             let chunk_count = chunks.len();
             let write = self.store.write_document_atomic(
                 &applied.document,
@@ -295,84 +287,6 @@ impl<'a> IngestService<'a> {
         self.store
             .require_embedding_dims_match(self.config.embedding_dims)
     }
-
-    async fn build_chunks(&self, document: &Document) -> Result<Vec<Chunk>, AppError> {
-        let is_code = serde_json::from_str::<serde_json::Value>(&document.metadata_json)
-            .ok()
-            .and_then(|value| value.get("language").cloned())
-            .is_some();
-        let pieces = if is_code {
-            code_chunks(
-                &document.content,
-                self.config.chunk_size,
-                self.config.chunk_overlap,
-            )
-        } else {
-            let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
-            Chunker::chunk(&chunker, &document.content)
-        };
-        if pieces.is_empty() {
-            return Ok(Vec::new());
-        }
-        let section_metadata = markdown_section_metadata(&document.content, &pieces);
-        let texts = pieces
-            .iter()
-            .map(|(content, _, _)| content.clone())
-            .collect::<Vec<_>>();
-        let embeddings = self.embedder.embed(&texts).await?;
-        ensure_vector_count(embeddings.len(), pieces.len())?;
-        Ok(pieces
-            .into_iter()
-            .zip(embeddings)
-            .zip(section_metadata)
-            .enumerate()
-            .map(
-                |(index, (((content, char_start, char_end), embedding), metadata_json))| Chunk {
-                    id: Uuid::new_v4().to_string(),
-                    document_id: document.id.clone(),
-                    chunk_index: index as i32,
-                    content,
-                    embedding,
-                    char_start,
-                    char_end,
-                    metadata_json,
-                },
-            )
-            .collect())
-    }
-
-    async fn build_plain_chunks(&self, document: &Document) -> Result<Vec<Chunk>, AppError> {
-        let chunker = from_config(self.config.chunk_size, self.config.chunk_overlap);
-        let pieces = Chunker::chunk(&chunker, &document.content);
-        if pieces.is_empty() {
-            return Ok(Vec::new());
-        }
-        let section_metadata = markdown_section_metadata(&document.content, &pieces);
-        let texts = pieces
-            .iter()
-            .map(|(content, _, _)| content.clone())
-            .collect::<Vec<_>>();
-        let embeddings = self.embedder.embed(&texts).await?;
-        ensure_vector_count(embeddings.len(), pieces.len())?;
-        Ok(pieces
-            .into_iter()
-            .zip(embeddings)
-            .zip(section_metadata)
-            .enumerate()
-            .map(
-                |(index, (((content, char_start, char_end), embedding), metadata_json))| Chunk {
-                    id: Uuid::new_v4().to_string(),
-                    document_id: document.id.clone(),
-                    chunk_index: index as i32,
-                    content,
-                    embedding,
-                    char_start,
-                    char_end,
-                    metadata_json,
-                },
-            )
-            .collect())
-    }
 }
 
 struct NormalizedIngest {
@@ -429,16 +343,6 @@ fn normalized_or(value: String, fallback: &str) -> String {
         fallback.to_string()
     } else {
         value.to_string()
-    }
-}
-
-fn ensure_vector_count(actual: usize, expected: usize) -> Result<(), AppError> {
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(AppError::embeddings(format!(
-            "embedder returned {actual} vectors for {expected} chunks"
-        )))
     }
 }
 
