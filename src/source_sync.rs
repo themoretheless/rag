@@ -89,6 +89,7 @@ pub enum SourceSyncPhase {
     Scanning,
     Syncing,
     RemovingDeleted,
+    RefreshingFts,
     Completed,
     Cancelled,
 }
@@ -566,6 +567,31 @@ impl<'a> SourceSyncService<'a> {
         }
         let seen_paths = seen.iter().cloned().collect::<Vec<_>>();
         self.store.mark_source_manifest_seen(&root, &seen_paths)?;
+        control.publish(SourceSyncProgress::from_report(
+            SourceSyncPhase::RefreshingFts,
+            total_files,
+            total_files,
+            None,
+            &report,
+        ));
+        if control.is_cancelled() {
+            return Ok(cancelled_outcome(
+                &control,
+                report,
+                total_files,
+                total_files,
+            ));
+        }
+        // A source sync owns the lexical coordination lane until its derived
+        // index is generation-clean. Otherwise the first user search after a
+        // bulk update pays the entire serialized BM25 rebuild cost.
+        let store = self.store.clone();
+        let stemmer = self.config.fts_stemmer.clone();
+        tokio::task::spawn_blocking(move || store.ensure_fts(&stemmer))
+            .await
+            .map_err(|error| {
+                AppError::fts(format!("source-sync FTS refresh task failed: {error}"))
+            })??;
         report.sort_paths();
         control.publish(SourceSyncProgress::from_report(
             SourceSyncPhase::Completed,
@@ -1504,6 +1530,11 @@ mod tests {
             ..Config::for_tests()
         };
         let store = Store::open(&config.db_path).unwrap();
+        store.ensure_fts(&config.fts_stemmer).unwrap();
+        let generation_before = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
         let calls = Arc::new(Mutex::new(Vec::new()));
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
             dims: 4,
@@ -1543,10 +1574,54 @@ mod tests {
         assert_eq!(store.list_documents().unwrap().len(), 1);
         assert_eq!(store.list_documents().unwrap()[0].title, "a.md");
         assert_eq!(calls.lock().unwrap().len(), 1);
+        let generation_after_cancel = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(generation_after_cancel.dirty);
+        assert_eq!(
+            generation_after_cancel.chunks_generation,
+            generation_before.chunks_generation + 1
+        );
+        assert_eq!(
+            generation_after_cancel.index_generation,
+            generation_before.index_generation
+        );
+        assert_eq!(
+            generation_after_cancel.rebuild_count,
+            generation_before.rebuild_count
+        );
         let progress = progress.lock().unwrap();
         let final_snapshot = progress.last().unwrap();
         assert_eq!(final_snapshot.phase, SourceSyncPhase::Cancelled);
         assert_eq!(final_snapshot.processed_files, 1);
+        assert!(!progress
+            .iter()
+            .any(|snapshot| snapshot.phase == SourceSyncPhase::RefreshingFts));
+        drop(progress);
+
+        let hits = crate::db::search::search(
+            &store,
+            &crate::db::search::SearchQuery {
+                mode: crate::models::SearchMode::Lex,
+                query_text: Some("body".into()),
+                top_k: 5,
+                fts_stemmer: config.fts_stemmer.clone(),
+                ..crate::db::search::SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].document_title, "a.md");
+        let generation_after_search = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(!generation_after_search.dirty);
+        assert_eq!(
+            generation_after_search.rebuild_count,
+            generation_after_cancel.rebuild_count + 1
+        );
     }
 
     #[tokio::test]
@@ -1734,6 +1809,217 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(store.list_source_roots(None).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn completed_sync_prepares_fts_before_the_first_user_search() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let source = root.path().join("README.md");
+        std::fs::write(&source, "alpha baseline").unwrap();
+        let config = Config {
+            db_path: db.path().join("sync-fts.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
+        let service = SourceSyncService::new(&store, &embedder, &config);
+        store.ensure_fts(&config.fts_stemmer).unwrap();
+        let generation_state = || {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        let search = |query: &str| {
+            crate::db::search::search(
+                &store,
+                &crate::db::search::SearchQuery {
+                    mode: crate::models::SearchMode::Lex,
+                    query_text: Some(query.to_string()),
+                    top_k: 5,
+                    timeout_ms: Some(5_000),
+                    fts_stemmer: config.fts_stemmer.clone(),
+                    ..crate::db::search::SearchQuery::default()
+                },
+            )
+            .unwrap()
+        };
+        let before = generation_state();
+
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let phases_from_progress = phases.clone();
+        let outcome = service
+            .sync_with_control(
+                SourceSyncCommand::new(root.path().to_path_buf()),
+                SourceSyncControl::new(CancellationToken::new(), move |progress| {
+                    phases_from_progress.lock().unwrap().push(progress.phase);
+                }),
+            )
+            .await
+            .unwrap();
+        let SourceSyncOutcome::Completed(first) = outcome else {
+            panic!("expected completed sync");
+        };
+        assert_eq!(first.added.len(), 1);
+        {
+            let phases = phases.lock().unwrap();
+            assert!(
+                phases.ends_with(&[SourceSyncPhase::RefreshingFts, SourceSyncPhase::Completed,])
+            );
+        }
+        let after_sync = generation_state();
+        assert!(!after_sync.dirty);
+        assert_eq!(after_sync.chunks_generation, before.chunks_generation + 1);
+        assert_eq!(
+            after_sync.index_generation,
+            Some(after_sync.chunks_generation)
+        );
+        assert_eq!(after_sync.rebuild_count, before.rebuild_count + 1);
+
+        let hits = search("alpha");
+        assert_eq!(hits.len(), 1);
+        let after_first_search = generation_state();
+        assert_eq!(after_first_search, after_sync);
+
+        let warm = service
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+        assert_eq!(warm.skipped.len(), 1);
+        let after_warm_sync = generation_state();
+        assert_eq!(after_warm_sync, after_sync);
+
+        std::fs::write(&source, "beta replacement").unwrap();
+        let changed = service
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+        assert_eq!(changed.updated.len(), 1);
+        let after_changed_sync = generation_state();
+        assert!(!after_changed_sync.dirty);
+        assert_eq!(
+            after_changed_sync.chunks_generation,
+            after_sync.chunks_generation + 1
+        );
+        assert_eq!(
+            after_changed_sync.rebuild_count,
+            after_sync.rebuild_count + 1
+        );
+        let hits = search("beta");
+        assert_eq!(hits.len(), 1);
+        let after_changed_search = generation_state();
+        assert_eq!(after_changed_search, after_changed_sync);
+
+        std::fs::remove_file(source).unwrap();
+        let deleted = service
+            .sync(SourceSyncCommand {
+                remove_deleted: true,
+                ..SourceSyncCommand::new(root.path().to_path_buf())
+            })
+            .await
+            .unwrap();
+        assert_eq!(deleted.deleted.len(), 1);
+        let after_delete_sync = generation_state();
+        assert!(!after_delete_sync.dirty);
+        assert_eq!(
+            after_delete_sync.chunks_generation,
+            after_changed_sync.chunks_generation + 1
+        );
+        assert_eq!(
+            after_delete_sync.rebuild_count,
+            after_changed_sync.rebuild_count + 1
+        );
+        assert!(search("beta").is_empty());
+        assert_eq!(generation_state(), after_delete_sync);
+    }
+
+    #[tokio::test]
+    async fn completed_sync_with_file_error_still_prepares_fts() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let source = root.path().join("README.md");
+        std::fs::write(&source, "alpha baseline").unwrap();
+        let config = Config {
+            db_path: db.path().join("sync-fts-with-error.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
+        let service = SourceSyncService::new(&store, &embedder, &config);
+        let command = || SourceSyncCommand {
+            max_file_bytes: Some(32),
+            ..SourceSyncCommand::new(root.path().to_path_buf())
+        };
+
+        let initial = service.sync(command()).await.unwrap();
+        assert_eq!(initial.added.len(), 1);
+        assert!(initial.errors.is_empty());
+        let generation_before = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+
+        std::fs::write(&source, "needle replacement").unwrap();
+        let oversized = root.path().join("oversized.md");
+        std::fs::write(&oversized, "x".repeat(64)).unwrap();
+        let outcome = service
+            .sync_with_control(command(), SourceSyncControl::default())
+            .await
+            .unwrap();
+        let SourceSyncOutcome::Completed(report) = outcome else {
+            panic!("expected completed sync with a per-file error");
+        };
+
+        assert_eq!(
+            report.updated,
+            vec![source.canonicalize().unwrap().display().to_string()]
+        );
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(
+            report.errors[0].path,
+            oversized.canonicalize().unwrap().display().to_string()
+        );
+        assert!(report.errors[0].error.contains("exceeds max_file_bytes"));
+        let generation_after_sync = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(!generation_after_sync.dirty);
+        assert_eq!(
+            generation_after_sync.chunks_generation,
+            generation_before.chunks_generation + 1
+        );
+        assert_eq!(
+            generation_after_sync.index_generation,
+            Some(generation_after_sync.chunks_generation)
+        );
+        assert_eq!(
+            generation_after_sync.rebuild_count,
+            generation_before.rebuild_count + 1
+        );
+
+        let hits = crate::db::search::search(
+            &store,
+            &crate::db::search::SearchQuery {
+                mode: crate::models::SearchMode::Lex,
+                query_text: Some("needle".into()),
+                top_k: 5,
+                timeout_ms: Some(5_000),
+                fts_stemmer: config.fts_stemmer.clone(),
+                ..crate::db::search::SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].document_title, "README.md");
+        let generation_after_search = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert_eq!(generation_after_search, generation_after_sync);
     }
 
     #[tokio::test]
