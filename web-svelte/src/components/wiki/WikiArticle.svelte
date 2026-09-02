@@ -152,6 +152,8 @@
           </div>
         </header>
         <!-- markdown is escaped inside renderWikiHtml; wikilinks route via onClick -->
+        <!-- svelte-ignore a11y_click_events_have_key_events (delegated wikilink routing) -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions (delegated wikilink routing) -->
         <div class="body prose" onclick={onClick} role="document">
           {@html html}
         </div>

@@ -37,6 +37,7 @@
   --graph-node-wiki: #a78bfa;
   --graph-node-tag: #2dd4bf;
   --graph-node-stub: #64748b;
+  --graph-node-entity: #f0b64a;
   --graph-edge: rgba(148, 163, 184, 0.28);
   --graph-edge-wikilink: rgba(167, 139, 250, 0.55);
   --graph-glow: rgba(167, 139, 250, 0.4);
@@ -59,12 +60,15 @@
   --bg: #f7f6f3;
   --bg-elevated: #ffffff;
   --bg-sidebar: #f1efe8;
+  --surface: #ffffff;
+  --surface-2: #eeece5;
   --bg-hover: rgba(55, 53, 47, 0.08);
   --bg-active: rgba(35, 131, 226, 0.14);
   --text: #37352f;
   --text-muted: #787774;
   --text-faint: #9b9a97;
   --border: rgba(55, 53, 47, 0.09);
+  --border-strong: rgba(55, 53, 47, 0.18);
   --accent: #2383e2;
   --accent-soft: rgba(35, 131, 226, 0.12);
   --danger: #e03e3e;
@@ -80,6 +84,7 @@
   --graph-node-wiki: #6d28d9;
   --graph-node-tag: #0f766e;
   --graph-node-stub: #64748b;
+  --graph-node-entity: #b7791f;
   --graph-edge: rgba(55, 53, 47, 0.22);
   --graph-edge-wikilink: rgba(109, 40, 217, 0.5);
   --graph-glow: rgba(109, 40, 217, 0.18);

@@ -12,16 +12,12 @@
       e.preventDefault()
       ui.openCommand()
     }
-    if (meta && e.key.toLowerCase() === 'b') {
-      e.preventDefault()
-      ui.toggleSidebar()
-    }
   }
 </script>
 
 <svelte:window onkeydown={onKey} />
 
-<div class="shell" class:collapsed={ui.sidebarCollapsed}>
+<div class="shell">
   <div class="body">
     <SideNav />
     <div class="workspace"><TopBar /><main class="main">{@render children()}</main></div>

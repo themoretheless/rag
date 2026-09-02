@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import { select, type Selection } from 'd3-selection'
   import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom'
   import { graph } from '@/lib/state/graph.svelte'
@@ -11,7 +11,6 @@
     type SimLink,
     type SimNode,
   } from '@/lib/forceLayout'
-  import Minimap, { type MinimapPoint, type MinimapTransform } from './Minimap.svelte'
 
   let host: HTMLDivElement | null = $state(null)
   let cleanup: (() => void) | null = null
@@ -25,15 +24,6 @@
   let nodeSel: Selection<SVGGElement, SimNode, SVGGElement, unknown> | null = null
   let linkSel: Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null = null
   let currentTransform: ZoomTransform = zoomIdentity
-
-  /** Minimap live snapshot (updated on tick/zoom/paint). */
-  let mapPoints = $state<MinimapPoint[]>([])
-  let mapTransform = $state<MinimapTransform>({ x: 0, y: 0, k: 1 })
-
-  function pushFrame() {
-    mapPoints = liveNodes.map((n) => ({ id: n.id, x: n.x ?? 0, y: n.y ?? 0, kind: n.kind }))
-    mapTransform = { x: currentTransform.x, y: currentTransform.y, k: currentTransform.k }
-  }
 
   export function fitView() {
     if (!svgSel || !zoomBehavior) return
@@ -64,23 +54,23 @@
     const pad = 48
     const bw = Math.max(1, maxX - minX)
     const bh = Math.max(1, maxY - minY)
+    const usableW = Math.max(360, viewW - (graph.selectedId ? 360 : 0))
     const scale = Math.max(
-      0.15,
-      Math.min(4, Math.min(viewW / (bw + pad * 2), viewH / (bh + pad * 2))),
+      0.35,
+      Math.min(1.8, Math.min(usableW / (bw + pad * 2), viewH / (bh + pad * 2))),
     )
-    const tx = viewW / 2 - (scale * (minX + maxX)) / 2
+    const tx = usableW / 2 - (scale * (minX + maxX)) / 2
     const ty = viewH / 2 - (scale * (minY + maxY)) / 2
     svgSel.call(zoomBehavior.transform as never, zoomIdentity.translate(tx, ty).scale(scale))
   }
 
-  /** Center the viewport on a world-space point (minimap navigation). */
-  function centerOn(x: number, y: number) {
+  function zoomBy(factor: number) {
     if (!svgSel || !zoomBehavior) return
-    const k = currentTransform.k || 1
-    const t = zoomIdentity.translate(viewW / 2 - k * x, viewH / 2 - k * y).scale(k)
-    // No d3-transition dependency: jump directly (zoom handler repaints).
-    svgSel.call(zoomBehavior.transform as never, t)
+    svgSel.call(zoomBehavior.scaleBy as never, factor)
   }
+
+  export function zoomIn() { zoomBy(1.25) }
+  export function zoomOut() { zoomBy(0.8) }
 
   function paint() {
     cleanup?.()
@@ -124,11 +114,10 @@
     const root = svg.append('g').attr('class', 'viewport')
 
     const z = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.15, 4])
+      .scaleExtent([0.3, 2.5])
       .on('zoom', (event) => {
         currentTransform = event.transform
         root.attr('transform', event.transform)
-        pushFrame()
       })
     zoomBehavior = z
     currentTransform = zoomIdentity
@@ -144,7 +133,6 @@
         .attr('fill', 'var(--graph-panel-muted)')
         .attr('font-size', 14)
         .text(graph.loading ? ui.t('graphLoading') : graph.error || ui.t('graphNoNodes'))
-      pushFrame()
       cleanup = () => {
         el.innerHTML = ''
         svgSel = null
@@ -166,10 +154,9 @@
       .selectAll<SVGLineElement, SimLink>('line')
       .data(simLinks)
       .join('line')
-      .attr('stroke', (d) =>
-        d.rel_type === 'wikilink' ? 'var(--graph-edge-wikilink)' : 'var(--graph-edge)',
-      )
-      .attr('stroke-width', (d) => (d.rel_type === 'wikilink' ? 1.6 : 1))
+      .attr('stroke', (d) => d.rel_type === 'wikilink' ? 'var(--graph-edge-wikilink)' : d.rel_type === 'tagged' ? 'var(--graph-node-tag)' : d.rel_type === 'tunnel' ? 'var(--graph-node-entity)' : 'var(--graph-edge)')
+      .attr('stroke-width', (d) => d.rel_type === 'tunnel' ? 2 : d.rel_type === 'wikilink' ? 1.6 : 1)
+      .attr('stroke-dasharray', (d) => d.rel_type === 'tagged' ? '2 4' : d.rel_type === 'tunnel' ? '7 5' : null)
       .attr('stroke-opacity', 0.85)
     linkSel = link
 
@@ -186,6 +173,8 @@
         if (event.defaultPrevented) return
         graph.select(d.id)
       })
+      .on('mouseenter', (_event, d) => { graph.hoveredId = d.id; applySelection() })
+      .on('mouseleave', () => { graph.hoveredId = null; applySelection() })
     nodeSel = nodeG
 
     nodeG
@@ -203,18 +192,21 @@
       .attr('stroke', 'var(--graph-node-stroke)')
       .attr('stroke-width', 1)
 
-    nodeG
+    const labels = nodeG
       .append('text')
       .text((d) => (d.label.length > 28 ? d.label.slice(0, 26) + '…' : d.label))
       .attr('x', (d) => d.radius + 6)
       .attr('y', 4)
       .attr('fill', 'var(--graph-label)')
       .attr('font-size', 11)
-      .attr('font-family', 'Inter, system-ui, sans-serif')
+      .attr('font-family', 'Golos Text, system-ui, sans-serif')
       .attr('paint-order', 'stroke')
       .attr('stroke', 'var(--graph-label-stroke)')
       .attr('stroke-width', 3)
 
+    labels.attr('display', (d) => graph.labelMode === 'all' || (graph.labelMode === 'hubs' && d.radius >= 11) ? null : 'none')
+
+    let tickCount = 0
     function tick() {
       link
         .attr('x1', (d) => (d.source as SimNode).x ?? 0)
@@ -222,7 +214,8 @@
         .attr('x2', (d) => (d.target as SimNode).x ?? 0)
         .attr('y2', (d) => (d.target as SimNode).y ?? 0)
       nodeG.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
-      pushFrame()
+      tickCount += 1
+      if (tickCount === 100) fitView()
     }
 
     sim.on('tick', tick)
@@ -253,6 +246,7 @@
           d.id === id ? 'var(--graph-node-stroke-selected)' : 'var(--graph-node-stroke)',
         )
       nodeSel.attr('opacity', (d: SimNode) => (focus && !focus.has(d.id) ? 0.25 : 1))
+      nodeSel.select('text').attr('display', (d: SimNode) => graph.labelMode === 'all' || (graph.labelMode === 'hubs' && (d.radius >= 11 || d.id === graph.hoveredId || d.id === id)) ? null : 'none')
     }
     if (linkSel) {
       linkSel.attr('stroke-opacity', (d) =>
@@ -264,18 +258,23 @@
   }
 
   $effect(() => {
-    // Repaint when the data, loading state or layout mode changes.
+    // Keep the previous graph stable while a replacement request is loading.
+    // Loading text only needs a repaint when there is no graph yet.
     void graph.nodes
     void graph.edges
-    void graph.loading
     void graph.layout
-    paint()
+    void graph.mode
+    if (graph.layout === 'radial') void graph.seed
+    if (!graph.nodes.length) void graph.loading
+    untrack(paint)
   })
 
   $effect(() => {
     // Cheap attr updates only; no repaint.
     void graph.selectedId
     void graph.focusNodeIds
+    void graph.hoveredId
+    void graph.labelMode
     applySelection()
   })
 
@@ -295,13 +294,7 @@
 
 <div class="stage">
   <div bind:this={host} class="canvas" tabindex="-1"></div>
-  <Minimap
-    points={mapPoints}
-    transform={mapTransform}
-    viewWidth={viewW}
-    viewHeight={viewH}
-    onnavigate={(p) => centerOn(p.x, p.y)}
-  />
+  <div class="hint">Тяните узел — соседи потянутся и спружинят обратно · фон — панорама · физика: rubber</div>
 </div>
 
 <style>
@@ -314,8 +307,11 @@
     inset: 0;
     overflow: hidden;
     background:
+      radial-gradient(rgba(255,255,255,.055) 1px,transparent 1px),
       radial-gradient(1200px 600px at 50% 40%, var(--graph-vignette-a), transparent 60%),
       radial-gradient(800px 500px at 20% 80%, var(--graph-vignette-b), transparent 55%),
       var(--graph-bg);
+    background-size:26px 26px,auto,auto,auto;
   }
+  .hint{position:absolute;right:14px;bottom:14px;padding:8px 11px;border:1px solid var(--graph-panel-border);border-radius:9px;background:var(--graph-panel-bg);color:var(--graph-panel-muted);font-size:11.5px;pointer-events:none;backdrop-filter:blur(8px)}
 </style>

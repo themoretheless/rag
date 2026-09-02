@@ -23,6 +23,7 @@ body {
 .screen-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}.screen-head h1{font-size:22px;letter-spacing:-.03em;margin:0}.screen-head p{margin:4px 0 0;color:var(--text-muted);font-size:12px}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:12px}.panel-title{padding:12px 14px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600}.mono{font-family:var(--mono)}
 .primary,.secondary{height:31px;padding:0 13px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px}.primary{border:0;background:linear-gradient(135deg,var(--l3),var(--l0));color:#090b10}.secondary{border:1px solid var(--border);background:rgba(255,255,255,.025);color:var(--text-muted)}
+.primary:disabled,.secondary:disabled{cursor:not-allowed;filter:saturate(.45);opacity:.46}
 
 button,
 input,

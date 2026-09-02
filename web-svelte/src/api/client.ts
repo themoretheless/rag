@@ -11,8 +11,11 @@ import type {
 
 const base = () => (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
 
+/** Resolve a gateway path for browser links as well as fetch requests. */
+export const apiUrl = (path: string) => `${base()}${path}`
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = `${base()}${path}`
+  const url = apiUrl(path)
   const res = await fetch(url, {
     ...init,
     headers: {
@@ -26,6 +29,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 400) || res.statusText}`)
   }
   return res.json() as Promise<T>
+}
+
+/** Run independent dashboard loaders without letting one failed panel hide the rest. */
+export async function loadPanels(
+  panels: ReadonlyArray<readonly [label: string, load: () => Promise<void>]>,
+): Promise<string[]> {
+  const outcomes = await Promise.all(
+    panels.map(async ([label, load]) => {
+      try {
+        await load()
+        return null
+      } catch {
+        return label
+      }
+    }),
+  )
+  return outcomes.filter((label): label is string => label !== null)
 }
 
 /** Build query string from wiki list params (skips undefined / empty). */
@@ -69,20 +89,23 @@ export const api = {
   backlinks: (id: string) =>
     request<BacklinksResponse>(`/v1/backlinks?id=${encodeURIComponent(id)}`),
 
-  graph: (opts?: { max_nodes?: number; include_tags?: boolean }) => {
+  graph: (opts?: { max_nodes?: number; include_tags?: boolean; project?: string }) => {
     const q = new URLSearchParams()
     if (opts?.max_nodes) q.set('max_nodes', String(opts.max_nodes))
     if (opts?.include_tags) q.set('include_tags', 'true')
+    if (opts?.project) q.set('project', opts.project)
     const s = q.toString()
     return request<GraphView>(`/v1/graph${s ? `?${s}` : ''}`)
   },
 
-  neighbors: (seed: string, depth = 1, max_nodes = 100) => {
+  neighbors: (seed: string, depth = 1, max_nodes = 100, include_tags = false, project = '') => {
     const q = new URLSearchParams({
       seed,
       depth: String(depth),
       max_nodes: String(max_nodes),
     })
+    if (include_tags) q.set('include_tags', 'true')
+    if (project) q.set('project', project)
     return request<GraphView>(`/v1/neighbors?${q}`)
   },
 

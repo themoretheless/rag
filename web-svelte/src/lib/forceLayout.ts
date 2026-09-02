@@ -40,6 +40,7 @@ export function nodeColor(kind?: string): string {
   const k = (kind || '').toLowerCase()
   if (k.includes('tag')) return 'var(--graph-node-tag)'
   if (k.includes('stub')) return 'var(--graph-node-stub)'
+  if (k.includes('entity')) return 'var(--graph-node-entity)'
   if (k.includes('wiki') || k.includes('page')) return 'var(--graph-node-wiki)'
   return 'var(--graph-node-doc)'
 }
@@ -54,6 +55,7 @@ function legendBucket(kind?: string): string {
   const k = (kind || '').toLowerCase()
   if (k.includes('tag')) return 'tag'
   if (k.includes('stub')) return 'stub'
+  if (k.includes('entity')) return 'entity'
   if (k.includes('wiki') || k.includes('page')) return 'wiki'
   return 'document'
 }

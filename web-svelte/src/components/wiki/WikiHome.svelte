@@ -5,10 +5,34 @@
   import { pageIcon } from '@/lib/pageIcon'
   import type { WikiPageMeta } from '@/api/types'
 
-  const offline = $derived(Boolean(ui.healthError || wiki.error))
+  function isTransportError(message: string | null): boolean {
+    if (!message) return false
+    return /failed to fetch|fetch failed|network ?error|network request failed|load failed|econnrefused|connection refused|err_connection|connection reset|socket hang up/i.test(message)
+  }
+
+  const requestError = $derived(wiki.pageError ?? wiki.catalogError)
+  const offlineError = $derived(
+    isTransportError(requestError)
+      ? requestError
+      : requestError && isTransportError(ui.healthError)
+        ? ui.healthError
+        : null,
+  )
+  const offline = $derived(Boolean(offlineError))
+  const requestFailed = $derived(Boolean(requestError && !offline))
+  const requestErrorTitle = $derived(
+    wiki.pageError
+      ? ui.locale === 'ru' ? 'Не удалось открыть страницу' : 'Could not open the page'
+      : ui.locale === 'ru' ? 'Не удалось загрузить вики' : 'Could not load the wiki',
+  )
+  const requestErrorHint = $derived(
+    ui.locale === 'ru'
+      ? 'Шлюз ответил, но запрос не выполнен. Проверьте детали и повторите.'
+      : 'The gateway responded, but the request failed. Check the details and retry.',
+  )
 
   /** Catalog loaded successfully but contains no pages. */
-  const emptyCatalog = $derived(!offline && !wiki.loading && !wiki.pages.length)
+  const emptyCatalog = $derived(!requestError && !wiki.loading && !wiki.pages.length)
 
   interface PageGroup {
     category: string | null
@@ -58,7 +82,11 @@
 
   function retry() {
     void ui.checkHealth()
-    void wiki.loadCatalog()
+    if (wiki.pageError && route.pageId) {
+      void wiki.openPage(route.pageId, false)
+    } else {
+      void wiki.loadCatalog()
+    }
   }
 
   function iconFor(p: { slug?: string | null; id: string }) {
@@ -71,9 +99,17 @@
     <div class="state">
       <div class="state-icon" aria-hidden="true">⛔</div>
       <h2>{ui.t('offlineTitle')}</h2>
-      <p class="err-text">{ui.healthError || wiki.error}</p>
+      <p class="err-text">{offlineError}</p>
       <p class="muted-text">{ui.t('offlineHint')}</p>
       <code class="cmd-line">RAG_HTTP_BIND=127.0.0.1:7432 RAG_HTTP_ONLY=true ./target/release/rag-mcp</code>
+      <button type="button" class="primary" onclick={retry}>{ui.t('retry')}</button>
+    </div>
+  {:else if requestFailed}
+    <div class="state" role="alert">
+      <div class="state-icon" aria-hidden="true">⚠</div>
+      <h2>{requestErrorTitle}</h2>
+      <p class="err-text">{requestError}</p>
+      <p class="muted-text">{requestErrorHint}</p>
       <button type="button" class="primary" onclick={retry}>{ui.t('retry')}</button>
     </div>
   {:else if emptyCatalog}

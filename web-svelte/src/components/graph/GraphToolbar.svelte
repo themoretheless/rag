@@ -1,164 +1,20 @@
 <script lang="ts">
   import { graph } from '@/lib/state/graph.svelte'
-  import { ui } from '@/lib/state/ui.svelte'
   import type { LayoutMode } from '@/lib/forceLayout'
-
-  let {
-    onexpand,
-    onfull,
-    onfit,
-  }: {
-    onexpand: () => void
-    onfull: () => void
-    onfit: () => void
-  } = $props()
-
-  function pickLayout(mode: LayoutMode) {
-    // Clicking the already-effective layout clears the override (back to auto).
-    graph.setLayout(graph.layoutOverride === mode ? null : mode)
+  let { onexpand, onfull, onfit, onzoomin, onzoomout, onprojectchange, onreload }: { onexpand:()=>void; onfull:()=>void; onfit:()=>void; onzoomin:()=>void; onzoomout:()=>void; onprojectchange:()=>void; onreload:()=>void | Promise<void> } = $props()
+  function pickLayout(mode:LayoutMode){graph.setLayout(graph.layoutOverride===mode?null:mode)}
+  async function toggleTags(){
+    const previous = graph.includeTags
+    const requested = !previous
+    graph.includeTags = requested
+    await onreload()
+    if (graph.error && graph.includeTags === requested) graph.includeTags = previous
   }
 </script>
-
 <div class="tb">
-  <div class="left">
-    <strong>{ui.t('graph')}</strong>
-    <span class="chip">{ui.t('graphNodes', { count: graph.nodes.length })}</span>
-    <span class="chip">{ui.t('graphEdges', { count: graph.edges.length })}</span>
-    <span class="chip">{graph.mode}</span>
-    <div class="seg" role="group" aria-label="layout">
-      <button
-        type="button"
-        class:active={graph.layout === 'force'}
-        onclick={() => pickLayout('force')}
-      >
-        {ui.t('layoutForce')}
-      </button>
-      <button
-        type="button"
-        class:active={graph.layout === 'radial'}
-        onclick={() => pickLayout('radial')}
-      >
-        {ui.t('layoutRadial')}
-      </button>
-    </div>
-    <button
-      type="button"
-      class:active={graph.focusMode}
-      title={ui.t('graphFocus')}
-      onclick={() => graph.toggleFocusMode()}
-    >
-      ◎
-    </button>
-    <button type="button" title={ui.t('graphFit')} onclick={onfit}>⛶</button>
-  </div>
-  <div class="mid">
-    <input bind:value={graph.seed} type="text" placeholder={ui.t('graphSeedPlaceholder')} />
-    <label>
-      {ui.t('graphDepth')}
-      <input bind:value={graph.depth} type="number" min="1" max="3" />
-    </label>
-    <label>
-      {ui.t('graphMax')}
-      <input bind:value={graph.maxNodes} type="number" min="20" max="2000" step="20" />
-    </label>
-    <label class="check">
-      <input bind:checked={graph.includeTags} type="checkbox" />
-      {ui.t('graphTags')}
-    </label>
-  </div>
-  <div class="right">
-    <button type="button" onclick={onfull}>{ui.t('graphFull')}</button>
-    <button type="button" class="accent" onclick={onexpand}>{ui.t('graphExpand')}</button>
-  </div>
+  <div class="left"><strong>Граф</strong><select class="project" value={graph.project} onchange={(event) => { graph.project = event.currentTarget.value; onprojectchange() }} title="Проект"><option value="">Все проекты</option>{#each graph.projects as item}<option value={item.project_id}>{item.project_id} · {item.document_count}</option>{/each}</select><span class="chip">{graph.nodes.length} узлов</span><span class="chip">{graph.edges.length} рёбер</span><div class="seg"><button class:active={graph.layout==='force'} onclick={()=>pickLayout('force')}>Силы</button><button class:active={graph.layout==='radial'} onclick={()=>pickLayout('radial')}>Радиальная</button></div><button class:active={graph.focusMode} onclick={()=>graph.toggleFocusMode()}>◎ Фокус</button><button class:active={graph.includeTags} disabled={graph.loading} onclick={toggleTags}>◇ Теги</button><div class="zoom"><button onclick={onzoomout}>−</button><button onclick={onzoomin}>+</button><button onclick={onfit}>⛶</button></div><select bind:value={graph.labelMode} title="Плотность подписей"><option value="hubs">Подписи: hubs</option><option value="all">Подписи: все</option><option value="none">Подписи: нет</option></select></div>
+  <div class="right"><input bind:value={graph.seed} placeholder="seed · wiki://…"/><label>глубина <input bind:value={graph.depth} type="number" min="1" max="3"/></label><label>макс <input bind:value={graph.maxNodes} type="number" min="20" max="300"/></label><button onclick={onfull}>Весь граф</button><button class="accent" onclick={onexpand}>Развернуть узел</button></div>
 </div>
-
 <style>
-  .tb {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--graph-panel-border);
-    background: var(--graph-panel-bg);
-    color: var(--graph-panel-text);
-    backdrop-filter: blur(8px);
-  }
-  .left,
-  .mid,
-  .right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .chip {
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: var(--graph-panel-chip);
-    color: var(--graph-panel-muted);
-  }
-  .seg {
-    display: flex;
-    border: 1px solid var(--graph-panel-border);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  .seg button {
-    border: none;
-    border-radius: 0;
-    padding: 6px 10px;
-    font-size: 12px;
-  }
-  .seg button.active {
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-weight: 600;
-  }
-  input[type='text'],
-  input[type='number'] {
-    background: var(--graph-panel-input);
-    border: 1px solid var(--graph-panel-border);
-    border-radius: 8px;
-    padding: 6px 10px;
-    color: var(--graph-panel-text);
-    outline: none;
-  }
-  input[type='text'] {
-    min-width: 220px;
-  }
-  input[type='number'] {
-    width: 64px;
-  }
-  label {
-    font-size: 12px;
-    color: var(--graph-panel-muted);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  button {
-    border: 1px solid var(--graph-panel-border);
-    background: var(--graph-panel-chip);
-    color: var(--graph-panel-text);
-    border-radius: 8px;
-    padding: 7px 12px;
-    cursor: pointer;
-  }
-  button.active {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-color: transparent;
-  }
-  button.accent {
-    background: linear-gradient(135deg, var(--graph-node-wiki), var(--accent));
-    border: none;
-    color: #fff;
-    font-weight: 600;
-  }
-  button:hover {
-    filter: brightness(1.08);
-  }
+  .tb{min-height:45px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 11px;border:1px solid var(--graph-panel-border);border-radius:11px;background:var(--graph-panel-bg);backdrop-filter:blur(10px);box-shadow:var(--graph-shadow);color:var(--graph-panel-text)}.left,.right{display:flex;align-items:center;gap:6px;min-width:0}.left>strong{font-size:13.5px;margin-right:2px}.chip{padding:3px 7px;border-radius:10px;background:var(--graph-panel-chip);color:var(--graph-panel-muted);font:10.5px var(--mono);white-space:nowrap}.tb button,.tb select,.tb input{height:26px;border:1px solid var(--graph-panel-border);border-radius:7px;background:var(--graph-panel-chip);color:var(--graph-panel-text);font-size:11.5px}.tb button{padding:0 8px;cursor:pointer}.tb button.active{background:color-mix(in srgb,var(--l2) 14%,transparent);color:var(--l2)}.seg,.zoom{display:flex;border:1px solid var(--graph-panel-border);border-radius:7px;overflow:hidden}.seg button,.zoom button{border:0;border-right:1px solid var(--graph-panel-border);border-radius:0}.zoom button{width:26px;padding:0}.tb select{padding:0 5px;color:var(--graph-panel-muted);max-width:112px}.tb select.project{max-width:128px;color:var(--l2)}.right>input{width:155px;padding:0 8px;font:10.5px var(--mono)}label{display:flex;align-items:center;gap:4px;color:var(--graph-panel-muted);font-size:10.5px;white-space:nowrap}label input{width:42px;padding:0 4px;font:10.5px var(--mono)}.tb button.accent{border:0;background:linear-gradient(135deg,var(--l3),var(--l0));color:#08101b;font-weight:700}@media(max-width:1200px){.left .chip,.left select:not(.project),.right label{display:none}.right>input{width:130px}}
 </style>

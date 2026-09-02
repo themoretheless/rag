@@ -10,12 +10,16 @@
   import SearchView from '@/views/SearchView.svelte'
   import ConsoleView from '@/views/ConsoleView.svelte'
   import CorpusView from '@/views/CorpusView.svelte'
-  import DataView from '@/views/DataView.svelte'
+  import AgentsView from '@/views/AgentsView.svelte'
+  import EvaluationView from '@/views/EvaluationView.svelte'
+  import ModelsView from '@/views/ModelsView.svelte'
+  import { wiki } from '@/lib/state/wiki.svelte'
 
   onMount(() => {
     ui.hydrateTheme()
     startRouter()
     void ui.checkHealth()
+    void wiki.loadCatalog()
     // Refresh the health badge periodically so offline recovery shows up.
     const timer = setInterval(() => void ui.checkHealth(), 15_000)
     return () => clearInterval(timer)
@@ -33,8 +37,12 @@
     <GraphView />
   {:else if route.name === 'search'}
     <SearchView />
+  {:else if route.name === 'agents'}
+    <AgentsView />
+  {:else if route.name === 'evaluation'}
+    <EvaluationView />
   {:else}
-    <DataView kind={route.name} />
+    <ModelsView />
   {/if}
 </AppShell>
 <CommandPalette />

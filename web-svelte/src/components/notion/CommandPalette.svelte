@@ -1,7 +1,9 @@
 <script lang="ts">
   import { ui } from '@/lib/state/ui.svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
-  import { route, goWiki, goGraph, goSearch } from '@/lib/router.svelte'
+  import { route, goWiki, goGraph, goSearch, go, navigate } from '@/lib/router.svelte'
+  import { api } from '@/api/client'
+  import { graph } from '@/lib/state/graph.svelte'
 
   interface ActionItem {
     kind: 'action'
@@ -19,11 +21,33 @@
     hint: string
     pageId: string
   }
+  interface CatalogDocument {
+    id: string
+    title?: string | null
+    uri: string
+    kind?: string | null
+    layer?: string | null
+    wing?: string | null
+    room?: string | null
+    source_file?: string | null
+  }
   type Item = ActionItem | PageItem
 
   let q = $state('')
   let active = $state(0)
   let inputEl: HTMLInputElement | null = $state(null)
+  let documents = $state<CatalogDocument[]>([])
+  let documentSearchId = 0
+
+  function openCorpusDocument(item: CatalogDocument) {
+    const params = new URLSearchParams({
+      document_id: item.id,
+      q: item.title || item.uri,
+    })
+    if (item.wing) params.set('project', item.wing)
+    if (item.room) params.set('room', item.room)
+    navigate(`/corpus?${params.toString()}`)
+  }
 
   const actions = $derived.by((): ActionItem[] => [
     {
@@ -59,6 +83,9 @@
       hint: '',
       run: () => goSearch(),
     },
+    ...([
+      ['console','Пульт','⌘'],['corpus','Корпус','◫'],['agents','Агенты · Журнал','◎'],['evaluation','Оценка retrieval','▥'],['models','Модели и пайплайн','⌁'],
+    ] as const).map(([name,title,icon]) => ({kind:'action' as const,id:`act-${name}`,icon,title,hint:`/${name}`,run:()=>go(name)})),
   ])
 
   const results = $derived.by((): Item[] => {
@@ -82,7 +109,9 @@
       hint: p.slug,
       pageId: p.id,
     }))
-    return [...acts, ...pages]
+    const docs: ActionItem[] = documents.filter((item) => item.layer === 'raw' && query && `${item.title ?? ''} ${item.uri} ${item.source_file ?? ''}`.toLowerCase().includes(query)).slice(0,8).map((item)=>({kind:'action',id:`doc-${item.id}`,icon:'◫',title:item.title||item.uri,hint:[item.layer ?? 'raw', item.wing].filter(Boolean).join(' · '),run:()=>openCorpusDocument(item)}))
+    const nodes: ActionItem[] = graph.nodes.filter((item) => query && `${item.label} ${item.uri ?? ''}`.toLowerCase().includes(query)).slice(0,6).map((item)=>({kind:'action',id:`node-${item.id}`,icon:'◇',title:item.label,hint:item.kind||'node',run:()=>goGraph(item.document_id||item.id,{project:graph.project})}))
+    return [...acts, ...pages, ...docs, ...nodes]
   })
 
   $effect(() => {
@@ -93,6 +122,26 @@
       // Focus after the overlay renders.
       requestAnimationFrame(() => inputEl?.focus())
     }
+  })
+
+  // Query the complete catalog instead of searching only a cached first page.
+  $effect(() => {
+    const open = ui.commandOpen
+    const query = q.trim()
+    const requestId = ++documentSearchId
+    if (!open || query.length < 2) {
+      documents = []
+      return
+    }
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ limit: '20', layer: 'raw', q: query })
+      void api.get<{ items?: CatalogDocument[] }>(`/v1/documents?${params}`).then((response) => {
+        if (requestId === documentSearchId && ui.commandOpen && q.trim() === query) documents = response.items ?? []
+      }).catch(() => {
+        if (requestId === documentSearchId) documents = []
+      })
+    }, 140)
+    return () => window.clearTimeout(timer)
   })
 
   // Keep the active row in range when results shrink.

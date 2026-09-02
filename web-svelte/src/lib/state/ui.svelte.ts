@@ -13,17 +13,27 @@ export interface Toast {
   kind: 'info' | 'error' | 'ok'
 }
 
+/** Compact agent snapshot used by the application shell. */
+export interface ShellAgent {
+  agent: string
+  transport?: string
+  online: boolean
+}
+
 /** Shell state: theme, locale, health, toasts, sidebar, command palette. */
 class UiStore {
   theme = $state<Theme>('dark')
-  locale = $state<Locale>('en')
+  locale = $state<Locale>('ru')
   sidebarCollapsed = $state(false)
   commandOpen = $state(false)
   health = $state<HealthResponse | null>(null)
   healthError = $state<string | null>(null)
+  shellAgents = $state<ShellAgent[]>([])
+  shellAgentsError = $state<string | null>(null)
   toasts = $state<Toast[]>([])
 
   private toastSeq = 0
+  private healthRequestId = 0
 
   get localeLabel(): string {
     return this.locale === 'en' ? 'EN' : 'RU'
@@ -83,13 +93,38 @@ class UiStore {
   }
 
   async checkHealth() {
-    try {
-      this.health = await api.health()
-      this.healthError = null
-    } catch (e) {
-      this.healthError = e instanceof Error ? e.message : String(e)
-      this.health = null
-    }
+    const requestId = ++this.healthRequestId
+
+    // Keep the two shell snapshots independent: a broken optional agents panel
+    // must not turn a healthy gateway red (and vice versa).
+    const healthTask = api.health().then(
+      (health) => {
+        if (requestId !== this.healthRequestId) return
+        this.health = health
+        this.healthError = null
+      },
+      (cause) => {
+        if (requestId !== this.healthRequestId) return
+        this.healthError = cause instanceof Error ? cause.message : String(cause)
+        this.health = null
+      },
+    )
+
+    const agentsTask = api.get<{ items?: ShellAgent[] }>('/v1/agents').then(
+      (response) => {
+        if (requestId !== this.healthRequestId) return
+        this.shellAgents = response.items ?? []
+        this.shellAgentsError = null
+      },
+      (cause) => {
+        if (requestId !== this.healthRequestId) return
+        // Preserve the last valid snapshot for diagnostics. TopBar hides it
+        // while stale, so old `online` flags are never presented as current.
+        this.shellAgentsError = cause instanceof Error ? cause.message : String(cause)
+      },
+    )
+
+    await Promise.all([healthTask, agentsTask])
   }
 
   toast(text: string, kind: 'info' | 'error' | 'ok' = 'info') {

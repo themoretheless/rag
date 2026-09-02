@@ -45,7 +45,7 @@
       void wiki.openPage(id)
     } else {
       openedId = null
-      if (wiki.current) wiki.closePage()
+      wiki.closePage()
     }
   })
 </script>

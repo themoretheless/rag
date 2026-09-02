@@ -163,8 +163,12 @@ class WikiStore {
   facet = $state<CatalogFacet>({ type: 'all' })
   /** Distinct categories for chips (kept across kind/category server filters). */
   categories = $state<string[]>([])
-  loading = $state(false)
-  error = $state<string | null>(null)
+  private catalogLoading = $state(false)
+  private pageLoading = $state(false)
+  loading = $derived(this.catalogLoading || this.pageLoading)
+  /** Catalog and page failures stay separate so one request cannot mislabel another. */
+  catalogError = $state<string | null>(null)
+  pageError = $state<string | null>(null)
   current = $state<DocumentBody | null>(null)
   backlinks = $state<BacklinkItem[]>([])
   editing = $state(false)
@@ -185,6 +189,7 @@ class WikiStore {
   creating = $state(false)
 
   private catalogSeq = 0
+  private pageSeq = 0
 
   filtered = $derived.by(() => {
     let list = this.pages
@@ -386,8 +391,8 @@ class WikiStore {
       merged.q = trimmed
     }
     const seq = ++this.catalogSeq
-    this.loading = true
-    this.error = null
+    this.catalogLoading = true
+    this.catalogError = null
     try {
       const res = await api.wikiList(merged)
       if (seq !== this.catalogSeq) return
@@ -401,19 +406,21 @@ class WikiStore {
       this.syncFavoritesFromCatalog()
     } catch (e) {
       if (seq !== this.catalogSeq) return
-      this.error = e instanceof Error ? e.message : String(e)
+      this.catalogError = e instanceof Error ? e.message : String(e)
     } finally {
-      if (seq === this.catalogSeq) this.loading = false
+      if (seq === this.catalogSeq) this.catalogLoading = false
     }
   }
 
   async openPage(id: string, pushHistory = true) {
-    this.loading = true
-    this.error = null
+    const seq = ++this.pageSeq
+    const previousId = this.current?.id ?? null
+    this.pageLoading = true
+    this.pageError = null
     try {
-      if (pushHistory && this.current?.id && this.current.id !== id) {        this.history.push(this.current.id)
-      }
       const doc = await api.document({ id })
+      if (seq !== this.pageSeq) return
+      if (pushHistory && previousId && previousId !== id) this.history.push(previousId)
       this.current = doc
       this.draftTitle = doc.title
       this.draftContent = doc.content
@@ -426,15 +433,18 @@ class WikiStore {
       this.touchRecent({ id: doc.id, title: doc.title, slug })
       try {
         const bl = await api.backlinks(id)
+        if (seq !== this.pageSeq) return
         this.backlinks = bl.backlinks ?? []
       } catch {
-        this.backlinks = []
+        if (seq === this.pageSeq) this.backlinks = []
       }
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e)
-      this.current = null
+      if (seq === this.pageSeq) {
+        this.pageError = e instanceof Error ? e.message : String(e)
+        this.current = null
+      }
     } finally {
-      this.loading = false
+      if (seq === this.pageSeq) this.pageLoading = false
     }
   }
 
@@ -445,11 +455,14 @@ class WikiStore {
 
   /** Leave the open page (route to /wiki root shows the home dashboard). */
   closePage() {
+    ++this.pageSeq
+    this.pageLoading = false
     this.current = null
     this.backlinks = []
     this.editing = false
     this.dirty = false
     this.pendingEditId = null
+    this.pageError = null
   }
 
   startEdit() {

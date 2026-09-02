@@ -100,9 +100,10 @@ export function goWiki(id?: string, opts?: { replace?: boolean }) {
   navigate(id ? `/wiki/${encodeURIComponent(id)}` : '/wiki', opts)
 }
 
-export function goGraph(seed?: string | null, opts?: { replace?: boolean }) {
+export function goGraph(seed?: string | null, opts?: { replace?: boolean; project?: string | null }) {
   const q = new URLSearchParams()
   if (seed) q.set('seed', seed)
+  if (opts && 'project' in opts) q.set('project', opts.project ?? '')
   const s = q.toString()
   navigate(`/graph${s ? `?${s}` : ''}`, opts)
 }
@@ -122,12 +123,22 @@ export function graphSeedParam(): string | null {
   return s && s.trim() ? s.trim() : null
 }
 
-/** Write/remove `?seed=` on /graph via history.replace (shareable, no push). */
-export function setGraphSeedQuery(seed: string | null) {
+/** Project param of the current /graph location; empty string means all projects. */
+export function graphProjectParam(): string | null {
+  if (route.name !== 'graph' || !route.query.has('project')) return null
+  return route.query.get('project')?.trim() ?? ''
+}
+
+/** Write graph scope into history.replace so the current view stays shareable. */
+export function setGraphSeedQuery(seed: string | null, project?: string | null) {
   if (route.name !== 'graph') return
   const q = new URLSearchParams(route.query)
   if (seed) q.set('seed', seed)
   else q.delete('seed')
+  if (project !== undefined) {
+    if (project === null) q.delete('project')
+    else q.set('project', project)
+  }
   const s = q.toString()
   navigate(`/graph${s ? `?${s}` : ''}`, { replace: true })
 }
