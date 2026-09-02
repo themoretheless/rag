@@ -536,6 +536,23 @@ pub struct DeleteBySourceParams {
     pub dry_run: Option<bool>,
 }
 
+/// Parameters for precise legacy source duplicate cleanup.
+///
+/// Preview is the default. Apply requires both `dry_run=false` and
+/// `confirm=true`; the configured maintenance cap remains the hard upper bound.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct CleanupSourceDuplicatesParams {
+    /// When true, inspect and report without changing the store (default true).
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+    /// Required together with `dry_run=false` before raw duplicates are removed.
+    #[serde(default)]
+    pub confirm: Option<bool>,
+    /// Maximum documents that may be removed atomically in one call.
+    #[serde(default)]
+    pub max_candidates: Option<u32>,
+}
+
 /// Parameters for `reembed_document`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ReembedDocumentParams {

@@ -22,7 +22,7 @@ use crate::util::{
 };
 
 /// Shared SELECT list for document rows (order matches [`rows::document`]).
-const DOCUMENT_SELECT: &str = r#"
+pub(super) const DOCUMENT_SELECT: &str = r#"
     id, uri, title, content, metadata_json,
     content_hash, wing, room, source_file, layer, kind,
     CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR),
@@ -2011,7 +2011,7 @@ fn apply_document_meta_update(
     })
 }
 
-fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Result<bool> {
+pub(super) fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Result<bool> {
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)",
         params![id],

@@ -434,6 +434,7 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `update_document_meta` | `document_id`, `wing?`, `room?`, `title?`, `metadata_json?`, `pinned?`, `boost?`, `status?`, `layer?`, `kind?`, `source_file?`, `content?` | Meta update without re-embed unless `content` changes; refused for immutable raw body |
 | `delete_document` | `document_id` | Delete document + chunks + graph cleanup |
 | `delete_by_source` | `source_file` (alias `source`), `dry_run?` | Bulk delete by exact `source_file` |
+| `cleanup_source_duplicates` | `dry_run?`, `confirm?`, `max_candidates?` | Preview by default; remove a bounded deterministic batch of legacy raw duplicates only when one exact `file://<source_file>` survivor exists; rewires safe references and reports protected groups without changing them |
 | `check_duplicate` | `content?`, `content_hash?`/`hash?`, `uri?` | content_hash / uri idempotency probe |
 | `list_wings` | (none) | Distinct wings with document counts |
 | `list_rooms` | `wing?` | Distinct rooms with counts |

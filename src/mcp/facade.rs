@@ -20,12 +20,13 @@ use super::surface::{self, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB}
 use super::tools::{
     AddDrawerParams, AnalyzeCorpusParams, AppendLogParams, ApplyMaintenancePlanParams,
     ArchiveMemoryItemsParams, BackupDbParams, CheckDuplicateParams, CheckpointParams,
-    CollectionCreateParams, CollectionEntryParams, CollectionGetParams, CollectionListParams,
-    CollectionUpdateParams, CompileSourceParams, ConsolidateMemoryItemsParams, ConsolidateParams,
-    CreateTunnelParams, DeleteBySourceParams, DeleteDocumentParams, DeleteTunnelParams,
-    DiaryReadParams, DiaryWriteParams, DoctorRepairParams, ExpandChunksParams, ExportBundleParams,
-    ExportGraphSnapshotParams, ExportVaultParams, FileAnswerCitationParams, FileAnswerParams,
-    FindNodeParams, FindSimilarParams, FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams,
+    CleanupSourceDuplicatesParams, CollectionCreateParams, CollectionEntryParams,
+    CollectionGetParams, CollectionListParams, CollectionUpdateParams, CompileSourceParams,
+    ConsolidateMemoryItemsParams, ConsolidateParams, CreateTunnelParams, DeleteBySourceParams,
+    DeleteDocumentParams, DeleteTunnelParams, DiaryReadParams, DiaryWriteParams,
+    DoctorRepairParams, ExpandChunksParams, ExportBundleParams, ExportGraphSnapshotParams,
+    ExportVaultParams, FileAnswerCitationParams, FileAnswerParams, FindNodeParams,
+    FindSimilarParams, FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams,
     GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams, GetSourceParams,
     GetTaxonomyParams, GetWikiPageParams, GraphExpandSearchParams, ImportBundleParams,
     IngestFileParams, IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams,
@@ -704,6 +705,41 @@ impl RagServer {
             "deleted": deleted,
             "document_ids": document_ids,
         }))
+    }
+
+    #[tool(
+        name = "cleanup_source_duplicates",
+        description = "Safely preview or remove legacy active raw source duplicates. A candidate must share the exact non-empty source_file and content_hash with one canonical file://<source_file> survivor. dry_run defaults true; apply requires dry_run=false and confirm=true. The operation is atomic, capped, rewires graph/KG/manifest references, and skips groups with wiki or collection references."
+    )]
+    async fn cleanup_source_duplicates(
+        &self,
+        Parameters(params): Parameters<CleanupSourceDuplicatesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let _mutation_guard = self
+            .store
+            .source_sync_lane()
+            .try_write_owned()
+            .map_err(|_| {
+                Self::map_err(AppError::busy(
+                    "source synchronization or guarded retrieval is active; retry duplicate cleanup after it completes",
+                ))
+            })?;
+        let configured_cap = self.config.maint_max_docs.max(1);
+        let max_candidates = params
+            .max_candidates
+            .map(|value| value as usize)
+            .unwrap_or(configured_cap)
+            .max(1)
+            .min(configured_cap);
+        let report = self
+            .store
+            .cleanup_source_duplicates(
+                params.dry_run.unwrap_or(true),
+                params.confirm.unwrap_or(false),
+                max_candidates,
+            )
+            .map_err(Self::map_err)?;
+        Self::json_result(&report)
     }
 
     #[tool(
@@ -4046,6 +4082,87 @@ mod tests {
         assert_eq!(deleted, 2);
         assert_eq!(server.store.list_documents().expect("list").len(), 0);
         assert_eq!(server.store.delete_by_source(src).expect("again"), 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_lane() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("source-dedupe-tool.duckdb");
+        let store = Store::open(&path).expect("open");
+        let dims = 16usize;
+        let config = test_config(path, Vec::new(), dims);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
+        let server = RagServer::new(store, embedder, config);
+        let source = "/vault/tool.md";
+        let body = "tool duplicate";
+        let hash = content_hash(body);
+        let now = Utc::now();
+        for (id, uri) in [
+            ("canonical", "file:///vault/tool.md"),
+            ("legacy", "project://tool.md"),
+        ] {
+            server
+                .store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: uri.into(),
+                    title: id.into(),
+                    content: body.into(),
+                    metadata_json: "{}".into(),
+                    created_at: now,
+                    updated_at: now,
+                    source_file: Some(source.into()),
+                    content_hash: Some(hash.clone()),
+                    layer: "raw".into(),
+                    kind: "document".into(),
+                    status: "active".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let preview = server
+            .cleanup_source_duplicates(Parameters(CleanupSourceDuplicatesParams::default()))
+            .await
+            .unwrap();
+        let preview_json: serde_json::Value =
+            serde_json::from_str(&preview.content[0].as_text().expect("text result").text).unwrap();
+        assert_eq!(preview_json["dry_run"], true);
+        assert_eq!(preview_json["applied"], false);
+        assert_eq!(preview_json["candidate_count"], 1);
+        assert!(server.store.get_document("legacy").unwrap().is_some());
+
+        let missing_confirm = server
+            .cleanup_source_duplicates(Parameters(CleanupSourceDuplicatesParams {
+                dry_run: Some(false),
+                confirm: Some(false),
+                max_candidates: Some(10),
+            }))
+            .await
+            .unwrap_err();
+        assert!(missing_confirm.message.contains("confirm=true"));
+
+        let search_guard = server.store.source_sync_lane().read_owned().await;
+        let busy = server
+            .cleanup_source_duplicates(Parameters(CleanupSourceDuplicatesParams::default()))
+            .await
+            .unwrap_err();
+        assert_eq!(busy.data.as_ref().unwrap()["code"], "STORE_BUSY");
+        drop(search_guard);
+
+        let applied = server
+            .cleanup_source_duplicates(Parameters(CleanupSourceDuplicatesParams {
+                dry_run: Some(false),
+                confirm: Some(true),
+                max_candidates: Some(10),
+            }))
+            .await
+            .unwrap();
+        let applied_json: serde_json::Value =
+            serde_json::from_str(&applied.content[0].as_text().expect("text result").text).unwrap();
+        assert_eq!(applied_json["applied"], true);
+        assert_eq!(applied_json["deleted_documents"], 1);
+        assert!(server.store.get_document("legacy").unwrap().is_none());
     }
 
     #[tokio::test]

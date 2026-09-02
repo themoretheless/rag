@@ -31,6 +31,7 @@ Priority labels in this matrix may lag shipped code; for “exists today” pref
 | `check_duplicate` | content_hash / similarity probe before write | Avoid re-ingest of same source | `mempalace_check_duplicate` | P0 |
 | `list_wings` / `list_rooms` / `get_taxonomy` | Hierarchical scope nav | Category sections in index.md | `list_wings` / `list_rooms` / `get_taxonomy` | P0 |
 | `delete_by_source` | Bulk delete by `source_file` | Remove all pages from one raw file | `mempalace_delete_by_source` | P0 |
+| `cleanup_source_duplicates` | Guarded exact `(source_file, content_hash)` legacy cleanup | Keep one canonical raw source | Migration integrity helper | P0 operational |
 | `status` | Health: FTS, dims, counts, path, `ready_for_search` | Session orientation | `mempalace_status` | P0 |
 | `doctor` | Integrity: schema_version, FTS, embed dims, orphans, allowlist | Drift control | reconnect / status depth | P0 minimal |
 | `get_embedding_manifest` | Active model/dims/provider fingerprint | Corpus honesty for search | Embed config surface | P0 |

@@ -22,6 +22,7 @@ pub mod recovery;
 mod rows;
 pub mod schema;
 pub mod search;
+mod source_dedupe;
 mod source_manifest;
 pub mod store;
 pub mod vault;
@@ -32,6 +33,9 @@ pub use fts::{
     fts_index_present, fts_status, load_fts_extension, mark_fts_dirty, probe_ready,
     refresh_fts_if_stale, refresh_fts_if_stale_with_stemmer, reindex, reindex_with_stemmer,
     search_bm25, search_bm25_with_stemmer, FtsBackend, FtsGenerationState, FtsState, LexFilters,
+};
+pub use source_dedupe::{
+    SourceDuplicateCleanupReport, SourceDuplicateDocument, SourceDuplicateGroup,
 };
 pub use source_manifest::{SourceManifestEntry, SourceManifestWrite, SourceRootSummary};
 pub use store::Store;
