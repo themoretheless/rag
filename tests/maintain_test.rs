@@ -468,15 +468,15 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
     let ops_final = store.list_ops_log(200).expect("final ops_log");
     let ops: Vec<&str> = ops_final.iter().map(|o| o.op.as_str()).collect();
     assert!(
-        ops.iter().any(|o| *o == "analyze_corpus"),
+        ops.contains(&"analyze_corpus"),
         "ops_log missing analyze_corpus: {ops:?}"
     );
     assert!(
-        ops.iter().any(|o| *o == "plan_maintenance"),
+        ops.contains(&"plan_maintenance"),
         "ops_log missing plan_maintenance: {ops:?}"
     );
     assert!(
-        ops.iter().any(|o| *o == "apply_maintenance_plan_dry_run"),
+        ops.contains(&"apply_maintenance_plan_dry_run"),
         "ops_log missing apply dry_run: {ops:?}"
     );
     assert!(
@@ -485,7 +485,7 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
         "ops_log missing maintain_compress: {ops:?}"
     );
     assert!(
-        ops.iter().any(|o| *o == "vacuum_store"),
+        ops.contains(&"vacuum_store"),
         "ops_log missing vacuum_store: {ops:?}"
     );
 }
@@ -532,9 +532,11 @@ async fn maintain_loop_empty_corpus_is_safe() {
     assert_eq!(analysis.counts.documents, 0);
     assert_eq!(analysis.exact_duplicates.len(), 0);
 
-    let mut plan_opts = PlanOptions::default();
-    plan_opts.force_heuristic = true;
-    plan_opts.log_ops = false;
+    let plan_opts = PlanOptions {
+        force_heuristic: true,
+        log_ops: false,
+        ..PlanOptions::default()
+    };
     let plan = plan_maintenance(&analysis, &config, None, &plan_opts)
         .await
         .expect("plan empty");

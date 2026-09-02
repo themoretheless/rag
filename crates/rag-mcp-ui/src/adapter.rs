@@ -600,7 +600,11 @@ mod tests {
                 if i == j {
                     continue;
                 }
-                let rel = if ei % 4 == 0 { "tagged" } else { "wikilink" };
+                let rel = if ei.is_multiple_of(4) {
+                    "tagged"
+                } else {
+                    "wikilink"
+                };
                 let w = if rel == "tagged" { 0.1 } else { 2.0 };
                 edges.push(edge(
                     &format!("e{ei}"),
