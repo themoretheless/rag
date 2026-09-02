@@ -46,15 +46,17 @@ one backlinks query per raw document.
 repair detection and explicit deleted-source pruning. The source-manifest
 repository owns its SQL and root summaries. Progress/cancellation is a service
 contract, while `http_api::jobs` owns process-local lifecycle, retention and
-admission. The Store owns the shared source-sync/retrieval coordination lane.
+admission. The Store owns the shared corpus-mutation/retrieval coordination lane.
 
-The Store owns a process-local read/write coordination lane: a source sync keeps
-the write guard for its complete run, while `lex`/`hybrid` acquire a non-blocking
-read guard before query embedding. This makes concurrent searches compatible,
-prevents a sync from crossing an already-admitted search, and returns a
-retryable `AppError::Busy` without embedding/FTS work when sync is active. HTTP
-and MCP remain thin, policy-specific mappings to 503 + `Retry-After` and
-structured `STORE_BUSY` metadata respectively.
+The Store owns a process-local read/write coordination lane. Source sync and
+guarded corpus-scale doctor repair, duplicate cleanup, delete-by-source,
+recovery import, and maintenance apply/refresh/compress own the exclusive side
+through their derived-index finalization; `lex`/`hybrid` acquire a non-blocking
+read guard before query embedding. This keeps concurrent searches compatible,
+prevents a mutation from crossing an already-admitted search, and returns a
+generic retryable `AppError::Busy` without embedding/FTS work while an exclusive
+corpus mutation is active. HTTP and MCP remain thin, policy-specific mappings to
+503 + `Retry-After` and structured `STORE_BUSY` metadata respectively.
 
 Unchanged healthy files skip extraction, hashing and embedding. The existing
 MCP `sync_sources` path remains a synchronous adapter over the same service.
@@ -68,16 +70,28 @@ reported as per-file errors instead of silently remaining stale; and
 `delete_source_state` removes documents, chunks, graph, wiki index and manifest
 rows in one transaction. Jobs distinguish clean success from
 `completed_with_errors`, and cancellation preserves a terminal result when it
-races completion.
+races completion. A run that reaches either completed state keeps the corpus
+lane through `refreshing_fts`; failed or early-cancelled runs leave the existing
+next-read repair path intact.
 
 ### Retrieval index ownership
 
-FTS dirty/generation state and single-flight refresh live in `db::fts`. Exact
-vector candidate loading, normalized snapshot caching and bounded top-k live in
-`db::search`. Mutation paths advance one shared chunk generation. A non-empty
+FTS dirty/generation state and the single-flight refresh primitive live in
+`db::fts`. Text/row mutations advance the chunk generation and leave the
+lexical generation dirty. Embedding-only updates advance the same vector-cache
+generation while also advancing an already-clean lexical generation; they do
+not hide pre-existing FTS debt. Guarded corpus-scale workflows invoke the
+refresh primitive eagerly before normal terminal success. Ordinary
+single-document authoring and failed/interrupted workflows invoke it lazily at
+the next lexical read. Exact vector candidate loading, normalized snapshot
+caching and bounded top-k live in `db::search`. A non-empty
 document/project/room/URI/source scope is materialized with a SQL join into a
 transient normalized snapshot; it neither reads nor populates the database-wide
 cache. The unscoped path retains the generation-keyed global snapshot.
+The manifest repository also owns the persistent incompatible migration marker:
+it precedes the first corpus-migration vector write and keeps partial failure or
+configuration rollback fail-closed until complete success publishes the target
+identity.
 
 Search orchestration does not know DuckDB FTS DDL or vector cache invalidation.
 Project filters are applied before scoring instead of after a global top-k.
@@ -144,7 +158,15 @@ server-provided human-readable message rather than the raw envelope. UI state ow
 non-cancellable mutations until their matching sequence completes. Project
 switching cannot discard wiki save, revision restore or Operations mutation
 state; wiki save freezes edit/navigation actions, restore cannot be locally
-cancelled, and verified backup alone uses a 30-minute request timeout.
+cancelled, and verified backup alone uses a 30-minute request timeout. The
+authoritative project catalog has its own request/retry lifecycle, retains the
+last successful list on failure, and is never inferred from bounded graph
+topology; graph failure affects Connections rather than gating other product
+workspaces. Search keeps the submitted request snapshot with each response,
+Library pagination reuses its applied filter snapshot, and project-scoped
+backlink failures remain visible instead of collapsing into a successful empty
+list. Direct `--db` exposes read-only Wiki/Connections only, so native writes
+remain behind the gateway adapter.
 
 ## Deliberate compatibility boundaries
 

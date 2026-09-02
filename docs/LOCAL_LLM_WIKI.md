@@ -92,7 +92,12 @@ export RAG_LLM_ENABLED=false
 - **raw** content is not updated in place (re-ingest same uri replaces)  
 - **wiki** is agent/LLM mutable  
 - Graph extract stays deterministic (`[[wikilink]]`, `#tag`)  
-- Changing embed model/dims requires `reembed_document` / corpus reembed  
+- `reembed_document` only refreshes one document when the stored and configured
+  corpus identities already match. Changing embedding provider, model,
+  dimensions, or base endpoint requires a complete, uncapped, successful
+  `reembed_all` before the target manifest is published and vector/hybrid search
+  resumes. A persistent incompatible marker is written before the first vector
+  change, keeping partial failure and configuration rollback fail-closed.
 
 ## Build
 

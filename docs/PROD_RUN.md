@@ -84,7 +84,7 @@ stdio process at the canonical DB while `local.rag-mcp` is running.
 | `http://127.0.0.1:7432/v1/find` | resolve node (`?q=`) |
 | `http://127.0.0.1:7432/v1/document` | document body (`?id=` / `?uri=` / `?q=`; returns `revision`/`etag`) |
 | `http://127.0.0.1:7432/v1/wiki` | lean cursor-paginated wiki catalog; `PUT` uses CAS |
-| `http://127.0.0.1:7432/v1/backlinks` | wiki backlinks (`?id=<document_id>` only) |
+| `http://127.0.0.1:7432/v1/backlinks` | project-scoped wiki backlinks (`?id=<document_id>&wing=<project>`) |
 | `http://127.0.0.1:7432/v1/activity`, `/v1/jobs*` | sanitized activity plus background sync lifecycle |
 | `http://127.0.0.1:7432/v1/revisions*` | lean timeline, lazy snapshot/diff and CAS restore |
 | `http://127.0.0.1:7432/v1/operations/*` | checkpoint and allowlisted backup |
@@ -93,15 +93,63 @@ The gateway is the live product port and the sole-writer operations boundary.
 The exact current method/path list is available at `GET /v1/routes`; detailed
 request contracts are in [`CONNECT.md`](CONNECT.md).
 
+The shared admission middleware caps **request** bodies for both `/v1/*` and
+mounted `/mcp` at 1 MiB, including requests without `Content-Length`. This is a
+request-ingress limit, not a claim that HTTP responses are capped at 1 MiB.
+
 Клиенты **не** стартуют второй binary на тот же `.duckdb`.
 
-Во время source sync gateway держит process-local write side coordination lane.
-Новые `lex`/`hybrid` запросы не ждут долгую переиндексацию и не вызывают
-embedding provider: они сразу получают HTTP `503`, `Retry-After: 1`,
-`code=STORE_BUSY` (MCP: `data.code=STORE_BUSY`, `retryable=true`,
-`retry_after_ms=1000`). Уже начавшийся search удерживает read side до конца, а
-sync стартует после его завершения. Повторяй запрос после terminal sync state;
-чистый `vec` этим lexical lane не блокируется.
+Source sync и guarded corpus-scale операции (`doctor_repair`, duplicate
+cleanup, delete-by-source, recovery import, maintenance
+apply/refresh/compress) держат process-local exclusive side coordination lane
+до финализации derived index. Новые `lex`/`hybrid` запросы не ждут долгую
+операцию и не вызывают embedding provider: они сразу получают HTTP `503`,
+`Retry-After: 1`, `code=STORE_BUSY` (MCP: `data.code=STORE_BUSY`,
+`retryable=true`, `retry_after_ms=1000`) с generic причиной `exclusive corpus
+mutation is active`. Уже начавшийся search удерживает read side до конца.
+Повторяй запрос после завершения текущей corpus mutation; чистый `vec` этой
+lexical lane не блокируется.
+
+Source-sync job показывает финальную фазу `refreshing_fts`; остальные guarded
+corpus-scale workflows выполняют ту же финализацию внутри своего apply-вызова.
+Normal terminal success возвращается только после выравнивания stale FTS.
+Если после durable commit финализация падает, отчёт возвращает
+`success=false`, не теряя committed counters/actions, и structured detail с
+`code=FTS_FINALIZATION_FAILED`, `durable_mutation_committed`,
+`retryable=true`, `fallback_dirty_marked` и возможными marker/log errors.
+Source-sync сохраняет этот detail и получает terminal
+`completed_with_errors`; dirty generation остаётся для безопасного next-read
+retry. Не повторяй саму mutation, пока не проверил committed flag и её
+идемпотентность.
+Обычный single-document authoring, а также fail/cancel до финализации, оставляет
+dirty marker для next-read single-flight fallback. Embedding-only update
+продвигает vector/chunk generation, но сохраняет уже чистую lexical generation;
+существующий FTS debt при этом не скрывается.
+
+Embedding identity включает provider, model, dimensions и base endpoint.
+`reembed_document` — только refresh одного документа при уже совпадающем
+manifest. После смены identity search и новые vector writes остаются запрещены,
+пока uncapped `reembed_all` не обработает весь corpus без skipped/failed и не
+опубликует новый manifest. Для этого передай `max_docs` не меньше текущего числа
+документов и сначала подними `RAG_MAINT_MAX_DOCS` до того же значения в env
+gateway с последующим restart: per-call `max_docs` всегда clamp-ится к этому
+hard cap. Default maintenance cap заранее откажет для большего corpus. Перед
+первым vector write сохраняется persistent incompatible migration marker, поэтому
+partial failure или возврат старой config identity не откроет mixed corpus.
+Если chunks уже есть, а manifest отсутствует, startup оставляет gateway
+доступным для диагностики/repair, но не самосертифицирует legacy vectors:
+vector reads/writes fail closed и `ready_for_search=false`. Единственный repair
+path — полный uncapped `reembed_all` без skipped/failed; `reembed_document` и
+частичный run manifest не публикуют.
+
+Все остальные maintenance `max_docs`, а также
+`cleanup_source_duplicates.max_candidates`, также не могут превышать
+`RAG_MAINT_MAX_DOCS`; per-call параметр выбирает полный configured batch или
+меньший. Duplicate cleanup классифицирует и считает весь набор внутри DuckDB,
+но materializes только ограниченный deterministic candidate batch и bounded
+diagnostic detail. Apply требует `dry_run=false` вместе с `confirm=true` и
+атомарно удаляет только выбранный batch; повторные вызовы сходятся по стабильному
+порядку.
 
 Project/document/source-scoped vector search materializes only matching chunks
 through SQL and deliberately bypasses the database-wide vector snapshot cache.
@@ -166,7 +214,7 @@ curl -s http://127.0.0.1:7432/health
 # expect "mcp_http": true, "mcp_path": "/mcp"
 curl -s 'http://127.0.0.1:7432/v1/graph?max_nodes=50' | head
 curl -s http://127.0.0.1:7432/v1/wiki | head
-curl -s 'http://127.0.0.1:7432/v1/backlinks?id=DOCUMENT_ID' | head
+curl -s 'http://127.0.0.1:7432/v1/backlinks?id=DOCUMENT_ID&wing=PROJECT' | head
 ```
 
 ### 3c. Snapshot (без HTTP)
@@ -174,7 +222,7 @@ curl -s 'http://127.0.0.1:7432/v1/backlinks?id=DOCUMENT_ID' | head
 Tool `export_graph_snapshot` → `rag-mcp-ui --snapshot ./graph.json --seed ...`  
 Snapshot mode has graph only (no live wiki catalog / backlinks).
 
-### 3d. Только UI (exclusive live DB, MCP выключен)
+### 3d. Только UI (exclusive read-only DB inspection, MCP выключен)
 
 This maintenance mode is allowed only after the gateway has stopped and no
 process owns the canonical file:
@@ -187,6 +235,8 @@ process owns the canonical file:
 
 Seed: title wiki/note, `node_id` или `document_id` (из `list_documents` / `list_wiki_pages` / `GET /v1/wiki`).
 Do not use `--db` while another process holds the same DuckDB (single writer).
+Direct `--db` Wiki is strictly read-only: edit/save and every other native
+write require `--http` and go through the one-writer gateway.
 
 ---
 
@@ -196,13 +246,25 @@ Do not use `--db` while another process holds the same DuckDB (single writer).
 
 ```bash
 rag-mcp-ui --http http://127.0.0.1:7432
-# exclusive maintenance only after stopping the gateway:
+# exclusive read-only inspection only after stopping the gateway:
 # rag-mcp-ui --db /Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 ```
 
 With `--http`, the app opens on **Home** and exposes Home, Library, Search,
 Wiki, Connections and Operations. Exclusive `--db` and snapshot modes remain
-limited graph/wiki inspection paths. Details: [`EGUI_USAGE.md`](EGUI_USAGE.md).
+limited read-only graph/wiki inspection paths. Details: [`EGUI_USAGE.md`](EGUI_USAGE.md).
+
+В HTTP mode `/v1/projects` является authoritative catalog и грузится отдельно
+от `/v1/graph`. Ошибка Connections не блокирует Home, Library, Search, History,
+Wiki или Operations. Ошибка refresh каталога сохраняет последний успешный
+список и selection; кнопка Retry повторяет только catalog request, не сбрасывая
+graph/workspace state.
+
+Search results сохраняют snapshot отправленного запроса и показывают stale
+notice, если controls уже изменены. Library блокирует Previous/Next при
+несовпадении draft и applied filters; Apply & refresh применяет фильтры со
+сбросом cursor. Wiki backlinks ограничены выбранным проектом; transport/DB
+failure показывается отдельно с Retry, а не как пустой список.
 
 Native UI не показывает raw transport diagnostics: timeout/connect/other
 failures превращаются в стабильные сообщения без method, URL и query details;
@@ -224,8 +286,12 @@ get_wiki_page slug=...
 
 HTTP `GET /v1/document` returns `revision` and `etag`; `PUT /v1/wiki` accepts
 `if_match_revision` / `if_match_etag` and returns `409` on stale CAS. Apply the
-same read-then-CAS rule to MCP wiki writes. Omitting CAS retains last-write-wins
-compatibility behavior.
+same read-then-CAS rule to MCP wiki writes. `update_wiki_page` requires an
+existing page; omitted kind/category/summary retain their current values, as do
+project placement, lifecycle/pin/boost state, source ownership and unrelated
+metadata. Omitting CAS retains last-write-wins compatibility behavior only when
+`RAG_WIKI_REQUIRE_IF_MATCH=false` (the default); when true, updates must supply
+the revision/etag.
 
 ---
 
@@ -249,7 +315,7 @@ export RAG_TOOLS=full
 | 4 | UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Wiki + Graph) |
 | 5 | Работа: ingest, wiki, search (MCP); browse via UI or `GET /v1/*` |
 | 6 | Offline graph only if needed: export → `rag-mcp-ui --snapshot` |
-| 7 | Бэкап: `POST /v1/operations/backup` с allowlisted path и `dry_run=false`; проверить `.sha256` и `.metadata.json` sidecars. Не копировать live DuckDB мимо gateway. |
+| 7 | Бэкап: `POST /v1/operations/backup` с allowlisted path и `dry_run=false`; проверить `.sha256` и `.metadata.json` sidecars. Не копировать live DuckDB мимо gateway. Backup briefly checkpoints/clones under the Store mutex, then copies one pinned MVCC generation on the cloned connection while normal Store queries remain available. |
 
 Portable recovery bundle публикуется иначе, чем raw copy: MCP `export_bundle`
 и `recovery export-bundle` полностью stage+sync файл рядом с destination, затем
@@ -258,6 +324,28 @@ Portable recovery bundle публикуется иначе, чем raw copy: MCP
 Offline CLI откажется писать bundle поверх самой DB или её hard-link. При
 `import_bundle conflict_policy=overwrite` совпадение id и URI с двумя разными
 existing documents является conflict и откатывает всю import transaction.
+
+Текущий recovery bundle format — **v2**: JSON/JSONL несёт canonical
+`embedding_manifest`, а vector-bearing import проверяет provider/model/dims/base
+URL/fingerprint и размерность chunks. Непустой target обязан иметь точно ту же
+identity; пустой target принимает её только на apply. JSONL без единственного
+manifest header перед document records (включая empty/headerless/duplicate или
+unknown version) отклоняется.
+
+Для legacy v1 без chunks допустим metadata-only import. V1 с chunks требует MCP
+`import_bundle reembed_legacy=true` через запущенный single-writer gateway:
+сначала dry-run и `embeddings_reembed_planned`, затем apply, который заменит все
+vectors live provider и отчитается `embeddings_reembedded` и
+`durable_mutation_committed`. Offline CLI такой bundle намеренно не импортирует,
+потому что у него нет live embedding provider. Version/manifest вручную не
+подделывать.
+
+Portable JSON/JSONL — не путь для полного production corpus: input и encoded
+output ограничены 64 MiB, один bundle — максимум 10,000 documents и 50,000
+chunks. Export делает SQL preflight до materialization, import проверяет размер
+файла и читает bounded reader до любой DB mutation. Для большего corpus
+используй verified DuckDB `backup_db` / `recovery backup`, а не разбиение или
+ручное редактирование vector bundle.
 
 ---
 

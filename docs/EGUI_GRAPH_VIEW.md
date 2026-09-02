@@ -1,33 +1,35 @@
 # egui object / dependency graph UI
 
-**Status:** design (post-v1 optional inspector)  
+**Status:** implemented architecture record; current operator behavior lives in [`EGUI_USAGE.md`](EGUI_USAGE.md)
 **Audience:** implementers of `crates/rag-mcp-ui`  
 **Domain authority:** [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md) owns node/edge types, extract/resolve, MCP filters, rebuild, vault live graph. **This file owns only client layout, process split, and inspector UX.**  
 **Related:** [`SPEC.md`](../SPEC.md) object graph · [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) · [`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md) §4b · [`FEATURES.md`](../FEATURES.md) · [`GRAPH_EGUI_DECISIONS.md`](GRAPH_EGUI_DECISIONS.md) · [`ROADMAP.md`](ROADMAP.md)  
-**Product role:** optional developer / human inspector (Obsidian local graph analog). Not an agent dependency, not a release gate for headless `rag-mcp`.
+**Product role:** optional native product client plus a read-only graph inspector (Obsidian local graph analog). It is not an agent/runtime dependency; the integrated product release gate may still require native visual QA as declared in [`ROADMAP.md`](ROADMAP.md).
 
 Where this doc and [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md) disagree on **domain** types, filters, or rebuild semantics, **GRAPH_DESIGN wins**. Where they disagree on **canvas / process / MVP chrome**, **this file wins**.
 
 ---
 
-## 1. Verdict (MVP recommendation)
+## 1. Implemented verdict
 
 | Decision | Choice |
 |----------|--------|
 | Ship shape | **Separate workspace crate** `crates/rag-mcp-ui` + binary `rag-mcp-ui` |
-| MCP binary | Stays **headless stdio-only**; **zero** `egui` / `eframe` / `egui_graphs` / `petgraph` deps or features |
+| Gateway binary | Stays **headless** with stdio and optional HTTP transports; **zero** `egui` / `eframe` / graph-widget deps or features |
 | Cargo feature `ui` on `rag-mcp` | **Forbidden** (GPU stack bloat + stdout risk for agent hosts) |
 | Workspace `default-members` | MCP-only; UI is non-default member |
-| Default open path | **Snapshot or vault graph.json** (read-only), then **require seed**, then `get_neighbors`-shaped load |
-| Live DuckDB (`--db`) | Optional exclusive mode only; refuse if file locked |
+| Normal live path | **`--http URL`** to the one-writer gateway; snapshot and direct DB remain limited inspection paths. Omitting all source flags opens the connection screen |
+| Live DuckDB (`--db`) | Optional exclusive, strictly read-only UI mode; refuse if file locked |
 | Dual-live write with MCP | **Unsupported forever** in v1 UI |
 | Layout (MVP) | **One algorithm:** deterministic **RadialLocal** on neighbor views; freeze after place |
-| Interaction (MVP) | **Read-only:** pan/zoom, select, expand neighbors, open document |
+| Connections interaction | **Read-only graph canvas:** pan/zoom, select, expand neighbors, open document. Wiki editing is a separate HTTP-only workspace |
 | Server payload | Topology-only `GraphView` (nodes + edges). **Never** server positions or canvas fields ([GRAPH_DESIGN §0](GRAPH_DESIGN.md)) |
 | Domain filters | Mirror server **PKB defaults** when loading live: `rel_types=[wikilink, related]`, tags off unless user toggles ([GRAPH_DESIGN §7.1](GRAPH_DESIGN.md)) |
-| Critical path | GUI is **not** P0. Server graph P0a–P0c land first; UI is ROADMAP P1 scaffold / P2 paint |
+| Critical path | The headless gateway does not depend on GUI code. The current integrated product gate separately requires native visual QA |
 
-Critics agreed: four layout modes + write menus + trait sandwich before first paint is overdesign. This doc freezes a thin MVP and parks the rest under post-MVP.
+The original MVP deliberately avoided four layout modes, graph-write menus and
+an early trait sandwich. The implemented client grew product workspaces around
+that same bounded, read-only Connections canvas.
 
 ---
 
@@ -56,15 +58,26 @@ Critics agreed: four layout modes + write menus + trait sandwich before first pa
       src/
         main.rs              # CLI + eframe entry
         app.rs               # GraphApp (eframe::App)
-        load.rs              # snapshot / vault json / exclusive store open
+        load.rs              # snapshot / HTTP / read-only DB graph and wiki loads
         adapter.rs           # GraphView -> UiGraph (collapse, clamp, style)
-        layout.rs            # RadialLocal (MVP); optional FR later
-        worker.rs            # StoreWorker channels (only if --db)
+        layout.rs            # deterministic RadialLocal
+        gateway.rs           # sanitized HTTP transport boundary
+        product.rs           # Home and Library DTO/application adapters
+        search.rs            # Search DTO/application adapter
+        operations.rs        # Activity/jobs/health/backup adapters
+        revisions.rs         # History timeline/diff/restore adapters
+        worker.rs            # blocking HTTP/DB workers; separate maintenance lane
         ui/
           canvas.rs
           status.rs
           detail.rs
           empty.rs
+          home.rs
+          library.rs
+          search.rs
+          revisions.rs
+          wiki.rs
+          operations.rs
 ```
 
 Workspace policy:
@@ -86,7 +99,8 @@ cargo build -p rag-mcp-ui
 
 - `rag-mcp-ui` depends on **`rag-mcp` as a library** for shared serde models:
   - `GraphNode`, `GraphEdge`, `GraphView`, `GraphFilter`, `Stats`
-  - optionally `Store` for exclusive `--db` only
+  - `Store` is called only by exclusive, read-only `--db` inspection/export
+    paths; HTTP remains the normal live path
 - **Do not duplicate DTOs.** Wire JSON is the same shape MCP tools already return.
 - Thin UI-local types (`UiNode`, `UiEdge`, `PosCache`) live only in `rag-mcp-ui`.
 
@@ -96,25 +110,22 @@ Engineering modes (internal; UI presents one path):
 
 | Mode | Writer of DuckDB | UI data source | When |
 |------|------------------|----------------|------|
-| **A Exclusive live** | UI process (`Store::open`) | Live `Store` via worker | Dev only; MCP **not** running |
-| **B Exclusive MCP** | MCP process | N/A (no UI) | Normal agent use |
-| **C Snapshot** | MCP (or export) | `GraphView` JSON / `.rag/graph.json` **read-only** | **Default when agent runs** |
+| **A Exclusive DB inspection** | None; UI opens an exclusive read-only `Store` handle | Read-only Wiki/Connections via worker | Dev only; MCP **not** running |
+| **B Gateway + HTTP client** | Gateway process | HTTP product/graph APIs | Normal agent and native use |
+| **C Snapshot** | MCP (or export) | `GraphView` JSON / `.rag/graph.json` **read-only** | Portable/offline topology inspection |
 | **D Dual-live write** | — | — | **Forbidden** |
 
-**Hard rule:** one process owns DuckDB write. A second process must use snapshot/export, never a second writer `Store::open` on the same file.
+**Hard rule:** the HTTP gateway owns product writes. Direct `--db` exposes no
+Wiki or graph mutation path and still must not open the file beside the gateway;
+a concurrent process uses HTTP or snapshot/export, never a second `Store::open`
+on the same file.
 
-UI open path (user-facing):
+UI open paths (user-facing):
 
 ```
-open --snapshot PATH  |  open --db PATH
-        ↓                        ↓
-   load GraphView JSON      exclusive Store (fail if lock)
-        ↓                        ↓
-   require seed (CLI --seed or search box)
-        ↓
-   local neighbors(depth=1, max=100)  [or pre-filtered snapshot subset]
-        ↓
-   paint RadialLocal
+open --http URL       | open --snapshot PATH | open --db PATH
+gateway product APIs | load GraphView JSON  | exclusive Store (fail if lock)
+all writes via HTTP  | read-only topology   | read-only Wiki/Connections
 ```
 
 Never cold-start unfiltered global FR on full corpus.
@@ -124,44 +135,42 @@ Never cold-start unfiltered global FR on full corpus.
 | Thread | Allowed | Forbidden |
 |--------|---------|-----------|
 | **egui frame thread** | draw, layout tick (budgeted), input, channel `try_recv` | DuckDB, `Mutex<Connection>`, full-file parse of large vault, MCP stdio, blocking network |
-| **StoreWorker** (optional) | `Store` graph queries, exclusive open/close | egui context, wgpu |
+| **Interactive worker** | blocking gateway requests, snapshot IO and read-only direct-DB queries | egui context, wgpu |
+| **Maintenance worker** | long checkpoint/backup HTTP calls | egui context, interactive request queue |
 | **Main** | eframe run, CLI parse | long DB work before first frame if avoidable |
 
 ```text
-  GraphApp (UI thread)  --StoreCmd-->  StoreWorker
-                        <--StoreEvt--
+  GraphApp (UI thread)  --WorkerCmd-->  interactive worker
+                        <--WorkerEvt--   maintenance worker
 ```
 
-If MVP ships **snapshot-only**, StoreWorker can wait until exclusive `--db` lands. Snapshot load: still off first paint if file > few MB (spawn once, show spinner banner).
+Snapshot parsing, HTTP and direct read-only DB work all stay off the frame thread.
+Checkpoint/backup use the maintenance lane so a long verified copy does not
+block ordinary interactive client requests.
 
 ### 2.6 stdio MCP coexistence checklist
 
 1. UI binary never attaches to MCP stdin/stdout.
 2. Tracing/logging: **stderr only** (`tracing-subscriber` like server).
 3. No shared process with `serve(stdio())`.
-4. Snapshot refresh is file reload or optional MCP tool `export_graph_snapshot` (P2), not a second DB handle.
-5. Status line always shows **source** (`snapshot` | `vault_graph_json` | `live_store`) + mtime when applicable.
+4. Snapshot refresh is file reload or the shipped MCP tool `export_graph_snapshot`, not a second live DB handle.
+5. Status line shows **source** (`http_service` | `snapshot` | `vault_graph_json` | `live_store`) plus mtime when applicable.
 
 ---
 
-## 3. Crate choices (pinned)
+## 3. Crate choices (implemented)
 
-| Crate | Role | Pin (implementer verify on crates.io) |
-|-------|------|----------------------------------------|
-| `egui_graphs` | `GraphView` widget + FR helpers | **0.31** (matches egui 0.35 lineage) |
-| `eframe` / `egui` | Window + immediate mode | **0.35** (must match `egui_graphs`) |
-| `petgraph` | `StableGraph` for widget | **0.8** (as required by `egui_graphs`) |
-| `rag-mcp` | models (+ optional Store) | path dependency |
-| `serde` / `serde_json` | snapshot IO | align with workspace |
-| `crossbeam-channel` or `std::sync::mpsc` | StoreCmd/Evt | small surface |
+| Crate | Role | Current contract |
+|-------|------|------------------|
+| `eframe` / `egui` | Window, workspaces and plain-Painter canvas | exact matched pin `0.36.1`; lightweight `glow` renderer |
+| `rag-mcp` | shared models plus read-only `Store` inspection | path dependency |
+| `reqwest` | blocking gateway client on worker threads | rustls + JSON; never called on the frame thread |
+| `serde` / `serde_json` | HTTP and snapshot IO | shared wire shapes |
+| `std::sync::mpsc` | worker commands/events | interactive and long-maintenance lanes |
 
-**Upstream risk:** `egui_graphs` has a thin reverse-dep tree and can lag egui minors. Mitigations:
-
-- Pin the **matched trio** in `crates/rag-mcp-ui/Cargo.toml`; do not `*` ranges.
-- Keep a **thin adapter** (`adapter.rs`): map domain `GraphView` → petgraph weights; avoid forking layouts deep into egui_graphs internals.
-- If crate rots: fallback path is plain `egui` painter + own RadialLocal (layout is client-owned anyway). Do not block server on this risk.
-
-**Never** add these deps to the `rag-mcp` package.
+The client intentionally uses its own bounded plain-egui canvas; it does not
+depend on `egui_graphs` or `petgraph`. GUI dependencies must never be added to
+the headless `rag-mcp` package.
 
 ---
 
@@ -258,11 +267,12 @@ struct UiEdge {
 
 enum GraphSourceKind {
     LiveStore,
+    HttpService { base: String },
     SnapshotFile { path: PathBuf, mtime: Option<SystemTime> },
     VaultGraphJson { path: PathBuf, mtime: Option<SystemTime> },
 }
 
-/// Positions keyed by stable graph node id, never petgraph::NodeIndex.
+/// Positions keyed by stable graph node id, never a transient canvas index.
 type PosCache = HashMap<String, egui::Pos2>;
 
 /// Topology generation for anti-thrash.
@@ -332,11 +342,11 @@ Algorithm (client-side):
 
 Anti-thrash (all modes):
 
-- Rebuild petgraph only when `topology_generation` changes.
+- Re-adapt canvas topology only when `topology_generation` changes.
 - Same generation re-fetch: keep `PosCache` by **string node id**.
 - Edge-only change: mild unfreeze (e.g. 30 frames) if FR mode; Radial keeps rings unless seed/depth changes.
 - `fit_to_screen`: **one-shot** after load / focus change, then off. Continuous fit fights pan/zoom (perceived thrash).
-- Never key positions by `petgraph::NodeIndex` after rebuild.
+- Never key positions by a transient vector/canvas index after rebuild.
 
 ### 5.3 LayoutEngine trait
 
@@ -350,7 +360,7 @@ Anti-thrash (all modes):
 
 | Action | Behavior |
 |--------|----------|
-| Pan / zoom | egui_graphs / scene defaults |
+| Pan / zoom | bounded plain-egui canvas controls |
 | Click node | Select; detail panel shows fields + collapsed edge provenance |
 | Double-click / context **Open** | If `document_id` present → show id/uri/title (clipboard or external open hook); resolve by **document_id**, not label |
 | Context **Expand neighbors** | Request neighbors of selected; merge into view under caps |
@@ -412,7 +422,8 @@ MVP chrome filters (aligned with server **PKB** defaults, GRAPH_DESIGN §7.1):
 - Rel types default: `wikilink` + `related` on; `tagged` / `tunnel` / Dep types **off** until user enables
 - When loading **live** Store: pass the same defaults into `NeighborsOpts` / `GraphFilter` (do not fetch full soup then hide only in paint, if avoidable)
 - Snapshot load: filter client-side after parse if file is already a full dump
-- **Defer** wing/room/layer filter chrome to post-MVP unless metadata already dense
+- Project (`wing`) selection and room filtering are implemented; layer remains
+  contextual workspace/filter data rather than a graph-layout mode
 - Dep projection chrome (depends_on walks): post-MVP, separate from local PKB graph
 
 Global view (post-MVP): only behind explicit control + required filter or confirm + soft max ~200.
@@ -441,13 +452,12 @@ No server physics. Edge `weight` is visual / optional spring scale only.
 const UI_HARD_MAX_NODES: usize = 300;
 const UI_MAX_DRAW_EDGES: usize = 2000;
 const UI_LOCAL_MAX_NODES: u32 = 100;
-const UI_LAYOUT_BUDGET_MS: f32 = 8.0; // drop extra steps if exceeded
-const UI_FR_AUTO_FREEZE_N: usize = 150; // post-MVP FR
 ```
 
 On every source (live, snapshot, vault json):
 
-1. If nodes > `UI_HARD_MAX_NODES`: seed-BFS sample from current seed (or refuse with banner if no seed).
+1. If nodes exceed `UI_HARD_MAX_NODES`: seed-BFS sample from the current seed,
+   otherwise deterministic stable-id truncation, with an honest banner.
 2. Collapse multi-edges; if draw edges > `UI_MAX_DRAW_EDGES`: drop lowest-weight / tagged first with banner.
 3. Never run FR on uncapped full export.
 
@@ -458,70 +468,49 @@ On every source (live, snapshot, vault json):
 | Frame freeze | Store/DuckDB on UI thread | Worker only; `try_recv` |
 | Frame freeze | FR O(n²) unbounded steps | Radial MVP; FR budget + freeze + hard n |
 | Layout thrash | rebuild / random reseed every poll | `topology_generation` + PosCache by string id |
-| Pin loss | positions keyed by NodeIndex | string id cache |
-| Multi-second Expand | server `neighbors` full-edge scan O(\|E\|) | cap max_nodes; fix store indexing separately; UI shows spinner |
+| Pin loss | positions keyed by a transient canvas index | string id cache |
+| Multi-second Expand | large neighbor query or transport latency | project-scope/frontier SQL before caps; UI cap + spinner |
 | Alloc storm | full GraphView clone every frame | load once; update on user action / Refresh |
 | Hairball | unfiltered global + tag hubs | no cold global; hide tags; local default |
 | Snapshot lie | agent ingested newer data | mtime/source badge + Refresh |
 | DB corruption class | dual writer | exclusive open fails; document Mode C |
 
-### 8.3 Worker API (exclusive `--db` / post-MVP)
+### 8.3 Worker boundary
 
-```rust
-enum StoreCmd {
-    GetGraph { filter: GraphFilter, req_id: u64 },
-    /// Prefer full NeighborsOpts when Store exposes them (GRAPH_DESIGN §7.1).
-    Neighbors {
-        node_id: String,
-        depth: u32,
-        max_nodes: u32,
-        undirected: bool,              // default true (PKB local)
-        rel_types: Option<Vec<String>>, // default [wikilink, related]
-        include_tags: bool,            // default false
-        req_id: u64,
-    },
-    Backlinks { node_id: String, req_id: u64 },
-    FindNode { label: Option<String>, document_id: Option<String>, node_id: Option<String>, req_id: u64 },
-    Stats { req_id: u64 },
-    LoadSnapshot { path: PathBuf, req_id: u64 },
-    Shutdown,
-    // LinkNodes deferred — read-only MVP
-}
-
-enum StoreEvt {
-    Ready { req_id: u64, view: GraphView, rev: u64, source: GraphSourceKind },
-    /// Backlinks are occurrence rows, not a collapsed GraphView (GRAPH_DESIGN §7.3).
-    BacklinkHits { req_id: u64, hits: Vec<BacklinkHit> },
-    NodeMatches { req_id: u64, nodes: Vec<GraphNode> },
-    Stats { req_id: u64, stats: Stats },
-    Err { req_id: u64, message: String },
-}
-```
-
-`rev` / `topology_generation`: skip petgraph rebuild and layout reset when unchanged.
+`WorkerCmd`/`WorkerEvt` cover topology, project catalog/Home, Library, Search,
+Wiki/backlinks, History, Activity and jobs. Every blocking HTTP, snapshot or
+read-only DuckDB operation runs outside the frame thread and carries a sequence
+identifier so stale responses can be dropped. Checkpoint and backup use a
+separate maintenance worker, keeping the interactive queue responsive during a
+long copy. `topology_generation` plus the stable-ID position cache prevents an
+unchanged refresh from resetting layout.
 
 ---
 
 ## 9. CLI and env
 
 ```text
-rag-mcp-ui [--snapshot PATH | --db PATH] [--seed LABEL_OR_ID] [--depth N]
+rag-mcp-ui [--http URL | --snapshot PATH | --db PATH]
+           [--seed LABEL_OR_ID] [--depth N] [--max-nodes N]
 
-Env (reuse server):
-  RAG_DB_PATH       default for --db
-  RAG_VAULT_PATH    look for .rag/graph.json when vault-oriented
-  RAG_UI_MAX_NODES  override hard cap (clamped to safe max, e.g. 500)
+Env:
   RUST_LOG          tracing on stderr only
 ```
 
 Rules:
 
-- Exactly one of snapshot or db for open (XOR). If both omitted, file picker empty state.
-- `--seed` optional at CLI but **required before paint** of a local graph (search box satisfies).
-- `--depth` default 1, max reasonable 3 for UI.
-- Document as **optional inspector**, not agent dependency.
+- At most one source flag is accepted. If all are omitted, the UI opens an
+  empty connection screen with the loopback gateway URL prefilled.
+- `--http` is the normal live/product mode. `--snapshot` is topology-only;
+  `--db` is exclusive, current-schema and strictly read-only.
+- `--seed` is optional. Connections can resolve a seed from its focus field;
+  other HTTP product workspaces do not require one.
+- `--depth` defaults to 1 and clamps to 1–3. `--max-nodes` defaults to 100 and
+  clamps to the 300-node layout cap.
+- `RAG_DB_PATH`, `RAG_VAULT_PATH` and `RAG_UI_MAX_NODES` are not implicit UI
+  source/default controls; pass the corresponding CLI source and cap explicitly.
 
-Optional P2 MCP tool (server side, topology dump only):
+Shipped MCP tool (server side, topology dump only):
 
 ```text
 export_graph_snapshot → writes GraphView JSON (no positions)
@@ -581,51 +570,25 @@ Per `STORAGE_ADAPTERS.md`: vault SoT is markdown; `.rag/graph.json` is rebuildab
 
 ---
 
-## 11. MVP PR plan
+## 11. Implemented milestones
 
-### PR0 — Preconditions (server, no GUI)
+- The separate non-default workspace crate and headless dependency boundary are
+  in place.
+- HTTP, snapshot and exclusive read-only DB sources share the topology DTOs;
+  snapshot/direct modes expose only their documented inspection subsets.
+- Connections uses deterministic RadialLocal placement, stable ID-keyed
+  positions, multi-edge collapse and hard 300-node/2,000-edge paint caps.
+- HTTP mode adds independent Home, Library, Search, History, Wiki and Operations
+  workspaces. The project catalog has its own retry lifecycle; graph failure is
+  isolated to Connections.
+- `export_graph_snapshot` is shipped through MCP, and the UI binary also has an
+  offline read-only `export --db ...` command.
+- Direct DB paths call `Store::open_read_only`: they require an existing current
+  schema, run no migration and expose no write fallback. Every Wiki write uses
+  the gateway.
 
-- Stable `get_graph` / `get_neighbors` / `get_backlinks` / `find_node` JSON.
-- Optional: CLI or tool path that dumps `GraphView` to file (even a small `rag-mcp` subcommand or example script).
-- Document: one writer for DuckDB.
-
-### PR1 — Scaffold `crates/rag-mcp-ui`
-
-- Workspace member non-default; pin egui_graphs 0.31 + eframe/egui 0.35 + petgraph 0.8.
-- Binary opens window with empty states + status line.
-- Load `--snapshot` GraphView JSON; clamp caps; multi-edge collapse.
-- **No** Store dependency required yet.
-
-### PR2 — Local graph paint
-
-- Seed search over loaded nodes.
-- RadialLocal layout; PosCache by string id; fit one-shot; freeze.
-- Select + detail panel; label LOD; kind colors; expand within in-memory snapshot (BFS client-side on loaded edges) **or** reload neighbors if live later.
-- Truncation / empty banners.
-
-### PR3 — Exclusive `--db` (optional)
-
-- StoreWorker + Neighbors/GetGraph/Find/Stats.
-- Fail clearly on lock.
-- Still read-only UI (no link_nodes).
-
-### PR4 — Polish
-
-- Snapshot mtime badge + Refresh.
-- Hide-tags toggle; draw edge cap.
-- README: optional inspector; build with `-p rag-mcp-ui`.
-
-### Post-MVP (see ROADMAP P2)
-
-- FR for filtered global ≤200  
-- Hierarchical for **Dep** (`depends_on` / derived_from / supersedes), not wikilink soup  
-- GraphQuery trait + vault live parse  
-- `export_graph_snapshot` MCP tool (server P2)  
-- Writes / unlink gated to exclusive related/tunnel only  
-- Background FR worker  
-- wing/room chrome  
-
-Scheduling: server graph P0a–P0c and frontier SQL before UI paint; UI crate scaffold can start once `GraphView` JSON is stable ([ROADMAP](ROADMAP.md) graph section).
+Future work is evidence-gated in [`ROADMAP.md`](ROADMAP.md), not scheduled by
+the original PR sketch that this section replaced.
 
 ---
 
@@ -636,7 +599,7 @@ Scheduling: server graph P0a–P0c and frontier SQL before UI paint; UI crate sc
 | Server-side positions or canvas in DuckDB / MCP tools | SPEC non-goal; clients own viz |
 | `ui` feature on `rag-mcp` binary | stdio + GPU bloat + agent risk |
 | Dual-live DuckDB write with MCP | locks / corruption |
-| GUI on P0 critical path / release gate | headless server ships without Metal/wgpu |
+| GUI as a runtime dependency of the headless gateway | headless server ships without Metal/wgpu; integrated product visual QA is a separate release gate |
 | Four layout modes day one | thrash + meaningless hierarchy on wiki soup |
 | Write/edit graph from UI in MVP | races, incomplete unlink, cognitive noise |
 | Full-corpus unfiltered global default | hairball + FR freeze |
@@ -653,27 +616,31 @@ Scheduling: server graph P0a–P0c and frontier SQL before UI paint; UI crate sc
 
 - Separate binary; no shared process; no egui in MCP deps.  
 - Tracing stderr only.  
-- Coexistence = snapshot file (Mode C), not dual writer.  
-- Engineering modes A/B/C documented; UI exposes **db XOR snapshot**, not a mode dropdown of four.
+- Coexistence = gateway-owned HTTP client or snapshot file, not dual writer.
+- Engineering modes A/B/C documented; CLI accepts at most one of **http**,
+  **db**, or **snapshot** (zero opens the connection screen), not a mode
+  dropdown of four.
 
 ### 13.2 UI thread
 
 - No DuckDB / heavy IO on frame thread.  
 - Layout budget; Radial freeze; hard node/edge caps in code.  
-- petgraph rebuild gated on topology generation; positions by stable string id.
+- Plain-egui canvas adaptation is gated on topology generation; positions use
+  stable string ids.
 
 ### 13.3 drop_gui risk
 
 - UI is optional non-default workspace member.  
 - `cargo build` default remains MCP-only.  
 - Product core (ingest, search, graph tools) does not import UI.  
-- If egui_graphs rots: inspector degrades or is dropped without breaking agents.
+- Exact GUI dependency pins remain isolated from the agent/gateway package.
 
 ### 13.4 UX critic (revise → applied)
 
-- One default path: source → seed → neighbors depth 1.  
-- One layout (RadialLocal).  
-- Read-only MVP.  
+- One normal live path: HTTP gateway; Connections focus resolves a seed and
+  requests bounded neighbors at depth 1.
+- One layout (RadialLocal).
+- Read-only Connections canvas; Wiki editing is HTTP-only.
 - Empty states with one primary action.  
 - Global behind explicit control later.  
 - Progressive disclosure: status always, detail on select.  
@@ -681,9 +648,10 @@ Scheduling: server graph P0a–P0c and frontier SQL before UI paint; UI crate sc
 
 ### 13.5 Realist critic (revise → applied)
 
-- Snapshot-first MVP; exclusive db second.  
-- Thin adapter; pinned versions; unmaintained upstream documented.  
-- No trait/worker/engine overdesign before first paint (worker only with `--db`).  
+- HTTP product mode plus snapshot and exclusive read-only DB inspection.
+- Thin adapter, exact eframe/egui pins and no third-party graph widget.
+- No trait/engine overdesign; blocking HTTP/DB and long maintenance work use
+  background worker lanes.
 - Hard caps 300 / 2000.
 
 ### 13.6 Perf critic (revise → applied)
@@ -710,26 +678,27 @@ Borrow from Obsidian / package dep UIs, not from IDE node editors:
 
 ---
 
-## 15. Success criteria (MVP done)
+## 15. Current acceptance boundary
 
 1. `cargo build` (default members) does not pull egui/eframe.  
-2. `cargo build -p rag-mcp-ui` opens window, loads snapshot, paints RadialLocal for a seed.  
+2. `cargo build -p rag-mcp-ui` builds the separate native binary; live visual
+   behavior still requires GUI QA rather than inference from compilation.
 3. No stdout pollution; logs on stderr.  
 4. 300+ node snapshot does not freeze indefinitely (cap/sample + banner).  
 5. Refresh with same topology does not thrash layout.  
-6. Status line shows source, seed, counts, truncated.  
+6. Status line shows HTTP/snapshot/direct-DB source, seed, counts and truncation.
 7. Empty/error states never look like a silent blank success.  
-8. README documents optional inspector and DuckDB single-writer rule.
+8. Direct DB inspection remains physically read-only; HTTP owns every mutation.
+9. Home, Library, Search, History, Wiki, Connections and Operations are covered
+   by the live visual release gate in [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
 ## 16. Open points (intentionally deferred)
 
 - Exact FR parameters when post-MVP global ships.  
-- Whether client-side BFS on a large snapshot is preferred over re-query for Expand.  
 - External "open document" (path open vs copy id) on each OS.  
 - Vault live parse vs sidecar authority when both exist (domain: GRAPH_DESIGN §10 prefers live parse for correctness).  
-- Optional `export_graph_snapshot` tool schema (P2).  
 - Mixed-origin multi-edge collapse: dominant origin heuristic (prefer explicit if any member is explicit).
 
 ---

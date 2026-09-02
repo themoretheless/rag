@@ -47,15 +47,17 @@ Layout is not computed server-side: tools return pure `{nodes, edges}` JSON for 
 - **Wiki layer**: write/get/list wiki pages, schema, index catalog, ops log, `query_with_index`, `search_wiki`, `file_answer`, `lint_wiki`, `consolidate`
 - **Local LLM** (optional): Ollama / LM Studio OpenAI-compatible chat + embeddings (`RAG_LLM_*`, `RAG_EMBEDDING_PROVIDER=ollama`)
 - **Maintenance loop**: `analyze_corpus` → `plan_maintenance` → `apply_maintenance_plan` (dry_run default) → `maintain_organize` / `maintain_compress` / `maintain_refresh`; wiki `compile_source`, `consolidate`, `refresh_stale_wiki`
-- **Incremental sources**: root manifest preflight skips healthy unchanged files; changed files share bounded cross-document embedding batches while retaining ordered per-document atomic commits; parent/subdirectory root rebinding is preserved; generated `.cache`, Storybook output, and Python virtual environments are excluded; oversized files become explicit per-file errors; deleted or newly policy-excluded source state is pruned transactionally. A process-local read/write lane keeps a full sync exclusive while concurrent `lex`/`hybrid` searches either finish before it starts or fail fast with retryable `STORE_BUSY`
+- **Incremental sources**: root manifest preflight skips healthy unchanged files; changed files share bounded cross-document embedding batches while retaining ordered per-document atomic commits; parent/subdirectory root rebinding is preserved; generated `.cache`, Storybook output, and Python virtual environments are excluded; oversized files become explicit per-file errors; deleted or newly policy-excluded source state is pruned transactionally. A process-local read/write lane coordinates source sync and other guarded corpus-scale mutations with `lex`/`hybrid`; retrieval either finishes before the exclusive mutation starts or fails fast with retryable `STORE_BUSY`
 - **Product API**: Project Home, lean Unified Library, search, SQL-scoped project graph, paginated revision timeline with lazy snapshots/diff/restore, background jobs, checkpoint and verified backup
-- **HTTP safety and observability**: all `/v1/*` and mounted `/mcp` request bodies are capped at 1 MiB even without `Content-Length`; bounded Activity exposes anonymous client IDs and operation lineage without raw IP/UA, request bodies, source paths or titles, and records job resources as `/v1/jobs/{id}` rather than retaining their identifiers
+- **HTTP safety and observability**: all `/v1/*` and mounted `/mcp` **request** bodies are capped at 1 MiB even without `Content-Length` (this is not a response-size limit); bounded Activity exposes anonymous client IDs and operation lineage without raw IP/UA, request bodies, source paths or titles, and records job resources as `/v1/jobs/{id}` rather than retaining their identifiers
 - **Integrity**: atomic document/chunk/graph writes, indexed document/graph-node URI lookup with single URI ownership enforced by CAS, immutable-raw revision restore guard, content_hash / `check_duplicate`, `embedding_manifest`, generation-aware FTS/vector caches; `status` aggregates layer health in SQL; `doctor`, `vacuum_store`, ops_log
 - **Single-file DuckDB** (bundled crate); embeddings stored as JSON float arrays (portable, no VSS required)
 - **Optional native client**: Home, Library, Search, Wiki, project Connections,
   Operations and document History over the live HTTP gateway; transport failures
   are sanitized before display, and project changes cannot discard an in-flight
-  wiki save, revision restore or Operations mutation
+  wiki save, revision restore or Operations mutation. The authoritative project
+  catalog loads and retries independently of graph topology and retains its last
+  successful list on failure
 - **Logging to stderr only** (stdout is reserved for MCP)
 
 ## MemPalace-inspired model
@@ -180,9 +182,10 @@ cargo run
 
 ### OpenAI-compatible embeddings
 
-These settings belong to the one gateway. Changing embedding dimensions
-requires a fresh compatible corpus or a full re-index; do not start a second
-`cargo run` process against either the canonical DB or an implicit
+These settings belong to the one gateway. Changing provider, model, dimensions,
+or base endpoint requires a complete uncapped successful `reembed_all` before
+the new manifest is published and vector/hybrid search resumes; do not start a
+second `cargo run` process against either the canonical DB or an implicit
 `./rag.duckdb`.
 
 ```bash
@@ -257,7 +260,20 @@ Also works with:
 Chat API: `POST {RAG_LLM_BASE_URL}/chat/completions`.  
 Embeddings: native Ollama `/api/embed` (or `/api/embeddings`), or OpenAI-compatible `/embeddings` when base ends with `/v1`.
 
-On model/dim change: `vec` / `hybrid` refuse until you reembed (`reembed_document` or `maintain_refresh` with `reembed_all`).
+The embedding corpus identity covers provider, model, dimensions, and base
+endpoint. `reembed_document` is a one-document refresh only when that identity
+already matches the stored manifest; it is not a migration command. After an
+identity change, `vec` / `hybrid` and new vector writes remain refused until
+`maintain_refresh` completes an uncapped `reembed_all` (`max_docs` at least the
+current corpus document count) with no skipped or failed documents and publishes
+the new manifest. Per-call `max_docs` is clamped to the gateway's
+`RAG_MAINT_MAX_DOCS`, so a larger corpus migration first requires raising that
+environment limit and restarting the gateway. The default maintenance cap
+deliberately refuses a larger identity migration before changing any vectors.
+Once migration starts, the store persists an incompatible migration marker
+before its first vector write. A partial failure—or switching configuration
+back to the old identity—therefore keeps vector/hybrid search closed; only full
+success replaces the marker with the target manifest.
 
 ### Env (LLM + maintenance)
 
@@ -335,7 +351,7 @@ Example agent session after Ollama is up:
 1. **Whitelist only:** LLM and plan tools cannot invent SQL or shell; only named actions (refile, pin, archive, set_tags, rebuild_*, reembed, compile_source, merge_exact_dup, vacuum, …).
 2. **`dry_run` defaults true** for multi-action / bulk paths: `apply_maintenance_plan`, `maintain_organize`, `maintain_compress`, `refresh_stale_wiki`. Preview + ops_log, no mutation until you set `dry_run=false`.
 3. **`confirm=true`** required for compress L2 near-dup merges (with `dry_run=false`).
-4. **Budget:** `RAG_MAINT_MAX_DOCS` (default 50) caps docs touched per run; override per-call with `max_docs` where exposed.
+4. **Budget:** `RAG_MAINT_MAX_DOCS` (default 50) is the hard cap for documents touched per maintenance run. Per-call `max_docs` may request a smaller batch; larger values are clamped to the configured cap.
 5. **ops_log** on every apply (and most dry_runs with `*_dry_run` op names).
 6. **No silent raw mutation:** `layer=raw` bodies stay immutable; hard-delete of raw needs explicit `allow_raw_delete` (compress/apply). Prefer tombstones.
 7. Offline-first: unreachable LLM → clear error (timeouts via `RAG_LLM_TIMEOUT_SECS`), not an infinite hang.
@@ -434,7 +450,7 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `update_document_meta` | `document_id`, `wing?`, `room?`, `title?`, `metadata_json?`, `pinned?`, `boost?`, `status?`, `layer?`, `kind?`, `source_file?`, `content?` | Meta update without re-embed unless `content` changes; refused for immutable raw body |
 | `delete_document` | `document_id` | Delete document + chunks + graph cleanup |
 | `delete_by_source` | `source_file` (alias `source`), `dry_run?` | Bulk delete by exact `source_file` |
-| `cleanup_source_duplicates` | `dry_run?`, `confirm?`, `max_candidates?` | Preview by default; remove a bounded deterministic batch of legacy raw duplicates only when one exact `file://<source_file>` survivor exists; rewires safe references and reports protected groups without changing them |
+| `cleanup_source_duplicates` | `dry_run?`, `confirm?`, `max_candidates?` | Preview by default; remove one deterministic atomic batch of legacy raw duplicates only when one exact `file://<source_file>` survivor exists; `max_candidates` is clamped to `RAG_MAINT_MAX_DOCS`, while full-scan totals are scalar and diagnostic details are bounded; rewires safe references and reports protected groups without changing them |
 | `check_duplicate` | `content?`, `content_hash?`/`hash?`, `uri?` | content_hash / uri idempotency probe |
 | `list_wings` | (none) | Distinct wings with document counts |
 | `list_rooms` | `wing?` | Distinct rooms with counts |
@@ -442,9 +458,9 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `stats` | (none) | Docs, chunks, nodes, edges + `db_path` |
 | `status` | (none) | Health: counts, FTS readiness, embed dims, `ready_for_search`; layer/index compilation health is aggregated in SQL without loading bodies |
 | `doctor` | (none) | Schema / FTS / embedding manifest, WAL size, orphan references, missing chunks, and scope integrity |
-| `get_embedding_manifest` | (none) | Corpus embedding fingerprint (provider, model, dims) |
+| `get_embedding_manifest` | (none) | Corpus embedding identity fingerprint (provider, model, dims, base endpoint) |
 | `multi_query_search` | `queries`, `top_k?`, `mode?`, filters | Caller-supplied query rewrites fused with deterministic RRF; no implicit LLM call |
-| `reembed_document` | `document_id` | Re-embed all chunks for one document with live config |
+| `reembed_document` | `document_id` | Refresh one document only when live embedding identity already matches the corpus manifest; not a model/provider/dims/base migration |
 | `llm_status` | (none) | Chat + embed config and reachability |
 | `vacuum_store` | (none) | DuckDB `CHECKPOINT` + file size delta; ops_log |
 
@@ -452,12 +468,27 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 
 | Tool | Params | Behavior |
 |------|--------|----------|
-| `backup_db` | `path`, `dry_run?`, `overwrite?` | Consistent checkpointed DuckDB copy; no overwrite by default |
-| `export_bundle` | `path`, `format?`, `dry_run?`, `overwrite?` | Portable JSON/JSONL documents, metadata, and chunks; fully staged and synced before atomic publication, with no-clobber default |
+| `backup_db` | `path`, `dry_run?`, `overwrite?` | Verified MVCC-consistent DuckDB snapshot; only CHECKPOINT/connection cloning hold the Store mutex, while the long database copy remains online; no overwrite by default |
+| `export_bundle` | `path`, `format?`, `dry_run?`, `overwrite?` | Recovery bundle v2: portable JSON/JSONL documents, metadata, chunks, and canonical `embedding_manifest`; fully staged and synced before atomic publication, with no-clobber default |
 | `export_vault` | `path`, `dry_run?`, `overwrite?` | Git-friendly Markdown grouped by wing/room/layer plus `.rag` graph, ops log, and manifest; dry-run by default |
-| `import_bundle` | `path`, `format?`, `dry_run?`, `conflict_policy?` | Transactional import; `error`, `skip`, or explicit `overwrite`; an id/URI cross-collision conflicts and rolls back the whole bundle |
+| `import_bundle` | `path`, `format?`, `dry_run?`, `conflict_policy?`, `reembed_legacy?` | Transactional v2 import with exact embedding-identity validation; `error`, `skip`, or explicit `overwrite`; vector-bearing v1 needs explicit gateway re-embedding; an id/URI cross-collision rolls back the whole bundle |
 
-All paths must be under `RAG_INGEST_ROOTS`. Imports default to dry-run. See [Backup and recovery](docs/RECOVERY.md).
+All paths must be under `RAG_INGEST_ROOTS`. Imports default to dry-run. A v2
+bundle with chunks is accepted only with a canonical manifest whose
+provider/model/dimensions/base URL/fingerprint matches the non-empty target; an
+empty target adopts that identity on apply. Legacy v1 chunks have unverifiable
+vector provenance and require MCP `import_bundle` with
+`reembed_legacy=true`, which replaces every vector through the live provider;
+the offline CLI refuses them. Metadata-only v1 remains importable. See
+[Backup and recovery](docs/RECOVERY.md).
+
+Portable JSON/JSONL recovery is an explicitly bounded, in-memory interchange
+path: input and encoded output are limited to 64 MiB, with at most 10,000
+documents and 50,000 chunks. Both gateway and offline CLI reject oversized
+imports before reading the whole file and reject oversized exports before
+loading the corpus or publishing an artifact. For a larger corpus, create a
+checkpointed `backup_db` / `recovery backup` snapshot and verify its checksum,
+schema, relational integrity, and embedding contract before restore.
 
 ### Graph (Obsidian-like)
 
@@ -508,8 +539,8 @@ not synthesize or rewrite content.
 
 | Tool | Params | Behavior |
 |------|--------|----------|
-| `write_wiki_page` | `slug`, `title`, `content`, `kind?`, `category?`, `summary?`, `agent?` | Create/overwrite wiki page + graph extract + index touch |
-| `update_wiki_page` | (same as write) | Alias of `write_wiki_page` (upsert by slug) |
+| `write_wiki_page` | `slug`, `title`, `content`, `kind?`, `category?`, `summary?`, `agent?` | Create or upsert a wiki page by slug + graph extract + index touch |
+| `update_wiki_page` | (same wire fields as write) | Update an existing page only; omitted kind/category/summary preserve their values, and project placement, lifecycle/pin/boost state, source ownership and unrelated metadata are retained |
 | `get_wiki_page` | `id_or_slug` | Fetch by slug, `wiki://…`, or document id |
 | `list_wiki_pages` | (none) | List `layer=wiki` documents |
 | `get_schema` | `no_default?` | Read agent conventions at `schema://agents` |
@@ -550,16 +581,57 @@ not synthesize or rewrite content.
 | API key | Not required | Required except local hosts | Dummy key filled when empty |
 | Use for | Dev, CI, wiring clients | Production / remote | Local semantic quality |
 
-Keep `RAG_EMBEDDING_DIMS` consistent with the model and with vectors already stored. The corpus records an **embedding manifest**; `vec` / `hybrid` refuse when dims mismatch. Use `reembed_document` or `maintain_refresh` with `reembed_all` after model/dim changes.
+Keep provider, model, `RAG_EMBEDDING_DIMS`, and
+`RAG_EMBEDDING_BASE_URL` consistent with the vectors already stored. The corpus
+records their combined identity in the **embedding manifest**; `vec` / `hybrid`
+and new vector writes refuse a mismatch. `reembed_document` only refreshes one
+document when the identity already matches. To change any identity component,
+run `maintain_refresh` with `reembed_all=true` and set `max_docs` to at least the
+current corpus document count, making the run uncapped relative to that corpus.
+Because the request is clamped to `RAG_MAINT_MAX_DOCS`, raise that gateway
+environment value to at least the same count and restart before a larger
+migration. The default maintenance cap refuses a larger migration before mutation. The new
+manifest is published, and search resumes, only after the complete corpus
+finishes with no skipped or failed documents. A persistent incompatible
+migration marker written before the first vector change keeps search closed
+after partial failure or configuration rollback.
 
-Compatible servers (LiteLLM, Azure OpenAI, LM Studio, local proxies) work by setting `RAG_EMBEDDING_BASE_URL` and matching model/dims.
+If a non-empty corpus has chunks but no manifest, startup does not invent one
+from the current environment. The gateway stays available for diagnosis and a
+full repair, while vector reads/writes remain fail-closed and
+`ready_for_search=false`. Run one complete uncapped `reembed_all`; only full
+coverage with no skipped or failed documents publishes the verified manifest.
+
+Compatible servers (LiteLLM, Azure OpenAI, LM Studio, local proxies) work by
+setting `RAG_EMBEDDING_BASE_URL` and matching the complete corpus identity.
 
 ## Lexical search (FTS)
 
 Preferred path: DuckDB `fts` extension (`INSTALL`/`LOAD fts` +
-`PRAGMA create_fts_index`). Mutations advance the chunk generation and mark FTS
-stale; the next lexical/hybrid read performs one single-flight refresh, so the
-reader observes preceding writes without rebuilding on every request.
+`PRAGMA create_fts_index`). Text or row mutations advance the chunk generation
+and leave FTS stale. An embedding-only update also advances the chunk generation
+to invalidate vector snapshots, but, when the lexical generation was already
+clean, advances it in the same transaction without rebuilding unchanged text;
+pre-existing FTS debt remains dirty.
+
+Guarded corpus-scale workflows—source sync, doctor repair, duplicate cleanup,
+delete-by-source, recovery import, and maintenance apply/refresh/compress—keep
+the exclusive corpus lane through derived-index finalization and reconcile
+stale FTS before returning normal terminal success. Ordinary single-document
+authoring, and workflows that fail or are interrupted before finalization,
+retain the crash-safe dirty marker: the next lexical/hybrid read performs one
+serialized single-flight refresh before ranking. Clean warm reads do not
+rebuild the index.
+
+If eager FTS finalization fails, the aggregate is explicitly unsuccessful and
+retains its mutation counters/actions. Structured finalization detail identifies
+`code=FTS_FINALIZATION_FAILED`, whether durable work committed
+(`durable_mutation_committed`), `retryable=true`, and whether the fallback dirty
+marker was written (or its marker error). A source-sync job retains that detail
+in its report and terminates as `completed_with_errors`, not `succeeded`. The
+dirty generation lets the next lexical/hybrid read retry the refresh safely;
+callers must inspect the committed flag and must not blindly replay work that
+already committed.
 
 If the FTS extension is unavailable (offline CI, locked-down hosts), the same `lex` / `hybrid` API falls back to a **term-frequency scorer in Rust**. Scores are not full Okapi BM25; `status` / `doctor` report the active backend (`duckdb_bm25` vs `term_frequency`).
 
@@ -608,8 +680,15 @@ the gateway. HTTP transport errors are reduced to safe timeout/connect/generic
 messages instead of exposing request URLs or query details. The project selector
 is locked while a wiki save, restore, sync/cancel, checkpoint or backup request is
 in flight; the submitted edit/restore state remains owned until its response.
-Verified backups have a dedicated 30-minute client timeout. Snapshot mode is topology-only; `--db` is an exclusive
-development/maintenance mode and must not run beside the gateway.
+Project catalog refresh is independent from Connections: failure preserves the
+last authoritative list, and Home/Library/Search/History/Wiki/Operations do not
+wait for graph availability. Search results retain the exact submitted request
+snapshot, Library pagination reuses only applied filters, and Wiki backlinks are
+project-scoped with transport/database errors shown distinctly from a successful
+empty result. Verified backups have a dedicated 30-minute client timeout.
+Snapshot mode is topology-only; `--db` is an exclusive read-only Wiki/Connections
+inspection mode and must not run beside the gateway. All native Wiki writes go
+through the one-writer HTTP gateway.
 
 Short usage: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md). Design: [`docs/EGUI_GRAPH_VIEW.md`](docs/EGUI_GRAPH_VIEW.md).
 
@@ -619,13 +698,14 @@ Short usage: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md). Design: [`docs/EGUI_GRA
 cargo build -p rag-mcp-ui
 cargo run -p rag-mcp-ui -- --http http://127.0.0.1:7432
 cargo run -p rag-mcp-ui -- --snapshot ./graph.json --seed "Note title"
-# exclusive live DB only when MCP is not holding the file:
+# exclusive read-only inspection only when MCP is not holding the file:
 cargo run -p rag-mcp-ui -- \
   --db /Users/themoretheless/.local/share/rag-mcp/rag.duckdb \
   --seed some-node-id
 ```
 
-Use exactly one of `--http`, `--snapshot`, or `--db`. Optional graph flags are
+Use at most one of `--http`, `--snapshot`, or `--db`; omitting all three opens
+the in-app connection screen. Optional graph flags are
 `--seed`, `--depth` (default 1), and `--max-nodes` (default 100, hard layout cap
 300). Logs stay on stderr. Connections use bounded RadialLocal layout; the
 server never persists canvas coordinates.
@@ -647,14 +727,15 @@ cargo run -p rag-mcp-ui -- --snapshot graph.json --seed "Note title"
 
 | Mode | Writer | UI | Use |
 |------|--------|-----|-----|
-| **A** Exclusive live | UI `--db` | Live Store | Dev; **MCP off** |
+| **A** Exclusive DB inspection | none; UI exposes no writes | `--db` read-only Wiki/Connections views | Dev inspection; **MCP off** |
 | **B** Gateway + HTTP client | gateway | `--http` | Normal agent and native use |
 | **C** Snapshot | gateway (or export) | `--snapshot` read-only | Offline review / portable topology |
 | **D** Dual-live write | - | - | **Forbidden** |
 
-One process owns DuckDB writes. Never open UI `--db` on the same file the
-gateway already holds. Prefer `--http` for live refresh; snapshot refresh means
-re-exporting JSON, not opening a second live writer.
+The gateway is the only product writer. Never open UI `--db` on the same file
+the gateway already holds, even though the direct UI surface is read-only.
+Prefer `--http` for live refresh and every Wiki write; snapshot refresh means
+re-exporting JSON, not opening a second live handle.
 
 ## License
 

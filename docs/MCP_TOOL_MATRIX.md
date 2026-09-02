@@ -34,8 +34,9 @@ Priority labels in this matrix may lag shipped code; for “exists today” pref
 | `cleanup_source_duplicates` | Guarded exact `(source_file, content_hash)` legacy cleanup | Keep one canonical raw source | Migration integrity helper | P0 operational |
 | `status` | Health: FTS, dims, counts, path, `ready_for_search` | Session orientation | `mempalace_status` | P0 |
 | `doctor` | Integrity: schema_version, FTS, embed dims, orphans, allowlist | Drift control | reconnect / status depth | P0 minimal |
-| `get_embedding_manifest` | Active model/dims/provider fingerprint | Corpus honesty for search | Embed config surface | P0 |
-| `reembed` / `reembed_document` | Migrate vectors after model/dim change | Keep wiki searchable after config change | Re-index drawers | P0 |
+| `get_embedding_manifest` | Active provider/model/dimensions/base-endpoint corpus identity | Corpus honesty for search | Embed config surface | P0 |
+| `reembed` / `reembed_document` | Refresh one document only while stored and configured corpus identities match | Keep an existing corpus current | Re-index one drawer | P0 |
+| `reembed_all` | Complete uncapped corpus migration after provider/model/dimensions/base-endpoint change; persist an incompatible marker before vectors and publish the target manifest only on full success | Resume vector/hybrid search after config change | Re-index all drawers | P0 |
 | `graph_expand_search` | Search hits + neighbor subgraph | Query then follow wiki links | Search + `traverse` / tunnels | P0 |
 | `ingest_raw` / `list_sources` / `get_source` | Immutable raw layer register | **Raw sources** (never mutate) | Drawers as verbatim store | P0 |
 | `write_wiki_page` / `update_wiki_page` / `get_wiki_page` / `list_wiki_pages` | Compiled wiki CRUD | **Wiki** layer LLM owns | — (MemPalace is store-not-compile) | P0 |
@@ -78,6 +79,8 @@ See [`ORGANIZE.md`](ORGANIZE.md).
 | `forget` / `undelete` | Soft-delete tombstone path | Remove without breaking node ids | Memory update/delete | P1 |
 | `consolidate_memory` | Diary/episode → wiki/kg compression | Compile pass over agent notes | Sleep / consolidate pattern | P1–P2 |
 | `backup_db` | Consistent DuckDB file snapshot | Before reembed / migration | Export outside core | shipped |
+| `export_bundle` | Portable recovery v2 with documents, chunks, and canonical embedding identity | Transfer the retrieval substrate honestly | Portable drawer snapshot | shipped |
+| `import_bundle` | Transactional identity-checked v2 restore; explicit `reembed_legacy=true` replaces unverifiable v1 vectors through the gateway | Restore without silently mixing models | Restore drawer contents | shipped |
 | `multi_get` / `find_similar` / `expand_chunks` | Retrieval UX | Open several index hits | Multi-drawer fetch | shipped |
 | `export_vault` / `export_markdown` / `export_graph` | Obsidian/git-friendly dump | Wiki is markdown repo | Export outside core MCP | P1 |
 | `ingest_directory` / `sync_sources` | Bulk mine + prune orphans | Batch ingest + cleanup | `mine` + `mempalace_sync` | shipped |
@@ -102,7 +105,8 @@ See [`ORGANIZE.md`](ORGANIZE.md).
 | `RAG_FTS_STEMMER` | FTS language / `none` for CJK/code |
 | `RAG_MAX_CONTEXT_TOKENS` | Default token pack for search hits |
 | `RAG_MAX_CHUNKS_PER_DOC` | Diversity collapse per document |
-| `embedding_manifest` table | Model/dims/provider; mismatch refuses vec search |
+| `embedding_manifest` table | Provider/model/dimensions/base-endpoint identity plus persistent incompatible migration state; mismatch, missing identity on a non-empty corpus, partial failure, and configuration rollback refuse vector work until a complete uncapped `reembed_all` succeeds |
+| FTS finalization contract | Guarded bulk reports retain committed counters/actions and structured `FTS_FINALIZATION_FAILED` detail (`durable_mutation_committed`, retryability, dirty-marker status); source-sync terminates `completed_with_errors` |
 | Atomic ingest txn | Doc + chunks + graph + log commit as one unit |
 | MCP safety annotations | Destructive vs read-only tools (when rmcp supports) |
 

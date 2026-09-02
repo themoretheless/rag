@@ -242,7 +242,13 @@ Implemented:
 - DuckDB remains the concrete full-runtime store.
 - Markdown provides document CRUD, deterministic lexical sidecar rebuild/watch,
   and a DuckDB-to-vault export path.
-- Portable `export_bundle` / `import_bundle` are shipped recovery tools.
+- Portable `export_bundle` / `import_bundle` are shipped recovery tools. Bundle
+  v2 carries the canonical embedding manifest with chunk vectors; import checks
+  exact target identity and dimensions. Vector-bearing v1 requires explicit
+  live-provider re-embedding through the gateway and is refused by the offline
+  CLI; metadata-only v1 is safe to upgrade. JSON/JSONL is deliberately bounded
+  to 64 MiB, 10,000 documents and 50,000 chunks; larger corpora use a verified
+  DuckDB backup rather than portable in-memory materialization.
 
 Future work is not backend-count driven. Extend the contract only for a real
 consumer, specify capability and failure semantics first, and require a shared
@@ -274,7 +280,10 @@ denominator schema.
 
 **Cross-backend migration:** `export_bundle` / `import_bundle` provide the
 shipped portable document-and-chunk path. Graph/index data remains derived and
-must be rebuilt after import.
+must be rebuilt after import. Portability does not erase vector provenance:
+bundle v2 includes the canonical provider/model/dimensions/base-URL manifest,
+and a target with existing chunks must match it exactly. This path is limited to
+64 MiB / 10,000 documents / 50,000 chunks; it is not the full-corpus backup path.
 
 ---
 

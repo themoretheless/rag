@@ -25,7 +25,7 @@
 
 4. **Layers, not modes.** Raw, retrieval, graph, wiki, and agent memory coexist. Do not force “wiki-only” or “vector-only” product modes that delete the other layers.
 
-5. **Honest retrieval.** Hybrid (lex|vec|hybrid + RRF) is substrate quality, not a leaderboard toy. Hits must be agent-usable: scores, snippets/offsets, diversity, token budget. Wrong embedding model/dims must fail closed (manifest), not rank nonsense.
+5. **Honest retrieval.** Hybrid (lex|vec|hybrid + RRF) is substrate quality, not a leaderboard toy. Hits must be agent-usable: scores, snippets/offsets, diversity, token budget. A mismatched embedding corpus identity must fail closed (manifest), not rank nonsense.
 
 6. **Deterministic graph structure.** `[[wikilink]]`, `#tag`, stubs, promote-on-title stay server-side and free of mandatory LLM NER. Entity pages and tunnels are additive; cognify is out of core.
 
@@ -75,10 +75,18 @@ These are testable product laws (subset expanded from architecture notes):
 7. Stdout is MCP-only; logging on stderr.
 8. One process owns one active store path for writes (no silent multi-writer corruption).
 9. `ingest_file` never reads outside `RAG_INGEST_ROOTS`.
-10. Vec/hybrid never silently ranks under the wrong embed model/dims.
+10. Vec/hybrid and new vector writes refuse a corpus identity mismatch
+    (provider/model/dims/base endpoint). Single-document reembed is refresh-only;
+    corpus migration writes a persistent incompatible marker before its first
+    vector change, and only a complete uncapped successful `reembed_all`
+    publishes the target manifest and resumes search. Partial failure or
+    configuration rollback remains blocked.
 11. Ingest is atomic: failure leaves neither half-chunks nor ghost edges.
-12. Writes advance the chunk generation; the next lexical/hybrid read performs
-    one single-flight FTS refresh before ranking.
+12. Text/row writes advance the chunk generation and leave FTS stale.
+    Embedding-only writes advance vector/chunk generation while preserving an
+    already-clean lexical generation. Guarded corpus-scale workflows reconcile
+    stale FTS before normal terminal success; ordinary authoring and
+    failed/interrupted workflows use one next-read single-flight refresh.
 13. Hybrid results include citation-oriented fields, diversity controls, and token budget.
 14. Soft organization (refile, pin, archive) does not rewrite immutable raw bodies.
 15. Optional local LLM tools refuse cleanly when disabled or unreachable; core search/graph/ingest still work.

@@ -38,7 +38,7 @@ It is **not**:
 | Uncompiled raw debt | raw docs with no citing `source_summary` / index touch |
 | Index-first wins | agent sessions that answer via index/wiki before hybrid |
 | Filed answers | `file_answer` / wiki writes after useful answers |
-| Zero forbidden leaks | L3 never rewrites L0 body; L1 never ranks on wrong embed model |
+| Zero forbidden leaks | L3 never rewrites L0 body; L1 never ranks under a mismatched embedding corpus identity |
 
 Parity checklists and “feature laundry” do **not** gate shipping. Coverage of surveyed repos is evidence, not architecture.
 
@@ -91,7 +91,7 @@ Layers are **ownership and write policy**, not marketing modes. Tables, modules,
 | Layer | Mutability | Owner of content meaning | Server may |
 |-------|------------|--------------------------|------------|
 | **L0** | Body immutable; meta may refile under policy | Human / agent deposit | Chunk, embed, hash, scope columns, graph node, refuse body rewrite |
-| **L1** | Rebuildable from L0/L3 text + manifest | Derived | Reembed, reindex FTS, refuse mismatched vec/hybrid |
+| **L1** | Rebuildable from L0/L3 text + manifest | Derived | Complete corpus reembed, reindex FTS, refuse mismatched vec/hybrid |
 | **L2** | Derived edges rebuild; explicit/tunnel preserved | Extract + agent `link_nodes` | Extract on write; BFS/export; no ChatClient edge invent |
 | **L3** | Mutable by agent tools | Client agent | CRUD wiki/index/schema; append ops_log; never rewrite L0 |
 | **L4** | Outside process | MCP client | Not stored as “the server’s brain” |
@@ -110,7 +110,7 @@ All writers pass a **single write-gate** (conceptual `policy::LayerKind` + asser
 | Leak | Why fatal |
 |------|-----------|
 | L3 / maintain rewrites L0 body | Destroys SoT trust |
-| L1 ranks with wrong model/dims | Poisoned retrieval without error |
+| L1 ranks with a mismatched provider/model/dimensions/base-endpoint identity | Poisoned retrieval without error |
 | Server LLM invents L2 edges | Non-reproducible graph |
 | Summarize-on-write into L0 | MemPalace anti-pattern + Karpathy violation |
 | Dual-live DuckDB + vault without exclusive reindex | Split brain |
@@ -147,8 +147,15 @@ One logical content transaction:
 
 `document (+ chunks + embeddings) + graph node + derived edges rebuild + chunk generation`
 
-Partial failure → full rollback. Writes advance one chunk generation; the next
-lexical/hybrid read must refresh stale FTS once before ranking.
+Partial failure → full rollback. Text/row writes advance one chunk generation
+and leave FTS stale. Embedding-only writes advance the same vector invalidation
+generation while preserving an already-clean lexical generation because ids and
+indexed text do not change. Guarded corpus-scale workflows finalize stale FTS
+before normal terminal success; ordinary authoring uses the next-read
+single-flight fallback. If eager finalization fails after corpus work, its
+structured aggregate preserves outcomes and reports
+`durable_mutation_committed`, retryability, and dirty-marker state; source-sync
+publishes `completed_with_errors`.
 
 Source-manifest and operational metadata remain repairable adjacent state; they
 are not part of this transaction. Deleted source state is a separate atomic
@@ -165,8 +172,20 @@ rows.
 
 ### 3.4 Embedding honesty
 
-- Singleton `embedding_manifest` (provider, model, dims, base_url fingerprint).
-- Vec / hybrid **refuse** on mismatch; point to `reembed`. Never silent wrong-model ranking.
+- Singleton `embedding_manifest` (provider, model, dims, base URL fingerprint).
+- Vec / hybrid and new vector writes **refuse** an identity mismatch. A
+  single-document reembed is refresh-only while identity matches; changing any
+  component requires a complete uncapped successful `reembed_all`, which alone
+  publishes the new manifest. It persists an incompatible migration marker
+  before the first vector write, so partial failure or configuration rollback
+  cannot reopen a mixed embedding corpus.
+- A populated corpus with no manifest is unknown, not implicitly compatible.
+  Startup keeps the gateway available for diagnosis and full repair, while
+  vector work remains fail-closed until complete uncapped `reembed_all`.
+- Portable recovery v2 carries the canonical manifest with its chunks and
+  validates exact target identity and vector dimensions. Vector-bearing v1 is
+  recoverable only through explicit gateway re-embedding; the offline CLI
+  refuses unverifiable legacy vectors. Metadata-only v1 remains safe.
 
 ### 3.5 Wiki vs raw
 
@@ -237,7 +256,7 @@ Unsupported backend configurations return structured errors, not fake success.
 - Lowest-common-denominator SQL that cripples DuckDB FTS  
 - Embeddings inside `.md` bodies (dirty git diffs)  
 - Async-only rewrite as prerequisite for the trait  
-- Multi-writer concurrent MCP+UI on one DuckDB file without exclusive StoreWorker  
+- Multi-writer concurrent MCP+UI on one DuckDB file
 
 ### 4.5 Relation to STORAGE_ADAPTERS.md
 
@@ -473,8 +492,8 @@ maintain: dry_run structural apply only by default
 | 1 | Raw body immutable after ingest | `update` raw content → error |
 | 2 | Wiki delete preserves raw | delete wiki → raw get still works |
 | 3 | content_hash idempotent ingest | second ingest → no-op / explicit replace, no bloat |
-| 4 | Manifest mismatch refuses vec/hybrid | wrong dims → structured error |
-| 5 | FTS generation consistency | ingest then the first lex search refreshes once and returns the hit |
+| 4 | Manifest mismatch refuses vec/hybrid | provider/model/dimensions/base-endpoint mismatch → structured error |
+| 5 | FTS generation consistency | embedding-only update invalidates vector snapshots without rebuilding clean lexical text; guarded corpus-scale workflows reach normal terminal success generation-clean; an ordinary/failed/interrupted dirty path refreshes once and returns the hit |
 | 6 | Cascade helpers documented / available | spine tools exist; instructions list order |
 | 7 | Maintain whitelist | non-whitelisted action rejected |
 | 8 | Maintain dry_run default | no write without apply flag |
@@ -541,7 +560,7 @@ the measurable gates in §17 and [`ROADMAP.md`](ROADMAP.md).
 2. Default tool list fits on one screen and matches the cascade.  
 3. Client can compile a source into wiki with LLM server disabled.  
 4. Deleting all wiki leaves raw intact.  
-5. Wrong embed model cannot silently rank.  
+5. A mismatched embedding corpus identity cannot silently rank.
 6. `server.rs` does not own business rules.  
 7. README says: local compounding store over DuckDB  -  not multi-backend RAG + palace + OS.  
 8. North-star metrics are visible in `status`/`doctor` and used to reject new tools.
@@ -585,9 +604,9 @@ Product- and architecture-level. Graph/UI micro-decisions stay in [`GRAPH_EGUI_D
 | V-D8 | **Default public surface is currently 33 spine tools**, protected by a 15–33 count test; replace/fold/flag before adding more | §1.7, §5.2 |
 | V-D9 | **Keep SPEC tool names**; no MemPalace rename; no AAAK default-on | §1.8, §11 |
 | V-D10 | **Server emits topology only** (no layout/positions in graph API) | §3.3, §11 |
-| V-D11 | **Atomic content unit** is document + replacement chunks + derived graph + chunk generation; source manifest, ops log and lazy FTS are adjacent state | §3.2 |
-| V-D12 | **Embedding manifest gate** refuses wrong-model vec/hybrid | §3.4, §10 |
-| V-D13 | **FTS read-your-writes** at the next lex/hybrid read, which refreshes stale generation before ranking | §3.2, §10 |
+| V-D11 | **Atomic content unit** is document + replacement chunks + derived graph + chunk generation; source manifest, ops log and generation-tracked FTS are adjacent state | §3.2 |
+| V-D12 | **Embedding manifest gate** refuses provider/model/dims/base endpoint mismatch; corpus migration writes a persistent incompatible marker before vectors and publishes a changed manifest only after a complete uncapped successful reembed | §3.4, §10 |
+| V-D13 | **FTS read-your-writes**: embedding-only writes preserve a clean lexical generation; guarded corpus-scale workflows eagerly finalize stale FTS before normal terminal success; any remaining stale generation refreshes once before lex/hybrid ranking | §3.2, §10 |
 | V-D14 | **Single active SoT per process**; no dual-live DuckDB+vault without exclusive reindex | §3.7 |
 | V-D15 | **ops_log append-only** for domain mutations that explicitly promise durable operation history | §3.6 |
 | V-D16 | **Closet/summary = wiki `source_summary` only**; no parallel summary store | §2.3, §7 |
@@ -656,7 +675,7 @@ compile-first store.
 | Honest retrieval | lex/vec/hybrid, citations, packing, generation-aware FTS/vector caches and a labeled eval CLI |
 | One-writer runtime | stdio + HTTP MCP and `/v1/*` share one Store; native live mode uses the gateway |
 | Product navigation | Project Home, Unified Library, Search, Wiki, project Connections, Operations and document History are implemented |
-| Port safety | product HTTP and mounted MCP reject bodies over 1 MiB even without `Content-Length`; Activity omits raw IP/UA, bodies, source paths and titles |
+| Port safety | product HTTP and mounted MCP reject **request** bodies over 1 MiB even without `Content-Length` (responses have no corresponding 1 MiB cap); Activity omits raw IP/UA, request/result bodies, source paths and titles |
 | Portability exit ramps | verified backup, bundle import/export, vault export and a limited Markdown document backend |
 
 ### Current release gate

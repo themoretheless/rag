@@ -307,7 +307,7 @@ Exclusive stdio остаётся только offline/dev вариантом: п
 | `/v1/calls`, `/v1/agents` | GET | bounded in-memory call timing and per-agent presence; argument values and raw errors are never retained. `RAG_CALL_LOG_CAPACITY` defaults to 2000 |
 | `/v1/capabilities`, `/v1/version`, `/v1/routes` | GET | feature, version and exact method/path discovery |
 | `/v1/projects`, `/v1/project-home` | GET | project catalog and scoped inventory |
-| `/v1/search` | POST | full `SearchParams` mirror (`min_score`, `diversity`, `group_by`, `recency_half_life_days`, `max_chunks_per_document`, `context_expansion`, `neighbor_chunks`, `rrf_k`, …). Hits carry `rank_vec` / `rank_lex`; `timings` has `embed_ms`, `vec_ms`, `lex_ms`, `retrieval_ms`, `postprocess_ms`, `total_ms`. Active source sync makes `lex`/`hybrid` fail fast with retryable `STORE_BUSY` |
+| `/v1/search` | POST | full `SearchParams` mirror (`min_score`, `diversity`, `group_by`, `recency_half_life_days`, `max_chunks_per_document`, `context_expansion`, `neighbor_chunks`, `rrf_k`, …). Hits carry `rank_vec` / `rank_lex`; `timings` has `embed_ms`, `vec_ms`, `lex_ms`, `retrieval_ms`, `postprocess_ms`, `total_ms`. An active exclusive corpus mutation makes `lex`/`hybrid` fail fast with generic retryable `STORE_BUSY` |
 | `/v1/pack-context` | POST | `pack_context` mirror: hits → token-budgeted citation block |
 | `/v1/ops-log` | GET | `read_log` mirror (`limit`, `id`, `seq`; client filters `agent`, `prefix`) |
 | `/v1/taxonomy`, `/v1/wings`, `/v1/rooms` | GET | wing → room tree with counts |
@@ -321,7 +321,7 @@ Exclusive stdio остаётся только offline/dev вариантом: п
 | `/v1/graph`, `/v1/neighbors` | GET | optional SQL project scope, bounded to 300 nodes and depth 3 |
 | `/v1/find` | GET | global node lookup used to resolve a navigation seed |
 | `/v1/wiki` | GET, PUT | cursor-paginated lean catalog and CAS-protected write |
-| `/v1/backlinks` | GET | wiki backlinks for a document |
+| `/v1/backlinks` | GET | project-scoped wiki backlinks for a document |
 | `/v1/activity` | GET | bounded sanitized process-local activity; path-parameter job resources are retained as `/v1/jobs/{id}`, never as concrete job identifiers |
 | `/v1/jobs/sync` | POST | enqueue an allowlisted incremental source sync without blocking the request |
 | `/v1/jobs`, `/v1/jobs/{id}` | GET | list jobs or read progress, counters, result and error for one job |
@@ -338,6 +338,11 @@ writes stay behind the existing CAS wiki/revision endpoints, serialized sync
 jobs, allowlisted backup/checkpoint operations, or the configured MCP surface.
 
 UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Home opens first in HTTP mode).
+The client treats `/v1/projects` as the authoritative catalog and retries it
+independently from `/v1/graph`: catalog failure retains the last successful
+list/selection, while graph failure is confined to Connections and does not
+block Home, Library, Search, History, Wiki or Operations. Direct UI `--db` is
+strictly read-only; Wiki writes use the one-writer HTTP gateway.
 Код: `src/http_api/`. Полный runbook: `docs/PROD_RUN.md`.
 
 ### 7a. Bind guard (`parse_bind`)
@@ -374,6 +379,8 @@ Gateway ограничивает тело каждого запроса к `/v1/
 ```
 
 Это общий admission boundary, а не только проверка `PUT /v1/wiki`.
+Ограничение относится к request body; response body этим 1 MiB лимитом не
+ограничивается.
 
 ### 7c. Catalog pagination и `GET` / `PUT /v1/wiki`
 
@@ -418,15 +425,49 @@ Cursor непрозрачен для клиента: первый запрос �
 документа текущего batch; cancellation до commit также отбрасывает весь batch,
 а между commits оставляет точный уже зафиксированный prefix.
 
-`Store` координирует source sync и exact lexical retrieval через process-local
-read/write lane. Sync держит write guard весь run. `lex` и `hybrid` берут
-non-blocking read guard **до** query embedding/FTS/vector work: уже активный sync
-не заставляет запрос ждать и не вызывает embedding provider. HTTP возвращает
-`503 Service Unavailable`, `Retry-After: 1` и JSON
-`{"ok":false,"code":"STORE_BUSY","error":"busy: source synchronization is active; retry lexical or hybrid search after it completes"}`. MCP сохраняет JSON-RPC error и кладёт
+`Store` координирует exact lexical retrieval и exclusive corpus mutations через
+process-local read/write lane. Write side держат source sync и guarded
+corpus-scale `doctor_repair`, duplicate cleanup, delete-by-source, recovery
+import и maintenance apply/refresh/compress — до завершения derived-index
+finalization. `lex` и `hybrid` берут non-blocking read guard **до** query
+embedding/FTS/vector work: уже активная mutation не заставляет запрос ждать и
+не вызывает embedding provider. HTTP возвращает `503 Service Unavailable`,
+`Retry-After: 1` и JSON
+`{"ok":false,"code":"STORE_BUSY","error":"busy: exclusive corpus mutation is active; retry lexical or hybrid search after it completes"}`. MCP сохраняет JSON-RPC error и кладёт
 в `data` структурированный
 `{"code":"STORE_BUSY","retryable":true,"retry_after_ms":1000}`. После release
 write guard обычный read-your-writes search снова доступен.
+
+Source sync явно показывает terminal-preparation фазу `refreshing_fts`;
+остальные guarded corpus-scale workflows выполняют ту же финализацию внутри
+apply-вызова. Normal terminal success возвращается только после того, как FTS
+догнал зафиксированные text/row mutations. Обычный single-document authoring и
+fail/cancel до финализации сохраняют dirty marker: следующая lexical read
+выполняет безопасный single-flight refresh. Embedding-only update продвигает
+vector/chunk generation и, если lexical generation была чистой, продвигает её
+без rebuild неизменного текста; уже существующий FTS debt остаётся dirty.
+Если mutation уже зафиксирована, но eager FTS finalization завершилась
+ошибкой, bulk-отчёт имеет `success=false`, сохраняет committed
+счётчики/действия и возвращает structured finalization detail:
+`code=FTS_FINALIZATION_FAILED`, `durable_mutation_committed`,
+`retryable=true`, `fallback_dirty_marked` и, если нужно,
+`dirty_marker_error`/`ops_log_error`. Source-sync сохраняет detail в
+`report.finalization_error` и завершается как `completed_with_errors`, даже
+если все file mutations уже commit. FTS остаётся dirty для next-read retry;
+сначала проверь committed flag, автоматически повторять саму mutation нельзя.
+
+Embedding manifest описывает corpus-wide provider/model/dims/base-endpoint
+identity. `reembed_document` разрешён только как refresh одного документа при
+совпадающей identity. После изменения любого компонента vec/hybrid и новые
+vector writes остаются закрыты, пока один uncapped `reembed_all` не завершится
+без skipped/failed документов и не опубликует новый manifest. Перед первым
+vector write сохраняется persistent incompatible migration marker: partial
+failure или возврат runtime config к старой identity поиск не переоткрывает.
+Если manifest вообще отсутствует при уже существующих chunks, startup не
+подписывает неизвестные legacy vectors текущей config. Gateway остаётся
+доступен для `status`/`doctor` и repair, но vector reads/writes fail closed,
+`ready_for_search=false`; восстановление — полный uncapped `reembed_all` без
+skipped/failed, а не single-document refresh.
 
 Для публичного `vec`/`hybrid` непустой `document_id`, `wing`, `room` или
 `source_file` строит transient snapshot только из подходящих chunks через SQL
@@ -437,8 +478,10 @@ selective snapshot не читает и не заменяет database-wide cach
 default active/archive filter не переводит его в scoped path.
 
 Статусы: `queued`, `running`, `succeeded`, `completed_with_errors`, `failed`,
-`cancelled`. `completed_with_errors` означает, что обход завершён, но отдельные
-файлы (например oversized source) дали ошибки; это не чистый success. В
+`cancelled`. Running progress проходит через `scanning`, `syncing`,
+`removing_deleted` и перед terminal completion через `refreshing_fts`.
+`completed_with_errors` означает, что обход завершён, но отдельные файлы
+(например oversized source) дали ошибки; это не чистый success. В
 `report` есть `added_count`, `updated_count`, `skipped_count`, `deleted_count`,
 `error_count`, до 20 `error_samples` и подробные `counters`.
 
@@ -485,12 +528,17 @@ Raw IP и User-Agent не сохраняются: из них получаетс
 content, search query, полные tool args/results и secret headers в Activity не
 попадают.
 
-### 7g. `GET /v1/backlinks?id=<document_id>`
+### 7g. `GET /v1/backlinks?id=<document_id>&wing=<project>`
 
 - Источник: `Store::wiki_backlinks_for_document` (wikilink edges → label + id).
-- `id` обязателен (document id); без limit/offset.
+- `id` обязателен (document id); `wing` задаёт project scope; без limit/offset.
 - Ответ: `{ ok, count, backlinks: [{ label, id }] }`.
-- UI sidebar/backlinks ходят сюда; при HTTP-ошибке UI может показать пустой список (silent fail).
+- UI sidebar/backlinks всегда передаёт выбранный `wing`; ссылки из других
+  проектов в результат не попадают.
+- Только успешный ответ с `count = 0` означает пустой список. Transport/DB
+  ошибка показывается отдельно в Page info с Retry и не маскируется под
+  отсутствие backlinks. Initial-load failure не оставляет backlink result;
+  refresh failure сохраняет прежний список с potentially-stale marker.
 
 ### 7h. Smoke curl
 
@@ -499,10 +547,18 @@ curl -s http://127.0.0.1:7432/health
 curl -s http://127.0.0.1:7432/v1/wiki | head
 curl -s 'http://127.0.0.1:7432/v1/revisions?document_id=YOUR_DOC_ID&limit=20'
 curl -s http://127.0.0.1:7432/v1/jobs
-curl -s 'http://127.0.0.1:7432/v1/backlinks?id=YOUR_DOC_ID'
+curl -s 'http://127.0.0.1:7432/v1/backlinks?id=YOUR_DOC_ID&wing=YOUR_PROJECT'
 ```
 
 ### 7i. Recovery publication and import collisions
+
+`backup_db` через gateway кратко выполняет `CHECKPOINT` и clone connection под
+Store mutex, затем начинает read transaction и копирует одну pinned MVCC
+generation в staged DuckDB через `COPY FROM DATABASE` уже без удержания shared
+mutex. Обычные Store queries остаются доступны. Все три artifact (database,
+`.sha256`, `.metadata.json`) stage/sync-ятся, sidecar paths публикуются раньше,
+а verified database path — последним commit marker этой serialized generation;
+это coordinated publication, а не обещание одного atomic rename для трёх paths.
 
 `export_bundle` (MCP и offline `recovery export-bundle`) сначала записывает
 полный JSON/JSONL во временный файл рядом с destination и синхронизирует его.
@@ -518,6 +574,28 @@ document, найденный по id **или** URI. Если один bundle it
 conflict до удаления и откатывает всю transaction, включая уже обработанные
 items текущего bundle.
 
+Новый export создаёт recovery bundle **v2**. Его JSON/JSONL содержит canonical
+`embedding_manifest` для всех serialized chunk vectors; import проверяет
+provider, model, dimensions, base URL, canonical fingerprint и размерность
+каждого vector. Для непустого target identity должна точно совпасть, пустой
+target принимает bundle identity только при apply. JSONL обязан иметь ровно
+один manifest header до document records; headerless/empty/duplicate/unknown
+version не угадываются и отклоняются.
+
+Legacy v1 не доказывает identity записанных vectors. Metadata-only v1 (без
+chunks) можно импортировать безопасно. Для v1 с chunks используй только MCP
+`import_bundle` через единственный gateway, сначала `dry_run=true`, затем apply
+с явным `reembed_legacy=true`: gateway bounded batches заменяет каждый vector
+live embedding provider и возвращает `legacy_bundle_version`,
+`embeddings_reembed_planned`, `embeddings_reembedded` и
+`durable_mutation_committed`. Offline `recovery import-bundle` vector-bearing
+v1 намеренно отклоняет; не переписывай version/manifest вручную.
+
+Portable JSON/JSONL materialization ограничен 64 MiB, 10,000 documents и
+50,000 chunks. Export отклоняется по SQL preflight до загрузки полного corpus,
+import — по file metadata/bounded read до DB mutation. Для большего corpus
+используй verified DuckDB backup.
+
 ---
 
 ## 8. Multi-LLM wiki: etag / revision (CAS)
@@ -527,7 +605,9 @@ items текущего bundle.
 1. `get_wiki_page` → в ответе `revision` (число) и `etag` (`W/"3"`).
 2. `write_wiki_page` / `update_wiki_page` с **`if_match_revision: 3`** (или `if_match_etag: "W/\"3\""`).
 3. Если другой агент уже записал → **conflict** (current revision); re-get и merge, не blind overwrite.
-4. **Без** `if_match_*` - last-write-wins (как раньше).
+4. **Без** `if_match_*` - last-write-wins только при
+   `RAG_WIKI_REQUIRE_IF_MATCH=false` (default); при `true` update без CAS
+   отклоняется.
 
 Детали:
 
@@ -538,6 +618,7 @@ items текущего bundle.
 | Require flag | `RAG_WIKI_REQUIRE_IF_MATCH` (default false): when true, wiki **updates** must pass if_match |
 | MCP conflict | `AppError::Conflict` → MCP `invalid_params` (не отдельный conflict code) |
 | HTTP | GET catalog/document отдаёт `revision`/`etag`; **PUT /v1/wiki** with if_match → 409 on mismatch |
+| Preserving update | `update_wiki_page` требует existing page; omitted kind/category/summary и placement/lifecycle/pin/boost/source/unrelated metadata сохраняются |
 | Internal paths | часть внутренних wiki writers / ingest upsert зовут CAS с `None` (LWW) |
 
 Агентам: всегда `get_wiki_page` → write с `if_match_*` при конкурентной работе.
@@ -582,13 +663,13 @@ RAG_TOOLS=full
 | Claude Code Pending | approve `.mcp.json` в `/mcp` |
 | ingest_file refuses | путь внутри `RAG_INGEST_ROOTS` |
 | search «пустой/глупый» | mock → ollama/openai embeddings; **тот же** dims что при ingest |
-| `STORE_BUSY` / HTTP 503 на `lex` или `hybrid` | source sync держит exclusive lane; уважать `Retry-After: 1` и повторить после завершения/отмены job |
-| vec error / dims | `reembed_document` или новая DB после смены модели |
+| `STORE_BUSY` / HTTP 503 на `lex` или `hybrid` | exclusive corpus mutation держит lane; уважать `Retry-After: 1` и повторить после её завершения (для source sync — после terminal job) |
+| vec/ingest identity mismatch | не использовать single-document reembed как migration; запустить `maintain_refresh` с `reembed_all=true` и `max_docs` не меньше текущего числа документов, добиться zero skipped/failed и только затем повторить search/write |
 | Desktop + Code одновременно | один writer: **gateway** + remote clients, не два stdio |
 | `RAG_HTTP_BIND` non-loopback fail | set `RAG_HTTP_ALLOW_REMOTE=true` (опасно) или bind `127.0.0.1` |
 | Remote `/mcp` rejects `Host` | add the exact hostname/IP to comma-separated `RAG_HTTP_ALLOWED_HOSTS`; wildcard bind alone does not allow it |
 | wiki conflict / clobber | pass `if_match_revision` from `get_wiki_page`; re-fetch on conflict |
-| empty `/v1/backlinks` | wrong `id` (need document id); or no wikilink edges yet |
+| successful empty `/v1/backlinks` | verify document `id` and `wing`; otherwise the scoped document has no wikilink edges yet. Transport/DB failures appear separately with Retry |
 
 Логи сервера: **stderr** (`RUST_LOG=info`), не stdout.
 

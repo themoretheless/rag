@@ -15,14 +15,23 @@
 5. **Single `label_key`:** trim → NFKC → lowercase → collapse whitespace. No dual NFC/NFKC columns.
 6. **Resolve never binds wikilink to `kind=tag`.** Multi-doc same title → no auto-bind; path/uri first; lint ambiguity.
 7. **Document delete demotes to stub** and keeps inbound edges; no default incident wipe of depends_on/tunnel/wikilink.
-8. **Neighbors BFS via frontier SQL**, not full `graph_edges` load. Caps: neighbors 100, graph export 500, extract 2000 links/doc.
+8. **Project/UI neighbors use scoped frontier SQL** before the 300-node/depth-3
+   product cap. General MCP `get_neighbors` retains its 100-node default and
+   graph export its 500-node default; extract remains capped at 2000 links/doc.
 9. **`graph_expand_search`:** search hits + PKB neighbor merge; do not invent edges from scores.
 10. **Optional UI is a separate crate/binary** (`crates/rag-mcp-ui`); never `ui` feature or GUI deps on headless `rag-mcp`.
-11. **UI default path:** snapshot / `.rag/graph.json` → require seed → local neighbors depth 1 → **RadialLocal** freeze. No cold-start global FR.
-12. **One DuckDB writer.** Dual-live UI+MCP write unsupported forever; coexistence = Mode C snapshot.
+11. **UI normal live path:** HTTP gateway. Snapshot / `.rag/graph.json` and
+    direct read-only DB are limited inspection modes; a Connections focus loads
+    local neighbors at depth 1 and freezes **RadialLocal**. No cold-start global
+    FR.
+12. **One DuckDB writer.** Dual-live UI+MCP write is unsupported forever;
+    coexistence is a gateway-owned HTTP client or Mode C snapshot. Direct
+    `--db` remains exclusive and exposes read-only Wiki/Connections.
 13. **UI always multi-edge collapses for canvas**; store keeps multi-wikilink; detail panel lists members/provenance.
 14. **UI PKB chrome mirrors server:** default rels `wikilink`+`related`; tags/tunnel/Dep off until toggled; UI hard layout cap 300 nodes / 2000 draw edges.
-15. **Read-only MVP inspector.** No link/unlink menus; Expand + Open only. FR / Hierarchical / writes post-MVP.
+15. **Read-only Connections canvas.** No link/unlink menus; Expand + Open only.
+    Wiki editing is a separate HTTP-only workspace. FR / Hierarchical remain
+    deferred.
 16. **Markdown vault:** live `[[links]]` preferred for correctness; explicit sidecar edges merge-preserved on reindex (GRAPH_DESIGN §10).
 
 ## Rejected
@@ -37,18 +46,16 @@
 24. Four layout modes + write chrome + GraphQuery trait sandwich before first paint.
 25. Continuous fit_to_screen / continuous FR after settle (layout thrash).
 26. Hierarchical layout on full wikilink+tag soup (Dep filter only).
-27. Treating GUI as P0 release gate for hybrid/wiki/MCP.
+27. Treating GUI as a runtime prerequisite for headless hybrid/wiki/MCP. The
+    integrated product may still require native visual QA before release.
 
 ## Open
 
 28. Exact FR params and soft n when post-MVP filtered global ships (EGUI ~150–200 freeze band).
-29. Expand on large snapshot: client BFS on loaded edges vs re-query `get_neighbors`.
 30. OS “open document” behavior (path open vs clipboard id/uri).
 31. Vault live parse vs `.rag/graph.json` freshness UX when both present (domain prefers live; UI badges mtime).
-32. `export_graph_snapshot` MCP schema (P2 server tool for Mode C refresh without UI opening DB).
 33. Mixed-origin multi-edge: dominant origin heuristic when collapsing extract+explicit members.
 34. Greenfield blake3 stable ids timing vs migrate/merge on existing UUID DBs (GRAPH_DESIGN §5.1 gate).
-35. Pin versions of `egui_graphs` / `egui` / `petgraph` at implement time (EGUI pins are targets; verify crates.io).
 
 ---
 

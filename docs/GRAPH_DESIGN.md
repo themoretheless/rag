@@ -3,7 +3,7 @@
 **Status:** definitive design for L2 object graph  
 **Scope:** data model, edge ontology, extract/resolve, incremental rebuild, query ops, hybrid expand, scale, markdown vault live graph, tests  
 **Code today:** `src/graph/{extract,resolve}.rs`, `src/db/graph.rs`, `src/models.rs`  
-**Related:** [`SPEC.md`](../SPEC.md) object graph · [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) L2 · [`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md) markdown vault · [`FEATURES.md`](../FEATURES.md) graph gaps · [`EGUI_GRAPH_VIEW.md`](EGUI_GRAPH_VIEW.md) optional client inspector · [`GRAPH_EGUI_DECISIONS.md`](GRAPH_EGUI_DECISIONS.md) decision log  
+**Related:** [`SPEC.md`](../SPEC.md) object graph · [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) L2 · [`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md) markdown vault · [`FEATURES.md`](../FEATURES.md) graph gaps · [`EGUI_GRAPH_VIEW.md`](EGUI_GRAPH_VIEW.md) native client/Connections architecture · [`GRAPH_EGUI_DECISIONS.md`](GRAPH_EGUI_DECISIONS.md) decision log
 
 This document is the contract implementers follow for **server / domain graph**. Where current code disagrees, **this wins**. Client canvas layout and inspector UX live in [`EGUI_GRAPH_VIEW.md`](EGUI_GRAPH_VIEW.md) (does not change domain semantics). Rejected alternatives are marked explicitly.
 
@@ -657,10 +657,10 @@ Domain pure; store adapter-agnostic signatures for Markdown vault.
 | Node/edge types, extract, resolve, rebuild, MCP tools | Server / domain | **this file** |
 | Wire JSON `GraphView` topology | Server emits; clients consume | this file + SPEC |
 | Multi-edge storage vs canvas collapse | Store keeps multi-wikilink; `aggregate_view` optional on export; **UI always collapses** for draw | this §1.6 / §7.1 · EGUI §4.3 |
-| PKB default filters | Server: `rel_types=[wikilink,related]`, tags off | this §7.1; UI mirrors when calling live Store |
+| PKB default filters | Server: `rel_types=[wikilink,related]`, tags off | this §7.1; UI mirrors over HTTP and direct read-only inspection |
 | Positions, layout algorithms, pan/zoom | Client only | [`EGUI_GRAPH_VIEW.md`](EGUI_GRAPH_VIEW.md) |
-| Dual-writer DuckDB UI+MCP | Forbidden | EGUI Mode C snapshot |
-| Ship gate | Headless MCP + graph tools ship without UI | ROADMAP / EGUI non-goals |
+| Dual-writer DuckDB UI+MCP | Forbidden | Gateway-owned HTTP client or EGUI Mode C snapshot; direct `--db` is exclusive/read-only |
+| Runtime dependency | Headless MCP + graph tools do not depend on UI code; integrated product visual QA is tracked separately | ROADMAP / EGUI non-goals |
 
 Decision bullets: [`GRAPH_EGUI_DECISIONS.md`](GRAPH_EGUI_DECISIONS.md).
 

@@ -95,7 +95,17 @@ export RAG_LLM_MODEL=llama3.2
 export RAG_LLM_ENABLED=true
 ```
 
-On model/dim change: refuse vec search until `reembed` / `reembed_all` (manifest).
+`reembed_document` is refresh-only: it may update one document only while the
+stored and configured corpus identities (provider, model, dimensions, and base
+endpoint) match. If any identity field changes, vector/hybrid search stays
+closed until a complete, uncapped `reembed_all` succeeds; only then is the
+target manifest published. Set `max_docs` to at least the current corpus
+document count and raise the gateway's `RAG_MAINT_MAX_DOCS` to the same value
+before restart, because per-call `max_docs` is clamped to that hard cap. The
+default maintenance cap refuses a larger migration before changing any vectors.
+Once migration starts, a persistent incompatible marker
+precedes the first vector write, so partial failure or configuration rollback
+cannot reopen vector/hybrid search over mixed identities.
 
 ### 2.3 Policy
 
@@ -174,7 +184,8 @@ Report: bytes before/after, docs removed, chunks removed, actions applied.
 
 | Action | When |
 |--------|------|
-| `reembed` / `reembed_all` | model or dims changed |
+| `reembed` / `reembed_document` | Refresh one document while the stored and configured corpus identities match |
+| `reembed_all` | Provider, model, dimensions, or base endpoint changed; raise `RAG_MAINT_MAX_DOCS` and set the clamped per-call `max_docs` to at least the current corpus document count; publish the target manifest only after full success |
 | `reindex_fts` | after bulk deletes |
 | `rebuild_graph` | after bulk meta edits |
 | `rebuild_index` | wiki catalog stale |
@@ -215,7 +226,11 @@ rag-mcp analyze
 1. **Whitelist actions** — LLM cannot invent SQL or shell.  
 2. **dry_run default** for multi-action plans.  
 3. **confirm** for L2+ compress.  
-4. **Budget:** max docs touched per run (`RAG_MAINT_MAX_DOCS=50`).  
+4. **Budget:** max docs touched per run (`RAG_MAINT_MAX_DOCS=50`); per-call
+   `max_docs` and duplicate-cleanup `max_candidates` can select a smaller batch
+   but cannot exceed that configured hard cap. An identity migration must raise
+   the gateway env cap and explicitly set `max_docs` to at least the current
+   corpus document count, or it is refused before mutation.
 5. **ops_log** every apply.  
 6. **Backup recommendation** in tool description; optional `backup_db` before apply.  
 7. **No silent raw mutation.**

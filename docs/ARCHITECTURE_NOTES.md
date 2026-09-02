@@ -119,10 +119,19 @@ Embeddings: JSON float arrays; rank cosine in Rust (portable). Connection: singl
 **Retrieval and graph:**
 
 - Chunks retain embeddings, offsets, content hashes, and Markdown section /
-  heading metadata. Chunk generation invalidates both exact-vector snapshots
-  and FTS state.
-- The next lex/hybrid read performs one serialized FTS refresh if generation is
-  stale; writes do not eagerly rebuild the index.
+  heading metadata. Every vector change advances the chunk generation and
+  invalidates exact-vector snapshots. Text/row changes leave FTS stale;
+  embedding-only updates preserve an already-clean lexical generation while
+  keeping any pre-existing FTS debt dirty.
+- Guarded corpus-scale workflows—source sync, doctor repair, duplicate cleanup,
+  delete-by-source, recovery import, and maintenance apply/refresh/compress—keep
+  the exclusive lane through FTS finalization and reconcile stale generations
+  before normal terminal success. Ordinary single-document authoring and
+  failed/interrupted workflows leave the serialized next-read refresh as the
+  consistency fallback. Failed eager finalization is an additive structured
+  aggregate: it preserves committed outcomes, reports
+  `durable_mutation_committed`, retryability and dirty-marker state, and makes a
+  source-sync job `completed_with_errors`.
 - Search hits carry vector, lexical and fused scores plus snippet, placement and
   offsets. `graph_nodes` / `graph_edges` remain derived topology.
 
@@ -131,9 +140,16 @@ Embeddings: JSON float arrays; rank cosine in Rust (portable). Connection: singl
 - `wiki_index` is the lean catalog for `documents.layer='wiki'`;
   `wiki_schema` stores conventions and `ops_log` stores explicit durable
   operation records.
-- `embedding_manifest` gates vec/hybrid model and dimension compatibility;
+- `embedding_manifest` gates vec/hybrid provider, model, dimension, and base
+  endpoint identity compatibility. A missing manifest never self-certifies a
+  non-empty corpus; the gateway remains diagnosable but vector work stays
+  fail-closed until complete uncapped `reembed_all`;
   `schema_version` records migrations; `source_manifest` supports incremental
   source preflight and parent/subdirectory root rebinding.
+- Recovery bundle v2 serializes that canonical manifest with chunk vectors and
+  validates it on import. Vector-bearing v1 can cross the gateway boundary only
+  with explicit live-provider re-embedding; the offline CLI refuses it, while a
+  metadata-only v1 bundle is safe to upgrade.
 - `kg_facts` and diary documents remain compatibility depth outside the
   default product identity.
 
@@ -164,10 +180,13 @@ ingest_text / ingest_file / ingest_raw
   → workflows that promise a durable operation record append ops_log explicitly
 ```
 
-FTS is not part of the write transaction: the first later lex/hybrid read
-refreshes stale FTS once before ranking. Source-manifest and promised ops-log
-records are adjacent workflow state, not part of the document/chunk/graph
-atomic unit.
+FTS is not part of an ordinary document write transaction: its dirty generation
+makes the first later lex/hybrid read refresh once before ranking. An
+embedding-only transaction advances vector/chunk generation while preserving a
+clean lexical generation because indexed ids and text are unchanged. Guarded
+corpus-scale workflows instead finalize any stale FTS before normal terminal
+success. Source-manifest and promised ops-log records are adjacent workflow
+state, not part of the document/chunk/graph atomic unit.
 
 Server does **not** invent entity pages here. That is compile.  
 `ingest_file` must refuse paths outside `RAG_INGEST_ROOTS` (empty list = refuse all absolute paths, or require explicit config; implementers document default).
@@ -200,7 +219,13 @@ Rules:
 5. **Raw fallback** — use the normal search layer filter explicitly.
 6. **`file_answer`** — persist high-value answer as wiki page + index touch + log (compounding).
 
-Before vec/hybrid: load `embedding_manifest`; if config model/dims differ from corpus, return structured error pointing to `reembed`.
+Before vec/hybrid or a new vector write: compare the live provider/model/dims/base
+endpoint fingerprint with `embedding_manifest`. A mismatch is a structured
+error. Single-document reembed is refresh-only under a matching identity; an
+identity migration requires one complete uncapped successful `reembed_all`
+before the new manifest is published and search resumes. Before its first vector
+write, that migration persists an incompatible marker; partial failure or
+runtime rollback to the old configuration remains fail-closed.
 
 ### 5.4 Lint and health
 
@@ -256,7 +281,7 @@ a delegation-only compatibility façade.
 | Cluster | Tools |
 |---------|--------|
 | Scope | `list_wings`, `list_rooms`, `get_taxonomy`, `delete_by_source`, `check_duplicate` |
-| Integrity | `status`, `doctor` (minimal), `get_embedding_manifest`, `reembed` / `reembed_document` |
+| Integrity | `status`, `doctor` (minimal), `get_embedding_manifest`, refresh-only `reembed` / `reembed_document`, corpus-migrating `reembed_all` |
 | Raw | `ingest_raw`, `list_sources`, `get_source` |
 | Wiki | `write_wiki_page`, `update_wiki_page`, `get_wiki_page`, `list_wiki_pages` |
 | Catalog | `read_index`, `update_index_entry`, `rebuild_index` |
@@ -459,10 +484,18 @@ rewrite.
 8. One gateway process owns one active store path for writes (default:
    `RAG_DB_PATH` DuckDB); it may expose stdio and HTTP adapters over that Store.
 9. `ingest_file` never reads outside `RAG_INGEST_ROOTS`.  
-10. Vec/hybrid search never silently ranks with wrong embedding model/dims (manifest check or explicit reembed).  
+10. Vec/hybrid search never silently ranks with the wrong embedding identity
+    (provider/model/dims/base endpoint); single-document refresh cannot publish
+    a corpus migration, and only a complete uncapped successful `reembed_all`
+    may replace the persistent incompatible migration marker with a changed
+    manifest. Partial failure, configuration rollback, and a missing manifest
+    on an already populated corpus remain blocked.
 11. Ingest is atomic: partial failure leaves neither half-chunks nor ghost edges.  
-12. Writes advance the chunk generation; the next lexical/hybrid read performs
-    one single-flight FTS refresh before ranking.
+12. Text/row writes advance the chunk generation and leave FTS stale;
+    embedding-only writes advance vector/chunk generation while preserving an
+    already-clean lexical generation. Guarded corpus-scale workflows reconcile
+    stale FTS before normal terminal success; ordinary authoring and
+    failed/interrupted workflows use one next-read single-flight refresh.
 13. Hybrid results are agent-usable: citation fields, diversity, and token budget are first-class, not afterthoughts.
 
 ---
