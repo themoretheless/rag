@@ -17,7 +17,8 @@ use std::{
 const VERSION: u32 = 1;
 const DEFAULT_DATASET: &str = "data/eval/example-v1.json";
 const ANN_CHUNKS: u64 = 50_000;
-const ANN_P95_MS: f64 = 200.0;
+const ANN_P95_MS: f64 = 300.0;
+const SYNTHETIC_CHUNKS_PER_DOCUMENT: usize = 256;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +48,7 @@ struct Report {
     dataset_name: String,
     top_k: usize,
     corpus: CorpusDiagnostics,
+    sampling: SamplingDiagnostics,
     modes: Vec<ModeReport>,
     scale_recommendation: Recommendation,
 }
@@ -55,6 +57,20 @@ struct CorpusDiagnostics {
     documents: u64,
     chunks: u64,
     ingest_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    synthetic: Option<SyntheticDiagnostics>,
+}
+#[derive(Serialize)]
+struct SyntheticDiagnostics {
+    requested_chunks: usize,
+    generated_documents: usize,
+}
+#[derive(Serialize)]
+struct SamplingDiagnostics {
+    queries: usize,
+    warmup: usize,
+    repeat: usize,
+    samples_per_mode: usize,
 }
 #[derive(Serialize)]
 struct ModeReport {
@@ -91,6 +107,13 @@ struct Recommendation {
     p95_search_ms_threshold: f64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SyntheticDocument {
+    title: String,
+    uri: String,
+    content: String,
+}
+
 struct Args {
     root: PathBuf,
     dataset: PathBuf,
@@ -102,6 +125,9 @@ struct Args {
     max_p95_ms: Option<f64>,
     feedback_jsonl: Option<PathBuf>,
     history_jsonl: Option<PathBuf>,
+    warmup: usize,
+    repeat: usize,
+    synthetic_chunks: Option<usize>,
 }
 
 fn main() -> Result<()> {
@@ -117,6 +143,14 @@ fn main() -> Result<()> {
 }
 
 fn parse_args() -> Result<Args> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I, S>(args: I) -> Result<Args>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let mut root = PathBuf::from(".");
     let mut dataset = None;
     let mut top_k = 5;
@@ -127,7 +161,10 @@ fn parse_args() -> Result<Args> {
     let mut max_p95_ms: Option<f64> = None;
     let mut feedback_jsonl = None;
     let mut history_jsonl = None;
-    let mut it = std::env::args().skip(1);
+    let mut warmup = 0;
+    let mut repeat = 1;
+    let mut synthetic_chunks = None;
+    let mut it = args.into_iter().map(Into::into);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--root" => root = PathBuf::from(it.next().context("--root needs path")?),
@@ -166,12 +203,22 @@ fn parse_args() -> Result<Args> {
                     it.next().context("--history-jsonl needs path")?,
                 ))
             }
+            "--warmup" => warmup = it.next().context("--warmup needs value")?.parse()?,
+            "--repeat" => repeat = it.next().context("--repeat needs value")?.parse()?,
+            "--synthetic-chunks" => {
+                synthetic_chunks = Some(
+                    it.next()
+                        .context("--synthetic-chunks needs value")?
+                        .parse()?,
+                )
+            }
             "-h" | "--help" => {
                 eprintln!(
                     "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N]\n\
                      \t[--modes lex,vec,hybrid] [--json] [--min-recall-at-k N]\n\
                      \t[--min-mrr N] [--max-p95-ms N] [--feedback-jsonl FILE]\n\
-                     \t[--history-jsonl FILE]\n\
+                     \t[--history-jsonl FILE] [--warmup N] [--repeat N]\n\
+                     \t[--synthetic-chunks N]\n\
                      Uses a throwaway database. --golden remains a --dataset alias."
                 );
                 std::process::exit(0);
@@ -181,6 +228,12 @@ fn parse_args() -> Result<Args> {
     }
     if top_k == 0 {
         bail!("--top-k must be greater than zero");
+    }
+    if repeat == 0 {
+        bail!("--repeat must be greater than zero");
+    }
+    if synthetic_chunks == Some(0) {
+        bail!("--synthetic-chunks must be greater than zero");
     }
     let root = root.canonicalize().unwrap_or(root);
     for (name, value) in [("min-recall-at-k", min_recall_at_k), ("min-mrr", min_mrr)] {
@@ -202,6 +255,9 @@ fn parse_args() -> Result<Args> {
         max_p95_ms,
         feedback_jsonl,
         history_jsonl,
+        warmup,
+        repeat,
+        synthetic_chunks,
     })
 }
 
@@ -293,6 +349,50 @@ fn append_feedback(path: &Path, report: &Report) -> Result<()> {
     Ok(())
 }
 
+fn generate_synthetic_documents(
+    requested_chunks: usize,
+    chunk_size: usize,
+    chunk_overlap: usize,
+) -> Result<Vec<SyntheticDocument>> {
+    if requested_chunks == 0 {
+        return Ok(Vec::new());
+    }
+    if chunk_size == 0 || chunk_overlap >= chunk_size {
+        bail!("synthetic generation needs chunk_size > 0 and chunk_overlap < chunk_size");
+    }
+    let step = chunk_size - chunk_overlap;
+    let mut remaining = requested_chunks;
+    let mut documents = Vec::new();
+    while remaining > 0 {
+        let document_index = documents.len();
+        let document_chunks = remaining.min(SYNTHETIC_CHUNKS_PER_DOCUMENT);
+        let content_len = (document_chunks - 1)
+            .checked_mul(step)
+            .and_then(|tail| chunk_size.checked_add(tail))
+            .context("synthetic corpus size overflows usize")?;
+        let title = format!("synthetic-{document_index:06}.txt");
+        documents.push(SyntheticDocument {
+            uri: format!("eval://synthetic/{title}"),
+            title,
+            content: synthetic_content(document_index, content_len),
+        });
+        remaining -= document_chunks;
+    }
+    Ok(documents)
+}
+
+fn synthetic_content(document_index: usize, len: usize) -> String {
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64 ^ document_index as u64;
+    let mut content = String::with_capacity(len);
+    for _ in 0..len {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        content.push(char::from(b'a' + (state % 26) as u8));
+    }
+    content
+}
+
 async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Report> {
     let mut config = Config::from_env()?;
     config.db_path = db_path.to_path_buf();
@@ -323,8 +423,53 @@ async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Repor
         .await
         .with_context(|| format!("ingest {relative}"))?;
     }
+    let synthetic = if let Some(requested_chunks) = args.synthetic_chunks {
+        let chunks_before = store.stats()?.1;
+        let documents = generate_synthetic_documents(
+            requested_chunks,
+            config.chunk_size,
+            config.chunk_overlap,
+        )?;
+        let generated_documents = documents.len();
+        for document in documents {
+            wiki::ingest_raw(
+                &store,
+                &embedder,
+                &config,
+                document.content,
+                Some(document.title),
+                Some(document.uri),
+                None,
+                None,
+                None,
+            )
+            .await
+            .context("ingest deterministic synthetic corpus")?;
+        }
+        let chunks_after = store.stats()?.1;
+        let generated_chunks = chunks_after
+            .checked_sub(chunks_before)
+            .context("synthetic ingest reduced the chunk count")?;
+        if generated_chunks != requested_chunks as u64 {
+            bail!(
+                "synthetic generator requested {requested_chunks} chunks but ingest produced \
+                 {generated_chunks}; check chunking configuration"
+            );
+        }
+        Some(SyntheticDiagnostics {
+            requested_chunks,
+            generated_documents,
+        })
+    } else {
+        None
+    };
     let ingest_ms = ms(started);
     let (documents, chunks, _, _) = store.stats()?;
+    let samples_per_mode = dataset
+        .queries
+        .len()
+        .checked_mul(args.repeat)
+        .context("query count multiplied by --repeat overflows usize")?;
     let mut modes = Vec::new();
     for mode in &args.modes {
         modes.push(
@@ -335,6 +480,8 @@ async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Repor
                 &dataset.queries,
                 *mode,
                 args.top_k,
+                args.warmup,
+                args.repeat,
             )
             .await?,
         );
@@ -352,6 +499,13 @@ async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Repor
             documents,
             chunks,
             ingest_ms,
+            synthetic,
+        },
+        sampling: SamplingDiagnostics {
+            queries: dataset.queries.len(),
+            warmup: args.warmup,
+            repeat: args.repeat,
+            samples_per_mode,
         },
         modes,
         scale_recommendation: recommend(chunks, worst_p95),
@@ -397,42 +551,81 @@ async fn eval_mode(
     queries: &[LabeledQuery],
     mode: SearchMode,
     top_k: usize,
+    warmup: usize,
+    repeat: usize,
 ) -> Result<ModeReport> {
-    let mut reports = Vec::new();
-    for q in queries {
-        let embedding_started = Instant::now();
-        let query_embedding = if mode.needs_embedding() {
-            Some(embedder.embed(&[q.query.clone()]).await?.remove(0))
-        } else {
-            None
-        };
-        let embedding_ms = ms(embedding_started);
-        let search_started = Instant::now();
-        let hits = search(
-            store,
-            &SearchQuery {
-                mode,
-                top_k,
-                query_text: Some(q.query.clone()),
-                query_embedding,
-                fts_stemmer: config.fts_stemmer.clone(),
-                ..SearchQuery::default()
-            },
-        )?;
-        reports.push(score(q, hits, embedding_ms, ms(search_started), top_k));
+    for _ in 0..warmup {
+        for query in queries {
+            let _ = eval_query(store, embedder, config, query, mode, top_k).await?;
+        }
+    }
+
+    let mut reports = Vec::with_capacity(queries.len());
+    let mut embedding_totals = vec![0.0; queries.len()];
+    let mut search_totals = vec![0.0; queries.len()];
+    let mut timings = Vec::with_capacity(queries.len() * repeat);
+    for repetition in 0..repeat {
+        for (query_index, query) in queries.iter().enumerate() {
+            let report = eval_query(store, embedder, config, query, mode, top_k).await?;
+            embedding_totals[query_index] += report.embedding_ms;
+            search_totals[query_index] += report.search_ms;
+            timings.push(report.search_ms);
+            if repetition == 0 {
+                reports.push(report);
+            }
+        }
+    }
+    for (query_index, report) in reports.iter_mut().enumerate() {
+        report.embedding_ms = embedding_totals[query_index] / repeat as f64;
+        report.search_ms = search_totals[query_index] / repeat as f64;
     }
     let n = reports.len() as f64;
-    let mut timings: Vec<_> = reports.iter().map(|q| q.search_ms).collect();
     timings.sort_by(f64::total_cmp);
+    let sample_count = timings.len() as f64;
     Ok(ModeReport {
         mode: mode.as_str().into(),
         recall_at_k: reports.iter().map(|q| q.recall_at_k).sum::<f64>() / n,
         mrr: reports.iter().map(|q| q.reciprocal_rank).sum::<f64>() / n,
         ndcg_at_k: reports.iter().map(|q| q.ndcg_at_k).sum::<f64>() / n,
-        mean_search_ms: timings.iter().sum::<f64>() / n,
+        mean_search_ms: timings.iter().sum::<f64>() / sample_count,
         p95_search_ms: percentile(&timings),
         queries: reports,
     })
+}
+
+async fn eval_query(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    query: &LabeledQuery,
+    mode: SearchMode,
+    top_k: usize,
+) -> Result<QueryReport> {
+    let embedding_started = Instant::now();
+    let query_embedding = if mode.needs_embedding() {
+        Some(
+            embedder
+                .embed(std::slice::from_ref(&query.query))
+                .await?
+                .remove(0),
+        )
+    } else {
+        None
+    };
+    let embedding_ms = ms(embedding_started);
+    let search_started = Instant::now();
+    let hits = search(
+        store,
+        &SearchQuery {
+            mode,
+            top_k,
+            query_text: Some(query.query.clone()),
+            query_embedding,
+            fts_stemmer: config.fts_stemmer.clone(),
+            ..SearchQuery::default()
+        },
+    )?;
+    Ok(score(query, hits, embedding_ms, ms(search_started), top_k))
 }
 
 fn score(
@@ -526,6 +719,16 @@ fn print_report(r: &Report) {
         r.corpus.chunks,
         r.corpus.ingest_ms
     );
+    if let Some(synthetic) = &r.corpus.synthetic {
+        println!(
+            "synthetic={} chunks/{} documents",
+            synthetic.requested_chunks, synthetic.generated_documents
+        );
+    }
+    println!(
+        "sampling={} measured/mode ({} queries x repeat {}), warmup={} pass(es)",
+        r.sampling.samples_per_mode, r.sampling.queries, r.sampling.repeat, r.sampling.warmup
+    );
     for mode in &r.modes {
         println!(
             "\n{} recall@{}={:.3} MRR={:.3} nDCG@{}={:.3} search_mean={:.2}ms search_p95={:.2}ms",
@@ -555,4 +758,84 @@ fn print_report(r: &Report) {
         "\nscale={} — {}",
         r.scale_recommendation.path, r.scale_recommendation.reason
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rag_mcp::chunking::{from_config, Chunker};
+
+    #[test]
+    fn parse_args_keeps_sampling_defaults_backward_compatible() {
+        let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+
+        assert_eq!(args.warmup, 0);
+        assert_eq!(args.repeat, 1);
+        assert_eq!(args.synthetic_chunks, None);
+        assert_eq!(args.top_k, 5);
+        assert_eq!(args.modes.len(), 3);
+    }
+
+    #[test]
+    fn parse_args_accepts_sampling_and_synthetic_options() {
+        let args = parse_args_from([
+            "--warmup",
+            "2",
+            "--repeat",
+            "7",
+            "--synthetic-chunks",
+            "1000",
+            "--modes",
+            "vec",
+        ])
+        .unwrap();
+
+        assert_eq!(args.warmup, 2);
+        assert_eq!(args.repeat, 7);
+        assert_eq!(args.synthetic_chunks, Some(1000));
+        assert_eq!(args.modes.len(), 1);
+        assert_eq!(args.modes[0], SearchMode::Vec);
+    }
+
+    #[test]
+    fn parse_args_rejects_zero_measured_or_synthetic_chunks() {
+        let repeat_error = parse_args_from(["--repeat", "0"])
+            .err()
+            .unwrap()
+            .to_string();
+        let synthetic_error = parse_args_from(["--synthetic-chunks", "0"])
+            .err()
+            .unwrap()
+            .to_string();
+
+        assert!(repeat_error.contains("--repeat must be greater than zero"));
+        assert!(synthetic_error.contains("--synthetic-chunks must be greater than zero"));
+    }
+
+    #[test]
+    fn percentile_uses_the_nearest_rank_ceiling() {
+        assert_eq!(percentile(&[7.0]), 7.0);
+        assert_eq!(percentile(&[1.0, 2.0]), 2.0);
+        let twenty: Vec<_> = (1..=20).map(f64::from).collect();
+        assert_eq!(percentile(&twenty), 20.0);
+    }
+
+    #[test]
+    fn synthetic_generation_is_deterministic_and_exact() {
+        let first = generate_synthetic_documents(513, 16, 4).unwrap();
+        let second = generate_synthetic_documents(513, 16, 4).unwrap();
+        let chunker = from_config(16, 4);
+        let actual_chunks: usize = first
+            .iter()
+            .map(|document| Chunker::chunk(&chunker, &document.content).len())
+            .sum();
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 3);
+        assert_eq!(actual_chunks, 513);
+        assert_eq!(first[0].title, "synthetic-000000.txt");
+        assert!(first
+            .iter()
+            .all(|document| !document.content.chars().any(char::is_whitespace)));
+    }
 }
