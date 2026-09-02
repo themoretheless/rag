@@ -264,6 +264,36 @@ pub struct GatewayHealth {
     pub relational_integrity_ok: bool,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ActivityEvent {
+    pub seq: u64,
+    pub at: String,
+    pub kind: String,
+    pub client: Option<String>,
+    pub action: String,
+    pub status: Option<u16>,
+    pub elapsed_ms: Option<f64>,
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ActivityResponse {
+    #[serde(default)]
+    items: Vec<ActivityEvent>,
+}
+
+pub fn fetch_activity_http(base: &str) -> Result<Vec<ActivityEvent>, String> {
+    let client = gateway_client(5)?;
+    let url = http_join(normalize_http_base(base), "v1/activity");
+    let response = get(&client, url.clone())?;
+    if !response.is_success() {
+        return Err(format!("HTTP {} from {url}", response.status));
+    }
+    serde_json::from_str::<ActivityResponse>(&response.body)
+        .map(|response| response.items)
+        .map_err(|e| format!("parse activity from {url}: {e}"))
+}
+
 /// Optional envelope around bare `GraphView` (EGUI_GRAPH_VIEW §10.1).
 #[derive(Debug, Deserialize)]
 struct SnapshotEnvelope {
@@ -886,20 +916,30 @@ fn urlencoding_minimal(s: &str) -> String {
 ///
 /// Server: `RAG_HTTP_BIND=127.0.0.1:7432`  
 /// UI: `--http http://127.0.0.1:7432`
-pub fn load_http(base: &str, _seed: Option<&str>, _depth: u32) -> Result<LoadedGraph, String> {
+pub fn load_http(
+    base: &str,
+    seed: Option<&str>,
+    depth: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> Result<LoadedGraph, String> {
     let client = gateway_client(30)?;
-    load_http_with_client(&client, base)
+    load_http_with_client(&client, base, seed, depth, project, include_tags)
 }
 
-fn load_http_with_client(client: &dyn GatewayClient, base: &str) -> Result<LoadedGraph, String> {
+fn load_http_with_client(
+    client: &dyn GatewayClient,
+    base: &str,
+    seed: Option<&str>,
+    depth: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> Result<LoadedGraph, String> {
     let base = normalize_http_base(base);
     if base.is_empty() {
         return Err("--http base URL is empty".into());
     }
-    let url = http_join(
-        base,
-        &format!("v1/graph?max_nodes={UI_GRAPH_EXPORT_MAX_NODES}&include_tags=false"),
-    );
+    let url = http_join(base, &http_graph_path(seed, depth, project, include_tags));
     let health = get(client, http_join(base, "health"))
         .ok()
         .filter(Response::is_success)
@@ -927,7 +967,9 @@ fn load_http_with_client(client: &dyn GatewayClient, base: &str) -> Result<Loade
     let view: GraphView = serde_json::from_str(&response.body)
         .map_err(|e| format!("parse GraphView from {url}: {e}"))?;
     let raw_node_count = view.nodes.len();
-    let truncated = raw_node_count > UI_HARD_MAX_NODES;
+    // The gateway clamps at the requested limit, so equality is the only
+    // client-visible signal that more server-side nodes may exist.
+    let truncated = http_export_may_be_truncated(raw_node_count);
     let projects = projects.unwrap_or_else(|| projects_from_view(&view));
     Ok(LoadedGraph {
         view,
@@ -941,17 +983,72 @@ fn load_http_with_client(client: &dyn GatewayClient, base: &str) -> Result<Loade
     })
 }
 
+fn http_export_may_be_truncated(raw_node_count: usize) -> bool {
+    raw_node_count >= UI_GRAPH_EXPORT_MAX_NODES as usize
+}
+
+fn http_graph_path(
+    seed: Option<&str>,
+    depth: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> String {
+    if let Some(seed) = seed.map(str::trim).filter(|seed| !seed.is_empty()) {
+        return http_neighbors_path(
+            seed,
+            depth,
+            UI_GRAPH_EXPORT_MAX_NODES,
+            project,
+            include_tags,
+        );
+    }
+    let mut path =
+        format!("v1/graph?max_nodes={UI_GRAPH_EXPORT_MAX_NODES}&include_tags={include_tags}");
+    if let Some(project) = project.map(str::trim).filter(|project| !project.is_empty()) {
+        path.push_str("&project=");
+        path.push_str(&urlencoding_minimal(project));
+    }
+    path
+}
+
+fn http_neighbors_path(
+    seed: &str,
+    depth: u32,
+    max_nodes: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> String {
+    let mut path = format!(
+        "v1/neighbors?seed={}&depth={}&max_nodes={}&include_tags={include_tags}",
+        urlencoding_minimal(seed.trim()),
+        depth.clamp(1, 3),
+        max_nodes.max(1)
+    );
+    if let Some(project) = project.map(str::trim).filter(|project| !project.is_empty()) {
+        path.push_str("&project=");
+        path.push_str(&urlencoding_minimal(project));
+    }
+    path
+}
+
 /// Exclusive live Store open (Mode A): `Store::open` + [`Store::export_graph_for_ui`].
 ///
-/// PKB defaults centralized on Store: `rel_types = [wikilink, related]`, tags
-/// excluded, `max_nodes = 300` ([`UI_GRAPH_EXPORT_MAX_NODES`]).
+/// PKB defaults centralized on Store: `rel_types = [wikilink, related]` and
+/// `max_nodes = 300` ([`UI_GRAPH_EXPORT_MAX_NODES`]); tag inclusion follows the
+/// UI toggle.
 /// Fails clearly if the path cannot be opened (missing file, lock, corrupt DB).
 /// Dual-live write with a concurrent MCP process is unsupported forever; if open
 /// fails while MCP holds the file, switch to `--snapshot` (Mode C).
 ///
 /// `seed` / `depth` are not applied here; the full filtered topology is returned
 /// and local seed BFS is done client-side (same as snapshot path).
-pub fn load_live_db(path: &Path, _seed: Option<&str>, _depth: u32) -> Result<LoadedGraph, String> {
+pub fn load_live_db(
+    path: &Path,
+    _seed: Option<&str>,
+    _depth: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> Result<LoadedGraph, String> {
     if !path.exists() {
         return Err(format!(
             "cannot open database: path does not exist: {}. Dual-live write with MCP is forbidden; use --snapshot if the agent holds the file.",
@@ -967,23 +1064,44 @@ pub fn load_live_db(path: &Path, _seed: Option<&str>, _depth: u32) -> Result<Loa
         )
     })?;
 
-    let view = store
-        .export_graph_for_ui(Some(UI_GRAPH_EXPORT_MAX_NODES), false)
-        .map_err(|e| {
-            format!(
-                "export_graph_for_ui failed on {}: {}. Check schema / graph tables.",
-                path.display(),
-                e
-            )
-        })?;
+    let project = project.map(str::trim).filter(|project| !project.is_empty());
+    let view = match project {
+        Some(project) => store.export_project_graph_for_ui(
+            project,
+            Some(UI_GRAPH_EXPORT_MAX_NODES),
+            include_tags,
+        ),
+        None => store.export_graph_for_ui(Some(UI_GRAPH_EXPORT_MAX_NODES), include_tags),
+    }
+    .map_err(|e| {
+        format!(
+            "UI graph export failed on {}: {}. Check schema / graph tables.",
+            path.display(),
+            e
+        )
+    })?;
 
-    let total_nodes = store
-        .graph_stats()
-        .map(|s| s.total_nodes as usize)
-        .unwrap_or(view.nodes.len());
-    let truncated = total_nodes > view.nodes.len()
-        || view.nodes.len() >= UI_HARD_MAX_NODES
-        || view.nodes.len() as u32 >= UI_GRAPH_EXPORT_MAX_NODES;
+    let (total_nodes, truncated) = if project.is_some() {
+        // The project predicate is applied in Store/SQL before the cap. Store's
+        // bounded project export does not expose an uncapped count, so reaching
+        // the limit is conservatively reported as potentially truncated.
+        let visible = view.nodes.len();
+        (
+            visible,
+            visible >= UI_HARD_MAX_NODES || visible as u32 >= UI_GRAPH_EXPORT_MAX_NODES,
+        )
+    } else {
+        let total = store
+            .graph_stats()
+            .map(|stats| stats.total_nodes as usize)
+            .unwrap_or(view.nodes.len());
+        (
+            total,
+            total > view.nodes.len()
+                || view.nodes.len() >= UI_HARD_MAX_NODES
+                || view.nodes.len() as u32 >= UI_GRAPH_EXPORT_MAX_NODES,
+        )
+    };
 
     let projects = store
         .list_projects()
@@ -1004,13 +1122,13 @@ pub fn load_live_db(path: &Path, _seed: Option<&str>, _depth: u32) -> Result<Loa
     })
 }
 
-/// Live-load filter: PKB rel types, no tags, hard UI node cap.
+/// Live-load filter: PKB rel types, caller-selected tags, hard UI node cap.
 ///
 /// Prefer [`Store::export_graph_for_ui`]; this mirrors
 /// [`GraphFilter::pkb_ui_export`] for callers that only need the filter value.
 #[allow(dead_code)] // public helper for tests / callers building filters without Store
-pub fn pkb_live_filter() -> GraphFilter {
-    GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), false)
+pub fn pkb_live_filter(include_tags: bool) -> GraphFilter {
+    GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), include_tags)
 }
 
 /// Parse bare `GraphView` or envelope `{ "graph": { ... } }`.
@@ -1168,11 +1286,13 @@ pub fn load_cli_source(
     source: &CliSource,
     seed: Option<&str>,
     depth: u32,
+    project: Option<&str>,
+    include_tags: bool,
 ) -> Result<LoadedGraph, String> {
     match source {
         CliSource::Snapshot(path) => load_snapshot_path(path),
-        CliSource::Db(path) => load_live_db(path, seed, depth),
-        CliSource::Http(base) => load_http(base, seed, depth),
+        CliSource::Db(path) => load_live_db(path, seed, depth, project, include_tags),
+        CliSource::Http(base) => load_http(base, seed, depth, project, include_tags),
     }
 }
 
@@ -1231,8 +1351,23 @@ pub fn sort_wiki_pages(pages: &mut [WikiPageMeta]) {
     });
 }
 
+/// Result of client-side BFS, including an exact signal that the node budget
+/// omitted at least one otherwise reachable node.
+#[derive(Debug, Clone)]
+pub struct LocalNeighbors {
+    pub view: GraphView,
+    pub capped: bool,
+}
+
 /// Client-side undirected BFS neighbors on a loaded snapshot (Mode C expand).
-pub fn local_neighbors(full: &GraphView, seed_id: &str, depth: u32, max_nodes: usize) -> GraphView {
+pub fn local_neighbors_bounded(
+    full: &GraphView,
+    seed_id: &str,
+    depth: u32,
+    max_nodes: usize,
+) -> LocalNeighbors {
+    let max_nodes = max_nodes.max(1);
+    let available: HashSet<&str> = full.nodes.iter().map(|node| node.id.as_str()).collect();
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for e in &full.edges {
         adj.entry(e.source_id.clone())
@@ -1250,28 +1385,38 @@ pub fn local_neighbors(full: &GraphView, seed_id: &str, depth: u32, max_nodes: u
         keep.insert(seed_id.to_string());
     }
 
+    let mut capped = false;
     while let Some((id, d)) = queue.pop_front() {
         if d >= depth {
             continue;
         }
         if let Some(neis) = adj.get(&id) {
             for n in neis {
+                if !available.contains(n.as_str()) {
+                    continue;
+                }
                 if keep.contains(n) {
                     continue;
                 }
                 if keep.len() >= max_nodes {
-                    break;
+                    capped = true;
+                    continue;
                 }
                 keep.insert(n.clone());
                 queue.push_back((n.clone(), d + 1));
             }
         }
-        if keep.len() >= max_nodes {
-            break;
-        }
     }
 
-    subgraph_from_keep(full, &keep)
+    LocalNeighbors {
+        view: subgraph_from_keep(full, &keep),
+        capped,
+    }
+}
+
+/// Compatibility helper for expansion paths that only need the subgraph.
+pub fn local_neighbors(full: &GraphView, seed_id: &str, depth: u32, max_nodes: usize) -> GraphView {
+    local_neighbors_bounded(full, seed_id, depth, max_nodes).view
 }
 
 /// Merge `extra` nodes into `base`, preferring existing nodes, capped at `max_nodes`.
@@ -1343,6 +1488,64 @@ pub fn expand_neighbors_local(
     merge_graph_views(current, &extra, Some(full), max_nodes)
 }
 
+/// Expand a selected node through the gateway so nodes outside the initial
+/// bounded project export remain discoverable. The project scope is repeated
+/// on every lazy request; omitting it could leak or merge another project.
+pub fn expand_neighbors_http(
+    base: &str,
+    current: &GraphView,
+    selected_id: &str,
+    max_nodes: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> Result<GraphView, String> {
+    let client = gateway_client(20)?;
+    expand_neighbors_http_with_client(
+        &client,
+        base,
+        current,
+        selected_id,
+        max_nodes,
+        project,
+        include_tags,
+    )
+}
+
+fn expand_neighbors_http_with_client(
+    client: &dyn GatewayClient,
+    base: &str,
+    current: &GraphView,
+    selected_id: &str,
+    max_nodes: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> Result<GraphView, String> {
+    let base = normalize_http_base(base);
+    if base.is_empty() {
+        return Err("HTTP base URL is empty".into());
+    }
+    let url = http_join(
+        base,
+        &http_neighbors_path(selected_id, 1, max_nodes, project, include_tags),
+    );
+    let response = get(client, url.clone())?;
+    if !response.is_success() {
+        return Err(format!(
+            "HTTP {} from {url}: {}",
+            response.status,
+            response.body.chars().take(300).collect::<String>()
+        ));
+    }
+    let extra: GraphView = serde_json::from_str(&response.body)
+        .map_err(|error| format!("parse GraphView from {url}: {error}"))?;
+    Ok(merge_graph_views(
+        current,
+        &extra,
+        None,
+        max_nodes.max(1) as usize,
+    ))
+}
+
 /// Expand neighbors via exclusive Store BFS (`Store::neighbors`), depth 1 from
 /// the selected node, merge into `current` under `max_nodes`.
 ///
@@ -1406,6 +1609,7 @@ fn subgraph_from_keep(full: &GraphView, keep: &HashSet<String>) -> GraphView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rag_mcp::Document;
     use std::sync::Mutex;
 
     struct FakeGateway {
@@ -1438,6 +1642,81 @@ mod tests {
         assert_eq!(
             wiki_catalog_path(Some("Project A/B")),
             "v1/wiki?wing=Project%20A%2FB"
+        );
+    }
+
+    #[test]
+    fn graph_and_lazy_neighbor_urls_repeat_encoded_project_scope() {
+        assert_eq!(
+            http_graph_path(None, 1, Some("Project A/B"), false),
+            format!(
+                "v1/graph?max_nodes={UI_GRAPH_EXPORT_MAX_NODES}&include_tags=false&project=Project%20A%2FB"
+            )
+        );
+        assert_eq!(
+            http_graph_path(
+                Some("doc://seed one"),
+                2,
+                Some("Project A/B"),
+                false,
+            ),
+            format!(
+                "v1/neighbors?seed=doc%3A%2F%2Fseed%20one&depth=2&max_nodes={UI_GRAPH_EXPORT_MAX_NODES}&include_tags=false&project=Project%20A%2FB"
+            )
+        );
+        assert_eq!(
+            http_neighbors_path("node/42", 1, 120, Some("Project A/B"), false),
+            "v1/neighbors?seed=node%2F42&depth=1&max_nodes=120&include_tags=false&project=Project%20A%2FB"
+        );
+    }
+
+    #[test]
+    fn graph_and_neighbor_urls_forward_tag_fetch_toggle() {
+        assert_eq!(
+            http_graph_path(None, 1, Some("alpha"), true),
+            format!(
+                "v1/graph?max_nodes={UI_GRAPH_EXPORT_MAX_NODES}&include_tags=true&project=alpha"
+            )
+        );
+        assert_eq!(
+            http_neighbors_path("doc://one", 3, 50, Some("alpha"), true),
+            "v1/neighbors?seed=doc%3A%2F%2Fone&depth=3&max_nodes=50&include_tags=true&project=alpha"
+        );
+    }
+
+    #[test]
+    fn reaching_server_export_limit_marks_result_as_potentially_truncated() {
+        let limit = UI_GRAPH_EXPORT_MAX_NODES as usize;
+        assert!(!http_export_may_be_truncated(limit - 1));
+        assert!(http_export_may_be_truncated(limit));
+        assert!(http_export_may_be_truncated(limit + 1));
+    }
+
+    #[test]
+    fn lazy_http_expand_sends_project_scoped_request() {
+        let graph = r#"{"nodes":[{"id":"a","kind":"document","label":"A","document_id":"d1","uri":"doc://a","resolved":true,"metadata_json":"{}"}],"edges":[]}"#;
+        let gateway = FakeGateway::ok(graph);
+        let current = GraphView {
+            nodes: vec![node("a", "A")],
+            edges: Vec::new(),
+        };
+        let expanded = expand_neighbors_http_with_client(
+            &gateway,
+            "http://gateway/",
+            &current,
+            "node/42",
+            120,
+            Some("Project A/B"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(expanded.nodes.len(), 1);
+        let requests = gateway.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, Method::Get);
+        assert_eq!(
+            requests[0].url,
+            "http://gateway/v1/neighbors?seed=node%2F42&depth=1&max_nodes=120&include_tags=false&project=Project%20A%2FB"
         );
     }
 
@@ -1550,8 +1829,52 @@ mod tests {
     }
 
     #[test]
+    fn live_db_project_filter_is_applied_before_ui_export() {
+        let suffix = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rag-mcp-ui-project-{suffix}"));
+        fs::create_dir_all(&dir).expect("create temp directory");
+        let db = dir.join("project.duckdb");
+        let store = Store::open(&db).expect("open temp store");
+        for (id, wing) in [("alpha-doc", "alpha"), ("beta-doc", "beta")] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("file:///{wing}/{id}.md"),
+                    title: format!("{wing} document"),
+                    content: wing.into(),
+                    wing: Some(wing.into()),
+                    ..Document::default()
+                })
+                .expect("insert document");
+            let mut graph_node = node(&format!("{wing}-node"), wing);
+            graph_node.document_id = Some(id.into());
+            store
+                .upsert_graph_node(&graph_node)
+                .expect("insert document node");
+        }
+        drop(store);
+
+        let loaded = load_live_db(&db, None, 1, Some("alpha"), false).expect("project export");
+        assert_eq!(loaded.view.nodes.len(), 1);
+        assert_eq!(
+            loaded.view.nodes[0].document_id.as_deref(),
+            Some("alpha-doc")
+        );
+        assert!(!loaded
+            .view
+            .nodes
+            .iter()
+            .any(|node| node.document_id.as_deref() == Some("beta-doc")));
+
+        fs::remove_dir_all(&dir).expect("remove temp directory");
+    }
+
+    #[test]
     fn pkb_live_filter_defaults() {
-        let f = pkb_live_filter();
+        let f = pkb_live_filter(false);
         let rels = f.rel_types.expect("rels");
         assert!(rels.iter().any(|r| r == "wikilink"));
         assert!(rels.iter().any(|r| r == "related"));
@@ -1559,6 +1882,13 @@ mod tests {
         let kinds = f.kinds.expect("kinds");
         assert!(kinds.iter().any(|k| k == "document"));
         assert!(!kinds.iter().any(|k| k == "tag"));
+
+        let with_tags = pkb_live_filter(true);
+        assert!(with_tags
+            .kinds
+            .expect("kinds")
+            .iter()
+            .any(|kind| kind == "tag"));
     }
 
     #[test]
@@ -1579,6 +1909,28 @@ mod tests {
         assert!(ids.contains("a"));
         assert!(ids.contains("b"));
         assert!(!ids.contains("c"));
+    }
+
+    #[test]
+    fn local_neighbors_reports_only_actual_budget_omissions() {
+        let complete = GraphView {
+            nodes: vec![node("seed", "Seed"), node("only", "Only")],
+            edges: vec![edge("e1", "seed", "only")],
+        };
+        let exact = local_neighbors_bounded(&complete, "seed", 1, 2);
+        assert_eq!(exact.view.nodes.len(), 2);
+        assert!(
+            !exact.capped,
+            "reaching the budget is not itself truncation"
+        );
+
+        let omitted = GraphView {
+            nodes: vec![node("seed", "Seed"), node("one", "One"), node("two", "Two")],
+            edges: vec![edge("e1", "seed", "one"), edge("e2", "seed", "two")],
+        };
+        let capped = local_neighbors_bounded(&omitted, "seed", 1, 2);
+        assert_eq!(capped.view.nodes.len(), 2);
+        assert!(capped.capped);
     }
 
     #[test]

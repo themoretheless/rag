@@ -13,6 +13,7 @@
 //!
 //! Graph *extract/resolve* (wikilinks, tags, stubs) lives in crate-root [`crate::graph`].
 
+mod catalog;
 pub mod collections;
 pub mod fts;
 pub mod graph;
@@ -21,13 +22,16 @@ pub mod recovery;
 mod rows;
 pub mod schema;
 pub mod search;
+mod source_manifest;
 pub mod store;
 pub mod vault;
 
+pub use catalog::{DocumentCatalogFilter, DocumentCatalogPage, ProjectHome};
 pub use fts::{
     chunks_generation, ensure_fts, ensure_fts_with_stemmer, fts_generation_state,
     fts_index_present, fts_status, load_fts_extension, mark_fts_dirty, probe_ready,
     refresh_fts_if_stale, refresh_fts_if_stale_with_stemmer, reindex, reindex_with_stemmer,
     search_bm25, search_bm25_with_stemmer, FtsBackend, FtsGenerationState, FtsState, LexFilters,
 };
+pub use source_manifest::{SourceManifestEntry, SourceManifestWrite, SourceRootSummary};
 pub use store::Store;

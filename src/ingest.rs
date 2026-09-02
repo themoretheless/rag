@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::store::DocumentDerivedWrite;
-use crate::db::Store;
+use crate::db::{SourceManifestWrite, Store};
 use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
@@ -27,6 +27,15 @@ pub struct IngestCommand {
     pub layer: String,
     pub kind: String,
     pub immutable: bool,
+}
+
+/// Filesystem stamp published with a source document after indexing succeeds.
+#[derive(Debug, Clone)]
+pub(crate) struct SourceManifestStamp {
+    pub canonical_path: String,
+    pub canonical_root: String,
+    pub size_bytes: u64,
+    pub mtime_ns: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,12 +96,28 @@ impl<'a> IngestService<'a> {
     }
 
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
+        self.ingest_inner(command, None).await
+    }
+
+    pub(crate) async fn ingest_source(
+        &self,
+        command: IngestCommand,
+        manifest: SourceManifestStamp,
+    ) -> Result<IngestResult, AppError> {
+        self.ingest_inner(command, Some(manifest)).await
+    }
+
+    async fn ingest_inner(
+        &self,
+        command: IngestCommand,
+        manifest: Option<SourceManifestStamp>,
+    ) -> Result<IngestResult, AppError> {
         self.ensure_vector_compatibility()?;
         let command = NormalizedIngest::try_from(command)?;
         let new_hash = content_hash(&command.text);
         let now = Utc::now();
 
-        let (document_id, created_at, operation) = if let Some(existing) =
+        let (document_id, created_at, operation, expected_revision) = if let Some(existing) =
             self.store.find_by_uri(&command.uri)?
         {
             if command.immutable {
@@ -124,9 +149,14 @@ impl<'a> IngestService<'a> {
                         command.uri, existing.id
                     )));
             }
-            (existing.id, existing.created_at, "updated")
+            (
+                existing.id,
+                existing.created_at,
+                "updated",
+                Some(existing.revision),
+            )
         } else {
-            (Uuid::new_v4().to_string(), now, "inserted")
+            (Uuid::new_v4().to_string(), now, "inserted", None)
         };
 
         let document = Document {
@@ -147,11 +177,27 @@ impl<'a> IngestService<'a> {
         };
         let chunks = self.indexer.build_chunks(&document).await?;
         let chunk_count = chunks.len();
-        let write = self.store.write_document_atomic(
-            &document,
-            None,
-            DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-        )?;
+        let write = if let Some(manifest) = manifest.as_ref() {
+            self.store.write_source_document_atomic(
+                &document,
+                expected_revision,
+                &chunks,
+                SourceManifestWrite {
+                    canonical_path: &manifest.canonical_path,
+                    canonical_root: &manifest.canonical_root,
+                    size_bytes: manifest.size_bytes,
+                    mtime_ns: manifest.mtime_ns,
+                    content_hash: &new_hash,
+                    document_id: &document_id,
+                },
+            )?
+        } else {
+            self.store.write_document_atomic(
+                &document,
+                expected_revision,
+                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+            )?
+        };
 
         Ok(IngestResult {
             document_id,
@@ -357,6 +403,11 @@ mod tests {
         dims: usize,
     }
 
+    struct BarrierEmbedder {
+        barrier: Arc<tokio::sync::Barrier>,
+        inner: MockEmbedder,
+    }
+
     #[async_trait]
     impl EmbeddingProvider for FailingEmbedder {
         async fn embed(&self, _texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
@@ -365,6 +416,18 @@ mod tests {
 
         fn dimensions(&self) -> usize {
             self.dims
+        }
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for BarrierEmbedder {
+        async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            self.barrier.wait().await;
+            self.inner.embed(texts).await
+        }
+
+        fn dimensions(&self) -> usize {
+            self.inner.dimensions()
         }
     }
 
@@ -391,6 +454,46 @@ mod tests {
             kind: "wiki".into(),
             immutable: false,
         }
+    }
+
+    #[tokio::test]
+    async fn source_manifest_failure_rolls_back_document_and_derived_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(temp.path().join("source-manifest-atomic.duckdb"));
+        let store = Store::open(&config.db_path).expect("store");
+        store
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TABLE source_manifest")
+            .unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+
+        let error = IngestService::new(&store, &embedder, &config)
+            .ingest_source(
+                IngestCommand {
+                    source_file: Some("/sources/atomic.md".into()),
+                    layer: "raw".into(),
+                    kind: "document".into(),
+                    ..command("Source body links to [[Target]].")
+                },
+                SourceManifestStamp {
+                    canonical_path: "/sources/atomic.md".into(),
+                    canonical_root: "/sources".into(),
+                    size_bytes: 32,
+                    mtime_ns: 1,
+                },
+            )
+            .await
+            .expect_err("manifest write must fail");
+
+        assert!(error.to_string().contains("source_manifest"));
+        assert!(store.list_documents().unwrap().is_empty());
+        assert!(store
+            .get_graph_view(crate::models::GraphFilter::default())
+            .unwrap()
+            .nodes
+            .is_empty());
+        assert!(store.list_graph_edges().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -474,5 +577,89 @@ mod tests {
         assert_eq!(persisted_edges.len(), original_edges.len());
         assert_eq!(persisted_edges[0].id, original_edges[0].id);
         assert!(store.find_nodes_by_label("New target").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_initial_ingest_never_creates_duplicate_uri_owners() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = Arc::new(test_config(temp.path().join("initial-race.duckdb")));
+        let store = Arc::new(Store::open(&config.db_path).expect("store"));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(BarrierEmbedder {
+            barrier: Arc::new(tokio::sync::Barrier::new(2)),
+            inner: MockEmbedder::new(8),
+        });
+
+        let mut tasks = Vec::new();
+        for text in ["first contender", "second contender"] {
+            let store = store.clone();
+            let config = config.clone();
+            let embedder = embedder.clone();
+            tasks.push(tokio::spawn(async move {
+                IngestService::new(store.as_ref(), &embedder, config.as_ref())
+                    .ingest(command(text))
+                    .await
+            }));
+        }
+        let results = [
+            tasks.remove(0).await.unwrap(),
+            tasks.remove(0).await.unwrap(),
+        ];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(AppError::Conflict(_))))
+                .count(),
+            1
+        );
+        let documents = store.list_documents().unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].uri, "wiki://atomic-page");
+    }
+
+    #[tokio::test]
+    async fn concurrent_updates_use_the_revision_observed_before_embedding() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = Arc::new(test_config(temp.path().join("update-race.duckdb")));
+        let store = Arc::new(Store::open(&config.db_path).expect("store"));
+        let initial_embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        IngestService::new(store.as_ref(), &initial_embedder, config.as_ref())
+            .ingest(command("initial"))
+            .await
+            .unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(BarrierEmbedder {
+            barrier: Arc::new(tokio::sync::Barrier::new(2)),
+            inner: MockEmbedder::new(8),
+        });
+
+        let mut tasks = Vec::new();
+        for text in ["update one", "update two"] {
+            let store = store.clone();
+            let config = config.clone();
+            let embedder = embedder.clone();
+            tasks.push(tokio::spawn(async move {
+                IngestService::new(store.as_ref(), &embedder, config.as_ref())
+                    .ingest(command(text))
+                    .await
+            }));
+        }
+        let results = [
+            tasks.remove(0).await.unwrap(),
+            tasks.remove(0).await.unwrap(),
+        ];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(AppError::Conflict(_))))
+                .count(),
+            1
+        );
+        let document = store.list_documents().unwrap().pop().unwrap();
+        assert_eq!(document.revision, 2);
+        assert!(matches!(
+            document.content.as_str(),
+            "update one" | "update two"
+        ));
     }
 }

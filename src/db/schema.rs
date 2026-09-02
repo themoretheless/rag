@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 8;
+pub const SCHEMA_VERSION: i32 = 9;
 
 /// Create `documents` table if missing (base v1 columns).
 pub const CREATE_DOCUMENTS: &str = r#"
@@ -126,6 +126,26 @@ CREATE TABLE IF NOT EXISTS embedding_manifest (
   updated_at TIMESTAMP NOT NULL
 )
 "#;
+
+/// Filesystem source preflight state for incremental tree synchronization.
+pub const CREATE_SOURCE_MANIFEST: &str = r#"
+CREATE TABLE IF NOT EXISTS source_manifest (
+  canonical_path VARCHAR PRIMARY KEY,
+  canonical_root VARCHAR NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  mtime_ns BIGINT NOT NULL,
+  content_hash VARCHAR NOT NULL,
+  document_id VARCHAR NOT NULL,
+  last_seen TIMESTAMP NOT NULL,
+  last_synced TIMESTAMP NOT NULL
+)
+"#;
+
+pub const CREATE_IDX_SOURCE_MANIFEST_ROOT: &str =
+    "CREATE INDEX IF NOT EXISTS idx_source_manifest_root ON source_manifest(canonical_root)";
+
+pub const CREATE_IDX_SOURCE_MANIFEST_DOCUMENT: &str =
+    "CREATE INDEX IF NOT EXISTS idx_source_manifest_document ON source_manifest(document_id)";
 
 /// Temporal knowledge-graph facts (MemPalace / Graphiti-lite).
 ///
@@ -277,7 +297,8 @@ pub const CREATE_IDX_DOCUMENTS_PINNED: &str =
 /// 2. Best-effort `ALTER TABLE ... ADD COLUMN` for P0/P1 columns on existing DBs.
 /// 3. Creates P0 tables (`ops_log`, `wiki_index`, `embedding_manifest`, `schema_version`, `meta`).
 /// 4. Creates MemPalace parity tables (`kg_facts`) and organize columns (`pinned`, `boost`, `status`).
-/// 5. Records [`SCHEMA_VERSION`].
+/// 5. Creates the schema-v9 filesystem source manifest.
+/// 6. Records [`SCHEMA_VERSION`].
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Base tables (CREATE IF NOT EXISTS is idempotent).
     conn.execute_batch(
@@ -335,6 +356,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_OPS_LOG,
             CREATE_WIKI_INDEX,
             CREATE_EMBEDDING_MANIFEST,
+            CREATE_SOURCE_MANIFEST,
+            CREATE_IDX_SOURCE_MANIFEST_ROOT,
+            CREATE_IDX_SOURCE_MANIFEST_DOCUMENT,
             CREATE_SCHEMA_VERSION,
             CREATE_META,
             CREATE_COLLECTIONS,
@@ -411,9 +435,8 @@ fn add_column_best_effort(
     type_and_default: &str,
 ) -> Result<()> {
     // Prefer IF NOT EXISTS when the engine supports it.
-    let sql_if = format!(
-        "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {type_and_default}"
-    );
+    let sql_if =
+        format!("ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {type_and_default}");
     match conn.execute_batch(&sql_if) {
         Ok(()) => return Ok(()),
         Err(e) => {
@@ -455,11 +478,9 @@ fn is_benign_add_column_error(msg: &str) -> bool {
 /// Insert current [`SCHEMA_VERSION`] if not already recorded at that version,
 /// and mirror it into `meta`.
 fn record_schema_version(conn: &Connection) -> Result<()> {
-    let current = match conn.query_row(
-        "SELECT MAX(version) FROM schema_version",
-        [],
-        |row| row.get::<_, Option<i32>>(0),
-    ) {
+    let current = match conn.query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+        row.get::<_, Option<i32>>(0)
+    }) {
         Ok(v) => v,
         Err(duckdb::Error::QueryReturnedNoRows) => None,
         Err(e) => return Err(e.into()),
@@ -478,7 +499,7 @@ fn record_schema_version(conn: &Connection) -> Result<()> {
         "#,
         duckdb::params![
             SCHEMA_VERSION,
-            "Document revision snapshots before mutation; schema v8"
+            "Filesystem source preflight manifest; schema v9"
         ],
     )?;
 
@@ -499,11 +520,9 @@ fn upsert_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
 
 /// Read the highest applied schema version, if any.
 pub fn current_schema_version(conn: &Connection) -> Result<Option<i32>> {
-    let v: Option<i32> = conn.query_row(
-        "SELECT MAX(version) FROM schema_version",
-        [],
-        |row| row.get::<_, Option<i32>>(0),
-    )?;
+    let v: Option<i32> = conn.query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+        row.get::<_, Option<i32>>(0)
+    })?;
     Ok(v)
 }
 
@@ -567,6 +586,7 @@ mod tests {
             "ops_log",
             "wiki_index",
             "embedding_manifest",
+            "source_manifest",
             "schema_version",
             "meta",
             "graph_nodes",
@@ -574,6 +594,23 @@ mod tests {
             "kg_facts",
         ] {
             assert!(table_exists(&conn, t), "missing table {t}");
+        }
+
+        let source_manifest = column_names(&conn, "source_manifest");
+        for col in [
+            "canonical_path",
+            "canonical_root",
+            "size_bytes",
+            "mtime_ns",
+            "content_hash",
+            "document_id",
+            "last_seen",
+            "last_synced",
+        ] {
+            assert!(
+                source_manifest.iter().any(|candidate| candidate == col),
+                "missing source_manifest.{col}"
+            );
         }
 
         let kg = column_names(&conn, "kg_facts");

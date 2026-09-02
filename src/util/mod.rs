@@ -1,10 +1,15 @@
 //! Shared helpers (hashing, path allowlist, wiki URI slug).
 
 pub mod hash;
+pub mod path;
 pub mod slug;
 pub mod time;
 
 pub use hash::{check_path_allowlist, content_hash, ingest_roots_from_env, parse_ingest_roots};
+pub use path::{
+    backup_artifact_paths, refuse_live_database_target, resolve_allowlisted_output_file,
+    validate_backup_output_paths,
+};
 pub use slug::{slugify, SlugPolicy};
 pub use time::{format_db_timestamp, parse_db_timestamp, parse_flexible_timestamp};
 

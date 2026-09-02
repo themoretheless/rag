@@ -11,7 +11,7 @@ use crate::error::AppError;
 /// Which tools are advertised and callable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolSurface {
-    /// ~25 compile-first tools (default).
+    /// 33 compile-first tools (default; count-bounded by test).
     #[default]
     Spine,
     /// All registered tools.
@@ -129,8 +129,8 @@ L0: ingest_raw, ingest_text, ingest_file, list_sources, get_source, list_documen
 L3: write/update/get/list_wiki_page(s), get/update_schema, read/rebuild_index, append/read_log,
     query_with_index, search_wiki, file_answer, lint_wiki
 L1: search, multi_query_search, pack_context
-L2: get_neighbors, get_backlinks, link_nodes, find_node
-Control: status, doctor
+L2: get_neighbors, get_backlinks, link_nodes, find_node, get_graph, export_graph_snapshot
+Control: status, doctor, doctor_repair
 Set RAG_TOOLS=full for MemPalace kg/diary/tunnels, maintain_*, graph_expand, etc.
 "#;
 

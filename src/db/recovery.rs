@@ -1,10 +1,12 @@
 //! Consistent DuckDB backup and portable document bundle recovery.
 
 use std::fs;
-use std::io::Read;
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -14,8 +16,19 @@ use serde::{Deserialize, Serialize};
 use super::Store;
 use crate::error::{AppError, Result};
 use crate::models::{Chunk, Document};
+use crate::util::backup_artifact_paths;
 
 pub const BUNDLE_VERSION: u32 = 1;
+
+const DATABASE_ARTIFACT: usize = 0;
+const SHA256_ARTIFACT: usize = 1;
+const METADATA_ARTIFACT: usize = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackupPublishStage {
+    SidecarPublished,
+    MainPublishedAndVerified,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryBundle {
@@ -143,13 +156,34 @@ impl Store {
         dry_run: bool,
         overwrite: bool,
     ) -> Result<BackupReport> {
-        let exists = path.exists();
-        if exists && !overwrite {
-            return Err(AppError::conflict(format!(
-                "backup destination '{}' already exists; set overwrite=true explicitly",
-                path.display()
-            )));
+        self.backup_database_with_publish_hook(path, dry_run, overwrite, |_| Ok(()))
+    }
+
+    fn backup_database_with_publish_hook<F>(
+        &self,
+        path: &Path,
+        dry_run: bool,
+        overwrite: bool,
+        mut publish_hook: F,
+    ) -> Result<BackupReport>
+    where
+        F: FnMut(BackupPublishStage) -> Result<()>,
+    {
+        let artifacts = backup_artifact_paths(path);
+        let mut artifact_exists = [false; 3];
+        for (index, artifact) in artifacts.iter().enumerate() {
+            artifact_exists[index] = preflight_backup_target(
+                self.path(),
+                artifact,
+                overwrite,
+                if index == 0 {
+                    "backup"
+                } else {
+                    "backup sidecar"
+                },
+            )?;
         }
+        let exists = artifact_exists[0];
         let source = self.path().display().to_string();
         if dry_run {
             return Ok(BackupReport {
@@ -165,14 +199,60 @@ impl Store {
             });
         }
 
-        refuse_same_file(self.path(), path)?;
-
         let conn = self.lock()?;
         conn.execute_batch("CHECKPOINT")?;
-        let bytes = fs::copy(self.path(), path)?;
+        let mut publication = BackupGroupPublication::new(artifacts, overwrite);
+        let (database_stage, bytes) = stage_file_copy(self.path(), path)?;
+        publication.set_staged(DATABASE_ARTIFACT, database_stage);
         drop(conn);
-        let verification = verify_backup(path)?;
-        write_backup_sidecars(path, self.path(), &verification)?;
+
+        let mut verification = verify_backup(publication.staged_path(DATABASE_ARTIFACT)?)?;
+        sync_file(publication.staged_path(DATABASE_ARTIFACT)?)?;
+        // Sidecars describe the durable destination, not the private staging name.
+        verification.path = path.display().to_string();
+        let sidecar_bytes = backup_sidecar_bytes(path, self.path(), &verification)?;
+        publication.set_staged(
+            SHA256_ARTIFACT,
+            stage_bytes(
+                &publication.artifacts[SHA256_ARTIFACT],
+                &sidecar_bytes.sha256,
+            )?,
+        );
+        publication.set_staged(
+            METADATA_ARTIFACT,
+            stage_bytes(
+                &publication.artifacts[METADATA_ARTIFACT],
+                &sidecar_bytes.metadata,
+            )?,
+        );
+
+        // Persist all three staged files and their directory entries before any
+        // public name changes. The database destination is deliberately the
+        // final publish: for a new (overwrite=false) group, its presence is the
+        // commit marker and both sidecars are already durable at that point.
+        sync_parent_directory(path)?;
+        publication.preserve_overwritten_artifacts()?;
+        sync_parent_directory(path)?;
+        publication.publish(SHA256_ARTIFACT)?;
+        sync_parent_directory(path)?;
+        publish_hook(BackupPublishStage::SidecarPublished)?;
+        publication.publish(METADATA_ARTIFACT)?;
+        sync_parent_directory(path)?;
+
+        publication.publish(DATABASE_ARTIFACT)?;
+        sync_parent_directory(path)?;
+        let final_verification = verify_backup(path)?;
+        if final_verification.sha256 != verification.sha256
+            || final_verification.bytes != verification.bytes
+        {
+            return Err(AppError::db(format!(
+                "published backup '{}' does not match its verified staging file",
+                path.display()
+            )));
+        }
+        publish_hook(BackupPublishStage::MainPublishedAndVerified)?;
+        publication.commit();
+
         Ok(BackupReport {
             success: true,
             dry_run: false,
@@ -181,8 +261,8 @@ impl Store {
             overwritten: exists,
             bytes: Some(bytes),
             errors: Vec::new(),
-            sha256: Some(verification.sha256.clone()),
-            verification: Some(verification),
+            sha256: Some(final_verification.sha256.clone()),
+            verification: Some(final_verification),
         })
     }
 
@@ -442,18 +522,20 @@ fn sha256_file(path: &Path) -> Result<String> {
         .collect())
 }
 
-fn write_backup_sidecars(
+struct BackupSidecarBytes {
+    sha256: Vec<u8>,
+    metadata: Vec<u8>,
+}
+
+fn backup_sidecar_bytes(
     path: &Path,
     source: &Path,
     verification: &BackupVerification,
-) -> Result<()> {
-    let sha_path = PathBuf::from(format!("{}.sha256", path.display()));
-    let metadata_path = PathBuf::from(format!("{}.metadata.json", path.display()));
+) -> Result<BackupSidecarBytes> {
     let name = path
         .file_name()
         .and_then(|v| v.to_str())
         .unwrap_or("backup.duckdb");
-    fs::write(sha_path, format!("{}  {}\n", verification.sha256, name))?;
     let sidecar = BackupSidecar {
         format: "rag-duckdb-backup".into(),
         created_at: Utc::now(),
@@ -461,8 +543,280 @@ fn write_backup_sidecars(
         required_free_bytes: verification.bytes.saturating_mul(2),
         verification: verification.clone(),
     };
-    fs::write(metadata_path, serde_json::to_vec_pretty(&sidecar)?)?;
+    Ok(BackupSidecarBytes {
+        sha256: format!("{}  {}\n", verification.sha256, name).into_bytes(),
+        metadata: serde_json::to_vec_pretty(&sidecar)?,
+    })
+}
+
+/// Owns the staged and published members of one three-file backup group.
+///
+/// A normal Rust error unwinds through `Drop`, which rolls back artifacts
+/// published by this attempt and restores overwrite targets from hard-link
+/// snapshots (subject, unavoidably, to the filesystem accepting cleanup I/O).
+/// Filesystems do not provide a transaction spanning three names, though: a
+/// process/power loss between renames can still leave sidecars without a new
+/// database, hidden staging/rollback links, or (when overwriting) a mixed
+/// generation. Publishing the database last makes a *new* database name the
+/// commit marker; callers needing the strongest crash semantics should use a
+/// fresh destination (`overwrite=false`) and ignore orphan sidecars.
+struct BackupGroupPublication {
+    artifacts: [PathBuf; 3],
+    staged: [Option<PathBuf>; 3],
+    overwritten: [Option<PathBuf>; 3],
+    published: [bool; 3],
+    overwrite: bool,
+    committed: bool,
+}
+
+impl BackupGroupPublication {
+    fn new(artifacts: [PathBuf; 3], overwrite: bool) -> Self {
+        Self {
+            artifacts,
+            staged: std::array::from_fn(|_| None),
+            overwritten: std::array::from_fn(|_| None),
+            published: [false; 3],
+            overwrite,
+            committed: false,
+        }
+    }
+
+    fn set_staged(&mut self, index: usize, path: PathBuf) {
+        self.staged[index] = Some(path);
+    }
+
+    fn staged_path(&self, index: usize) -> Result<&Path> {
+        self.staged[index]
+            .as_deref()
+            .ok_or_else(|| AppError::db("backup artifact was not staged"))
+    }
+
+    fn preserve_overwritten_artifacts(&mut self) -> Result<()> {
+        if !self.overwrite {
+            return Ok(());
+        }
+        for index in 0..self.artifacts.len() {
+            match fs::symlink_metadata(&self.artifacts[index]) {
+                Ok(_) => {
+                    self.overwritten[index] = Some(create_rollback_link(&self.artifacts[index])?);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
+    fn publish(&mut self, index: usize) -> Result<()> {
+        let staged = self.staged_path(index)?.to_path_buf();
+        publish_temporary_artifact(&staged, &self.artifacts[index], self.overwrite)?;
+        self.published[index] = true;
+        if !self.overwrite {
+            // `hard_link` publishes the final name without consuming staging.
+            // Mark ownership first so an unlink error rolls back both names.
+            fs::remove_file(&staged)?;
+        }
+        self.staged[index] = None;
+        Ok(())
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+        for path in self.overwritten.iter_mut().filter_map(Option::take) {
+            let _ = fs::remove_file(path);
+        }
+        let _ = sync_parent_directory(&self.artifacts[DATABASE_ARTIFACT]);
+    }
+
+    fn rollback(&mut self) {
+        for index in (0..self.artifacts.len()).rev() {
+            if self.published[index] {
+                let _ = fs::remove_file(&self.artifacts[index]);
+                self.published[index] = false;
+                if let Some(original) = self.overwritten[index].take() {
+                    if fs::rename(&original, &self.artifacts[index]).is_err() {
+                        // Keep the hard-link snapshot for manual recovery rather
+                        // than deleting the last known copy of the old artifact.
+                        self.overwritten[index] = Some(original);
+                    }
+                }
+            } else if let Some(original) = self.overwritten[index].take() {
+                let _ = fs::remove_file(original);
+            }
+        }
+        for staged in self.staged.iter_mut().filter_map(Option::take) {
+            let _ = fs::remove_file(staged);
+        }
+        let _ = sync_parent_directory(&self.artifacts[DATABASE_ARTIFACT]);
+    }
+}
+
+impl Drop for BackupGroupPublication {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.rollback();
+        }
+    }
+}
+
+fn preflight_backup_target(
+    source: &Path,
+    destination: &Path,
+    overwrite: bool,
+    label: &str,
+) -> Result<bool> {
+    refuse_same_file(source, destination)?;
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err(AppError::config(format!(
+            "{label} parent directory '{}' does not exist",
+            parent.display()
+        )));
+    }
+    let metadata = match fs::symlink_metadata(destination) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if metadata
+        .as_ref()
+        .is_some_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(AppError::forbidden(format!(
+            "{label} destination '{}' must not be a symbolic link",
+            destination.display()
+        )));
+    }
+    let exists = metadata.is_some();
+    if exists && !overwrite {
+        return Err(AppError::conflict(format!(
+            "{label} destination '{}' already exists; set overwrite=true explicitly",
+            destination.display()
+        )));
+    }
+    Ok(exists)
+}
+
+fn stage_file_copy(source: &Path, destination: &Path) -> Result<(PathBuf, u64)> {
+    let (temporary_path, mut temporary) = create_temporary_artifact(destination)?;
+    let result = (|| -> Result<(PathBuf, u64)> {
+        let mut input = fs::File::open(source)?;
+        let bytes = std::io::copy(&mut input, &mut temporary)?;
+        if let Ok(metadata) = fs::metadata(source) {
+            fs::set_permissions(&temporary_path, metadata.permissions())?;
+        }
+        temporary.sync_all()?;
+        drop(temporary);
+        Ok((temporary_path.clone(), bytes))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    result
+}
+
+fn stage_bytes(destination: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    let (temporary_path, mut temporary) = create_temporary_artifact(destination)?;
+    let result = (|| -> Result<PathBuf> {
+        temporary.write_all(bytes)?;
+        temporary.sync_all()?;
+        drop(temporary);
+        Ok(temporary_path.clone())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    result
+}
+
+fn sync_file(path: &Path) -> Result<()> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?
+        .sync_all()?;
     Ok(())
+}
+
+fn create_rollback_link(destination: &Path) -> Result<PathBuf> {
+    static NEXT_ROLLBACK_ID: AtomicU64 = AtomicU64::new(0);
+
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| AppError::config("backup destination must name a file"))?;
+    for _ in 0..100 {
+        let id = NEXT_ROLLBACK_ID.fetch_add(1, Ordering::Relaxed);
+        let mut rollback_name = file_name.to_os_string();
+        rollback_name.push(format!(".rag-backup-rollback-{}-{id}", std::process::id()));
+        let rollback_path = parent.join(rollback_name);
+        match fs::hard_link(destination, &rollback_path) {
+            Ok(()) => return Ok(rollback_path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(AppError::conflict(format!(
+        "could not preserve overwritten backup artifact '{}'",
+        destination.display()
+    )))
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn create_temporary_artifact(destination: &Path) -> Result<(PathBuf, fs::File)> {
+    static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| AppError::config("backup destination must name a file"))?;
+    for _ in 0..100 {
+        let id = NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+        let mut temporary_name = file_name.to_os_string();
+        temporary_name.push(format!(".rag-backup-tmp-{}-{id}", std::process::id()));
+        let temporary_path = parent.join(temporary_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+        {
+            Ok(file) => return Ok((temporary_path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(AppError::conflict(format!(
+        "could not allocate a temporary backup artifact beside '{}'",
+        destination.display()
+    )))
+}
+
+fn publish_temporary_artifact(temporary: &Path, destination: &Path, overwrite: bool) -> Result<()> {
+    if overwrite {
+        fs::rename(temporary, destination)?;
+        return Ok(());
+    }
+    match fs::hard_link(temporary, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(AppError::conflict(format!(
+                "backup artifact '{}' appeared while the backup was running",
+                destination.display()
+            )))
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn refuse_same_file(source: &Path, destination: &Path) -> Result<()> {
@@ -538,6 +892,98 @@ mod tests {
             .is_err());
     }
 
+    #[test]
+    fn backup_preflights_every_sidecar_before_publishing_the_database() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("live.duckdb");
+        let backup = root.path().join("backup.duckdb");
+        let sha_path = PathBuf::from(format!("{}.sha256", backup.display()));
+        let store = Store::open(&source).unwrap();
+        fs::write(&sha_path, "keep-existing-sidecar").unwrap();
+
+        let error = store.backup_database(&backup, false, false).unwrap_err();
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert!(!backup.exists());
+        assert_eq!(
+            fs::read_to_string(sha_path).unwrap(),
+            "keep-existing-sidecar"
+        );
+    }
+
+    #[test]
+    fn atomic_no_overwrite_publish_rejects_a_racing_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("backup.duckdb.sha256");
+        let (temporary_path, mut temporary) = create_temporary_artifact(&destination).unwrap();
+        temporary.write_all(b"new").unwrap();
+        temporary.sync_all().unwrap();
+        drop(temporary);
+        fs::write(&destination, "racing-writer").unwrap();
+
+        let error = publish_temporary_artifact(&temporary_path, &destination, false).unwrap_err();
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert_eq!(fs::read_to_string(destination).unwrap(), "racing-writer");
+        fs::remove_file(temporary_path).unwrap();
+    }
+
+    #[test]
+    fn backup_failure_after_sidecar_publish_removes_group_and_retry_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("live.duckdb");
+        let backup = root.path().join("backup.duckdb");
+        let artifacts = backup_artifact_paths(&backup);
+        let store = Store::open(&source).unwrap();
+
+        let error = store
+            .backup_database_with_publish_hook(&backup, false, false, |stage| match stage {
+                BackupPublishStage::SidecarPublished => {
+                    assert!(!artifacts[DATABASE_ARTIFACT].exists());
+                    assert!(artifacts[SHA256_ARTIFACT].is_file());
+                    assert!(!artifacts[METADATA_ARTIFACT].exists());
+                    Err(AppError::db("injected failure after sidecar publish"))
+                }
+                BackupPublishStage::MainPublishedAndVerified => Ok(()),
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected failure"));
+        assert_backup_group_absent(&backup);
+        assert_no_backup_work_files(root.path());
+
+        let report = store.backup_database(&backup, false, false).unwrap();
+        assert!(report.success);
+        assert_complete_backup_group(&backup);
+    }
+
+    #[test]
+    fn backup_failure_after_main_verification_removes_group_and_retry_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("live.duckdb");
+        let backup = root.path().join("backup.duckdb");
+        let artifacts = backup_artifact_paths(&backup);
+        let store = Store::open(&source).unwrap();
+
+        let error = store
+            .backup_database_with_publish_hook(&backup, false, false, |stage| match stage {
+                BackupPublishStage::SidecarPublished => Ok(()),
+                BackupPublishStage::MainPublishedAndVerified => {
+                    assert!(artifacts.iter().all(|artifact| artifact.is_file()));
+                    Err(AppError::db("injected failure after main verification"))
+                }
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected failure"));
+        assert_backup_group_absent(&backup);
+        assert_no_backup_work_files(root.path());
+
+        let report = store.backup_database(&backup, false, false).unwrap();
+        assert!(report.success);
+        assert_complete_backup_group(&backup);
+    }
+
     #[cfg(unix)]
     #[test]
     fn backup_refuses_live_database_inode_alias() {
@@ -548,5 +994,52 @@ mod tests {
         fs::hard_link(&source, &alias).unwrap();
         let error = store.backup_database(&alias, false, true).unwrap_err();
         assert!(error.to_string().contains("inode"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_refuses_a_sidecar_alias_to_the_live_database() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("live.duckdb");
+        let backup = root.path().join("backup.duckdb");
+        let metadata_path = PathBuf::from(format!("{}.metadata.json", backup.display()));
+        let store = Store::open(&source).unwrap();
+        fs::hard_link(&source, &metadata_path).unwrap();
+        let original_len = fs::metadata(&source).unwrap().len();
+
+        let error = store.backup_database(&backup, false, true).unwrap_err();
+
+        assert!(matches!(error, AppError::Forbidden(_)));
+        assert!(!backup.exists());
+        assert_eq!(fs::metadata(source).unwrap().len(), original_len);
+    }
+
+    fn assert_backup_group_absent(path: &Path) {
+        assert!(
+            backup_artifact_paths(path)
+                .iter()
+                .all(|artifact| !artifact.exists()),
+            "failed backup must not leave a visible partial group"
+        );
+    }
+
+    fn assert_complete_backup_group(path: &Path) {
+        assert!(
+            backup_artifact_paths(path)
+                .iter()
+                .all(|artifact| artifact.is_file()),
+            "successful retry must publish the complete backup group"
+        );
+        assert!(verify_backup(path).unwrap().ok);
+    }
+
+    fn assert_no_backup_work_files(dir: &Path) {
+        let leaked = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".rag-backup-"))
+            .collect::<Vec<_>>();
+        assert!(leaked.is_empty(), "leaked backup work files: {leaked:?}");
     }
 }

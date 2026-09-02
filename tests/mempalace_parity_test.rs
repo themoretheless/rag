@@ -59,6 +59,8 @@ fn ts(y: i32, m: u32, d: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, 0, 0, 0).unwrap()
 }
 
+// Test fixture adapter keeps parity scenarios compact at each call site.
+#[allow(clippy::too_many_arguments)]
 fn upsert_doc(
     store: &Store,
     uri: &str,

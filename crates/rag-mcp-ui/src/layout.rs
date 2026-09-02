@@ -31,11 +31,7 @@ pub fn radial_place(graph: &UiGraph, seed_id: Option<&str>, cache: &mut PosCache
     }
 
     let node_ids: HashSet<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
-    let by_id: HashMap<&str, &UiNode> = graph
-        .nodes
-        .iter()
-        .map(|n| (n.id.as_str(), n))
-        .collect();
+    let by_id: HashMap<&str, &UiNode> = graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
     let seed = resolve_seed(graph, seed_id, &by_id);
 
@@ -285,16 +281,8 @@ pub fn fit_transform(positions: &PosCache, rect: Rect) -> (Vec2, f32) {
     let size = max - min;
     let pad = 48.0_f32;
     let avail = (rect.size() - Vec2::splat(pad * 2.0)).max(Vec2::splat(1.0));
-    let sx = if size.x > 1.0 {
-        avail.x / size.x
-    } else {
-        1.0
-    };
-    let sy = if size.y > 1.0 {
-        avail.y / size.y
-    } else {
-        1.0
-    };
+    let sx = if size.x > 1.0 { avail.x / size.x } else { 1.0 };
+    let sy = if size.y > 1.0 { avail.y / size.y } else { 1.0 };
     let zoom = sx.min(sy).clamp(0.05, 8.0);
     let center_graph = Pos2::new((min.x + max.x) * 0.5, (min.y + max.y) * 0.5);
     // screen = p * zoom + pan  =>  pan = rect.center - center_graph * zoom
@@ -341,12 +329,7 @@ mod tests {
     #[test]
     fn seed_at_center_neighbors_on_rings() {
         let g = UiGraph {
-            nodes: vec![
-                node("c", 1),
-                node("b", 1),
-                node("a", 0),
-                node("d", 2),
-            ],
+            nodes: vec![node("c", 1), node("b", 1), node("a", 0), node("d", 2)],
             edges: vec![
                 edge("e1", "a", "c"),
                 edge("e2", "a", "b"),

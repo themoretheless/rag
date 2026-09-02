@@ -1,0 +1,622 @@
+//! In-process background jobs for long-running, write-side HTTP operations.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use super::error::api_err;
+use super::HttpState;
+use crate::config::Config;
+use crate::db::Store;
+use crate::embeddings::EmbeddingProvider;
+use crate::error::AppError;
+use crate::source_sync::{
+    SourceSyncCommand, SourceSyncControl, SourceSyncCounters, SourceSyncError, SourceSyncOutcome,
+    SourceSyncProgress, SourceSyncReport, SourceSyncService,
+};
+
+const MAX_RETAINED_JOBS: usize = 100;
+const MAX_ERROR_SAMPLES: usize = 20;
+
+pub(super) fn routes() -> Router<HttpState> {
+    Router::new()
+        .route("/v1/jobs/sync", post(start_sync))
+        .route("/v1/jobs", get(list_jobs))
+        .route("/v1/jobs/{id}", get(get_job).delete(cancel_job))
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SyncJobRequest {
+    pub path: String,
+    #[serde(default)]
+    pub remove_deleted: bool,
+    #[serde(default, alias = "project")]
+    pub wing: Option<String>,
+    #[serde(default)]
+    pub room: Option<String>,
+    #[serde(default)]
+    pub max_file_bytes: Option<u64>,
+}
+
+impl SyncJobRequest {
+    fn command(&self) -> SourceSyncCommand {
+        SourceSyncCommand {
+            path: PathBuf::from(&self.path),
+            remove_deleted: self.remove_deleted,
+            wing: self.wing.clone(),
+            room: self.room.clone(),
+            max_file_bytes: self.max_file_bytes,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobStatus {
+    Queued,
+    Running,
+    Succeeded,
+    CompletedWithErrors,
+    Failed,
+    Cancelled,
+}
+
+impl JobStatus {
+    fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::CompletedWithErrors | Self::Failed | Self::Cancelled
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceSyncJobReport {
+    pub added_count: usize,
+    pub updated_count: usize,
+    pub skipped_count: usize,
+    pub deleted_count: usize,
+    pub error_count: usize,
+    pub error_samples: Vec<SourceSyncError>,
+    pub counters: SourceSyncCounters,
+}
+
+impl From<SourceSyncReport> for SourceSyncJobReport {
+    fn from(report: SourceSyncReport) -> Self {
+        Self {
+            added_count: report.added.len(),
+            updated_count: report.updated.len(),
+            skipped_count: report.skipped.len(),
+            deleted_count: report.deleted.len(),
+            error_count: report.errors.len(),
+            error_samples: report.errors.into_iter().take(MAX_ERROR_SAMPLES).collect(),
+            counters: report.counters,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JobSnapshot {
+    pub id: String,
+    pub kind: &'static str,
+    pub status: JobStatus,
+    pub request: SyncJobRequest,
+    pub progress: Option<SourceSyncProgress>,
+    pub report: Option<SourceSyncJobReport>,
+    pub error: Option<String>,
+    pub cancel_requested: bool,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+struct JobEntry {
+    sequence: u64,
+    snapshot: JobSnapshot,
+    cancellation: CancellationToken,
+}
+
+struct JobRegistryInner {
+    jobs: Mutex<HashMap<String, JobEntry>>,
+    writer_lane: tokio::sync::Mutex<()>,
+    next_sequence: AtomicU64,
+}
+
+/// Process-local job state. All write-side jobs share one FIFO-ish mutex lane.
+#[derive(Clone)]
+pub struct JobRegistry {
+    inner: Arc<JobRegistryInner>,
+}
+
+impl Default for JobRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(JobRegistryInner {
+                jobs: Mutex::new(HashMap::new()),
+                writer_lane: tokio::sync::Mutex::new(()),
+                next_sequence: AtomicU64::new(1),
+            }),
+        }
+    }
+}
+
+impl JobRegistry {
+    pub fn start_source_sync(
+        &self,
+        request: SyncJobRequest,
+        store: Arc<Store>,
+        embedder: Arc<dyn EmbeddingProvider>,
+        config: Config,
+    ) -> Result<JobSnapshot, AppError> {
+        let id = Uuid::new_v4().to_string();
+        let cancellation = CancellationToken::new();
+        let snapshot = JobSnapshot {
+            id: id.clone(),
+            kind: "source_sync",
+            status: JobStatus::Queued,
+            request: request.clone(),
+            progress: None,
+            report: None,
+            error: None,
+            cancel_requested: false,
+            created_at: Utc::now(),
+            started_at: None,
+            finished_at: None,
+        };
+        let sequence = self.inner.next_sequence.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut jobs = self.jobs();
+            prune_jobs_to(&mut jobs, MAX_RETAINED_JOBS.saturating_sub(1));
+            if jobs.len() >= MAX_RETAINED_JOBS {
+                return Err(AppError::busy(format!(
+                    "background job capacity reached ({MAX_RETAINED_JOBS} active jobs)"
+                )));
+            }
+            jobs.insert(
+                id.clone(),
+                JobEntry {
+                    sequence,
+                    snapshot: snapshot.clone(),
+                    cancellation: cancellation.clone(),
+                },
+            );
+        }
+
+        let registry = self.clone();
+        tokio::spawn(async move {
+            let _writer_guard = registry.inner.writer_lane.lock().await;
+            if cancellation.is_cancelled() {
+                registry.finish_cancelled(&id, SourceSyncReport::default());
+                return;
+            }
+            registry.update(&id, |job| {
+                job.status = JobStatus::Running;
+                job.started_at = Some(Utc::now());
+            });
+
+            let progress_registry = registry.clone();
+            let progress_id = id.clone();
+            let control = SourceSyncControl::new(cancellation.clone(), move |progress| {
+                progress_registry.update(&progress_id, |job| {
+                    job.progress = Some(progress);
+                });
+            });
+            let result = SourceSyncService::new(&store, &embedder, &config)
+                .sync_with_control(request.command(), control)
+                .await;
+            match result {
+                Ok(SourceSyncOutcome::Completed(report)) => {
+                    let status = if report.errors.is_empty() {
+                        JobStatus::Succeeded
+                    } else {
+                        JobStatus::CompletedWithErrors
+                    };
+                    registry.finish(&id, status, Some(report), None);
+                }
+                Ok(SourceSyncOutcome::Cancelled(report)) => registry.finish_cancelled(&id, report),
+                Err(_error) if cancellation.is_cancelled() => {
+                    registry.finish_cancelled(&id, SourceSyncReport::default());
+                }
+                Err(error) => {
+                    registry.finish(&id, JobStatus::Failed, None, Some(error.to_string()));
+                }
+            }
+        });
+
+        Ok(snapshot)
+    }
+
+    pub fn list(&self) -> Vec<JobSnapshot> {
+        let jobs = self.jobs();
+        let mut entries = jobs.values().collect::<Vec<_>>();
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.sequence));
+        entries
+            .into_iter()
+            .map(|entry| entry.snapshot.clone())
+            .collect()
+    }
+
+    pub fn get(&self, id: &str) -> Option<JobSnapshot> {
+        self.jobs().get(id).map(|entry| entry.snapshot.clone())
+    }
+
+    pub fn cancel(&self, id: &str) -> Result<JobSnapshot, AppError> {
+        let (snapshot, cancellation) = {
+            let mut jobs = self.jobs();
+            let entry = jobs
+                .get_mut(id)
+                .ok_or_else(|| AppError::not_found(format!("job not found: {id}")))?;
+            if !entry.snapshot.status.is_terminal() {
+                entry.snapshot.cancel_requested = true;
+            }
+            (entry.snapshot.clone(), entry.cancellation.clone())
+        };
+        if !snapshot.status.is_terminal() {
+            cancellation.cancel();
+        }
+        Ok(snapshot)
+    }
+
+    fn update(&self, id: &str, update: impl FnOnce(&mut JobSnapshot)) {
+        if let Some(entry) = self.jobs().get_mut(id) {
+            update(&mut entry.snapshot);
+        }
+    }
+
+    fn finish_cancelled(&self, id: &str, report: SourceSyncReport) {
+        self.finish(id, JobStatus::Cancelled, Some(report), None);
+    }
+
+    fn finish(
+        &self,
+        id: &str,
+        status: JobStatus,
+        report: Option<SourceSyncReport>,
+        error: Option<String>,
+    ) {
+        let mut jobs = self.jobs();
+        if let Some(entry) = jobs.get_mut(id) {
+            entry.snapshot.status = status;
+            entry.snapshot.report = report.map(SourceSyncJobReport::from);
+            entry.snapshot.error = error;
+            entry.snapshot.finished_at = Some(Utc::now());
+        }
+        prune_jobs(&mut jobs);
+    }
+
+    fn jobs(&self) -> MutexGuard<'_, HashMap<String, JobEntry>> {
+        self.inner
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+fn prune_jobs(jobs: &mut HashMap<String, JobEntry>) {
+    prune_jobs_to(jobs, MAX_RETAINED_JOBS);
+}
+
+fn prune_jobs_to(jobs: &mut HashMap<String, JobEntry>, maximum: usize) {
+    while jobs.len() > maximum {
+        let oldest_terminal = jobs
+            .iter()
+            .filter(|(_, entry)| entry.snapshot.status.is_terminal())
+            .min_by_key(|(_, entry)| entry.sequence)
+            .map(|(id, _)| id.clone());
+        let Some(id) = oldest_terminal else {
+            break;
+        };
+        jobs.remove(&id);
+    }
+}
+
+async fn start_sync(
+    State(state): State<HttpState>,
+    Json(request): Json<SyncJobRequest>,
+) -> Response {
+    if request.path.trim().is_empty() {
+        return api_err(AppError::config("path must not be empty"));
+    }
+    let snapshot = match state.jobs.start_source_sync(
+        request,
+        state.store.clone(),
+        state.embedder.clone(),
+        state.config.clone(),
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return api_err(error),
+    };
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({"ok": true, "job": snapshot})),
+    )
+        .into_response()
+}
+
+async fn list_jobs(State(state): State<HttpState>) -> impl IntoResponse {
+    Json(json!({"ok": true, "items": state.jobs.list()}))
+}
+
+async fn get_job(State(state): State<HttpState>, Path(id): Path<String>) -> Response {
+    match state.jobs.get(&id) {
+        Some(job) => Json(json!({"ok": true, "job": job})).into_response(),
+        None => api_err(AppError::not_found(format!("job not found: {id}"))),
+    }
+}
+
+async fn cancel_job(State(state): State<HttpState>, Path(id): Path<String>) -> Response {
+    match state.jobs.cancel(&id) {
+        Ok(job) => {
+            let status = if job.status.is_terminal() {
+                StatusCode::OK
+            } else {
+                StatusCode::ACCEPTED
+            };
+            (status, Json(json!({"ok": true, "job": job}))).into_response()
+        }
+        Err(error) => api_err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::embeddings::MockEmbedder;
+    use axum::body::{to_bytes, Body};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    fn state(root: &std::path::Path) -> HttpState {
+        let config = Config {
+            db_path: root.join("jobs.duckdb"),
+            ingest_roots: vec![root.to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        HttpState {
+            store: Arc::new(Store::open(&config.db_path).unwrap()),
+            mcp_http: false,
+            embedder: Arc::new(MockEmbedder::new(16)),
+            config,
+            jobs: JobRegistry::default(),
+        }
+    }
+
+    async fn wait_for_terminal(registry: &JobRegistry, id: &str) -> JobSnapshot {
+        for _ in 0..200 {
+            let snapshot = registry.get(id).unwrap();
+            if snapshot.status.is_terminal() {
+                return snapshot;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("job did not reach terminal state");
+    }
+
+    fn entry(sequence: u64, status: JobStatus) -> JobEntry {
+        let id = format!("job-{sequence}");
+        JobEntry {
+            sequence,
+            snapshot: JobSnapshot {
+                id,
+                kind: "source_sync",
+                status,
+                request: SyncJobRequest {
+                    path: "/tmp/project".into(),
+                    remove_deleted: false,
+                    wing: None,
+                    room: None,
+                    max_file_bytes: None,
+                },
+                progress: None,
+                report: None,
+                error: None,
+                cancel_requested: false,
+                created_at: Utc::now(),
+                started_at: None,
+                finished_at: status.is_terminal().then(Utc::now),
+            },
+            cancellation: CancellationToken::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn source_sync_job_reports_lifecycle_and_result() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "# indexed").unwrap();
+        let state = state(root.path());
+        let job = state
+            .jobs
+            .start_source_sync(
+                SyncJobRequest {
+                    path: root.path().display().to_string(),
+                    remove_deleted: false,
+                    wing: Some("jobs-test".into()),
+                    room: None,
+                    max_file_bytes: None,
+                },
+                state.store.clone(),
+                state.embedder.clone(),
+                state.config.clone(),
+            )
+            .unwrap();
+        assert_eq!(job.status, JobStatus::Queued);
+
+        let finished = wait_for_terminal(&state.jobs, &job.id).await;
+        assert_eq!(finished.status, JobStatus::Succeeded);
+        assert_eq!(finished.report.unwrap().added_count, 1);
+        assert_eq!(finished.progress.unwrap().processed_files, 1);
+        assert_eq!(state.jobs.list()[0].id, job.id);
+    }
+
+    #[tokio::test]
+    async fn per_file_errors_are_terminal_but_not_reported_as_success() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("large.md"), "larger than one byte").unwrap();
+        let state = state(root.path());
+        let job = state
+            .jobs
+            .start_source_sync(
+                SyncJobRequest {
+                    path: root.path().display().to_string(),
+                    remove_deleted: false,
+                    wing: Some("jobs-test".into()),
+                    room: None,
+                    max_file_bytes: Some(1),
+                },
+                state.store.clone(),
+                state.embedder.clone(),
+                state.config.clone(),
+            )
+            .unwrap();
+
+        let finished = wait_for_terminal(&state.jobs, &job.id).await;
+        assert_eq!(finished.status, JobStatus::CompletedWithErrors);
+        assert_eq!(finished.report.unwrap().error_count, 1);
+    }
+
+    #[tokio::test]
+    async fn queued_job_can_be_cancelled_before_it_enters_writer_lane() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "# not indexed").unwrap();
+        let state = state(root.path());
+        let writer_guard = state.jobs.inner.writer_lane.lock().await;
+        let job = state
+            .jobs
+            .start_source_sync(
+                SyncJobRequest {
+                    path: root.path().display().to_string(),
+                    remove_deleted: false,
+                    wing: None,
+                    room: None,
+                    max_file_bytes: None,
+                },
+                state.store.clone(),
+                state.embedder.clone(),
+                state.config.clone(),
+            )
+            .unwrap();
+        let cancelled = state.jobs.cancel(&job.id).unwrap();
+        assert!(cancelled.cancel_requested);
+        drop(writer_guard);
+
+        let finished = wait_for_terminal(&state.jobs, &job.id).await;
+        assert_eq!(finished.status, JobStatus::Cancelled);
+        assert!(state.store.list_documents().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn http_api_creates_lists_reads_and_cancels_a_job() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "# queued").unwrap();
+        let state = state(root.path());
+        let writer_guard = state.jobs.inner.writer_lane.lock().await;
+        let app = routes().with_state(state.clone());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/jobs/sync")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"path": root.path(), "project": "jobs-http"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let id = body["job"]["id"].as_str().unwrap();
+
+        for uri in ["/v1/jobs".to_string(), format!("/v1/jobs/{id}")] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/jobs/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        drop(writer_guard);
+
+        let finished = wait_for_terminal(&state.jobs, id).await;
+        assert_eq!(finished.status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    fn retention_keeps_the_newest_terminal_jobs() {
+        let mut jobs = HashMap::new();
+        for sequence in 0..(MAX_RETAINED_JOBS as u64 + 2) {
+            jobs.insert(
+                format!("job-{sequence}"),
+                entry(sequence, JobStatus::Succeeded),
+            );
+        }
+
+        prune_jobs(&mut jobs);
+
+        assert_eq!(jobs.len(), MAX_RETAINED_JOBS);
+        assert!(!jobs.contains_key("job-0"));
+        assert!(!jobs.contains_key("job-1"));
+        assert!(jobs.contains_key("job-2"));
+    }
+
+    #[tokio::test]
+    async fn admission_refuses_a_burst_when_all_slots_are_active() {
+        let root = tempfile::tempdir().unwrap();
+        let state = state(root.path());
+        {
+            let mut jobs = state.jobs.jobs();
+            for sequence in 0..MAX_RETAINED_JOBS as u64 {
+                jobs.insert(
+                    format!("job-{sequence}"),
+                    entry(sequence, JobStatus::Queued),
+                );
+            }
+        }
+
+        let error = state
+            .jobs
+            .start_source_sync(
+                SyncJobRequest {
+                    path: root.path().display().to_string(),
+                    remove_deleted: false,
+                    wing: None,
+                    room: None,
+                    max_file_bytes: None,
+                },
+                state.store.clone(),
+                state.embedder.clone(),
+                state.config.clone(),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::Busy(_)));
+        assert_eq!(state.jobs.list().len(), MAX_RETAINED_JOBS);
+    }
+}

@@ -88,7 +88,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let raw_nodes = view.nodes.len();
     let raw_edges = view.edges.len();
 
-    let filtered_nodes: Vec<&GraphNode> = view
+    let kind_visible: Vec<&GraphNode> = view
         .nodes
         .iter()
         .filter(|n| match n.kind.as_str() {
@@ -96,15 +96,50 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
             "stub" => opts.show_stubs,
             _ => true,
         })
-        .filter(|n| {
-            let (_, wing, room) = parse_placement_meta(&n.metadata_json);
-            opts.wing.as_deref().is_none_or(|wanted| wing.as_deref() == Some(wanted))
-                && opts.room.as_deref().is_none_or(|wanted| room.as_deref() == Some(wanted))
+        .collect();
+
+    // Project/room metadata belongs to placed documents. Companion graph nodes
+    // (unresolved stubs, entities and tags) often have no placement of their
+    // own, so keep them only when they are directly connected to a matching
+    // document. Explicitly mismatched placement is never allowed through.
+    let scope: HashMap<&str, ScopeDisposition> = kind_visible
+        .iter()
+        .map(|node| (node.id.as_str(), scope_disposition(node, opts)))
+        .collect();
+    let anchors: HashSet<&str> = kind_visible
+        .iter()
+        .filter(|node| {
+            node.kind == "document" && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
+        })
+        .map(|node| node.id.as_str())
+        .collect();
+    let attached_companions: HashSet<&str> = view
+        .edges
+        .iter()
+        .filter_map(|edge| {
+            if anchors.contains(edge.source_id.as_str())
+                && scope.get(edge.target_id.as_str()) == Some(&ScopeDisposition::Companion)
+            {
+                Some(edge.target_id.as_str())
+            } else if anchors.contains(edge.target_id.as_str())
+                && scope.get(edge.source_id.as_str()) == Some(&ScopeDisposition::Companion)
+            {
+                Some(edge.source_id.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let filtered_nodes: Vec<&GraphNode> = kind_visible
+        .into_iter()
+        .filter(|node| match scope.get(node.id.as_str()) {
+            Some(ScopeDisposition::Match) => true,
+            Some(ScopeDisposition::Companion) => attached_companions.contains(node.id.as_str()),
+            Some(ScopeDisposition::Excluded) | None => false,
         })
         .collect();
 
-    let (kept_nodes, truncated_nodes) =
-        clamp_nodes(&filtered_nodes, view, opts.seed_id.as_deref());
+    let (kept_nodes, truncated_nodes) = clamp_nodes(&filtered_nodes, view, opts.seed_id.as_deref());
 
     let keep: HashSet<String> = kept_nodes.iter().map(|n| n.id.clone()).collect();
 
@@ -117,6 +152,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
                 return true;
             }
             matches!(e.rel_type.as_str(), "wikilink" | "related")
+                || (opts.show_tags && e.rel_type == "tagged")
         })
         .collect();
 
@@ -217,8 +253,7 @@ fn clamp_nodes<'a>(
     }
 
     let filtered_ids: HashSet<&str> = filtered.iter().map(|n| n.id.as_str()).collect();
-    let by_id: HashMap<&str, &GraphNode> =
-        filtered.iter().map(|n| (n.id.as_str(), *n)).collect();
+    let by_id: HashMap<&str, &GraphNode> = filtered.iter().map(|n| (n.id.as_str(), *n)).collect();
 
     if let Some(seed) = seed_id {
         if filtered_ids.contains(seed) {
@@ -356,11 +391,7 @@ fn truncation_note(
 pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
     let mut map: HashMap<(String, String, String), UiEdge> = HashMap::new();
     for e in edges {
-        let key = (
-            e.source_id.clone(),
-            e.target_id.clone(),
-            e.rel_type.clone(),
-        );
+        let key = (e.source_id.clone(), e.target_id.clone(), e.rel_type.clone());
         map.entry(key)
             .and_modify(|ui| {
                 ui.multi_count += 1;
@@ -412,15 +443,46 @@ fn node_to_ui(n: &GraphNode, depth: u32, degree: u32) -> UiNode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeDisposition {
+    Match,
+    Companion,
+    Excluded,
+}
+
+fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition {
+    let (_, wing, room) = parse_placement_meta(&node.metadata_json);
+    let mut missing_placement = false;
+    for (wanted, actual) in [
+        (opts.wing.as_deref(), wing.as_deref()),
+        (opts.room.as_deref(), room.as_deref()),
+    ] {
+        let Some(wanted) = wanted else {
+            continue;
+        };
+        match actual {
+            Some(actual) if actual == wanted => {}
+            Some(_) => return ScopeDisposition::Excluded,
+            None => missing_placement = true,
+        }
+    }
+
+    if missing_placement {
+        if node.kind == "document" {
+            ScopeDisposition::Excluded
+        } else {
+            ScopeDisposition::Companion
+        }
+    } else {
+        ScopeDisposition::Match
+    }
+}
+
 fn parse_placement_meta(metadata_json: &str) -> (Option<String>, Option<String>, Option<String>) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(metadata_json) else {
         return (None, None, None);
     };
-    let s = |k: &str| {
-        v.get(k)
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string())
-    };
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|s| s.to_string());
     (s("layer"), s("wing"), s("room"))
 }
 
@@ -497,10 +559,7 @@ mod tests {
         ];
         let collapsed = collapse_edges(&edges);
         assert_eq!(collapsed.len(), 2);
-        let wiki = collapsed
-            .iter()
-            .find(|e| e.rel_type == "wikilink")
-            .unwrap();
+        let wiki = collapsed.iter().find(|e| e.rel_type == "wikilink").unwrap();
         assert_eq!(wiki.multi_count, 2);
         assert_eq!(wiki.weight, 3.0);
         assert_eq!(wiki.members.len(), 2);
@@ -511,10 +570,7 @@ mod tests {
     #[test]
     fn nodes_carry_label_kind_color() {
         let view = GraphView {
-            nodes: vec![
-                node("d1", "document", "Doc"),
-                node("t1", "tag", "Tag"),
-            ],
+            nodes: vec![node("d1", "document", "Doc"), node("t1", "tag", "Tag")],
             edges: vec![],
         };
         let g = adapt(
@@ -653,10 +709,7 @@ mod tests {
     #[test]
     fn tags_hidden_by_default() {
         let view = GraphView {
-            nodes: vec![
-                node("d", "document", "D"),
-                node("t", "tag", "T"),
-            ],
+            nodes: vec![node("d", "document", "D"), node("t", "tag", "T")],
             edges: vec![edge("e", "d", "t", "tagged", 1.0)],
         };
         let g = adapt(&view, &AdaptOptions::default());
@@ -676,10 +729,7 @@ mod tests {
     #[test]
     fn under_cap_no_truncation_flags() {
         let view = GraphView {
-            nodes: vec![
-                node("a", "document", "A"),
-                node("b", "document", "B"),
-            ],
+            nodes: vec![node("a", "document", "A"), node("b", "document", "B")],
             edges: vec![edge("e", "a", "b", "wikilink", 1.0)],
         };
         let g = adapt(
@@ -738,10 +788,10 @@ mod tests {
         };
         let g = adapt(&view, &AdaptOptions::default());
         assert_eq!(g.edges.len(), 2);
-        assert!(g.edges.iter().all(|e| matches!(
-            e.rel_type.as_str(),
-            "wikilink" | "related"
-        )));
+        assert!(g
+            .edges
+            .iter()
+            .all(|e| matches!(e.rel_type.as_str(), "wikilink" | "related")));
         let g_all = adapt(
             &view,
             &AdaptOptions {
@@ -822,10 +872,7 @@ mod tests {
     #[test]
     fn stubs_visible_by_default_hidden_when_toggled() {
         let view = GraphView {
-            nodes: vec![
-                node("d", "document", "D"),
-                node("s", "stub", "S"),
-            ],
+            nodes: vec![node("d", "document", "D"), node("s", "stub", "S")],
             edges: vec![edge("e", "d", "s", "wikilink", 1.0)],
         };
         let shown = adapt(&view, &AdaptOptions::default());
@@ -857,12 +904,86 @@ mod tests {
                 edge("ac", "a", "c", "related", 1.0),
             ],
         };
-        let filtered = adapt(&view, &AdaptOptions {
-            wing: Some("alpha".into()), room: Some("docs".into()),
-            ..Default::default()
-        });
+        let filtered = adapt(
+            &view,
+            &AdaptOptions {
+                wing: Some("alpha".into()),
+                room: Some("docs".into()),
+                ..Default::default()
+            },
+        );
         assert_eq!(filtered.nodes.len(), 1);
         assert_eq!(filtered.nodes[0].id, "a");
         assert!(filtered.edges.is_empty());
+    }
+
+    #[test]
+    fn project_scope_keeps_only_companions_attached_to_matching_documents() {
+        let mut alpha = node("alpha", "document", "Alpha");
+        alpha.metadata_json = r#"{"wing":"alpha","room":"docs"}"#.into();
+        let mut beta = node("beta", "document", "Beta");
+        beta.metadata_json = r#"{"wing":"beta","room":"docs"}"#.into();
+        let alpha_stub = node("alpha-stub", "stub", "Alpha stub");
+        let alpha_entity = node("alpha-entity", "entity", "Alpha entity");
+        let beta_stub = node("beta-stub", "stub", "Beta stub");
+        let unrelated = node("orphan", "entity", "Orphan");
+        let mut explicitly_beta = node("explicit-beta", "entity", "Explicit beta");
+        explicitly_beta.metadata_json = r#"{"wing":"beta"}"#.into();
+        let view = GraphView {
+            nodes: vec![
+                alpha,
+                beta,
+                alpha_stub,
+                alpha_entity,
+                beta_stub,
+                unrelated,
+                explicitly_beta,
+            ],
+            edges: vec![
+                edge("as", "alpha", "alpha-stub", "wikilink", 1.0),
+                edge("ae", "alpha-entity", "alpha", "related", 1.0),
+                edge("bs", "beta", "beta-stub", "wikilink", 1.0),
+                edge("ab", "alpha", "beta", "related", 1.0),
+                edge("ax", "alpha", "explicit-beta", "related", 1.0),
+            ],
+        };
+
+        let filtered = adapt(
+            &view,
+            &AdaptOptions {
+                wing: Some("alpha".into()),
+                room: Some("docs".into()),
+                ..Default::default()
+            },
+        );
+        let ids: HashSet<&str> = filtered.nodes.iter().map(|node| node.id.as_str()).collect();
+        assert_eq!(ids, HashSet::from(["alpha", "alpha-stub", "alpha-entity"]));
+        assert_eq!(filtered.edges.len(), 2);
+        assert!(filtered
+            .edges
+            .iter()
+            .all(|edge| edge.source_id == "alpha" || edge.target_id == "alpha"));
+    }
+
+    #[test]
+    fn enabling_tags_keeps_tag_nodes_tagged_edges_and_tag_styling() {
+        let view = GraphView {
+            nodes: vec![node("doc", "document", "Doc"), node("tag", "tag", "Tag")],
+            edges: vec![edge("tagged", "doc", "tag", "tagged", 1.0)],
+        };
+        let graph = adapt(
+            &view,
+            &AdaptOptions {
+                show_tags: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.edges[0].rel_type, "tagged");
+        let tag = graph.nodes.iter().find(|node| node.id == "tag").unwrap();
+        assert_eq!(tag.color, kind_color("tag"));
+        assert_eq!(edge_color(&graph.edges[0].rel_type), edge_color("tagged"));
     }
 }

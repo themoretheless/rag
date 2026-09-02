@@ -6,18 +6,19 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use duckdb::{params, Connection};
 
-use super::schema;
 use super::rows;
+use super::schema;
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::models::{
     Chunk, DiaryEntry, Document, DocumentFilter, DocumentMetaApplyResult, DocumentMetaUpdate,
-    DuplicateCheckResult, DuplicateMatch, EmbeddingManifest, OpsLogEntry, PlacementUpdate,
-    RoomCount, Taxonomy, TaxonomyRoom, TaxonomyWing, VacuumStoreReport, WikiIndexEntry, WingCount,
+    DocumentRevisionPage, DocumentRevisionSummary, DuplicateCheckResult, DuplicateMatch,
+    EmbeddingManifest, OpsLogEntry, PlacementUpdate, RoomCount, Taxonomy, TaxonomyRoom,
+    TaxonomyWing, VacuumStoreReport, WikiIndexEntry, WingCount,
 };
 use crate::util::{
-    content_hash, format_db_timestamp as format_ts, parse_db_timestamp,
-    slugify as shared_slugify, wiki_slug_from_uri, SlugPolicy,
+    content_hash, format_db_timestamp as format_ts, parse_db_timestamp, slugify as shared_slugify,
+    wiki_slug_from_uri, SlugPolicy,
 };
 
 /// Shared SELECT list for document rows (order matches [`rows::document`]).
@@ -55,6 +56,7 @@ pub struct WikiPageMetaFilter {
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
     path: PathBuf,
+    source_sync_lane: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Derived state that must stay consistent with a document write.
@@ -90,6 +92,7 @@ impl Store {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
+            source_sync_lane: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -108,6 +111,11 @@ impl Store {
         self.conn
             .lock()
             .map_err(|e| AppError::db(format!("database lock poisoned: {e}")))
+    }
+
+    /// Process-local writer lane shared by every clone that synchronizes source trees.
+    pub(crate) fn source_sync_lane(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.source_sync_lane.clone()
     }
 
     /// Insert or replace a document row by primary key `id` (last-write-wins).
@@ -146,6 +154,48 @@ impl Store {
         if_match_revision: Option<i64>,
         derived: DocumentDerivedWrite<'_>,
     ) -> Result<AtomicDocumentWriteResult> {
+        self.write_document_atomic_with_manifest(doc, if_match_revision, derived, None)
+    }
+
+    /// Persist a synchronized source document and its manifest ownership in the
+    /// same transaction as chunks and graph state.
+    pub(crate) fn write_source_document_atomic(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+        chunks: &[Chunk],
+        manifest: crate::db::SourceManifestWrite<'_>,
+    ) -> Result<AtomicDocumentWriteResult> {
+        if manifest.document_id != doc.id {
+            return Err(AppError::config(format!(
+                "source manifest document {} does not match {}",
+                manifest.document_id, doc.id
+            )));
+        }
+        let document_hash = doc
+            .content_hash
+            .clone()
+            .unwrap_or_else(|| content_hash(&doc.content));
+        if manifest.content_hash != document_hash {
+            return Err(AppError::config(
+                "source manifest content hash does not match document",
+            ));
+        }
+        self.write_document_atomic_with_manifest(
+            doc,
+            if_match_revision,
+            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
+            Some(manifest),
+        )
+    }
+
+    fn write_document_atomic_with_manifest(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+        derived: DocumentDerivedWrite<'_>,
+        manifest: Option<crate::db::SourceManifestWrite<'_>>,
+    ) -> Result<AtomicDocumentWriteResult> {
         let prepared_embeddings = match &derived {
             DocumentDerivedWrite::ReplaceChunksAndGraph(chunks) => {
                 if let Some(chunk) = chunks.iter().find(|chunk| chunk.document_id != doc.id) {
@@ -182,6 +232,9 @@ impl Store {
             }
             _ => unreachable!("derived write and prepared embedding state must match"),
         };
+        if let Some(manifest) = manifest {
+            super::source_manifest::upsert_source_manifest_locked(&tx, manifest)?;
+        }
         tx.commit()?;
         Ok(AtomicDocumentWriteResult {
             revision,
@@ -198,8 +251,91 @@ impl Store {
         )?;
         let mut rows = stmt.query(params![document_id.trim()])?;
         let mut out = Vec::new();
-        while let Some(row) = rows.next()? { out.push(rows::document(row)?); }
+        while let Some(row) = rows.next()? {
+            out.push(rows::document(row)?);
+        }
         Ok(out)
+    }
+
+    /// Paginated revision timeline metadata without materializing historical
+    /// bodies. Use [`Self::get_document_revision`] for one selected snapshot.
+    pub fn list_document_revision_summaries(
+        &self,
+        document_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<DocumentRevisionPage> {
+        let document_id = document_id.trim();
+        if document_id.is_empty() {
+            return Err(AppError::config("document_id must be non-empty"));
+        }
+        let limit = limit.clamp(1, 200);
+        let conn = self.lock()?;
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM document_revisions WHERE document_id = ?",
+            params![document_id],
+            |row| row.get(0),
+        )?;
+        let sql = format!(
+            r#"
+            SELECT document_id, uri, title, wing, room,
+                   COALESCE(NULLIF(layer, ''), 'raw'),
+                   COALESCE(NULLIF(kind, ''), 'document'),
+                   COALESCE(NULLIF(status, ''), 'active'),
+                   CAST(updated_at AS VARCHAR), CAST(superseded_at AS VARCHAR), revision,
+                   LENGTH(content)::BIGINT,
+                   CASE WHEN content = '' THEN 0
+                        ELSE 1 + LENGTH(content) - LENGTH(REPLACE(content, '\n', '')) END
+            FROM document_revisions
+            WHERE document_id = ?
+            ORDER BY revision DESC
+            LIMIT {limit} OFFSET {offset}
+            "#
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![document_id])?;
+        let mut items = Vec::new();
+        while let Some(row) = rows.next()? {
+            items.push(DocumentRevisionSummary {
+                document_id: row.get(0)?,
+                uri: row.get(1)?,
+                title: row.get(2)?,
+                wing: row.get(3)?,
+                room: row.get(4)?,
+                layer: row.get(5)?,
+                kind: row.get(6)?,
+                status: row.get(7)?,
+                updated_at: row.get(8)?,
+                superseded_at: row.get(9)?,
+                revision: row.get(10)?,
+                content_chars: row.get::<_, i64>(11)?.max(0) as u64,
+                content_lines: row.get::<_, i64>(12)?.max(0) as u64,
+            });
+        }
+        Ok(DocumentRevisionPage {
+            items,
+            total: total.max(0) as u64,
+        })
+    }
+
+    /// Load one historical document snapshot by its original revision number.
+    pub fn get_document_revision(
+        &self,
+        document_id: &str,
+        revision: i64,
+    ) -> Result<Option<Document>> {
+        if revision < 1 {
+            return Err(AppError::config("revision must be >= 1"));
+        }
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), revision FROM document_revisions WHERE document_id = ? AND revision = ?",
+        )?;
+        let mut rows = stmt.query(params![document_id.trim(), revision])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(rows::document(row)?)),
+            None => Ok(None),
+        }
     }
 
     /// Insert chunk rows. Embeddings are stored as JSON float arrays in `embedding_json`.
@@ -221,14 +357,11 @@ impl Store {
     ///
     /// Returns `true` if a document row was removed.
     pub fn delete_document(&self, id: &str) -> Result<bool> {
-        // Graph cleanup first (looks up node by document_id while doc still exists).
-        self.delete_graph_for_document(id)?;
-
-        let conn = self.lock()?;
-        super::fts::mark_fts_dirty(&conn)?;
-        conn.execute("DELETE FROM chunks WHERE document_id = ?", params![id])?;
-        let n = conn.execute("DELETE FROM documents WHERE id = ?", params![id])?;
-        Ok(n > 0)
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let deleted = delete_document_locked(&tx, id)?;
+        tx.commit()?;
+        Ok(deleted)
     }
 
     /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
@@ -246,25 +379,46 @@ impl Store {
     ///
     /// Returns the number of document rows removed.
     pub fn delete_by_source(&self, source: &str) -> Result<u64> {
-        let conn = self.lock()?;
-        let mut ids: Vec<String> = Vec::new();
+        self.delete_source_state(source)
+            .map(|(documents, _)| documents)
+    }
+
+    /// Atomically remove every document/derived row and manifest ownership for
+    /// one filesystem source. Returns `(documents_deleted, manifest_deleted)`.
+    pub(crate) fn delete_source_state(&self, source: &str) -> Result<(u64, bool)> {
+        self.delete_source_state_with(source, |_| Ok(()))
+    }
+
+    fn delete_source_state_with(
+        &self,
+        source: &str,
+        mut after_document: impl FnMut(usize) -> Result<()>,
+    ) -> Result<(u64, bool)> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let manifest_present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM source_manifest WHERE canonical_path = ?)",
+            params![source],
+            |row| row.get(0),
+        )?;
+        let mut ids = Vec::new();
         {
-            let mut stmt = conn.prepare("SELECT id FROM documents WHERE source_file = ?")?;
+            let mut stmt = tx.prepare("SELECT id FROM documents WHERE source_file = ?")?;
             let mut rows = stmt.query(params![source])?;
             while let Some(row) = rows.next()? {
-                ids.push(row.get(0)?);
+                ids.push(row.get::<_, String>(0)?);
             }
         }
-
-        if ids.is_empty() {
-            return Ok(0);
+        for (index, id) in ids.iter().enumerate() {
+            delete_document_locked(&tx, id)?;
+            after_document(index + 1)?;
         }
-
-        drop(conn);
-        for id in &ids {
-            self.delete_document(id)?;
-        }
-        Ok(ids.len() as u64)
+        tx.execute(
+            "DELETE FROM source_manifest WHERE canonical_path = ?",
+            params![source],
+        )?;
+        tx.commit()?;
+        Ok((ids.len() as u64, manifest_present))
     }
 
     /// Fetch a document by id.
@@ -598,13 +752,17 @@ impl Store {
 
     /// First-class project catalog backed by the compatible `wing` storage key.
     pub fn list_projects(&self) -> Result<Vec<crate::models::ProjectSummary>> {
-        self.get_taxonomy()?.wings.into_iter().map(|wing| {
-            Ok(crate::models::ProjectSummary {
-                project_id: crate::models::ProjectId::parse(wing.wing)?,
-                document_count: wing.document_count,
-                rooms: wing.rooms,
+        self.get_taxonomy()?
+            .wings
+            .into_iter()
+            .map(|wing| {
+                Ok(crate::models::ProjectSummary {
+                    project_id: crate::models::ProjectId::parse(wing.wing)?,
+                    document_count: wing.document_count,
+                    rooms: wing.rooms,
+                })
             })
-        }).collect()
+            .collect()
     }
 
     /// Distinct rooms with document counts.
@@ -824,7 +982,8 @@ impl Store {
             Ok(count.max(0) as u64)
         };
         let documents_without_chunks = scalar(
-            "SELECT COUNT(*) FROM documents d WHERE COALESCE(d.layer, '') <> 'schema' AND NOT EXISTS \
+            "SELECT COUNT(*) FROM documents d WHERE COALESCE(d.layer, '') <> 'schema' \
+             AND length(trim(COALESCE(d.content, ''))) > 0 AND NOT EXISTS \
              (SELECT 1 FROM chunks c WHERE c.document_id = d.id)",
         )?;
         let orphan_chunks = scalar(
@@ -1638,6 +1797,25 @@ fn apply_document_meta_update(
 ) -> Result<DocumentMetaApplyResult> {
     let mut content_changed = false;
     let mut title_changed = false;
+    let persisted_raw = doc.layer.eq_ignore_ascii_case("raw");
+
+    // Layer transition policy is deliberately asymmetric: mutable documents
+    // may be frozen by moving to `raw`, but a persisted raw source cannot leave
+    // that layer through a generic metadata patch. Compiled/mutable content must
+    // be created as a separate document instead of relabelling the source.
+    if persisted_raw
+        && update
+            .layer
+            .as_deref()
+            .map(str::trim)
+            .filter(|layer| !layer.is_empty())
+            .is_some_and(|layer| !layer.eq_ignore_ascii_case("raw"))
+    {
+        return Err(AppError::conflict(format!(
+            "document {} is layer=raw (immutable source); changing its layer is forbidden",
+            doc.id
+        )));
+    }
 
     if let Some(ref wing) = update.wing {
         doc.wing = if wing.is_empty() {
@@ -1662,7 +1840,11 @@ fn apply_document_meta_update(
     if let Some(ref layer) = update.layer {
         let layer = layer.trim();
         if !layer.is_empty() {
-            doc.layer = layer.to_string();
+            doc.layer = if layer.eq_ignore_ascii_case("raw") {
+                "raw".to_string()
+            } else {
+                layer.to_string()
+            };
         }
     }
     if let Some(ref kind) = update.kind {
@@ -1712,8 +1894,10 @@ fn apply_document_meta_update(
     }
     if let Some(ref new_content) = update.content {
         if new_content.as_str() != doc.content.as_str() {
-            // Immutable raw policy: refuse body rewrite for layer=raw.
-            if doc.layer == "raw" {
+            // Check the persisted layer, not the already-applied patch: a
+            // `{layer: "wiki", content: ...}` request must not bypass raw
+            // immutability in one operation.
+            if persisted_raw {
                 return Err(AppError::conflict(format!(
                     "document {} is layer=raw (immutable body); refuse content change via update_document_meta",
                     doc.id
@@ -1731,6 +1915,54 @@ fn apply_document_meta_update(
         content_changed,
         title_changed,
     })
+}
+
+fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Result<bool> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(false);
+    }
+    super::fts::mark_fts_dirty(conn)?;
+    conn.execute(
+        r#"
+        DELETE FROM graph_edges
+        WHERE source_id IN (SELECT id FROM graph_nodes WHERE document_id = ?)
+           OR target_id IN (SELECT id FROM graph_nodes WHERE document_id = ?)
+        "#,
+        params![id, id],
+    )?;
+    conn.execute("DELETE FROM graph_nodes WHERE document_id = ?", params![id])?;
+    conn.execute("DELETE FROM chunks WHERE document_id = ?", params![id])?;
+    conn.execute(
+        "DELETE FROM wiki_index WHERE document_id = ? OR page_id = ?",
+        params![id, id],
+    )?;
+    conn.execute(
+        "DELETE FROM collection_dependencies WHERE document_id = ? OR depends_on_document_id = ?",
+        params![id, id],
+    )?;
+    conn.execute(
+        "UPDATE collection_entries SET parent_document_id = NULL WHERE parent_document_id = ?",
+        params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM collection_entries WHERE document_id = ?",
+        params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM source_manifest WHERE document_id = ?",
+        params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM document_revisions WHERE document_id = ?",
+        params![id],
+    )?;
+    let deleted = conn.execute("DELETE FROM documents WHERE id = ?", params![id])?;
+    Ok(deleted > 0)
 }
 
 fn upsert_document_cas_locked(
@@ -1758,13 +1990,31 @@ fn upsert_document_cas_locked(
         doc.status.as_str()
     };
 
-    let current_rev: Option<i64> = conn
-        .query_row(
-            "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
-            params![doc.id],
-            |row| row.get(0),
-        )
-        .ok();
+    let conflicting_uri_owner = {
+        let mut stmt =
+            conn.prepare("SELECT id FROM documents WHERE uri = ? AND id <> ? LIMIT 1")?;
+        let mut rows = stmt.query(params![doc.uri, doc.id])?;
+        match rows.next()? {
+            Some(row) => Some(row.get::<_, String>(0)?),
+            None => None,
+        }
+    };
+    if let Some(owner) = conflicting_uri_owner {
+        return Err(AppError::conflict(format!(
+            "document uri '{}' is already owned by document {owner}",
+            doc.uri
+        )));
+    }
+
+    let current_rev: Option<i64> = match conn.query_row(
+        "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
+        params![doc.id],
+        |row| row.get(0),
+    ) {
+        Ok(revision) => Some(revision),
+        Err(duckdb::Error::QueryReturnedNoRows) => None,
+        Err(error) => return Err(error.into()),
+    };
 
     let new_rev = match current_rev {
         Some(rev) => {
@@ -2368,9 +2618,16 @@ mod tests {
         assert_eq!(nodes, 0);
         assert_eq!(edges, 0);
 
+        let mut revised = got;
+        revised.content = "Hello revision two".into();
+        revised.updated_at = Utc::now();
+        assert_eq!(store.upsert_document_cas(&revised, Some(1)).unwrap(), 2);
+        assert_eq!(store.list_document_revisions("d1").unwrap().len(), 1);
+
         assert!(store.delete_document("d1").unwrap());
         assert!(store.get_document("d1").unwrap().is_none());
         assert!(store.list_chunks_for_document("d1").unwrap().is_empty());
+        assert!(store.list_document_revisions("d1").unwrap().is_empty());
         assert!(!store.delete_document("d1").unwrap());
     }
 
@@ -2627,12 +2884,127 @@ mod tests {
         let wing = store.list_documents_by_wing("projects").unwrap();
         assert_eq!(wing.len(), 2);
 
+        for id in ["d1", "d2"] {
+            store
+                .insert_chunks(&[Chunk {
+                    id: format!("chunk-{id}"),
+                    document_id: id.into(),
+                    chunk_index: 0,
+                    content: "derived".into(),
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: 7,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+        store
+            .upsert_source_manifest(crate::db::SourceManifestWrite {
+                canonical_path: "/vault/a.md",
+                canonical_root: "/vault",
+                size_bytes: 11,
+                mtime_ns: 7,
+                content_hash: &hash,
+                document_id: "d1",
+            })
+            .unwrap();
+        store
+            .upsert_wiki_index_entry(&WikiIndexEntry {
+                id: "idx-d2".into(),
+                slug: "page".into(),
+                title: "Wiki".into(),
+                kind: "wiki".into(),
+                category: None,
+                summary: None,
+                page_id: Some("d2".into()),
+                updated_at: now,
+            })
+            .unwrap();
+
         let deleted = store.delete_by_source("/vault/a.md").unwrap();
         assert_eq!(deleted, 2);
         assert!(store.get_document("d1").unwrap().is_none());
         assert!(store.get_document("d2").unwrap().is_none());
         assert!(store.get_document("d3").unwrap().is_some());
+        assert!(store.list_chunks_for_document("d1").unwrap().is_empty());
+        assert!(store.list_chunks_for_document("d2").unwrap().is_empty());
+        assert!(store.get_wiki_index_by_slug("page").unwrap().is_none());
+        let remaining = store
+            .load_source_manifest_root(Path::new("/vault"))
+            .unwrap();
+        assert!(!remaining.contains_key("/vault/a.md"));
+        assert!(remaining.contains_key("/vault/other.md"));
         assert_eq!(store.delete_by_source("/vault/a.md").unwrap(), 0);
+    }
+
+    #[test]
+    fn source_delete_fault_rolls_back_documents_chunks_graph_and_manifest() {
+        let store = open_temp();
+        let source = "/vault/atomic.md";
+        for id in ["atomic-a", "atomic-b"] {
+            let mut document = sample_doc(id, &format!("file:///{id}.md"));
+            document.title = format!("Document {id}");
+            document.source_file = Some(source.into());
+            document.content = format!("body for {id}");
+            let chunk = Chunk {
+                id: format!("chunk-{id}"),
+                document_id: id.into(),
+                chunk_index: 0,
+                content: document.content.clone(),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: document.content.chars().count() as i32,
+                metadata_json: "{}".into(),
+            };
+            store
+                .write_document_atomic(
+                    &document,
+                    None,
+                    DocumentDerivedWrite::ReplaceChunksAndGraph(std::slice::from_ref(&chunk)),
+                )
+                .unwrap();
+        }
+        store
+            .upsert_source_manifest(crate::db::SourceManifestWrite {
+                canonical_path: source,
+                canonical_root: "/vault",
+                size_bytes: 20,
+                mtime_ns: 9,
+                content_hash: "manifest-hash",
+                document_id: "atomic-a",
+            })
+            .unwrap();
+
+        let error = store
+            .delete_source_state_with(source, |deleted| {
+                if deleted == 1 {
+                    Err(AppError::db("injected source delete failure"))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("injected source delete failure"));
+        for id in ["atomic-a", "atomic-b"] {
+            assert!(store.get_document(id).unwrap().is_some());
+            assert_eq!(store.list_chunks_for_document(id).unwrap().len(), 1);
+            assert!(store.find_node_by_document_id(id).unwrap().is_some());
+        }
+        assert!(store
+            .load_source_manifest_root(Path::new("/vault"))
+            .unwrap()
+            .contains_key(source));
+
+        assert_eq!(store.delete_source_state(source).unwrap(), (2, true));
+        for id in ["atomic-a", "atomic-b"] {
+            assert!(store.get_document(id).unwrap().is_none());
+            assert!(store.list_chunks_for_document(id).unwrap().is_empty());
+            assert!(store.find_node_by_document_id(id).unwrap().is_none());
+        }
+        assert!(!store
+            .load_source_manifest_root(Path::new("/vault"))
+            .unwrap()
+            .contains_key(source));
     }
 
     #[test]
@@ -2855,6 +3227,67 @@ mod tests {
             },
         );
         assert!(bad_boost.is_err());
+    }
+
+    #[test]
+    fn raw_meta_update_cannot_escape_immutability_by_relabelling() {
+        let store = open_temp();
+        let mut raw = sample_doc("raw-policy", "file://raw-policy.md");
+        raw.source_file = Some("/vault/raw-policy.md".into());
+        store.upsert_document(&raw).unwrap();
+        let before = store.get_document(&raw.id).unwrap().unwrap();
+
+        let combined = store
+            .update_document_meta(
+                &raw.id,
+                &DocumentMetaUpdate {
+                    layer: Some("wiki".into()),
+                    content: Some("rewritten in the same patch".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(combined, AppError::Conflict(_)));
+
+        let transition = store
+            .update_document_meta(
+                &raw.id,
+                &DocumentMetaUpdate {
+                    layer: Some("wiki".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(transition, AppError::Conflict(_)));
+        let after = store.get_document(&raw.id).unwrap().unwrap();
+        assert_eq!(after.layer, "raw");
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.revision, before.revision);
+
+        let mut wiki = sample_doc("freeze-policy", "wiki://freeze-policy");
+        wiki.layer = "wiki".into();
+        wiki.kind = "wiki".into();
+        store.upsert_document(&wiki).unwrap();
+        let frozen = store
+            .update_document_meta(
+                &wiki.id,
+                &DocumentMetaUpdate {
+                    layer: Some("RAW".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(frozen.document.layer, "raw");
+        assert!(store
+            .update_document_meta(
+                &wiki.id,
+                &DocumentMetaUpdate {
+                    content: Some("cannot rewrite after freezing".into()),
+                    ..Default::default()
+                },
+            )
+            .is_err());
     }
 
     #[test]
@@ -3182,9 +3615,23 @@ mod tests {
         assert_eq!(loaded.revision, 3);
         assert_eq!(loaded.content, "v3");
         let history = store.list_document_revisions("d1").unwrap();
-        assert_eq!(history.iter().map(|doc| doc.revision).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(
+            history.iter().map(|doc| doc.revision).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
         assert_eq!(history[0].content, "v2");
         assert_eq!(history[1].content, "v1");
+        let first_page = store.list_document_revision_summaries("d1", 1, 0).unwrap();
+        assert_eq!(first_page.total, 2);
+        assert_eq!(first_page.items.len(), 1);
+        assert_eq!(first_page.items[0].revision, 2);
+        assert_eq!(first_page.items[0].content_chars, 2);
+        assert_eq!(first_page.items[0].content_lines, 1);
+        let serialized = serde_json::to_value(&first_page.items[0]).unwrap();
+        assert!(serialized.get("content").is_none());
+        assert!(serialized.get("metadata_json").is_none());
+        let second_page = store.list_document_revision_summaries("d1", 1, 1).unwrap();
+        assert_eq!(second_page.items[0].revision, 1);
     }
 
     #[test]

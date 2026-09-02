@@ -104,10 +104,7 @@ mod tests {
             std::env::set_var("RAG_HTTP_ALLOW_REMOTE", val);
             let err = parse_bind("192.168.1.10:7432").unwrap_err();
             let msg = err.to_string();
-            assert!(
-                msg.contains("not loopback"),
-                "allow={val:?}: {msg}"
-            );
+            assert!(msg.contains("not loopback"), "allow={val:?}: {msg}");
         }
         std::env::remove_var("RAG_HTTP_ALLOW_REMOTE");
     }

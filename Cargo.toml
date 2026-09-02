@@ -33,7 +33,10 @@ duckdb = { version = "1", features = ["bundled"] }
 notify = "8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 ring = "0.17"
-rmcp = { version = "0.11", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "=1.4.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
+# rmcp 1.x did not keep macro/runtime compatibility across every minor; pin the
+# proc-macro crate to the matching security-fixed release as well.
+rmcp-macros = "=1.4.0"
 tokio-util = { version = "0.7", features = ["rt"] }
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }

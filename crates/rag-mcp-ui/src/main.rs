@@ -12,6 +12,10 @@ mod app;
 mod gateway;
 mod layout;
 mod load;
+mod operations;
+mod product;
+mod revisions;
+mod search;
 mod ui;
 mod worker;
 
@@ -71,9 +75,9 @@ fn main() {
 fn run_gui(open: load::OpenArgs) -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Knowledge Base — Library + Connections")
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([900.0, 600.0]),
+            .with_title("Knowledge Base — Home, Search & Operations")
+            .with_inner_size([1440.0, 900.0])
+            .with_min_inner_size([1100.0, 700.0]),
         ..Default::default()
     };
 

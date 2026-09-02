@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::Utc;
-use duckdb::params;
+use duckdb::{params, params_from_iter};
 use uuid::Uuid;
 
 use super::store::Store;
@@ -128,6 +128,97 @@ impl Store {
         include_tags: bool,
     ) -> Result<GraphView> {
         self.get_graph_view(GraphFilter::pkb_ui_export(max_nodes, include_tags))
+    }
+
+    /// Export a UI graph whose document nodes belong to one project (`documents.wing`).
+    ///
+    /// The project predicate is applied before the UI node cap. Unresolved stubs,
+    /// entities, and optional tags directly connected to a project document are
+    /// retained, while document nodes from other projects are not pulled through
+    /// cross-project edges.
+    pub fn export_project_graph_for_ui(
+        &self,
+        project: &str,
+        max_nodes: Option<u32>,
+        include_tags: bool,
+    ) -> Result<GraphView> {
+        let project = require_project(project)?;
+        let max_nodes = max_nodes
+            .unwrap_or(crate::models::UI_GRAPH_EXPORT_MAX_NODES)
+            .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
+        let conn = self.lock()?;
+        let mut nodes = load_bounded_project_nodes_locked(&conn, project, max_nodes)?;
+        if nodes.len() < max_nodes {
+            let project_node_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
+            nodes.extend(load_bounded_project_companions_locked(
+                &conn,
+                &project_node_ids,
+                max_nodes - nodes.len(),
+                include_tags,
+            )?);
+        }
+        let node_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
+        let edges = load_bounded_scoped_edges_locked(&conn, project, &node_ids, include_tags)?;
+        Ok(GraphView { nodes, edges })
+    }
+
+    /// Resolve and expand a seed strictly inside one project's graph topology.
+    pub fn export_project_neighbors_for_ui(
+        &self,
+        project: &str,
+        seed: &str,
+        depth: u32,
+        max_nodes: u32,
+        include_tags: bool,
+    ) -> Result<GraphView> {
+        let project = require_project(project)?;
+        let seed = seed.trim();
+        if seed.is_empty() {
+            return Ok(GraphView::default());
+        }
+        let depth = depth.clamp(1, 3);
+        let max_nodes = max_nodes.clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
+        let conn = self.lock()?;
+        let Some(seed_node) = resolve_project_seed_locked(&conn, project, seed, include_tags)?
+        else {
+            return Ok(GraphView::default());
+        };
+
+        let mut visited = vec![seed_node.id.clone()];
+        let mut seen = HashSet::from([seed_node.id.clone()]);
+        let mut frontier = vec![seed_node.id];
+        for _ in 0..depth {
+            let remaining = max_nodes - visited.len();
+            if remaining == 0 {
+                break;
+            }
+            let candidate_limit = remaining + seen.len();
+            let candidates = discover_scoped_neighbors_locked(
+                &conn,
+                project,
+                &frontier,
+                candidate_limit,
+                include_tags,
+            )?;
+            let mut next_frontier = Vec::new();
+            for candidate in candidates {
+                if seen.insert(candidate.clone()) {
+                    next_frontier.push(candidate);
+                    if next_frontier.len() == remaining {
+                        break;
+                    }
+                }
+            }
+            if next_frontier.is_empty() {
+                break;
+            }
+            visited.extend(next_frontier.iter().cloned());
+            frontier = next_frontier;
+        }
+
+        let nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        let edges = load_bounded_scoped_edges_locked(&conn, project, &visited, include_tags)?;
+        Ok(GraphView { nodes, edges })
     }
 
     /// Resolve a UI seed string: exact node id, then `document_id`, then exact label.
@@ -611,7 +702,9 @@ impl Store {
     pub fn delete_tunnel(&self, tunnel_id: &str) -> Result<bool> {
         let tunnel_id = tunnel_id.trim();
         if tunnel_id.is_empty() {
-            return Err(AppError::config("delete_tunnel requires non-empty tunnel_id"));
+            return Err(AppError::config(
+                "delete_tunnel requires non-empty tunnel_id",
+            ));
         }
         let conn = self.lock()?;
         let n = conn.execute(
@@ -626,16 +719,13 @@ impl Store {
     /// Missing seed → empty view. `depth` default semantics: caller supplies;
     /// `max_nodes == 0` is treated as 100. Returned edges are tunnel-only with
     /// both endpoints in the visited set.
-    pub fn follow_tunnels(
-        &self,
-        node_id: &str,
-        depth: u32,
-        max_nodes: u32,
-    ) -> Result<GraphView> {
+    pub fn follow_tunnels(&self, node_id: &str, depth: u32, max_nodes: u32) -> Result<GraphView> {
         let max_nodes = if max_nodes == 0 { 100 } else { max_nodes };
         let node_id = node_id.trim();
         if node_id.is_empty() {
-            return Err(AppError::config("follow_tunnels requires non-empty node_id"));
+            return Err(AppError::config(
+                "follow_tunnels requires non-empty node_id",
+            ));
         }
         if self.find_node_by_id(node_id)?.is_none() {
             return Ok(GraphView::default());
@@ -814,6 +904,341 @@ impl Store {
     }
 }
 
+fn require_project(project: &str) -> Result<&str> {
+    let project = project.trim();
+    if project.is_empty() {
+        return Err(AppError::config("project must be non-empty"));
+    }
+    Ok(project)
+}
+
+fn scoped_relation_types(include_tags: bool) -> &'static str {
+    if include_tags {
+        "'wikilink', 'related', 'tagged'"
+    } else {
+        "'wikilink', 'related'"
+    }
+}
+
+fn scoped_companion_kinds(include_tags: bool) -> &'static str {
+    if include_tags {
+        "'stub', 'entity', 'tag'"
+    } else {
+        "'stub', 'entity'"
+    }
+}
+
+fn values_clause(len: usize) -> String {
+    (0..len).map(|_| "(?)").collect::<Vec<_>>().join(", ")
+}
+
+fn load_bounded_project_nodes_locked(
+    conn: &duckdb::Connection,
+    project: &str,
+    limit: usize,
+) -> Result<Vec<GraphNode>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let sql = format!(
+        r#"
+        SELECT n.id, n.kind, n.label, n.document_id, n.uri, n.resolved, n.metadata_json
+        FROM graph_nodes n
+        JOIN documents d ON d.id = n.document_id
+        WHERE d.wing = ?
+          AND n.kind IN ('document', 'stub', 'entity')
+        ORDER BY n.label, n.id
+        LIMIT {limit}
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params![project])?;
+    let mut nodes = Vec::with_capacity(limit);
+    while let Some(row) = rows.next()? {
+        nodes.push(row_to_node(row)?);
+    }
+    Ok(nodes)
+}
+
+fn load_bounded_project_companions_locked(
+    conn: &duckdb::Connection,
+    project_node_ids: &[String],
+    limit: usize,
+    include_tags: bool,
+) -> Result<Vec<GraphNode>> {
+    if limit == 0 || project_node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let selected = values_clause(project_node_ids.len());
+    let relation_types = scoped_relation_types(include_tags);
+    let companion_kinds = scoped_companion_kinds(include_tags);
+    let sql = format!(
+        r#"
+        WITH selected_project_nodes(id) AS (VALUES {selected}),
+        direct_companions(id) AS (
+          SELECT e.target_id
+          FROM selected_project_nodes selected
+          JOIN graph_edges e ON e.source_id = selected.id
+          WHERE e.rel_type IN ({relation_types})
+          UNION ALL
+          SELECT e.source_id
+          FROM selected_project_nodes selected
+          JOIN graph_edges e ON e.target_id = selected.id
+          WHERE e.rel_type IN ({relation_types})
+        )
+        SELECT DISTINCT
+          n.id, n.kind, n.label, n.document_id, n.uri, n.resolved, n.metadata_json
+        FROM direct_companions direct
+        JOIN graph_nodes n ON n.id = direct.id
+        WHERE n.document_id IS NULL
+          AND n.kind IN ({companion_kinds})
+        ORDER BY n.label, n.id
+        LIMIT {limit}
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(project_node_ids.iter()))?;
+    let mut nodes = Vec::with_capacity(limit);
+    while let Some(row) = rows.next()? {
+        nodes.push(row_to_node(row)?);
+    }
+    Ok(nodes)
+}
+
+fn resolve_project_seed_locked(
+    conn: &duckdb::Connection,
+    project: &str,
+    seed: &str,
+    include_tags: bool,
+) -> Result<Option<GraphNode>> {
+    for column in ["id", "document_id", "label"] {
+        if let Some(node) = find_scoped_node_locked(conn, project, column, seed, include_tags)? {
+            return Ok(Some(node));
+        }
+    }
+    Ok(None)
+}
+
+fn find_scoped_node_locked(
+    conn: &duckdb::Connection,
+    project: &str,
+    column: &str,
+    value: &str,
+    include_tags: bool,
+) -> Result<Option<GraphNode>> {
+    let relation_types = scoped_relation_types(include_tags);
+    let companion_kinds = scoped_companion_kinds(include_tags);
+    let sql = format!(
+        r#"
+        SELECT n.id, n.kind, n.label, n.document_id, n.uri, n.resolved, n.metadata_json
+        FROM graph_nodes n
+        LEFT JOIN documents d ON d.id = n.document_id
+        WHERE n.{column} = ?
+          AND (
+            (
+              n.document_id IS NOT NULL
+              AND d.wing = ?
+              AND n.kind IN ('document', 'stub', 'entity')
+            )
+            OR (
+              n.document_id IS NULL
+              AND n.kind IN ({companion_kinds})
+              AND EXISTS (
+                SELECT 1
+                FROM graph_edges e
+                JOIN graph_nodes project_node
+                  ON project_node.id = CASE
+                    WHEN e.source_id = n.id THEN e.target_id
+                    ELSE e.source_id
+                  END
+                JOIN documents project_document
+                  ON project_document.id = project_node.document_id
+                WHERE (e.source_id = n.id OR e.target_id = n.id)
+                  AND project_document.wing = ?
+                  AND project_node.kind IN ('document', 'stub', 'entity')
+                  AND e.rel_type IN ({relation_types})
+                LIMIT 1
+              )
+            )
+          )
+        ORDER BY
+          CASE
+            WHEN n.kind = 'document' AND n.resolved THEN 0
+            WHEN n.kind = 'document' THEN 1
+            ELSE 2
+          END,
+          n.id
+        LIMIT 1
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params![value, project, project])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row_to_node(row)?)),
+        None => Ok(None),
+    }
+}
+
+fn discover_scoped_neighbors_locked(
+    conn: &duckdb::Connection,
+    project: &str,
+    frontier: &[String],
+    limit: usize,
+    include_tags: bool,
+) -> Result<Vec<String>> {
+    if frontier.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let frontier_values = (0..frontier.len())
+        .map(|ordinal| format!("(?, {ordinal})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let relation_types = scoped_relation_types(include_tags);
+    let companion_kinds = scoped_companion_kinds(include_tags);
+    let sql = format!(
+        r#"
+        WITH frontier(id, ordinal) AS (VALUES {frontier_values}),
+        incident AS (
+          SELECT
+            frontier.ordinal AS frontier_ordinal,
+            e.id AS edge_id,
+            e.source_id,
+            e.target_id,
+            e.target_id AS neighbor_id,
+            e.rel_type
+          FROM frontier
+          JOIN graph_edges e ON e.source_id = frontier.id
+          UNION ALL
+          SELECT
+            frontier.ordinal AS frontier_ordinal,
+            e.id AS edge_id,
+            e.source_id,
+            e.target_id,
+            e.source_id AS neighbor_id,
+            e.rel_type
+          FROM frontier
+          JOIN graph_edges e ON e.target_id = frontier.id
+        )
+        SELECT incident.neighbor_id
+        FROM incident
+        JOIN graph_nodes neighbor ON neighbor.id = incident.neighbor_id
+        JOIN graph_nodes source_node ON source_node.id = incident.source_id
+        JOIN graph_nodes target_node ON target_node.id = incident.target_id
+        LEFT JOIN documents neighbor_document ON neighbor_document.id = neighbor.document_id
+        LEFT JOIN documents source_document ON source_document.id = source_node.document_id
+        LEFT JOIN documents target_document ON target_document.id = target_node.document_id
+        WHERE incident.rel_type IN ({relation_types})
+          AND (
+            (
+              neighbor.document_id IS NOT NULL
+              AND neighbor_document.wing = ?
+              AND neighbor.kind IN ('document', 'stub', 'entity')
+            )
+            OR (
+              neighbor.document_id IS NULL
+              AND neighbor.kind IN ({companion_kinds})
+            )
+          )
+          AND (source_document.wing = ? OR target_document.wing = ?)
+        GROUP BY incident.neighbor_id
+        ORDER BY
+          MIN(incident.frontier_ordinal),
+          MIN(incident.edge_id),
+          incident.neighbor_id
+        LIMIT {limit}
+        "#
+    );
+    let mut binds = frontier.to_vec();
+    binds.extend([
+        project.to_string(),
+        project.to_string(),
+        project.to_string(),
+    ]);
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
+    let mut neighbors = Vec::with_capacity(limit);
+    while let Some(row) = rows.next()? {
+        neighbors.push(row.get(0)?);
+    }
+    Ok(neighbors)
+}
+
+fn load_nodes_by_ids_locked(
+    conn: &duckdb::Connection,
+    node_ids: &[String],
+) -> Result<Vec<GraphNode>> {
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let selected = values_clause(node_ids.len());
+    let limit = node_ids.len();
+    let sql = format!(
+        r#"
+        WITH selected(id) AS (VALUES {selected})
+        SELECT n.id, n.kind, n.label, n.document_id, n.uri, n.resolved, n.metadata_json
+        FROM selected
+        JOIN graph_nodes n ON n.id = selected.id
+        ORDER BY n.id
+        LIMIT {limit}
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(node_ids.iter()))?;
+    let mut nodes = Vec::with_capacity(limit);
+    while let Some(row) = rows.next()? {
+        nodes.push(row_to_node(row)?);
+    }
+    Ok(nodes)
+}
+
+fn load_bounded_scoped_edges_locked(
+    conn: &duckdb::Connection,
+    project: &str,
+    node_ids: &[String],
+    include_tags: bool,
+) -> Result<Vec<GraphEdge>> {
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let selected = values_clause(node_ids.len());
+    let relation_types = scoped_relation_types(include_tags);
+    let relation_count = if include_tags { 3 } else { 2 };
+    let max_edges = node_ids
+        .len()
+        .saturating_mul(node_ids.len())
+        .saturating_mul(relation_count)
+        .max(1);
+    let sql = format!(
+        r#"
+        WITH selected(id) AS (VALUES {selected})
+        SELECT e.id, e.source_id, e.target_id, e.rel_type, e.weight, e.context
+        FROM graph_edges e
+        JOIN selected source_selected ON source_selected.id = e.source_id
+        JOIN selected target_selected ON target_selected.id = e.target_id
+        JOIN graph_nodes source_node ON source_node.id = e.source_id
+        JOIN graph_nodes target_node ON target_node.id = e.target_id
+        LEFT JOIN documents source_document ON source_document.id = source_node.document_id
+        LEFT JOIN documents target_document ON target_document.id = target_node.document_id
+        WHERE e.rel_type IN ({relation_types})
+          AND (source_document.wing = ? OR target_document.wing = ?)
+        ORDER BY e.id
+        LIMIT {max_edges}
+        "#
+    );
+    let mut binds = node_ids.to_vec();
+    binds.extend([project.to_string(), project.to_string()]);
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
+    let mut edges = Vec::with_capacity(max_edges.min(1024));
+    while let Some(row) = rows.next()? {
+        edges.push(row_to_edge(row)?);
+    }
+    Ok(edges)
+}
+
 pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNode) -> Result<()> {
     let now = format_ts_now();
     let metadata = if node.metadata_json.is_empty() {
@@ -945,9 +1370,7 @@ pub(crate) fn find_nodes_by_label_locked(
 }
 
 fn format_ts_now() -> String {
-    Utc::now()
-        .format("%Y-%m-%d %H:%M:%S%.6f")
-        .to_string()
+    Utc::now().format("%Y-%m-%d %H:%M:%S%.6f").to_string()
 }
 
 fn row_to_node(row: &duckdb::Row<'_>) -> Result<GraphNode> {
@@ -1021,6 +1444,17 @@ mod tests {
             uri: None,
             resolved: kind != "stub",
             metadata_json: "{}".into(),
+        }
+    }
+
+    fn edge(id: &str, source_id: &str, target_id: &str, rel_type: &str) -> GraphEdge {
+        GraphEdge {
+            id: id.into(),
+            source_id: source_id.into(),
+            target_id: target_id.into(),
+            rel_type: rel_type.into(),
+            weight: 1.0,
+            context: None,
         }
     }
 
@@ -1177,6 +1611,267 @@ mod tests {
         let local = store.export_neighbors_for_ui("A", 1, 100).unwrap();
         assert!(local.nodes.iter().any(|n| n.id == "n1"));
         assert!(local.nodes.iter().any(|n| n.id == "n2"));
+    }
+
+    #[test]
+    fn project_graph_scopes_before_cap_and_lazy_expansion_cannot_cross_projects() {
+        let store = open_temp();
+        for (id, wing, title) in [
+            ("alpha-doc", "alpha", "Zed project note"),
+            ("beta-doc", "beta", "Aardvark other note"),
+        ] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("file:///{wing}/{id}.md"),
+                    title: title.into(),
+                    content: title.into(),
+                    wing: Some(wing.into()),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        store
+            .upsert_graph_node(&node(
+                "alpha-node",
+                "document",
+                "Zed project note",
+                Some("alpha-doc"),
+            ))
+            .unwrap();
+        store
+            .upsert_graph_node(&node(
+                "beta-node",
+                "document",
+                "Aardvark other note",
+                Some("beta-doc"),
+            ))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("alpha-stub", "stub", "Missing alpha", None))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("alpha-entity", "entity", "Entity alpha", None))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("alpha-tag", "tag", "Tag alpha", None))
+            .unwrap();
+        store
+            .link_nodes("alpha-node", "alpha-stub", "wikilink", 1.0)
+            .unwrap();
+        store
+            .link_nodes("alpha-node", "alpha-entity", "related", 1.0)
+            .unwrap();
+        store
+            .link_nodes("alpha-node", "alpha-tag", "tagged", 1.0)
+            .unwrap();
+        store
+            .link_nodes("alpha-node", "beta-node", "related", 1.0)
+            .unwrap();
+
+        let capped = store
+            .export_project_graph_for_ui("alpha", Some(1), false)
+            .unwrap();
+        assert_eq!(capped.nodes.len(), 1);
+        assert_eq!(capped.nodes[0].id, "alpha-node");
+
+        let graph = store
+            .export_project_graph_for_ui("alpha", Some(10), false)
+            .unwrap();
+        assert!(graph.nodes.iter().any(|node| node.id == "alpha-node"));
+        assert!(graph.nodes.iter().any(|node| node.id == "alpha-stub"));
+        assert!(graph.nodes.iter().any(|node| node.id == "alpha-entity"));
+        assert!(!graph.nodes.iter().any(|node| node.id == "alpha-tag"));
+        assert!(!graph.nodes.iter().any(|node| node.id == "beta-node"));
+        assert_eq!(graph.edges.len(), 2);
+
+        let graph_with_tags = store
+            .export_project_graph_for_ui("alpha", Some(10), true)
+            .unwrap();
+        assert!(graph_with_tags
+            .nodes
+            .iter()
+            .any(|node| node.id == "alpha-tag"));
+        assert!(graph_with_tags
+            .edges
+            .iter()
+            .any(|edge| edge.rel_type == "tagged"));
+        assert!(!graph_with_tags
+            .nodes
+            .iter()
+            .any(|node| node.id == "beta-node"));
+
+        let lazy = store
+            .export_project_neighbors_for_ui("alpha", "Zed project note", 1, 10, false)
+            .unwrap();
+        assert!(lazy.nodes.iter().any(|node| node.id == "alpha-stub"));
+        assert!(lazy.nodes.iter().any(|node| node.id == "alpha-entity"));
+        assert!(!lazy.nodes.iter().any(|node| node.id == "alpha-tag"));
+        assert!(!lazy.nodes.iter().any(|node| node.id == "beta-node"));
+        assert!(store
+            .export_project_neighbors_for_ui("alpha", "Aardvark other note", 1, 10, false)
+            .unwrap()
+            .nodes
+            .is_empty());
+    }
+
+    #[test]
+    fn project_neighbors_are_deterministic_bounded_and_depth_clamped() {
+        let store = open_temp();
+        for (id, wing) in [
+            ("seed-doc", "alpha"),
+            ("a-doc", "alpha"),
+            ("b-doc", "alpha"),
+            ("c-doc", "alpha"),
+            ("d-doc", "alpha"),
+            ("e-doc", "alpha"),
+            ("beta-doc", "beta"),
+        ] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("file:///{wing}/{id}.md"),
+                    title: id.into(),
+                    content: id.into(),
+                    wing: Some(wing.into()),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        for (id, label, document_id) in [
+            ("seed", "Seed", "seed-doc"),
+            ("a", "A", "a-doc"),
+            ("b", "B", "b-doc"),
+            ("c", "C", "c-doc"),
+            ("d", "D", "d-doc"),
+            ("e", "E", "e-doc"),
+            ("beta", "Beta", "beta-doc"),
+        ] {
+            store
+                .upsert_graph_node(&node(id, "document", label, Some(document_id)))
+                .unwrap();
+        }
+        store
+            .insert_graph_edges(&[
+                edge("00-cross-project", "seed", "beta", "related"),
+                edge("01-first", "seed", "b", "related"),
+                edge("02-second", "seed", "a", "related"),
+                edge("03-depth-two", "b", "c", "related"),
+                edge("04-depth-three", "c", "d", "related"),
+                edge("05-depth-four", "d", "e", "related"),
+            ])
+            .unwrap();
+
+        let first = store
+            .export_project_neighbors_for_ui("alpha", "Seed", 1, 2, false)
+            .unwrap();
+        let second = store
+            .export_project_neighbors_for_ui("alpha", "Seed", 1, 2, false)
+            .unwrap();
+        let first_ids = first
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>();
+        let second_ids = second
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(first_ids, vec!["b", "seed"]);
+        assert_eq!(second_ids, first_ids);
+        assert_eq!(
+            first
+                .edges
+                .iter()
+                .map(|edge| edge.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["01-first"]
+        );
+
+        let clamped = store
+            .export_project_neighbors_for_ui("alpha", "seed-doc", u32::MAX, u32::MAX, false)
+            .unwrap();
+        let clamped_ids = clamped
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        assert!(clamped.nodes.len() <= crate::models::UI_GRAPH_EXPORT_MAX_NODES as usize);
+        assert!(clamped_ids.contains("a"));
+        assert!(clamped_ids.contains("b"));
+        assert!(clamped_ids.contains("c"));
+        assert!(clamped_ids.contains("d"));
+        assert!(!clamped_ids.contains("e"));
+        assert!(!clamped_ids.contains("beta"));
+    }
+
+    #[test]
+    fn direct_companion_seed_stays_inside_project_scope() {
+        let store = open_temp();
+        for (id, wing) in [("alpha-doc", "alpha"), ("beta-doc", "beta")] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("file:///{wing}/{id}.md"),
+                    title: id.into(),
+                    content: id.into(),
+                    wing: Some(wing.into()),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        for (id, label, document_id) in [
+            ("alpha-node", "Alpha", Some("alpha-doc")),
+            ("beta-node", "Beta", Some("beta-doc")),
+            ("shared-stub", "Shared", None),
+            ("orphan-stub", "Orphan", None),
+            ("alpha-tag", "Alpha tag", None),
+        ] {
+            let kind = if id == "alpha-tag" {
+                "tag"
+            } else if document_id.is_none() {
+                "stub"
+            } else {
+                "document"
+            };
+            store
+                .upsert_graph_node(&node(id, kind, label, document_id))
+                .unwrap();
+        }
+        store
+            .insert_graph_edges(&[
+                edge("01-alpha-shared", "alpha-node", "shared-stub", "wikilink"),
+                edge("02-beta-shared", "beta-node", "shared-stub", "wikilink"),
+                edge("03-alpha-tag", "alpha-node", "alpha-tag", "tagged"),
+            ])
+            .unwrap();
+
+        let shared = store
+            .export_project_neighbors_for_ui("alpha", "shared-stub", 1, 10, false)
+            .unwrap();
+        assert!(shared.nodes.iter().any(|node| node.id == "alpha-node"));
+        assert!(shared.nodes.iter().any(|node| node.id == "shared-stub"));
+        assert!(!shared.nodes.iter().any(|node| node.id == "beta-node"));
+        assert_eq!(shared.edges.len(), 1);
+
+        assert!(store
+            .export_project_neighbors_for_ui("alpha", "orphan-stub", 1, 10, false)
+            .unwrap()
+            .nodes
+            .is_empty());
+        assert!(store
+            .export_project_neighbors_for_ui("alpha", "alpha-tag", 1, 10, false)
+            .unwrap()
+            .nodes
+            .is_empty());
+
+        let tag = store
+            .export_project_neighbors_for_ui("alpha", "alpha-tag", 1, 10, true)
+            .unwrap();
+        assert!(tag.nodes.iter().any(|node| node.id == "alpha-node"));
+        assert!(tag.nodes.iter().any(|node| node.id == "alpha-tag"));
+        assert!(tag.edges.iter().any(|edge| edge.rel_type == "tagged"));
     }
 
     #[test]

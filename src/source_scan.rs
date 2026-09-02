@@ -66,6 +66,11 @@ impl SourceScanPolicy {
         self
     }
 
+    /// Maximum accepted file size, when configured.
+    pub fn max_bytes(&self) -> Option<u64> {
+        self.max_bytes
+    }
+
     fn accepts(&self, path: &Path, size: u64) -> bool {
         if self.max_bytes.is_some_and(|limit| size > limit) {
             return false;
@@ -85,10 +90,29 @@ pub fn collect_source_files(
     root: &Path,
     policy: &SourceScanPolicy,
 ) -> std::io::Result<Vec<PathBuf>> {
+    collect_source_files_while(root, policy, || true)
+}
+
+/// Collect source files while `keep_going` remains true.
+///
+/// Returning false stops traversal promptly and returns the files found so far;
+/// the caller owns the cancellation outcome.
+pub fn collect_source_files_while(
+    root: &Path,
+    policy: &SourceScanPolicy,
+    mut keep_going: impl FnMut() -> bool,
+) -> std::io::Result<Vec<PathBuf>> {
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
     while let Some(directory) = pending.pop() {
+        if !keep_going() {
+            break;
+        }
         for entry in std::fs::read_dir(directory)? {
+            if !keep_going() {
+                files.sort();
+                return Ok(files);
+            }
             let entry = entry?;
             let file_type = entry.file_type()?;
             let path = entry.path();
@@ -129,6 +153,25 @@ mod tests {
 
         let files = collect_source_files(root.path(), &SourceScanPolicy::default()).unwrap();
         assert_eq!(files, vec![root.path().join("keep.rs")]);
+    }
+
+    #[test]
+    fn controlled_scan_stops_when_requested() {
+        let root = tempfile::tempdir().expect("tempdir");
+        for index in 0..10 {
+            std::fs::write(root.path().join(format!("{index}.md")), "body").unwrap();
+        }
+        let checks = std::cell::Cell::new(0usize);
+
+        let files = collect_source_files_while(root.path(), &SourceScanPolicy::default(), || {
+            let next = checks.get() + 1;
+            checks.set(next);
+            next <= 4
+        })
+        .unwrap();
+
+        assert!(checks.get() >= 5);
+        assert!(files.len() < 10);
     }
 
     #[test]

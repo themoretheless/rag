@@ -33,6 +33,7 @@ pub mod memory_lifecycle;
 pub mod models;
 pub mod ops;
 pub mod retrieval;
+pub mod revisions;
 pub mod search_pack;
 pub mod source_scan;
 pub mod source_sync;

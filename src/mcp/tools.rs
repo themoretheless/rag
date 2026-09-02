@@ -207,6 +207,9 @@ pub struct SyncSourcesParams {
     /// Optional room applied to newly added or updated files.
     #[serde(default)]
     pub room: Option<String>,
+    /// Maximum bytes accepted per source file. Defaults to 512 KiB.
+    #[serde(default)]
+    pub max_file_bytes: Option<u64>,
 }
 
 /// Parameters for `ingest_raw` (immutable raw layer register).

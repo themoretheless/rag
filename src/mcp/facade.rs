@@ -7,8 +7,8 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use rmcp::handler::server::tool::{ToolCallContext, ToolRouter};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolRequestParam, CallToolResult, Content, Implementation, ListToolsResult,
-    PaginatedRequestParam, ServerCapabilities, ServerInfo,
+    CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::{tool, tool_router, ErrorData as McpError, RoleServer, ServerHandler};
@@ -76,9 +76,12 @@ use crate::retrieval::SearchCommand;
 use crate::retrieval::{self, DocumentWithChunks, SimilarDocumentsQuery};
 use crate::search_pack::pack_hits;
 use crate::source_sync::{SourceSyncCommand, SourceSyncError, SourceSyncService};
-use crate::util::check_path_allowlist;
 #[cfg(test)]
 use crate::util::content_hash;
+use crate::util::{
+    check_path_allowlist, refuse_live_database_target, resolve_allowlisted_output_file,
+    validate_backup_output_paths,
+};
 use crate::wiki;
 use crate::wiki::FileAnswerCitation;
 
@@ -147,6 +150,7 @@ impl RagServer {
                         remove_deleted: Some(false),
                         wing: None,
                         room: None,
+                        max_file_bytes: None,
                     };
                     match self.sync_sources(Parameters(params)).await {
                         Ok(_) => tracing::info!(path, "automatic source sync completed"),
@@ -258,34 +262,11 @@ impl RagServer {
 
     /// Ingest text: upsert-by-uri, chunk, embed, store chunks.
     ///
-    /// When `immutable` is true (raw layer policy): existing uri with the same
+    /// When `command.immutable` is true (raw layer policy): existing uri with the same
     /// content hash is a no-op; different content is refused (`Conflict`).
-    async fn ingest_pipeline(
-        &self,
-        text: String,
-        title: Option<String>,
-        uri: Option<String>,
-        metadata_json: Option<String>,
-        wing: Option<String>,
-        room: Option<String>,
-        source_file: Option<String>,
-        layer: &str,
-        kind: &str,
-        immutable: bool,
-    ) -> Result<IngestResult, AppError> {
+    async fn ingest_pipeline(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
         IngestService::new(&self.store, &self.embedder, &self.config)
-            .ingest(IngestCommand {
-                text,
-                title,
-                uri,
-                metadata_json,
-                wing,
-                room,
-                source_file,
-                layer: layer.to_string(),
-                kind: kind.to_string(),
-                immutable,
-            })
+            .ingest(command)
             .await
     }
 
@@ -655,18 +636,18 @@ impl RagServer {
         Parameters(params): Parameters<IngestTextParams>,
     ) -> Result<CallToolResult, McpError> {
         let result = self
-            .ingest_pipeline(
-                params.text,
-                params.title,
-                params.uri,
-                params.metadata_json,
-                None,
-                None,
-                None,
-                "raw",
-                "document",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: params.text,
+                title: params.title,
+                uri: params.uri,
+                metadata_json: params.metadata_json,
+                wing: None,
+                room: None,
+                source_file: None,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -717,18 +698,18 @@ impl RagServer {
             .or_else(|| Some(params.path.clone()));
 
         let result = self
-            .ingest_pipeline(
-                extracted.text,
-                params.title.or(default_title),
-                params.uri.or(Some(default_uri)),
-                Some(metadata_json),
-                params.wing,
-                params.room,
+            .ingest_pipeline(IngestCommand {
+                text: extracted.text,
+                title: params.title.or(default_title),
+                uri: params.uri.or(Some(default_uri)),
+                metadata_json: Some(metadata_json),
+                wing: params.wing,
+                room: params.room,
                 source_file,
-                "raw",
-                "document",
-                false,
-            )
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -748,6 +729,7 @@ impl RagServer {
                 remove_deleted: params.remove_deleted.unwrap_or(false),
                 wing: params.wing,
                 room: params.room,
+                max_file_bytes: params.max_file_bytes,
             })
             .await
             .map_err(Self::map_err)?;
@@ -763,18 +745,18 @@ impl RagServer {
         Parameters(params): Parameters<IngestRawParams>,
     ) -> Result<CallToolResult, McpError> {
         let result = self
-            .ingest_pipeline(
-                params.text,
-                params.title,
-                params.uri,
-                params.metadata_json,
-                params.wing,
-                params.room,
-                params.source_file,
-                "raw",
-                "document",
-                true,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: params.text,
+                title: params.title,
+                uri: params.uri,
+                metadata_json: params.metadata_json,
+                wing: params.wing,
+                room: params.room,
+                source_file: params.source_file,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: true,
+            })
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -801,18 +783,18 @@ impl RagServer {
         }
 
         let result = self
-            .ingest_pipeline(
-                params.content,
-                params.title,
-                params.uri,
-                params.metadata_json,
-                Some(wing.to_string()),
-                Some(room.to_string()),
-                params.source_file,
-                "raw",
-                "document",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: params.content,
+                title: params.title,
+                uri: params.uri,
+                metadata_json: params.metadata_json,
+                wing: Some(wing.to_string()),
+                room: Some(room.to_string()),
+                source_file: params.source_file,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -1000,6 +982,10 @@ impl RagServer {
             None
         };
 
+        let source_download_path = doc
+            .source_file
+            .as_ref()
+            .map(|_| format!("/v1/source-file?document_id={}", doc.id));
         let body = SourceDetail {
             id: doc.id,
             uri: doc.uri,
@@ -1010,6 +996,7 @@ impl RagServer {
             wing: doc.wing,
             room: doc.room,
             source_file: doc.source_file,
+            source_download_path,
             layer: doc.layer,
             kind: doc.kind,
             created_at: doc.created_at.to_rfc3339(),
@@ -1434,7 +1421,7 @@ impl RagServer {
         let documents = self.store.list_documents().map_err(Self::map_err)?;
         let mut missing = Vec::new();
         for document in documents {
-            if document.layer == "schema" {
+            if document.layer == "schema" || document.content.trim().is_empty() {
                 continue;
             }
             let chunks = self
@@ -1454,18 +1441,18 @@ impl RagServer {
         if !dry_run {
             for document in &missing {
                 match self
-                    .ingest_pipeline(
-                        document.content.clone(),
-                        Some(document.title.clone()),
-                        Some(document.uri.clone()),
-                        Some(document.metadata_json.clone()),
-                        document.wing.clone(),
-                        document.room.clone(),
-                        document.source_file.clone(),
-                        &document.layer,
-                        &document.kind,
-                        false,
-                    )
+                    .ingest_pipeline(IngestCommand {
+                        text: document.content.clone(),
+                        title: Some(document.title.clone()),
+                        uri: Some(document.uri.clone()),
+                        metadata_json: Some(document.metadata_json.clone()),
+                        wing: document.wing.clone(),
+                        room: document.room.clone(),
+                        source_file: document.source_file.clone(),
+                        layer: document.layer.clone(),
+                        kind: document.kind.clone(),
+                        immutable: false,
+                    })
                     .await
                 {
                     Ok(_) => documents_repaired.push(document.id.clone()),
@@ -3185,8 +3172,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<BackupDbParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
-        refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(Self::map_err)?;
+        validate_backup_output_paths(&path, &self.config.ingest_roots, self.store.path())
+            .map_err(Self::map_err)?;
         let report = self
             .store
             .backup_database(
@@ -3206,8 +3195,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExportBundleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
-        refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(Self::map_err)?;
+        refuse_live_database_target(&path, self.store.path()).map_err(Self::map_err)?;
         let format = recovery_format(params.format.as_deref(), &path).map_err(Self::map_err)?;
         let overwrite = params.overwrite.unwrap_or(false);
         let dry_run = params.dry_run.unwrap_or(false);
@@ -3247,8 +3237,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExportVaultParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
-        refuse_live_db_target(&path, self.store.path()).map_err(Self::map_err)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(Self::map_err)?;
+        refuse_live_database_target(&path, self.store.path()).map_err(Self::map_err)?;
         let report = self
             .store
             .export_vault(
@@ -3268,7 +3259,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ImportBundleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = recovery_path(&params.path, &self.config.ingest_roots).map_err(Self::map_err)?;
+        let path = resolve_allowlisted_output_file(&params.path, &self.config.ingest_roots)
+            .map_err(Self::map_err)?;
         if !path.is_file() {
             return Err(Self::map_err(AppError::not_found(format!(
                 "bundle file '{}'",
@@ -3294,27 +3286,6 @@ impl RagServer {
     }
 }
 
-fn recovery_path(raw: &str, roots: &[PathBuf]) -> Result<PathBuf, AppError> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return Err(AppError::config("path must be non-empty"));
-    }
-    let path = PathBuf::from(raw);
-    check_path_allowlist(&path, roots)?;
-    let parent = path.parent().unwrap_or(Path::new("."));
-    if !parent.is_dir() {
-        return Err(AppError::config(format!(
-            "parent directory '{}' does not exist",
-            parent.display()
-        )));
-    }
-    let parent = std::fs::canonicalize(parent)?;
-    Ok(parent.join(
-        path.file_name()
-            .ok_or_else(|| AppError::config("path must name a file"))?,
-    ))
-}
-
 fn recovery_format(requested: Option<&str>, path: &Path) -> Result<&'static str, AppError> {
     let value = requested
         .map(str::trim)
@@ -3333,16 +3304,6 @@ fn recovery_format(requested: Option<&str>, path: &Path) -> Result<&'static str,
             "invalid bundle format '{other}': expected json or jsonl"
         ))),
     }
-}
-
-fn refuse_live_db_target(path: &Path, db_path: &Path) -> Result<(), AppError> {
-    let db = std::fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
-    if path == db {
-        return Err(AppError::forbidden(
-            "recovery output path must not be the live DuckDB file",
-        ));
-    }
-    Ok(())
 }
 
 fn encode_recovery_bundle(bundle: &RecoveryBundle, format: &str) -> Result<Vec<u8>, AppError> {
@@ -3499,23 +3460,17 @@ impl ServerHandler for RagServer {
              Logs only on stderr. [[wikilinks]] and #tags extract to the object graph.\n",
         );
 
-        ServerInfo {
-            instructions: Some(instructions),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "rag-mcp".into(),
-                title: Some("RAG MCP Server".into()),
-                version: env!("CARGO_PKG_VERSION").into(),
-                icons: None,
-                website_url: None,
-            },
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(instructions)
+            .with_server_info(
+                Implementation::new("rag-mcp", env!("CARGO_PKG_VERSION"))
+                    .with_title("RAG MCP Server"),
+            )
     }
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let surface = self.config.tool_surface;
@@ -3534,7 +3489,7 @@ impl ServerHandler for RagServer {
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let name = request.name.as_ref();
@@ -3546,8 +3501,51 @@ impl ServerHandler for RagServer {
                 None,
             ));
         }
+        let tool_name = name.to_string();
+        let audit_action = mcp_audit_action(&tool_name, request.arguments.as_ref());
+        let started = std::time::Instant::now();
         let tcc = ToolCallContext::new(self, request, context);
-        self.tool_router.call(tcc).await
+        let result = self.tool_router.call(tcc).await;
+        crate::http_api::record_mcp_tool(
+            &audit_action,
+            if result.is_ok() { 200 } else { 500 },
+            started.elapsed().as_secs_f64() * 1000.0,
+        );
+        result
+    }
+}
+
+fn mcp_audit_action(
+    name: &str,
+    _arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> String {
+    // `/v1/activity` can be reachable on an explicitly remote-bound gateway.
+    // Never copy one MCP client's arguments into a cross-client activity feed.
+    name.to_string()
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::mcp_audit_action;
+
+    #[test]
+    fn audit_action_keeps_lineage_and_omits_content() {
+        let arguments = serde_json::json!({
+            "path": "/docs/source.pdf",
+            "title": "Source article",
+            "content": "private body",
+            "query": "private search",
+            "document_id": "private-document",
+            "wing": "secret-project"
+        });
+        let action = mcp_audit_action("ingest_file", arguments.as_object());
+        assert_eq!(action, "ingest_file");
+        assert!(!action.contains("/docs/source.pdf"));
+        assert!(!action.contains("Source article"));
+        assert!(!action.contains("private body"));
+        assert!(!action.contains("private search"));
+        assert!(!action.contains("private-document"));
+        assert!(!action.contains("secret-project"));
     }
 }
 
@@ -3615,12 +3613,20 @@ struct DocumentDetail {
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    source_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_download_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     chunks: Option<Vec<ChunkView>>,
 }
 
 impl From<DocumentWithChunks> for DocumentDetail {
     fn from(value: DocumentWithChunks) -> Self {
         let document = value.document;
+        let source_download_path = document
+            .source_file
+            .as_ref()
+            .map(|_| format!("/v1/source-file?document_id={}", document.id));
         Self {
             id: document.id,
             uri: document.uri,
@@ -3629,6 +3635,8 @@ impl From<DocumentWithChunks> for DocumentDetail {
             metadata_json: document.metadata_json,
             created_at: document.created_at.to_rfc3339(),
             updated_at: document.updated_at.to_rfc3339(),
+            source_file: document.source_file,
+            source_download_path,
             chunks: value
                 .chunks
                 .map(|chunks| chunks.into_iter().map(ChunkView::from).collect()),
@@ -3652,6 +3660,8 @@ struct SourceDetail {
     room: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_download_path: Option<String>,
     layer: String,
     kind: String,
     created_at: String,
@@ -3819,33 +3829,33 @@ mod tests {
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
         let server = RagServer::new(store, embedder, config);
         let first = server
-            .ingest_pipeline(
-                "alpha architecture and duckdb reliability ".repeat(80),
-                Some("Alpha".into()),
-                Some("file://alpha.md".into()),
-                None,
-                Some("rag".into()),
-                Some("docs".into()),
-                None,
-                "raw",
-                "document",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "alpha architecture and duckdb reliability ".repeat(80),
+                title: Some("Alpha".into()),
+                uri: Some("file://alpha.md".into()),
+                metadata_json: None,
+                wing: Some("rag".into()),
+                room: Some("docs".into()),
+                source_file: None,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .unwrap();
         let second = server
-            .ingest_pipeline(
-                "alpha architecture with database recovery ".repeat(80),
-                Some("Beta".into()),
-                Some("file://beta.md".into()),
-                None,
-                Some("rag".into()),
-                Some("docs".into()),
-                None,
-                "raw",
-                "document",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "alpha architecture with database recovery ".repeat(80),
+                title: Some("Beta".into()),
+                uri: Some("file://beta.md".into()),
+                metadata_json: None,
+                wing: Some("rag".into()),
+                room: Some("docs".into()),
+                source_file: None,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .unwrap();
 
@@ -3953,18 +3963,18 @@ mod tests {
         let server = RagServer::new(store, embedder, config);
 
         server
-            .ingest_pipeline(
-                "hello searchable world".into(),
-                Some("t".into()),
-                Some("text://ready".into()),
-                None,
-                None,
-                None,
-                None,
-                "raw",
-                "document",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "hello searchable world".into(),
+                title: Some("t".into()),
+                uri: Some("text://ready".into()),
+                metadata_json: None,
+                wing: None,
+                room: None,
+                source_file: None,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .expect("ingest");
 
@@ -3996,18 +4006,18 @@ mod tests {
             ("gamma body", "raw://c", "ops", "runbooks"),
         ] {
             server
-                .ingest_pipeline(
-                    text.into(),
-                    Some(uri.into()),
-                    Some(uri.into()),
-                    None,
-                    Some(wing.into()),
-                    Some(room.into()),
-                    None,
-                    "raw",
-                    "document",
-                    true,
-                )
+                .ingest_pipeline(IngestCommand {
+                    text: text.into(),
+                    title: Some(uri.into()),
+                    uri: Some(uri.into()),
+                    metadata_json: None,
+                    wing: Some(wing.into()),
+                    room: Some(room.into()),
+                    source_file: None,
+                    layer: "raw".into(),
+                    kind: "document".into(),
+                    immutable: true,
+                })
                 .await
                 .expect("ingest");
         }
@@ -4060,18 +4070,18 @@ mod tests {
 
         // Wiki layer so body updates are allowed (raw is immutable).
         let ing = server
-            .ingest_pipeline(
-                "original wiki body about retrieval".into(),
-                Some("Wiki note".into()),
-                Some("wiki://meta-test".into()),
-                Some(r#"{"k":1}"#.into()),
-                Some("research".into()),
-                Some("rag".into()),
-                None,
-                "wiki",
-                "wiki",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "original wiki body about retrieval".into(),
+                title: Some("Wiki note".into()),
+                uri: Some("wiki://meta-test".into()),
+                metadata_json: Some(r#"{"k":1}"#.into()),
+                wing: Some("research".into()),
+                room: Some("rag".into()),
+                source_file: None,
+                layer: "wiki".into(),
+                kind: "wiki".into(),
+                immutable: false,
+            })
             .await
             .expect("ingest");
         let chunks_before = server
@@ -4138,18 +4148,18 @@ mod tests {
 
         // Raw layer refuses content rewrite.
         let raw = server
-            .ingest_pipeline(
-                "raw immutable body".into(),
-                Some("raw".into()),
-                Some("raw://meta-raw".into()),
-                None,
-                Some("research".into()),
-                Some("rag".into()),
-                None,
-                "raw",
-                "document",
-                true,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "raw immutable body".into(),
+                title: Some("raw".into()),
+                uri: Some("raw://meta-raw".into()),
+                metadata_json: None,
+                wing: Some("research".into()),
+                room: Some("rag".into()),
+                source_file: None,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: true,
+            })
             .await
             .expect("raw ingest");
         let refuse = server
@@ -4175,33 +4185,33 @@ mod tests {
         let body = "duplicate candidate body";
         let src = "/vault/shared.md";
         server
-            .ingest_pipeline(
-                body.into(),
-                Some("One".into()),
-                Some("raw://one".into()),
-                None,
-                Some("lab".into()),
-                Some("a".into()),
-                Some(src.into()),
-                "raw",
-                "document",
-                true,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: body.into(),
+                title: Some("One".into()),
+                uri: Some("raw://one".into()),
+                metadata_json: None,
+                wing: Some("lab".into()),
+                room: Some("a".into()),
+                source_file: Some(src.into()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: true,
+            })
             .await
             .expect("ingest one");
         server
-            .ingest_pipeline(
-                "other".into(),
-                Some("Two".into()),
-                Some("raw://two".into()),
-                None,
-                Some("lab".into()),
-                Some("b".into()),
-                Some(src.into()),
-                "raw",
-                "document",
-                true,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "other".into(),
+                title: Some("Two".into()),
+                uri: Some("raw://two".into()),
+                metadata_json: None,
+                wing: Some("lab".into()),
+                room: Some("b".into()),
+                source_file: Some(src.into()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: true,
+            })
             .await
             .expect("ingest two");
 
@@ -4240,18 +4250,18 @@ mod tests {
         let server = RagServer::new(store, embedder, config);
 
         let r1 = server
-            .ingest_pipeline(
-                "verbatim source alpha".into(),
-                Some("Alpha".into()),
-                Some("raw://alpha".into()),
-                None,
-                Some("projects".into()),
-                Some("lab".into()),
-                Some("/vault/alpha.md".into()),
-                "raw",
-                "document",
-                true,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "verbatim source alpha".into(),
+                title: Some("Alpha".into()),
+                uri: Some("raw://alpha".into()),
+                metadata_json: None,
+                wing: Some("projects".into()),
+                room: Some("lab".into()),
+                source_file: Some("/vault/alpha.md".into()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: true,
+            })
             .await
             .expect("ingest_raw");
         assert!(r1.chunk_count >= 1);
@@ -4259,18 +4269,18 @@ mod tests {
 
         // Same uri + content: idempotent no-op (stable id).
         let r2 = server
-            .ingest_pipeline(
-                "verbatim source alpha".into(),
-                Some("Alpha".into()),
-                Some("raw://alpha".into()),
-                None,
-                Some("projects".into()),
-                Some("lab".into()),
-                Some("/vault/alpha.md".into()),
-                "raw",
-                "document",
-                true,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "verbatim source alpha".into(),
+                title: Some("Alpha".into()),
+                uri: Some("raw://alpha".into()),
+                metadata_json: None,
+                wing: Some("projects".into()),
+                room: Some("lab".into()),
+                source_file: Some("/vault/alpha.md".into()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: true,
+            })
             .await
             .expect("re-ingest same");
         assert_eq!(r2.document_id, r1.document_id);
@@ -4278,18 +4288,18 @@ mod tests {
 
         // Same uri + different content: conflict under immutable policy.
         let err = server
-            .ingest_pipeline(
-                "changed content".into(),
-                Some("Alpha".into()),
-                Some("raw://alpha".into()),
-                None,
-                None,
-                None,
-                None,
-                "raw",
-                "document",
-                true,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "changed content".into(),
+                title: Some("Alpha".into()),
+                uri: Some("raw://alpha".into()),
+                metadata_json: None,
+                wing: None,
+                room: None,
+                source_file: None,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: true,
+            })
             .await
             .expect_err("must refuse content change");
         assert!(
@@ -4353,18 +4363,18 @@ mod tests {
             .expect("inside allowed");
         let text = std::fs::read_to_string(&inside).expect("read");
         let result = server
-            .ingest_pipeline(
+            .ingest_pipeline(IngestCommand {
                 text,
-                Some("note.md".into()),
-                Some(format!("file://{}", inside.display())),
-                None,
-                None,
-                None,
-                Some(inside.display().to_string()),
-                "raw",
-                "document",
-                false,
-            )
+                title: Some("note.md".into()),
+                uri: Some(format!("file://{}", inside.display())),
+                metadata_json: None,
+                wing: None,
+                room: None,
+                source_file: Some(inside.display().to_string()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .expect("ingest inside");
         assert!(result.chunk_count >= 1);
@@ -4393,18 +4403,18 @@ mod tests {
 
         // add_drawer path = ingest with required wing/room + optional source_file.
         let ing = server
-            .ingest_pipeline(
-                body.into(),
-                Some("Drawer A".into()),
-                Some("drawer://a".into()),
-                None,
-                Some("projects".into()),
-                Some("notes".into()),
-                Some("/vault/drawer-a.md".into()),
-                "raw",
-                "document",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: body.into(),
+                title: Some("Drawer A".into()),
+                uri: Some("drawer://a".into()),
+                metadata_json: None,
+                wing: Some("projects".into()),
+                room: Some("notes".into()),
+                source_file: Some("/vault/drawer-a.md".into()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .expect("add_drawer ingest");
         assert!(ing.chunk_count >= 1);
@@ -4481,18 +4491,18 @@ mod tests {
         let server = RagServer::new(store, embedder, config);
 
         let ingest = server
-            .ingest_pipeline(
-                "reembed me please".into(),
-                Some("re".into()),
-                Some("text://reembed".into()),
-                None,
-                None,
-                None,
-                None,
-                "raw",
-                "document",
-                false,
-            )
+            .ingest_pipeline(IngestCommand {
+                text: "reembed me please".into(),
+                title: Some("re".into()),
+                uri: Some("text://reembed".into()),
+                metadata_json: None,
+                wing: None,
+                room: None,
+                source_file: None,
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
             .await
             .expect("ingest");
 

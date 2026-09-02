@@ -41,6 +41,9 @@ pub fn draw_canvas(
     let (response, painter) =
         ui.allocate_painter(ui.available_size_before_wrap(), Sense::click_and_drag());
     let rect = response.rect;
+    let canvas_pointer = ui
+        .input(|input| input.pointer.hover_pos())
+        .filter(|pointer| rect.contains(*pointer));
 
     // Subtle canvas background so empty vs graph is obvious.
     painter.rect_filled(rect, 0.0, Color32::from_rgb(18, 18, 24));
@@ -58,32 +61,13 @@ pub fn draw_canvas(
     }
 
     // Zoom toward pointer (scroll / trackpad).
-    if response.hovered() {
+    if let Some(pivot) = canvas_pointer {
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll.abs() > 0.0 {
             let factor = (1.0 + scroll * 0.001).clamp(0.9, 1.1);
-            let pivot = response.hover_pos().unwrap_or(rect.center());
             zoom_at(zoom, pan, pivot, factor);
         }
     }
-
-    // View controls overlay: Fit + zoom in/out (top-right corner).
-    let ctl_rect = Rect::from_min_size(
-        rect.right_top() + Vec2::new(-132.0, 6.0),
-        Vec2::new(126.0, 24.0),
-    );
-    let mut ctl = ui.new_child(egui::UiBuilder::new().max_rect(ctl_rect));
-    ctl.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if ui.button("+").on_hover_text("Zoom in").clicked() {
-            zoom_at(zoom, pan, rect.center(), 1.25);
-        }
-        if ui.button("−").on_hover_text("Zoom out").clicked() {
-            zoom_at(zoom, pan, rect.center(), 0.8);
-        }
-        if ui.button("Fit").on_hover_text("Fit graph to view").clicked() {
-            *need_fit = true;
-        }
-    });
 
     let z = *zoom;
     let p = *pan;
@@ -109,10 +93,9 @@ pub fn draw_canvas(
             "tagged" | "mentions" => 1.0,
             _ => 1.2,
         };
-        let width = (base_w
-            + (e.weight as f32).ln_1p() * 0.45
-            + (e.multi_count as f32 - 1.0) * 0.25)
-            .clamp(0.6, 5.0);
+        let width =
+            (base_w + (e.weight as f32).ln_1p() * 0.45 + (e.multi_count as f32 - 1.0) * 0.25)
+                .clamp(0.6, 5.0);
         let color = edge_color(&e.rel_type);
         let stroke = Stroke::new(width, color);
         match e.rel_type.as_str() {
@@ -120,8 +103,10 @@ pub fn draw_canvas(
             _ => {
                 painter.line_segment([sa, sb], stroke);
                 // Direction arrow for directed rel types (EGUI_GRAPH_VIEW §7.2).
-                if matches!(e.rel_type.as_str(), "wikilink" | "depends_on" | "derived_from" | "supersedes")
-                {
+                if matches!(
+                    e.rel_type.as_str(),
+                    "wikilink" | "depends_on" | "derived_from" | "supersedes"
+                ) {
                     draw_arrowhead(&painter, sa, sb, stroke);
                 }
             }
@@ -130,7 +115,7 @@ pub fn draw_canvas(
 
     let n_nodes = graph.nodes.len();
     let show_all_labels = n_nodes <= 40 || z > 1.8;
-    let pointer = response.hover_pos();
+    let pointer = canvas_pointer;
     let click_pos = if response.clicked() {
         response.interact_pointer_pos()
     } else {
@@ -168,9 +153,53 @@ pub fn draw_canvas(
         });
     }
 
+    // Every visible node is a real focusable egui widget. That supplies Tab and
+    // spatial arrow navigation, Enter/Space activation, and an AccessKit node
+    // with a meaningful label while preserving painter-based rendering.
+    let mut interaction_clicked_id = None;
+    let mut focused_id = None;
+    let mut node_drag_delta = Vec2::ZERO;
+    for sn in &screen_nodes {
+        let hit_size = (sn.radius * 2.3).max(24.0);
+        let hit_rect = Rect::from_center_size(sn.center, Vec2::splat(hit_size));
+        if !hit_rect.intersects(rect) {
+            continue;
+        }
+        let hit_rect = hit_rect.intersect(rect);
+        let node_response = ui.interact(
+            hit_rect,
+            response.id.with(("graph_node", sn.node.id.as_str())),
+            Sense::click_and_drag(),
+        );
+        node_response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                true,
+                selected == Some(sn.node.id.as_str()),
+                node_accessibility_label(sn.node),
+            )
+        });
+        if node_response.clicked() {
+            interaction_clicked_id = Some(sn.node.id.clone());
+        }
+        if node_response.has_focus() {
+            focused_id = Some(sn.node.id.clone());
+        }
+        if node_response.dragged() {
+            node_drag_delta = node_response.drag_delta();
+        }
+    }
+    if node_drag_delta != Vec2::ZERO && !response.dragged() {
+        // Keep the canvas pannable even when the gesture starts on a focusable
+        // node target rather than on empty background.
+        *pan += node_drag_delta;
+    }
+
     // Hit test: closest center among nodes whose hit radius contains the pointer.
     let hover_id = pointer.and_then(|pos| pick_node(&screen_nodes, pos).map(|n| n.id.clone()));
-    let clicked_id = click_pos.and_then(|pos| pick_node(&screen_nodes, pos).map(|n| n.id.clone()));
+    let clicked_id = interaction_clicked_id.or_else(|| {
+        click_pos.and_then(|pos| pick_node(&screen_nodes, pos).map(|node| node.id.clone()))
+    });
     let clicked_empty = response.clicked() && clicked_id.is_none();
 
     // Paint order: non-selected first, selected last (on top).
@@ -189,6 +218,7 @@ pub fn draw_canvas(
         let center = sn.center;
         let radius = sn.radius;
         let selected_here = selected == Some(node.id.as_str());
+        let focused_here = focused_id.as_deref() == Some(node.id.as_str());
         let is_stub = node.kind == "stub" || !node.resolved;
 
         // Fill color comes from adapter kind_color (document/tag/stub/entity).
@@ -218,6 +248,14 @@ pub fn draw_canvas(
             );
         }
 
+        if focused_here {
+            painter.circle_stroke(
+                center,
+                radius + 5.0,
+                Stroke::new(2.0, Color32::from_rgb(105, 170, 255)),
+            );
+        }
+
         let show_label = selected_here
             || hover_id.as_deref() == Some(node.id.as_str())
             || node.depth == 0
@@ -241,6 +279,29 @@ pub fn draw_canvas(
             painter.galley(label_rect.min + Vec2::splat(2.0), galley, text_color);
         }
     }
+
+    // View controls are registered after node hit targets so they remain the
+    // topmost interaction if a node sits beneath the overlay.
+    let ctl_rect = Rect::from_min_size(
+        rect.right_top() + Vec2::new(-132.0, 6.0),
+        Vec2::new(126.0, 24.0),
+    );
+    let mut ctl = ui.new_child(egui::UiBuilder::new().max_rect(ctl_rect));
+    ctl.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui.button("+").on_hover_text("Zoom in").clicked() {
+            zoom_at(zoom, pan, rect.center(), 1.25);
+        }
+        if ui.button("−").on_hover_text("Zoom out").clicked() {
+            zoom_at(zoom, pan, rect.center(), 0.8);
+        }
+        if ui
+            .button("Fit")
+            .on_hover_text("Fit graph to view")
+            .clicked()
+        {
+            *need_fit = true;
+        }
+    });
 
     draw_legend(&painter, rect, graph);
 
@@ -271,6 +332,18 @@ pub fn draw_canvas(
         clicked_empty,
         hover_id,
     }
+}
+
+fn node_accessibility_label(node: &UiNode) -> String {
+    let resolution = if node.resolved {
+        "resolved"
+    } else {
+        "unresolved"
+    };
+    format!(
+        "{}; {} node; {resolution}; {} connections; depth {}",
+        node.label, node.kind, node.degree, node.depth
+    )
 }
 
 /// Zoom around a pivot point (screen coords), clamped like scroll zoom.
@@ -398,5 +471,34 @@ fn dashed_circle(painter: &egui::Painter, center: Pos2, radius: f32, stroke: Str
         let p0 = center + Vec2::new(a0.cos(), a0.sin()) * radius;
         let p1 = center + Vec2::new(a1.cos(), a1.sin()) * radius;
         painter.line_segment([p0, p1], stroke);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accessible_node_label_exposes_identity_and_topology() {
+        let node = UiNode {
+            id: "node-1".into(),
+            kind: "document".into(),
+            label: "Architecture".into(),
+            color: Color32::WHITE,
+            document_id: Some("doc-1".into()),
+            uri: Some("wiki://architecture".into()),
+            resolved: true,
+            layer: Some("wiki".into()),
+            wing: Some("alpha".into()),
+            room: None,
+            depth: 2,
+            degree: 7,
+            pinned: false,
+        };
+        let label = node_accessibility_label(&node);
+        assert!(label.contains("Architecture"));
+        assert!(label.contains("document node"));
+        assert!(label.contains("7 connections"));
+        assert!(label.contains("depth 2"));
     }
 }

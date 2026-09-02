@@ -1,8 +1,8 @@
 //! Graph + document HTTP handlers (`/v1/graph`, neighbors, find, document).
 
 use axum::extract::{Query, State};
-use axum::response::{IntoResponse, Response};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
@@ -29,15 +29,25 @@ struct GraphQuery {
     max_nodes: Option<u32>,
     #[serde(default)]
     include_tags: Option<bool>,
+    #[serde(default, alias = "wing")]
+    project: Option<String>,
 }
 
-async fn graph(
-    State(st): State<HttpState>,
-    Query(q): Query<GraphQuery>,
-) -> impl IntoResponse {
+async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl IntoResponse {
     let max = q.max_nodes.unwrap_or(500);
     let tags = q.include_tags.unwrap_or(false);
-    match st.store.export_graph_for_ui(Some(max), tags) {
+    let result = match q
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        Some(project) => st
+            .store
+            .export_project_graph_for_ui(project, Some(max), tags),
+        None => st.store.export_graph_for_ui(Some(max), tags),
+    };
+    match result {
         Ok(view) => api_ok(view),
         Err(e) => api_err(e),
     }
@@ -50,6 +60,10 @@ struct NeighborsQuery {
     depth: Option<u32>,
     #[serde(default)]
     max_nodes: Option<u32>,
+    #[serde(default, alias = "wing")]
+    project: Option<String>,
+    #[serde(default)]
+    include_tags: Option<bool>,
 }
 
 async fn neighbors(
@@ -62,6 +76,27 @@ async fn neighbors(
     }
     let depth = q.depth.unwrap_or(1).clamp(1, 3);
     let max_nodes = q.max_nodes.unwrap_or(100).clamp(1, 300);
+
+    if let Some(project) = q
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        return match st.store.export_project_neighbors_for_ui(
+            project,
+            seed,
+            depth,
+            max_nodes,
+            q.include_tags.unwrap_or(false),
+        ) {
+            Ok(view) if view.nodes.is_empty() => api_err(AppError::not_found(format!(
+                "no graph node for seed '{seed}' in project '{project}'"
+            ))),
+            Ok(view) => api_ok(view),
+            Err(e) => api_err(e),
+        };
+    }
 
     // Resolve seed like UI: id, document_id, or label.
     let node_id = match resolve_seed(&st.store, seed) {
@@ -80,10 +115,7 @@ struct FindQuery {
     q: String,
 }
 
-async fn find_node(
-    State(st): State<HttpState>,
-    Query(q): Query<FindQuery>,
-) -> impl IntoResponse {
+async fn find_node(State(st): State<HttpState>, Query(q): Query<FindQuery>) -> impl IntoResponse {
     let key = q.q.trim();
     if key.is_empty() {
         return api_err(AppError::config("q required"));
@@ -119,7 +151,13 @@ async fn document(
     match resolve_document(&st.store, &q) {
         Ok(doc) => {
             let etag = doc.etag();
-            if headers.get(axum::http::header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) == Some(etag.as_str()) { return StatusCode::NOT_MODIFIED.into_response(); }
+            if headers
+                .get(axum::http::header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok())
+                == Some(etag.as_str())
+            {
+                return StatusCode::NOT_MODIFIED.into_response();
+            }
             let mut response = api_ok(json!({
             "id": doc.id,
             "uri": doc.uri,
@@ -135,16 +173,16 @@ async fn document(
             "revision": doc.revision,
             "etag": doc.etag(),
             }));
-            response.headers_mut().insert(axum::http::header::ETAG, etag.parse().unwrap()); response
-        },
+            response
+                .headers_mut()
+                .insert(axum::http::header::ETAG, etag.parse().unwrap());
+            response
+        }
         Err(e) => api_err(e),
     }
 }
 
-fn resolve_document(
-    store: &Store,
-    q: &DocumentQuery,
-) -> Result<crate::models::Document, AppError> {
+fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::Document, AppError> {
     if let Some(id) = q.id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return store
             .get_document(id)?
@@ -155,12 +193,11 @@ fn resolve_document(
             .find_by_uri(uri)?
             .ok_or_else(|| AppError::not_found(format!("document uri '{uri}'")));
     }
-    let key = q
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::config("provide id, uri, or q"))?;
+    let key =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| AppError::config("provide id, uri, or q"))?;
 
     // Direct document id or uri before graph seed.
     if let Some(doc) = store.get_document(key)? {

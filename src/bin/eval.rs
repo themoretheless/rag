@@ -16,7 +16,8 @@ use std::{
 
 const VERSION: u32 = 1;
 const DEFAULT_DATASET: &str = "data/eval/example-v1.json";
-const ANN_CHUNKS: u64 = 50_000;
+// Retained in the JSON report as a historical scale marker, never as an ANN trigger.
+const CHUNK_OBSERVATION_MARKER: u64 = 50_000;
 const ANN_P95_MS: f64 = 300.0;
 const SYNTHETIC_CHUNKS_PER_DOCUMENT: usize = 256;
 
@@ -49,6 +50,7 @@ struct Report {
     top_k: usize,
     corpus: CorpusDiagnostics,
     sampling: SamplingDiagnostics,
+    resources: ResourceDiagnostics,
     modes: Vec<ModeReport>,
     scale_recommendation: Recommendation,
 }
@@ -73,6 +75,11 @@ struct SamplingDiagnostics {
     samples_per_mode: usize,
 }
 #[derive(Serialize)]
+struct ResourceDiagnostics {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rss_mib: Option<f64>,
+}
+#[derive(Serialize)]
 struct ModeReport {
     mode: String,
     recall_at_k: f64,
@@ -80,6 +87,8 @@ struct ModeReport {
     ndcg_at_k: f64,
     mean_search_ms: f64,
     p95_search_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_throughput_qps: Option<f64>,
     queries: Vec<QueryReport>,
 }
 #[derive(Serialize)]
@@ -103,8 +112,21 @@ struct ResultItem {
 struct Recommendation {
     path: String,
     reason: String,
+    /// Historical report field retained for JSON compatibility; observation only.
     chunk_threshold: u64,
     p95_search_ms_threshold: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rss_mib_threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    throughput_qps_threshold: Option<f64>,
+    failed_thresholds: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+struct RecommendationThresholds {
+    p95_search_ms: f64,
+    rss_mib: Option<f64>,
+    throughput_qps: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +145,8 @@ struct Args {
     min_recall_at_k: Option<f64>,
     min_mrr: Option<f64>,
     max_p95_ms: Option<f64>,
+    max_rss_mib: Option<f64>,
+    min_throughput_qps: Option<f64>,
     feedback_jsonl: Option<PathBuf>,
     history_jsonl: Option<PathBuf>,
     warmup: usize,
@@ -159,6 +183,8 @@ where
     let mut min_recall_at_k: Option<f64> = None;
     let mut min_mrr: Option<f64> = None;
     let mut max_p95_ms: Option<f64> = None;
+    let mut max_rss_mib: Option<f64> = None;
+    let mut min_throughput_qps: Option<f64> = None;
     let mut feedback_jsonl = None;
     let mut history_jsonl = None;
     let mut warmup = 0;
@@ -193,6 +219,16 @@ where
             "--max-p95-ms" => {
                 max_p95_ms = Some(it.next().context("--max-p95-ms needs value")?.parse()?)
             }
+            "--max-rss-mib" => {
+                max_rss_mib = Some(it.next().context("--max-rss-mib needs value")?.parse()?)
+            }
+            "--min-throughput-qps" => {
+                min_throughput_qps = Some(
+                    it.next()
+                        .context("--min-throughput-qps needs value")?
+                        .parse()?,
+                )
+            }
             "--feedback-jsonl" => {
                 feedback_jsonl = Some(PathBuf::from(
                     it.next().context("--feedback-jsonl needs path")?,
@@ -216,7 +252,8 @@ where
                 eprintln!(
                     "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N]\n\
                      \t[--modes lex,vec,hybrid] [--json] [--min-recall-at-k N]\n\
-                     \t[--min-mrr N] [--max-p95-ms N] [--feedback-jsonl FILE]\n\
+                     \t[--min-mrr N] [--max-p95-ms N] [--max-rss-mib N]\n\
+                     \t[--min-throughput-qps N] [--feedback-jsonl FILE]\n\
                      \t[--history-jsonl FILE] [--warmup N] [--repeat N]\n\
                      \t[--synthetic-chunks N]\n\
                      Uses a throwaway database. --golden remains a --dataset alias."
@@ -244,6 +281,12 @@ where
     if max_p95_ms.is_some_and(|v| !v.is_finite() || v <= 0.0) {
         bail!("--max-p95-ms must be greater than zero");
     }
+    if max_rss_mib.is_some_and(|v| !v.is_finite() || v <= 0.0) {
+        bail!("--max-rss-mib must be greater than zero");
+    }
+    if min_throughput_qps.is_some_and(|v| !v.is_finite() || v <= 0.0) {
+        bail!("--min-throughput-qps must be greater than zero");
+    }
     Ok(Args {
         dataset: dataset.unwrap_or_else(|| root.join(DEFAULT_DATASET)),
         root,
@@ -253,6 +296,8 @@ where
         min_recall_at_k,
         min_mrr,
         max_p95_ms,
+        max_rss_mib,
+        min_throughput_qps,
         feedback_jsonl,
         history_jsonl,
         warmup,
@@ -307,6 +352,34 @@ async fn run(args: Args) -> Result<()> {
                 mode.mode,
                 mode.p95_search_ms,
                 args.max_p95_ms.unwrap()
+            );
+        }
+        if mode.mode != "lex" {
+            if let Some(minimum) = args.min_throughput_qps {
+                let measured = mode.search_throughput_qps.with_context(|| {
+                    format!("{} search throughput could not be measured", mode.mode)
+                })?;
+                if measured < minimum {
+                    bail!(
+                        "{} throughput {:.2} qps is below threshold {:.2} qps",
+                        mode.mode,
+                        measured,
+                        minimum
+                    );
+                }
+            }
+        }
+    }
+    if let Some(maximum) = args.max_rss_mib {
+        let measured = report
+            .resources
+            .rss_mib
+            .context("RSS could not be measured on this platform; cannot enforce --max-rss-mib")?;
+        if measured > maximum {
+            bail!(
+                "RSS {:.2} MiB exceeds threshold {:.2} MiB",
+                measured,
+                maximum
             );
         }
     }
@@ -470,27 +543,33 @@ async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Repor
         .len()
         .checked_mul(args.repeat)
         .context("query count multiplied by --repeat overflows usize")?;
+    let eval_context = EvalModeContext {
+        store: &store,
+        embedder: &embedder,
+        config: &config,
+        queries: &dataset.queries,
+        top_k: args.top_k,
+    };
     let mut modes = Vec::new();
     for mode in &args.modes {
-        modes.push(
-            eval_mode(
-                &store,
-                &embedder,
-                &config,
-                &dataset.queries,
-                *mode,
-                args.top_k,
-                args.warmup,
-                args.repeat,
-            )
-            .await?,
-        );
+        modes.push(eval_mode(&eval_context, *mode, args.warmup, args.repeat).await?);
     }
     let worst_p95 = modes
         .iter()
         .filter(|m| m.mode != "lex")
         .map(|m| m.p95_search_ms)
-        .fold(0.0, f64::max);
+        .reduce(f64::max);
+    let minimum_throughput_qps = modes
+        .iter()
+        .filter(|m| m.mode != "lex")
+        .filter_map(|m| m.search_throughput_qps)
+        .reduce(f64::min);
+    let rss_mib = process_rss_mib();
+    let thresholds = RecommendationThresholds {
+        p95_search_ms: args.max_p95_ms.unwrap_or(ANN_P95_MS),
+        rss_mib: args.max_rss_mib,
+        throughput_qps: args.min_throughput_qps,
+    };
     Ok(Report {
         dataset_version: dataset.version,
         dataset_name: dataset.name,
@@ -507,8 +586,15 @@ async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Repor
             repeat: args.repeat,
             samples_per_mode,
         },
+        resources: ResourceDiagnostics { rss_mib },
         modes,
-        scale_recommendation: recommend(chunks, worst_p95),
+        scale_recommendation: recommend(
+            chunks,
+            worst_p95,
+            rss_mib,
+            minimum_throughput_qps,
+            thresholds,
+        ),
     })
 }
 
@@ -544,29 +630,49 @@ fn load_dataset(path: &Path) -> Result<Dataset> {
     Ok(data)
 }
 
-async fn eval_mode(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    queries: &[LabeledQuery],
-    mode: SearchMode,
+struct EvalModeContext<'a> {
+    store: &'a Store,
+    embedder: &'a Arc<dyn EmbeddingProvider>,
+    config: &'a Config,
+    queries: &'a [LabeledQuery],
     top_k: usize,
+}
+
+async fn eval_mode(
+    context: &EvalModeContext<'_>,
+    mode: SearchMode,
     warmup: usize,
     repeat: usize,
 ) -> Result<ModeReport> {
     for _ in 0..warmup {
-        for query in queries {
-            let _ = eval_query(store, embedder, config, query, mode, top_k).await?;
+        for query in context.queries {
+            let _ = eval_query(
+                context.store,
+                context.embedder,
+                context.config,
+                query,
+                mode,
+                context.top_k,
+            )
+            .await?;
         }
     }
 
-    let mut reports = Vec::with_capacity(queries.len());
-    let mut embedding_totals = vec![0.0; queries.len()];
-    let mut search_totals = vec![0.0; queries.len()];
-    let mut timings = Vec::with_capacity(queries.len() * repeat);
+    let mut reports = Vec::with_capacity(context.queries.len());
+    let mut embedding_totals = vec![0.0; context.queries.len()];
+    let mut search_totals = vec![0.0; context.queries.len()];
+    let mut timings = Vec::with_capacity(context.queries.len() * repeat);
     for repetition in 0..repeat {
-        for (query_index, query) in queries.iter().enumerate() {
-            let report = eval_query(store, embedder, config, query, mode, top_k).await?;
+        for (query_index, query) in context.queries.iter().enumerate() {
+            let report = eval_query(
+                context.store,
+                context.embedder,
+                context.config,
+                query,
+                mode,
+                context.top_k,
+            )
+            .await?;
             embedding_totals[query_index] += report.embedding_ms;
             search_totals[query_index] += report.search_ms;
             timings.push(report.search_ms);
@@ -582,13 +688,15 @@ async fn eval_mode(
     let n = reports.len() as f64;
     timings.sort_by(f64::total_cmp);
     let sample_count = timings.len() as f64;
+    let total_search_ms = timings.iter().sum::<f64>();
     Ok(ModeReport {
         mode: mode.as_str().into(),
         recall_at_k: reports.iter().map(|q| q.recall_at_k).sum::<f64>() / n,
         mrr: reports.iter().map(|q| q.reciprocal_rank).sum::<f64>() / n,
         ndcg_at_k: reports.iter().map(|q| q.ndcg_at_k).sum::<f64>() / n,
-        mean_search_ms: timings.iter().sum::<f64>() / sample_count,
+        mean_search_ms: total_search_ms / sample_count,
         p95_search_ms: percentile(&timings),
+        search_throughput_qps: measured_throughput_qps(timings.len(), total_search_ms),
         queries: reports,
     })
 }
@@ -691,21 +799,136 @@ fn ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1_000.0
 }
 
-fn recommend(chunks: u64, p95: f64) -> Recommendation {
-    let full_scan = chunks <= ANN_CHUNKS && p95 <= ANN_P95_MS;
+fn measured_throughput_qps(samples: usize, total_search_ms: f64) -> Option<f64> {
+    (samples > 0 && total_search_ms.is_finite() && total_search_ms > 0.0)
+        .then(|| samples as f64 * 1_000.0 / total_search_ms)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_rss_mib(status: &str) -> Option<f64> {
+    ["VmHWM:", "VmRSS:"].into_iter().find_map(|field| {
+        status
+            .lines()
+            .find(|line| line.starts_with(field))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<f64>().ok())
+            .map(|kib| kib / 1_024.0)
+    })
+}
+
+fn process_rss_mib() -> Option<f64> {
+    #[cfg(target_os = "linux")]
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        if let Some(rss_mib) = linux_rss_mib(&status) {
+            return Some(rss_mib);
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        let pid = std::process::id().to_string();
+        let output = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", pid.as_str()])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8(output.stdout)
+            .ok()?
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .map(|kib| kib / 1_024.0)
+    }
+
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+fn recommend(
+    chunks: u64,
+    p95_search_ms: Option<f64>,
+    rss_mib: Option<f64>,
+    throughput_qps: Option<f64>,
+    thresholds: RecommendationThresholds,
+) -> Recommendation {
+    let vector_path_measured = p95_search_ms.is_some();
+    let mut failed_thresholds = Vec::new();
+    if p95_search_ms.is_some_and(|measured| measured > thresholds.p95_search_ms) {
+        failed_thresholds.push("p95_search_ms".to_string());
+    }
+    if vector_path_measured
+        && thresholds
+            .rss_mib
+            .zip(rss_mib)
+            .is_some_and(|(maximum, measured)| measured > maximum)
+    {
+        failed_thresholds.push("rss_mib".to_string());
+    }
+    if thresholds
+        .throughput_qps
+        .zip(throughput_qps)
+        .is_some_and(|(minimum, measured)| measured < minimum)
+    {
+        failed_thresholds.push("throughput_qps".to_string());
+    }
+
+    let mut observations = vec![format!(
+        "{chunks} chunks observed (chunk count is not an ANN trigger)"
+    )];
+    match p95_search_ms {
+        Some(measured) => observations.push(format!(
+            "vector/hybrid p95 {measured:.2} ms against {:.2} ms",
+            thresholds.p95_search_ms
+        )),
+        None => observations.push("vector/hybrid latency not measured".into()),
+    }
+    match (rss_mib, thresholds.rss_mib) {
+        (Some(measured), Some(maximum)) => {
+            observations.push(format!("RSS {measured:.2} MiB against {maximum:.2} MiB"))
+        }
+        (Some(measured), None) => observations.push(format!(
+            "RSS {measured:.2} MiB observed without a configured threshold"
+        )),
+        (None, Some(_)) => observations.push("RSS unavailable; threshold not evaluated".into()),
+        (None, None) => observations.push("RSS unavailable".into()),
+    }
+    match (throughput_qps, thresholds.throughput_qps) {
+        (Some(measured), Some(minimum)) => observations.push(format!(
+            "vector/hybrid throughput {measured:.2} qps against {minimum:.2} qps"
+        )),
+        (Some(measured), None) => observations.push(format!(
+            "vector/hybrid throughput {measured:.2} qps observed without a configured threshold"
+        )),
+        (None, Some(_)) => observations
+            .push("vector/hybrid throughput unavailable; threshold not evaluated".into()),
+        (None, None) => observations.push("vector/hybrid throughput not measured".into()),
+    }
+    if failed_thresholds.is_empty() {
+        observations.push("no measured ANN threshold failed".into());
+    } else {
+        observations.push(format!(
+            "failed measured threshold(s): {}",
+            failed_thresholds.join(", ")
+        ));
+    }
+
     Recommendation {
-        path: if full_scan {
+        path: if failed_thresholds.is_empty() {
             "full_scan"
         } else {
             "investigate_future_ann"
         }
         .into(),
-        reason: format!(
-            "{} chunks and {:.2} ms worst vector/hybrid p95; profile before any backend change",
-            chunks, p95
-        ),
-        chunk_threshold: ANN_CHUNKS,
-        p95_search_ms_threshold: ANN_P95_MS,
+        reason: observations.join("; "),
+        chunk_threshold: CHUNK_OBSERVATION_MARKER,
+        p95_search_ms_threshold: thresholds.p95_search_ms,
+        rss_mib_threshold: thresholds.rss_mib,
+        throughput_qps_threshold: thresholds.throughput_qps,
+        failed_thresholds,
     }
 }
 
@@ -729,9 +952,18 @@ fn print_report(r: &Report) {
         "sampling={} measured/mode ({} queries x repeat {}), warmup={} pass(es)",
         r.sampling.samples_per_mode, r.sampling.queries, r.sampling.repeat, r.sampling.warmup
     );
+    if let Some(rss_mib) = r.resources.rss_mib {
+        println!("rss={rss_mib:.2}MiB");
+    } else {
+        println!("rss=unavailable");
+    }
     for mode in &r.modes {
+        let throughput = mode
+            .search_throughput_qps
+            .map(|qps| format!("{qps:.2}"))
+            .unwrap_or_else(|| "unavailable".into());
         println!(
-            "\n{} recall@{}={:.3} MRR={:.3} nDCG@{}={:.3} search_mean={:.2}ms search_p95={:.2}ms",
+            "\n{} recall@{}={:.3} MRR={:.3} nDCG@{}={:.3} search_mean={:.2}ms search_p95={:.2}ms search_qps={}",
             mode.mode,
             r.top_k,
             mode.recall_at_k,
@@ -739,7 +971,8 @@ fn print_report(r: &Report) {
             r.top_k,
             mode.ndcg_at_k,
             mode.mean_search_ms,
-            mode.p95_search_ms
+            mode.p95_search_ms,
+            throughput
         );
         for q in &mode.queries {
             println!(
@@ -772,6 +1005,8 @@ mod tests {
         assert_eq!(args.warmup, 0);
         assert_eq!(args.repeat, 1);
         assert_eq!(args.synthetic_chunks, None);
+        assert_eq!(args.max_rss_mib, None);
+        assert_eq!(args.min_throughput_qps, None);
         assert_eq!(args.top_k, 5);
         assert_eq!(args.modes.len(), 3);
     }
@@ -785,6 +1020,10 @@ mod tests {
             "7",
             "--synthetic-chunks",
             "1000",
+            "--max-rss-mib",
+            "2048",
+            "--min-throughput-qps",
+            "5",
             "--modes",
             "vec",
         ])
@@ -793,12 +1032,14 @@ mod tests {
         assert_eq!(args.warmup, 2);
         assert_eq!(args.repeat, 7);
         assert_eq!(args.synthetic_chunks, Some(1000));
+        assert_eq!(args.max_rss_mib, Some(2048.0));
+        assert_eq!(args.min_throughput_qps, Some(5.0));
         assert_eq!(args.modes.len(), 1);
         assert_eq!(args.modes[0], SearchMode::Vec);
     }
 
     #[test]
-    fn parse_args_rejects_zero_measured_or_synthetic_chunks() {
+    fn parse_args_rejects_invalid_sampling_and_resource_thresholds() {
         let repeat_error = parse_args_from(["--repeat", "0"])
             .err()
             .unwrap()
@@ -807,9 +1048,19 @@ mod tests {
             .err()
             .unwrap()
             .to_string();
+        let rss_error = parse_args_from(["--max-rss-mib", "0"])
+            .err()
+            .unwrap()
+            .to_string();
+        let throughput_error = parse_args_from(["--min-throughput-qps", "NaN"])
+            .err()
+            .unwrap()
+            .to_string();
 
         assert!(repeat_error.contains("--repeat must be greater than zero"));
         assert!(synthetic_error.contains("--synthetic-chunks must be greater than zero"));
+        assert!(rss_error.contains("--max-rss-mib must be greater than zero"));
+        assert!(throughput_error.contains("--min-throughput-qps must be greater than zero"));
     }
 
     #[test]
@@ -837,5 +1088,58 @@ mod tests {
         assert!(first
             .iter()
             .all(|document| !document.content.chars().any(char::is_whitespace)));
+    }
+
+    #[test]
+    fn measured_scale_results_keep_full_scan_beyond_chunk_marker() {
+        let thresholds = RecommendationThresholds {
+            p95_search_ms: 300.0,
+            rss_mib: None,
+            throughput_qps: None,
+        };
+
+        for (chunks, p95_search_ms) in [(10_111, 48.83), (100_111, 133.98)] {
+            let recommendation = recommend(
+                chunks,
+                Some(p95_search_ms),
+                Some(512.0),
+                Some(1_000.0 / p95_search_ms),
+                thresholds,
+            );
+
+            assert_eq!(recommendation.path, "full_scan");
+            assert!(recommendation.failed_thresholds.is_empty());
+            assert!(recommendation.reason.contains("not an ANN trigger"));
+        }
+    }
+
+    #[test]
+    fn ann_requires_a_measured_threshold_failure() {
+        let thresholds = RecommendationThresholds {
+            p95_search_ms: 300.0,
+            rss_mib: Some(2_048.0),
+            throughput_qps: Some(5.0),
+        };
+        let unmeasured = recommend(1_000_000, None, None, None, thresholds);
+        assert_eq!(unmeasured.path, "full_scan");
+        assert!(unmeasured.failed_thresholds.is_empty());
+
+        let failed = recommend(1_000, Some(301.0), Some(2_049.0), Some(4.0), thresholds);
+        assert_eq!(failed.path, "investigate_future_ann");
+        assert_eq!(
+            failed.failed_thresholds,
+            ["p95_search_ms", "rss_mib", "throughput_qps"]
+        );
+    }
+
+    #[test]
+    fn throughput_and_linux_rss_observations_are_calculated() {
+        assert_eq!(measured_throughput_qps(5, 250.0), Some(20.0));
+        assert_eq!(measured_throughput_qps(0, 250.0), None);
+        assert_eq!(measured_throughput_qps(5, 0.0), None);
+        assert_eq!(
+            linux_rss_mib("Name:\teval\nVmRSS:\t1024 kB\nVmHWM:\t2048 kB\n"),
+            Some(2.0)
+        );
     }
 }

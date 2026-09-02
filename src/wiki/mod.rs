@@ -303,9 +303,7 @@ pub fn update_schema(
     agent: Option<&str>,
 ) -> Result<SchemaDocumentView> {
     if content.trim().is_empty() {
-        return Err(AppError::config(
-            "update_schema: content must not be empty",
-        ));
+        return Err(AppError::config("update_schema: content must not be empty"));
     }
 
     let now = Utc::now();
@@ -397,6 +395,8 @@ pub struct WikiWriteCommand {
 }
 
 /// Write/update a wiki page by slug (`wiki://{slug}`), chunk+embed+graph.
+// Compatibility adapter: new integrations should prefer the command API.
+#[allow(clippy::too_many_arguments)]
 pub async fn write_wiki_page(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -426,6 +426,8 @@ pub async fn write_wiki_page(
 }
 
 /// Write/update a wiki page with custom log op and metadata.
+// Compatibility adapter: new integrations should prefer the command API.
+#[allow(clippy::too_many_arguments)]
 pub async fn write_wiki_page_with_opts(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -581,9 +583,7 @@ pub async fn write_wiki_page_command(
         updated_at: now,
     })?;
 
-    let op = opts
-        .op
-        .unwrap_or_else(|| "wiki_write".into());
+    let op = opts.op.unwrap_or_else(|| "wiki_write".into());
     let prefix = opts.prefix.unwrap_or_else(|| "WIKI".into());
     let message = opts
         .message
@@ -627,6 +627,8 @@ pub async fn write_wiki_page_command(
 ///
 /// Requires an existing `layer=wiki` document. Re-chunks, re-embeds, and
 /// re-runs wikilink/tag graph extract. Rejects raw-layer documents.
+// Compatibility adapter: preserve the established public call shape.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_wiki_page(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -640,22 +642,14 @@ pub async fn update_wiki_page(
     agent: Option<&str>,
 ) -> Result<WikiWriteResult> {
     update_wiki_page_cas(
-        store,
-        embedder,
-        config,
-        id_or_slug,
-        title,
-        content,
-        kind,
-        category,
-        summary,
-        agent,
-        None,
+        store, embedder, config, id_or_slug, title, content, kind, category, summary, agent, None,
     )
     .await
 }
 
 /// Like [`update_wiki_page`] with optional `if_match_revision` (multi-LLM CAS).
+// Compatibility adapter: preserve the established public call shape.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_wiki_page_cas(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -793,6 +787,8 @@ fn slug_from_wiki_doc(doc: &Document) -> String {
 }
 
 /// Ingest immutable raw text (layer=raw). Re-ingest same uri replaces chunks but keeps raw policy.
+// Compatibility adapter: preserve the established public call shape.
+#[allow(clippy::too_many_arguments)]
 pub async fn ingest_raw(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -809,15 +805,13 @@ pub async fn ingest_raw(
     let uri = uri
         .filter(|u| !u.trim().is_empty())
         .unwrap_or_else(|| format!("raw://{}", Uuid::new_v4()));
-    let title = title
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or_else(|| {
-            uri.rsplit('/')
-                .next()
-                .filter(|s| !s.is_empty())
-                .unwrap_or("untitled")
-                .to_string()
-        });
+    let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| {
+        uri.rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("untitled")
+            .to_string()
+    });
 
     let (document_id, created_at) = if let Some(existing) = store.find_by_uri(&uri)? {
         (existing.id, existing.created_at)
@@ -923,7 +917,10 @@ pub async fn compile_source(
             WriteWikiOpts {
                 op: Some("compile_source".into()),
                 prefix: Some("COMPILE".into()),
-                message: Some(format!("compiled page wiki://{} from {}", page.slug, source.uri)),
+                message: Some(format!(
+                    "compiled page wiki://{} from {}",
+                    page.slug, source.uri
+                )),
                 extra_metadata: Some(serde_json::json!({
                     "source_id": source.id,
                     "source_uri": source.uri,
@@ -957,11 +954,7 @@ pub async fn compile_source(
         ts: Utc::now(),
         op: "compile_source".into(),
         prefix: Some("COMPILE".into()),
-        message: format!(
-            "compiled {} into {} wiki pages",
-            source.uri,
-            page_ids.len()
-        ),
+        message: format!("compiled {} into {} wiki pages", source.uri, page_ids.len()),
         entity_id: Some(source.id.clone()),
         entity_kind: Some("raw".into()),
         payload_json: serde_json::json!({ "page_ids": page_ids }).to_string(),
@@ -996,6 +989,8 @@ pub struct ConsolidateOpts {
 ///   each source document node → wiki node with `related`.
 ///
 /// Raw sources stay immutable; only the compiled wiki layer is written.
+// Compatibility adapter: preserve the established public call shape.
+#[allow(clippy::too_many_arguments)]
 pub async fn consolidate(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -1038,11 +1033,7 @@ pub async fn consolidate(
             "consolidate: no valid document ids/uris after filtering empties",
         ));
     }
-    let capped = document_ids
-        .iter()
-        .filter(|s| !s.trim().is_empty())
-        .count()
-        > resolved.len()
+    let capped = document_ids.iter().filter(|s| !s.trim().is_empty()).count() > resolved.len()
         || document_ids.len() > max_docs && resolved.len() >= max_docs;
 
     let schema = schema_text(store)?;
@@ -1053,13 +1044,28 @@ pub async fn consolidate(
     let mut proposed = llm.consolidate_wiki(&schema, &sources).await?;
 
     // Caller overrides (whitelist fields only).
-    if let Some(s) = opts.slug.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(s) = opts
+        .slug
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         proposed.slug = s.to_string();
     }
-    if let Some(t) = opts.title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(t) = opts
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         proposed.title = t.to_string();
     }
-    if let Some(k) = opts.kind.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(k) = opts
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         proposed.kind = k.to_string();
     }
     if let Some(c) = opts
@@ -1117,15 +1123,8 @@ pub async fn consolidate(
         });
     }
 
-    let written = apply_consolidate_proposal(
-        store,
-        embedder,
-        config,
-        &proposed,
-        &resolved,
-        agent,
-    )
-    .await?;
+    let written =
+        apply_consolidate_proposal(store, embedder, config, &proposed, &resolved, agent).await?;
 
     let _ = store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
@@ -1533,19 +1532,25 @@ fn group_raw_targets(stale: &[StaleWikiItem]) -> Vec<RawRefreshTarget> {
     let mut map: std::collections::BTreeMap<String, RawRefreshTarget> =
         std::collections::BTreeMap::new();
     for s in stale {
-        let entry = map.entry(s.raw_id.clone()).or_insert_with(|| RawRefreshTarget {
-            raw_id: s.raw_id.clone(),
-            raw_uri: s.raw_uri.clone(),
-            raw_title: s.raw_title.clone(),
-            stale_wiki_ids: Vec::new(),
-        });
+        let entry = map
+            .entry(s.raw_id.clone())
+            .or_insert_with(|| RawRefreshTarget {
+                raw_id: s.raw_id.clone(),
+                raw_uri: s.raw_uri.clone(),
+                raw_title: s.raw_title.clone(),
+                stale_wiki_ids: Vec::new(),
+            });
         if !entry.stale_wiki_ids.contains(&s.wiki_id) {
             entry.stale_wiki_ids.push(s.wiki_id.clone());
         }
     }
     // Stable order by raw_uri then id.
     let mut out: Vec<RawRefreshTarget> = map.into_values().collect();
-    out.sort_by(|a, b| a.raw_uri.cmp(&b.raw_uri).then_with(|| a.raw_id.cmp(&b.raw_id)));
+    out.sort_by(|a, b| {
+        a.raw_uri
+            .cmp(&b.raw_uri)
+            .then_with(|| a.raw_id.cmp(&b.raw_id))
+    });
     out
 }
 
@@ -1562,48 +1567,24 @@ fn linked_raws_for_wiki(
     if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&wiki.metadata_json) {
         if let Some(sid) = meta.get("source_id").and_then(|v| v.as_str()) {
             try_push_raw(
-                store,
-                sid,
-                "metadata",
-                raw_by_id,
-                raw_by_uri,
-                &mut seen,
-                &mut out,
+                store, sid, "metadata", raw_by_id, raw_by_uri, &mut seen, &mut out,
             )?;
         }
         if let Some(suri) = meta.get("source_uri").and_then(|v| v.as_str()) {
             try_push_raw(
-                store,
-                suri,
-                "metadata",
-                raw_by_id,
-                raw_by_uri,
-                &mut seen,
-                &mut out,
+                store, suri, "metadata", raw_by_id, raw_by_uri, &mut seen, &mut out,
             )?;
         }
         if let Some(arr) = meta.get("citations").and_then(|v| v.as_array()) {
             for c in arr {
                 if let Some(did) = c.get("document_id").and_then(|v| v.as_str()) {
                     try_push_raw(
-                        store,
-                        did,
-                        "citation",
-                        raw_by_id,
-                        raw_by_uri,
-                        &mut seen,
-                        &mut out,
+                        store, did, "citation", raw_by_id, raw_by_uri, &mut seen, &mut out,
                     )?;
                 }
                 if let Some(uri) = c.get("uri").and_then(|v| v.as_str()) {
                     try_push_raw(
-                        store,
-                        uri,
-                        "citation",
-                        raw_by_id,
-                        raw_by_uri,
-                        &mut seen,
-                        &mut out,
+                        store, uri, "citation", raw_by_id, raw_by_uri, &mut seen, &mut out,
                     )?;
                 }
             }
@@ -1723,6 +1704,8 @@ impl FileAnswerCitation {
 }
 
 /// Persist a cited answer as a wiki page: body + citations metadata, graph rebuild, ops log, index touch.
+// Compatibility adapter: preserve the established public call shape.
+#[allow(clippy::too_many_arguments)]
 pub async fn file_answer(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -1915,7 +1898,9 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
 
     // Pages missing from index
     for d in &wiki_docs {
-        let in_index = index.iter().any(|e| e.page_id.as_deref() == Some(d.id.as_str()));
+        let in_index = index
+            .iter()
+            .any(|e| e.page_id.as_deref() == Some(d.id.as_str()));
         if !in_index {
             issues.push(LintIssue {
                 code: "missing_index".into(),
@@ -1947,10 +1932,12 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     for n in graph.nodes.iter().filter(|n| n.kind == "stub") {
         if !n.resolved {
             health.unresolved_targets += 1;
-            let bl = store.backlinks(&n.id).unwrap_or_else(|_| crate::models::GraphView {
-                nodes: vec![],
-                edges: vec![],
-            });
+            let bl = store
+                .backlinks(&n.id)
+                .unwrap_or_else(|_| crate::models::GraphView {
+                    nodes: vec![],
+                    edges: vec![],
+                });
             let referenced_by: Vec<String> = bl
                 .nodes
                 .iter()
@@ -2003,7 +1990,12 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             health.orphan_wiki_pages += 1;
         }
         issues.push(LintIssue {
-            code: if is_wiki { "orphan_wiki_page" } else { "orphan_document" }.into(),
+            code: if is_wiki {
+                "orphan_wiki_page"
+            } else {
+                "orphan_document"
+            }
+            .into(),
             severity: "info".into(),
             message: format!(
                 "{} has no incoming or outgoing graph links; add a relevant wikilink or archive it",
@@ -2054,10 +2046,7 @@ pub fn render_index_markdown(store: &Store) -> Result<String> {
     let mut by_cat: std::collections::BTreeMap<String, Vec<&WikiIndexEntry>> =
         std::collections::BTreeMap::new();
     for e in &entries {
-        let cat = e
-            .category
-            .clone()
-            .unwrap_or_else(|| "uncategorized".into());
+        let cat = e.category.clone().unwrap_or_else(|| "uncategorized".into());
         by_cat.entry(cat).or_default().push(e);
     }
     for (cat, rows) in by_cat {
@@ -2689,8 +2678,7 @@ mod tests {
         let original_index = wiki_index_state(&store, "atomic-answer");
         let original_ops_count = store.list_ops_log(100).unwrap().len();
 
-        let failing_embedder: Arc<dyn EmbeddingProvider> =
-            Arc::new(FailingEmbedder { dims });
+        let failing_embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailingEmbedder { dims });
         let error = file_answer(
             &store,
             &failing_embedder,
@@ -2929,17 +2917,10 @@ mod tests {
             stale[0].link_kind
         );
 
-        let report = refresh_stale_wiki(
-            &store,
-            &embedder,
-            &config,
-            None,
-            true,
-            None,
-            Some("tester"),
-        )
-        .await
-        .expect("refresh dry_run");
+        let report =
+            refresh_stale_wiki(&store, &embedder, &config, None, true, None, Some("tester"))
+                .await
+                .expect("refresh dry_run");
         assert_eq!(report.stale_count, 1);
         assert_eq!(report.raw_sources.len(), 1);
         assert_eq!(report.raw_sources[0].raw_id, raw.document_id);
@@ -3142,19 +3123,15 @@ mod tests {
         raw_doc.updated_at = newer;
         store.upsert_document(&raw_doc).unwrap();
 
-        let report = refresh_stale_wiki(
-            &store,
-            &embedder,
-            &config,
-            None,
-            false,
-            Some(10),
-            None,
-        )
-        .await
-        .unwrap();
+        let report = refresh_stale_wiki(&store, &embedder, &config, None, false, Some(10), None)
+            .await
+            .unwrap();
         assert_eq!(report.stale_count, 1);
         assert!(!report.applied);
-        assert!(report.notes.as_deref().unwrap_or("").contains("no ChatClient"));
+        assert!(report
+            .notes
+            .as_deref()
+            .unwrap_or("")
+            .contains("no ChatClient"));
     }
 }

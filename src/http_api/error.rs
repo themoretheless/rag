@@ -28,11 +28,16 @@ pub(super) fn api_ok(value: impl serde::Serialize) -> Response {
 pub(super) fn api_err(err: AppError) -> Response {
     let status = status_for(&err);
     let code = match &err {
-        AppError::NotFound(_) => "NOT_FOUND", AppError::Config(_) => "INVALID_REQUEST",
-        AppError::Conflict(_) => "CONFLICT", AppError::Forbidden(_) => "FORBIDDEN",
-        AppError::Busy(_) => "STORE_BUSY", AppError::Db(_) => "DATABASE_ERROR",
-        AppError::Embeddings(_) => "EMBEDDINGS_ERROR", AppError::Fts(_) => "FTS_ERROR",
-        AppError::Io(_) => "IO_ERROR", _ => "INTERNAL_ERROR",
+        AppError::NotFound(_) => "NOT_FOUND",
+        AppError::Config(_) => "INVALID_REQUEST",
+        AppError::Conflict(_) => "CONFLICT",
+        AppError::Forbidden(_) => "FORBIDDEN",
+        AppError::Busy(_) => "STORE_BUSY",
+        AppError::Db(_) => "DATABASE_ERROR",
+        AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
+        AppError::Fts(_) => "FTS_ERROR",
+        AppError::Io(_) => "IO_ERROR",
+        _ => "INTERNAL_ERROR",
     };
     let body = Json(json!({
         "ok": false,
@@ -40,6 +45,10 @@ pub(super) fn api_err(err: AppError) -> Response {
         "error": err.to_string(),
     }));
     let mut response = (status, body).into_response();
-    if matches!(err, AppError::Busy(_)) { response.headers_mut().insert("retry-after", "1".parse().unwrap()); }
+    if matches!(err, AppError::Busy(_)) {
+        response
+            .headers_mut()
+            .insert("retry-after", "1".parse().unwrap());
+    }
     response
 }

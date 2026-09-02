@@ -4,7 +4,9 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
+    Delete,
     Get,
+    Post,
     Put,
 }
 
@@ -49,7 +51,9 @@ impl ReqwestGatewayClient {
 impl GatewayClient for ReqwestGatewayClient {
     fn execute(&self, request: Request) -> Result<Response, String> {
         let mut builder = match request.method {
+            Method::Delete => self.client.delete(&request.url),
             Method::Get => self.client.get(&request.url),
+            Method::Post => self.client.post(&request.url),
             Method::Put => self.client.put(&request.url),
         };
         for (name, value) in request.headers {

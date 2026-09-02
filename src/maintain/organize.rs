@@ -194,8 +194,7 @@ pub async fn maintain_organize(
                         tracing::warn!(error = %e, "organize LLM failed; falling back to heuristic");
                         let mut s = suggest_heuristic(store, &taxonomy, &considered)?;
                         for item in &mut s {
-                            item.reason =
-                                format!("llm_fallback: {}; {}", e, item.reason);
+                            item.reason = format!("llm_fallback: {}; {}", e, item.reason);
                         }
                         s
                     }
@@ -218,9 +217,8 @@ pub async fn maintain_organize(
             let need_llm: Vec<Document> = considered
                 .iter()
                 .filter(|d| {
-                    !s.iter().any(|x| {
-                        x.document_id == d.id && x.confidence >= min_confidence
-                    })
+                    !s.iter()
+                        .any(|x| x.document_id == d.id && x.confidence >= min_confidence)
                 })
                 .cloned()
                 .collect();
@@ -277,14 +275,8 @@ pub async fn maintain_organize(
         if let Some(ref room) = s.suggested_room {
             params.insert("room".into(), serde_json::Value::String(room.clone()));
         }
-        params.insert(
-            "confidence".into(),
-            serde_json::Value::from(s.confidence),
-        );
-        params.insert(
-            "method".into(),
-            serde_json::Value::String(s.method.clone()),
-        );
+        params.insert("confidence".into(), serde_json::Value::from(s.confidence));
+        params.insert("method".into(), serde_json::Value::String(s.method.clone()));
         let action = MaintenancePlanItem {
             action: MaintenanceAction::Refile,
             reason: Some(s.reason.clone()),
@@ -415,7 +407,11 @@ pub async fn maintain_organize(
         }
     }
 
-    if opts.rebuild_index && actions.iter().any(|a| a.action == MaintenanceAction::RebuildIndex) {
+    if opts.rebuild_index
+        && actions
+            .iter()
+            .any(|a| a.action == MaintenanceAction::RebuildIndex)
+    {
         if dry_run {
             let n = store.list_documents_by_layer("wiki")?.len();
             rebuild_index_entries = Some(n);
@@ -531,17 +527,17 @@ fn list_unscoped_documents(store: &Store) -> Result<Vec<Document>> {
         if status == "archived" || status == "tombstone" {
             continue;
         }
-        let wing_empty = d
-            .wing
-            .as_ref()
-            .map(|w| w.trim().is_empty())
-            .unwrap_or(true);
+        let wing_empty = d.wing.as_ref().map(|w| w.trim().is_empty()).unwrap_or(true);
         if wing_empty {
             out.push(d);
         }
     }
     // Prefer recently updated first so maintain touches hot docs under cap.
-    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| a.title.cmp(&b.title)));
+    out.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| a.title.cmp(&b.title))
+    });
     Ok(out)
 }
 
@@ -653,7 +649,10 @@ fn heuristic_path(
                 current_wing: doc.wing.clone(),
                 current_room: doc.room.clone(),
                 suggested_wing: wing.clone(),
-                suggested_room: candidates.get(1).filter(|s| is_meaningful_segment(s)).cloned(),
+                suggested_room: candidates
+                    .get(1)
+                    .filter(|s| is_meaningful_segment(s))
+                    .cloned(),
                 confidence: 0.55,
                 method: "heuristic_path".into(),
                 reason: "path/uri first segment proposed as wing (not in taxonomy yet)".into(),
@@ -737,9 +736,9 @@ fn heuristic_embedding(
             *room_votes.entry((*wing, *r)).or_default() += *cos;
         }
     }
-    let (best_wing, _wing_score) = wing_votes.into_iter().max_by(|a, b| {
-        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-    })?;
+    let (best_wing, _wing_score) = wing_votes
+        .into_iter()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))?;
     let best_room = room_votes
         .into_iter()
         .filter(|((w, _), _)| *w == best_wing)
@@ -783,10 +782,7 @@ fn path_segments(path: &str) -> Vec<String> {
         return Vec::new();
     }
     // Strip scheme for uris like file:///… or raw://…
-    let stripped = path
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(path);
+    let stripped = path.split_once("://").map(|(_, rest)| rest).unwrap_or(path);
     let stripped = stripped.trim_start_matches('/');
     stripped
         .split(['/', '\\'])
@@ -796,13 +792,16 @@ fn path_segments(path: &str) -> Vec<String> {
                 None
             } else {
                 // Drop file extension on last segment-like tokens later; keep as-is for matching.
-                let no_ext = s.rsplit_once('.').map(|(stem, ext)| {
-                    if ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
-                        stem
-                    } else {
-                        s
-                    }
-                }).unwrap_or(s);
+                let no_ext = s
+                    .rsplit_once('.')
+                    .map(|(stem, ext)| {
+                        if ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+                            stem
+                        } else {
+                            s
+                        }
+                    })
+                    .unwrap_or(s);
                 if is_meaningful_segment(no_ext) {
                     Some(no_ext.to_string())
                 } else {
@@ -861,10 +860,7 @@ fn is_meaningful_segment(s: &str) -> bool {
 
 fn match_known(seg: &str, known: &[String]) -> Option<String> {
     let sl = seg.to_ascii_lowercase();
-    known
-        .iter()
-        .find(|k| k.to_ascii_lowercase() == sl)
-        .cloned()
+    known.iter().find(|k| k.to_ascii_lowercase() == sl).cloned()
 }
 
 /// LLM JSON shape for organize suggestions.
@@ -953,8 +949,7 @@ confidence is 0..1.
     ];
     let raw = client.complete(&messages).await?;
     let payload = parse_organize_json(&raw)?;
-    let by_id: HashMap<&str, &Document> =
-        unscoped.iter().map(|d| (d.id.as_str(), d)).collect();
+    let by_id: HashMap<&str, &Document> = unscoped.iter().map(|d| (d.id.as_str(), d)).collect();
 
     let mut out = Vec::new();
     for item in payload.suggestions {
@@ -1069,6 +1064,8 @@ mod tests {
         }
     }
 
+    // Compact test fixture helper; keeping call sites readable is more useful here.
+    #[allow(clippy::too_many_arguments)]
     fn seed_doc(
         store: &Store,
         id: &str,
@@ -1122,7 +1119,10 @@ mod tests {
 
     #[test]
     fn mode_parse() {
-        assert_eq!(OrganizeMode::parse("heuristic").unwrap(), OrganizeMode::Heuristic);
+        assert_eq!(
+            OrganizeMode::parse("heuristic").unwrap(),
+            OrganizeMode::Heuristic
+        );
         assert_eq!(OrganizeMode::parse("LLM").unwrap(), OrganizeMode::Llm);
         assert_eq!(OrganizeMode::parse("auto").unwrap(), OrganizeMode::Auto);
         assert!(OrganizeMode::parse("nope").is_err());
@@ -1164,9 +1164,7 @@ mod tests {
             rebuild_index: false,
             agent: None,
         };
-        let report = maintain_organize(&store, &cfg, None, &opts)
-            .await
-            .unwrap();
+        let report = maintain_organize(&store, &cfg, None, &opts).await.unwrap();
         assert!(report.dry_run);
         assert_eq!(report.unscoped_total, 1);
         assert!(!report.suggestions.is_empty());
@@ -1175,7 +1173,10 @@ mod tests {
         assert_eq!(s.suggested_wing, "research");
         assert_eq!(s.suggested_room.as_deref(), Some("rag"));
         assert!(s.confidence >= 0.5);
-        assert!(report.actions.iter().all(|a| a.action == MaintenanceAction::Refile));
+        assert!(report
+            .actions
+            .iter()
+            .all(|a| a.action == MaintenanceAction::Refile));
         assert_eq!(report.applied_ok, report.actions.len());
         // dry_run: wing still empty
         let doc = store.get_document("loose").unwrap().unwrap();
@@ -1220,9 +1221,7 @@ mod tests {
             rebuild_index: false,
             agent: Some("test-agent".into()),
         };
-        let report = maintain_organize(&store, &cfg, None, &opts)
-            .await
-            .unwrap();
+        let report = maintain_organize(&store, &cfg, None, &opts).await.unwrap();
         assert!(!report.dry_run);
         assert!(report.applied_ok >= 1);
         let doc = store.get_document("b").unwrap().unwrap();
@@ -1248,9 +1247,7 @@ mod tests {
             "text://x",
         );
         let opts = OrganizeOptions::from_config(&cfg);
-        let report = maintain_organize(&store, &cfg, None, &opts)
-            .await
-            .unwrap();
+        let report = maintain_organize(&store, &cfg, None, &opts).await.unwrap();
         assert_eq!(report.unscoped_total, 0);
         assert!(report.suggestions.is_empty());
         assert!(report.actions.is_empty());
@@ -1292,9 +1289,7 @@ mod tests {
             rebuild_index: false,
             agent: None,
         };
-        let report = maintain_organize(&store, &cfg, None, &opts)
-            .await
-            .unwrap();
+        let report = maintain_organize(&store, &cfg, None, &opts).await.unwrap();
         assert_eq!(report.unscoped_total, 5);
         assert_eq!(report.unscoped_considered, 2);
         assert_eq!(report.skipped_cap, 3);

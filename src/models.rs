@@ -153,6 +153,33 @@ impl Document {
     }
 }
 
+/// Lean immutable revision row for timelines. Full bodies are deliberately
+/// excluded and loaded one-at-a-time through the revision snapshot endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocumentRevisionSummary {
+    pub document_id: String,
+    pub uri: String,
+    pub title: String,
+    #[serde(default)]
+    pub wing: Option<String>,
+    #[serde(default)]
+    pub room: Option<String>,
+    pub layer: String,
+    pub kind: String,
+    pub status: String,
+    pub updated_at: String,
+    pub superseded_at: String,
+    pub revision: i64,
+    pub content_chars: u64,
+    pub content_lines: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentRevisionPage {
+    pub items: Vec<DocumentRevisionSummary>,
+    pub total: u64,
+}
+
 /// Format a document etag from revision (`W/"3"`).
 pub fn format_document_etag(revision: i64) -> String {
     format!("W/\"{revision}\"")
@@ -318,15 +345,17 @@ impl ProjectId {
         if trimmed.is_empty() || trimmed.len() > 128 {
             return Err(AppError::config("project_id must contain 1..=128 bytes"));
         }
-        if !trimmed.chars().all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/')) {
+        if trimmed.chars().any(char::is_control) {
             return Err(AppError::config(
-                "project_id may contain letters, numbers, dash, underscore, dot, or slash",
+                "project_id must not contain control characters",
             ));
         }
         Ok(Self(trimmed.to_owned()))
     }
 
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Project catalog item exposed to native and HTTP clients.
@@ -1130,9 +1159,16 @@ mod tests {
     #[test]
     fn project_id_is_trimmed_and_rejects_ambiguous_values() {
         assert_eq!(ProjectId::parse("  rag-mcp  ").unwrap().as_str(), "rag-mcp");
-        assert_eq!(ProjectId::parse("agents/claude").unwrap().as_str(), "agents/claude");
+        assert_eq!(
+            ProjectId::parse("agents/claude").unwrap().as_str(),
+            "agents/claude"
+        );
         assert!(ProjectId::parse("").is_err());
-        assert!(ProjectId::parse("two projects").is_err());
+        assert_eq!(
+            ProjectId::parse("two projects (2026)").unwrap().as_str(),
+            "two projects (2026)"
+        );
+        assert!(ProjectId::parse("two\nprojects").is_err());
     }
 
     #[test]
@@ -1210,7 +1246,10 @@ mod tests {
 
     #[test]
     fn document_etag_roundtrips_through_parse() {
-        let doc = Document { revision: 5, ..Document::default() };
+        let doc = Document {
+            revision: 5,
+            ..Document::default()
+        };
         let tag = doc.etag();
         assert_eq!(tag, format_document_etag(5));
         assert_eq!(parse_document_etag(&tag), Some(5));
