@@ -82,6 +82,10 @@ pub const CREATE_IDX_GRAPH_NODES_LABEL: &str =
 pub const CREATE_IDX_GRAPH_NODES_DOCUMENT_ID: &str =
     "CREATE INDEX IF NOT EXISTS idx_graph_nodes_document_id ON graph_nodes(document_id)";
 
+/// Index graph nodes by URI for document-node reuse and wikilink resolution.
+pub const CREATE_IDX_GRAPH_NODES_URI: &str =
+    "CREATE INDEX IF NOT EXISTS idx_graph_nodes_uri ON graph_nodes(uri)";
+
 /// Append-only operations / wiki timeline log.
 pub const CREATE_OPS_LOG: &str = r#"
 CREATE TABLE IF NOT EXISTS ops_log (
@@ -312,6 +316,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_IDX_GRAPH_EDGES_TARGET,
             CREATE_IDX_GRAPH_NODES_LABEL,
             CREATE_IDX_GRAPH_NODES_DOCUMENT_ID,
+            CREATE_IDX_GRAPH_NODES_URI,
         ]
         .join(";\n"),
     )?;
@@ -556,6 +561,17 @@ mod tests {
         n > 0
     }
 
+    fn index_exists(conn: &Connection, name: &str) -> bool {
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM duckdb_indexes() WHERE index_name = ?",
+                duckdb::params![name],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        n > 0
+    }
+
     #[test]
     fn migrate_fresh_creates_p0_columns_and_tables() {
         let conn = open_mem();
@@ -595,6 +611,7 @@ mod tests {
         ] {
             assert!(table_exists(&conn, t), "missing table {t}");
         }
+        assert!(index_exists(&conn, "idx_graph_nodes_uri"));
 
         let source_manifest = column_names(&conn, "source_manifest");
         for col in [
@@ -727,6 +744,7 @@ mod tests {
         assert!(table_exists(&conn, "wiki_index"));
         assert!(table_exists(&conn, "embedding_manifest"));
         assert!(table_exists(&conn, "kg_facts"));
+        assert!(index_exists(&conn, "idx_graph_nodes_uri"));
     }
 
     #[test]
