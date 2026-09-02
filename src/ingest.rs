@@ -8,10 +8,10 @@ use uuid::Uuid;
 
 use crate::chunking::{code_chunks, from_config, markdown_section_metadata, Chunker};
 use crate::config::Config;
+use crate::db::store::DocumentDerivedWrite;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
-use crate::graph::rebuild_document_graph;
 use crate::models::{Chunk, Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
 use crate::util::content_hash;
 
@@ -147,24 +147,21 @@ impl<'a> IngestService<'a> {
         };
         let chunks = self.build_chunks(&document).await?;
         let chunk_count = chunks.len();
-        if operation == "updated" {
-            self.store.delete_chunks_for_document(&document_id)?;
-        }
-        let revision = self.store.upsert_document_cas(&document, None)?;
-        if !chunks.is_empty() {
-            self.store.insert_chunks(&chunks)?;
-        }
-        let (node_id, edge_count) = rebuild_document_graph(self.store, &document)?;
+        let write = self.store.write_document_atomic(
+            &document,
+            None,
+            DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+        )?;
 
         Ok(IngestResult {
             document_id,
             chunk_count,
-            node_id,
-            edge_count,
+            node_id: write.node_id.unwrap_or_default(),
+            edge_count: write.edge_count,
             content_hash: new_hash,
             op: operation.into(),
-            revision,
-            etag: crate::models::format_document_etag(revision),
+            revision: write.revision,
+            etag: crate::models::format_document_etag(write.revision),
         })
     }
 
@@ -215,30 +212,40 @@ impl<'a> IngestService<'a> {
         if document_id.is_empty() {
             return Err(AppError::config("document_id must be non-empty"));
         }
-        let applied = self
+        let mut applied = self
             .store
-            .update_document_meta(document_id, &command.update)?
+            .prepare_document_meta_update(document_id, &command.update)?
             .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-        let mut reembedded = false;
-        let mut chunk_count = self
-            .store
-            .list_chunks_for_document(&applied.document.id)?
-            .len();
+        let expected_revision = applied.document.revision;
 
-        if applied.content_changed {
+        let (write, chunk_count, reembedded) = if applied.content_changed {
             self.ensure_vector_compatibility()?;
             let chunks = self.build_plain_chunks(&applied.document).await?;
-            chunk_count = chunks.len();
-            self.store
-                .replace_chunks_for_document(&applied.document.id, &chunks)?;
-            rebuild_document_graph(self.store, &applied.document)?;
-            reembedded = true;
-        } else if applied.title_changed {
-            if let Some(mut node) = self.store.find_node_by_document_id(&applied.document.id)? {
-                node.label = applied.document.title.clone();
-                self.store.upsert_graph_node(&node)?;
-            }
-        }
+            let chunk_count = chunks.len();
+            let write = self.store.write_document_atomic(
+                &applied.document,
+                Some(expected_revision),
+                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+            )?;
+            (write, chunk_count, true)
+        } else {
+            let chunk_count = self
+                .store
+                .list_chunks_for_document(&applied.document.id)?
+                .len();
+            let derived = if applied.title_changed {
+                DocumentDerivedWrite::RefreshGraphLabel
+            } else {
+                DocumentDerivedWrite::Preserve
+            };
+            let write = self.store.write_document_atomic(
+                &applied.document,
+                Some(expected_revision),
+                derived,
+            )?;
+            (write, chunk_count, false)
+        };
+        applied.document.revision = write.revision;
 
         let document = applied.document;
         let _ = self.store.append_ops_log(&OpsLogEntry {
@@ -432,5 +439,136 @@ fn ensure_vector_count(actual: usize, expected: usize) -> Result<(), AppError> {
         Err(AppError::embeddings(format!(
             "embedder returned {actual} vectors for {expected} chunks"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    use crate::embeddings::MockEmbedder;
+
+    struct FailingEmbedder {
+        dims: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for FailingEmbedder {
+        async fn embed(&self, _texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            Err(AppError::embeddings("injected embedding failure"))
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
+
+    fn test_config(db_path: std::path::PathBuf) -> Config {
+        Config {
+            db_path,
+            embedding_dims: 8,
+            chunk_size: 64,
+            chunk_overlap: 8,
+            ..Config::for_tests()
+        }
+    }
+
+    fn command(text: &str) -> IngestCommand {
+        IngestCommand {
+            text: text.into(),
+            title: Some("Atomic page".into()),
+            uri: Some("wiki://atomic-page".into()),
+            metadata_json: Some("{}".into()),
+            wing: Some("tests".into()),
+            room: Some("atomicity".into()),
+            source_file: None,
+            layer: "wiki".into(),
+            kind: "wiki".into(),
+            immutable: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn embedding_failure_leaves_document_chunks_and_graph_unchanged() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(temp.path().join("ingest-atomic.duckdb"));
+        let store = Store::open(&config.db_path).expect("store");
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        let service = IngestService::new(&store, &embedder, &config);
+        let inserted = service
+            .ingest(command("Original body links to [[Old target]]."))
+            .await
+            .expect("initial ingest");
+
+        let original_document = store
+            .get_document(&inserted.document_id)
+            .unwrap()
+            .expect("document");
+        let original_chunks = store
+            .list_chunks_for_document(&inserted.document_id)
+            .unwrap();
+        let original_node = store
+            .find_node_by_document_id(&inserted.document_id)
+            .unwrap()
+            .expect("node");
+        let original_edges: Vec<_> = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.source_id == original_node.id)
+            .collect();
+
+        let failing_embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailingEmbedder { dims: 8 });
+        let failing_service = IngestService::new(&store, &failing_embedder, &config);
+        let error = failing_service
+            .update_document(UpdateDocumentCommand {
+                document_id: inserted.document_id.clone(),
+                update: DocumentMetaUpdate {
+                    title: Some("Changed title".into()),
+                    content: Some("Changed body links to [[New target]].".into()),
+                    ..Default::default()
+                },
+            })
+            .await
+            .expect_err("embedding must fail before persistence");
+        assert!(error.to_string().contains("injected embedding failure"));
+
+        let persisted_document = store
+            .get_document(&inserted.document_id)
+            .unwrap()
+            .expect("document after failure");
+        assert_eq!(persisted_document.revision, original_document.revision);
+        assert_eq!(persisted_document.title, original_document.title);
+        assert_eq!(persisted_document.content, original_document.content);
+        let persisted_chunks = store
+            .list_chunks_for_document(&inserted.document_id)
+            .unwrap();
+        assert_eq!(persisted_chunks.len(), original_chunks.len());
+        assert_eq!(
+            persisted_chunks
+                .iter()
+                .map(|chunk| (&chunk.id, &chunk.content))
+                .collect::<Vec<_>>(),
+            original_chunks
+                .iter()
+                .map(|chunk| (&chunk.id, &chunk.content))
+                .collect::<Vec<_>>()
+        );
+        let persisted_node = store
+            .find_node_by_document_id(&inserted.document_id)
+            .unwrap()
+            .expect("node after failure");
+        assert_eq!(persisted_node.id, original_node.id);
+        assert_eq!(persisted_node.label, original_node.label);
+        let persisted_edges: Vec<_> = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.source_id == persisted_node.id)
+            .collect();
+        assert_eq!(persisted_edges.len(), original_edges.len());
+        assert_eq!(persisted_edges[0].id, original_edges[0].id);
+        assert!(store.find_nodes_by_label("New target").unwrap().is_empty());
     }
 }

@@ -17,67 +17,13 @@ impl Store {
     /// Preserves original `created_at` when the id already exists.
     pub fn upsert_graph_node(&self, node: &GraphNode) -> Result<()> {
         let conn = self.lock()?;
-        let now = format_ts_now();
-        let metadata = if node.metadata_json.is_empty() {
-            "{}"
-        } else {
-            node.metadata_json.as_str()
-        };
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO graph_nodes
-              (id, kind, label, document_id, uri, resolved, metadata_json, created_at, updated_at)
-            VALUES
-              (?, ?, ?, ?, ?, ?, ?,
-               COALESCE(
-                 (SELECT created_at FROM graph_nodes WHERE id = ?),
-                 CAST(? AS TIMESTAMP)
-               ),
-               CAST(? AS TIMESTAMP))
-            "#,
-            params![
-                node.id,
-                node.kind,
-                node.label,
-                node.document_id,
-                node.uri,
-                node.resolved,
-                metadata,
-                node.id,
-                now.as_str(),
-                now.as_str(),
-            ],
-        )?;
-        Ok(())
+        upsert_graph_node_locked(&conn, node)
     }
 
     /// Insert edge rows (empty slice is a no-op).
     pub fn insert_graph_edges(&self, edges: &[GraphEdge]) -> Result<()> {
-        if edges.is_empty() {
-            return Ok(());
-        }
         let conn = self.lock()?;
-        let now = format_ts_now();
-        let mut stmt = conn.prepare(
-            r#"
-            INSERT INTO graph_edges
-              (id, source_id, target_id, rel_type, weight, context, created_at)
-            VALUES
-              (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
-            "#,
-        )?;
-        for e in edges {
-            stmt.execute(params![
-                e.id,
-                e.source_id,
-                e.target_id,
-                e.rel_type,
-                e.weight,
-                e.context,
-                now.as_str(),
-            ])?;
-        }
-        Ok(())
+        insert_graph_edges_locked(&conn, edges)
     }
 
     /// Delete all edges with the given source node (re-ingest rebuild).
@@ -110,38 +56,13 @@ impl Store {
     /// Find the graph node linked to a document id, if any.
     pub fn find_node_by_document_id(&self, doc_id: &str) -> Result<Option<GraphNode>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, kind, label, document_id, uri, resolved, metadata_json
-            FROM graph_nodes
-            WHERE document_id = ?
-            LIMIT 1
-            "#,
-        )?;
-        let mut rows = stmt.query(params![doc_id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_node(row)?)),
-            None => Ok(None),
-        }
+        find_node_by_document_id_locked(&conn, doc_id)
     }
 
     /// Find nodes whose label equals `label` (case-sensitive).
     pub fn find_nodes_by_label(&self, label: &str) -> Result<Vec<GraphNode>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, kind, label, document_id, uri, resolved, metadata_json
-            FROM graph_nodes
-            WHERE label = ?
-            ORDER BY resolved DESC, kind ASC, id ASC
-            "#,
-        )?;
-        let mut rows = stmt.query(params![label])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_node(row)?);
-        }
-        Ok(out)
+        find_nodes_by_label_locked(&conn, label)
     }
 
     /// Find a node by primary key.
@@ -153,19 +74,7 @@ impl Store {
     /// Find a node by exact `uri` match.
     pub fn find_node_by_uri(&self, uri: &str) -> Result<Option<GraphNode>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, kind, label, document_id, uri, resolved, metadata_json
-            FROM graph_nodes
-            WHERE uri = ?
-            LIMIT 1
-            "#,
-        )?;
-        let mut rows = stmt.query(params![uri])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row_to_node(row)?)),
-            None => Ok(None),
-        }
+        find_node_by_uri_locked(&conn, uri)
     }
 
     /// Resolve a single node by id, document id, or exact label (priority order).
@@ -903,6 +812,136 @@ impl Store {
             None => Ok(None),
         }
     }
+}
+
+pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNode) -> Result<()> {
+    let now = format_ts_now();
+    let metadata = if node.metadata_json.is_empty() {
+        "{}"
+    } else {
+        node.metadata_json.as_str()
+    };
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO graph_nodes
+          (id, kind, label, document_id, uri, resolved, metadata_json, created_at, updated_at)
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?,
+           COALESCE(
+             (SELECT created_at FROM graph_nodes WHERE id = ?),
+             CAST(? AS TIMESTAMP)
+           ),
+           CAST(? AS TIMESTAMP))
+        "#,
+        params![
+            node.id,
+            node.kind,
+            node.label,
+            node.document_id,
+            node.uri,
+            node.resolved,
+            metadata,
+            node.id,
+            now.as_str(),
+            now.as_str(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn insert_graph_edges_locked(
+    conn: &duckdb::Connection,
+    edges: &[GraphEdge],
+) -> Result<()> {
+    if edges.is_empty() {
+        return Ok(());
+    }
+    let now = format_ts_now();
+    let mut stmt = conn.prepare(
+        r#"
+        INSERT INTO graph_edges
+          (id, source_id, target_id, rel_type, weight, context, created_at)
+        VALUES
+          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
+        "#,
+    )?;
+    for edge in edges {
+        stmt.execute(params![
+            edge.id,
+            edge.source_id,
+            edge.target_id,
+            edge.rel_type,
+            edge.weight,
+            edge.context,
+            now.as_str(),
+        ])?;
+    }
+    Ok(())
+}
+
+pub(crate) fn find_node_by_document_id_locked(
+    conn: &duckdb::Connection,
+    document_id: &str,
+) -> Result<Option<GraphNode>> {
+    find_one_node_locked(
+        conn,
+        r#"
+        SELECT id, kind, label, document_id, uri, resolved, metadata_json
+        FROM graph_nodes
+        WHERE document_id = ?
+        LIMIT 1
+        "#,
+        document_id,
+    )
+}
+
+pub(crate) fn find_node_by_uri_locked(
+    conn: &duckdb::Connection,
+    uri: &str,
+) -> Result<Option<GraphNode>> {
+    find_one_node_locked(
+        conn,
+        r#"
+        SELECT id, kind, label, document_id, uri, resolved, metadata_json
+        FROM graph_nodes
+        WHERE uri = ?
+        LIMIT 1
+        "#,
+        uri,
+    )
+}
+
+fn find_one_node_locked(
+    conn: &duckdb::Connection,
+    sql: &str,
+    value: &str,
+) -> Result<Option<GraphNode>> {
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query(params![value])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row_to_node(row)?)),
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn find_nodes_by_label_locked(
+    conn: &duckdb::Connection,
+    label: &str,
+) -> Result<Vec<GraphNode>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT id, kind, label, document_id, uri, resolved, metadata_json
+        FROM graph_nodes
+        WHERE label = ?
+        ORDER BY resolved DESC, kind ASC, id ASC
+        "#,
+    )?;
+    let mut rows = stmt.query(params![label])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(row_to_node(row)?);
+    }
+    Ok(out)
 }
 
 fn format_ts_now() -> String {

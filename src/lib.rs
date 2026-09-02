@@ -17,8 +17,8 @@
 pub mod chunking;
 pub mod config;
 pub mod db;
-pub mod diary;
 pub mod diagnostics;
+pub mod diary;
 pub mod embeddings;
 pub mod error;
 pub mod file_ingest;
@@ -66,8 +66,10 @@ pub use graph::{
 
 // --- FTS / hybrid substrate (owned by `db::fts`, re-exported at `db::`) ---
 pub use db::{
-    ensure_fts, ensure_fts_with_stemmer, fts_index_present, fts_status, reindex,
-    reindex_with_stemmer, search_bm25, FtsBackend, FtsState, LexFilters,
+    chunks_generation, ensure_fts, ensure_fts_with_stemmer, fts_generation_state,
+    fts_index_present, fts_status, refresh_fts_if_stale, refresh_fts_if_stale_with_stemmer,
+    reindex, reindex_with_stemmer, search_bm25, FtsBackend, FtsGenerationState, FtsState,
+    LexFilters,
 };
 
 // --- Util (hash + ingest path allowlist) ---
@@ -78,9 +80,9 @@ pub use wiki::{
     apply_consolidate_proposal, consolidate, file_answer, find_stale_wiki, get_schema,
     get_wiki_page, list_wiki_pages, refresh_stale_wiki, update_schema, update_wiki_page,
     write_wiki_page, write_wiki_page_command, ConsolidateOpts, ConsolidateResult,
-    FileAnswerCitation, RawRefreshTarget, RefreshError, RefreshStaleWikiResult,
-    SchemaDocumentView, StaleWikiItem, WikiWriteCommand, WikiWriteResult, LAYER_RAW, LAYER_SCHEMA,
-    LAYER_WIKI, SCHEMA_URI,
+    FileAnswerCitation, RawRefreshTarget, RefreshError, RefreshStaleWikiResult, SchemaDocumentView,
+    StaleWikiItem, WikiWriteCommand, WikiWriteResult, LAYER_RAW, LAYER_SCHEMA, LAYER_WIKI,
+    SCHEMA_URI,
 };
 
 // --- Agent diary / session checkpoint / wake_up ---

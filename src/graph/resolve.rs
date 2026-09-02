@@ -1,7 +1,13 @@
 //! Resolve extracted links into graph nodes/edges for a document.
 
+use duckdb::{params, Connection};
 use uuid::Uuid;
 
+use crate::db::graph::{
+    find_node_by_document_id_locked as find_node_by_document_id,
+    find_node_by_uri_locked as find_node_by_uri, find_nodes_by_label_locked as find_nodes_by_label,
+    insert_graph_edges_locked as insert_graph_edges, upsert_graph_node_locked as upsert_graph_node,
+};
 use crate::db::Store;
 use crate::error::Result;
 use crate::graph::extract::{extract_links, ExtractedLink};
@@ -16,14 +22,29 @@ use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 ///
 /// Returns `(node_id, edge_count)` for the document node and edges written this pass.
 pub fn rebuild_document_graph(store: &Store, doc: &Document) -> Result<(String, usize)> {
-    let node_id = ensure_document_node(store, doc)?;
-    store.delete_edges_from(&node_id)?;
+    let conn = store.lock()?;
+    rebuild_document_graph_locked(&conn, doc)
+}
+
+/// Transaction-aware graph rebuild used by atomic document writes.
+///
+/// `duckdb::Transaction` dereferences to [`Connection`], so callers can run the
+/// exact same resolution logic under their surrounding document/chunk transaction.
+pub(crate) fn rebuild_document_graph_locked(
+    conn: &Connection,
+    doc: &Document,
+) -> Result<(String, usize)> {
+    let node_id = ensure_document_node(conn, &doc.id, &doc.title, &doc.uri)?;
+    conn.execute(
+        "DELETE FROM graph_edges WHERE source_id = ?",
+        params![node_id],
+    )?;
 
     let links = extract_links(&doc.content);
     let mut edges: Vec<GraphEdge> = Vec::with_capacity(links.len());
 
     for link in &links {
-        let target_id = resolve_target(store, link)?;
+        let target_id = resolve_target(conn, link)?;
         edges.push(GraphEdge {
             id: Uuid::new_v4().to_string(),
             source_id: node_id.clone(),
@@ -35,92 +56,98 @@ pub fn rebuild_document_graph(store: &Store, doc: &Document) -> Result<(String, 
     }
 
     let edge_count = edges.len();
-    store.insert_graph_edges(&edges)?;
+    insert_graph_edges(conn, &edges)?;
     Ok((node_id, edge_count))
 }
 
 /// Ensure a resolved document node exists for `doc`; promote matching stubs by title/slug/uri.
-fn ensure_document_node(store: &Store, doc: &Document) -> Result<String> {
+fn ensure_document_node(
+    conn: &Connection,
+    document_id: &str,
+    title: &str,
+    uri: &str,
+) -> Result<String> {
     // Prefer existing node for this document id (stable across re-ingest with same doc id).
-    if let Some(existing) = store.find_node_by_document_id(&doc.id)? {
+    if let Some(existing) = find_node_by_document_id(conn, document_id)? {
         let mut node = existing;
         node.kind = "document".into();
-        node.label = doc.title.clone();
-        node.document_id = Some(doc.id.clone());
-        node.uri = Some(doc.uri.clone());
+        node.label = title.to_string();
+        node.document_id = Some(document_id.to_string());
+        node.uri = Some(uri.to_string());
         node.resolved = true;
-        store.upsert_graph_node(&node)?;
+        upsert_graph_node(conn, &node)?;
         return Ok(node.id);
     }
 
     // Stable by uri when node survived a content-only re-ingest path.
-    if !doc.uri.is_empty() {
-        if let Some(existing) = store.find_node_by_uri(&doc.uri)? {
+    if !uri.is_empty() {
+        if let Some(existing) = find_node_by_uri(conn, uri)? {
             let mut node = existing;
             node.kind = "document".into();
-            node.label = doc.title.clone();
-            node.document_id = Some(doc.id.clone());
-            node.uri = Some(doc.uri.clone());
+            node.label = title.to_string();
+            node.document_id = Some(document_id.to_string());
+            node.uri = Some(uri.to_string());
             node.resolved = true;
-            store.upsert_graph_node(&node)?;
+            upsert_graph_node(conn, &node)?;
             return Ok(node.id);
         }
     }
 
     // Promote stub whose label matches title, uri basename, or wiki slug
     // (so [[rag-mcp-overview]] stubs resolve when page title differs).
-    let promote_labels = promote_label_candidates(doc);
+    let promote_labels = promote_label_candidates(title, uri);
     for label in &promote_labels {
-        let matches = store.find_nodes_by_label(label)?;
-        if let Some(stub) = matches.into_iter().find(|n| n.kind == "stub" || !n.resolved)
+        let matches = find_nodes_by_label(conn, label)?;
+        if let Some(stub) = matches
+            .into_iter()
+            .find(|n| n.kind == "stub" || !n.resolved)
         {
             let mut node = stub;
             node.kind = "document".into();
-            node.label = doc.title.clone();
-            node.document_id = Some(doc.id.clone());
-            node.uri = Some(doc.uri.clone());
+            node.label = title.to_string();
+            node.document_id = Some(document_id.to_string());
+            node.uri = Some(uri.to_string());
             node.resolved = true;
-            store.upsert_graph_node(&node)?;
+            upsert_graph_node(conn, &node)?;
             return Ok(node.id);
         }
     }
 
     // Also reuse an existing document node that already has this title.
-    if let Some(existing) = store
-        .find_nodes_by_label(&doc.title)?
+    if let Some(existing) = find_nodes_by_label(conn, title)?
         .into_iter()
         .find(|n| n.kind == "document" && n.resolved)
     {
         let mut node = existing;
-        node.document_id = Some(doc.id.clone());
-        node.uri = Some(doc.uri.clone());
-        node.label = doc.title.clone();
-        store.upsert_graph_node(&node)?;
+        node.document_id = Some(document_id.to_string());
+        node.uri = Some(uri.to_string());
+        node.label = title.to_string();
+        upsert_graph_node(conn, &node)?;
         return Ok(node.id);
     }
 
     let node = GraphNode {
         id: Uuid::new_v4().to_string(),
         kind: "document".into(),
-        label: doc.title.clone(),
-        document_id: Some(doc.id.clone()),
-        uri: Some(doc.uri.clone()),
+        label: title.to_string(),
+        document_id: Some(document_id.to_string()),
+        uri: Some(uri.to_string()),
         resolved: true,
         metadata_json: "{}".into(),
     };
     let id = node.id.clone();
-    store.upsert_graph_node(&node)?;
+    upsert_graph_node(conn, &node)?;
     Ok(id)
 }
 
-fn promote_label_candidates(doc: &Document) -> Vec<String> {
-    let mut labels = vec![doc.title.clone()];
-    if let Some(base) = uri_basename(&doc.uri) {
-        if base != doc.title {
+fn promote_label_candidates(title: &str, uri: &str) -> Vec<String> {
+    let mut labels = vec![title.to_string()];
+    if let Some(base) = uri_basename(uri) {
+        if base != title {
             labels.push(base);
         }
     }
-    if let Some(slug) = wiki_slug_from_uri(&doc.uri) {
+    if let Some(slug) = wiki_slug_from_uri(uri) {
         if !labels.iter().any(|l| l == &slug) {
             labels.push(slug);
         }
@@ -144,15 +171,15 @@ fn uri_basename(uri: &str) -> Option<String> {
     }
 }
 
-fn resolve_target(store: &Store, link: &ExtractedLink) -> Result<String> {
+fn resolve_target(conn: &Connection, link: &ExtractedLink) -> Result<String> {
     match link.rel_type.as_str() {
-        "tagged" => upsert_tag_node(store, &link.target_label),
-        _ => resolve_wikilink_target(store, &link.target_label),
+        "tagged" => upsert_tag_node(conn, &link.target_label),
+        _ => resolve_wikilink_target(conn, &link.target_label),
     }
 }
 
-fn upsert_tag_node(store: &Store, label: &str) -> Result<String> {
-    let existing = store.find_nodes_by_label(label)?;
+fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> {
+    let existing = find_nodes_by_label(conn, label)?;
     if let Some(node) = existing.into_iter().find(|n| n.kind == "tag") {
         return Ok(node.id);
     }
@@ -166,7 +193,7 @@ fn upsert_tag_node(store: &Store, label: &str) -> Result<String> {
         metadata_json: "{}".into(),
     };
     let id = node.id.clone();
-    store.upsert_graph_node(&node)?;
+    upsert_graph_node(conn, &node)?;
     Ok(id)
 }
 
@@ -178,15 +205,15 @@ fn upsert_tag_node(store: &Store, label: &str) -> Result<String> {
 /// 3. Document by those uris → its graph node
 /// 4. `wiki_index.slug` → page document node
 /// 5. Create a new stub (label only; uri left unset until page write)
-fn resolve_wikilink_target(store: &Store, label: &str) -> Result<String> {
+fn resolve_wikilink_target(conn: &Connection, label: &str) -> Result<String> {
     let label = label.trim();
     if label.is_empty() {
         // Should not happen from extract; keep a stable empty stub.
-        return upsert_stub(store, "");
+        return upsert_stub(conn, "");
     }
 
     // 1. Exact label on graph (prefer resolved document).
-    let matches = store.find_nodes_by_label(label)?;
+    let matches = find_nodes_by_label(conn, label)?;
     if let Some(n) = pick_best_node(&matches) {
         return Ok(n.id.clone());
     }
@@ -210,31 +237,29 @@ fn resolve_wikilink_target(store: &Store, label: &str) -> Result<String> {
 
     // 2. Node by uri
     for uri in &uri_candidates {
-        if let Some(n) = store.find_node_by_uri(uri)? {
+        if let Some(n) = find_node_by_uri(conn, uri)? {
             return Ok(n.id);
         }
     }
 
     // 3. Document by uri → ensure graph node for that document
     for uri in &uri_candidates {
-        if let Some(doc) = store.find_by_uri(uri)? {
-            return ensure_document_node(store, &doc);
+        if let Some((id, title, uri)) = find_document_by_uri(conn, uri)? {
+            return ensure_document_node(conn, &id, &title, &uri);
         }
     }
 
     // 4. wiki_index by slug (label or slugified)
     for slug in [label, slugified.as_str()] {
-        if let Some(entry) = store.get_wiki_index_by_slug(slug)? {
-            if let Some(pid) = entry.page_id.as_deref() {
-                if let Some(doc) = store.get_document(pid)? {
-                    return ensure_document_node(store, &doc);
-                }
+        if let Some(page_id) = find_wiki_index_page_id(conn, slug)? {
+            if let Some((id, title, uri)) = find_document_by_id(conn, &page_id)? {
+                return ensure_document_node(conn, &id, &title, &uri);
             }
         }
     }
 
     // 5. Stub
-    upsert_stub(store, label)
+    upsert_stub(conn, label)
 }
 
 fn pick_best_node(matches: &[GraphNode]) -> Option<&GraphNode> {
@@ -245,8 +270,8 @@ fn pick_best_node(matches: &[GraphNode]) -> Option<&GraphNode> {
         .or_else(|| matches.first())
 }
 
-fn upsert_stub(store: &Store, label: &str) -> Result<String> {
-    let matches = store.find_nodes_by_label(label)?;
+fn upsert_stub(conn: &Connection, label: &str) -> Result<String> {
+    let matches = find_nodes_by_label(conn, label)?;
     if let Some(n) = matches.into_iter().next() {
         return Ok(n.id);
     }
@@ -260,8 +285,56 @@ fn upsert_stub(store: &Store, label: &str) -> Result<String> {
         metadata_json: "{}".into(),
     };
     let id = node.id.clone();
-    store.upsert_graph_node(&node)?;
+    upsert_graph_node(conn, &node)?;
     Ok(id)
+}
+
+fn find_document_by_uri(conn: &Connection, uri: &str) -> Result<Option<(String, String, String)>> {
+    find_document_node_data(
+        conn,
+        "SELECT id, title, uri FROM documents WHERE uri = ? LIMIT 1",
+        uri,
+    )
+}
+
+fn find_document_by_id(
+    conn: &Connection,
+    document_id: &str,
+) -> Result<Option<(String, String, String)>> {
+    find_document_node_data(
+        conn,
+        "SELECT id, title, uri FROM documents WHERE id = ? LIMIT 1",
+        document_id,
+    )
+}
+
+fn find_document_node_data(
+    conn: &Connection,
+    sql: &str,
+    value: &str,
+) -> Result<Option<(String, String, String)>> {
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query(params![value])?;
+    match rows.next()? {
+        Some(row) => Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?))),
+        None => Ok(None),
+    }
+}
+
+fn find_wiki_index_page_id(conn: &Connection, slug: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT COALESCE(page_id, document_id)
+        FROM wiki_index
+        WHERE slug = ? OR label = ? OR id = ?
+        LIMIT 1
+        "#,
+    )?;
+    let mut rows = stmt.query(params![slug, slug, slug])?;
+    match rows.next()? {
+        Some(row) => Ok(row.get(0)?),
+        None => Ok(None),
+    }
 }
 
 /// Light slug for link targets (keep dots for file names; collapse spaces).

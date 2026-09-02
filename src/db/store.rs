@@ -57,6 +57,24 @@ pub struct Store {
     path: PathBuf,
 }
 
+/// Derived state that must stay consistent with a document write.
+pub(crate) enum DocumentDerivedWrite<'a> {
+    /// Keep chunks and graph unchanged (metadata-only update).
+    Preserve,
+    /// Keep chunks/edges, but refresh the existing document-node label.
+    RefreshGraphLabel,
+    /// Replace chunks and rebuild the document's outgoing graph slice.
+    ReplaceChunksAndGraph(&'a [Chunk]),
+}
+
+/// Outcome of an atomic document + derived-state write.
+#[derive(Debug)]
+pub(crate) struct AtomicDocumentWriteResult {
+    pub revision: i64,
+    pub node_id: Option<String>,
+    pub edge_count: usize,
+}
+
 impl Store {
     /// Open (or create) a DuckDB database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
@@ -110,154 +128,66 @@ impl Store {
         doc: &Document,
         if_match_revision: Option<i64>,
     ) -> Result<i64> {
-        let hash = match doc.content_hash.as_deref() {
-            Some(h) if !h.is_empty() => h.to_string(),
-            _ => content_hash(&doc.content),
-        };
-        let layer = if doc.layer.is_empty() {
-            "raw"
-        } else {
-            doc.layer.as_str()
-        };
-        let kind = if doc.kind.is_empty() {
-            "document"
-        } else {
-            doc.kind.as_str()
-        };
-
-        let status = if doc.status.is_empty() {
-            "active"
-        } else {
-            doc.status.as_str()
-        };
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-
-        let current_rev: Option<i64> = tx
-            .query_row(
-                "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
-                params![doc.id],
-                |row| row.get(0),
-            )
-            .ok();
-
-        let new_rev = match current_rev {
-            Some(rev) => {
-                if let Some(expected) = if_match_revision {
-                    if rev != expected {
-                        return Err(AppError::conflict(format!(
-                            "etag mismatch for document {}: expected revision {} ({}), current revision {} ({})",
-                            doc.id,
-                            expected,
-                            crate::models::format_document_etag(expected),
-                            rev,
-                            crate::models::format_document_etag(rev),
-                        )));
-                    }
-                }
-                rev.saturating_add(1)
-            }
-            None => {
-                if let Some(expected) = if_match_revision {
-                    return Err(AppError::conflict(format!(
-                        "etag mismatch: if_match_revision={expected} but document {} does not exist",
-                        doc.id
-                    )));
-                }
-                1
-            }
-        };
-
-        let boost = if doc.boost.is_finite() && doc.boost > 0.0 {
-            doc.boost
-        } else {
-            1.0
-        };
-        if current_rev.is_some() {
-            tx.execute(
-                r#"
-                INSERT INTO document_revisions
-                  (document_id, revision, uri, title, content, metadata_json, content_hash,
-                   wing, room, source_file, layer, kind, status, pinned, boost,
-                   created_at, updated_at, superseded_at)
-                SELECT id, COALESCE(revision, 1), uri, title, content, metadata_json, content_hash,
-                       wing, room, source_file, layer, kind, status, pinned, boost,
-                       created_at, updated_at, CURRENT_TIMESTAMP
-                FROM documents WHERE id = ?
-                ON CONFLICT (document_id, revision) DO NOTHING
-                "#,
-                params![doc.id],
-            )?;
-            // DuckDB implements INSERT OR REPLACE as delete+insert. Repeated
-            // autosync updates can hit an ART index delete bug and invalidate
-            // the whole connection. UPDATE preserves the indexed row identity.
-            tx.execute(
-                r#"
-                UPDATE documents SET
-                  uri = ?, title = ?, content = ?, metadata_json = ?,
-                  content_hash = ?, wing = ?, room = ?, source_file = ?,
-                  layer = ?, kind = ?, status = ?, pinned = ?, boost = ?,
-                  revision = ?, created_at = CAST(? AS TIMESTAMP),
-                  updated_at = CAST(? AS TIMESTAMP)
-                WHERE id = ?
-                "#,
-                params![
-                    doc.uri,
-                    doc.title,
-                    doc.content,
-                    doc.metadata_json,
-                    hash,
-                    doc.wing,
-                    doc.room,
-                    doc.source_file,
-                    layer,
-                    kind,
-                    status,
-                    doc.pinned,
-                    boost,
-                    new_rev,
-                    format_ts(doc.created_at),
-                    format_ts(doc.updated_at),
-                    doc.id,
-                ],
-            )?;
-        } else {
-            tx.execute(
-                r#"
-            INSERT INTO documents
-              (id, uri, title, content, metadata_json,
-               content_hash, wing, room, source_file, layer, kind, status,
-               pinned, boost, revision,
-               created_at, updated_at)
-            VALUES
-              (?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?,
-               CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))
-            "#,
-                params![
-                    doc.id,
-                    doc.uri,
-                    doc.title,
-                    doc.content,
-                    doc.metadata_json,
-                    hash,
-                    doc.wing,
-                    doc.room,
-                    doc.source_file,
-                    layer,
-                    kind,
-                    status,
-                    doc.pinned,
-                    boost,
-                    new_rev,
-                    format_ts(doc.created_at),
-                    format_ts(doc.updated_at),
-                ],
-            )?;
-        }
+        let new_rev = upsert_document_cas_locked(&tx, doc, if_match_revision)?;
         tx.commit()?;
         Ok(new_rev)
+    }
+
+    /// Persist a document and its derived state under one DuckDB transaction.
+    ///
+    /// Callers must finish chunking and embedding before entering this method.
+    /// Embedding JSON is also prepared before the database lock/transaction so
+    /// serialization failures cannot leave a partially-updated document.
+    pub(crate) fn write_document_atomic(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+        derived: DocumentDerivedWrite<'_>,
+    ) -> Result<AtomicDocumentWriteResult> {
+        let prepared_embeddings = match &derived {
+            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks) => {
+                if let Some(chunk) = chunks.iter().find(|chunk| chunk.document_id != doc.id) {
+                    return Err(AppError::config(format!(
+                        "chunk {} belongs to document {}, expected {}",
+                        chunk.id, chunk.document_id, doc.id
+                    )));
+                }
+                Some(
+                    chunks
+                        .iter()
+                        .map(|chunk| serde_json::to_string(&chunk.embedding))
+                        .collect::<std::result::Result<Vec<_>, _>>()?,
+                )
+            }
+            DocumentDerivedWrite::Preserve | DocumentDerivedWrite::RefreshGraphLabel => None,
+        };
+
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let revision = upsert_document_cas_locked(&tx, doc, if_match_revision)?;
+        let (node_id, edge_count) = match (derived, prepared_embeddings) {
+            (DocumentDerivedWrite::Preserve, None) => (None, 0),
+            (DocumentDerivedWrite::RefreshGraphLabel, None) => {
+                (refresh_document_graph_label_locked(&tx, doc)?, 0)
+            }
+            (DocumentDerivedWrite::ReplaceChunksAndGraph(chunks), Some(embedding_json)) => {
+                super::fts::mark_fts_dirty(&tx)?;
+                tx.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
+                insert_chunks_locked(&tx, chunks, &embedding_json)?;
+                let (node_id, edge_count) =
+                    crate::graph::resolve::rebuild_document_graph_locked(&tx, doc)?;
+                (Some(node_id), edge_count)
+            }
+            _ => unreachable!("derived write and prepared embedding state must match"),
+        };
+        tx.commit()?;
+        Ok(AtomicDocumentWriteResult {
+            revision,
+            node_id,
+            edge_count,
+        })
     }
 
     /// Historical document snapshots, newest revision first.
@@ -278,33 +208,13 @@ impl Store {
             return Ok(());
         }
 
+        let embedding_json = chunks
+            .iter()
+            .map(|chunk| serde_json::to_string(&chunk.embedding))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         let conn = self.lock()?;
-        let now = format_ts(Utc::now());
-        let mut stmt = conn.prepare(
-            r#"
-            INSERT INTO chunks
-              (id, document_id, chunk_index, content, embedding_json, char_start, char_end, created_at, metadata_json)
-            VALUES
-              (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
-            "#,
-        )?;
-
-        for chunk in chunks {
-            let embedding_json = serde_json::to_string(&chunk.embedding)?;
-            stmt.execute(params![
-                chunk.id,
-                chunk.document_id,
-                chunk.chunk_index,
-                chunk.content,
-                embedding_json,
-                chunk.char_start,
-                chunk.char_end,
-                now.as_str(),
-                chunk.metadata_json,
-            ])?;
-        }
-
-        Ok(())
+        super::fts::mark_fts_dirty(&conn)?;
+        insert_chunks_locked(&conn, chunks, &embedding_json)
     }
 
     /// Delete a document, its chunks, and its graph node + incident edges.
@@ -315,6 +225,7 @@ impl Store {
         self.delete_graph_for_document(id)?;
 
         let conn = self.lock()?;
+        super::fts::mark_fts_dirty(&conn)?;
         conn.execute("DELETE FROM chunks WHERE document_id = ?", params![id])?;
         let n = conn.execute("DELETE FROM documents WHERE id = ?", params![id])?;
         Ok(n > 0)
@@ -323,6 +234,7 @@ impl Store {
     /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
     pub fn delete_chunks_for_document(&self, document_id: &str) -> Result<()> {
         let conn = self.lock()?;
+        super::fts::mark_fts_dirty(&conn)?;
         conn.execute(
             "DELETE FROM chunks WHERE document_id = ?",
             params![document_id],
@@ -808,102 +720,27 @@ impl Store {
         id: &str,
         update: &DocumentMetaUpdate,
     ) -> Result<Option<DocumentMetaApplyResult>> {
-        let Some(mut doc) = self.get_document(id)? else {
+        let Some(mut applied) = self.prepare_document_meta_update(id, update)? else {
             return Ok(None);
         };
+        let expected_revision = applied.document.revision;
+        applied.document.revision =
+            self.upsert_document_cas(&applied.document, Some(expected_revision))?;
+        Ok(Some(applied))
+    }
 
-        let mut content_changed = false;
-        let mut title_changed = false;
-
-        if let Some(ref w) = update.wing {
-            doc.wing = if w.is_empty() { None } else { Some(w.clone()) };
-        }
-        if let Some(ref r) = update.room {
-            doc.room = if r.is_empty() { None } else { Some(r.clone()) };
-        }
-        if let Some(ref s) = update.status {
-            let s = s.trim();
-            if !s.is_empty() {
-                doc.status = s.to_string();
-            }
-        }
-        if let Some(ref layer) = update.layer {
-            let layer = layer.trim();
-            if !layer.is_empty() {
-                doc.layer = layer.to_string();
-            }
-        }
-        if let Some(ref kind) = update.kind {
-            let kind = kind.trim();
-            if !kind.is_empty() {
-                doc.kind = kind.to_string();
-            }
-        }
-        if let Some(ref src) = update.source_file {
-            doc.source_file = if src.is_empty() {
-                None
-            } else {
-                Some(src.clone())
-            };
-        }
-        if let Some(ref title) = update.title {
-            let title = title.trim();
-            if !title.is_empty() && title != doc.title {
-                doc.title = title.to_string();
-                title_changed = true;
-            } else if !title.is_empty() {
-                // Same title: still count as written but not "changed" for graph label.
-                doc.title = title.to_string();
-            }
-        }
-        if let Some(ref meta) = update.metadata_json {
-            let meta = meta.trim();
-            if meta.is_empty() {
-                doc.metadata_json = "{}".into();
-            } else {
-                // Validate JSON; reject garbage so agents get a clear error.
-                serde_json::from_str::<serde_json::Value>(meta).map_err(|e| {
-                    AppError::config(format!("metadata_json is not valid JSON: {e}"))
-                })?;
-                doc.metadata_json = meta.to_string();
-            }
-        }
-        if let Some(pinned) = update.pinned {
-            doc.pinned = pinned;
-        }
-        if let Some(boost) = update.boost {
-            if !boost.is_finite() || boost <= 0.0 {
-                return Err(AppError::config(format!(
-                    "boost must be finite and > 0 (got {boost})"
-                )));
-            }
-            doc.boost = boost;
-        }
-        if let Some(ref new_content) = update.content {
-            if new_content.as_str() != doc.content.as_str() {
-                // Immutable raw policy: refuse body rewrite for layer=raw.
-                if doc.layer == "raw" {
-                    return Err(AppError::conflict(format!(
-                        "document {} is layer=raw (immutable body); refuse content change via update_document_meta",
-                        doc.id
-                    )));
-                }
-                doc.content = new_content.clone();
-                doc.content_hash = Some(content_hash(new_content));
-                content_changed = true;
-            }
-        }
-
-        doc.updated_at = Utc::now();
-        self.upsert_document(&doc)?;
-        let document = self
-            .get_document(id)?
-            .ok_or_else(|| AppError::db(format!("document vanished after meta update: {id}")))?;
-        Ok(Some(DocumentMetaApplyResult {
-            document,
-            content_changed,
-            title_changed,
-        }))
+    /// Prepare a metadata/body update without mutating storage.
+    ///
+    /// Ingestion uses this seam to finish any required chunking/embedding before
+    /// passing the prepared document to [`Self::write_document_atomic`].
+    pub(crate) fn prepare_document_meta_update(
+        &self,
+        id: &str,
+        update: &DocumentMetaUpdate,
+    ) -> Result<Option<DocumentMetaApplyResult>> {
+        self.get_document(id)?
+            .map(|doc| apply_document_meta_update(doc, update))
+            .transpose()
     }
 
     /// Placement-only alias for [`Self::update_document_meta`] (returns document only).
@@ -1022,6 +859,9 @@ impl Store {
             return Ok((chunks, nodes, edges));
         }
         let conn = self.lock()?;
+        if chunks > 0 {
+            super::fts::mark_fts_dirty(&conn)?;
+        }
         conn.execute_batch(
             "BEGIN TRANSACTION;
              DELETE FROM graph_edges WHERE NOT EXISTS
@@ -1211,10 +1051,21 @@ impl Store {
         )))
     }
 
-    /// Replace all chunks for a document (delete + insert), preserving caller-supplied ids.
+    /// Atomically replace all chunks for a document, preserving caller-supplied ids.
     pub fn replace_chunks_for_document(&self, document_id: &str, chunks: &[Chunk]) -> Result<()> {
-        self.delete_chunks_for_document(document_id)?;
-        self.insert_chunks(chunks)?;
+        let embedding_json = chunks
+            .iter()
+            .map(|chunk| serde_json::to_string(&chunk.embedding))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        super::fts::mark_fts_dirty(&tx)?;
+        tx.execute(
+            "DELETE FROM chunks WHERE document_id = ?",
+            params![document_id],
+        )?;
+        insert_chunks_locked(&tx, chunks, &embedding_json)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1781,6 +1632,315 @@ impl Store {
     }
 }
 
+fn apply_document_meta_update(
+    mut doc: Document,
+    update: &DocumentMetaUpdate,
+) -> Result<DocumentMetaApplyResult> {
+    let mut content_changed = false;
+    let mut title_changed = false;
+
+    if let Some(ref wing) = update.wing {
+        doc.wing = if wing.is_empty() {
+            None
+        } else {
+            Some(wing.clone())
+        };
+    }
+    if let Some(ref room) = update.room {
+        doc.room = if room.is_empty() {
+            None
+        } else {
+            Some(room.clone())
+        };
+    }
+    if let Some(ref status) = update.status {
+        let status = status.trim();
+        if !status.is_empty() {
+            doc.status = status.to_string();
+        }
+    }
+    if let Some(ref layer) = update.layer {
+        let layer = layer.trim();
+        if !layer.is_empty() {
+            doc.layer = layer.to_string();
+        }
+    }
+    if let Some(ref kind) = update.kind {
+        let kind = kind.trim();
+        if !kind.is_empty() {
+            doc.kind = kind.to_string();
+        }
+    }
+    if let Some(ref source_file) = update.source_file {
+        doc.source_file = if source_file.is_empty() {
+            None
+        } else {
+            Some(source_file.clone())
+        };
+    }
+    if let Some(ref title) = update.title {
+        let title = title.trim();
+        if !title.is_empty() && title != doc.title {
+            doc.title = title.to_string();
+            title_changed = true;
+        } else if !title.is_empty() {
+            // Same title: still count as written but not "changed" for graph label.
+            doc.title = title.to_string();
+        }
+    }
+    if let Some(ref metadata_json) = update.metadata_json {
+        let metadata_json = metadata_json.trim();
+        if metadata_json.is_empty() {
+            doc.metadata_json = "{}".into();
+        } else {
+            serde_json::from_str::<serde_json::Value>(metadata_json).map_err(|error| {
+                AppError::config(format!("metadata_json is not valid JSON: {error}"))
+            })?;
+            doc.metadata_json = metadata_json.to_string();
+        }
+    }
+    if let Some(pinned) = update.pinned {
+        doc.pinned = pinned;
+    }
+    if let Some(boost) = update.boost {
+        if !boost.is_finite() || boost <= 0.0 {
+            return Err(AppError::config(format!(
+                "boost must be finite and > 0 (got {boost})"
+            )));
+        }
+        doc.boost = boost;
+    }
+    if let Some(ref new_content) = update.content {
+        if new_content.as_str() != doc.content.as_str() {
+            // Immutable raw policy: refuse body rewrite for layer=raw.
+            if doc.layer == "raw" {
+                return Err(AppError::conflict(format!(
+                    "document {} is layer=raw (immutable body); refuse content change via update_document_meta",
+                    doc.id
+                )));
+            }
+            doc.content = new_content.clone();
+            doc.content_hash = Some(content_hash(new_content));
+            content_changed = true;
+        }
+    }
+
+    doc.updated_at = Utc::now();
+    Ok(DocumentMetaApplyResult {
+        document: doc,
+        content_changed,
+        title_changed,
+    })
+}
+
+fn upsert_document_cas_locked(
+    conn: &Connection,
+    doc: &Document,
+    if_match_revision: Option<i64>,
+) -> Result<i64> {
+    let hash = match doc.content_hash.as_deref() {
+        Some(h) if !h.is_empty() => h.to_string(),
+        _ => content_hash(&doc.content),
+    };
+    let layer = if doc.layer.is_empty() {
+        "raw"
+    } else {
+        doc.layer.as_str()
+    };
+    let kind = if doc.kind.is_empty() {
+        "document"
+    } else {
+        doc.kind.as_str()
+    };
+    let status = if doc.status.is_empty() {
+        "active"
+    } else {
+        doc.status.as_str()
+    };
+
+    let current_rev: Option<i64> = conn
+        .query_row(
+            "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
+            params![doc.id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let new_rev = match current_rev {
+        Some(rev) => {
+            if let Some(expected) = if_match_revision {
+                if rev != expected {
+                    return Err(AppError::conflict(format!(
+                        "etag mismatch for document {}: expected revision {} ({}), current revision {} ({})",
+                        doc.id,
+                        expected,
+                        crate::models::format_document_etag(expected),
+                        rev,
+                        crate::models::format_document_etag(rev),
+                    )));
+                }
+            }
+            rev.saturating_add(1)
+        }
+        None => {
+            if let Some(expected) = if_match_revision {
+                return Err(AppError::conflict(format!(
+                    "etag mismatch: if_match_revision={expected} but document {} does not exist",
+                    doc.id
+                )));
+            }
+            1
+        }
+    };
+
+    let boost = if doc.boost.is_finite() && doc.boost > 0.0 {
+        doc.boost
+    } else {
+        1.0
+    };
+    if current_rev.is_some() {
+        conn.execute(
+            r#"
+            INSERT INTO document_revisions
+              (document_id, revision, uri, title, content, metadata_json, content_hash,
+               wing, room, source_file, layer, kind, status, pinned, boost,
+               created_at, updated_at, superseded_at)
+            SELECT id, COALESCE(revision, 1), uri, title, content, metadata_json, content_hash,
+                   wing, room, source_file, layer, kind, status, pinned, boost,
+                   created_at, updated_at, CURRENT_TIMESTAMP
+            FROM documents WHERE id = ?
+            ON CONFLICT (document_id, revision) DO NOTHING
+            "#,
+            params![doc.id],
+        )?;
+        // DuckDB implements INSERT OR REPLACE as delete+insert. Repeated
+        // autosync updates can hit an ART index delete bug and invalidate
+        // the whole connection. UPDATE preserves the indexed row identity.
+        conn.execute(
+            r#"
+            UPDATE documents SET
+              uri = ?, title = ?, content = ?, metadata_json = ?,
+              content_hash = ?, wing = ?, room = ?, source_file = ?,
+              layer = ?, kind = ?, status = ?, pinned = ?, boost = ?,
+              revision = ?, created_at = CAST(? AS TIMESTAMP),
+              updated_at = CAST(? AS TIMESTAMP)
+            WHERE id = ?
+            "#,
+            params![
+                doc.uri,
+                doc.title,
+                doc.content,
+                doc.metadata_json,
+                hash,
+                doc.wing,
+                doc.room,
+                doc.source_file,
+                layer,
+                kind,
+                status,
+                doc.pinned,
+                boost,
+                new_rev,
+                format_ts(doc.created_at),
+                format_ts(doc.updated_at),
+                doc.id,
+            ],
+        )?;
+    } else {
+        conn.execute(
+            r#"
+            INSERT INTO documents
+              (id, uri, title, content, metadata_json,
+               content_hash, wing, room, source_file, layer, kind, status,
+               pinned, boost, revision,
+               created_at, updated_at)
+            VALUES
+              (?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?,
+               CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))
+            "#,
+            params![
+                doc.id,
+                doc.uri,
+                doc.title,
+                doc.content,
+                doc.metadata_json,
+                hash,
+                doc.wing,
+                doc.room,
+                doc.source_file,
+                layer,
+                kind,
+                status,
+                doc.pinned,
+                boost,
+                new_rev,
+                format_ts(doc.created_at),
+                format_ts(doc.updated_at),
+            ],
+        )?;
+    }
+    Ok(new_rev)
+}
+
+fn insert_chunks_locked(
+    conn: &Connection,
+    chunks: &[Chunk],
+    embedding_json: &[String],
+) -> Result<()> {
+    if chunks.len() != embedding_json.len() {
+        return Err(AppError::db(
+            "prepared embedding count does not match chunk count",
+        ));
+    }
+    if chunks.is_empty() {
+        return Ok(());
+    }
+
+    let now = format_ts(Utc::now());
+    let mut stmt = conn.prepare(
+        r#"
+        INSERT INTO chunks
+          (id, document_id, chunk_index, content, embedding_json, char_start, char_end, created_at, metadata_json)
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
+        "#,
+    )?;
+    for (chunk, embedding_json) in chunks.iter().zip(embedding_json) {
+        stmt.execute(params![
+            chunk.id,
+            chunk.document_id,
+            chunk.chunk_index,
+            chunk.content,
+            embedding_json,
+            chunk.char_start,
+            chunk.char_end,
+            now.as_str(),
+            chunk.metadata_json,
+        ])?;
+    }
+    Ok(())
+}
+
+fn refresh_document_graph_label_locked(
+    conn: &Connection,
+    doc: &Document,
+) -> Result<Option<String>> {
+    let node_id = {
+        let mut stmt = conn.prepare("SELECT id FROM graph_nodes WHERE document_id = ? LIMIT 1")?;
+        let mut rows = stmt.query(params![doc.id])?;
+        rows.next()?.map(|row| row.get(0)).transpose()?
+    };
+    if let Some(ref node_id) = node_id {
+        conn.execute(
+            "UPDATE graph_nodes SET label = ?, updated_at = CAST(? AS TIMESTAMP) WHERE id = ?",
+            params![doc.title, format_ts(Utc::now()), node_id],
+        )?;
+    }
+    Ok(node_id)
+}
+
 /// Whitespace / punctuation tokenization for index query matching.
 fn tokenize_index_query(query: &str) -> Vec<String> {
     query
@@ -2242,6 +2402,128 @@ mod tests {
         assert_eq!(doc.content, "content revision 49");
         assert_eq!(doc.revision, 50);
         assert_eq!(reopened.integrity_counts().unwrap().1, 0);
+    }
+
+    #[test]
+    fn atomic_document_write_rolls_back_document_chunks_and_graph_on_graph_fault() {
+        let store = open_temp();
+        let mut original = sample_doc("atomic", "wiki://atomic");
+        original.title = "Original title".into();
+        original.content = "Original body links to [[Old target]].".into();
+        original.layer = "wiki".into();
+        original.kind = "wiki".into();
+        original.content_hash = Some(content_hash(&original.content));
+        let original_chunk = Chunk {
+            id: "old-chunk".into(),
+            document_id: original.id.clone(),
+            chunk_index: 0,
+            content: original.content.clone(),
+            embedding: vec![0.1, 0.2],
+            char_start: 0,
+            char_end: original.content.chars().count() as i32,
+            metadata_json: "{}".into(),
+        };
+        let initial = store
+            .write_document_atomic(
+                &original,
+                None,
+                DocumentDerivedWrite::ReplaceChunksAndGraph(std::slice::from_ref(&original_chunk)),
+            )
+            .expect("initial atomic write");
+        assert_eq!(initial.revision, 1);
+        let generation_after_initial = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::chunks_generation(&conn).unwrap()
+        };
+        assert_eq!(generation_after_initial, 1);
+        let node_id = initial.node_id.expect("document node");
+        let original_edges: Vec<_> = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.source_id == node_id)
+            .collect();
+        assert_eq!(original_edges.len(), 1);
+
+        // The unique key is a test-only fault injector: the rebuilt graph gets
+        // as far as its second identical edge, after document/chunk mutations.
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "CREATE UNIQUE INDEX rollback_edge_key ON graph_edges(source_id, target_id, rel_type)",
+                [],
+            )
+            .expect("fault index");
+
+        let mut updated = original.clone();
+        updated.title = "Updated title".into();
+        updated.content = "Updated body [[Repeated target]] and [[Repeated target]].".into();
+        updated.content_hash = Some(content_hash(&updated.content));
+        updated.updated_at = Utc::now();
+        let replacement_chunk = Chunk {
+            id: "new-chunk".into(),
+            document_id: updated.id.clone(),
+            chunk_index: 0,
+            content: updated.content.clone(),
+            embedding: vec![0.3, 0.4],
+            char_start: 0,
+            char_end: updated.content.chars().count() as i32,
+            metadata_json: "{}".into(),
+        };
+        let error = store
+            .write_document_atomic(
+                &updated,
+                Some(initial.revision),
+                DocumentDerivedWrite::ReplaceChunksAndGraph(std::slice::from_ref(
+                    &replacement_chunk,
+                )),
+            )
+            .expect_err("duplicate graph edge must fail the transaction");
+        assert!(
+            error.to_string().contains("duplicate")
+                || error.to_string().contains("constraint")
+                || error.to_string().contains("unique"),
+            "unexpected fault: {error}"
+        );
+
+        let persisted = store.get_document(&original.id).unwrap().expect("document");
+        assert_eq!(persisted.revision, initial.revision);
+        assert_eq!(persisted.title, original.title);
+        assert_eq!(persisted.content, original.content);
+        let chunks = store.list_chunks_for_document(&original.id).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].id, original_chunk.id);
+        assert_eq!(chunks[0].content, original_chunk.content);
+        let node = store
+            .find_node_by_document_id(&original.id)
+            .unwrap()
+            .expect("document node after rollback");
+        assert_eq!(node.id, node_id);
+        assert_eq!(node.label, original.title);
+        let edges: Vec<_> = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.source_id == node_id)
+            .collect();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].id, original_edges[0].id);
+        assert_eq!(edges[0].target_id, original_edges[0].target_id);
+        assert_eq!(edges[0].rel_type, original_edges[0].rel_type);
+        assert!(store
+            .find_nodes_by_label("Repeated target")
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .list_document_revisions(&original.id)
+            .unwrap()
+            .is_empty());
+        let generation_after_rollback = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::chunks_generation(&conn).unwrap()
+        };
+        assert_eq!(generation_after_rollback, generation_after_initial);
     }
 
     #[test]

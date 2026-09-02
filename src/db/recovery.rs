@@ -279,6 +279,7 @@ impl Store {
         };
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
+        let mut fts_marked_dirty = false;
         for item in &bundle.documents {
             let exists: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM documents WHERE id = ? OR uri = ?)",
@@ -310,6 +311,10 @@ impl Store {
             report.chunks_inserted += item.chunks.len() as u64;
             if dry_run {
                 continue;
+            }
+            if !fts_marked_dirty && (exists || !item.chunks.is_empty()) {
+                super::fts::mark_fts_dirty(&tx)?;
+                fts_marked_dirty = true;
             }
             if exists {
                 tx.execute("DELETE FROM graph_edges WHERE source_id IN (SELECT id FROM graph_nodes WHERE document_id IN (SELECT id FROM documents WHERE id = ? OR uri = ?)) OR target_id IN (SELECT id FROM graph_nodes WHERE document_id IN (SELECT id FROM documents WHERE id = ? OR uri = ?))", params![item.document.id, item.document.uri, item.document.id, item.document.uri])?;

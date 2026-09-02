@@ -6,9 +6,10 @@
 //! 2. `PRAGMA create_fts_index('chunks', 'id', 'content', stemmer := …, overwrite := 1)`
 //! 3. Rank with `fts_main_chunks.match_bm25(id, query)`
 //!
-//! The FTS inverted index does **not** update when `chunks` changes. Call
-//! [`reindex`] (or [`ensure_fts`]) after ingest/delete so search is
-//! read-your-writes consistent before an MCP tool returns.
+//! The FTS inverted index does **not** update when `chunks` changes. Chunk
+//! mutations call [`mark_fts_dirty`], and the next lexical search performs one
+//! serialized [`refresh_fts_if_stale`] before ranking. Clean, warm searches do
+//! not execute FTS DDL. [`reindex`] remains the explicit force-rebuild API.
 //!
 //! # Fallback: term-frequency in Rust
 //!
@@ -34,6 +35,9 @@ pub const FTS_TABLE: &str = "chunks";
 
 const META_BACKEND: &str = "fts_backend";
 const META_STEMMER: &str = "fts_stemmer";
+const META_CHUNKS_GENERATION: &str = "fts_chunks_generation";
+const META_INDEX_GENERATION: &str = "fts_index_generation";
+const META_REBUILD_COUNT: &str = "fts_rebuild_count";
 const DEFAULT_STEMMER: &str = "porter";
 const SNIPPET_CHARS: usize = 240;
 
@@ -71,6 +75,23 @@ pub struct FtsState {
     pub stemmer: String,
 }
 
+/// Generation snapshot for the derived lexical index.
+///
+/// `chunks_generation` advances before a mutation can change `chunks`.
+/// `index_generation` advances only after a successful BM25 rebuild (or after
+/// selecting the live-row term-frequency fallback). A mismatch is therefore a
+/// crash-safe dirty marker: false positives can cause one extra rebuild, while
+/// a completed mutation cannot be hidden behind a clean generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FtsGenerationState {
+    pub chunks_generation: u64,
+    pub index_generation: Option<u64>,
+    pub dirty: bool,
+    /// Successful refresh/reindex attempts. Primarily useful for diagnostics
+    /// and for proving that clean searches stay on the read-only fast path.
+    pub rebuild_count: u64,
+}
+
 /// Optional equality filters for lexical search (joined via `documents`).
 ///
 /// Empty / `None` fields are ignored. Used by hybrid / lex search tools.
@@ -103,7 +124,8 @@ impl LexFilters {
 ///
 /// Tries DuckDB FTS with stemmer `"porter"`. On extension failure, records the
 /// term-frequency fallback and returns successfully so callers never hard-fail
-/// solely because FTS could not be installed.
+/// solely because FTS could not be installed. Once initialized, this is a
+/// no-op while the recorded generations and requested configuration are clean.
 pub fn ensure_fts(conn: &Connection) -> Result<FtsState> {
     ensure_fts_with_stemmer(conn, DEFAULT_STEMMER)
 }
@@ -113,51 +135,166 @@ pub fn ensure_fts(conn: &Connection) -> Result<FtsState> {
 /// Pass `"none"` to disable stemming (better for CJK / code). When stemmer is
 /// `"none"`, stopwords are also set to `"none"`.
 pub fn ensure_fts_with_stemmer(conn: &Connection, stemmer: &str) -> Result<FtsState> {
-    let stemmer = sanitize_stemmer(stemmer);
-
-    match try_duckdb_fts_index(conn, &stemmer) {
-        Ok(()) => {
-            let state = FtsState {
-                backend: FtsBackend::DuckDbBm25,
-                stemmer,
-            };
-            persist_state(conn, &state)?;
-            tracing::info!(
-                backend = state.backend.as_str(),
-                stemmer = %state.stemmer,
-                "FTS index ready on chunks (DuckDB BM25)"
-            );
-            Ok(state)
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                stemmer = %stemmer,
-                "DuckDB FTS extension unavailable; lex search uses term-frequency fallback"
-            );
-            let state = FtsState {
-                backend: FtsBackend::TermFrequency,
-                stemmer,
-            };
-            persist_state(conn, &state)?;
-            Ok(state)
-        }
-    }
+    refresh_fts_if_stale_with_stemmer(conn, stemmer)
 }
 
-/// Rebuild the FTS index after ingest/delete (read-your-writes).
+/// Mark the derived FTS index stale before mutating `chunks`.
+///
+/// Store mutations are serialized by [`Store`]'s connection mutex, so the
+/// read/increment/write sequence is single-writer. Call this before the first
+/// statement that may change chunks: a failed mutation can leave a harmless
+/// dirty marker, whereas marking afterwards could expose stale results if the
+/// marker write itself failed.
+pub fn mark_fts_dirty(conn: &Connection) -> Result<u64> {
+    let current = chunks_generation(conn)?;
+    let next = current
+        .checked_add(1)
+        .ok_or_else(|| AppError::fts("FTS chunks generation overflow"))?;
+    upsert_meta(conn, META_CHUNKS_GENERATION, &next.to_string())?;
+    Ok(next)
+}
+
+/// Read only the source chunk generation (one `meta` lookup, no FTS probe).
+///
+/// This is the hot-path invalidation token for caches derived from `chunks`.
+/// Missing legacy/corrupt metadata reads as generation zero; the next mutation
+/// advances it through [`mark_fts_dirty`].
+pub fn chunks_generation(conn: &Connection) -> Result<u64> {
+    Ok(read_u64_meta(conn, META_CHUNKS_GENERATION)?.unwrap_or(0))
+}
+
+/// Read the current dirty/generation state without refreshing the index.
+pub fn fts_generation_state(conn: &Connection) -> Result<FtsGenerationState> {
+    let recorded_chunks_generation = read_u64_meta(conn, META_CHUNKS_GENERATION)?;
+    let chunks_generation = recorded_chunks_generation.unwrap_or(0);
+    let index_generation = read_u64_meta(conn, META_INDEX_GENERATION)?;
+    let rebuild_count = read_u64_meta(conn, META_REBUILD_COUNT)?.unwrap_or(0);
+    let configured = fts_status(conn)?;
+    let physical_index_missing = configured
+        .as_ref()
+        .is_some_and(|state| state.backend == FtsBackend::DuckDbBm25 && !fts_index_present(conn));
+    let dirty = recorded_chunks_generation.is_none()
+        || configured.is_none()
+        || index_generation != Some(chunks_generation)
+        || physical_index_missing;
+
+    Ok(FtsGenerationState {
+        chunks_generation,
+        index_generation,
+        dirty,
+        rebuild_count,
+    })
+}
+
+/// Refresh the derived index once when chunk generations are stale.
+///
+/// The stored stemmer is reused, defaulting to `porter`. Search calls this
+/// while holding the store connection mutex, which makes concurrent stale
+/// searches a singleflight: the first rebuilds and advances the generation;
+/// waiters observe a clean generation and skip DDL.
+pub fn refresh_fts_if_stale(conn: &Connection) -> Result<FtsState> {
+    let stemmer = read_meta(conn, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
+    refresh_fts_if_stale_with_stemmer(conn, &stemmer)
+}
+
+/// Like [`refresh_fts_if_stale`], with an explicit requested stemmer.
+pub fn refresh_fts_if_stale_with_stemmer(conn: &Connection, stemmer: &str) -> Result<FtsState> {
+    refresh_fts(conn, stemmer, RefreshMode::IfStale)
+}
+
+/// Force-rebuild the FTS index after ingest/delete (read-your-writes).
 ///
 /// For [`FtsBackend::TermFrequency`] this only refreshes meta (scoring always
 /// reads live rows). Uses the stemmer last stored in `meta`, defaulting to
 /// `"porter"`.
 pub fn reindex(conn: &Connection) -> Result<FtsState> {
     let stemmer = read_meta(conn, META_STEMMER)?.unwrap_or_else(|| DEFAULT_STEMMER.to_string());
-    ensure_fts_with_stemmer(conn, &stemmer)
+    refresh_fts(conn, &stemmer, RefreshMode::Force)
 }
 
 /// Rebuild with an explicit stemmer (updates `meta.fts_stemmer`).
 pub fn reindex_with_stemmer(conn: &Connection, stemmer: &str) -> Result<FtsState> {
-    ensure_fts_with_stemmer(conn, stemmer)
+    refresh_fts(conn, stemmer, RefreshMode::Force)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshMode {
+    IfStale,
+    Force,
+}
+
+fn refresh_fts(conn: &Connection, stemmer: &str, mode: RefreshMode) -> Result<FtsState> {
+    let stemmer = sanitize_stemmer(stemmer);
+    let current = fts_status(conn)?;
+    let generations = fts_generation_state(conn)?;
+    let configuration_changed = current
+        .as_ref()
+        .is_none_or(|state| state.stemmer != stemmer);
+
+    if mode == RefreshMode::IfStale && !configuration_changed {
+        if !generations.dirty {
+            return current.ok_or_else(|| {
+                AppError::fts("FTS generation is clean but backend metadata is missing")
+            });
+        }
+        if let Some(state) = current.filter(|state| state.backend == FtsBackend::TermFrequency) {
+            // TF scores live chunks directly. A chunk mutation only needs to
+            // advance the logical generation; retry extension installation
+            // only on an explicit reindex or configuration change.
+            publish_refreshed_state(conn, &state, generations.chunks_generation)?;
+            return Ok(state);
+        }
+    }
+
+    rebuild_fts(conn, stemmer, generations.chunks_generation)
+}
+
+fn rebuild_fts(conn: &Connection, stemmer: String, chunks_generation: u64) -> Result<FtsState> {
+    let state = match try_duckdb_fts_index(conn, &stemmer) {
+        Ok(()) => {
+            let state = FtsState {
+                backend: FtsBackend::DuckDbBm25,
+                stemmer,
+            };
+            tracing::info!(
+                backend = state.backend.as_str(),
+                stemmer = %state.stemmer,
+                chunks_generation,
+                "FTS index refreshed on chunks (DuckDB BM25)"
+            );
+            state
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                stemmer = %stemmer,
+                chunks_generation,
+                "DuckDB FTS extension unavailable; lex search uses term-frequency fallback"
+            );
+            FtsState {
+                backend: FtsBackend::TermFrequency,
+                stemmer,
+            }
+        }
+    };
+
+    publish_refreshed_state(conn, &state, chunks_generation)?;
+    Ok(state)
+}
+
+fn publish_refreshed_state(
+    conn: &Connection,
+    state: &FtsState,
+    chunks_generation: u64,
+) -> Result<()> {
+    // Publish the generation only after the derived search backend is ready.
+    // If the process fails between these writes, the missing/mismatched
+    // generation remains dirty and the next refresh safely retries.
+    persist_state(conn, state)?;
+    upsert_meta(conn, META_CHUNKS_GENERATION, &chunks_generation.to_string())?;
+    upsert_meta(conn, META_INDEX_GENERATION, &chunks_generation.to_string())?;
+    increment_rebuild_count(conn)?;
+    Ok(())
 }
 
 /// Load last-known FTS state from `meta`, if [`ensure_fts`] has run.
@@ -207,7 +344,8 @@ pub fn fts_index_present(conn: &Connection) -> bool {
     {
         return true;
     }
-    conn.prepare("SELECT 1 FROM fts_main_chunks LIMIT 0").is_ok()
+    conn.prepare("SELECT 1 FROM fts_main_chunks LIMIT 0")
+        .is_ok()
 }
 
 /// Best-effort: extension loadable **and** index present (same contract as
@@ -235,9 +373,9 @@ pub fn load_fts_extension(conn: &Connection) -> bool {
 
 /// Lexical search over chunks: BM25 when the extension is active, else TF.
 ///
-/// Ensures a backend is configured (calls [`ensure_fts`] if meta is empty).
-/// For the DuckDB path, rebuilds the FTS index before ranking so ingest/delete
-/// in the same session is visible (DuckDB FTS is not incremental; read-your-writes).
+/// Ensures a backend is configured and refreshes it only when a chunk mutation
+/// advanced the stored generation. The store mutex serializes this check and
+/// refresh, preserving read-your-writes without rebuilding on warm searches.
 ///
 /// Returns hits sorted by lexical score descending, capped at `top_k`.
 /// Each hit sets `score` and `score_lex` to the lexical score; `snippet` is a
@@ -270,8 +408,9 @@ pub fn search_bm25_with_stemmer(
         .or_else(|| read_meta(&conn, META_STEMMER).ok().flatten())
         .unwrap_or_else(|| DEFAULT_STEMMER.to_string());
 
-    // Rebuild / ensure before search so writes are visible (overwrite=1).
-    let state = ensure_fts_with_stemmer(&conn, &preferred_stemmer)?;
+    // The Store connection mutex covers the dirty check plus optional rebuild.
+    // Concurrent stale searches therefore collapse into one refresh.
+    let state = refresh_fts_if_stale_with_stemmer(&conn, &preferred_stemmer)?;
 
     match state.backend {
         FtsBackend::DuckDbBm25 => match search_duckdb_bm25(&conn, query, top_k, filters) {
@@ -527,9 +666,7 @@ fn filter_where_clause(filters: &LexFilters) -> (String, Vec<String>) {
     push_eq(&mut parts, &mut bind, "d.source_file", &filters.source_file);
 
     if !filters.include_archived {
-        parts.push(
-            "COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')".into(),
-        );
+        parts.push("COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')".into());
     }
 
     let where_sql = if parts.is_empty() {
@@ -540,12 +677,7 @@ fn filter_where_clause(filters: &LexFilters) -> (String, Vec<String>) {
     (where_sql, bind)
 }
 
-fn push_eq(
-    parts: &mut Vec<String>,
-    bind: &mut Vec<String>,
-    column: &str,
-    value: &Option<String>,
-) {
+fn push_eq(parts: &mut Vec<String>, bind: &mut Vec<String>, column: &str, value: &Option<String>) {
     if let Some(v) = value {
         if !v.is_empty() {
             parts.push(format!("{column} = ?"));
@@ -578,6 +710,30 @@ fn read_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
         Some(row) => Ok(Some(row.get(0)?)),
         None => Ok(None),
     }
+}
+
+fn read_u64_meta(conn: &Connection, key: &str) -> Result<Option<u64>> {
+    let Some(raw) = read_meta(conn, key)? else {
+        return Ok(None);
+    };
+    match raw.parse::<u64>() {
+        Ok(value) => Ok(Some(value)),
+        Err(e) => {
+            // Treat corrupt lifecycle metadata as absent. That is fail-safe for
+            // generations (it forces refresh) and self-heals on the next write.
+            tracing::warn!(meta_key = key, value = %raw, error = %e, "invalid FTS generation metadata");
+            Ok(None)
+        }
+    }
+}
+
+fn increment_rebuild_count(conn: &Connection) -> Result<u64> {
+    let current = read_u64_meta(conn, META_REBUILD_COUNT)?.unwrap_or(0);
+    let next = current
+        .checked_add(1)
+        .ok_or_else(|| AppError::fts("FTS rebuild counter overflow"))?;
+    upsert_meta(conn, META_REBUILD_COUNT, &next.to_string())?;
+    Ok(next)
 }
 
 /// Allow only ascii alpha / underscore stemmer names (DuckDB language list + none).
@@ -670,7 +826,12 @@ mod tests {
         }
 
         let chunks = [
-            ("c1", "d1", 0, "The domestic cat is a small carnivorous mammal."),
+            (
+                "c1",
+                "d1",
+                0,
+                "The domestic cat is a small carnivorous mammal.",
+            ),
             ("c2", "d1", 1, "Cats hunt mice and birds at night."),
             (
                 "c3",
@@ -699,6 +860,11 @@ mod tests {
             });
         }
         store.insert_chunks(&batch).unwrap();
+    }
+
+    fn lifecycle(store: &Store) -> FtsGenerationState {
+        let conn = store.lock().unwrap();
+        fts_generation_state(&conn).unwrap()
     }
 
     #[test]
@@ -739,6 +905,163 @@ mod tests {
     }
 
     #[test]
+    fn clean_warm_search_does_not_rebuild_fts() {
+        let (_dir, store) = open_store();
+        seed_docs(&store);
+        {
+            let conn = store.lock().unwrap();
+            ensure_fts(&conn).unwrap();
+        }
+        let initialized = lifecycle(&store);
+        assert!(!initialized.dirty);
+        assert!(initialized.rebuild_count > 0);
+
+        for _ in 0..2 {
+            let hits = search_bm25(&store, "cat", 10, &LexFilters::default()).unwrap();
+            assert!(!hits.is_empty());
+        }
+
+        let warm = lifecycle(&store);
+        assert_eq!(warm.chunks_generation, initialized.chunks_generation);
+        assert_eq!(warm.index_generation, initialized.index_generation);
+        assert_eq!(
+            warm.rebuild_count, initialized.rebuild_count,
+            "a clean warm search must not execute create_fts_index"
+        );
+    }
+
+    #[test]
+    fn reopened_clean_index_searches_without_rebuild() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fts-reopen.duckdb");
+        let (before, backend) = {
+            let store = Store::open(&path).unwrap();
+            seed_docs(&store);
+            let backend = {
+                let conn = store.lock().unwrap();
+                ensure_fts(&conn).unwrap().backend
+            };
+            (lifecycle(&store), backend)
+        };
+
+        let reopened = Store::open(&path).unwrap();
+        if backend == FtsBackend::DuckDbBm25 {
+            let conn = reopened.lock().unwrap();
+            let direct = search_duckdb_bm25(&conn, "cat", 10, &LexFilters::default()).unwrap();
+            assert!(!direct.is_empty());
+        }
+        let hits = search_bm25(&reopened, "cat", 10, &LexFilters::default()).unwrap();
+        assert!(!hits.is_empty());
+        let after = lifecycle(&reopened);
+        assert_eq!(after.rebuild_count, before.rebuild_count);
+        assert!(!after.dirty);
+    }
+
+    #[test]
+    fn dirty_term_frequency_backend_advances_without_fts_ddl_retry() {
+        let conn = Connection::open_in_memory().unwrap();
+        schema::migrate(&conn).unwrap();
+        let fallback = FtsState {
+            backend: FtsBackend::TermFrequency,
+            stemmer: DEFAULT_STEMMER.into(),
+        };
+        publish_refreshed_state(&conn, &fallback, 0).unwrap();
+        mark_fts_dirty(&conn).unwrap();
+        let before = fts_generation_state(&conn).unwrap();
+        assert!(before.dirty);
+        assert!(!fts_index_present(&conn));
+
+        let refreshed = refresh_fts_if_stale(&conn).unwrap();
+        assert_eq!(refreshed.backend, FtsBackend::TermFrequency);
+        let after = fts_generation_state(&conn).unwrap();
+        assert!(!after.dirty);
+        assert_eq!(after.rebuild_count, before.rebuild_count + 1);
+        assert!(
+            !fts_index_present(&conn),
+            "dirty TF refresh must not retry create_fts_index"
+        );
+    }
+
+    #[test]
+    fn mutation_marks_dirty_and_controlled_refresh_restores_freshness() {
+        let (_dir, store) = open_store();
+        seed_docs(&store);
+        {
+            let conn = store.lock().unwrap();
+            ensure_fts(&conn).unwrap();
+        }
+        let before = lifecycle(&store);
+
+        let content = "A quokka is a small marsupial native to Australia.";
+        store
+            .insert_chunks(&[Chunk {
+                id: "c5".into(),
+                document_id: "d1".into(),
+                chunk_index: 2,
+                content: content.into(),
+                embedding: vec![0.0; 4],
+                char_start: 0,
+                char_end: content.len() as i32,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+
+        let dirty = lifecycle(&store);
+        assert!(dirty.dirty);
+        assert_eq!(dirty.chunks_generation, before.chunks_generation + 1);
+        assert_eq!(dirty.index_generation, before.index_generation);
+
+        {
+            let conn = store.lock().unwrap();
+            refresh_fts_if_stale(&conn).unwrap();
+        }
+        let refreshed = lifecycle(&store);
+        assert!(!refreshed.dirty);
+        assert_eq!(
+            refreshed.index_generation,
+            Some(refreshed.chunks_generation)
+        );
+        assert_eq!(refreshed.rebuild_count, before.rebuild_count + 1);
+
+        let hits = search_bm25(&store, "quokka", 10, &LexFilters::default()).unwrap();
+        assert!(hits.iter().any(|hit| hit.chunk_id == "c5"));
+        assert_eq!(
+            lifecycle(&store).rebuild_count,
+            refreshed.rebuild_count,
+            "search after controlled refresh must stay warm"
+        );
+    }
+
+    #[test]
+    fn concurrent_stale_searches_singleflight_one_refresh() {
+        let (_dir, store) = open_store();
+        seed_docs(&store);
+        {
+            let conn = store.lock().unwrap();
+            ensure_fts(&conn).unwrap();
+            mark_fts_dirty(&conn).unwrap();
+        }
+        let before = lifecycle(&store);
+        assert!(before.dirty);
+
+        let workers = (0..4)
+            .map(|_| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    search_bm25(&store, "cat", 10, &LexFilters::default()).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            assert!(!worker.join().unwrap().is_empty());
+        }
+
+        let after = lifecycle(&store);
+        assert!(!after.dirty);
+        assert_eq!(after.rebuild_count, before.rebuild_count + 1);
+    }
+
+    #[test]
     fn search_bm25_finds_keyword_and_respects_top_k() {
         let (_dir, store) = open_store();
         seed_docs(&store);
@@ -752,7 +1075,8 @@ mod tests {
         let hits = search_bm25(&store, "cat mammal", 10, &LexFilters::default()).unwrap();
         assert!(!hits.is_empty(), "expected at least one lex hit");
         assert!(
-            hits.iter().any(|h| h.chunk_id == "c1" || h.content.to_lowercase().contains("cat")),
+            hits.iter()
+                .any(|h| h.chunk_id == "c1" || h.content.to_lowercase().contains("cat")),
             "expected cat-related chunk, got {:?}",
             hits.iter().map(|h| &h.chunk_id).collect::<Vec<_>>()
         );
@@ -776,13 +1100,7 @@ mod tests {
             reindex(&conn).unwrap();
         }
 
-        let by_doc = search_bm25(
-            &store,
-            "cats",
-            10,
-            &LexFilters::document_id("d1"),
-        )
-        .unwrap();
+        let by_doc = search_bm25(&store, "cats", 10, &LexFilters::document_id("d1")).unwrap();
         assert!(!by_doc.is_empty());
         assert!(by_doc.iter().all(|h| h.document_id == "d1"));
 
