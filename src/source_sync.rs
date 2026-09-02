@@ -14,7 +14,9 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
 use crate::ingest::{IngestCommand, IngestService, PreparedIngest, SourceManifestStamp};
-use crate::source_scan::{collect_source_files_while, SourceScanPolicy};
+use crate::source_scan::{
+    collect_source_files_while, is_explicitly_excluded_source_path, SourceScanPolicy,
+};
 use crate::util::{check_path_allowlist, content_hash};
 
 /// Default safety cap for one file in recursive source synchronization.
@@ -532,7 +534,20 @@ impl<'a> SourceSyncService<'a> {
                     total_files,
                 ));
             }
-            if self.remove_deleted(&seen, &preloaded, &mut report, &control, total_files)? {
+            if self.remove_deleted_with_probe(
+                &seen,
+                &preloaded,
+                &mut report,
+                &control,
+                total_files,
+                |path| {
+                    if is_explicitly_excluded_source_path(&root, path) {
+                        Ok(true)
+                    } else {
+                        metadata_means_missing(std::fs::metadata(path))
+                    }
+                },
+            )? {
                 return Ok(cancelled_outcome(
                     &control,
                     report,
@@ -735,27 +750,14 @@ impl<'a> SourceSyncService<'a> {
         BatchFlushOutcome::Completed(processed_files)
     }
 
-    fn remove_deleted(
+    fn remove_deleted_with_probe(
         &self,
         seen: &BTreeSet<String>,
         preloaded: &HashMap<String, SourceManifestEntry>,
         report: &mut SourceSyncReport,
         control: &SourceSyncControl,
         total_files: usize,
-    ) -> Result<bool, AppError> {
-        self.remove_deleted_with_metadata(seen, preloaded, report, control, total_files, |path| {
-            std::fs::metadata(path)
-        })
-    }
-
-    fn remove_deleted_with_metadata(
-        &self,
-        seen: &BTreeSet<String>,
-        preloaded: &HashMap<String, SourceManifestEntry>,
-        report: &mut SourceSyncReport,
-        control: &SourceSyncControl,
-        total_files: usize,
-        metadata: impl Fn(&Path) -> std::io::Result<std::fs::Metadata>,
+        should_remove: impl Fn(&Path) -> std::io::Result<bool>,
     ) -> Result<bool, AppError> {
         let mut sources = preloaded.keys().collect::<Vec<_>>();
         sources.sort();
@@ -774,8 +776,8 @@ impl<'a> SourceSyncService<'a> {
             if !is_supported_source(path) || seen.contains(source) {
                 continue;
             }
-            let missing = match metadata_means_missing(metadata(path)) {
-                Ok(missing) => missing,
+            let should_remove = match should_remove(path) {
+                Ok(should_remove) => should_remove,
                 Err(error) => {
                     report.errors.push(SourceSyncError {
                         path: source.clone(),
@@ -786,7 +788,7 @@ impl<'a> SourceSyncService<'a> {
                     continue;
                 }
             };
-            if missing {
+            if should_remove {
                 let (deleted_documents, deleted_manifest) =
                     match self.store.delete_source_state(source) {
                         Ok(deleted) => deleted,
@@ -1077,7 +1079,7 @@ mod tests {
         let mut report = SourceSyncReport::default();
 
         let cancelled = service
-            .remove_deleted_with_metadata(
+            .remove_deleted_with_probe(
                 &BTreeSet::new(),
                 &preloaded,
                 &mut report,
@@ -1735,6 +1737,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remove_deleted_prunes_existing_sources_newly_excluded_by_scan_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let cached_directory = root.path().join("project/.cache");
+        let environment = root.path().join("project/environment");
+        std::fs::create_dir_all(&cached_directory).unwrap();
+        std::fs::create_dir_all(environment.join("lib")).unwrap();
+        let retained = root.path().join("project/README.md");
+        let cached = cached_directory.join("dependency.py");
+        let virtualized = environment.join("lib/dependency.py");
+        std::fs::write(&retained, "# Retained").unwrap();
+        std::fs::write(&cached, "cached = True").unwrap();
+        std::fs::write(&virtualized, "installed = True").unwrap();
+
+        let config = Config {
+            db_path: db.path().join("policy-prune.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
+        let service = SourceSyncService::new(&store, &embedder, &config);
+        let canonical_root = root.path().canonicalize().unwrap();
+
+        // Selecting a skipped directory as the root models content indexed by
+        // an older scan policy while keeping the setup on the public sync path.
+        service
+            .sync(SourceSyncCommand::new(cached_directory))
+            .await
+            .unwrap();
+        service
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+        assert_eq!(store.list_documents().unwrap().len(), 3);
+
+        // A regular sentinel turns an already-indexed directory into an
+        // explicit virtual-environment exclusion without deleting its files.
+        std::fs::write(environment.join("pyvenv.cfg"), "home = /python").unwrap();
+        let report = service
+            .sync(SourceSyncCommand {
+                remove_deleted: true,
+                ..SourceSyncCommand::new(root.path().to_path_buf())
+            })
+            .await
+            .unwrap();
+
+        let retained = retained.canonicalize().unwrap().display().to_string();
+        let mut excluded = vec![
+            cached.canonicalize().unwrap().display().to_string(),
+            virtualized.canonicalize().unwrap().display().to_string(),
+        ];
+        excluded.sort();
+        assert!(report.errors.is_empty(), "report={report:?}");
+        assert_eq!(report.deleted, excluded);
+        assert_eq!(report.skipped, vec![retained.clone()]);
+        assert!(cached.exists());
+        assert!(virtualized.exists());
+
+        let documents = store.list_documents().unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].source_file.as_deref(), Some(retained.as_str()));
+        let manifest = store.load_source_manifest_root(&canonical_root).unwrap();
+        assert_eq!(manifest.len(), 1);
+        assert!(manifest.contains_key(&retained));
+    }
+
+    #[tokio::test]
     async fn controlled_sync_reports_progress_and_cancels_before_the_next_write() {
         let root = tempfile::tempdir().unwrap();
         let db = tempfile::tempdir().unwrap();
@@ -1975,10 +2046,12 @@ mod tests {
 
         std::fs::write(&source, "now much larger than the configured cap").unwrap();
         command.max_file_bytes = Some(3);
+        command.remove_deleted = true;
         let report = service.sync(command).await.unwrap();
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].error.contains("exceeds max_file_bytes"));
         assert!(report.updated.is_empty());
+        assert!(report.deleted.is_empty());
         assert_eq!(
             store.list_documents().unwrap().pop().unwrap().content,
             original

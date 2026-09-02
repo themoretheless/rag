@@ -1,6 +1,7 @@
 //! Shared source-tree discovery policy for every ingest entry point.
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::file_ingest::is_supported_source;
@@ -14,6 +15,7 @@ pub const SKIP_DIRECTORY_NAMES: &[&str] = &[
     ".idea",
     ".vscode",
     ".zed",
+    ".cache",
     "target",
     "node_modules",
     "bin",
@@ -29,6 +31,7 @@ pub const SKIP_DIRECTORY_NAMES: &[&str] = &[
     ".next",
     ".nuxt",
     ".svelte-kit",
+    "storybook-static",
     "TestResults",
     "worktrees",
 ];
@@ -86,6 +89,42 @@ impl SourceScanPolicy {
     }
 }
 
+/// Return whether traversal rooted at `root` intentionally excludes `source`.
+///
+/// This deliberately covers only directory exclusions, not file extensions or
+/// size limits. Callers may therefore prune state for sources excluded by a
+/// policy update without treating an unreadable or oversized existing file as
+/// deleted.
+pub fn is_explicitly_excluded_source_path(root: &Path, source: &Path) -> bool {
+    let Ok(relative) = source.strip_prefix(root) else {
+        return false;
+    };
+    if relative
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return false;
+    }
+
+    let mut directory = root.to_path_buf();
+    if has_regular_pyvenv_sentinel(&directory) {
+        return true;
+    }
+    let Some(parent) = relative.parent() else {
+        return false;
+    };
+    for component in parent.components() {
+        let std::path::Component::Normal(name) = component else {
+            return false;
+        };
+        directory.push(name);
+        if is_skipped_directory_name(name) || has_regular_pyvenv_sentinel(&directory) {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn collect_source_files(
     root: &Path,
     policy: &SourceScanPolicy,
@@ -108,6 +147,9 @@ pub fn collect_source_files_while(
         if !keep_going() {
             break;
         }
+        if has_regular_pyvenv_sentinel(&directory) {
+            continue;
+        }
         for entry in std::fs::read_dir(directory)? {
             if !keep_going() {
                 files.sort();
@@ -117,11 +159,7 @@ pub fn collect_source_files_while(
             let file_type = entry.file_type()?;
             let path = entry.path();
             if file_type.is_dir() {
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("");
-                if !SKIP_DIRECTORY_NAMES.contains(&name) {
+                if !path.file_name().is_some_and(is_skipped_directory_name) {
                     pending.push(path);
                 }
             } else if file_type.is_file() {
@@ -136,6 +174,18 @@ pub fn collect_source_files_while(
     Ok(files)
 }
 
+fn is_skipped_directory_name(name: &OsStr) -> bool {
+    SKIP_DIRECTORY_NAMES
+        .iter()
+        .any(|skipped| name == OsStr::new(skipped))
+}
+
+fn has_regular_pyvenv_sentinel(directory: &Path) -> bool {
+    std::fs::symlink_metadata(directory.join("pyvenv.cfg"))
+        .map(|metadata| metadata.file_type().is_file())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,7 +195,15 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         std::fs::write(root.path().join("keep.rs"), "fn main() {}").unwrap();
         std::fs::write(root.path().join("skip.lock"), "lock").unwrap();
-        for directory in ["bin", "obj", ".yarn", ".turbo", "TestResults", "worktrees"] {
+        for directory in [
+            "bin",
+            "obj",
+            ".yarn",
+            ".turbo",
+            "storybook-static",
+            "TestResults",
+            "worktrees",
+        ] {
             let generated = root.path().join(directory);
             std::fs::create_dir_all(&generated).unwrap();
             std::fs::write(generated.join("duplicate.rs"), "fn duplicate() {}").unwrap();
@@ -153,6 +211,75 @@ mod tests {
 
         let files = collect_source_files(root.path(), &SourceScanPolicy::default()).unwrap();
         assert_eq!(files, vec![root.path().join("keep.rs")]);
+    }
+
+    #[test]
+    fn default_policy_skips_caches_and_python_virtual_environments_without_overmatching() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let nested_cache = root.path().join("project/.cache/bulk-deps");
+        std::fs::create_dir_all(&nested_cache).unwrap();
+        std::fs::write(nested_cache.join("dependency.py"), "cached = True").unwrap();
+
+        let virtual_environment = root.path().join("project/.venv-pattern");
+        std::fs::create_dir_all(virtual_environment.join("lib/site-packages")).unwrap();
+        std::fs::write(virtual_environment.join("pyvenv.cfg"), "home = /python").unwrap();
+        std::fs::write(
+            virtual_environment.join("lib/site-packages/dependency.py"),
+            "installed = True",
+        )
+        .unwrap();
+
+        let mut expected = Vec::new();
+        for (parent, directory) in [
+            ("lowercase", "cache"),
+            ("uppercase", "Cache"),
+            ("environment", "env"),
+            ("generated-source", "generated"),
+        ] {
+            let retained = root.path().join(parent).join(directory).join("source.rs");
+            std::fs::create_dir_all(retained.parent().unwrap()).unwrap();
+            std::fs::write(&retained, "pub fn retained() {}").unwrap();
+            expected.push(retained);
+        }
+        let non_regular_sentinel = root.path().join("not-an-environment/pyvenv.cfg");
+        std::fs::create_dir_all(&non_regular_sentinel).unwrap();
+        let retained_below_non_regular = root.path().join("not-an-environment/lib/source.py");
+        std::fs::create_dir_all(retained_below_non_regular.parent().unwrap()).unwrap();
+        std::fs::write(&retained_below_non_regular, "retained = True").unwrap();
+        expected.push(retained_below_non_regular);
+        expected.sort();
+
+        let files = collect_source_files(root.path(), &SourceScanPolicy::default()).unwrap();
+        assert_eq!(files, expected);
+    }
+
+    #[test]
+    fn explicit_exclusion_matches_only_skipped_ancestors_and_regular_venv_sentinels() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let cached = root.path().join("project/.cache/dependency.py");
+        let similarly_named = root.path().join("project/Cache/dependency.py");
+        let virtualized = root.path().join("project/environment/lib/dependency.py");
+        let outside = root.path().parent().unwrap().join("outside/.cache/file.py");
+        for source in [&cached, &similarly_named, &virtualized] {
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(source, "body").unwrap();
+        }
+        std::fs::write(
+            root.path().join("project/environment/pyvenv.cfg"),
+            "home = /python",
+        )
+        .unwrap();
+
+        assert!(is_explicitly_excluded_source_path(root.path(), &cached));
+        assert!(is_explicitly_excluded_source_path(
+            root.path(),
+            &virtualized
+        ));
+        assert!(!is_explicitly_excluded_source_path(
+            root.path(),
+            &similarly_named
+        ));
+        assert!(!is_explicitly_excluded_source_path(root.path(), &outside));
     }
 
     #[test]
