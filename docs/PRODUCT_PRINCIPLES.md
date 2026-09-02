@@ -10,9 +10,16 @@
 
 ## 1. Ordered principles
 
-1. **Local-first, single binary.** Default deploy is `rag-mcp` on stdio + one store path. No Python runtime, no mandatory cloud. Logs on stderr only; stdout is MCP.
+1. **Local-first, single binary.** Default deploy is one `rag-mcp` gateway on
+   stdio and/or HTTP plus one store path. No Python runtime, no mandatory cloud.
+   Logs stay on stderr; stdout is MCP when stdio is enabled.
 
-2. **One logical store, pluggable physical backend.** Domain code depends on storage abstractions (today: DuckDB modules; target: `Storage` trait). **DuckDB is the default adapter.** Markdown vault, SQLite, Postgres+pgvector are legitimate adapters with honest capability flags. A remote vector DB **alone** is not the product’s primary source of truth.
+2. **One logical store, pluggable physical backend.** A small `Storage`
+   document contract exists, while search/graph/wiki still use focused DuckDB
+   modules. **DuckDB is the only full application adapter.** Markdown is an
+   opt-in document source of truth with honest limited capabilities;
+   SQLite/Postgres remain possible ports. A remote vector DB **alone** is not
+   the product’s primary source of truth.
 
 3. **Verbatim first, synthesis second.** Ingest stores full text and chunks without mandatory paraphrase. Compiled wiki, consolidate, and file_answer are explicit workflows. Closets/summaries are L3 pages that cite L0, never silent rewrites of raw rows.
 
@@ -39,9 +46,14 @@
     - Destructive maintain defaults to dry_run / confirm.  
     - `doctor` / `status` tell truth about FTS, schema, embed mismatch, readiness.
 
-12. **Portable embeddings path until scale hurts.** Cosine over stored vectors (JSON or native) is fine for personal corpora. VSS/HNSW/Qdrant are scale escapes, not identity.
+12. **Portable embeddings path until scale hurts.** Exact cosine over stored
+    JSON vectors is the measured default. VSS/HNSW/Qdrant are evidence-gated
+    scale escapes, not identity.
 
-13. **Headless is the product; UI is optional.** Graph tools return topology JSON. `rag-mcp-ui` (egui) is an inspector, never a dependency for agent workflows, never dual-writer against a live MCP DB without exclusive mode.
+13. **Headless core, optional native product client.** MCP/product APIs remain
+    complete without a GUI. `rag-mcp-ui` provides Home, Library, Search, Wiki,
+    Connections, Operations and History over the gateway; it never becomes a
+    second live DuckDB writer.
 
 14. **Organize is a product layer, not a side script.** Place, rank, structure, compile, hygiene ([`ORGANIZE.md`](ORGANIZE.md)) keep the haystack shaped. Search finds needles; organization compounds.
 
@@ -58,13 +70,15 @@ These are testable product laws (subset expanded from architecture notes):
 3. Graph edge endpoints remain valid across re-ingest when uri/slug is stable.
 4. `search` can fall back to raw chunks even if wiki is empty.
 5. Index/wiki query path can work with zero embeddings (mock/lex/offline catalog).
-6. Significant mutations appear in `ops_log`.
+6. Durable domain mutations that promise an operation record appear in
+   `ops_log`; bounded HTTP Activity is not an audit log.
 7. Stdout is MCP-only; logging on stderr.
 8. One process owns one active store path for writes (no silent multi-writer corruption).
 9. `ingest_file` never reads outside `RAG_INGEST_ROOTS`.
 10. Vec/hybrid never silently ranks under the wrong embed model/dims.
 11. Ingest is atomic: failure leaves neither half-chunks nor ghost edges.
-12. FTS is consistent with writes before the tool returns (read-your-writes).
+12. Writes advance the chunk generation; the next lexical/hybrid read performs
+    one single-flight FTS refresh before ranking.
 13. Hybrid results include citation-oriented fields, diversity controls, and token budget.
 14. Soft organization (refile, pin, archive) does not rewrite immutable raw bodies.
 15. Optional local LLM tools refuse cleanly when disabled or unreachable; core search/graph/ingest still work.
@@ -75,14 +89,14 @@ These are testable product laws (subset expanded from architecture notes):
 
 | Tension | Resolution |
 |---------|------------|
-| Karpathy “anti-RAG / index only” vs hybrid BM25 | **Both:** index-first for compiled layer; hybrid is P0 substrate + raw fallback. |
+| Karpathy “anti-RAG / index only” vs hybrid BM25 | **Both:** index-first for compiled layer; hybrid is substrate + raw fallback. |
 | MemPalace “never summarize” vs wiki summaries | **Split layers:** raw never paraphrased; L3 cites L0. |
 | Palace rename vs SPEC names | **Keep SPEC/rag names;** wing/room as data + additive tools. |
 | LLM graph extract vs deterministic wikilinks | **Deterministic first;** no mandatory cognify. |
 | “DuckDB only” vs Storage adapters | **Logical single store;** DuckDB default; adapters with caps; export/vault dual-use; remote ANN alone ≠ SoT. |
 | “Server does not call LLM” vs local maintain/compile | **No LLM for graph NER.** Optional chat for maintenance/wiki helpers; client remains primary author of knowledge. |
 | Feature list growth vs focus | Prefer loops in [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) §4 over paper features (HyDE, AAAK, multi-tenant). |
-| MemPalace parity doc “impl now” vs older P1 labels | **Capability status follows code + README;** ROADMAP sequencing may lag. Prefer SYSTEM_MAP / README for “exists today.” |
+| Research/parity priority labels vs shipped code | **Capability status follows code + README/SYSTEM_MAP.** ROADMAP contains only the current release gate and evidence-gated candidates. |
 
 ---
 
@@ -119,7 +133,7 @@ Before adding a tool or backend:
 | [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) | What the product is |
 | [`SYSTEM_MAP.md`](SYSTEM_MAP.md) | Layers, modules, tool clusters, doc graph |
 | [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) | Five-layer mechanics, workflows, invariants detail |
-| [`ROADMAP.md`](ROADMAP.md) | Sequencing |
+| [`ROADMAP.md`](ROADMAP.md) | Current release gate and evidence-gated candidates |
 | [`MEMPALACE_PARITY.md`](MEMPALACE_PARITY.md) | Capability map vs MemPalace (not a rename guide) |
 | [`ORGANIZE.md`](ORGANIZE.md) | Place / rank / structure / compile / hygiene |
 | [`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md) | Backend strategy |

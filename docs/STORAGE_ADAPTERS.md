@@ -1,13 +1,16 @@
 # Storage adapters (multi-backend)
 
-**Status:** design for post-v1 / parallel to P0 graph+hybrid  
-**Default backend:** DuckDB (single-file, bundled, local-first)  
+**Status:** DuckDB production adapter and a bounded Markdown document adapter are implemented; the full multi-backend contract remains a design boundary.
+
+**Default backend:** DuckDB (single-file, bundled, local-first)
+
 **Goal:** domain logic (chunk, embed, graph, wiki, MCP tools) must not depend on DuckDB types.
 
-**Principles:** one logical store, pluggable physical backend. See [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) §1.2 · [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) · map: [`SYSTEM_MAP.md`](SYSTEM_MAP.md) §6.  
+**Principles:** one logical store, explicit physical capabilities. See [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) §1.2 · [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) · map: [`SYSTEM_MAP.md`](SYSTEM_MAP.md) §6.
 
-Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the production adapter through the existing factory. The backend-neutral factory also supports opt-in `markdown` document CRUD when an explicit `RAG_VAULT_PATH` is set. `sqlite`, `postgres`, and `memory` remain recognized migration targets that fail explicitly. Markdown files and their frontmatter are the source of truth; search, chunks, graph, transactions, and vectors are not yet adapter capabilities. The Markdown adapter can rebuild a lightweight lexical JSONL sidecar or explicitly watch it without changing the default runtime.
-Remote vector DB alone is **not** the primary source of truth; DuckDB (or markdown vault / SQL) remains SoT for documents and graph.
+Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the only full application adapter. The backend-neutral factory also supports opt-in `markdown` document CRUD when an explicit `RAG_VAULT_PATH` is set. `sqlite`, `postgres`, and `memory` are recognized names that fail explicitly. Markdown files and frontmatter are the document source of truth, but search, chunks, graph, transactions, and vectors are not adapter capabilities. The Markdown adapter can rebuild a lightweight lexical JSONL sidecar or explicitly watch it without changing the default runtime.
+
+A remote vector DB alone is **not** a primary store. Any future split must retain a metadata/graph source of truth and publish explicit capabilities.
 
 ---
 
@@ -22,190 +25,103 @@ Remote vector DB alone is **not** the primary source of truth; DuckDB (or markdo
 | Huge ANN corpus | full-scan cosine hurts | Qdrant / Lance / Milvus for **vectors only** |
 | Tests | heavy DuckDB link | in-memory mock / SQLite |
 
-Principle: **one domain store API**, many physical backends.  
-Embeddings and FTS may be **native to the backend** or **emulated in Rust** (same as current cosine-over-JSON).
+Principle: **one domain contract per proven capability**, with explicit physical
+backend metadata. Embeddings and FTS may eventually be native to a backend or
+emulated in Rust, but the current application implementations remain DuckDB
+specific.
 
-**Markdown is a first-class backend**, not only an export format: Karpathy LLM Wiki + Obsidian graph live as real files you can edit, git-diff, and open in Obsidian while MCP tools still search/link/ingest.
+**Markdown is a first-class document backend**, not a full application backend.
+Its files can be edited and git-diffed; MCP search/link/ingest still require the
+DuckDB runtime.
 
 ---
 
 ## 2. Layering
 
 ```
-MCP tools / wiki / graph / ingest pipeline
-              │
-              ▼
-     Arc<dyn Storage>     ← async-friendly facade (or sync + spawn_blocking)
-              │
-     ┌────────┼────────────┬──────────────┬─────────────┐
-     ▼        ▼            ▼              ▼             ▼
-  DuckDb   SqliteStore  PostgresStore  MarkdownVault  Composite
-  Store                  (pgvector)    (md + sidecar) (SQL + Vector)
+MCP / HTTP / wiki / graph / ingest ──→ Store ──→ DuckDB (full runtime)
+
+document-contract consumers ──→ dyn Storage ──┬─→ DuckDB
+                                               └─→ Markdown vault
 ```
 
-Optional split (P1+):
-
-- `MetaStore` — documents, graph, wiki, ops_log (SQL)
-- `VectorStore` — ANN / embed index (may be same DB or external)
-- `FullTextStore` — BM25/FTS
-
-`Storage` is the default façade that implements all three for simple backends.
+The two paths are intentional. `Storage` is not yet the application façade and
+does not claim search, graph, wiki, transaction or maintenance parity. A future
+metadata/vector/full-text split is justified only by a measured workload and
+must preserve one metadata/graph source of truth.
 
 ---
 
-## 3. Trait sketch (Rust)
+## 3. Implemented contract
 
 ```rust
-/// Backend identifier for config + doctor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackendKind {
-    DuckDb,
-    Sqlite,
-    Postgres,
-    /// Git-friendly Obsidian/Karpathy vault: markdown files are source of truth
-    Markdown,
-    Memory,
-    // later: Qdrant, Lance (as vector half of Composite)
-}
-
-/// Open options from env / CLI.
-pub struct StorageConfig {
-    pub kind: BackendKind,
-    /// duckdb/sqlite path, or postgres DSN
-    pub url_or_path: String,
-    pub embed_dims: usize,
-    pub pool_size: u32,
-    // backend-specific JSON blob optional
-    pub extra: serde_json::Value,
-}
-
-#[async_trait]
 pub trait Storage: Send + Sync {
-    fn kind(&self) -> BackendKind;
-    fn location(&self) -> &str; // path or redacted DSN
-
-    // --- documents ---
-    async fn upsert_document(&self, doc: &Document) -> Result<()>;
-    async fn get_document(&self, id: &str) -> Result<Option<Document>>;
-    async fn find_by_uri(&self, uri: &str) -> Result<Option<Document>>;
-    async fn find_by_content_hash(&self, hash: &str) -> Result<Option<Document>>;
-    async fn list_documents(&self, filter: DocumentFilter) -> Result<Vec<Document>>;
-    async fn delete_document(&self, id: &str) -> Result<bool>;
-    async fn delete_by_source(&self, source_file: &str) -> Result<u64>;
-
-    // --- chunks + embeddings ---
-    async fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()>;
-    async fn list_chunks_for_document(&self, doc_id: &str) -> Result<Vec<Chunk>>;
-    async fn delete_chunks_for_document(&self, doc_id: &str) -> Result<()>;
-
-    // --- search (backend may implement hybrid natively) ---
-    async fn search(&self, req: SearchRequest) -> Result<Vec<SearchHit>>;
-
-    // --- graph ---
-    async fn upsert_graph_node(&self, node: &GraphNode) -> Result<()>;
-    async fn insert_graph_edges(&self, edges: &[GraphEdge]) -> Result<()>;
-    async fn delete_edges_from(&self, source_id: &str) -> Result<()>;
-    async fn get_graph_view(&self, filter: GraphFilter) -> Result<GraphView>;
-    async fn neighbors(&self, node_id: &str, depth: u32, max_nodes: u32) -> Result<GraphView>;
-    async fn backlinks(&self, node_id: &str) -> Result<GraphView>;
-    async fn find_nodes(&self, q: NodeQuery) -> Result<Vec<GraphNode>>;
-    async fn link_nodes(&self, edge: &GraphEdge) -> Result<()>;
-
-    // --- wiki / ops (may map to documents layer=wiki) ---
-    async fn append_ops_log(&self, entry: &OpsLogEntry) -> Result<()>;
-    async fn read_ops_log(&self, limit: u32) -> Result<Vec<OpsLogEntry>>;
-    async fn wiki_index_rebuild(&self) -> Result<()>;
-    async fn wiki_index_read(&self) -> Result<Vec<WikiIndexEntry>>;
-
-    // --- health ---
-    async fn stats(&self) -> Result<Stats>;
-    async fn doctor(&self) -> Result<DoctorReport>;
-    async fn migrate(&self) -> Result<()>;
-}
-
-pub fn open_storage(cfg: &StorageConfig) -> Result<Arc<dyn Storage>> {
-    match cfg.kind {
-        BackendKind::DuckDb => Ok(Arc::new(DuckDbStorage::open(&cfg.url_or_path)?)),
-        BackendKind::Sqlite => Ok(Arc::new(SqliteStorage::open(&cfg.url_or_path)?)),
-        BackendKind::Postgres => Ok(Arc::new(PostgresStorage::connect(&cfg.url_or_path)?)),
-        BackendKind::Markdown => Ok(Arc::new(MarkdownVaultStorage::open(&cfg.url_or_path)?)),
-        BackendKind::Memory => Ok(Arc::new(MemoryStorage::new())),
-    }
+    fn metadata(&self) -> BackendMetadata;
+    fn upsert_document(&self, document: &Document) -> Result<(), AppError>;
+    fn get_document(&self, id: &str) -> Result<Option<Document>, AppError>;
+    fn list_documents(&self) -> Result<Vec<Document>, AppError>;
+    fn delete_document(&self, id: &str) -> Result<bool, AppError>;
 }
 ```
 
-**Sync note:** current code is sync `Store` + `Mutex`. Adapters may stay sync initially:
-
-```rust
-pub trait Storage: Send + Sync { /* sync methods */ }
-```
-
-MCP tools call `storage.*` the same way they call `store.*` today. Migrate to async later if Postgres pool needs it (`spawn_blocking` is fine for DuckDB/SQLite).
+The contract is synchronous because both shipped implementations are local.
+Capability metadata is explicit. Extend the interface only alongside a second
+consumer and shared conformance tests; do not predeclare a full backend API.
 
 ---
 
 ## 4. Backend matrix
 
-| Backend | Meta (docs/graph/wiki) | Vectors | FTS/BM25 | Deploy | Priority |
-|---------|------------------------|---------|----------|--------|----------|
-| **DuckDB** | SQL tables | `embedding_json` + Rust cosine; later VSS | DuckDB FTS ext or Rust lex | single file | **P0 default** (shipped) |
-| **Markdown vault** | `.md` files + YAML frontmatter; graph from `[[links]]` | sidecar (see below) | ripgrep/tantivy or sidecar FTS | vault directory | **P1 (high)** |
-| **SQLite** | SQL tables | JSON blob + cosine; optional `sqlite-vec` | FTS5 | single file, lighter link | **P1** |
-| **Postgres** | SQL | **pgvector** | native FTS / tsvector | server DSN | **P1** |
-| **Qdrant** | no (pair with SQL) | ANN collections | payload filter only | server | **P2** composite |
-| **LanceDB** | partial | ANN | limited | local/dir | **P2** |
-| **Memory** | HashMap | Vec cosine | simple | tests only | **P1** for unit tests |
-| **LibSQL / Turso** | SQL | like SQLite | FTS | edge/remote | **P2** |
-| **MotherDuck** | DuckDB protocol | same as DuckDB | same | cloud DuckDB | **P2** (DSN variant of DuckDB) |
+| Backend | Current capability | Product status | Advancement gate |
+|---------|--------------------|----------------|------------------|
+| **DuckDB** | Documents, chunks, exact vectors, generation-aware FTS, graph, wiki, transactions, maintenance | Full default; shipped | Add ANN/VSS only after the measured retrieval threshold in [`ROADMAP.md`](ROADMAP.md) is crossed |
+| **Markdown vault** | Document CRUD plus deterministic lexical JSONL rebuild/watch | Bounded opt-in library adapter; shipped | Full app backend only after search/chunk/graph/transaction conformance tests pass |
+| **SQLite / Postgres / Memory** | Name parsing and explicit refusal | Not implemented | Require a concrete deployment or test need and the same capability suite |
+| **Qdrant / LanceDB / LibSQL / MotherDuck** | Design candidates only | Not scheduled | Require measured evidence that DuckDB cannot meet an accepted workload |
 
 ---
 
-## 4b. Markdown vault backend (Obsidian / Karpathy-native)
+## 4b. Markdown document backend
 
 ### Goals
 
 - **Source of truth = files on disk** (human-readable, git-diffable, open in Obsidian).
-- MCP tools still: ingest, search, graph neighbors/backlinks, wiki compile, file_answer.
-- No requirement that the user run a SQL DB to browse knowledge.
+- Preserve the full document body and metadata in readable files.
+- Rebuild a disposable lexical catalog without treating it as source of truth.
+- Refuse search/graph/wiki/transaction claims until their contracts exist.
 
-### Vault layout (default)
+### Implemented layout
 
 ```
-$RAG_VAULT_PATH/                    # or RAG_DB_PATH when backend=markdown
-  raw/                              # immutable sources (Karpathy raw layer)
-    articles/
-      2026-04-llm-wiki.md
-  wiki/                             # compiled / agent-written pages
-    index.md                        # catalog (also rebuilt via tool)
-    log.md                          # append-only ops timeline
-    schema.md                       # AGENTS/schema conventions
-    entities/
-    concepts/
-  notes/                            # general notes (layer flexible)
-  .rag/                             # machine sidecars (gitoptional)
+$RAG_VAULT_PATH/                    # explicit root when backend=markdown
+  <encoded-layer>/                  # for example raw/ or wiki/
+    <encoded-document-id>.md        # JSON/YAML-1.2 frontmatter + body
+  .rag/                             # rebuildable machine sidecars
     documents.v1.jsonl              # deterministic lexical metadata; rebuildable
-    manifest.json                   # embed model/dims, schema_version
-    embeddings.duckdb               # optional: vectors only (hybrid mode)
-    # OR embeddings.jsonl           # portable: {chunk_id, path, start, end, vec}
-    fts/                            # optional tantivy or simple index dir
-    cache/
 ```
 
-Frontmatter on every note:
+Each adapter-written note uses JSON frontmatter (a YAML 1.2 subset) containing
+the complete `Document` metadata needed for round-trip document CRUD:
 
-```yaml
+```text
 ---
-id: 550e8400-e29b-41d4-a716-446655440000
-title: LLM Wiki
-uri: vault://wiki/concepts/llm-wiki
-layer: wiki          # raw | wiki | diary
-kind: concept        # document | entity | concept | source_summary | diary
-wing: research
-room: architecture
-tags: [rag, karpathy]
-content_hash: sha256:abc...
-created_at: 2026-07-29T12:00:00Z
-updated_at: 2026-07-29T12:00:00Z
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "uri": "vault://wiki/concepts/llm-wiki",
+  "title": "LLM Wiki",
+  "metadata_json": "{\"tags\":[\"rag\",\"karpathy\"]}",
+  "created_at": "2026-07-29T12:00:00Z",
+  "updated_at": "2026-07-29T12:00:00Z",
+  "wing": "research",
+  "room": "architecture",
+  "layer": "wiki",
+  "kind": "concept",
+  "content_hash": "abc...",
+  "status": "active",
+  "pinned": false,
+  "boost": 1.0,
+  "revision": 1
+}
 ---
 
 Body with [[wikilinks]] and #tags …
@@ -214,131 +130,127 @@ Body with [[wikilinks]] and #tags …
 - [[Hybrid Search]]
 ```
 
-### Mapping domain ↔ files
+### Current and future mapping
 
 | Domain | Markdown representation |
 |--------|-------------------------|
 | Document | one `.md` file; body = content; meta = frontmatter |
-| uri | relative path (`wiki/concepts/foo.md`) or `vault://...` |
-| Chunks | derived on read/ingest: split body (after frontmatter); not separate files by default |
-| Embeddings | **not** in `.md` (keeps diffs clean) → `.rag/embeddings.*` sidecar |
-| Graph nodes | document/tag/stub; stubs = optional `stubs/*.md` or only in sidecar until created |
-| Graph edges | **primary:** parse `[[wikilinks]]` + `#tags` live from files; **cache:** `.rag/graph.json` rebuildable |
-| Wiki index | `wiki/index.md` (+ optional structured `.rag/index.json`) |
-| Ops log | `wiki/log.md` lines `## [ISO] op \| title` (Karpathy-parseable) |
-| Schema | `wiki/schema.md` |
+| uri | stored in frontmatter; filesystem path is derived from encoded layer and document id |
+| Chunks, embeddings | not implemented by the Markdown adapter |
+| Graph, wiki, ops log | not implemented by the Markdown adapter |
+| Lexical catalog | `.rag/documents.v1.jsonl`; rebuilt from Markdown and never read as body source |
 
-### Two operating modes
+### Target operating modes beyond the document slice
 
 | Mode | Env | Behavior |
 |------|-----|----------|
-| **Pure markdown** | `RAG_MARKDOWN_INDEX=none` | Search = lex over files (grep/tantivy); vectors optional slow path or off |
-| **Markdown + sidecar index** | `RAG_MARKDOWN_INDEX=duckdb` \| `sqlite` \| `jsonl` (default **duckdb** sidecar in `.rag/`) | Files remain SoT; hybrid vec+FTS from sidecar; reindex on file change / `doctor` / `reindex` tool |
+| **Pure markdown** | Proposed `RAG_MARKDOWN_INDEX=none` | Search = lexical scan over files; vectors off |
+| **Markdown + retrieval sidecar** | Proposed explicit index setting | Files remain SoT; the sidecar provides hybrid retrieval and is rebuildable |
 
-Recommended default: **Markdown + small DuckDB/SQLite sidecar** under `.rag/` so hybrid search stays fast, while humans only touch `.md`.
+Neither mode is a full application backend today. The shipped `.rag/documents.v1.jsonl` sidecar stores deterministic lexical metadata only; it does not provide hybrid search or embeddings.
 
-### Write policy
+### Implemented write and index policy
 
-1. **Raw files** (`raw/**`): MCP may create on ingest; **no in-place body mutation** except full replace via re-ingest (same as SQL raw layer).
-2. **Wiki files**: agent tools may write/update; always rewrite frontmatter + body atomically (temp file + rename).
-3. **Sidecar**: never hand-edited; rebuildable via `reindex` / `rebuild_index` / `doctor --repair`.
-4. **External Obsidian edits**: detect mtime/content_hash mismatch → invalidate chunk embeddings for that file; optional file watcher (P2).
+- Document upsert writes frontmatter and body through a temporary file and
+  rename, and removes the prior path when the document layer changes.
+- The adapter itself does not enforce raw immutability; application policies
+  must not be assumed when using the document contract directly.
+- The sidecar is never hand-edited. `reindex` and the explicit watcher rebuild
+  it from Markdown; a future full backend must additionally invalidate derived
+  chunks and embeddings.
 
 `MarkdownVaultStorage::reindex` scans regular `.md` files in sorted path order, skips symlinks and every `.rag` subtree, rejects canonical paths outside the vault, and atomically replaces `.rag/documents.v1.jsonl`. Each versioned JSONL record contains the frontmatter document ID, relative path, a BLAKE3 body hash, and small lexical fields (title/layer/kind, counts, and sorted unique terms). The sidecar contains no vectors and is always disposable.
 
 `MarkdownVaultStorage::watch_sidecar` is an explicit blocking library API with a caller-owned stop callback; opening any backend never starts it. It debounces and coalesces filesystem events, ignores `.rag`, symlinks, editor/temporary files, and unsafe paths, then atomically replaces the JSONL sidecar after updating or removing only affected paths. Missing/corrupt sidecars, ambiguous events, duplicate IDs, and watcher overflow/errors conservatively trigger a full `reindex`. There is no built-in daemon lifecycle.
 
-### Graph
+Graph and wikilink resolution are intentionally absent from this adapter. Live
+vault parsing versus a derived graph cache is a future conformance decision,
+not current behavior.
 
-- On `get_backlinks` / `get_neighbors`: prefer live parse of vault (correct after manual edits); optionally use `.rag/graph.json` if fresh.
-- Stub targets: `[[Missing Page]]` with no file → stub node; creating `Missing Page.md` promotes stub (same semantics as SQL backend).
-
-### Config
+### Implemented config
 
 | Env | Meaning |
 |-----|---------|
-| `RAG_STORAGE_BACKEND=markdown` | enable vault adapter |
+| `RAG_STORAGE_BACKEND=markdown` | select the bounded vault adapter through the library `open_configured_storage`; the production `rag-mcp` binary rejects this incomplete application backend |
 | `RAG_VAULT_PATH` | explicit vault root (required; no `RAG_DB_PATH` fallback) |
-| `RAG_MARKDOWN_INDEX` | `duckdb` (default) \| `sqlite` \| `jsonl` \| `none` |
-| `RAG_MARKDOWN_WATCH` | `0` \| `1` file watch reindex (P2) |
-| `RAG_MARKDOWN_GITIGNORE_SIDECAR` | if `1`, ensure `.rag/` in vault `.gitignore` (default recommend true for embeddings) |
 
-### MCP extras (markdown-specific, optional)
+`RAG_MARKDOWN_INDEX`, `RAG_MARKDOWN_WATCH`, and
+`RAG_MARKDOWN_GITIGNORE_SIDECAR` remain design placeholders and are not parsed.
+Sidecar rebuild/watch is an explicit library call.
 
-| Tool | Purpose |
-|------|---------|
-| `vault_status` | path, file counts, sidecar freshness (or fold into `status`) |
-| `reindex` | rebuild embeddings + graph cache from all `.md` |
-| `export_vault` / already files | no-op or sync check |
-| `import_folder` | mine a directory of md into vault layout |
+The adapter's `reindex` and watcher are library APIs, not MCP tools. The shipped
+DuckDB `export_vault` command produces a human/Git-oriented export, but it is
+not claimed as a lossless round-trip into this adapter layout.
 
-`export_vault` from SQL backends **writes this same layout**, so DuckDB → Markdown is a first-class migration path.
+### Completion gate
 
-### Priority
-
-- **P1:** read/write documents as md + frontmatter; wikilink graph from files; lex search; optional duckdb sidecar for vectors  
-- **P1:** `export_vault` from DuckDB producing this layout  
-- **P2:** file watcher, pure tantivy, multi-vault, conflict UI for concurrent Obsidian+MCP writes
-
-### Composite pattern (P2)
-
-```
-PostgresMetaStore  +  QdrantVectorStore  =>  CompositeStorage
-```
-
-Document/chunk metadata and graph live in SQL; vectors in ANN engine; search does RRF in the façade.
+Document CRUD, deterministic JSONL rebuild/watch and DuckDB `export_vault` are
+shipped as separate capabilities. A Markdown application backend is complete
+only when it passes the
+same document, chunk, retrieval, graph, transaction, repair, and concurrency
+contracts as DuckDB. Until then the factory must refuse unsupported full-runtime
+combinations rather than degrade silently.
 
 ---
 
-## 5. Config (env)
+## 5. Configuration boundary
 
 | Env | Example | Meaning |
 |-----|---------|---------|
-| `RAG_STORAGE_BACKEND` | `duckdb` (default) \| `markdown` \| `sqlite` \| `postgres` \| `memory` | which adapter |
-| `RAG_DB_PATH` | `./rag.duckdb` | path for duckdb/sqlite |
-| `RAG_VAULT_PATH` | `./vault` | root for `markdown` backend (fallback: `RAG_DB_PATH`) |
-| `RAG_MARKDOWN_INDEX` | `duckdb` \| `sqlite` \| `jsonl` \| `none` | sidecar search index for vault |
-| `RAG_DATABASE_URL` | `postgres://user:pass@host/db` | DSN for postgres (and future remote) |
-| `RAG_VECTOR_BACKEND` | `inline` \| `qdrant` | optional split |
-| `RAG_QDRANT_URL` | `http://127.0.0.1:6333` | when vector backend = qdrant |
-| `RAG_PG_POOL_SIZE` | `5` | postgres pool |
+| `RAG_STORAGE_BACKEND` | `duckdb` (default) \| `markdown` \| `sqlite` \| `postgres` \| `memory` | selects a recognized adapter name; the production binary currently accepts only DuckDB, while the library document factory also accepts Markdown |
+| `RAG_DB_PATH` | `./rag.duckdb` | path for DuckDB |
+| `RAG_VAULT_PATH` | `./vault` | required root for the bounded `markdown` adapter; never inferred from `RAG_DB_PATH` |
 
-`doctor` must report: backend kind, location (redacted), vector mode, FTS mode, schema version, embed dims.
+`RAG_DATABASE_URL`, `RAG_VECTOR_BACKEND`, `RAG_QDRANT_URL`, and
+`RAG_PG_POOL_SIZE` are design names only; the binary does not parse them.
+
+The full DuckDB runtime's current `status` / `doctor` responses report backend
+identity, capability names, the database path, schema version, FTS readiness,
+embedding dimensions and integrity counts. The path is not redacted, and there
+is no separate `vector_mode` field; callers must treat these local diagnostics
+accordingly.
 
 ---
 
-## 6. Capability flags
+## 6. Capability declarations
 
-Not every backend supports every feature on day one. Expose:
+The implemented metadata uses one closed capability enum:
 
 ```rust
-pub struct StorageCaps {
-    pub hybrid_fts: bool,
-    pub native_ann: bool,
-    pub transactions: bool,
-    pub concurrent_writers: bool,
-    pub json_metadata_filter: bool,
+pub enum StorageCapability {
+    Documents,
+    FullTextSearch,
+    VectorSearch,
+    Transactions,
+    Graph,
+    TemporalKnowledgeGraph,
 }
 ```
 
-MCP `status` / `doctor` returns caps so agents do not call unsupported modes.  
-`search(mode=hybrid)` on a backend without FTS → degrade to `vec` + warning field in result, or hard error (prefer **hard error with clear message** for honesty).
+DuckDB advertises its full set through status/doctor. Markdown advertises only
+`Documents`. Unsupported full-runtime configurations fail explicitly; they do
+not silently degrade hybrid search or alias another backend.
 
 ---
 
-## 7. Migration path (from current code)
+## 7. Migration state and next boundary
 
-1. **Now (docs):** this file + SPEC/ROADMAP entries.  
-2. **After graph-p0 stabilizes:** introduce `storage` module:
-   - `Storage` trait = current `Store` method set (+ graph/search)
-   - `DuckDbStorage` = rename/wrap existing `Store`
-   - `RagServer` holds `Arc<dyn Storage>` instead of `Arc<Store>`
-3. **P1:** `MarkdownVaultStorage` (files SoT + optional `.rag/` sidecar) + `export_vault` from DuckDB.  
-4. **P1:** `SqliteStorage`, `MemoryStorage` for tests.  
-5. **P1:** `PostgresStorage` with `sqlx` or `tokio-postgres` + pgvector.  
-6. **P2:** `CompositeStorage`, Qdrant, Lance, MotherDuck DSN, vault file watcher.
+Implemented:
 
-SQL DDL should live as **backend-specific** migrations (`storage/duckdb/schema.rs`, `storage/sqlite/schema.rs`, …), not one shared DuckDB-only string forever. Shared **logical schema** documented once; dialects differ (`TIMESTAMP`, `INSERT OR REPLACE` vs `ON CONFLICT`, boolean types).
+- `Storage` owns the small document lifecycle contract.
+- DuckDB and Markdown implement that contract.
+- DuckDB remains the concrete full-runtime store.
+- Markdown provides document CRUD, deterministic lexical sidecar rebuild/watch,
+  and a DuckDB-to-vault export path.
+- Portable `export_bundle` / `import_bundle` are shipped recovery tools.
+
+Future work is not backend-count driven. Extend the contract only for a real
+consumer, specify capability and failure semantics first, and require a shared
+conformance suite before routing the application through another adapter.
+
+If a second SQL backend is justified, its dialect-specific migrations stay in
+that adapter. Do not force current DuckDB DDL into a premature lowest-common-
+denominator schema.
 
 ---
 
@@ -360,38 +272,25 @@ SQL DDL should live as **backend-specific** migrations (`storage/duckdb/schema.r
 - Silent data loss when switching backends (export/import tool required before cross-backend migrate)
 - Multi-master replication
 
-**Cross-backend migrate (P2 tool):** `export_bundle` / `import_bundle` JSONL or parquet of documents+chunks+graph+wiki.
+**Cross-backend migration:** `export_bundle` / `import_bundle` provide the
+shipped portable document-and-chunk path. Graph/index data remains derived and
+must be rebuilt after import.
 
 ---
 
-## 10. Suggested module layout
+## 10. Current ownership
 
 ```
 src/storage/
-  mod.rs           # trait Storage, StorageConfig, open_storage
-  caps.rs
-  request.rs       # SearchRequest, DocumentFilter, NodeQuery
-  duckdb/
-    mod.rs
-    schema.rs
-    store.rs       # current Store moved here
-    search.rs
-    graph.rs
-    fts.rs
-  markdown/        # P1 — vault SoT
-    mod.rs
-    layout.rs      # paths: raw/, wiki/, .rag/
-    frontmatter.rs
-    vault_store.rs
-    sidecar.rs     # embeddings + optional graph cache
-    walk.rs        # discover .md files
-  sqlite/          # P1
-  postgres/        # P1
-  memory/          # P1 tests
-  composite/       # P2
+  mod.rs                 # identity, capabilities, document trait and factories
+  duckdb/mod.rs          # Store adapter for the document trait
+  markdown/mod.rs        # Markdown CRUD and deterministic JSONL rebuild
+  markdown/watcher.rs    # explicit blocking sidecar watcher
+src/db/                  # full DuckDB repositories and transaction owner
 ```
 
-Until the move, keep `src/db/*` as the DuckDB implementation and treat `docs/STORAGE_ADAPTERS.md` as the contract for the refactor.
+Keep `src/db/*` as the full DuckDB implementation until an extraction removes
+more coupling than it adds and passes the shared behavior suite.
 
 ---
 
@@ -399,9 +298,9 @@ Until the move, keep `src/db/*` as the DuckDB implementation and treat `docs/STO
 
 | Tool | Behavior |
 |------|----------|
-| `status` / `doctor` | include `backend`, `caps`, `location` |
-| `search` | mode limited by caps |
-| `export_bundle` | P2 portable dump |
-| `import_bundle` | P2 load into current backend |
+| `status` / `doctor` | report DuckDB backend identity and capabilities for the full runtime |
+| `search` | DuckDB lex/vec/hybrid; no Markdown runtime fallback |
+| `export_bundle` | shipped portable dump |
+| `import_bundle` | shipped transactional load into DuckDB |
 
 No separate tool per backend; config selects adapter at process start.

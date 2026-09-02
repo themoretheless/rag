@@ -67,14 +67,22 @@ command = /Users/themoretheless/Documents/Sources/rag/target/release/rag-mcp
 | `http://127.0.0.1:7432/health` | health + backend/schema/FTS, counts, WAL/integrity, `mcp_http` |
 | `http://127.0.0.1:7432/live` | process liveness, PID, uptime; no DuckDB query |
 | `http://127.0.0.1:7432/ready` | readiness gate; HTTP 503 until startup completes and FTS/store respond |
+| `http://127.0.0.1:7432/v1/project-home` | scoped project inventory |
+| `http://127.0.0.1:7432/v1/documents` | lean filtered/paginated library catalog |
+| `http://127.0.0.1:7432/v1/search` | lex/vector/hybrid product search |
 | `http://127.0.0.1:7432/v1/graph` | rag-mcp-ui graph (`?max_nodes=&include_tags=`) |
 | `http://127.0.0.1:7432/v1/neighbors` | neighborhood (`?seed=&depth=&max_nodes=`) |
 | `http://127.0.0.1:7432/v1/find` | resolve node (`?q=`) |
 | `http://127.0.0.1:7432/v1/document` | document body (`?id=` / `?uri=` / `?q=`; returns `revision`/`etag`) |
-| `http://127.0.0.1:7432/v1/wiki` | wiki catalog (full list; no `q`/`limit`/`offset`) |
+| `http://127.0.0.1:7432/v1/wiki` | lean cursor-paginated wiki catalog; `PUT` uses CAS |
 | `http://127.0.0.1:7432/v1/backlinks` | wiki backlinks (`?id=<document_id>` only) |
+| `http://127.0.0.1:7432/v1/activity`, `/v1/jobs*` | sanitized activity plus background sync lifecycle |
+| `http://127.0.0.1:7432/v1/revisions*` | lean timeline, lazy snapshot/diff and CAS restore |
+| `http://127.0.0.1:7432/v1/operations/*` | checkpoint and allowlisted backup |
 
-HTTP is mostly read for the graph UI; wiki also supports **`PUT /v1/wiki`** (slug + content + optional CAS). Ingest and most mutations remain MCP tools.
+The gateway is the live product port and the sole-writer operations boundary.
+The exact current method/path list is available at `GET /v1/routes`; detailed
+request contracts are in [`CONNECT.md`](CONNECT.md).
 
 Клиенты **не** стартуют второй binary на тот же `.duckdb`.
 
@@ -86,8 +94,15 @@ HTTP is mostly read for the graph UI; wiki also supports **`PUT /v1/wiki`** (slu
 | `RAG_HTTP_ONLY` | `true` → gateway only (no stdio). Requires `RAG_HTTP_BIND`. Process blocks on HTTP until exit. Without it, HTTP is spawned in the background and stdio MCP still runs. |
 | `RAG_MCP_HTTP` | default on when bind is set; `false` disables `/mcp` (graph/wiki HTTP stays). |
 | `RAG_HTTP_ALLOW_REMOTE` | required for non-loopback binds (`1`/`true`/`yes`/`on`). MCP/HTTP are **unauthenticated**. |
+| `RAG_HTTP_ALLOWED_HOSTS` | comma-separated extra Host names/IPs accepted by mounted `/mcp`; required for remote authorities when binding `0.0.0.0` or `[::]` |
 
-`parse_bind` rejects non-loopback addresses unless `RAG_HTTP_ALLOW_REMOTE` is set. Prefer `127.0.0.1` on a single machine; do not expose `0.0.0.0` without a reverse proxy and auth you trust.
+`parse_bind` rejects non-loopback addresses unless `RAG_HTTP_ALLOW_REMOTE` is
+set. The mounted MCP transport separately allows loopback authorities and a
+concrete bind IP; wildcard binds do not infer remote hosts. For a LAN rollout,
+set the exact authorities, for example
+`RAG_HTTP_ALLOWED_HOSTS=192.168.50.205,tmtl-macbook-pro-m4.local`. Prefer
+`127.0.0.1` on a single machine; do not expose `0.0.0.0` without a reverse
+proxy and auth you trust.
 
 ### 3b. Рекомендуется (shared server)
 
@@ -141,7 +156,7 @@ Snapshot mode has graph only (no live wiki catalog / backlinks).
 ./target/release/rag-mcp-ui --db ./rag.duckdb --seed "SEED"
 ```
 
-Seed: title wiki/note, `node_id` или `document_id` (из `list_documents` / `list_wiki_pages` / `GET /v1/wiki`).  
+Seed: title wiki/note, `node_id` или `document_id` (из `list_documents` / `list_wiki_pages` / `GET /v1/wiki`).
 Do not use `--db` while another process holds the same DuckDB (single writer).
 
 ---
@@ -155,7 +170,9 @@ rag-mcp-ui --http http://127.0.0.1:7432
 # or exclusive: rag-mcp-ui --db ./rag.duckdb
 ```
 
-With `--http` or live `--db`, the app opens in **Wiki** mode by default (catalog + article + backlinks; toolbar Wiki | Graph). Details: `docs/EGUI_USAGE.md`.
+With `--http`, the app opens on **Home** and exposes Home, Library, Search,
+Wiki, Connections and Operations. Exclusive `--db` and snapshot modes remain
+limited graph/wiki inspection paths. Details: [`EGUI_USAGE.md`](EGUI_USAGE.md).
 
 **Через агента / MCP Inspector** (writes + CAS):
 
@@ -166,7 +183,10 @@ get_wiki_page slug=...
 # update: get_wiki_page → revision/etag → update_wiki_page with if_match_revision
 ```
 
-HTTP `GET /v1/document` returns `revision` and `etag`, but there is no write+If-Match HTTP API. Concurrent wiki edits: always pass `if_match_revision` / `if_match_etag` on MCP writes (optional today = last-write-wins if omitted).
+HTTP `GET /v1/document` returns `revision` and `etag`; `PUT /v1/wiki` accepts
+`if_match_revision` / `if_match_etag` and returns `409` on stale CAS. Apply the
+same read-then-CAS rule to MCP wiki writes. Omitting CAS retains last-write-wins
+compatibility behavior.
 
 ---
 

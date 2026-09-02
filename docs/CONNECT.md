@@ -47,7 +47,7 @@ ls target/release/rag-mcp
 
 | Env | Смысл |
 |-----|--------|
-| `RAG_TOOLS=spine` | **по умолчанию** - **31** tools, index-first (рекомендуется) |
+| `RAG_TOOLS=spine` | **по умолчанию** - **33** tools, index-first (рекомендуется) |
 | `RAG_TOOLS=full` | все tools (MemPalace kg/diary, maintain, …) |
 
 Список spine: `src/mcp/surface.rs` / `docs/SPINE_TOOLS.md`  
@@ -270,60 +270,170 @@ claude mcp add-from-claude-desktop
 
 ---
 
-## 7. HTTP gateway: bind guard, wiki, backlinks
+## 7. HTTP gateway: routes and contracts
 
 Один process с `RAG_HTTP_BIND` (часто + `RAG_HTTP_ONLY=true`):
 
 | Path | Метод | Назначение |
 |------|-------|------------|
-| `/mcp` | streamable HTTP | MCP clients |
+| `/mcp` | GET, POST, DELETE | stateful streamable HTTP MCP clients |
 | `/health` | GET | counts, integrity, WAL and nested runtime/startup/autosync/backup state |
-| `/live`, `/ready` | GET | process liveness and store readiness |
+| `/live`, `/ready` | GET | process liveness and store/FTS readiness |
 | `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports |
+| `/v1/capabilities`, `/v1/version`, `/v1/routes` | GET | feature, version and exact route discovery |
+| `/v1/projects`, `/v1/project-home` | GET | project catalog and scoped inventory |
 | `/v1/search` | POST | lex/vector/hybrid retrieval with filters and diagnostics |
 | `/v1/multi-get` | POST | ordered batch document retrieval |
 | `/v1/expand-chunks`, `/v1/find-similar` | GET | retrieval helpers |
-| `/v1/documents`, `/v1/wiki` | GET | cursor-paginated catalogs; read responses include ETags |
-| `/v1/capabilities`, `/v1/version`, `/v1/routes` | GET | feature, version, deprecation, and route discovery |
-| `/live` | GET | process liveness, PID and uptime |
-| `/ready` | GET | readiness; 503 until startup and store/FTS checks pass |
-| `/v1/graph` | GET | graph UI |
-| `/v1/neighbors` | GET | neighbors by seed |
-| `/v1/find` | GET | find node |
-| `/v1/document` | GET | document body (`id` / `uri` / `q`) |
-| `/v1/wiki` | GET, PUT | catalog (metas); PUT write with optional CAS |
+| `/v1/documents` | GET | lean unified library; server-side `q`, `wing`, `room`, `layer`, `kind`, `status`, archive filters and cursor pagination |
+| `/v1/document`, `/v1/source-file` | GET | selected document body or allowlisted original source download |
+| `/v1/graph`, `/v1/neighbors` | GET | optional SQL project scope, bounded to 300 nodes and depth 3 |
+| `/v1/find` | GET | global node lookup used to resolve a navigation seed |
+| `/v1/wiki` | GET, PUT | cursor-paginated lean catalog and CAS-protected write |
 | `/v1/backlinks` | GET | wiki backlinks for a document |
+| `/v1/activity` | GET | bounded sanitized process-local activity |
+| `/v1/jobs/sync` | POST | enqueue an allowlisted incremental source sync without blocking the request |
+| `/v1/jobs`, `/v1/jobs/{id}` | GET | list jobs or read progress, counters, result and error for one job |
+| `/v1/jobs/{id}` | DELETE | cooperatively cancel a queued or running job |
+| `/v1/revisions` | GET | lean cursor-paginated revision timeline |
+| `/v1/revisions/snapshot`, `/v1/revisions/diff` | GET | one full historical snapshot on demand or bounded line diff |
+| `/v1/revisions/restore` | POST | restore an old revision as a new CAS-protected head revision |
+| `/v1/operations/checkpoint` | POST | checkpoint/vacuum the live store through its sole writer process |
+| `/v1/operations/backup` | POST | create an allowlisted backup; `dry_run` defaults to `true` and the live DB target is refused |
 
-UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Wiki mode default).  
-Код: `src/http_api.rs`. Полный runbook: `docs/PROD_RUN.md`.
+UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Home opens first in HTTP mode).
+Код: `src/http_api/`. Полный runbook: `docs/PROD_RUN.md`.
 
 ### 7a. Bind guard (`parse_bind`)
 
 - `RAG_HTTP_BIND=127.0.0.1:7432` (или любой loopback) - ок.
 - Пустой / unset - HTTP не слушает.
-- **Non-loopback** (например `0.0.0.0:7432`) **отклонён**, пока не выставлен  
-  `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on`.  
-  MCP/HTTP **без auth** - remote bind опасен.
+- **Non-loopback** (например `0.0.0.0:7432`) **отклонён**, пока не выставлен
+  `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on`.
+MCP/HTTP **без auth** - remote bind опасен.
 
-### 7b. `GET` / `PUT /v1/wiki`
+Mounted `/mcp` additionally checks the HTTP `Host` authority against an rmcp
+allowlist. Loopback names/addresses are always allowed and a concrete bind IP
+is added automatically. With `0.0.0.0` or `[::]`, list every remote MCP
+hostname or IP explicitly as comma-separated `RAG_HTTP_ALLOWED_HOSTS`, for
+example:
+
+```bash
+RAG_HTTP_ALLOWED_HOSTS=192.168.50.205,tmtl-macbook-pro-m4.local
+```
+
+### 7b. Общий лимит HTTP body
+
+Gateway ограничивает тело каждого запроса к `/v1/*` и к смонтированному
+`/mcp` значением **1 048 576 bytes (1 MiB)**. Проверка читает реальный поток,
+поэтому работает и без `Content-Length`. Превышение возвращает `413`:
+
+```json
+{
+  "ok": false,
+  "code": "BODY_TOO_LARGE",
+  "error": "request body exceeds 1048576 bytes",
+  "request_id": "..."
+}
+```
+
+Это общий admission boundary, а не только проверка `PUT /v1/wiki`.
+
+### 7c. Catalog pagination и `GET` / `PUT /v1/wiki`
+
+Cursor непрозрачен для клиента: первый запрос идёт без `cursor`, затем клиент
+передаёт полученный `page.next_cursor` без разбора.
+
+- `GET /v1/documents`: `limit` по умолчанию 50, диапазон 1–200; фильтры
+  `q`, `wing`, `room`, `layer`, `kind`, `status`, `include_archived`; ответ
+  `{ ok, items, page: { limit, next_cursor, total } }`. Bodies в catalog rows
+  не загружаются.
+- `GET /v1/wiki`: optional `q`, `limit`, `cursor`, `kind`, `category`, `wing`,
+  `room`; legacy `offset` поддержан и при наличии имеет приоритет над cursor.
+  Ответ сохраняет совместимые `items` и `pages`, а также
+  `page: { limit, next_cursor, total }`. `ETag` / `If-None-Match` дают `304` для
+  неизменившейся страницы.
 
 - GET: `Store::list_wiki_page_metas_filtered` (`layer=wiki`, без `content`).
-- GET query (optional): `q`, `limit`, `offset`, `kind`, `category`, `wing`, `room`.
-- GET ответ: `{ ok, count, pages[] }` - `id`, `uri`, `slug`, `title`, `kind`, `summary`, `category`, `revision`, `etag`, `updated_at`.
+- GET row: `id`, `uri`, `slug`, `title`, `kind`, `summary`, `category`,
+  `revision`, `etag`, `updated_at`.
 - PUT body: `slug` (or `uri=wiki://…`), `title`, `content`; optional `if_match_revision` / `if_match_etag` → **409** on CAS mismatch. UI may also send `id` (ignored as write key).
 
-### 7c. `GET /v1/backlinks?id=<document_id>`
+### 7d. Background source-sync jobs
+
+`POST /v1/jobs/sync` принимает JSON:
+
+```json
+{
+  "path": "/allowlisted/source/root",
+  "remove_deleted": true,
+  "wing": "project-name",
+  "room": null,
+  "max_file_bytes": 10485760
+}
+```
+
+`path` обязателен; `project` принят как alias для `wing`. Ответ `202` содержит
+начальный `{ ok, job }`. Все HTTP write jobs используют один serialized lane и
+тот же `Store` / embedder / config, что MCP; второй DuckDB writer не создаётся.
+
+Статусы: `queued`, `running`, `succeeded`, `completed_with_errors`, `failed`,
+`cancelled`. `completed_with_errors` означает, что обход завершён, но отдельные
+файлы (например oversized source) дали ошибки; это не чистый success. В
+`report` есть `added_count`, `updated_count`, `skipped_count`, `deleted_count`,
+`error_count`, до 20 `error_samples` и подробные `counters`.
+
+- `GET /v1/jobs` — newest first; `GET /v1/jobs/{id}` — один snapshot с
+  progress/current file/report/error и timestamps.
+- `DELETE /v1/jobs/{id}` — cooperative cancel: `202` для queued/running, `200`
+  для уже terminal job. Если cancel гоняется с завершением, terminal result не
+  переписывается ложным статусом.
+- Registry process-local и хранит максимум 100 jobs; terminal jobs вытесняются
+  первыми, а при 100 active jobs admission возвращает busy error.
+
+### 7e. Revisions: timeline, lazy snapshot, diff, restore
+
+- `GET /v1/revisions?document_id=...&limit=50&cursor=...` возвращает lean
+  summaries и `page { limit, next_cursor, total }`; `limit` по умолчанию 50 и
+  ограничен 1–200. Summary содержит identity/placement/status/timestamps,
+  `revision`, `content_chars`, `content_lines`, но не body или metadata JSON.
+- `GET /v1/revisions/snapshot?document_id=...&revision=N` загружает ровно один
+  полный исторический `Document` как `{ ok, result }`. Используй его только
+  после выбора строки timeline.
+- `GET /v1/revisions/diff?document_id=...&from_revision=N&to_revision=M`
+  сравнивает две версии; если `to_revision` не задан, используется current head.
+  Line diff ограничен 400 changes, длинные строки помечаются truncated.
+- `POST /v1/revisions/restore` принимает
+  `{ "document_id": "...", "revision": N, "if_match_revision": HEAD }` и
+  создаёт новую head revision. Stale head даёт `409`; immutable raw document
+  даёт `403` и должен восстанавливаться через source file + sync.
+
+### 7f. Activity privacy
+
+`GET /v1/activity?limit=200&after=<seq>` возвращает хронологические `items`,
+`latest_seq` и `capacity=1000`. История bounded и process-local; это не
+`ops_log`.
+
+Raw IP и User-Agent не сохраняются: из них получается стабильный
+`client-<hash>`. HTTP event хранит method + route path без query/body. MCP event
+хранит tool action и только безопасные lineage fields. Source paths, titles,
+content, search query, полные tool args/results и secret headers в Activity не
+попадают.
+
+### 7g. `GET /v1/backlinks?id=<document_id>`
 
 - Источник: `Store::wiki_backlinks_for_document` (wikilink edges → label + id).
 - `id` обязателен (document id); без limit/offset.
 - Ответ: `{ ok, count, backlinks: [{ label, id }] }`.
 - UI sidebar/backlinks ходят сюда; при HTTP-ошибке UI может показать пустой список (silent fail).
 
-### 7d. Smoke curl
+### 7h. Smoke curl
 
 ```bash
 curl -s http://127.0.0.1:7432/health
 curl -s http://127.0.0.1:7432/v1/wiki | head
+curl -s 'http://127.0.0.1:7432/v1/revisions?document_id=YOUR_DOC_ID&limit=20'
+curl -s http://127.0.0.1:7432/v1/jobs
 curl -s 'http://127.0.0.1:7432/v1/backlinks?id=YOUR_DOC_ID'
 ```
 
@@ -342,7 +452,7 @@ curl -s 'http://127.0.0.1:7432/v1/backlinks?id=YOUR_DOC_ID'
 
 | Тема | Поведение сейчас |
 |------|------------------|
-| Schema | `documents.revision` (+1 на successful write); schema v5 |
+| Schema | `documents.revision` (+1 на successful write); current schema v9 |
 | Оба параметра | если заданы и `if_match_revision`, и `if_match_etag` - **revision wins** |
 | Require flag | `RAG_WIKI_REQUIRE_IF_MATCH` (default false): when true, wiki **updates** must pass if_match |
 | MCP conflict | `AppError::Conflict` → MCP `invalid_params` (не отдельный conflict code) |
@@ -394,6 +504,7 @@ RAG_TOOLS=full
 | vec error / dims | `reembed_document` или новая DB после смены модели |
 | Desktop + Code одновременно | один writer: **gateway** + remote clients, не два stdio |
 | `RAG_HTTP_BIND` non-loopback fail | set `RAG_HTTP_ALLOW_REMOTE=true` (опасно) или bind `127.0.0.1` |
+| Remote `/mcp` rejects `Host` | add the exact hostname/IP to comma-separated `RAG_HTTP_ALLOWED_HOSTS`; wildcard bind alone does not allow it |
 | wiki conflict / clobber | pass `if_match_revision` from `get_wiki_page`; re-fetch on conflict |
 | empty `/v1/backlinks` | wrong `id` (need document id); or no wikilink edges yet |
 
@@ -408,7 +519,7 @@ RAG_TOOLS=full
 - [ ] Клиент: HTTP url / mcp-remote **или** absolute `command` + `RAG_DB_PATH`  
 - [ ] `RAG_TOOLS=spine` (или full осознанно)  
 - [ ] Restart клиента  
-- [ ] `status` / list tools виден (~31 spine)  
+- [ ] `status` / list tools виден (33 spine)
 - [ ] smoke ingest + search/wiki  
 - [ ] multi-agent: wiki writes с `if_match_revision`  
 

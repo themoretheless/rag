@@ -1,116 +1,131 @@
 # SOLID / DRY audit
 
-This audit is tied to the current source tree. It separates completed structural
-changes from remaining work so architecture claims stay testable.
+**Updated:** 2026-09-02
 
-## Completed
+This audit records responsibility boundaries that are present in the current
+tree. File size alone is not a refactor reason; behavior-preserving seams and
+tests are the acceptance criteria.
 
-### Transport-independent retrieval
+## Completed responsibility boundaries
 
-`src/retrieval.rs` now owns document lookup, ordered multi-get, neighbor chunk
-expansion, and similar-document search. MCP and HTTP are adapters over the same
-use cases instead of maintaining separate validation, centroid, and filtering
-implementations.
+### Document preparation and atomic persistence
 
-Principles improved: SRP, DIP, DRY. The transports depend on a domain use-case
-module and preserve their existing response envelopes.
+`DocumentIndexer` owns chunk policy, Markdown section metadata, batch embedding
+and `Chunk` construction without database access. `IngestService` and wiki/raw
+write paths prepare everything before calling `Store::write_document_atomic`.
+The Store transaction owns CAS/upsert, single-URI ownership, chunk replacement
+and derived graph rebuild. Racing first ingests through different admission
+paths resolve to one owner plus one explicit conflict; they cannot create two
+documents for the same URI.
 
-### Reading-first native viewer
+Embedding and injected graph failures preserve the previous document, chunks,
+graph, wiki index and operation log. This is the main SRP/DIP boundary for all
+content writes.
 
-The wiki renderer no longer owns backlinks and page metadata. Those live in an
-independently hideable information panel. The catalog is independently
-hideable, article text has a bounded readable width, and render dependencies are
-grouped in `WikiReadContext` instead of an argument-heavy function.
+### Transport-independent application services
 
-Principles improved: SRP, ISP. The reading surface, navigation surface, and page
-information surface can evolve separately.
+- `retrieval.rs` owns validated search commands, multi-get, chunk expansion and
+  similar-document use cases.
+- `diagnostics.rs` owns status and doctor reports.
+- `revisions.rs` owns bounded line diff and restore-as-new-head with CAS.
+- Wiki writes use `WikiWriteCommand`; maintenance uses
+  `MaintenanceExecutionContext`.
 
-### Timestamp conversion
+MCP and HTTP preserve their wire defaults and envelopes but do not reimplement
+these workflows. This removes transport-level copies without erasing deliberate
+compatibility differences.
 
-RFC3339 and DuckDB timestamp parsing/formatting live in `util::time`. The KG
-layer explicitly opts into the extra date-only form; persistence and corpus
-analysis use the stricter database form.
+### Incremental source synchronization
 
-Principles improved: DRY without erasing domain-specific policy.
+`SourceSyncService` owns allowlist validation, scan policy, manifest preflight,
+repair detection and explicit deleted-source pruning. The source-manifest
+repository owns its SQL and root summaries. Progress/cancellation is a service
+contract, while `http_api::jobs` owns process-local lifecycle, retention,
+admission and the serialized background writer lane.
 
-### Ingest application service
+Unchanged healthy files skip extraction, hashing and embedding. The existing
+MCP `sync_sources` path remains a synchronous adapter over the same service.
+Manifest ownership survives parent ↔ child root changes; oversized files are
+reported as per-file errors instead of silently remaining stale; and
+`delete_source_state` removes documents, chunks, graph, wiki index and manifest
+rows in one transaction. Jobs distinguish clean success from
+`completed_with_errors`, and cancellation preserves a terminal result when it
+races completion.
 
-`IngestService` owns normalization, immutable-source policy, chunking,
-embedding, persistence, graph refresh, and document re-embedding. The MCP
-facade delegates to this service instead of implementing the workflow.
+### Retrieval index ownership
 
-Principles improved: SRP, DIP. Ingest behavior is now transport-independent and
-accepts an `IngestCommand` rather than accumulating more facade parameters.
+FTS dirty/generation state and single-flight refresh live in `db::fts`. Exact
+vector candidate loading, normalized snapshot caching and bounded top-k live in
+`db::search`. Mutation paths advance one shared chunk generation.
 
-### Wiki commands and maintenance context
+Search orchestration does not know DuckDB FTS DDL or vector cache invalidation.
+Project filters are applied before scoring instead of after a global top-k.
 
-Wiki writes expose `WikiWriteCommand`; MCP and HTTP use it while legacy
-functions remain compatibility adapters. Maintenance plan execution carries
-shared dependencies and execution policy in `MaintenanceExecutionContext`
-instead of forwarding the same six arguments through every action handler.
+Project graph lookup follows the same rule: SQL selects project documents and
+their direct companion nodes before deterministic traversal. The induced graph
+is bounded to 300 nodes and neighbor expansion to depth 3, without admitting
+documents owned by another project.
 
-Principles improved: ISP, SRP, DRY.
+### HTTP boundary and operational privacy
 
-### Explicit slug policies
+One request-body middleware wraps both product HTTP routes and the mounted MCP
+router. It enforces a 1 MiB limit even when `Content-Length` is absent. Activity
+keeps bounded operational lineage with anonymous client identifiers; it does
+not retain raw IP/UA, request or result bodies, source paths, titles or search
+queries.
 
-Shared slug mechanics now require a named `SlugPolicy`. Wiki pages, index
-fallbacks, and graph link targets retain their different slash, punctuation,
-and empty-value behavior without maintaining three loop implementations.
+### Persistence codecs and focused repositories
 
-Principles improved: DRY while keeping policy differences explicit.
+Document/chunk/manifest row decoding lives in `db::rows`. Catalog aggregation,
+source manifests, FTS, search, graph, KG, recovery and vault export have focused
+`db/*` owners while `Store` remains the compatibility façade and transaction
+owner.
 
-### Diagnostics and document updates
+Timestamp and slug mechanics are shared only where policy is genuinely shared:
+`util::time` retains strict and date-flexible modes, and `SlugPolicy` preserves
+wiki/index/graph differences.
 
-`DiagnosticsService` now supplies HTTP and MCP status/doctor payloads without
-constructing or depending on an MCP server. Document metadata and body updates
-run through `IngestService`, including conditional re-chunking, re-embedding,
-graph synchronization, title-only node updates, and operation logging.
+### Native product workspaces
 
-Principles improved: SRP and DIP. Transport code no longer owns diagnostics or
-document mutation workflows.
-
-### Validated search commands
-
-`SearchCommand` and the retrieval application service now own mode parsing,
-filter normalization, diversity/grouping policy, limits, context expansion,
-and embedding preparation. HTTP and MCP retain their compatibility defaults
-without constructing independent `SearchQuery` values.
-
-### Projects, revisions, and safe ingest preparation
-
-Project ids are validated domain values and `/v1/projects` exposes the catalog
-without breaking the existing `wing` wire alias. The native viewer uses a
-project picker. Schema v8 preserves immutable document snapshots before each
-successful update and `/v1/revisions` exposes history. Ingest prepares chunks
-and embeddings before it removes active chunks.
-
-### Persistence codecs and operational state
-
-Document, chunk, and embedding-manifest row codecs live in `db::rows`, leaving
-transaction ownership in `Store`. Automatic backup status is reconstructed
-from retained snapshots after process restart instead of reporting a false
-`null` completion time.
+Gateway DTO/load behavior is split into `product`, `search`, `operations` and
+`revisions`; workspace rendering lives under `ui/`. `app.rs` coordinates
+navigation and worker sequence ownership rather than performing HTTP or
+persistence itself. Project Home, Unified Library, Search, Operations and
+History use lean server-side APIs instead of loading the corpus into the UI
+process. Revision summaries are cursor-paginated and snapshots load only after
+selection. Native tests cover polling/cancellation, destructive backup
+confirmation and CAS revision restore; the service refuses restore for
+immutable raw documents.
 
 ## Deliberate compatibility boundaries
 
-These are not active refactor tasks without a versioned compatibility decision:
+1. `mcp/facade.rs` remains the rmcp macro composition root. Tool families have
+   bounded routers; moving macro methods without framework support would add
+   forwarding code rather than reduce responsibility.
+2. `Store` remains the public DuckDB façade and transaction owner. Focused
+   repository modules may move algorithms out, but callers do not receive raw
+   DuckDB connections.
+3. Long-form wiki functions remain compatibility adapters over command APIs
+   until a versioned deprecation window.
+4. `wing` remains the v1 persistence/wire alias for project. A physical rename
+   requires a dual-write migration and rollback plan.
+5. The `Storage` trait intentionally covers document lifecycle only. Claiming a
+   full multi-backend abstraction before search/graph/wiki conformance would
+   violate interface segregation and capability honesty.
 
-1. `mcp/facade.rs` remains the macro-owned tool implementation/composition
-   root. Capability registration is already split into bounded routers. Moving
-   individual macro methods should wait until rmcp supports composable handler
-   implementations or a v2 tool surface justifies the churn.
-2. Long-form wiki functions remain public compatibility adapters over command
-   APIs. Removing them requires a major-version deprecation window; new internal
-   transport code must use command APIs.
-3. `wing` remains the v1 persistence/wire alias for `ProjectId`. A physical
-   `project_id NOT NULL` column belongs to a v2 migration with dual-write and
-   rollback, not a silent schema rename.
+## Remaining measurable debt
+
+| Boundary | Current limitation | Completion test |
+|----------|--------------------|-----------------|
+| Source manifest | Manifest metadata commits after the atomic document write, so a crash can leave repairable stale metadata | Failure injection proves the next sync repairs without duplicate documents or missed deletion; fold into the document transaction only if exact atomic metadata becomes required |
+| Storage | Markdown has document CRUD, sidecar rebuild and watcher, but not application search/graph/transaction parity | One shared conformance suite passes for every capability advertised by both DuckDB and Markdown; unsupported capabilities return structured refusal |
+| Large orchestration roots | `Store`, `wiki`, `mcp/facade` and native `app` still coordinate many compatibility paths | Extract a slice only when its behavior tests can run through the new boundary and the old façade becomes delegation-only for that slice |
 
 ## Guardrails
 
 - Preserve HTTP and MCP wire shapes during internal refactors.
-- Keep DuckDB writes behind the live one-writer gateway in production.
-- Commit one structural slice at a time and run targeted tests plus
-  `cargo check --all-targets` before integration.
-- Do not deduplicate code whose superficially similar behavior encodes different
-  domain policy.
+- Keep production DuckDB writes behind the live one-writer gateway.
+- Do not deduplicate code whose similar shape encodes different mutation,
+  timestamp, slug or compatibility policy.
+- Every structural slice runs targeted regression tests, full workspace tests,
+  strict Clippy and `git diff --check` before integration.

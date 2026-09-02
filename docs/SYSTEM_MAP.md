@@ -1,242 +1,192 @@
-# System Map
+# System map
 
-**Product:** `rag-mcp`  
-**Role:** living map of layers, code ownership, tool clusters, and documentation.  
-**North star:** [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) · **Laws:** [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md)
+**Product:** `rag-mcp`
 
-Update this file when modules or major tool clusters move. Prefer truth over aspirational layout when they diverge; mark target vs current.
+**Updated:** 2026-09-02
 
----
+**North star:** [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md)
 
-## 1. Conceptual layers
+**Laws:** [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  L4  Agent / MCP client  (+ optional local chat LLM tools)  │
-├─────────────────────────────────────────────────────────────┤
-│  L3  Compiled knowledge   wiki · index · schema · ops_log   │
-├─────────────────────────────────────────────────────────────┤
-│  L2  Object graph         nodes · edges · stubs · tunnels   │
-├─────────────────────────────────────────────────────────────┤
-│  L1  Retrieval            chunks · embeddings · FTS · RRF   │
-├─────────────────────────────────────────────────────────────┤
-│  L0  Verbatim corpus      documents · wing/room · hash      │
-└─────────────────────────────────────────────────────────────┘
-              Storage (default: DuckDB single file)
-```
+This is the current ownership map. It describes code that exists; target work
+belongs in [`ROADMAP.md`](ROADMAP.md).
 
-| Layer | Tables / artifacts (logical) | Primary tools (examples) |
-|-------|------------------------------|---------------------------|
-| **L0** | `documents` (raw/diary/…), content_hash, wing, room, immutable | `ingest_*`, `add_drawer`, `get_document`, `list_*`, `delete_by_source` |
-| **L1** | `chunks`, embedding_json, FTS, embedding_manifest | `search`, diversity/token pack, `reembed*`, `pack_context` |
-| **L2** | `graph_nodes`, `graph_edges` | `get_graph`, `get_neighbors`, `get_backlinks`, `link_nodes`, tunnels, `graph_expand_search` |
-| **L3** | wiki pages, index entries, schema, ops_log | wiki CRUD, `query_with_index`, `search_wiki`, `file_answer`, `lint_wiki`, `consolidate` |
-| **L4** | client agent; optional server chat | `wake_up`, diary, `checkpoint`, `analyze_corpus`, maintain_*, `compile_source`, `llm_status` |
-| **KG** | `kg_facts` (spans L2/L4 memory) | `kg_add/query/invalidate/supersede/timeline/stats` |
+## 1. Logical layers
 
-Vocabulary map (external → product): drawers→docs/chunks; wing/room→columns; tunnel→edge type; closet→wiki `source_summary`; index.md→index tools; log.md→ops_log. See [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) §3.
-
----
-
-## 2. Runtime shape
-
-```
-MCP client (Claude / Zed / …)
-        │ stdio JSON-RPC
-        ▼
-   rag-mcp binary
-        │
-        ├── mcp/server.rs   tool_router façade (today: large single file)
-        ├── domain modules  chunk · embed · graph · search · wiki · maintain · diary · kg
-        ├── db/*            DuckDB schema + store (target: storage/* adapters)
-        └── optional HTTP   embeddings + chat (OpenAI-compatible / Ollama)
+```text
+L4  MCP, HTTP and native client ports
+ │
+L3  compiled knowledge: wiki, index, schema, revisions, ops log
+ │
+L2  object graph: document nodes, tags, stubs, tunnels, provenance
+ │
+L1  retrieval: chunks, embeddings, FTS, exact vector cache, RRF
+ │
+L0  verbatim corpus: documents, project/room, source, hash, lifecycle
+ │
+SoT default: one DuckDB file owned by one gateway process
 ```
 
-**Process rules:** one writer process per store path; UI snapshot/export or exclusive `--db` mode for inspector; never dual-live MCP + UI writers.
+| Layer | Durable artifacts | Application entry points |
+|-------|-------------------|--------------------------|
+| L0 | `documents`, `source_manifest`, immutable raw bodies | ingest, source sync, document catalog, lifecycle |
+| L1 | `chunks`, embedding manifest, FTS generation state | lex/vec/hybrid search, packing, expand, similar |
+| L2 | `graph_nodes`, `graph_edges` | scoped graph, neighbors, backlinks, tunnels |
+| L3 | wiki pages/index/schema, document revisions, `ops_log` | wiki CRUD, diff/restore, compile, maintenance |
+| L4 | MCP tool routers, HTTP routes, native workspaces | adapters only; domain policy stays below the port |
 
----
+The temporal `kg_facts` and diary surfaces remain supported but are not separate
+sources of truth. They share the same store and are outside the default
+compile-first spine.
 
-## 3. Code map (current ≈ target)
+## 2. Runtime topology
 
-**Current tree (repo root `src/`):**
+```text
+MCP clients ── stdio or streamable HTTP /mcp ─┐
+                                               │
+native client ── /v1/* HTTP ──────────────────┼── rag-mcp gateway
+                                               │      │
+scheduled sync / backup ──────────────────────┘      ▼
+                                              shared Store
+                                                   │
+                                              rag.duckdb
+```
+
+The gateway is the sole live DuckDB writer. MCP and `/v1/*` handlers share the
+same `Store`, embedder and configuration. HTTP source-sync jobs use a serialized
+writer lane and cooperative cancellation; they do not open another database.
+Store-level CAS enforces one URI owner when synchronous MCP/autosync work races
+the HTTP lane.
+
+The native client uses `--http` for live work. `--snapshot` is read-only and
+`--db` is an exclusive maintenance/development mode.
+
+## 3. Code ownership
 
 | Path | Owns |
 |------|------|
-| `main.rs`, `lib.rs`, `config.rs`, `error.rs`, `models.rs` | entry, config, domain DTOs |
-| `chunking/` | fixed-window chunker |
-| `embeddings/` | mock, openai, ollama providers |
-| `llm/` | chat client + provider presets |
-| `graph/` | wikilink/tag extract + resolve |
-| `db/` | schema, store, search, graph, fts, kg |
-| `wiki/` | wiki compile helpers |
-| `diary/` | agent diary helpers |
-| `maintain/` | analyze, plan, apply, organize, compress, refresh |
-| `search_pack.rs` | token packing / hit packing |
-| `mcp/server.rs` | **all** MCP tool handlers (concentration risk) |
-| `mcp/tools.rs` | parameter structs (schemars) |
-| `util/` | hashing helpers |
+| `ingest.rs` | transport-independent ingest command, immutable policy and orchestration |
+| `document_indexer.rs` | pure chunk policy, section metadata, embedding and `Chunk` construction; no storage writes |
+| `source_scan.rs`, `source_sync.rs` | source discovery, manifest-aware incremental sync, progress and cancellation |
+| `retrieval.rs`, `search_pack.rs` | validated search use cases, multi-get/expand/similar and token packing |
+| `revisions.rs` | revision diff and CAS-protected restore use cases |
+| `diagnostics.rs`, `ops.rs` | health/doctor and scheduled operational state |
+| `graph/` | pure wikilink/tag extraction and resolution |
+| `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams |
+| `maintain/`, `memory_lifecycle.rs`, `diary/` | explicit maintenance and memory workflows |
+| `db/store.rs` | compatibility DuckDB façade and transaction boundary |
+| `db/{rows,fts,search,graph,kg,catalog,source_manifest,recovery,vault}.rs` | persistence repositories and backend-specific algorithms |
+| `storage/` | small backend-neutral document contract; DuckDB and Markdown implementations |
+| `mcp/facade.rs`, `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs` | macro composition root and bounded MCP tool routers |
+| `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters |
+| `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
+| `crates/rag-mcp-ui/src/ui/` | workspace rendering; `app.rs` coordinates navigation and worker state |
 
-**Target pressure (not a rewrite mandate):**
+## 4. Structural seams
 
-- Extract tool clusters from `server.rs` into `mcp/tools_{ingest,search,graph,wiki,kg,maintain}.rs` or thin handlers over domain services.
-- Introduce `storage/` + `trait Storage`; move `db/*` DuckDB code behind `storage/duckdb` ([`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md)).
-- Keep public MCP tool **names** stable while internal modules split.
+| Seam | Contract | Enforced behavior |
+|------|----------|-------------------|
+| `DocumentIndexer` → `Store::write_document_atomic` | prepare before persistence, then commit document/chunks/derived graph together | embedding or graph failure preserves the previous state; URI CAS permits exactly one owner under racing initial ingest |
+| `SourceSyncService` → source manifest repository | stat preflight avoids extraction/hash/embed for healthy unchanged files | parent ↔ child root rebinding preserves ownership; oversized files are reported; `delete_source_state` removes source-owned state transactionally |
+| Retrieval service → `db::search`/`db::fts` | transports pass validated commands, persistence owns candidate loading and ranking substrate | project filters run before exact vector top-k; cache invalidates by chunk generation |
+| Project graph HTTP → `db::graph` | scope project documents and direct companions in SQL before traversal | deterministic BFS is capped at 300 nodes/depth 3 and excludes documents from another project |
+| MCP/HTTP → application services | ports map wire values and response envelopes only | ingest, retrieval, diagnostics and revisions do not depend on a transport |
+| Gateway → jobs/operations | one process owns writes and maintenance | bounded job retention, hard admission cap, `completed_with_errors`, terminal-safe cancellation and safe checkpoint/backup paths |
+| HTTP boundary → product API and mounted MCP | one middleware owns admission and Activity sanitization | headerless bodies over 1 MiB are rejected; raw IP/UA, bodies, source paths and titles are not retained |
+| Native client → gateway | product workspaces consume lean APIs | no second live DuckDB reader/writer is required for normal use |
+| `Storage` | backend identity, capabilities and document lifecycle | unsupported backends/capabilities fail explicitly; no silent DuckDB alias |
 
-### SOLID seams (current boundaries)
+Compatibility boundaries are intentional: `mcp/facade.rs` remains the rmcp
+macro composition root, `Store` remains the public DuckDB façade, and `wing`
+remains the v1 wire/storage alias for project.
 
-Intentional boundaries after the modularity pass. Prefer extend-at-seam over growing façades. S/O pressure below is direction, not a rewrite mandate.
+## 5. Main workflows
 
-| Seam | Owns | Does not own | Open pressure (S / O) |
-|------|------|--------------|------------------------|
-| **`Store` (boundary)** | Document/chunk/graph/wiki/ops I/O; single-writer DuckDB façade | Ranking policy, pack/token budget, MCP/HTTP wire shapes | Split mixed methods (CRUD vs graph cascade, wiki index score, CAS pure helpers); target `Storage` trait so domain holds `dyn Storage` ([`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md)) |
-| **`EmbeddingProvider` trait** | Embed text → vectors; mock / openai / ollama impls | Chunking, search fuse, config env parse | Co-locate kind policy on `EmbeddingProviderKind` (defaults, URL/key, dialect); `build_provider` = kind→ctor only; vector metrics in one module |
-| **HTTP vs MCP** | Ports only: `http_api` routes + `mcp/server` tools map params → domain → JSON/status | Business rules, compile policy, embed choice | Keep both thin adapters; shared free fns for CAS if_match, search options, ingest pipeline; bind parse/validate out of handlers; spine membership data-driven |
-| **Wiki compile layer (L3)** | Agent-authored pages, index, schema, ops_log; `compile_source` / `file_answer` / lint helpers | Raw body rewrite (L0 immutable); graph NER | Split write vs pure query paths; one owner for parent→wiki provenance links; kinds/mutability policy as registry so new page kinds do not scatter |
+### Ingest and sync
 
-**Rules of thumb:** domain free functions and traits get algorithms; façades stay param-to-domain-to-JSON; new backends/modes/actions register at the seam (kind arm, route merge, action table) instead of editing god matches. See §9 for concentration debt; principles §1.15 and vision thin-MCP / Storage notes for product stance.
-
----
-
-## 4. MCP tool clusters
-
-Counts fluctuate; README and `#[tool` on `server.rs` are ground truth for “exists today.” Clusters for navigation:
-
-| Cluster | Purpose | Design docs |
-|---------|---------|-------------|
-| **Ingest / raw** | text, file, raw, drawer, duplicates | SPEC, MEMPALACE_PARITY |
-| **Search / pack** | lex/vec/hybrid, filters, diversity, expand | FEATURES, ARCHITECTURE_NOTES |
-| **Documents / taxonomy** | list/get/delete, wings/rooms, refile, pin, archive | ORGANIZE |
-| **Graph** | nodes, edges, stubs, tunnels, expand, stats | GRAPH_DESIGN |
-| **Wiki / compile** | pages, schema, index, log, file_answer, lint | FEATURES Karpathy map |
-| **KG** | temporal facts | MEMPALACE_PARITY |
-| **Diary / session** | diary, wake_up, checkpoint | MEMPALACE_PARITY |
-| **Integrity / ops** | status, doctor, manifest, reembed, vacuum, ops_log | ARCHITECTURE_NOTES |
-| **LLM / maintain** | llm_status, analyze/plan/apply, organize/compress/refresh | LOCAL_LLM_MAINTENANCE, ORGANIZE |
-
-Full planned × theme matrix: [`MCP_TOOL_MATRIX.md`](MCP_TOOL_MATRIX.md).  
-Priority sequencing: [`ROADMAP.md`](ROADMAP.md).
-
----
-
-## 5. Control-plane workflows (where to look)
-
-| Workflow | Entry tools | Detail |
-|----------|-------------|--------|
-| Ingest verbatim | `ingest_text` / `ingest_file` / `ingest_raw` / `add_drawer` | ARCHITECTURE_NOTES §5.1 |
-| Compile | `compile_source` / wiki write / `ingest_source` | §5.2; LOCAL_LLM_WIKI |
-| Query cascade | `query_with_index` → `search_wiki` → `search` → `graph_expand_search` | §5.3 |
-| Session memory | `wake_up`, diary, `checkpoint` | MEMPALACE_PARITY |
-| Organize | `refile`, pin/boost, archive, collections | ORGANIZE |
-| Maintain | `analyze_corpus` → plan → apply → compress/refresh | LOCAL_LLM_MAINTENANCE |
-| Graph inspect | MCP topology tools; optional `rag-mcp-ui` | GRAPH_DESIGN, EGUI_GRAPH_VIEW |
-
----
-
-## 6. Storage adapters (target)
-
-```
-Domain (ingest, search, graph, wiki)
-            │
-            ▼
-     dyn Storage (capability flags)
-            │
-   ┌────────┼──────────┬────────────┐
-   ▼        ▼          ▼            ▼
- DuckDB   Markdown   SQLite     Postgres
-(default)  vault               +pgvector
+```text
+allowlist → extract/normalize → DocumentIndexer → embed
+          → atomic document + chunks + graph write
+          → source manifest / operational metadata
 ```
 
-- **Default path today:** DuckDB file via `RAG_DB_PATH` (no trait yet; code in `db/`).
-- **Markdown vault:** files as SoT + sidecar vectors; Obsidian/git friendly.
-- **Capability flags:** hybrid FTS, native ANN, transactions, vault_live_parse: degrade or hard-error honestly.
-- **Non-goal:** remote vector DB as sole primary SoT.
+Source sync first loads one root manifest view. Size/mtime plus document/chunk
+health can skip extraction and embedding. Root scope can move between a parent
+and child directory without losing ownership rows. Oversized sources become
+visible per-file errors, and removal commits documents, chunks, graph, wiki
+index and manifest state together. Background HTTP runs publish scan, sync,
+delete and terminal progress phases.
 
-See [`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md). Principles: [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) §1.2.
+### Query
 
----
-
-## 7. Documentation map
-
-```
-ARCHITECTURE_VISION.md     ← north star (what / why)
-        │
-        ├── PRODUCT_PRINCIPLES.md   laws + conflict resolutions
-        ├── SYSTEM_MAP.md           this file (layers + §8 recent surface truth)
-        └── ARCHITECTURE_NOTES.md   layer mechanics + workflows
-
-ROADMAP.md                 sequencing (points to vision)
-SPEC.md                    v1 implementation contract
-FEATURES.md                research depth + adversarial A1–A30
-MCP_TOOL_MATRIX.md         tools × Karpathy × MemPalace
-README.md                  operator-facing truth of shipped tools
-CONNECT.md · PROD_RUN.md   multi-client HTTP gateway (may lag §8)
-
-Topic deep-dives:
-  ORGANIZE.md · MEMPALACE_PARITY.md · STORAGE_ADAPTERS.md
-  GRAPH_DESIGN.md · EGUI_GRAPH_VIEW.md · GRAPH_EGUI_DECISIONS.md
-  LOCAL_LLM_MAINTENANCE.md · LOCAL_LLM_WIKI.md · LLM_PROVIDERS.md
-  REPOS_SURVEYED.md · EGUI_USAGE.md
+```text
+index/wiki navigation → scoped lex/vec/hybrid retrieval → optional graph expand
+                    → packed cited context → client-owned answer/synthesis
 ```
 
-### Authority on conflict
+FTS is rebuilt only when its recorded chunk generation is stale. Exact vector
+search uses a generation-keyed normalized snapshot, scopes candidates before
+scoring and hydrates content only for winners.
 
-1. **Intent / identity:** ARCHITECTURE_VISION + PRODUCT_PRINCIPLES  
-2. **v1 wire contracts:** SPEC (until revised)  
-3. **Sequencing:** ROADMAP (must not violate principles)  
-4. **Shipped surface:** README + code + this map §8 for recent wiki/HTTP/CAS/UI  
-5. **Research / history:** FEATURES, REPOS_SURVEYED (may lag priorities)
+### Product navigation
 
----
+```text
+Project Home → Unified Library → document/wiki/graph
+             → Search ──────────┘
+             → Operations (activity, health, jobs, checkpoint, backup)
+             → History (timeline, diff, CAS restore) from a document
+```
 
-## 8. Recent surface inventory (truth, not backlog)
+Project graph queries scope in SQL before the 300-node/depth-3 caps; lazy
+neighbor expansion cannot cross the selected project. History fetches a lean,
+cursor-paginated timeline and loads a full revision snapshot only after the
+user selects it; raw documents cannot be restored as mutable heads.
 
-Honest status of wiki catalog / HTTP bind / CAS / UI / hooks work that landed in code but is uneven in docs and tests. Prefer this section over aspirational ROADMAP labels for “exists today.” Codes: **shipped** = usable in production path; **partial** = core path works with documented gaps; **docs-stale** = code ahead of docs.
+## 6. Storage truth
 
-| Area | Status | Shipped | Incomplete / gaps |
-|------|--------|---------|-------------------|
-| **store-wiki-metas** | shipped | `list_wiki_page_metas` / filtered; `wiki_backlinks_for_document`; HTTP + UI; unit tests | Deeper q/limit edge cases; dual catalog parity with `list_wiki_index` |
-| **http-wiki-bind** | shipped | GET `/v1/wiki` (+q/limit/offset/filters), PUT `/v1/wiki` (CAS), GET `/v1/backlinks`, `parse_bind` + remote guard + unit tests | No axum handler integration tests; backlinks only by `id` |
-| **cas-revision** | shipped | `upsert_document_cas`, wiki if_match, `RAG_WIKI_REQUIRE_IF_MATCH`, PUT 409; chunks deleted **after** successful CAS | MCP Conflict → `invalid_params`; `--db` UI save uses check-then-meta (not full re-embed) |
-| **mcp-ingest-wing** | shipped | `ingest_file` wing/room + CLI `ingest_file` bin | MCP tool description/matrix still thin; `ingest_text` has no wing/room |
-| **ui-wiki** | shipped | Wiki browser + dual-pane + Edit/Save (PUT or `--db`) + backlinks + link colors + bold/code/*italic* | Snapshot mode no wiki catalog; no tables/images; no forward history |
-| **graph-wiki-bridge** | shipped | Open as wiki / Show in graph by document id | No canvas double-click; snapshot/vault limited |
-| **hooks-claude** | shipped | Queue/flush hooks; `.rag/` gitignored; CLAUDE.md CAS + re-ingest | No auto-flush; agent still runs `ingest_file` |
-| **cli-ingest** | shipped | `ingest_file` + `ingest_project` bins | Paths differ slightly from MCP (`file://` pipeline vs raw helpers) |
-| **tests-existing** | partial | parse_bind, metas, backlinks, document_cas, require-if-match wiki test | HTTP handler tests thin; more q/limit matrix |
+DuckDB is the full application backend. `Storage` has landed as a deliberately
+small document-lifecycle contract rather than a fake all-backend façade.
 
-### Operator implications (short)
+| Backend | Current capability |
+|---------|--------------------|
+| DuckDB | documents, chunks, FTS, vectors, graph, wiki, revisions, transactions, recovery |
+| Markdown | opt-in document CRUD, frontmatter source of truth, deterministic sidecar rebuild and watcher |
+| SQLite/Postgres/Memory | recognized identifiers only; startup refuses them |
 
-- **HTTP gateway:** graph read + wiki catalog/backlinks + **PUT wiki** with optional CAS.
-- **CAS:** optional per call; set `RAG_WIKI_REQUIRE_IF_MATCH=true` for multi-agent enforce on updates.
-- **UI:** Wiki browser **and** editor (Edit/Save); prefer MCP for bulk agent writes.
-- **Placement:** MCP/CLI `ingest_file` accept `wing`/`room`.
+Search, graph, wiki and maintenance still depend on the DuckDB surface. A full
+Markdown application backend requires the conformance gate in the roadmap.
 
----
+## 7. Current product surface
 
-## 9. Known concentration / debt (map, not backlog)
+| Area | Status | Boundary |
+|------|--------|----------|
+| Project Home and Unified Library | shipped | HTTP mode; lean catalog never loads every body |
+| Search workspace | shipped | gateway lex/vec/hybrid API; no implicit LLM rewrite |
+| Wiki reader/editor | shipped | CAS conflict recovery; raw bodies remain immutable |
+| Project Connections graph | shipped | SQL-scoped project graph; deterministic local expansion capped at 300 nodes/depth 3 |
+| Activity | shipped | in-process bounded sanitized event history, not an audit-log replacement |
+| Operations API | shipped | status/doctor, jobs with explicit partial-success state, checkpoint and allowlisted backup |
+| Revision API | shipped | lean cursor pagination, lazy snapshot, bounded line diff and CAS restore-as-new-head with raw guard |
+| Native Operations and revisions flows | shipped | jobs poll/cancel, health/backup and revision diff/CAS restore; native package tests are green |
+| Retrieval scale | local observation | 100,111 chunks: 133.98 ms hybrid p95; exact path remains default until representative release reruns fail the gate |
 
-| Debt | Why it matters | Direction |
-|------|----------------|-----------|
-| Large `mcp/server.rs` (~70+ tools) | Hard to review; risk of god-object | Split handlers by cluster; keep names |
-| DuckDB types leak into domain | Blocks vault/SQLite adapters | `Storage` trait + adapters |
-| Doc priority labels vs shipped MemPalace tools | ROADMAP/MCP matrix still say P1 for some shipped kg/diary tools | Prefer README/code; refresh labels when editing those docs |
-| Optional UI dual-writer | DB corruption risk | Exclusive mode / snapshot only (EGUI decisions) |
-| HTTP wiki/CAS/UI surface uneven vs docs/tests | Operators and agents over-trust “shipped” labels | §8 inventory above; fill tests + docs before treating as complete |
+## 8. Remaining concentration and measurable gates
 
----
+| Concentration | Current risk | Gate |
+|---------------|--------------|------|
+| `Store`, `wiki`, `mcp/facade` and native `app` remain large compatibility/orchestration roots | Mechanical splitting could duplicate policy or break wire behavior | New workflows must enter through existing application seams; extract only with behavior tests |
+| Markdown implements only the document slice | Capability names can be mistaken for full parity | Shared search/graph/recovery conformance before it is marketed as a full backend |
+| Exact vector search is O(n) | Future corpora may exceed latency/RSS targets | ANN only after the roadmap's repeated 300 ms or resource gate fails |
+| Native layout has unit tests but no deterministic screenshot suite | Visual regressions can pass compilation | Add screenshot baselines only under the roadmap's visual-regression entry condition |
 
-## 10. Related entry points
+## 9. Documentation authority
 
-| Want | Open |
-|------|------|
-| Product idea | [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) |
-| Rules | [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) |
-| Layer detail | [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) |
-| What to build next | [`ROADMAP.md`](ROADMAP.md) |
-| Operator install | [`README.md`](../README.md) |
-| HTTP / multi-client | [`CONNECT.md`](CONNECT.md), [`PROD_RUN.md`](PROD_RUN.md) |
-| UI modes | [`EGUI_USAGE.md`](EGUI_USAGE.md) |
+1. Product identity: `ARCHITECTURE_VISION.md` and `PRODUCT_PRINCIPLES.md`.
+2. Current shipped behavior: code, `README.md`, then this map.
+3. Sequencing and measurable gates: `ROADMAP.md`.
+4. Deep contracts: `ARCHITECTURE_NOTES.md`, graph/storage/topic docs.
+5. Research history: `FEATURES.md`, `REPOS_SURVEYED.md`,
+   `BACKLOG_500.md`, and tool matrices. They are not execution queues.
 
----
-
-*End of system map.*
+Operator setup remains in [`README.md`](../README.md); HTTP details remain in
+[`CONNECT.md`](CONNECT.md) and [`PROD_RUN.md`](PROD_RUN.md).

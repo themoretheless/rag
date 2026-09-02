@@ -1,13 +1,19 @@
 # rag-mcp
 
-Local **stdio MCP server** for Retrieval-Augmented Generation with an Obsidian-like object graph and a Karpathy-style wiki compile layer. Single Rust binary, DuckDB store, no Python runtime.
+Local **MCP knowledge gateway** for Retrieval-Augmented Generation with an
+Obsidian-like object graph and a Karpathy-style wiki compile layer. One Rust
+process serves stdio and/or streamable HTTP over a single-writer DuckDB store;
+no Python runtime.
 
 **Binary:** `rag-mcp`  
 **License:** MIT
 
 ## What it is
 
-`rag-mcp` ingests text and UTF-8 files into a local DuckDB database, chunks them, embeds chunks (mock / OpenAI-compatible / Ollama), and exposes search plus document CRUD over the [Model Context Protocol](https://modelcontextprotocol.io/) (stdio transport).
+`rag-mcp` ingests text and supported files into a local DuckDB database, chunks
+them, embeds chunks (mock / OpenAI-compatible / Ollama), and exposes search plus
+document CRUD over the [Model Context Protocol](https://modelcontextprotocol.io/)
+and a loopback HTTP product API. Both transports share the same `Store`.
 
 Beyond plain RAG it maintains:
 
@@ -41,8 +47,13 @@ Layout is not computed server-side: tools return pure `{nodes, edges}` JSON for 
 - **Wiki layer**: write/get/list wiki pages, schema, index catalog, ops log, `query_with_index`, `search_wiki`, `file_answer`, `lint_wiki`, `consolidate`
 - **Local LLM** (optional): Ollama / LM Studio OpenAI-compatible chat + embeddings (`RAG_LLM_*`, `RAG_EMBEDDING_PROVIDER=ollama`)
 - **Maintenance loop**: `analyze_corpus` → `plan_maintenance` → `apply_maintenance_plan` (dry_run default) → `maintain_organize` / `maintain_compress` / `maintain_refresh`; wiki `compile_source`, `consolidate`, `refresh_stale_wiki`
-- **Integrity**: content_hash / `check_duplicate`, `embedding_manifest`, `reembed_document`, `doctor`, `status`, `vacuum_store`, ops_log
+- **Incremental sources**: root manifest preflight skips healthy unchanged files; parent/subdirectory root rebinding is preserved; oversized files become explicit per-file errors; deleted source state is pruned transactionally
+- **Product API**: Project Home, lean Unified Library, search, SQL-scoped project graph, paginated revision timeline with lazy snapshots/diff/restore, background jobs, checkpoint and verified backup
+- **HTTP safety and observability**: all `/v1/*` and mounted `/mcp` request bodies are capped at 1 MiB even without `Content-Length`; bounded Activity exposes anonymous client IDs and operation lineage without raw IP/UA, request bodies, source paths or titles
+- **Integrity**: atomic document/chunk/graph writes, single URI ownership with CAS conflicts under concurrent ingest, immutable-raw revision restore guard, content_hash / `check_duplicate`, `embedding_manifest`, generation-aware FTS/vector caches, `doctor`, `status`, `vacuum_store`, ops_log
 - **Single-file DuckDB** (bundled crate); embeddings stored as JSON float arrays (portable, no VSS required)
+- **Optional native client**: Home, Library, Search, Wiki, project Connections,
+  Operations and document History over the live HTTP gateway
 - **Logging to stderr only** (stdout is reserved for MCP)
 
 ## MemPalace-inspired model
@@ -70,13 +81,20 @@ Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), im
 
 **Diary and session bootstrap.** Agents append notes with `diary_write` (searchable, embedded). `wake_up` is the session entrypoint (health + memory surface without seeding a default schema). Prefer `checkpoint` at session boundaries over ad-hoc `append_log` + `diary_write`.
 
-**Tool naming honesty.** Tables under [MCP tools](#mcp-tools-implemented) list tools that exist on the binary today. We do **not** expose MemPalace-prefixed aliases. Gaps (directory mine/sync, hallways, AAAK, multi-backend) stay in [Limitations](#limitations-honest) and the parity doc.
+**Tool naming honesty.** Tables under [MCP tools](#mcp-tools-implemented) list
+tools that exist on the binary today. We do **not** expose MemPalace-prefixed
+aliases. Remaining gaps (generic event watch, hallways, AAAK, full multi-backend
+parity) stay in [Limitations](#limitations-honest) and the parity doc.
 
 ## Environment variables
 
 | Env | Default | Meaning |
 |-----|---------|---------|
 | `RAG_DB_PATH` | `./rag.duckdb` | DuckDB file path |
+| `RAG_HTTP_BIND` | (empty/off) | Loopback gateway bind such as `127.0.0.1:7432`; streamable MCP is `/mcp` and product routes are `/v1/*` |
+| `RAG_HTTP_ONLY` | `false` | Run the HTTP gateway without stdio; requires `RAG_HTTP_BIND` |
+| `RAG_HTTP_ALLOW_REMOTE` | `false` | Required for non-loopback bind; the gateway has no built-in authentication |
+| `RAG_HTTP_ALLOWED_HOSTS` | loopback names/addresses; concrete bind IP | Comma-separated extra Host names/IPs accepted by mounted `/mcp`; wildcard binds require every remote MCP authority explicitly |
 | `RAG_EMBEDDING_PROVIDER` | `mock` | `mock` \| `openai` \| `openai_compat` \| `ollama` |
 | `RAG_EMBEDDING_BASE_URL` | OpenAI `https://api.openai.com/v1`; Ollama `http://127.0.0.1:11434` | API root (native Ollama or OpenAI-compatible `/v1`) |
 | `RAG_EMBEDDING_API_KEY` | (empty; local defaults to `ollama`) | Required when `provider=openai` against non-local hosts |
@@ -85,7 +103,7 @@ Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), im
 | `RAG_CHUNK_SIZE` | `800` | Approx chars per chunk |
 | `RAG_CHUNK_OVERLAP` | `120` | Overlap chars (must be &lt; chunk size) |
 | `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
-| `RAG_STORAGE_BACKEND` | `duckdb` | Storage adapter. DuckDB remains the application default; `markdown` opts abstraction users into document CRUD backed by vault files |
+| `RAG_STORAGE_BACKEND` | `duckdb` | Full `rag-mcp` runtime accepts DuckDB; the backend-neutral library document factory also supports opt-in `markdown` vault CRUD |
 | `RAG_VAULT_PATH` | — | Explicit vault root required by the Markdown storage adapter; never inferred from `RAG_DB_PATH` |
 | `RAG_STARTUP_WARN_MS` | `30000` | Warn when a measured startup phase exceeds this duration |
 | `RAG_PID_FILE` | `<RAG_DB_PATH with .pid>` | Optional PID metadata path used to flag stale crash metadata |
@@ -101,7 +119,7 @@ Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), im
 | `RAG_MAX_CONTEXT_TOKENS` | `4096` | Default token budget when packing search hits (~4 chars/token) |
 | `RAG_MAX_CHUNKS_PER_DOC` | `3` | Max chunks retained per document under diversity collapse |
 | `RAG_FTS_STEMMER` | `porter` | DuckDB FTS stemmer; use `none` for CJK/code |
-| `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (~25 compile-first tools) or `full` (all tools). See vision §5. |
+| `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (currently 33 compile-first tools, count-bounded by test) or `full` (all tools). See vision §5. |
 | `RAG_LLM_PROVIDER` | `ollama` | Chat preset: `ollama` \| `openai` \| `codex` \| `claude` \| `kimi` \| `deepseek` \| `custom` — see [`docs/LLM_PROVIDERS.md`](docs/LLM_PROVIDERS.md) |
 | `RAG_LLM_ENABLED` | `true` | When false, chat/compile tools refuse |
 | `RAG_LLM_BASE_URL` | provider default | Chat API root (override preset) |
@@ -130,7 +148,8 @@ cargo run
 
 The process speaks MCP on **stdio**. Do not write application logs to stdout.
 
-Default workspace members build **only** `rag-mcp` (no egui). The optional graph inspector is a separate package; see [Optional graph inspector](#optional-graph-inspector-rag-mcp-ui).
+Default workspace members build **only** `rag-mcp` (no egui). The optional
+native client is a separate package; see [Optional native client](#optional-native-client-rag-mcp-ui).
 
 ### Offline smoke (mock embeddings)
 
@@ -374,7 +393,7 @@ All tools return JSON text content via MCP `CallToolResult`.
 |------|--------|----------|
 | `ingest_text` | `text`, `title?`, `uri?`, `metadata_json?` | Chunk, embed, store; upsert by uri; graph extract |
 | `ingest_file` | `path`, `title?`, `uri?`, `metadata_json?` | Ingest text, Markdown, HTML, PDF, or common source code under `RAG_INGEST_ROOTS` |
-| `sync_sources` | `path`, `remove_deleted?`, `wing?`, `room?` | Recursively ingest new/changed supported files, skip unchanged content, optionally prune deleted sources |
+| `sync_sources` | `path`, `remove_deleted?`, `wing?`, `room?`, `max_file_bytes?` | Manifest-aware recursive sync; skip healthy unchanged files, repair missing chunks, optionally prune deleted sources |
 
 HTML ingest strips tags plus script/style content. Source files retain `format`, `language`, and
 `source_path` metadata and prefer code block/line chunk boundaries. PDF ingest invokes Poppler's
@@ -528,7 +547,10 @@ Compatible servers (LiteLLM, Azure OpenAI, LM Studio, local proxies) work by set
 
 ## Lexical search (FTS)
 
-Preferred path: DuckDB `fts` extension (`INSTALL`/`LOAD fts` + `PRAGMA create_fts_index`). The inverted index is refreshed on ingest/delete so tools stay read-your-writes.
+Preferred path: DuckDB `fts` extension (`INSTALL`/`LOAD fts` +
+`PRAGMA create_fts_index`). Mutations advance the chunk generation and mark FTS
+stale; the next lexical/hybrid read performs one single-flight refresh, so the
+reader observes preceding writes without rebuilding on every request.
 
 If the FTS extension is unavailable (offline CI, locked-down hosts), the same `lex` / `hybrid` API falls back to a **term-frequency scorer in Rust**. Scores are not full Okapi BM25; `status` / `doctor` report the active backend (`duckdb_bm25` vs `term_frequency`).
 
@@ -537,31 +559,44 @@ If the FTS extension is unavailable (offline CI, locked-down hosts), the same `l
 Tool tables above match the current MCP surface (see also Features and MemPalace-inspired model). Still **not** shipped:
 
 - No MemPalace `mempalace_*` tool renames or AAAK dialect
-- No OS file watcher; optional `RAG_AUTO_SYNC_ROOTS` runs safe incremental background scans with build/cache directories excluded
+- No generic OS watcher for DuckDB source roots; `RAG_AUTO_SYNC_ROOTS` and HTTP jobs run manifest-aware scans. The limited Markdown document adapter has its own sidecar watcher
 - No hallways (named multi-hop path objects) as first-class tools
 - Dedicated CLI `maintain` subcommand and compress L3+ remain open; backup and source-sync schedules are built into the gateway
-- No HNSW / DuckDB VSS ANN (full-scan cosine in Rust; fine for personal corpora)
+- No HNSW / DuckDB VSS ANN. A recorded local benchmark observed 133.98 ms
+  hybrid p95 at 100,111 chunks on the cached exact path, below the current
+  300 ms gate; rollout decisions require a representative rerun
 - Versioned retrieval evaluation is available through the `eval` CLI; see
   [`docs/RETRIEVAL_EVALUATION.md`](docs/RETRIEVAL_EVALUATION.md) for dataset,
   metrics, diagnostics, and threshold-based future ANN guidance.
 - Binary formats other than PDF are not parsed
-- Streamable HTTP MCP and stdio transports are both available
 - No multi-tenant auth
 - No force-directed layout server-side (clients own visualization; optional `rag-mcp-ui` is RadialLocal only)
 - No block refs `[[note#^block]]` (full-note link only)
 - No YAML property bi-directional sync with Obsidian vault
-- DuckDB is the only implemented storage adapter. The backend factory, capability diagnostics, portable bundle, and Markdown vault migration path are present; selecting an unimplemented adapter fails explicitly at startup.
+- DuckDB is the only full application backend. The opt-in Markdown adapter implements document CRUD, frontmatter, sidecar rebuild and watching, but not search/graph/wiki/transaction parity; SQLite/Postgres/Memory still fail explicitly at startup
 - `reconnect` is an intentional no-op success on single-process DuckDB (no Chroma-style client cache)
 
-Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md).  
-Roadmap and research: [`SPEC.md`](SPEC.md), [`FEATURES.md`](FEATURES.md), [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/MEMPALACE_PARITY.md`](docs/MEMPALACE_PARITY.md), [`docs/MCP_TOOL_MATRIX.md`](docs/MCP_TOOL_MATRIX.md).  
+Architecture north star: [`docs/ARCHITECTURE_VISION.md`](docs/ARCHITECTURE_VISION.md), principles [`docs/PRODUCT_PRINCIPLES.md`](docs/PRODUCT_PRINCIPLES.md), map [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md).
+
+Current release gate: [`docs/ROADMAP.md`](docs/ROADMAP.md). Historical contract
+and research: [`SPEC.md`](SPEC.md), [`FEATURES.md`](FEATURES.md),
+[`docs/MEMPALACE_PARITY.md`](docs/MEMPALACE_PARITY.md),
+[`docs/MCP_TOOL_MATRIX.md`](docs/MCP_TOOL_MATRIX.md).
+
 Optional UI: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md), design [`docs/EGUI_GRAPH_VIEW.md`](docs/EGUI_GRAPH_VIEW.md).
 
-## Optional graph inspector (`rag-mcp-ui`)
+## Optional native client (`rag-mcp-ui`)
 
-Read-only egui local-graph viewer in **`crates/rag-mcp-ui`**. Separate binary from headless MCP: **zero** egui/eframe deps on the `rag-mcp` package; workspace `default-members = ["."]` so plain `cargo build` stays lean.
+The egui client in **`crates/rag-mcp-ui`** is a separate workspace binary, so
+the headless `rag-mcp` package has zero egui/eframe dependencies and plain
+`cargo build` stays lean.
 
-The Graph toolbar can filter nodes by project wing and room, and **Open as wiki** navigates a selected document node into the article view. HTTP mode also shows live backend/schema/FTS/WAL/integrity health from `/health`.
+Live `--http` mode provides project Home, server-filtered Unified Library,
+lex/vec/hybrid Search, Wiki reading/editing, project-scoped Connections,
+Activity, background jobs, health/backup operations and document History with
+bounded diff and CAS restore. Wiki writes and revision restores use CAS through
+the gateway. Snapshot mode is topology-only; `--db` is an exclusive
+development/maintenance mode and must not run beside the gateway.
 
 Short usage: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md). Design: [`docs/EGUI_GRAPH_VIEW.md`](docs/EGUI_GRAPH_VIEW.md).
 
@@ -569,12 +604,16 @@ Short usage: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md). Design: [`docs/EGUI_GRA
 
 ```bash
 cargo build -p rag-mcp-ui
+cargo run -p rag-mcp-ui -- --http http://127.0.0.1:7432
 cargo run -p rag-mcp-ui -- --snapshot ./graph.json --seed "Note title"
 # exclusive live DB only when MCP is not holding the file:
 cargo run -p rag-mcp-ui -- --db ./rag.duckdb --seed some-node-id
 ```
 
-Flags: `--snapshot` **or** `--db` (XOR), optional `--seed`, `--depth` (default 1), `--max-nodes` (default 100, hard layout cap 300). Logs on **stderr** only. MVP: pan/zoom, select, Expand neighbors, RadialLocal layout; no graph write-back.
+Use exactly one of `--http`, `--snapshot`, or `--db`. Optional graph flags are
+`--seed`, `--depth` (default 1), and `--max-nodes` (default 100, hard layout cap
+300). Logs stay on stderr. Connections use bounded RadialLocal layout; the
+server never persists canvas coordinates.
 
 ### Export snapshot from DuckDB
 
@@ -592,11 +631,13 @@ cargo run -p rag-mcp-ui -- --snapshot graph.json --seed "Note title"
 | Mode | Writer | UI | Use |
 |------|--------|-----|-----|
 | **A** Exclusive live | UI `--db` | Live Store | Dev; **MCP off** |
-| **B** Exclusive MCP | MCP | no UI | Normal agent use |
-| **C** Snapshot | MCP (or export) | `--snapshot` read-only | **Default while agent runs** |
+| **B** Gateway + HTTP client | gateway | `--http` | Normal agent and native use |
+| **C** Snapshot | gateway (or export) | `--snapshot` read-only | Offline review / portable topology |
 | **D** Dual-live write | - | - | **Forbidden** |
 
-One process owns DuckDB write. Never open UI `--db` on the same file MCP already holds. Refresh = re-export JSON + reload snapshot, not a second live writer.
+One process owns DuckDB writes. Never open UI `--db` on the same file the
+gateway already holds. Prefer `--http` for live refresh; snapshot refresh means
+re-exporting JSON, not opening a second live writer.
 
 ## License
 
