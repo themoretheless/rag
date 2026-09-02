@@ -262,7 +262,7 @@ impl<'a> SourceSyncService<'a> {
         let mut report = SourceSyncReport::default();
         let sync_lane = self.store.source_sync_lane();
         let _sync_guard = tokio::select! {
-            guard = sync_lane.lock_owned() => guard,
+            guard = sync_lane.write_owned() => guard,
             () = control.cancelled() => {
                 return Ok(cancelled_outcome(&control, report, 0, 0));
             }

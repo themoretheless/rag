@@ -361,11 +361,24 @@ impl Store {
         let tx = conn.transaction()?;
         let mut fts_marked_dirty = false;
         for item in &bundle.documents {
-            let exists: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM documents WHERE id = ? OR uri = ?)",
-                params![item.document.id, item.document.uri],
-                |r| r.get(0),
-            )?;
+            let matching_document_ids = {
+                let mut stmt =
+                    tx.prepare("SELECT id FROM documents WHERE id = ? OR uri = ? ORDER BY id ASC")?;
+                let rows = stmt.query_map(params![item.document.id, item.document.uri], |row| {
+                    row.get::<_, String>(0)
+                })?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            if matching_document_ids.len() > 1 {
+                return Err(AppError::conflict(format!(
+                    "recovery bundle document {} ({}) matches multiple existing documents by id/uri: {}",
+                    item.document.id,
+                    item.document.uri,
+                    matching_document_ids.join(", ")
+                )));
+            }
+            let existing_document_id = matching_document_ids.first();
+            let exists = existing_document_id.is_some();
             if exists {
                 report.conflicts += 1;
                 match policy {
@@ -396,14 +409,26 @@ impl Store {
                 super::fts::mark_fts_dirty(&tx)?;
                 fts_marked_dirty = true;
             }
-            if exists {
-                tx.execute("DELETE FROM graph_edges WHERE source_id IN (SELECT id FROM graph_nodes WHERE document_id IN (SELECT id FROM documents WHERE id = ? OR uri = ?)) OR target_id IN (SELECT id FROM graph_nodes WHERE document_id IN (SELECT id FROM documents WHERE id = ? OR uri = ?))", params![item.document.id, item.document.uri, item.document.id, item.document.uri])?;
-                tx.execute("DELETE FROM graph_nodes WHERE document_id IN (SELECT id FROM documents WHERE id = ? OR uri = ?)", params![item.document.id, item.document.uri])?;
-                tx.execute("DELETE FROM wiki_index WHERE document_id IN (SELECT id FROM documents WHERE id = ? OR uri = ?)", params![item.document.id, item.document.uri])?;
-                tx.execute("DELETE FROM chunks WHERE document_id IN (SELECT id FROM documents WHERE id = ? OR uri = ?)", params![item.document.id, item.document.uri])?;
+            if let Some(existing_document_id) = existing_document_id {
                 tx.execute(
-                    "DELETE FROM documents WHERE id = ? OR uri = ?",
-                    params![item.document.id, item.document.uri],
+                    "DELETE FROM graph_edges WHERE source_id IN (SELECT id FROM graph_nodes WHERE document_id = ?) OR target_id IN (SELECT id FROM graph_nodes WHERE document_id = ?)",
+                    params![existing_document_id, existing_document_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM graph_nodes WHERE document_id = ?",
+                    params![existing_document_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM wiki_index WHERE document_id = ? OR page_id = ?",
+                    params![existing_document_id, existing_document_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM chunks WHERE document_id = ?",
+                    params![existing_document_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM documents WHERE id = ?",
+                    params![existing_document_id],
                 )?;
             }
             let d = &item.document;
@@ -423,6 +448,62 @@ impl Store {
         }
         Ok(report)
     }
+}
+
+/// Atomically publish one recovery artifact after fully staging and syncing it.
+///
+/// With `overwrite=false`, a destination that appears after preflight is left
+/// untouched and reported as a conflict.
+pub fn publish_recovery_artifact(
+    destination: &Path,
+    bytes: &[u8],
+    overwrite: bool,
+) -> Result<bool> {
+    publish_recovery_artifact_with_hook(destination, bytes, overwrite, |_| Ok(()))
+}
+
+fn publish_recovery_artifact_with_hook<F>(
+    destination: &Path,
+    bytes: &[u8],
+    overwrite: bool,
+    before_publish: F,
+) -> Result<bool>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err(AppError::config(format!(
+            "recovery artifact parent directory '{}' does not exist",
+            parent.display()
+        )));
+    }
+    let existed = match fs::symlink_metadata(destination) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if existed && !overwrite {
+        return Err(AppError::conflict(format!(
+            "recovery artifact destination '{}' already exists; set overwrite=true explicitly",
+            destination.display()
+        )));
+    }
+
+    let temporary = stage_bytes(destination, bytes)?;
+    let result = (|| {
+        before_publish(destination)?;
+        publish_temporary_artifact(&temporary, destination, overwrite)?;
+        if !overwrite {
+            fs::remove_file(&temporary)?;
+        }
+        sync_parent_directory(destination)?;
+        Ok(existed)
+    })();
+    if temporary.exists() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
@@ -848,6 +929,7 @@ fn parse_ts(value: String) -> DateTime<Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{GraphEdge, GraphFilter, GraphNode};
 
     #[test]
     fn backup_writes_verified_sidecars_and_inventory_protects_final() {
@@ -926,6 +1008,274 @@ mod tests {
         assert!(matches!(error, AppError::Conflict(_)));
         assert_eq!(fs::read_to_string(destination).unwrap(), "racing-writer");
         fs::remove_file(temporary_path).unwrap();
+    }
+
+    #[test]
+    fn recovery_artifact_publish_is_atomic_and_no_clobber_under_race() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("bundle.json");
+
+        let error = publish_recovery_artifact_with_hook(
+            &destination,
+            b"new bundle",
+            false,
+            |destination| {
+                fs::write(destination, "racing writer")?;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "racing writer");
+        assert_no_backup_work_files(root.path());
+
+        assert!(publish_recovery_artifact(&destination, b"replacement", true).unwrap());
+        assert_eq!(fs::read(&destination).unwrap(), b"replacement");
+        assert_no_backup_work_files(root.path());
+    }
+
+    #[test]
+    fn recovery_artifact_publish_cleans_stage_after_injected_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("bundle.jsonl");
+
+        let error = publish_recovery_artifact_with_hook(
+            &destination,
+            b"complete staged bytes",
+            false,
+            |_| Err(AppError::db("injected failure before publish")),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("injected failure"));
+        assert!(!destination.exists());
+        assert_no_backup_work_files(root.path());
+    }
+
+    #[test]
+    fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("live.duckdb")).unwrap();
+        let original_a = recovery_document("document-a", "recovery://a", "original a");
+        let original_b = recovery_document("document-b", "recovery://b", "original b");
+        store.upsert_document(&original_a).unwrap();
+        store.upsert_document(&original_b).unwrap();
+        store
+            .insert_chunks(&[
+                recovery_chunk("chunk-a", "document-a", "original chunk a"),
+                recovery_chunk("chunk-b", "document-b", "original chunk b"),
+            ])
+            .unwrap();
+        for node in [
+            recovery_node("node-a", "document-a", "recovery://a"),
+            recovery_node("node-b", "document-b", "recovery://b"),
+        ] {
+            store.upsert_graph_node(&node).unwrap();
+        }
+        store
+            .insert_graph_edges(&[GraphEdge {
+                id: "edge-a-b".into(),
+                source_id: "node-a".into(),
+                target_id: "node-b".into(),
+                rel_type: "related".into(),
+                weight: 1.0,
+                context: Some("preserve me".into()),
+            }])
+            .unwrap();
+
+        let before_documents = serde_json::to_vec(&store.recovery_bundle().unwrap().documents)
+            .expect("serialize documents before import");
+        let before_graph = serde_json::to_vec(
+            &store
+                .get_graph_view(GraphFilter {
+                    max_nodes: Some(100),
+                    ..GraphFilter::default()
+                })
+                .unwrap(),
+        )
+        .expect("serialize graph before import");
+        let bundle = RecoveryBundle {
+            format: "rag-recovery-bundle".into(),
+            version: BUNDLE_VERSION,
+            exported_at: Utc::now(),
+            documents: vec![
+                BundleDocument {
+                    document: recovery_document("new-document", "recovery://new", "must roll back"),
+                    chunks: vec![recovery_chunk(
+                        "new-chunk",
+                        "new-document",
+                        "must roll back",
+                    )],
+                },
+                BundleDocument {
+                    document: recovery_document("document-a", "recovery://b", "cross collision"),
+                    chunks: vec![recovery_chunk(
+                        "collision-chunk",
+                        "document-a",
+                        "cross collision",
+                    )],
+                },
+            ],
+        };
+
+        let error = store
+            .import_recovery_bundle(
+                &bundle,
+                ConflictPolicy::Overwrite,
+                false,
+                Path::new("fixture.json"),
+                "json",
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert!(error.to_string().contains("document-a"));
+        assert!(error.to_string().contains("document-b"));
+        assert!(store.get_document("new-document").unwrap().is_none());
+        let after_documents = serde_json::to_vec(&store.recovery_bundle().unwrap().documents)
+            .expect("serialize documents after import");
+        let after_graph = serde_json::to_vec(
+            &store
+                .get_graph_view(GraphFilter {
+                    max_nodes: Some(100),
+                    ..GraphFilter::default()
+                })
+                .unwrap(),
+        )
+        .expect("serialize graph after import");
+        assert_eq!(after_documents, before_documents);
+        assert_eq!(after_graph, before_graph);
+    }
+
+    #[test]
+    fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("live.duckdb")).unwrap();
+        store
+            .upsert_document(&recovery_document(
+                "old-document",
+                "recovery://replace",
+                "old body",
+            ))
+            .unwrap();
+        store
+            .insert_chunks(&[recovery_chunk("old-chunk", "old-document", "old chunk")])
+            .unwrap();
+        store
+            .upsert_graph_node(&recovery_node(
+                "old-node",
+                "old-document",
+                "recovery://replace",
+            ))
+            .unwrap();
+        let bundle = RecoveryBundle {
+            format: "rag-recovery-bundle".into(),
+            version: BUNDLE_VERSION,
+            exported_at: Utc::now(),
+            documents: vec![
+                BundleDocument {
+                    document: recovery_document(
+                        "replacement-document",
+                        "recovery://replace",
+                        "replacement body",
+                    ),
+                    chunks: vec![recovery_chunk(
+                        "replacement-chunk",
+                        "replacement-document",
+                        "replacement chunk",
+                    )],
+                },
+                BundleDocument {
+                    document: recovery_document(
+                        "inserted-document",
+                        "recovery://inserted",
+                        "inserted body",
+                    ),
+                    chunks: vec![recovery_chunk(
+                        "inserted-chunk",
+                        "inserted-document",
+                        "inserted chunk",
+                    )],
+                },
+            ],
+        };
+
+        let report = store
+            .import_recovery_bundle(
+                &bundle,
+                ConflictPolicy::Overwrite,
+                false,
+                Path::new("fixture.json"),
+                "json",
+            )
+            .unwrap();
+
+        assert!(report.success);
+        assert_eq!(report.documents_overwritten, 1);
+        assert_eq!(report.documents_inserted, 1);
+        assert_eq!(report.conflicts, 1);
+        assert_eq!(report.chunks_inserted, 2);
+        assert!(store.get_document("old-document").unwrap().is_none());
+        assert!(store.find_node_by_id("old-node").unwrap().is_none());
+        assert_eq!(
+            store
+                .get_document("replacement-document")
+                .unwrap()
+                .unwrap()
+                .content,
+            "replacement body"
+        );
+        assert_eq!(
+            store
+                .list_chunks_for_document("replacement-document")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_document("inserted-document")
+                .unwrap()
+                .unwrap()
+                .content,
+            "inserted body"
+        );
+    }
+
+    fn recovery_document(id: &str, uri: &str, content: &str) -> Document {
+        Document {
+            id: id.into(),
+            uri: uri.into(),
+            title: id.into(),
+            content: content.into(),
+            ..Document::default()
+        }
+    }
+
+    fn recovery_chunk(id: &str, document_id: &str, content: &str) -> Chunk {
+        Chunk {
+            id: id.into(),
+            document_id: document_id.into(),
+            chunk_index: 0,
+            content: content.into(),
+            embedding: vec![1.0, 0.0],
+            char_start: 0,
+            char_end: content.chars().count() as i32,
+            metadata_json: "{}".into(),
+        }
+    }
+
+    fn recovery_node(id: &str, document_id: &str, uri: &str) -> GraphNode {
+        GraphNode {
+            id: id.into(),
+            kind: "document".into(),
+            label: id.into(),
+            document_id: Some(document_id.into()),
+            uri: Some(uri.into()),
+            resolved: true,
+            metadata_json: "{}".into(),
+        }
     }
 
     #[test]

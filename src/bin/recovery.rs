@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use rag_mcp::db::recovery::{
-    backup_inventory, retention_preview, verify_backup, BundleDocument, ConflictPolicy,
-    RecoveryBundle, BUNDLE_VERSION,
+    backup_inventory, publish_recovery_artifact, retention_preview, verify_backup, BundleDocument,
+    ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
 };
+use rag_mcp::util::refuse_live_database_target;
 use rag_mcp::Store;
 
 fn main() -> Result<()> {
@@ -130,19 +131,22 @@ fn export_vault(args: &[String]) -> Result<()> {
 fn export_bundle(args: &[String]) -> Result<()> {
     let db = required_path(args, "--db")?;
     let out = required_path(args, "--out")?;
-    if out.exists() && !flag(args, "--overwrite") {
+    let overwrite = flag(args, "--overwrite");
+    let dry_run = flag(args, "--dry-run");
+    let store = Store::open(&db)?;
+    refuse_live_database_target(&out, store.path())?;
+    if out.exists() && !overwrite {
         bail!("output exists: {}", out.display());
     }
-    let store = Store::open(&db)?;
     let bundle = store.recovery_bundle()?;
     let format = bundle_format(args, &out)?;
     let encoded = encode_bundle(&bundle, format)?;
-    if !flag(args, "--dry-run") {
-        fs::write(&out, &encoded)?;
+    if !dry_run {
+        publish_recovery_artifact(&out, &encoded, overwrite)?;
     }
     println!(
         "{}",
-        serde_json::to_string_pretty(&serde_json::json!({"dry_run": flag(args, "--dry-run"),
+        serde_json::to_string_pretty(&serde_json::json!({"dry_run": dry_run,
         "path": out, "format": format, "documents": bundle.documents.len(), "bytes": encoded.len()}))?
     );
     Ok(())

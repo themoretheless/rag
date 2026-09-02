@@ -41,13 +41,14 @@ use super::tools::{
 };
 use crate::config::Config;
 use crate::db::recovery::{
-    BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
+    publish_recovery_artifact, BundleDocument, BundleExportReport, ConflictPolicy, RecoveryBundle,
+    BUNDLE_VERSION,
 };
 #[cfg(test)]
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::search::{
-    attach_context, fuse_rrf_many, search, search_chunks, ContextExpansion, DiversityMode,
-    SearchQuery,
+    acquire_source_sync_search_guard, attach_context, fuse_rrf_many, search_chunks,
+    search_with_source_sync_guard, ContextExpansion, DiversityMode, SearchQuery,
 };
 use crate::db::Store;
 use crate::diagnostics::DiagnosticsService;
@@ -225,6 +226,14 @@ impl RagServer {
             AppError::Llm(msg) => McpError::internal_error(msg, None),
             AppError::Conflict(msg) => McpError::invalid_params(msg, None),
             AppError::Forbidden(msg) => McpError::invalid_params(msg, None),
+            AppError::Busy(msg) => McpError::internal_error(
+                msg,
+                Some(serde_json::json!({
+                    "code": "STORE_BUSY",
+                    "retryable": true,
+                    "retry_after_ms": 1_000,
+                })),
+            ),
             other => McpError::internal_error(other.to_string(), None),
         }
     }
@@ -267,100 +276,7 @@ impl RagServer {
     /// Build the MemPalace-style `status` health payload (vision §5.5 layer health).
     #[cfg(test)]
     pub(crate) fn status_report(&self) -> Result<StatusReport, AppError> {
-        let schema_version = self.store.schema_version()?.unwrap_or(0);
-        let fts_ready = self.store.fts_ready()?;
-        let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
-        let wings = self.store.list_wings()?;
-        let embed_dims = self.config.embedding_dims;
-        let ingest_roots_configured = !self.config.ingest_roots.is_empty();
-        // Empty corpus is not ready; schema lag also blocks readiness.
-        let ready_for_search = chunk_count > 0 && schema_version >= SCHEMA_VERSION;
-
-        let raw_docs = self.store.list_documents_by_layer("raw")?;
-        let wiki_docs = self.store.list_documents_by_layer("wiki")?;
-        let raw_count = raw_docs.len() as u64;
-        let wiki_count = wiki_docs.len() as u64;
-        let index = self.store.list_wiki_index()?;
-        let index_entry_count = index.len() as u64;
-        let indexed_pages = wiki_docs
-            .iter()
-            .filter(|d| {
-                index
-                    .iter()
-                    .any(|e| e.page_id.as_deref() == Some(d.id.as_str()))
-            })
-            .count() as u64;
-        let index_coverage = if wiki_count == 0 {
-            0.0
-        } else {
-            indexed_pages as f64 / wiki_count as f64
-        };
-
-        // Uncompiled debt: raw with no wiki corpus at all, or raw nodes never
-        // targeted by a wiki document edge (soft graph signal).
-        let uncompiled_raw_count = if wiki_count == 0 {
-            raw_count
-        } else {
-            let mut uncompiled = 0u64;
-            for r in &raw_docs {
-                let Some(node) = self.store.find_node_by_document_id(&r.id)? else {
-                    uncompiled += 1;
-                    continue;
-                };
-                let bl = self.store.backlinks(&node.id)?;
-                let wiki_ref = bl.nodes.iter().any(|n| {
-                    n.id != node.id
-                        && n.resolved
-                        && n.uri
-                            .as_deref()
-                            .map(|u| u.starts_with("wiki://"))
-                            .unwrap_or(false)
-                });
-                if !wiki_ref {
-                    uncompiled += 1;
-                }
-            }
-            uncompiled
-        };
-
-        let manifest = self.store.get_embedding_manifest()?;
-        let embedding_manifest_match = match &manifest {
-            Some(m) => {
-                m.dims as usize == self.config.embedding_dims
-                    && m.provider == self.config.embedding_provider.as_str()
-                    && m.model == self.config.embedding_model
-            }
-            None => chunk_count == 0, // empty corpus: no fingerprint yet is ok
-        };
-
-        Ok(StatusReport {
-            backend: "duckdb".to_string(),
-            storage_capabilities: crate::storage::duckdb_capability_names(),
-            schema_version,
-            fts_ready,
-            document_count,
-            chunk_count,
-            node_count,
-            edge_count,
-            raw_count,
-            wiki_count,
-            index_entry_count,
-            index_coverage,
-            uncompiled_raw_count,
-            embedding_manifest_match,
-            embed_provider: self.config.embedding_provider.as_str().to_string(),
-            embed_model: self.config.embedding_model.clone(),
-            wings,
-            embed_dims,
-            ready_for_search,
-            ingest_roots_configured,
-            pid: std::process::id(),
-            uptime_seconds: 0,
-            db_file_bytes: None,
-            wal_bytes: 0,
-            wal_warn_bytes: 0,
-            db_path: self.store.path().display().to_string(),
-        })
+        DiagnosticsService::new(&self.store, &self.config).status()
     }
 
     /// Build the minimal `doctor` integrity payload.
@@ -1000,15 +916,11 @@ impl RagServer {
             .top_k
             .map(|v| v as usize)
             .unwrap_or(self.config.default_top_k);
-        let mode = match params
-            .mode
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            Some(raw) => SearchMode::parse(raw).map_err(|e| Self::map_err(AppError::config(e)))?,
-            None => self.config.default_search_mode,
-        };
+        let mode =
+            retrieval::resolve_search_mode(params.mode.as_deref(), self.config.default_search_mode)
+                .map_err(Self::map_err)?;
+        let source_sync_guard =
+            acquire_source_sync_search_guard(&self.store, mode).map_err(Self::map_err)?;
         if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
             self.require_vec_compatible().map_err(Self::map_err)?;
         }
@@ -1030,7 +942,7 @@ impl RagServer {
                 None
             };
             lists.push(
-                search(
+                search_with_source_sync_guard(
                     &self.store,
                     &SearchQuery {
                         mode,
@@ -1045,6 +957,7 @@ impl RagServer {
                         fts_stemmer: self.config.fts_stemmer.clone(),
                         ..SearchQuery::default()
                     },
+                    &source_sync_guard,
                 )
                 .map_err(Self::map_err)?,
             );
@@ -2322,15 +2235,11 @@ impl RagServer {
             .map(|k| k as usize)
             .unwrap_or(self.config.default_top_k);
 
-        let mode = match params
-            .mode
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            Some(raw) => SearchMode::parse(raw).map_err(|e| Self::map_err(AppError::config(e)))?,
-            None => self.config.default_search_mode,
-        };
+        let mode =
+            retrieval::resolve_search_mode(params.mode.as_deref(), self.config.default_search_mode)
+                .map_err(Self::map_err)?;
+        let source_sync_guard =
+            acquire_source_sync_search_guard(&self.store, mode).map_err(Self::map_err)?;
 
         if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
             self.require_vec_compatible().map_err(Self::map_err)?;
@@ -2387,7 +2296,8 @@ impl RagServer {
             ..SearchQuery::default()
         };
 
-        let hits = search(&self.store, &opts).map_err(Self::map_err)?;
+        let hits = search_with_source_sync_guard(&self.store, &opts, &source_sync_guard)
+            .map_err(Self::map_err)?;
         Self::json_result(&hits)
     }
 
@@ -3065,15 +2975,17 @@ impl RagServer {
         let documents = bundle.documents.len() as u64;
         let chunks = bundle.documents.iter().map(|d| d.chunks.len() as u64).sum();
         let encoded = encode_recovery_bundle(&bundle, format).map_err(Self::map_err)?;
-        if !dry_run {
-            std::fs::write(&path, &encoded).map_err(|e| Self::map_err(e.into()))?;
-        }
+        let overwritten = if dry_run {
+            existed && overwrite
+        } else {
+            publish_recovery_artifact(&path, &encoded, overwrite).map_err(Self::map_err)?
+        };
         let report = BundleExportReport {
             success: true,
             dry_run,
             path: path.display().to_string(),
             format: format.into(),
-            overwritten: existed && overwrite,
+            overwritten,
             documents,
             chunks,
             bytes: Some(encoded.len() as u64),
@@ -3578,7 +3490,26 @@ mod tests {
     use super::*;
     use crate::embeddings::MockEmbedder;
     use crate::models::SearchMode;
+    use async_trait::async_trait;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingEmbedder {
+        calls: Arc<AtomicUsize>,
+        dims: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for CountingEmbedder {
+        async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(vec![vec![1.0; self.dims]; texts.len()])
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
 
     fn test_config(db_path: PathBuf, roots: Vec<PathBuf>, dims: usize) -> Config {
         Config {
@@ -4438,6 +4369,59 @@ mod tests {
         // Config maps to invalid_params for MCP clients.
         let mcp = RagServer::map_err(err);
         assert_eq!(mcp.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
+
+    #[test]
+    fn busy_error_is_structured_retryable_and_resource_safe() {
+        let mcp = RagServer::map_err(AppError::busy(
+            "source synchronization is active; retry lexical or hybrid search after it completes",
+        ));
+        assert_eq!(mcp.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        assert_eq!(
+            mcp.data,
+            Some(serde_json::json!({
+                "code": "STORE_BUSY",
+                "retryable": true,
+                "retry_after_ms": 1_000,
+            }))
+        );
+        assert!(!mcp.message.contains("http"));
+        assert!(!mcp.message.contains("/Users/"));
+    }
+
+    #[tokio::test]
+    async fn multi_query_search_fails_busy_before_embedding_any_rewrite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("multi-query-busy.duckdb");
+        let store = Store::open(&path).expect("open");
+        let dims = 2;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
+            calls: calls.clone(),
+            dims,
+        });
+        let mut config = test_config(path, Vec::new(), dims);
+        config.default_search_mode = SearchMode::Hybrid;
+        let server = RagServer::new(store, embedder, config);
+        let sync_guard = server.store.source_sync_lane().write_owned().await;
+
+        let error = server
+            .multi_query_search(Parameters(MultiQuerySearchParams {
+                queries: vec!["original".into(), "rewrite".into()],
+                top_k: Some(5),
+                mode: Some("hybrid".into()),
+                wing: Some("project".into()),
+                room: None,
+                layer: None,
+                source_file: None,
+                timeout_ms: Some(5_000),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert_eq!(error.data.as_ref().unwrap()["code"], "STORE_BUSY");
+        assert_eq!(error.data.as_ref().unwrap()["retryable"], true);
+        drop(sync_guard);
     }
 
     #[test]

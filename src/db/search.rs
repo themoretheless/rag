@@ -209,7 +209,51 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
         return Ok(Vec::new());
     }
 
+    let source_sync_guard = acquire_source_sync_search_guard(store, query.mode)?;
+    search_with_source_sync_guard(store, query, &source_sync_guard)
+}
+
+/// Acquire the source-sync coordination guard required by exact lexical modes.
+///
+/// The returned read guard permits concurrent searches and prevents a source
+/// synchronization run from starting until the caller finishes. An active sync
+/// produces a retryable [`AppError::Busy`] before embedding, FTS, or vector work.
+pub(crate) struct SourceSyncSearchGuard {
+    _guard: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+}
+
+pub(crate) fn acquire_source_sync_search_guard(
+    store: &Store,
+    mode: SearchMode,
+) -> Result<SourceSyncSearchGuard> {
+    if matches!(mode, SearchMode::Lex | SearchMode::Hybrid) {
+        let guard = store.try_source_sync_idle_guard().ok_or_else(|| {
+            AppError::busy(
+                "source synchronization is active; retry lexical or hybrid search after it completes",
+            )
+        })?;
+        return Ok(SourceSyncSearchGuard {
+            _guard: Some(guard),
+        });
+    }
+    Ok(SourceSyncSearchGuard { _guard: None })
+}
+
+/// Run search while the caller keeps its source-sync guard alive.
+///
+/// Transport orchestration uses this after acquiring the guard before an async
+/// embedding request. Direct synchronous callers should use [`search`].
+pub(crate) fn search_with_source_sync_guard(
+    store: &Store,
+    query: &SearchQuery,
+    _source_sync_guard: &SourceSyncSearchGuard,
+) -> Result<Vec<SearchHit>> {
     validate_query(query)?;
+    // Source sync advances the global chunk generation once per committed
+    // document. Starting exact lexical retrieval in the middle of that stream
+    // would rebuild BM25 (and hybrid's vector input) only to invalidate it on
+    // the next commit. The guard fast-fails before this function and preserves
+    // normal read-your-writes once the writer releases.
     let started = Instant::now();
     let pool = candidate_pool_size(query.top_k);
     let filters = scope_filters(query);
@@ -859,26 +903,51 @@ fn vector_search_inputs(
 ) -> Result<(Arc<VectorSnapshot>, VectorDocumentLookup)> {
     let conn = store.lock()?;
     let generation = fts::chunks_generation(&conn)?;
-    let key = store.path().to_path_buf();
-    let cached = vector_snapshots()
-        .lock()
-        .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
-        .get(&key)
-        .filter(|snapshot| snapshot.generation == generation)
-        .cloned();
-    let snapshot = match cached {
-        Some(snapshot) => snapshot,
-        None => {
-            let snapshot = Arc::new(build_vector_snapshot(&conn, generation)?);
-            vector_snapshots()
-                .lock()
-                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
-                .insert(key, snapshot.clone());
-            snapshot
+    let snapshot = if has_selective_vector_scope(filters) {
+        // Exact project/document searches should pay only for their matching
+        // chunks. Do not populate or consult the database-wide cache: unrelated
+        // source-sync commits advance the global generation continuously.
+        Arc::new(build_vector_snapshot_with_filters(
+            &conn,
+            generation,
+            Some(filters),
+        )?)
+    } else {
+        let key = store.path().to_path_buf();
+        let cached = vector_snapshots()
+            .lock()
+            .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+            .get(&key)
+            .filter(|snapshot| snapshot.generation == generation)
+            .cloned();
+        match cached {
+            Some(snapshot) => snapshot,
+            None => {
+                let snapshot = Arc::new(build_vector_snapshot(&conn, generation)?);
+                vector_snapshots()
+                    .lock()
+                    .map_err(|error| {
+                        AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                    })?
+                    .insert(key, snapshot.clone());
+                snapshot
+            }
         }
     };
     let documents = load_vector_documents(&conn, filters)?;
     Ok((snapshot, documents))
+}
+
+fn has_selective_vector_scope(filters: &LexFilters) -> bool {
+    [
+        filters.document_id.as_deref(),
+        filters.wing.as_deref(),
+        filters.room.as_deref(),
+        filters.uri.as_deref(),
+        filters.source_file.as_deref(),
+    ]
+    .into_iter()
+    .any(|value| value.is_some_and(|value| !value.trim().is_empty()))
 }
 
 fn vector_snapshots() -> &'static Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>> {
@@ -886,15 +955,37 @@ fn vector_snapshots() -> &'static Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>> {
 }
 
 fn build_vector_snapshot(conn: &duckdb::Connection, generation: u64) -> Result<VectorSnapshot> {
-    let mut stmt = conn.prepare(
+    build_vector_snapshot_with_filters(conn, generation, None)
+}
+
+fn build_vector_snapshot_with_filters(
+    conn: &duckdb::Connection,
+    generation: u64,
+    filters: Option<&LexFilters>,
+) -> Result<VectorSnapshot> {
+    let (join_sql, where_sql, bind) = match filters {
+        Some(filters) => {
+            let (where_sql, bind) = vector_document_where_clause(filters);
+            (
+                "INNER JOIN documents d ON d.id = c.document_id",
+                where_sql,
+                bind,
+            )
+        }
+        None => ("", String::new(), Vec::new()),
+    };
+    let sql = format!(
         r#"
-        SELECT id, document_id, chunk_index, embedding_json,
-               char_start, char_end, metadata_json
-        FROM chunks
-        ORDER BY document_id ASC, chunk_index ASC, id ASC
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
+        SELECT c.id, c.document_id, c.chunk_index, c.embedding_json,
+               c.char_start, c.char_end, c.metadata_json
+        FROM chunks c
+        {join_sql}
+        {where_sql}
+        ORDER BY c.document_id ASC, c.chunk_index ASC, c.id ASC
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(bind.iter()))?;
     let mut embeddings = Vec::new();
     let mut chunks = Vec::new();
     while let Some(row) = rows.next()? {
@@ -1778,6 +1869,61 @@ mod tests {
             ])
             .unwrap();
 
+        // Selective scopes materialize only their matching chunks and never
+        // populate the database-wide snapshot cache. This is stronger than
+        // merely filtering a global ranking after it has been built.
+        let scoped_cases = [
+            (
+                LexFilters {
+                    document_id: Some("active".into()),
+                    ..Default::default()
+                },
+                vec!["c-active"],
+            ),
+            (
+                LexFilters {
+                    wing: Some("research".into()),
+                    ..Default::default()
+                },
+                vec!["c-active"],
+            ),
+            (
+                LexFilters {
+                    room: Some("rag".into()),
+                    ..Default::default()
+                },
+                vec!["c-active"],
+            ),
+            (
+                LexFilters {
+                    uri: Some("uri://other".into()),
+                    ..Default::default()
+                },
+                vec!["c-other"],
+            ),
+            (
+                LexFilters {
+                    source_file: Some("/vault/other.md".into()),
+                    ..Default::default()
+                },
+                vec!["c-other"],
+            ),
+        ];
+        for (filters, expected) in scoped_cases {
+            let (snapshot, documents) = vector_search_inputs(&store, &filters).unwrap();
+            let chunk_ids = snapshot
+                .chunks
+                .iter()
+                .map(|chunk| chunk.id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(chunk_ids, expected);
+            assert_eq!(documents.len(), expected.len());
+        }
+        assert!(
+            !vector_snapshots().lock().unwrap().contains_key(&path),
+            "scoped searches must not populate the global snapshot cache"
+        );
+
         // Default: exclude archived; no wing filter → active + other.
         let open = search(
             &store,
@@ -1793,6 +1939,38 @@ mod tests {
         assert!(ids.contains(&"active"));
         assert!(ids.contains(&"other"));
         assert!(!ids.contains(&"arch"));
+        assert_eq!(
+            vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&path)
+                .unwrap()
+                .chunks
+                .len(),
+            3,
+            "the implicit active-status filter alone must retain the global cache path"
+        );
+
+        let (scoped_after_global, _) = vector_search_inputs(
+            &store,
+            &LexFilters {
+                wing: Some("research".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(scoped_after_global.chunks.len(), 1);
+        assert_eq!(
+            vector_snapshots()
+                .lock()
+                .unwrap()
+                .get(&path)
+                .unwrap()
+                .chunks
+                .len(),
+            3,
+            "a scoped read must neither consult nor replace the global snapshot"
+        );
 
         // Wing filter.
         let wing = search(
@@ -2022,6 +2200,100 @@ mod tests {
             .unwrap()
             .generation;
         assert_eq!(cached_generation, second_generation);
+    }
+
+    #[tokio::test]
+    async fn active_source_sync_rejects_lexical_modes_before_refresh_and_releases_cleanly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hybrid-source-sync-busy.duckdb");
+        let store = Store::open(&path).expect("open");
+        let document = Document {
+            id: "project-doc".into(),
+            uri: "uri://project-doc".into(),
+            title: "Project document".into(),
+            content: "needle".into(),
+            wing: Some("project".into()),
+            ..Default::default()
+        };
+        store.upsert_document(&document).unwrap();
+        store
+            .insert_chunks(&[Chunk {
+                id: "project-chunk".into(),
+                document_id: document.id.clone(),
+                chunk_index: 0,
+                content: document.content.clone(),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: 6,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+        store.ensure_fts("porter").unwrap();
+        store
+            .insert_chunks(&[Chunk {
+                id: "project-chunk-new".into(),
+                document_id: document.id.clone(),
+                chunk_index: 1,
+                content: "fresh needle".into(),
+                embedding: vec![1.0, 0.0],
+                char_start: 7,
+                char_end: 19,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+
+        let lifecycle_before = {
+            let conn = store.lock().unwrap();
+            fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(lifecycle_before.dirty);
+
+        let sync_guard = store.source_sync_lane().write_owned().await;
+        let hybrid_query = SearchQuery {
+            mode: SearchMode::Hybrid,
+            top_k: 5,
+            query_text: Some("needle".into()),
+            query_embedding: Some(vec![1.0, 0.0]),
+            wing: Some("project".into()),
+            ..SearchQuery::default()
+        };
+        let lex_query = SearchQuery {
+            mode: SearchMode::Lex,
+            query_text: Some("needle".into()),
+            wing: Some("project".into()),
+            ..SearchQuery::default()
+        };
+        for query in [&lex_query, &hybrid_query] {
+            let error = search(&store, query).unwrap_err();
+            let AppError::Busy(message) = error else {
+                panic!("expected retryable busy error, got {error}");
+            };
+            assert_eq!(
+                message,
+                "source synchronization is active; retry lexical or hybrid search after it completes"
+            );
+            assert!(!message.contains("http"));
+            assert!(!message.contains(&path.display().to_string()));
+        }
+        let lifecycle_while_busy = {
+            let conn = store.lock().unwrap();
+            fts::fts_generation_state(&conn).unwrap()
+        };
+        assert_eq!(lifecycle_while_busy, lifecycle_before);
+        assert!(!vector_snapshots().lock().unwrap().contains_key(&path));
+
+        drop(sync_guard);
+        let hits = search(&store, &hybrid_query).unwrap();
+        assert!(hits.iter().any(|hit| hit.chunk_id == "project-chunk-new"));
+        let lifecycle_after = {
+            let conn = store.lock().unwrap();
+            fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(!lifecycle_after.dirty);
+        assert_eq!(
+            lifecycle_after.rebuild_count,
+            lifecycle_before.rebuild_count + 1
+        );
     }
 
     #[test]

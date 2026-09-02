@@ -165,26 +165,17 @@ impl<'a> DiagnosticsService<'a> {
         let fts_ready = self.store.fts_ready()?;
         let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
         let wings = self.store.list_wings()?;
-        let raw_documents = self.store.list_documents_by_layer("raw")?;
-        let wiki_documents = self.store.list_documents_by_layer("wiki")?;
-        let raw_count = raw_documents.len() as u64;
-        let wiki_count = wiki_documents.len() as u64;
-        let index = self.store.list_wiki_index()?;
-        let index_entry_count = index.len() as u64;
-        let indexed_pages = wiki_documents
-            .iter()
-            .filter(|document| {
-                index
-                    .iter()
-                    .any(|entry| entry.page_id.as_deref() == Some(document.id.as_str()))
-            })
-            .count() as u64;
+        let layer_health = self.store.layer_health_counts()?;
+        let raw_count = layer_health.raw_count;
+        let wiki_count = layer_health.wiki_count;
+        let index_entry_count = layer_health.index_entry_count;
+        let indexed_pages = layer_health.indexed_pages;
         let index_coverage = if wiki_count == 0 {
             0.0
         } else {
             indexed_pages as f64 / wiki_count as f64
         };
-        let uncompiled_raw_count = self.uncompiled_raw_count(&raw_documents, wiki_count)?;
+        let uncompiled_raw_count = layer_health.uncompiled_raw_count;
         let runtime = crate::ops::runtime_snapshot();
         let manifest = self.store.get_embedding_manifest()?;
         let embedding_manifest_match = manifest.as_ref().map_or(chunk_count == 0, |item| {
@@ -279,35 +270,6 @@ impl<'a> DiagnosticsService<'a> {
             ok: schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0,
         })
     }
-
-    fn uncompiled_raw_count(
-        &self,
-        raw_documents: &[crate::models::Document],
-        wiki_count: u64,
-    ) -> Result<u64, AppError> {
-        if wiki_count == 0 {
-            return Ok(raw_documents.len() as u64);
-        }
-        let mut count = 0;
-        for document in raw_documents {
-            let Some(node) = self.store.find_node_by_document_id(&document.id)? else {
-                count += 1;
-                continue;
-            };
-            let referenced_by_wiki = self.store.backlinks(&node.id)?.nodes.iter().any(|source| {
-                source.id != node.id
-                    && source.resolved
-                    && source
-                        .uri
-                        .as_deref()
-                        .is_some_and(|uri| uri.starts_with("wiki://"))
-            });
-            if !referenced_by_wiki {
-                count += 1;
-            }
-        }
-        Ok(count)
-    }
 }
 
 fn repair_hint(
@@ -333,7 +295,155 @@ fn repair_hint(
 mod tests {
     use super::*;
     use crate::embeddings::MockEmbedder;
-    use crate::models::Document;
+    use crate::models::{Document, GraphEdge, GraphNode, WikiIndexEntry};
+
+    #[test]
+    fn status_layer_health_counts_match_legacy_semantics() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("status-layer-health.duckdb");
+        let store = Store::open(&path).expect("open store");
+
+        for (id, layer) in [
+            ("raw-no-node", "raw"),
+            ("raw-non-wiki-backlink", "raw"),
+            ("raw-wiki-backlink", "raw"),
+            ("raw-unresolved-wiki-backlink", "raw"),
+        ] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("file://{id}.md"),
+                    title: id.into(),
+                    layer: layer.into(),
+                    ..Document::default()
+                })
+                .expect("insert raw document");
+        }
+
+        for node in [
+            graph_node(
+                "target-non-wiki",
+                Some("raw-non-wiki-backlink"),
+                Some("file://raw-non-wiki-backlink.md"),
+                true,
+            ),
+            graph_node("source-non-wiki", None, Some("file://notes.md"), true),
+            graph_node(
+                "target-wiki",
+                Some("raw-wiki-backlink"),
+                Some("file://raw-wiki-backlink.md"),
+                true,
+            ),
+            graph_node("source-wiki", None, Some("wiki://compiled"), true),
+            graph_node(
+                "target-unresolved",
+                Some("raw-unresolved-wiki-backlink"),
+                Some("file://raw-unresolved-wiki-backlink.md"),
+                true,
+            ),
+            graph_node("source-unresolved-wiki", None, Some("wiki://draft"), false),
+        ] {
+            store.upsert_graph_node(&node).expect("insert graph node");
+        }
+        store
+            .insert_graph_edges(&[
+                graph_edge("edge-non-wiki", "source-non-wiki", "target-non-wiki"),
+                graph_edge("edge-wiki", "source-wiki", "target-wiki"),
+                graph_edge(
+                    "edge-unresolved-wiki",
+                    "source-unresolved-wiki",
+                    "target-unresolved",
+                ),
+            ])
+            .expect("insert graph edges");
+
+        // Legacy behavior deliberately treats every raw as uncompiled when the
+        // corpus contains no layer=wiki document, even if a wiki:// source node exists.
+        let without_wiki = store.layer_health_counts().expect("layer health");
+        assert_eq!(without_wiki.raw_count, 4);
+        assert_eq!(without_wiki.wiki_count, 0);
+        assert_eq!(without_wiki.index_entry_count, 0);
+        assert_eq!(without_wiki.indexed_pages, 0);
+        assert_eq!(without_wiki.uncompiled_raw_count, 4);
+
+        for id in ["wiki-indexed", "wiki-unindexed"] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("wiki://{id}"),
+                    title: id.into(),
+                    layer: "wiki".into(),
+                    kind: "wiki".into(),
+                    ..Document::default()
+                })
+                .expect("insert wiki document");
+        }
+        for (id, page_id) in [
+            ("index-present", Some("wiki-indexed")),
+            ("index-orphan", Some("missing-wiki")),
+        ] {
+            store
+                .upsert_wiki_index_entry(&WikiIndexEntry {
+                    id: id.into(),
+                    slug: id.into(),
+                    title: id.into(),
+                    kind: "wiki".into(),
+                    category: None,
+                    summary: None,
+                    page_id: page_id.map(str::to_string),
+                    updated_at: chrono::Utc::now(),
+                })
+                .expect("insert wiki index entry");
+        }
+
+        let counts = store.layer_health_counts().expect("layer health");
+        assert_eq!(counts.raw_count, 4);
+        assert_eq!(counts.wiki_count, 2);
+        assert_eq!(counts.index_entry_count, 2);
+        assert_eq!(counts.indexed_pages, 1);
+        assert_eq!(counts.uncompiled_raw_count, 3);
+
+        let config = Config {
+            db_path: path,
+            ..Config::for_tests()
+        };
+        let report = DiagnosticsService::new(&store, &config)
+            .status()
+            .expect("status");
+        assert_eq!(report.raw_count, counts.raw_count);
+        assert_eq!(report.wiki_count, counts.wiki_count);
+        assert_eq!(report.index_entry_count, counts.index_entry_count);
+        assert_eq!(report.index_coverage, 0.5);
+        assert_eq!(report.uncompiled_raw_count, counts.uncompiled_raw_count);
+    }
+
+    fn graph_node(
+        id: &str,
+        document_id: Option<&str>,
+        uri: Option<&str>,
+        resolved: bool,
+    ) -> GraphNode {
+        GraphNode {
+            id: id.into(),
+            kind: "document".into(),
+            label: id.into(),
+            document_id: document_id.map(str::to_string),
+            uri: uri.map(str::to_string),
+            resolved,
+            metadata_json: "{}".into(),
+        }
+    }
+
+    fn graph_edge(id: &str, source_id: &str, target_id: &str) -> GraphEdge {
+        GraphEdge {
+            id: id.into(),
+            source_id: source_id.into(),
+            target_id: target_id.into(),
+            rel_type: "related".into(),
+            weight: 1.0,
+            context: None,
+        }
+    }
 
     #[tokio::test]
     async fn repair_ignores_intentionally_empty_documents() {

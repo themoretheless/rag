@@ -56,7 +56,7 @@ pub struct WikiPageMetaFilter {
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
     path: PathBuf,
-    source_sync_lane: Arc<tokio::sync::Mutex<()>>,
+    source_sync_lane: Arc<tokio::sync::RwLock<()>>,
 }
 
 /// Derived state that must stay consistent with a document write.
@@ -77,6 +77,16 @@ pub(crate) struct AtomicDocumentWriteResult {
     pub edge_count: usize,
 }
 
+/// Aggregate layer/index health used by diagnostics without loading document bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LayerHealthCounts {
+    pub raw_count: u64,
+    pub wiki_count: u64,
+    pub index_entry_count: u64,
+    pub indexed_pages: u64,
+    pub uncompiled_raw_count: u64,
+}
+
 impl Store {
     /// Open (or create) a DuckDB database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
@@ -92,7 +102,7 @@ impl Store {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
-            source_sync_lane: Arc::new(tokio::sync::Mutex::new(())),
+            source_sync_lane: Arc::new(tokio::sync::RwLock::new(())),
         })
     }
 
@@ -114,8 +124,22 @@ impl Store {
     }
 
     /// Process-local writer lane shared by every clone that synchronizes source trees.
-    pub(crate) fn source_sync_lane(&self) -> Arc<tokio::sync::Mutex<()>> {
+    ///
+    /// Source synchronization owns the write side for its full run. Hybrid
+    /// searches briefly own the read side, so concurrent searches remain
+    /// possible while a newly-starting sync cannot race past their idle check.
+    pub(crate) fn source_sync_lane(&self) -> Arc<tokio::sync::RwLock<()>> {
         self.source_sync_lane.clone()
+    }
+
+    /// Acquire the non-exclusive side of the source-sync lane without waiting.
+    ///
+    /// `None` means a source synchronization run is active. Keeping the guard
+    /// alive prevents a new run from starting until the guarded search ends.
+    pub(crate) fn try_source_sync_idle_guard(
+        &self,
+    ) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
+        self.source_sync_lane.clone().try_read_owned().ok()
     }
 
     /// Insert or replace a document row by primary key `id` (last-write-wins).
@@ -957,6 +981,76 @@ impl Store {
         let nodes: i64 = conn.query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0))?;
         let edges: i64 = conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0))?;
         Ok((docs as u64, chunks as u64, nodes as u64, edges as u64))
+    }
+
+    /// Count raw/wiki compilation health in SQL without materializing document bodies.
+    pub(crate) fn layer_health_counts(&self) -> Result<LayerHealthCounts> {
+        let conn = self.lock()?;
+        let counts = conn.query_row(
+            r#"
+            WITH layer_counts AS (
+              SELECT
+                COALESCE(SUM(CASE WHEN layer = 'raw' THEN 1 ELSE 0 END), 0)::BIGINT AS raw_count,
+                COALESCE(SUM(CASE WHEN layer = 'wiki' THEN 1 ELSE 0 END), 0)::BIGINT AS wiki_count
+              FROM documents
+            )
+            SELECT
+              layer_counts.raw_count,
+              layer_counts.wiki_count,
+              (SELECT COUNT(*)::BIGINT FROM wiki_index) AS index_entry_count,
+              (
+                SELECT COUNT(*)::BIGINT
+                FROM documents wiki
+                WHERE wiki.layer = 'wiki'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM wiki_index entry
+                    WHERE COALESCE(entry.page_id, entry.document_id) = wiki.id
+                  )
+              ) AS indexed_pages,
+              CASE
+                WHEN layer_counts.wiki_count = 0 THEN layer_counts.raw_count
+                ELSE (
+                  SELECT COUNT(*)::BIGINT
+                  FROM documents raw
+                  WHERE raw.layer = 'raw'
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM graph_edges edge
+                      JOIN graph_nodes source ON source.id = edge.source_id
+                      WHERE edge.target_id = (
+                        SELECT target.id
+                        FROM graph_nodes target
+                        WHERE target.document_id = raw.id
+                        LIMIT 1
+                      )
+                        AND source.id <> edge.target_id
+                        AND source.resolved
+                        AND starts_with(source.uri, 'wiki://')
+                    )
+                )
+              END AS uncompiled_raw_count
+            FROM layer_counts
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )?;
+        let count = |value: i64| value.max(0) as u64;
+        Ok(LayerHealthCounts {
+            raw_count: count(counts.0),
+            wiki_count: count(counts.1),
+            index_entry_count: count(counts.2),
+            indexed_pages: count(counts.3),
+            uncompiled_raw_count: count(counts.4),
+        })
     }
 
     /// Filesystem size of the main DuckDB file, when readable.

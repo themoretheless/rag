@@ -3,7 +3,8 @@
 use serde::Serialize;
 
 use crate::db::search::{
-    search, ContextExpansion, DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
+    acquire_source_sync_search_guard, search, search_with_source_sync_guard, ContextExpansion,
+    DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
 };
 use crate::db::Store;
 use crate::embeddings::{l2_normalize, EmbeddingProvider};
@@ -45,13 +46,37 @@ pub async fn execute_search(
     embedder: &dyn EmbeddingProvider,
     command: SearchCommand,
 ) -> Result<Vec<SearchHit>, AppError> {
-    let query = prepare_search(embedder, command).await?;
-    search(store, &query)
+    let mode = resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
+    // Acquire before the potentially slow async embedding request. The read
+    // guard both fast-fails an already-running source sync and prevents a new
+    // sync from starting between embedding and exact retrieval.
+    let source_sync_guard = acquire_source_sync_search_guard(store, mode)?;
+    let query = prepare_search_with_mode(embedder, command, mode).await?;
+    search_with_source_sync_guard(store, &query, &source_sync_guard)
 }
 
 pub async fn prepare_search(
     embedder: &dyn EmbeddingProvider,
     command: SearchCommand,
+) -> Result<SearchQuery, AppError> {
+    let mode = resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
+    prepare_search_with_mode(embedder, command, mode).await
+}
+
+pub(crate) fn resolve_search_mode(
+    requested: Option<&str>,
+    default_mode: SearchMode,
+) -> Result<SearchMode, AppError> {
+    match requested.map(str::trim).filter(|mode| !mode.is_empty()) {
+        Some(raw) => SearchMode::parse(raw).map_err(AppError::config),
+        None => Ok(default_mode),
+    }
+}
+
+async fn prepare_search_with_mode(
+    embedder: &dyn EmbeddingProvider,
+    command: SearchCommand,
+    mode: SearchMode,
 ) -> Result<SearchQuery, AppError> {
     let text = command.query.trim();
     if text.is_empty() {
@@ -62,10 +87,6 @@ pub async fn prepare_search(
             "query exceeds {MAX_QUERY_CHARS} characters"
         )));
     }
-    let mode = match nonempty(command.mode) {
-        Some(raw) => SearchMode::parse(&raw).map_err(AppError::config)?,
-        None => command.default_mode,
-    };
     let mut diversity = command
         .diversity
         .as_deref()
@@ -292,6 +313,24 @@ fn nonempty(value: Option<String>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::embeddings::MockEmbedder;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingEmbedder {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for CountingEmbedder {
+        async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(vec![vec![1.0, 0.0]; texts.len()])
+        }
+
+        fn dimensions(&self) -> usize {
+            2
+        }
+    }
 
     fn command(query: &str) -> SearchCommand {
         SearchCommand {
@@ -351,5 +390,24 @@ mod tests {
         let mut invalid = command("valid");
         invalid.rrf_k = Some(f32::NAN);
         assert!(prepare_search(&embedder, invalid).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn active_source_sync_rejects_hybrid_before_embedding_provider_call() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Store::open(&dir.path().join("pre-embed-busy.duckdb")).expect("open");
+        let sync_guard = store.source_sync_lane().write_owned().await;
+        let embedder = CountingEmbedder {
+            calls: AtomicUsize::new(0),
+        };
+        let mut request = command("needle");
+        request.mode = Some("hybrid".into());
+
+        let error = execute_search(&store, &embedder, request)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Busy(_)));
+        assert_eq!(embedder.calls.load(Ordering::Relaxed), 0);
+        drop(sync_guard);
     }
 }
