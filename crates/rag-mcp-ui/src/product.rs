@@ -8,7 +8,8 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use crate::gateway::{
-    format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient, Response,
+    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
+    Response,
 };
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -236,12 +237,15 @@ fn library_path(request: &LibraryRequest) -> String {
 }
 
 fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {
-    client.execute(Request {
-        method: Method::Get,
-        url,
-        body: None,
-        headers: Vec::new(),
-    })
+    execute_request(
+        client,
+        Request {
+            method: Method::Get,
+            url,
+            body: None,
+            headers: Vec::new(),
+        },
+    )
 }
 
 fn ensure_success(response: Response, context: &str) -> Result<String, String> {

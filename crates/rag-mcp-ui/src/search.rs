@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::gateway::{format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient};
+use crate::gateway::{
+    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SearchRequest {
@@ -93,15 +95,18 @@ fn fetch_search_with_client(
         return Err("http base URL is empty".to_string());
     }
     let url = format!("{base}/v1/search");
-    let response = client.execute(Request {
-        method: Method::Post,
-        url: url.clone(),
-        body: Some(
-            serde_json::to_string(request)
-                .map_err(|error| format!("serialize search request: {error}"))?,
-        ),
-        headers: Vec::new(),
-    })?;
+    let response = execute_request(
+        client,
+        Request {
+            method: Method::Post,
+            url: url.clone(),
+            body: Some(
+                serde_json::to_string(request)
+                    .map_err(|error| format!("serialize search request: {error}"))?,
+            ),
+            headers: Vec::new(),
+        },
+    )?;
     if !response.is_success() {
         return Err(format_http_error(&response, "Search"));
     }
@@ -204,5 +209,33 @@ mod tests {
         assert!(!error.contains("gateway/private-base"));
         assert!(!error.contains("private-id"));
         assert!(!error.contains('{'));
+    }
+
+    struct FailingGateway;
+
+    impl GatewayClient for FailingGateway {
+        fn execute(&self, _request: Request) -> Result<Response, String> {
+            Err(
+                "HTTP Post http://127.0.0.1:7432/v1/search failed: error sending request for url (...)"
+                    .to_string(),
+            )
+        }
+    }
+
+    #[test]
+    fn search_transport_error_is_safe_for_display() {
+        let error = fetch_search_with_client(
+            &FailingGateway,
+            "http://127.0.0.1:7432",
+            &SearchRequest {
+                query: "needle".to_string(),
+                ..SearchRequest::default()
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "RAG gateway request failed");
+        assert!(!error.contains("127.0.0.1"));
+        assert!(!error.contains("/v1/search"));
     }
 }

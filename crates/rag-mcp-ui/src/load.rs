@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::gateway::{
-    format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient, Response,
+    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
+    Response,
 };
 
 /// Hard layout caps (EGUI_GRAPH_VIEW §8.1).
@@ -503,12 +504,15 @@ fn gateway_client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
 }
 
 fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {
-    client.execute(Request {
-        method: Method::Get,
-        url,
-        body: None,
-        headers: Vec::new(),
-    })
+    execute_request(
+        client,
+        Request {
+            method: Method::Get,
+            url,
+            body: None,
+            headers: Vec::new(),
+        },
+    )
 }
 
 /// Normalize gateway base URL (trim whitespace and trailing `/`).
@@ -744,14 +748,16 @@ fn put_wiki_http_with_client(
     } else if let Some(rev) = req.if_match_revision {
         headers.push(("If-Match".to_string(), format!("W/\"{rev}\"")));
     }
-    let response = client
-        .execute(Request {
+    let response = execute_request(
+        client,
+        Request {
             method: Method::Put,
             url: url.clone(),
             body: Some(serde_json::to_string(req).map_err(|e| format!("serialize wiki: {e}"))?),
             headers,
-        })
-        .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
+        },
+    )
+    .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
     if response.status == 404 || response.status == 405 {
         return Err(format!(
             "{}. Wiki writing is not available on this gateway; use a newer gateway or MCP update_wiki_page.",

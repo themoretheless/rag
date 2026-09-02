@@ -30,6 +30,51 @@ impl Response {
     }
 }
 
+const TRANSPORT_TIMEOUT_MESSAGE: &str = "RAG gateway did not respond in time";
+const TRANSPORT_CONNECT_MESSAGE: &str = "Could not connect to the RAG gateway";
+const TRANSPORT_FAILURE_MESSAGE: &str = "RAG gateway request failed";
+
+/// Execute one gateway request and normalize every transport failure before it
+/// can reach product UI. This also keeps injected/test transports on the same
+/// safe contract as the reqwest implementation.
+pub fn execute_request(client: &dyn GatewayClient, request: Request) -> Result<Response, String> {
+    client
+        .execute(request)
+        .map_err(|error| format_transport_error(&error))
+}
+
+/// Convert an opaque transport error into a stable, user-facing message.
+///
+/// Never echo the original value: reqwest errors may contain the HTTP method,
+/// full URL, query parameters, or lower-level request diagnostics. Known
+/// timeout and connection phrases are classified for non-reqwest transports;
+/// unknown values deliberately collapse to a generic message.
+pub fn format_transport_error(error: &str) -> String {
+    if matches!(
+        error,
+        TRANSPORT_TIMEOUT_MESSAGE | TRANSPORT_CONNECT_MESSAGE | TRANSPORT_FAILURE_MESSAGE
+    ) {
+        return error.to_string();
+    }
+
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("timed out")
+        || normalized.contains("timeout")
+        || normalized.contains("deadline elapsed")
+    {
+        TRANSPORT_TIMEOUT_MESSAGE.to_string()
+    } else if normalized.contains("connection refused")
+        || normalized.contains("failed to connect")
+        || normalized.contains("connect error")
+        || normalized.contains("tcp connect")
+        || normalized.contains("dns error")
+    {
+        TRANSPORT_CONNECT_MESSAGE.to_string()
+    } else {
+        TRANSPORT_FAILURE_MESSAGE.to_string()
+    }
+}
+
 /// Format a non-success gateway response for display in the native UI.
 ///
 /// Gateway JSON envelopes can contain internal request metadata and are not
@@ -123,7 +168,7 @@ impl ReqwestGatewayClient {
             .timeout(timeout)
             .build()
             .map(|client| Self { client })
-            .map_err(|error| format!("http client: {error}"))
+            .map_err(|_| "Could not initialize the RAG gateway connection".to_string())
     }
 }
 
@@ -143,14 +188,20 @@ impl GatewayClient for ReqwestGatewayClient {
                 .header("Content-Type", "application/json")
                 .body(body);
         }
-        let response = builder.send().map_err(|error| {
-            format!("HTTP {:?} {} failed: {error}", request.method, request.url)
-        })?;
+        let response = builder.send().map_err(format_reqwest_transport_error)?;
         let status = response.status().as_u16();
-        let body = response
-            .text()
-            .map_err(|error| format!("read HTTP response from {}: {error}", request.url))?;
+        let body = response.text().map_err(format_reqwest_transport_error)?;
         Ok(Response { status, body })
+    }
+}
+
+fn format_reqwest_transport_error(error: reqwest::Error) -> String {
+    if error.is_timeout() {
+        TRANSPORT_TIMEOUT_MESSAGE.to_string()
+    } else if error.is_connect() {
+        TRANSPORT_CONNECT_MESSAGE.to_string()
+    } else {
+        TRANSPORT_FAILURE_MESSAGE.to_string()
     }
 }
 
@@ -222,5 +273,59 @@ mod tests {
             format_http_error(&response, "Library"),
             "HTTP 500 · Library: gateway returned an error response"
         );
+    }
+
+    #[test]
+    fn raw_reqwest_transport_error_never_exposes_method_or_url() {
+        let raw =
+            "HTTP Post http://127.0.0.1:7432/v1/search failed: error sending request for url (...)";
+
+        let formatted = format_transport_error(raw);
+
+        assert_eq!(formatted, TRANSPORT_FAILURE_MESSAGE);
+        assert!(!formatted.contains("Post"));
+        assert!(!formatted.contains("127.0.0.1"));
+        assert!(!formatted.contains("/v1/search"));
+    }
+
+    #[test]
+    fn transport_error_classifies_timeout_and_connection_without_raw_details() {
+        assert_eq!(
+            format_transport_error(
+                "error sending request for url (http://secret.internal/v1/search): operation timed out"
+            ),
+            TRANSPORT_TIMEOUT_MESSAGE
+        );
+        assert_eq!(
+            format_transport_error("tcp connect error: Connection refused at secret.internal:7432"),
+            TRANSPORT_CONNECT_MESSAGE
+        );
+    }
+
+    struct FailingGateway;
+
+    impl GatewayClient for FailingGateway {
+        fn execute(&self, _request: Request) -> Result<Response, String> {
+            Err(
+                "HTTP Post http://127.0.0.1:7432/v1/search failed: error sending request for url (...)"
+                    .to_string(),
+            )
+        }
+    }
+
+    #[test]
+    fn request_boundary_sanitizes_injected_transport_errors() {
+        let error = execute_request(
+            &FailingGateway,
+            Request {
+                method: Method::Post,
+                url: "http://127.0.0.1:7432/v1/search".to_string(),
+                body: None,
+                headers: Vec::new(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, TRANSPORT_FAILURE_MESSAGE);
     }
 }

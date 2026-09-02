@@ -3,7 +3,9 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::gateway::{format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient};
+use crate::gateway::{
+    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
+};
 use crate::load::DocumentBody;
 
 pub const REVISION_PAGE_SIZE: usize = 50;
@@ -215,12 +217,15 @@ fn send_json<T: DeserializeOwned>(
     body: Option<String>,
 ) -> Result<T, String> {
     let url = join(base, path)?;
-    let response = client.execute(Request {
-        method,
-        url: url.clone(),
-        body,
-        headers: Vec::new(),
-    })?;
+    let response = execute_request(
+        client,
+        Request {
+            method,
+            url: url.clone(),
+            body,
+            headers: Vec::new(),
+        },
+    )?;
     if !response.is_success() {
         return Err(format_http_error(&response, revision_context(path)));
     }
