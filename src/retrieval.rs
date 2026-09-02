@@ -282,7 +282,10 @@ pub fn find_similar(
 }
 
 fn nonempty(value: Option<String>) -> Option<String> {
-    value.filter(|item| !item.trim().is_empty())
+    value.and_then(|item| {
+        let trimmed = item.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
 }
 
 #[cfg(test)]
@@ -325,7 +328,7 @@ mod tests {
         assert_eq!(query.mode, SearchMode::Lex);
         assert_eq!(query.top_k, 7);
         assert_eq!(query.query_text.as_deref(), Some("architecture"));
-        assert_eq!(query.wing.as_deref(), Some(" rag "));
+        assert_eq!(query.wing.as_deref(), Some("rag"));
         assert!(query.document_id.is_none());
         assert_eq!(query.diversity, Some(DiversityMode::CollapseByDocument));
         assert_eq!(query.context_expansion, Some(ContextExpansion::Neighbors));
@@ -341,6 +344,12 @@ mod tests {
         assert!(prepare_search(&embedder, invalid).await.is_err());
         let mut invalid = command("valid");
         invalid.group_by = Some("chunk".into());
+        assert!(prepare_search(&embedder, invalid).await.is_err());
+        let mut invalid = command("valid");
+        invalid.rrf_k = Some(0.0);
+        assert!(prepare_search(&embedder, invalid).await.is_err());
+        let mut invalid = command("valid");
+        invalid.rrf_k = Some(f32::NAN);
         assert!(prepare_search(&embedder, invalid).await.is_err());
     }
 }
