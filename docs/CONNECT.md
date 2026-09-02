@@ -244,29 +244,41 @@ claude mcp add-from-claude-desktop
 
 ## 6. Zed
 
-### 6a. Project (exclusive stdio)
+### 6a. Project (shared gateway, recommended)
 
-Файл: **`.zed/settings.json`** (уже в репо) - `command` + env, stdio.
+Файл: **`.zed/settings.json`** (уже в репо):
 
-Открой workspace `rag` в Zed.  
-**Не** совмещай с gateway/`RAG_HTTP_ONLY` writer на тот же `rag.duckdb`.
+```json
+{
+  "context_servers": {
+    "rag-mcp": {
+      "url": "http://127.0.0.1:7432/mcp"
+    }
+  }
+}
+```
 
-### 6b. Global (exclusive stdio)
+Zed поддерживает remote MCP нативно; второй `rag-mcp` process и
+вторая DuckDB не запускаются.
 
-Файл: `~/.config/zed/settings.json` → блок `context_servers.rag-mcp`  
-(или Settings → AI → MCP Servers → Add Local Server).
+### 6b. Global (shared gateway)
 
-Пример: `examples/zed.settings.json` (stdio only).
+Файл: `~/.config/zed/settings.json` → блок `context_servers.rag-mcp`
+(или Settings → AI → MCP Servers → Add Remote Server).
 
-Для **shared HTTP gateway** (как Code/Desktop) сейчас нет готового Zed snippet в `examples/`; подключай remote MCP к `http://127.0.0.1:7432/mcp`, если клиент это умеет, или оставь exclusive stdio.
+Пример: `examples/zed.settings.json`.
 
-**Порядок (stdio):**
+**Порядок:**
 
-1. `cargo build --release` (если binary нет).
+1. Убедиться, что gateway отвечает на `/ready`.
 2. Сохранить settings.
 3. Reload window / restart Zed.
 4. Settings → AI → MCP Servers → **зелёная точка** у `rag-mcp`.
 5. Agent Panel: упомяни `rag-mcp` в промпте.
+
+Exclusive stdio остаётся только offline/dev вариантом: перед ним
+останови gateway и укажи явный `RAG_DB_PATH`; не создавай project-local
+`rag.duckdb` рядом с живым gateway.
 
 ---
 
@@ -279,12 +291,12 @@ claude mcp add-from-claude-desktop
 | `/mcp` | GET, POST, DELETE | stateful streamable HTTP MCP clients |
 | `/health` | GET | counts, integrity, WAL and nested runtime/startup/autosync/backup state |
 | `/live`, `/ready` | GET | process liveness and store readiness |
-| `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports; status carries `pid`, `uptime_seconds`, `db_file_bytes`, `wal_bytes` |
+| `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports; status carries `pid`, `uptime_seconds`, `db_file_bytes`, `wal_bytes`, and computes raw/wiki/index compilation health with one SQL aggregate rather than loading bodies/backlinks |
 | `/v1/runtime` | GET | startup phases, autosync / auto-backup state |
 | `/v1/calls`, `/v1/agents` | GET | bounded in-memory call timing and per-agent presence; argument values and raw errors are never retained. `RAG_CALL_LOG_CAPACITY` defaults to 2000 |
 | `/v1/capabilities`, `/v1/version`, `/v1/routes` | GET | feature, version and exact method/path discovery |
 | `/v1/projects`, `/v1/project-home` | GET | project catalog and scoped inventory |
-| `/v1/search` | POST | full `SearchParams` mirror (`min_score`, `diversity`, `group_by`, `recency_half_life_days`, `max_chunks_per_document`, `context_expansion`, `neighbor_chunks`, `rrf_k`, …). Hits carry `rank_vec` / `rank_lex`; `timings` has `embed_ms`, `vec_ms`, `lex_ms`, `retrieval_ms`, `postprocess_ms`, `total_ms` |
+| `/v1/search` | POST | full `SearchParams` mirror (`min_score`, `diversity`, `group_by`, `recency_half_life_days`, `max_chunks_per_document`, `context_expansion`, `neighbor_chunks`, `rrf_k`, …). Hits carry `rank_vec` / `rank_lex`; `timings` has `embed_ms`, `vec_ms`, `lex_ms`, `retrieval_ms`, `postprocess_ms`, `total_ms`. Active source sync makes `lex`/`hybrid` fail fast with retryable `STORE_BUSY` |
 | `/v1/pack-context` | POST | `pack_context` mirror: hits → token-budgeted citation block |
 | `/v1/ops-log` | GET | `read_log` mirror (`limit`, `id`, `seq`; client filters `agent`, `prefix`) |
 | `/v1/taxonomy`, `/v1/wings`, `/v1/rooms` | GET | wing → room tree with counts |
@@ -299,10 +311,10 @@ claude mcp add-from-claude-desktop
 | `/v1/find` | GET | global node lookup used to resolve a navigation seed |
 | `/v1/wiki` | GET, PUT | cursor-paginated lean catalog and CAS-protected write |
 | `/v1/backlinks` | GET | wiki backlinks for a document |
-| `/v1/activity` | GET | bounded sanitized process-local activity |
+| `/v1/activity` | GET | bounded sanitized process-local activity; path-parameter job resources are retained as `/v1/jobs/{id}`, never as concrete job identifiers |
 | `/v1/jobs/sync` | POST | enqueue an allowlisted incremental source sync without blocking the request |
 | `/v1/jobs`, `/v1/jobs/{id}` | GET | list jobs or read progress, counters, result and error for one job |
-| `/v1/jobs/{id}` | DELETE | cooperatively cancel a queued or running job |
+| `/v1/jobs/{id}` | DELETE | immediately cancel a queued job or cooperatively cancel a running job |
 | `/v1/revisions` | GET | lean cursor-paginated revision timeline |
 | `/v1/revisions/snapshot`, `/v1/revisions/diff` | GET | one full historical snapshot on demand or bounded line diff |
 | `/v1/revisions/restore` | POST | restore an old revision as a new CAS-protected head revision |
@@ -389,6 +401,29 @@ Cursor непрозрачен для клиента: первый запрос �
 `path` обязателен; `project` принят как alias для `wing`. Ответ `202` содержит
 начальный `{ ok, job }`. Все HTTP write jobs используют один serialized lane и
 тот же `Store` / embedder / config, что MCP; второй DuckDB writer не создаётся.
+Изменённые небольшие документы объединяются в bounded embedding microbatches
+(до 64 документов и 64 chunks), после чего каждый документ фиксируется
+атомарно в canonical path order. Ошибка provider не записывает ни одного
+документа текущего batch; cancellation до commit также отбрасывает весь batch,
+а между commits оставляет точный уже зафиксированный prefix.
+
+`Store` координирует source sync и exact lexical retrieval через process-local
+read/write lane. Sync держит write guard весь run. `lex` и `hybrid` берут
+non-blocking read guard **до** query embedding/FTS/vector work: уже активный sync
+не заставляет запрос ждать и не вызывает embedding provider. HTTP возвращает
+`503 Service Unavailable`, `Retry-After: 1` и JSON
+`{"ok":false,"code":"STORE_BUSY","error":"busy: source synchronization is active; retry lexical or hybrid search after it completes"}`. MCP сохраняет JSON-RPC error и кладёт
+в `data` структурированный
+`{"code":"STORE_BUSY","retryable":true,"retry_after_ms":1000}`. После release
+write guard обычный read-your-writes search снова доступен.
+
+Для публичного `vec`/`hybrid` непустой `document_id`, `wing`, `room` или
+`source_file` строит transient snapshot только из подходящих chunks через SQL
+join с `documents`; `layer` и archive policy применяются в том же SQL. Такой
+selective snapshot не читает и не заменяет database-wide cache,
+поэтому commits в других проектах не вынуждают materialize весь corpus.
+Нефильтрованный поиск сохраняет generation-aware global snapshot; один лишь
+default active/archive filter не переводит его в scoped path.
 
 Статусы: `queued`, `running`, `succeeded`, `completed_with_errors`, `failed`,
 `cancelled`. `completed_with_errors` означает, что обход завершён, но отдельные
@@ -398,11 +433,17 @@ Cursor непрозрачен для клиента: первый запрос �
 
 - `GET /v1/jobs` — newest first; `GET /v1/jobs/{id}` — один snapshot с
   progress/current file/report/error и timestamps.
-- `DELETE /v1/jobs/{id}` — cooperative cancel: `202` для queued/running, `200`
-  для уже terminal job. Если cancel гоняется с завершением, terminal result не
-  переписывается ложным статусом.
+- `DELETE /v1/jobs/{id}` — queued job сразу становится terminal
+  `cancelled`; running job отменяется cooperative. Ответ `202` для
+  принятой running-отмены и `200` для уже terminal job. Если cancel
+  гоняется с завершением, terminal result не переписывается ложным
+  статусом.
 - Registry process-local и хранит максимум 100 jobs; terminal jobs вытесняются
   первыми, а при 100 active jobs admission возвращает busy error.
+
+Schema migration создаёт lookup indexes `idx_documents_uri` и
+`idx_graph_nodes_uri`. Document URI index намеренно не объявляет новую physical
+uniqueness policy: ownership по-прежнему защищён Store CAS, включая legacy data.
 
 ### 7e. Revisions: timeline, lazy snapshot, diff, restore
 
@@ -449,6 +490,22 @@ curl -s 'http://127.0.0.1:7432/v1/revisions?document_id=YOUR_DOC_ID&limit=20'
 curl -s http://127.0.0.1:7432/v1/jobs
 curl -s 'http://127.0.0.1:7432/v1/backlinks?id=YOUR_DOC_ID'
 ```
+
+### 7i. Recovery publication and import collisions
+
+`export_bundle` (MCP и offline `recovery export-bundle`) сначала записывает
+полный JSON/JSONL во временный файл рядом с destination и синхронизирует его.
+При `overwrite=false` publication атомарно не затирает файл, даже если другой
+process создал destination после preflight. При явном `overwrite=true`
+используется atomic replace; parent directory синхронизируется, staging file
+удаляется и при success, и после ошибки. Offline CLI также отклоняет live DB как
+output, включая тот же filesystem inode под другим path.
+
+`import_bundle conflict_policy=overwrite` заменяет ноль или один существующий
+document, найденный по id **или** URI. Если один bundle item одновременно
+совпадает с двумя разными documents (id одного + URI другого), import возвращает
+conflict до удаления и откатывает всю transaction, включая уже обработанные
+items текущего bundle.
 
 ---
 
@@ -514,6 +571,7 @@ RAG_TOOLS=full
 | Claude Code Pending | approve `.mcp.json` в `/mcp` |
 | ingest_file refuses | путь внутри `RAG_INGEST_ROOTS` |
 | search «пустой/глупый» | mock → ollama/openai embeddings; **тот же** dims что при ingest |
+| `STORE_BUSY` / HTTP 503 на `lex` или `hybrid` | source sync держит exclusive lane; уважать `Retry-After: 1` и повторить после завершения/отмены job |
 | vec error / dims | `reembed_document` или новая DB после смены модели |
 | Desktop + Code одновременно | один writer: **gateway** + remote clients, не два stdio |
 | `RAG_HTTP_BIND` non-loopback fail | set `RAG_HTTP_ALLOW_REMOTE=true` (опасно) или bind `127.0.0.1` |

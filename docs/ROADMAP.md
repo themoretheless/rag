@@ -16,12 +16,12 @@ those files are not commitments.
 
 | Area | Current implementation | Verification boundary |
 |------|------------------------|-----------------------|
-| Retrieval | Generation-aware FTS, exact vector snapshot cache, project-first filtering, lex/vec/hybrid search, citations, packing and evaluation CLI | Exact search remains the default while the measured scale gate below passes |
-| Ingest | Pure `DocumentIndexer`; document, chunks and derived graph commit atomically; URI ownership is CAS-protected; source manifests survive parent/subdirectory root rebinding; oversized files are reported; deleted source state is removed transactionally | Manifest metadata remains repairable adjacent state beside the atomic document transaction |
-| One-writer operations | HTTP/MCP share one `Store`; background source-sync jobs have progress, terminal-safe cancellation, bounded retention, `completed_with_errors` and a serialized HTTP writer lane; checkpoint and verified backup stay in the gateway | Job state is process-local; cancellation is cooperative; Store CAS resolves mixed-path ownership races |
-| Product API | Project Home, lean server-filtered Unified Library, search, SQL-scoped bounded project graph, lean paginated revisions with lazy snapshots/diff/restore and operational endpoints | All HTTP/MCP bodies are capped at 1 MiB; Activity retains sanitized operational metadata only |
-| Native client | Home, Library, Search, Wiki, Connections and Operations workspaces; live activity/jobs/health, backup and revision diff/CAS restore | `rag-mcp-ui` tests cover worker state and operational flows; HTTP is normal live mode while snapshot and exclusive `--db` remain limited modes |
-| Recovery and portability | Verified DuckDB backup, portable bundle import/export, vault export, backend capability reporting | DuckDB is the only full application backend |
+| Retrieval | Generation-aware FTS, exact global vector snapshot cache, SQL-materialized transient snapshots for project/document/source scopes, URI lookup indexes, lex/vec/hybrid search, citations, packing and evaluation CLI | Selective vector scopes neither consult nor populate the global cache; exact search remains the default while the measured scale gate below passes |
+| Ingest | Pure `DocumentIndexer`; changed source files share bounded embedding batches of at most 64 documents/64 chunks while ordered document, chunks, manifest and derived graph commits remain atomic; URI ownership is CAS-protected; source manifests survive parent/subdirectory root rebinding; oversized files are reported; deleted source state is removed transactionally | A provider failure writes none of its pending batch; cancellation drops the uncommitted batch or leaves an exact committed prefix; Store CAS resolves races between prepare and commit |
+| One-writer operations | HTTP/MCP share one `Store`; source sync owns the write side of a process-local coordination lane for its full run while `lex`/`hybrid` use non-blocking read guards; jobs have progress, immediate queued cancellation, terminal-safe running cancellation, bounded retention and `completed_with_errors`; checkpoint and verified backup stay in the gateway | Active sync fails new lexical/hybrid work before embedding with HTTP 503 + `Retry-After` or structured MCP `STORE_BUSY`; job state is process-local and running cancellation is cooperative |
+| Product API | Project Home, lean server-filtered Unified Library, search, SQL-scoped bounded project graph, lean paginated revisions with lazy snapshots/diff/restore and operational endpoints; status layer/index health is one aggregate query | All HTTP/MCP bodies are capped at 1 MiB; Activity retains sanitized operational metadata only; HTTP and MCP status share `DiagnosticsService` |
+| Native client | Home, Library, Search, Wiki, Connections and Operations workspaces; safe transport errors; mutation-owned wiki/restore/Operations state; live activity/jobs/health, 30-minute backup and revision diff/CAS restore | Project switching cannot invalidate an in-flight mutation; HTTP is normal live mode while snapshot and exclusive `--db` remain limited modes |
+| Recovery and portability | Verified DuckDB backup; atomically published no-clobber bundle export; transactional import that rejects id/URI cross-collisions before deletion; vault export; backend capability reporting | Explicit overwrite is required for atomic replacement; a cross-collision rolls back every item in the bundle; DuckDB is the only full application backend |
 | Storage seam | `Storage` document contract with DuckDB and opt-in Markdown implementations; Markdown sidecar index and watcher | Search, graph, transactions, wiki and maintenance still use DuckDB APIs |
 
 ## Current release gate
@@ -31,10 +31,11 @@ same tree:
 
 1. `cargo test --workspace` and strict workspace Clippy pass on the integrated
    tree.
-2. A live gateway rollout verifies `/ready`, a project-scoped search and graph,
-   successful and `completed_with_errors` sync jobs, cancellation, revision
-   snapshot/restore refusal for raw, and a recoverable backup without opening a
-   second DuckDB writer.
+2. A live gateway rollout verifies `/ready`, project-scoped search and graph,
+   `STORE_BUSY` + retry metadata during active sync, successful and
+   `completed_with_errors` sync jobs, cancellation, revision snapshot/restore
+   refusal for raw, and a recoverable backup without opening a second DuckDB
+   writer.
 3. Native visual QA covers Home, Library, Search, History, Wiki, Connections
    and all Operations tabs at default and compact window sizes against the live
    gateway.

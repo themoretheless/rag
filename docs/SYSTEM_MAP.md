@@ -54,7 +54,12 @@ scheduled sync / backup ──────────────────�
 
 The gateway is the sole live DuckDB writer. MCP and `/v1/*` handlers share the
 same `Store`, embedder and configuration. HTTP source-sync jobs use a serialized
-writer lane and cooperative cancellation; they do not open another database.
+writer lane, immediate queued cancellation and cooperative running cancellation;
+they do not open another database. Changed files share bounded embedding batches
+before ordered per-document atomic commits. The same process-local lane is a
+read/write lock: sync owns its write side for the whole run; admitted
+`lex`/`hybrid` requests hold read guards, while new ones fail fast with
+retryable `STORE_BUSY` before embedding when sync is active.
 Store-level CAS enforces one URI owner when synchronous MCP/autosync work races
 the HTTP lane.
 
@@ -65,17 +70,17 @@ The native client uses `--http` for live work. `--snapshot` is read-only and
 
 | Path | Owns |
 |------|------|
-| `ingest.rs` | transport-independent ingest command, immutable policy and orchestration |
-| `document_indexer.rs` | pure chunk policy, section metadata, embedding and `Chunk` construction; no storage writes |
-| `source_scan.rs`, `source_sync.rs` | source discovery, manifest-aware incremental sync, progress and cancellation |
+| `ingest.rs` | transport-independent prepare/embed-many/atomic-commit ingest orchestration and immutable policy |
+| `document_indexer.rs` | pure chunk policy, section metadata, cross-document embedding and `Chunk` construction; no storage writes |
+| `source_scan.rs`, `source_sync.rs` | source discovery, manifest-aware bounded batching, ordered progress and cancellation |
 | `retrieval.rs`, `search_pack.rs` | validated search use cases, multi-get/expand/similar and token packing |
 | `revisions.rs` | revision diff and CAS-protected restore use cases |
-| `diagnostics.rs`, `ops.rs` | health/doctor and scheduled operational state |
+| `diagnostics.rs`, `ops.rs` | shared HTTP/MCP health/status/doctor policy, aggregate layer health and scheduled operational state |
 | `graph/` | pure wikilink/tag extraction and resolution |
 | `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams |
 | `maintain/`, `memory_lifecycle.rs`, `diary/` | explicit maintenance and memory workflows |
 | `db/store.rs` | compatibility DuckDB façade and transaction boundary |
-| `db/{rows,fts,search,graph,kg,catalog,source_manifest,recovery,vault}.rs` | persistence repositories and backend-specific algorithms |
+| `db/{rows,fts,search,graph,kg,catalog,source_manifest,recovery,vault}.rs` | persistence repositories, scoped/global retrieval snapshots, aggregate health and atomic recovery publication |
 | `storage/` | small backend-neutral document contract; DuckDB and Markdown implementations |
 | `mcp/facade.rs`, `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs` | macro composition root and bounded MCP tool routers |
 | `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters |
@@ -87,13 +92,14 @@ The native client uses `--http` for live work. `--snapshot` is read-only and
 | Seam | Contract | Enforced behavior |
 |------|----------|-------------------|
 | `DocumentIndexer` → `Store::write_document_atomic` | prepare before persistence, then commit document/chunks/derived graph together | embedding or graph failure preserves the previous state; URI CAS permits exactly one owner under racing initial ingest |
-| `SourceSyncService` → source manifest repository | stat preflight avoids extraction/hash/embed for healthy unchanged files | parent ↔ child root rebinding preserves ownership; oversized files are reported; `delete_source_state` removes source-owned state transactionally |
-| Retrieval service → `db::search`/`db::fts` | transports pass validated commands, persistence owns candidate loading and ranking substrate | project filters run before exact vector top-k; cache invalidates by chunk generation |
+| `SourceSyncService` → ingest/manifest repositories | stat preflight avoids extraction/hash/embed for healthy unchanged files; changed files batch provider work before ordered commits | provider failure writes none of a pending batch; cancellation leaves no batch or an exact committed prefix; root rebinding and transactional deletion preserve ownership |
+| Retrieval service → source-sync lane + `db::search`/`db::fts` | transports pass validated commands; retrieval admits lexical work before embedding; persistence owns candidate loading and ranking substrate | active sync yields retryable `STORE_BUSY`; project/document/source scopes materialize in SQL before exact vector top-k and bypass the global cache; unscoped cache invalidates by chunk generation |
 | Project graph HTTP → `db::graph` | scope project documents and direct companions in SQL before traversal | deterministic BFS is capped at 300 nodes/depth 3 and excludes documents from another project |
-| MCP/HTTP → application services | ports map wire values and response envelopes only | ingest, retrieval, diagnostics and revisions do not depend on a transport |
-| Gateway → jobs/operations | one process owns writes and maintenance | bounded job retention, hard admission cap, `completed_with_errors`, terminal-safe cancellation and safe checkpoint/backup paths |
-| HTTP boundary → product API and mounted MCP | one middleware owns admission and Activity sanitization | headerless bodies over 1 MiB are rejected; raw IP/UA, bodies, source paths and titles are not retained |
-| Native client → gateway | product workspaces consume lean APIs | no second live DuckDB reader/writer is required for normal use |
+| MCP/HTTP → application services | ports map wire values and response envelopes only | ingest, retrieval, diagnostics and revisions do not depend on a transport; both status ports use the same aggregate diagnostics service |
+| Gateway → jobs/operations | one process owns writes and maintenance | bounded job retention, hard admission cap, `completed_with_errors`, terminal-safe cancellation and safe checkpoint/backup paths; HTTP busy includes 503 + `Retry-After`, MCP busy includes structured retry data |
+| HTTP boundary → product API and mounted MCP | one middleware owns admission and Activity sanitization | headerless bodies over 1 MiB are rejected; raw IP/UA, bodies, source paths, titles and concrete job resource IDs are not retained |
+| Recovery adapters → `db::recovery` | MCP and offline CLI share staged atomic artifact publication and transactional import policy | default no-clobber survives destination races; explicit overwrite replaces atomically; an id/URI cross-collision rolls back the whole bundle |
+| Native client → gateway | product workspaces consume lean APIs through one sanitized transport boundary | no second live DuckDB reader/writer is required; project changes cannot drop in-flight wiki, restore or Operations mutations; verified backup gets a 30-minute timeout |
 | `Storage` | backend identity, capabilities and document lifecycle | unsupported backends/capabilities fail explicitly; no silent DuckDB alias |
 
 Compatibility boundaries are intentional: `mcp/facade.rs` remains the rmcp
@@ -125,8 +131,12 @@ index/wiki navigation → scoped lex/vec/hybrid retrieval → optional graph exp
 ```
 
 FTS is rebuilt only when its recorded chunk generation is stale. Exact vector
-search uses a generation-keyed normalized snapshot, scopes candidates before
-scoring and hydrates content only for winners.
+search uses a generation-keyed normalized global snapshot when unscoped.
+Non-empty document/project/room/URI/source scopes instead select matching chunks
+and layer/kind/status/archive policy in SQL, build a transient snapshot, score
+inside that scope and hydrate content only for winners; scoped reads never churn
+the global cache. Document and graph-node URI lookup has dedicated schema indexes,
+while Store CAS remains the ownership authority.
 
 ### Product navigation
 
@@ -161,13 +171,14 @@ Markdown application backend requires the conformance gate in the roadmap.
 | Area | Status | Boundary |
 |------|--------|----------|
 | Project Home and Unified Library | shipped | HTTP mode; lean catalog never loads every body |
-| Search workspace | shipped | gateway lex/vec/hybrid API; no implicit LLM rewrite |
+| Search workspace | shipped | gateway lex/vec/hybrid API; scoped vector snapshots; retryable fast-busy lexical contract during sync; no implicit LLM rewrite |
 | Wiki reader/editor | shipped | CAS conflict recovery; raw bodies remain immutable |
 | Project Connections graph | shipped | SQL-scoped project graph; deterministic local expansion capped at 300 nodes/depth 3 |
 | Activity | shipped | in-process bounded sanitized event history, not an audit-log replacement |
-| Operations API | shipped | status/doctor, jobs with explicit partial-success state, checkpoint and allowlisted backup |
+| Operations API | shipped | aggregate status/doctor, jobs with explicit partial-success state, checkpoint and allowlisted backup |
 | Revision API | shipped | lean cursor pagination, lazy snapshot, bounded line diff and CAS restore-as-new-head with raw guard |
-| Native Operations and revisions flows | shipped | jobs poll/cancel, health/backup and revision diff/CAS restore; native package tests are green |
+| Native Operations and revisions flows | shipped | sanitized errors, mutation-safe project/editor state, jobs poll/cancel, health, 30-minute backup and revision diff/CAS restore |
+| Recovery bundles | shipped | staged atomic no-clobber export and whole-transaction rollback on id/URI cross-collision |
 | Retrieval scale | local observation | 100,111 chunks: 133.98 ms hybrid p95; exact path remains default until representative release reruns fail the gate |
 
 ## 8. Remaining concentration and measurable gates

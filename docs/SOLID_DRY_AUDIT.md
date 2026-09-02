@@ -35,6 +35,11 @@ MCP and HTTP preserve their wire defaults and envelopes but do not reimplement
 these workflows. This removes transport-level copies without erasing deliberate
 compatibility differences.
 
+`DiagnosticsService::status` is the single HTTP/MCP status owner. Store supplies
+raw/wiki/index coverage and uncompiled-raw debt as one SQL aggregate, preserving
+the existing health semantics without materializing document bodies or issuing
+one backlinks query per raw document.
+
 ### Incremental source synchronization
 
 `SourceSyncService` owns allowlist validation, scan policy, manifest preflight,
@@ -43,8 +48,21 @@ repository owns its SQL and root summaries. Progress/cancellation is a service
 contract, while `http_api::jobs` owns process-local lifecycle, retention,
 admission and the serialized background writer lane.
 
+The Store owns a process-local read/write coordination lane: a source sync keeps
+the write guard for its complete run, while `lex`/`hybrid` acquire a non-blocking
+read guard before query embedding. This makes concurrent searches compatible,
+prevents a sync from crossing an already-admitted search, and returns a
+retryable `AppError::Busy` without embedding/FTS work when sync is active. HTTP
+and MCP remain thin, policy-specific mappings to 503 + `Retry-After` and
+structured `STORE_BUSY` metadata respectively.
+
 Unchanged healthy files skip extraction, hashing and embedding. The existing
 MCP `sync_sources` path remains a synchronous adapter over the same service.
+Changed files are prepared without I/O to the embedding provider, grouped into
+bounded cross-document embedding batches, then committed individually in
+canonical path order through the same atomic/CAS persistence boundary. A batch
+provider failure writes none of that batch; cancellation before commit drops it,
+while cancellation between commits preserves an exact deterministic prefix.
 Manifest ownership survives parent ↔ child root changes; oversized files are
 reported as per-file errors instead of silently remaining stale; and
 `delete_source_state` removes documents, chunks, graph, wiki index and manifest
@@ -56,7 +74,10 @@ races completion.
 
 FTS dirty/generation state and single-flight refresh live in `db::fts`. Exact
 vector candidate loading, normalized snapshot caching and bounded top-k live in
-`db::search`. Mutation paths advance one shared chunk generation.
+`db::search`. Mutation paths advance one shared chunk generation. A non-empty
+document/project/room/URI/source scope is materialized with a SQL join into a
+transient normalized snapshot; it neither reads nor populates the database-wide
+cache. The unscoped path retains the generation-keyed global snapshot.
 
 Search orchestration does not know DuckDB FTS DDL or vector cache invalidation.
 Project filters are applied before scoring instead of after a global top-k.
@@ -65,6 +86,10 @@ Project graph lookup follows the same rule: SQL selects project documents and
 their direct companion nodes before deterministic traversal. The induced graph
 is bounded to 300 nodes and neighbor expansion to depth 3, without admitting
 documents owned by another project.
+
+Schema owns non-unique lookup indexes for `documents.uri` and
+`graph_nodes.uri`. They accelerate recovery, document-node reuse and wikilink
+resolution without moving URI-ownership policy out of the Store CAS boundary.
 
 ### HTTP boundary and operational privacy
 
@@ -85,6 +110,21 @@ Timestamp and slug mechanics are shared only where policy is genuinely shared:
 `util::time` retains strict and date-flexible modes, and `SlugPolicy` preserves
 wiki/index/graph differences.
 
+### Recovery publication and transactional collision policy
+
+`db::recovery::publish_recovery_artifact` is the shared MCP/offline bundle
+publication seam. It stages and syncs complete bytes beside the destination,
+performs a race-safe no-clobber publish by default or an atomic replace only
+after explicit overwrite, syncs the parent directory and cleans the stage on
+all outcomes. The offline adapter additionally refuses the live database target
+or another path to the same inode.
+
+Bundle overwrite resolves at most one existing document by id or URI. A cross
+collision that selects two distinct rows is a conflict before deletion; the
+surrounding import transaction rolls back both that item and any earlier item
+from the same bundle. Persistence, rather than either transport, owns graph,
+chunk and wiki-index cleanup for the single valid replacement.
+
 ### Native product workspaces
 
 Gateway DTO/load behavior is split into `product`, `search`, `operations` and
@@ -96,6 +136,15 @@ process. Revision summaries are cursor-paginated and snapshots load only after
 selection. Native tests cover polling/cancellation, destructive backup
 confirmation and CAS revision restore; the service refuses restore for
 immutable raw documents.
+
+The gateway adapter is also the single UI error-disclosure boundary: raw
+transport failures become stable timeout/connect/generic messages, while safe
+HTTP formatting retains status, operation context, structured code and the
+server-provided human-readable message rather than the raw envelope. UI state owns
+non-cancellable mutations until their matching sequence completes. Project
+switching cannot discard wiki save, revision restore or Operations mutation
+state; wiki save freezes edit/navigation actions, restore cannot be locally
+cancelled, and verified backup alone uses a 30-minute request timeout.
 
 ## Deliberate compatibility boundaries
 

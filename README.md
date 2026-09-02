@@ -37,8 +37,8 @@ Layout is not computed server-side: tools return pure `{nodes, edges}` JSON for 
 - **Palace placement**: wings / rooms taxonomy (`list_wings`, `list_rooms`, `get_taxonomy`); scoped search by wing/room/layer/source
 - **Fixed-size chunking** with overlap (`RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`); Markdown chunks retain `heading_path` and leaf `section` metadata
 - **Embeddings**: `mock` (deterministic), `openai` / `openai_compat`, `ollama` (native or OpenAI-compatible base)
-- **Search modes**: `lex` (BM25 or TF fallback), `vec` (cosine over stored vectors), `hybrid` (RRF fusion)
-- **Search filters**: document_id, wing, room, layer, source_file, include_archived; min_score; diversity (`mmr` | `collapse_by_document`); token packing
+- **Search modes**: `lex` (BM25 or TF fallback), `vec` (cosine over stored vectors), `hybrid` (RRF fusion); selective vector scopes are materialized in SQL before exact scoring instead of copying the global snapshot
+- **Search filters**: document_id, wing, room, layer, source_file, include_archived; min_score; diversity (`mmr` | `collapse_by_document`); token packing. Project/document/source scopes neither consult nor populate the database-wide vector cache
 - **Citation-oriented hits**: scores (`score`, `score_vec`, `score_lex`, `score_rrf`), snippet, char offsets, and Markdown section metadata when available
 - **Opt-in context expansion**: `search` and `pack_context` accept `context_expansion=neighbors|parent_section`; `neighbor_chunks` controls the neighbor radius (default 1)
 - **Object graph**: wikilinks, tags, stubs, neighbors BFS, backlinks, `link_nodes`, dedicated tunnel tools, `graph_expand_search`, `graph_stats`
@@ -47,13 +47,15 @@ Layout is not computed server-side: tools return pure `{nodes, edges}` JSON for 
 - **Wiki layer**: write/get/list wiki pages, schema, index catalog, ops log, `query_with_index`, `search_wiki`, `file_answer`, `lint_wiki`, `consolidate`
 - **Local LLM** (optional): Ollama / LM Studio OpenAI-compatible chat + embeddings (`RAG_LLM_*`, `RAG_EMBEDDING_PROVIDER=ollama`)
 - **Maintenance loop**: `analyze_corpus` → `plan_maintenance` → `apply_maintenance_plan` (dry_run default) → `maintain_organize` / `maintain_compress` / `maintain_refresh`; wiki `compile_source`, `consolidate`, `refresh_stale_wiki`
-- **Incremental sources**: root manifest preflight skips healthy unchanged files; parent/subdirectory root rebinding is preserved; oversized files become explicit per-file errors; deleted source state is pruned transactionally
+- **Incremental sources**: root manifest preflight skips healthy unchanged files; changed files share bounded cross-document embedding batches while retaining ordered per-document atomic commits; parent/subdirectory root rebinding is preserved; oversized files become explicit per-file errors; deleted source state is pruned transactionally. A process-local read/write lane keeps a full sync exclusive while concurrent `lex`/`hybrid` searches either finish before it starts or fail fast with retryable `STORE_BUSY`
 - **Product API**: Project Home, lean Unified Library, search, SQL-scoped project graph, paginated revision timeline with lazy snapshots/diff/restore, background jobs, checkpoint and verified backup
-- **HTTP safety and observability**: all `/v1/*` and mounted `/mcp` request bodies are capped at 1 MiB even without `Content-Length`; bounded Activity exposes anonymous client IDs and operation lineage without raw IP/UA, request bodies, source paths or titles
-- **Integrity**: atomic document/chunk/graph writes, single URI ownership with CAS conflicts under concurrent ingest, immutable-raw revision restore guard, content_hash / `check_duplicate`, `embedding_manifest`, generation-aware FTS/vector caches, `doctor`, `status`, `vacuum_store`, ops_log
+- **HTTP safety and observability**: all `/v1/*` and mounted `/mcp` request bodies are capped at 1 MiB even without `Content-Length`; bounded Activity exposes anonymous client IDs and operation lineage without raw IP/UA, request bodies, source paths or titles, and records job resources as `/v1/jobs/{id}` rather than retaining their identifiers
+- **Integrity**: atomic document/chunk/graph writes, indexed document/graph-node URI lookup with single URI ownership enforced by CAS, immutable-raw revision restore guard, content_hash / `check_duplicate`, `embedding_manifest`, generation-aware FTS/vector caches; `status` aggregates layer health in SQL; `doctor`, `vacuum_store`, ops_log
 - **Single-file DuckDB** (bundled crate); embeddings stored as JSON float arrays (portable, no VSS required)
 - **Optional native client**: Home, Library, Search, Wiki, project Connections,
-  Operations and document History over the live HTTP gateway
+  Operations and document History over the live HTTP gateway; transport failures
+  are sanitized before display, and project changes cannot discard an in-flight
+  wiki save, revision restore or Operations mutation
 - **Logging to stderr only** (stdout is reserved for MCP)
 
 ## MemPalace-inspired model
@@ -431,7 +433,7 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `list_rooms` | `wing?` | Distinct rooms with counts |
 | `get_taxonomy` | (none) | Wing → room tree + counts |
 | `stats` | (none) | Docs, chunks, nodes, edges + `db_path` |
-| `status` | (none) | Health: counts, FTS readiness, embed dims, `ready_for_search` |
+| `status` | (none) | Health: counts, FTS readiness, embed dims, `ready_for_search`; layer/index compilation health is aggregated in SQL without loading bodies |
 | `doctor` | (none) | Schema / FTS / embedding manifest, WAL size, orphan references, missing chunks, and scope integrity |
 | `get_embedding_manifest` | (none) | Corpus embedding fingerprint (provider, model, dims) |
 | `multi_query_search` | `queries`, `top_k?`, `mode?`, filters | Caller-supplied query rewrites fused with deterministic RRF; no implicit LLM call |
@@ -444,9 +446,9 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | Tool | Params | Behavior |
 |------|--------|----------|
 | `backup_db` | `path`, `dry_run?`, `overwrite?` | Consistent checkpointed DuckDB copy; no overwrite by default |
-| `export_bundle` | `path`, `format?`, `dry_run?`, `overwrite?` | Portable JSON/JSONL documents, metadata, and chunks |
+| `export_bundle` | `path`, `format?`, `dry_run?`, `overwrite?` | Portable JSON/JSONL documents, metadata, and chunks; fully staged and synced before atomic publication, with no-clobber default |
 | `export_vault` | `path`, `dry_run?`, `overwrite?` | Git-friendly Markdown grouped by wing/room/layer plus `.rag` graph, ops log, and manifest; dry-run by default |
-| `import_bundle` | `path`, `format?`, `dry_run?`, `conflict_policy?` | Transactional import; `error`, `skip`, or explicit `overwrite` |
+| `import_bundle` | `path`, `format?`, `dry_run?`, `conflict_policy?` | Transactional import; `error`, `skip`, or explicit `overwrite`; an id/URI cross-collision conflicts and rolls back the whole bundle |
 
 All paths must be under `RAG_INGEST_ROOTS`. Imports default to dry-run. See [Backup and recovery](docs/RECOVERY.md).
 
@@ -595,7 +597,11 @@ Live `--http` mode provides project Home, server-filtered Unified Library,
 lex/vec/hybrid Search, Wiki reading/editing, project-scoped Connections,
 Activity, background jobs, health/backup operations and document History with
 bounded diff and CAS restore. Wiki writes and revision restores use CAS through
-the gateway. Snapshot mode is topology-only; `--db` is an exclusive
+the gateway. HTTP transport errors are reduced to safe timeout/connect/generic
+messages instead of exposing request URLs or query details. The project selector
+is locked while a wiki save, restore, sync/cancel, checkpoint or backup request is
+in flight; the submitted edit/restore state remains owned until its response.
+Verified backups have a dedicated 30-minute client timeout. Snapshot mode is topology-only; `--db` is an exclusive
 development/maintenance mode and must not run beside the gateway.
 
 Short usage: [`docs/EGUI_USAGE.md`](docs/EGUI_USAGE.md). Design: [`docs/EGUI_GRAPH_VIEW.md`](docs/EGUI_GRAPH_VIEW.md).

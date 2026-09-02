@@ -86,6 +86,20 @@ request contracts are in [`CONNECT.md`](CONNECT.md).
 
 Клиенты **не** стартуют второй binary на тот же `.duckdb`.
 
+Во время source sync gateway держит process-local write side coordination lane.
+Новые `lex`/`hybrid` запросы не ждут долгую переиндексацию и не вызывают
+embedding provider: они сразу получают HTTP `503`, `Retry-After: 1`,
+`code=STORE_BUSY` (MCP: `data.code=STORE_BUSY`, `retryable=true`,
+`retry_after_ms=1000`). Уже начавшийся search удерживает read side до конца, а
+sync стартует после его завершения. Повторяй запрос после terminal sync state;
+чистый `vec` этим lexical lane не блокируется.
+
+Project/document/source-scoped vector search materializes only matching chunks
+through SQL and deliberately bypasses the database-wide vector snapshot cache.
+Unscoped exact search keeps the generation-aware global cache. URI lookup for
+documents and graph nodes is indexed by the schema migration; URI ownership is
+still enforced by Store CAS rather than a new unique index.
+
 ### 3a. Bind: loopback vs remote
 
 | Env | Meaning |
@@ -174,6 +188,15 @@ With `--http`, the app opens on **Home** and exposes Home, Library, Search,
 Wiki, Connections and Operations. Exclusive `--db` and snapshot modes remain
 limited graph/wiki inspection paths. Details: [`EGUI_USAGE.md`](EGUI_USAGE.md).
 
+Native UI не показывает raw transport diagnostics: timeout/connect/other
+failures превращаются в стабильные сообщения без method, URL и query details;
+HTTP errors показываются компактно как status, action context, stable code и
+server-provided human-readable message вместо raw JSON envelope. Пока выполняется wiki save, revision restore или Operations mutation
+(sync/cancel/checkpoint/backup), project selector заблокирован и pending result
+не отбрасывается. Wiki editor нельзя Cancel/Reload/Back/follow-link во время
+Save, а History restore нельзя отменить локально. Для verified backup у клиента
+отдельный timeout **30 минут**.
+
 **Через агента / MCP Inspector** (writes + CAS):
 
 ```
@@ -210,7 +233,15 @@ export RAG_TOOLS=full
 | 4 | UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Wiki + Graph) |
 | 5 | Работа: ingest, wiki, search (MCP); browse via UI or `GET /v1/*` |
 | 6 | Offline graph only if needed: export → `rag-mcp-ui --snapshot` |
-| 7 | Бэкап: `cp rag.duckdb rag.duckdb.bak` (stop writers first if possible) |
+| 7 | Бэкап: `POST /v1/operations/backup` с allowlisted path и `dry_run=false`; проверить `.sha256` и `.metadata.json` sidecars. Не копировать live DuckDB мимо gateway. |
+
+Portable recovery bundle публикуется иначе, чем raw copy: MCP `export_bundle`
+и `recovery export-bundle` полностью stage+sync файл рядом с destination, затем
+делают no-clobber publish по умолчанию или atomic replace только при явном
+`overwrite=true`; временный файл очищается и parent directory синхронизируется.
+Offline CLI откажется писать bundle поверх самой DB или её hard-link. При
+`import_bundle conflict_policy=overwrite` совпадение id и URI с двумя разными
+existing documents является conflict и откатывает всю import transaction.
 
 ---
 
