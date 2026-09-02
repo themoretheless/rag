@@ -8,6 +8,8 @@ use crate::gateway::{
     execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
 };
 
+const BACKUP_TIMEOUT_SECS: u64 = 30 * 60;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct StatusSnapshot {
     pub backend: String,
@@ -226,7 +228,7 @@ pub fn checkpoint_http(base: &str) -> Result<MaintenanceResult, String> {
 }
 
 pub fn backup_http(base: &str, request: &BackupRequest) -> Result<MaintenanceResult, String> {
-    let client = client(120)?;
+    let client = client(BACKUP_TIMEOUT_SECS)?;
     let body =
         serde_json::to_string(request).map_err(|error| format!("serialize backup: {error}"))?;
     send_json::<ReportEnvelope>(
@@ -322,6 +324,11 @@ mod tests {
     use crate::gateway::Response;
     use std::collections::VecDeque;
     use std::sync::Mutex;
+
+    #[test]
+    fn backup_timeout_covers_large_verified_database_copies() {
+        assert_eq!(BACKUP_TIMEOUT_SECS, 30 * 60);
+    }
 
     struct FakeGateway {
         responses: Mutex<VecDeque<Response>>,

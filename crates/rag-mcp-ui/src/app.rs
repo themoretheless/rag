@@ -38,8 +38,9 @@ use crate::ui::revisions::{draw_revisions_workspace, RevisionsAction, RevisionsV
 use crate::ui::search::{draw_search_workspace, SearchAction};
 use crate::ui::status::draw_status;
 use crate::ui::wiki::{
-    content_summary_line, draw_wiki_edit_view, draw_wiki_info_panel, draw_wiki_read_view,
-    draw_wiki_sidebar, slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers, WikiReadContext,
+    can_cancel_edit, content_summary_line, draw_wiki_edit_view, draw_wiki_info_panel,
+    draw_wiki_read_view, draw_wiki_sidebar, slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
+    WikiReadContext,
 };
 use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 
@@ -94,6 +95,28 @@ fn is_operations_mutation(action: &OperationsAction) -> bool {
 fn project_scope_matches(response_project: Option<&str>, current_project: &str) -> bool {
     let current_project = current_project.trim();
     response_project == (!current_project.is_empty()).then_some(current_project)
+}
+
+fn reconcile_project_change(
+    selected_project: &mut String,
+    previous_project: &str,
+    mutation_in_flight: bool,
+) -> bool {
+    let changed = selected_project != previous_project;
+    if changed && mutation_in_flight {
+        previous_project.clone_into(selected_project);
+        false
+    } else {
+        changed
+    }
+}
+
+const fn has_noncancellable_mutation(
+    save_in_flight: bool,
+    operation_in_flight: bool,
+    restore_in_flight: bool,
+) -> bool {
+    save_in_flight || operation_in_flight || restore_in_flight
 }
 
 fn prepare_library_request_from_search(
@@ -461,6 +484,26 @@ impl GraphApp {
             || self.pending_revision_restore.is_some()
     }
 
+    fn noncancellable_mutation_in_flight(&self) -> bool {
+        has_noncancellable_mutation(
+            self.pending_save.is_some(),
+            self.pending_operation_action.is_some(),
+            self.pending_revision_restore.is_some(),
+        )
+    }
+
+    fn mutation_status_label(&self) -> Option<&'static str> {
+        if self.pending_save.is_some() {
+            Some("saving…")
+        } else if self.pending_revision_restore.is_some() {
+            Some("restoring…")
+        } else if self.pending_operation_action.is_some() {
+            Some("operation…")
+        } else {
+            None
+        }
+    }
+
     fn activity_base(&self) -> Option<String> {
         match self.source.as_ref() {
             Some(GraphSourceKind::HttpService { base }) => Some(base.clone()),
@@ -663,6 +706,14 @@ impl GraphApp {
     }
 
     fn open_revisions(&mut self, item: &LibraryItem) {
+        if self.pending_revision_restore.is_some() {
+            self.mode = ViewMode::Revisions;
+            self.revision.error = Some(
+                "Restore is in progress. Wait for its result before opening another history."
+                    .into(),
+            );
+            return;
+        }
         self.revision.clear();
         self.revision.document_id = Some(item.id.clone());
         self.revision.document_title = item.title.clone();
@@ -800,7 +851,6 @@ impl GraphApp {
         self.pending_revisions = None;
         self.pending_revision_snapshot = None;
         self.pending_revision_diff = None;
-        self.pending_revision_restore = None;
         self.project_home = None;
         self.project_home_project = None;
         self.project_home_error = None;
@@ -1026,6 +1076,12 @@ impl GraphApp {
             self.open_wiki_page_in_b(id);
             return;
         }
+        if self.pending_save.is_some() {
+            self.wiki_error = Some(
+                "Save is in progress. Wait for its result before opening another page.".into(),
+            );
+            return;
+        }
         // Same for pane A.
         if self.wiki_selected_id.as_deref() == Some(id) && self.wiki_article.is_some() {
             return;
@@ -1218,12 +1274,22 @@ impl GraphApp {
     }
 
     fn cancel_wiki_edit(&mut self) {
+        if self.pending_save.is_some() {
+            self.wiki_error =
+                Some("Save is in progress. Wait for its result before closing the editor.".into());
+            return;
+        }
         self.wiki_edit = None;
         self.wiki_error = None;
     }
 
     /// Discard edits and refetch the current revision (409 CAS conflict path).
     fn reload_wiki_page(&mut self) {
+        if self.pending_save.is_some() {
+            self.wiki_error =
+                Some("Save is in progress. Wait for its result before reloading the page.".into());
+            return;
+        }
         let id = self
             .wiki_selected_id
             .clone()
@@ -1324,6 +1390,11 @@ impl GraphApp {
     }
 
     fn wiki_go_back(&mut self) {
+        if self.pending_save.is_some() {
+            self.wiki_error =
+                Some("Save is in progress. Wait for its result before going back.".into());
+            return;
+        }
         if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
             self.wiki_error = Some("unsaved edits: Save or Cancel before going back".into());
             return;
@@ -1337,6 +1408,11 @@ impl GraphApp {
     /// Resolve `[[link]]` text to a catalog page and open it (exact title/slug/id only).
     fn open_wiki_link(&mut self, link: &str) {
         let into_b = self.wiki_dual_pane && self.wiki_focus == WikiPane::B;
+        if !into_b && self.pending_save.is_some() {
+            self.wiki_error =
+                Some("Save is in progress. Wait for its result before following a link.".into());
+            return;
+        }
         if !into_b && self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
             self.wiki_error = Some("unsaved edits: Save or Cancel before following a link".into());
             return;
@@ -2300,9 +2376,12 @@ impl eframe::App for GraphApp {
                 ui.separator();
 
                 ui.weak("Project");
-                ui.add_enabled_ui(
-                    !self.wiki_edit.as_ref().is_some_and(|edit| edit.dirty),
-                    |ui| {
+                let project_switch_enabled = !self
+                    .wiki_edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.dirty)
+                    && !self.noncancellable_mutation_in_flight();
+                let project_selector = ui.add_enabled_ui(project_switch_enabled, |ui| {
                         egui::ComboBox::from_id_salt("global_project")
                             .selected_text(if self.filter_wing.is_empty() {
                                 "All projects"
@@ -2326,8 +2405,16 @@ impl eframe::App for GraphApp {
                                     );
                                 }
                             });
-                    },
-                );
+                    });
+                if !project_switch_enabled {
+                    project_selector.response.on_disabled_hover_text(
+                        "Finish or cancel edits, then wait for the active write to complete",
+                    );
+                }
+                if let Some(status) = self.mutation_status_label() {
+                    ui.spinner();
+                    ui.weak(status);
+                }
             });
             ui.add_space(2.0);
 
@@ -2531,7 +2618,12 @@ impl eframe::App for GraphApp {
                             self.wiki_go_back();
                         }
                         if ui.button("Reload wiki").clicked() {
-                            if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
+                            if self.pending_save.is_some() {
+                                self.wiki_error = Some(
+                                    "Save is in progress. Wait for its result before reloading the wiki."
+                                        .into(),
+                                );
+                            } else if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
                                 self.wiki_error =
                                     Some("unsaved edits: Save or Cancel before reload".into());
                             } else {
@@ -2617,7 +2709,15 @@ impl eframe::App for GraphApp {
                                 ui.spinner();
                                 ui.weak("saving…");
                             }
-                            if ui.button("Cancel edit").on_hover_text("Esc").clicked() {
+                            if ui
+                                .add_enabled(can_cancel_edit(saving), egui::Button::new("Cancel edit"))
+                                .on_hover_text(if saving {
+                                    "Wait for the save result"
+                                } else {
+                                    "Esc"
+                                })
+                                .clicked()
+                            {
                                 self.cancel_wiki_edit();
                             }
                         }
@@ -2782,7 +2882,12 @@ impl eframe::App for GraphApp {
             });
         });
 
-        let project_changed = self.filter_wing != self.prev_filter_wing;
+        let mutation_in_flight = self.noncancellable_mutation_in_flight();
+        let project_changed = reconcile_project_change(
+            &mut self.filter_wing,
+            &self.prev_filter_wing,
+            mutation_in_flight,
+        );
         let tags_changed = self.show_tags != self.prev_show_tags;
         if tags_changed
             || self.show_stubs != self.prev_show_stubs
@@ -3843,6 +3948,22 @@ mod tests {
         assert!(!project_scope_matches(Some("alpha"), "beta"));
         assert!(!project_scope_matches(Some("alpha"), ""));
         assert!(!project_scope_matches(None, "alpha"));
+    }
+
+    #[test]
+    fn project_switch_during_restore_keeps_previous_selection() {
+        let mut selected = "project-b".to_string();
+        let restore_in_flight = has_noncancellable_mutation(false, false, true);
+
+        let changed = reconcile_project_change(&mut selected, "project-a", restore_in_flight);
+
+        assert!(!changed);
+        assert_eq!(selected, "project-a");
+
+        let changed = reconcile_project_change(&mut selected, "project-a", false);
+        assert!(!changed);
+        selected = "project-b".to_string();
+        assert!(reconcile_project_change(&mut selected, "project-a", false));
     }
 
     #[test]

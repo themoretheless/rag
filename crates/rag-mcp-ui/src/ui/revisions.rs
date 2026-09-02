@@ -89,7 +89,11 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
             ))
             .inner_margin(14.0)
             .show(ui, |ui| {
-                ui.strong(format!("Restore historical revision {revision}?"));
+                ui.strong(if view.loading_restore {
+                    format!("Restoring historical revision {revision}…")
+                } else {
+                    format!("Restore historical revision {revision}?")
+                });
                 ui.label("This creates a new head revision and rebuilds chunks and graph. The current head remains in history. Optimistic concurrency prevents overwriting a newer edit.");
                 ui.horizontal(|ui| {
                     if ui
@@ -98,7 +102,11 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
                     {
                         action = RevisionsAction::ConfirmRestore(revision);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .add_enabled(!view.loading_restore, egui::Button::new("Cancel"))
+                        .on_disabled_hover_text("Wait for the restore result")
+                        .clicked()
+                    {
                         action = RevisionsAction::CancelRestore;
                     }
                     if view.loading_restore {

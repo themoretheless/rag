@@ -212,8 +212,8 @@ fn draw_page_entry(
 
 /// Edit mode only: title/content fields + Save/Cancel. No render/link/backlink params.
 ///
-/// `saving` disables Save and shows a spinner while a worker save is in flight
-/// (the edit buffers stay editable; a repeated save is ignored).
+/// `saving` freezes the submitted buffers, disables Save/Cancel and shows a
+/// spinner while the non-cancellable worker write is in flight.
 pub fn draw_wiki_edit_view(
     ui: &mut Ui,
     page: &DocumentBody,
@@ -231,7 +231,7 @@ pub fn draw_wiki_edit_view(
             let conflict = err.contains("conflict") || err.contains("409");
             if conflict
                 && ui
-                    .button("Reload page")
+                    .add_enabled(!saving, egui::Button::new("Reload page"))
                     .on_hover_text("Discard edits and refetch the current revision")
                     .clicked()
             {
@@ -263,7 +263,11 @@ pub fn draw_wiki_edit_view(
             if saving {
                 ui.spinner();
             }
-            if ui.button("Cancel").clicked() {
+            if ui
+                .add_enabled(can_cancel_edit(saving), egui::Button::new("Cancel"))
+                .on_disabled_hover_text("Wait for the save result")
+                .clicked()
+            {
                 action.cancel = true;
             }
             if let Some(r) = edit.base_revision {
@@ -275,7 +279,8 @@ pub fn draw_wiki_edit_view(
     ui.separator();
 
     ui.label("Title");
-    let title_resp = ui.add(
+    let title_resp = ui.add_enabled(
+        !saving,
         egui::TextEdit::singleline(&mut edit.title)
             .desired_width(f32::INFINITY)
             .hint_text("Page title"),
@@ -289,22 +294,30 @@ pub fn draw_wiki_edit_view(
         .id_salt("wiki_edit_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let content_resp = ui.add_sized(
-                [
-                    ui.available_width(),
-                    (ui.available_height() - 8.0).max(200.0),
-                ],
-                egui::TextEdit::multiline(&mut edit.content)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace)
-                    .hint_text("Markdown body…"),
-            );
+            let content_resp = ui
+                .add_enabled_ui(!saving, |ui| {
+                    ui.add_sized(
+                        [
+                            ui.available_width(),
+                            (ui.available_height() - 8.0).max(200.0),
+                        ],
+                        egui::TextEdit::multiline(&mut edit.content)
+                            .desired_width(f32::INFINITY)
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text("Markdown body…"),
+                    )
+                })
+                .inner;
             if content_resp.changed() {
                 edit.dirty = true;
             }
         });
 
     action
+}
+
+pub(crate) const fn can_cancel_edit(saving: bool) -> bool {
+    !saving
 }
 
 /// Read mode: rendered markdown, Edit button, backlinks. No edit buffers.
@@ -727,7 +740,13 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{content_summary_line, slug_from_wiki_uri};
+    use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri};
+
+    #[test]
+    fn cancel_is_disabled_while_wiki_save_is_in_flight() {
+        assert!(!can_cancel_edit(true));
+        assert!(can_cancel_edit(false));
+    }
 
     #[test]
     fn slug_from_wiki_uri_strips_prefix() {
