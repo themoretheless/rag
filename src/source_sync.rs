@@ -13,12 +13,15 @@ use crate::db::{SourceManifestEntry, SourceManifestWrite, Store};
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, is_supported_source, merge_metadata};
-use crate::ingest::{IngestCommand, IngestService, SourceManifestStamp};
+use crate::ingest::{IngestCommand, IngestService, PreparedIngest, SourceManifestStamp};
 use crate::source_scan::{collect_source_files_while, SourceScanPolicy};
 use crate::util::{check_path_allowlist, content_hash};
 
 /// Default safety cap for one file in recursive source synchronization.
 pub const DEFAULT_SOURCE_SYNC_MAX_FILE_BYTES: u64 = 512 * 1024;
+
+const SOURCE_SYNC_BATCH_MAX_DOCUMENTS: usize = 64;
+const SOURCE_SYNC_BATCH_MAX_CHUNKS: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct SourceSyncCommand {
@@ -64,6 +67,17 @@ pub struct SourceSyncCounters {
     pub preflight: u64,
     pub extracted: u64,
     pub embedded: u64,
+}
+
+impl SourceSyncReport {
+    fn sort_paths(&mut self) {
+        self.added.sort();
+        self.updated.sort();
+        self.skipped.sort();
+        self.deleted.sort();
+        self.errors
+            .sort_by(|left, right| left.path.cmp(&right.path));
+    }
 }
 
 /// Observable phases for a cooperative source synchronization run.
@@ -175,6 +189,47 @@ struct SourceSyncRunContext<'a> {
     preloaded: &'a HashMap<String, SourceManifestEntry>,
 }
 
+struct PendingSourceIngest {
+    file_index: usize,
+    source_file: String,
+    prepared: PreparedIngest,
+}
+
+enum PreparedSourceFile {
+    Skipped {
+        source_file: String,
+        manifest_refresh: Option<SourceManifestRefresh>,
+    },
+    Ingest {
+        source_file: String,
+        prepared: PreparedIngest,
+    },
+}
+
+struct SourceManifestRefresh {
+    stamp: SourceManifestStamp,
+    content_hash: String,
+    document_id: String,
+}
+
+impl SourceManifestRefresh {
+    fn commit(&self, store: &Store) -> Result<(), AppError> {
+        store.upsert_source_manifest(SourceManifestWrite {
+            canonical_path: &self.stamp.canonical_path,
+            canonical_root: &self.stamp.canonical_root,
+            size_bytes: self.stamp.size_bytes,
+            mtime_ns: self.stamp.mtime_ns,
+            content_hash: &self.content_hash,
+            document_id: &self.document_id,
+        })
+    }
+}
+
+enum BatchFlushOutcome {
+    Completed(usize),
+    Cancelled(usize),
+}
+
 impl<'a> SourceSyncService<'a> {
     pub fn new(
         store: &'a Store,
@@ -261,40 +316,205 @@ impl<'a> SourceSyncService<'a> {
         if control.is_cancelled() {
             return Ok(cancelled_outcome(&control, report, total_files, 0));
         }
+        let mut pending = Vec::new();
+        let mut pending_chunks = 0usize;
+        let mut processed_files = 0usize;
         for (index, path) in files.into_iter().enumerate() {
             control.publish(SourceSyncProgress::from_report(
                 SourceSyncPhase::Syncing,
                 total_files,
-                index,
+                processed_files,
                 Some(path.display().to_string()),
                 &report,
             ));
             if control.is_cancelled() {
-                return Ok(cancelled_outcome(&control, report, total_files, index));
+                return Ok(cancelled_outcome(
+                    &control,
+                    report,
+                    total_files,
+                    processed_files,
+                ));
             }
             report.counters.preflight = report.counters.preflight.saturating_add(1);
-            let sync_file = self.sync_file(&run, &path, &mut seen, &mut report);
-            tokio::select! {
-                () = control.cancelled() => {
-                    return Ok(cancelled_outcome(
-                        &control,
-                        report,
-                        total_files,
-                        index,
-                    ));
-                }
-                () = sync_file => {}
-            }
-            control.publish(SourceSyncProgress::from_report(
-                SourceSyncPhase::Syncing,
-                total_files,
-                index + 1,
-                None,
-                &report,
-            ));
+
+            let preparation = self.prepare_source_file(&run, &path, &mut seen, &mut report);
             if control.is_cancelled() {
-                return Ok(cancelled_outcome(&control, report, total_files, index + 1));
+                return Ok(cancelled_outcome(
+                    &control,
+                    report,
+                    total_files,
+                    processed_files,
+                ));
             }
+
+            match preparation {
+                Ok(PreparedSourceFile::Ingest {
+                    source_file,
+                    prepared,
+                }) => {
+                    let chunk_count = prepared.chunk_count();
+                    let exceeds_current_batch = !pending.is_empty()
+                        && (pending.len() >= SOURCE_SYNC_BATCH_MAX_DOCUMENTS
+                            || chunk_count > SOURCE_SYNC_BATCH_MAX_CHUNKS
+                            || pending_chunks.saturating_add(chunk_count)
+                                > SOURCE_SYNC_BATCH_MAX_CHUNKS);
+                    if exceeds_current_batch {
+                        match self
+                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
+                            .await
+                        {
+                            BatchFlushOutcome::Completed(processed) => {
+                                processed_files = processed;
+                                pending_chunks = 0;
+                                if control.is_cancelled() {
+                                    return Ok(cancelled_outcome(
+                                        &control,
+                                        report,
+                                        total_files,
+                                        processed,
+                                    ));
+                                }
+                            }
+                            BatchFlushOutcome::Cancelled(processed) => {
+                                return Ok(cancelled_outcome(
+                                    &control,
+                                    report,
+                                    total_files,
+                                    processed,
+                                ));
+                            }
+                        }
+                    }
+
+                    pending_chunks = pending_chunks.saturating_add(chunk_count);
+                    pending.push(PendingSourceIngest {
+                        file_index: index,
+                        source_file,
+                        prepared,
+                    });
+                    if pending.len() >= SOURCE_SYNC_BATCH_MAX_DOCUMENTS
+                        || pending_chunks >= SOURCE_SYNC_BATCH_MAX_CHUNKS
+                        || chunk_count > SOURCE_SYNC_BATCH_MAX_CHUNKS
+                    {
+                        match self
+                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
+                            .await
+                        {
+                            BatchFlushOutcome::Completed(processed) => {
+                                processed_files = processed;
+                                pending_chunks = 0;
+                            }
+                            BatchFlushOutcome::Cancelled(processed) => {
+                                return Ok(cancelled_outcome(
+                                    &control,
+                                    report,
+                                    total_files,
+                                    processed,
+                                ));
+                            }
+                        }
+                    }
+                }
+                Ok(PreparedSourceFile::Skipped {
+                    source_file,
+                    manifest_refresh,
+                }) => {
+                    if !pending.is_empty() {
+                        match self
+                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
+                            .await
+                        {
+                            BatchFlushOutcome::Completed(processed) => {
+                                pending_chunks = 0;
+                                if control.is_cancelled() {
+                                    return Ok(cancelled_outcome(
+                                        &control,
+                                        report,
+                                        total_files,
+                                        processed,
+                                    ));
+                                }
+                            }
+                            BatchFlushOutcome::Cancelled(processed) => {
+                                return Ok(cancelled_outcome(
+                                    &control,
+                                    report,
+                                    total_files,
+                                    processed,
+                                ));
+                            }
+                        }
+                    }
+                    let result = manifest_refresh
+                        .as_ref()
+                        .map_or(Ok(()), |refresh| refresh.commit(self.store));
+                    match result {
+                        Ok(()) => report.skipped.push(source_file),
+                        Err(error) => report.errors.push(SourceSyncError {
+                            path: source_file,
+                            error: error.to_string(),
+                        }),
+                    }
+                    processed_files = index + 1;
+                    publish_file_completion(&control, &report, total_files, processed_files);
+                }
+                Err(error) => {
+                    if !pending.is_empty() {
+                        match self
+                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
+                            .await
+                        {
+                            BatchFlushOutcome::Completed(_) => {
+                                pending_chunks = 0;
+                            }
+                            BatchFlushOutcome::Cancelled(processed) => {
+                                return Ok(cancelled_outcome(
+                                    &control,
+                                    report,
+                                    total_files,
+                                    processed,
+                                ));
+                            }
+                        }
+                    }
+                    report.errors.push(SourceSyncError {
+                        path: path.display().to_string(),
+                        error: error.to_string(),
+                    });
+                    processed_files = index + 1;
+                    publish_file_completion(&control, &report, total_files, processed_files);
+                }
+            }
+
+            if control.is_cancelled() {
+                return Ok(cancelled_outcome(
+                    &control,
+                    report,
+                    total_files,
+                    processed_files,
+                ));
+            }
+        }
+        if !pending.is_empty() {
+            match self
+                .flush_pending_batch(&mut pending, &control, &mut report, total_files)
+                .await
+            {
+                BatchFlushOutcome::Completed(processed) => {
+                    processed_files = processed;
+                }
+                BatchFlushOutcome::Cancelled(processed) => {
+                    return Ok(cancelled_outcome(&control, report, total_files, processed));
+                }
+            }
+        }
+        if control.is_cancelled() {
+            return Ok(cancelled_outcome(
+                &control,
+                report,
+                total_files,
+                processed_files,
+            ));
         }
         if command.remove_deleted {
             control.publish(SourceSyncProgress::from_report(
@@ -321,8 +541,17 @@ impl<'a> SourceSyncService<'a> {
                 ));
             }
         }
+        if control.is_cancelled() {
+            return Ok(cancelled_outcome(
+                &control,
+                report,
+                total_files,
+                total_files,
+            ));
+        }
         let seen_paths = seen.iter().cloned().collect::<Vec<_>>();
         self.store.mark_source_manifest_seen(&root, &seen_paths)?;
+        report.sort_paths();
         control.publish(SourceSyncProgress::from_report(
             SourceSyncPhase::Completed,
             total_files,
@@ -333,28 +562,13 @@ impl<'a> SourceSyncService<'a> {
         Ok(SourceSyncOutcome::Completed(report))
     }
 
-    async fn sync_file(
+    fn prepare_source_file(
         &self,
         run: &SourceSyncRunContext<'_>,
         path: &Path,
         seen: &mut BTreeSet<String>,
         report: &mut SourceSyncReport,
-    ) {
-        if let Err(error) = self.try_sync_file(run, path, seen, report).await {
-            report.errors.push(SourceSyncError {
-                path: path.display().to_string(),
-                error: error.to_string(),
-            });
-        }
-    }
-
-    async fn try_sync_file(
-        &self,
-        run: &SourceSyncRunContext<'_>,
-        path: &Path,
-        seen: &mut BTreeSet<String>,
-        report: &mut SourceSyncReport,
-    ) -> Result<(), AppError> {
+    ) -> Result<PreparedSourceFile, AppError> {
         let canonical = path.canonicalize()?;
         let source_file = canonical.display().to_string();
         let canonical_root = run.root.display().to_string();
@@ -365,8 +579,10 @@ impl<'a> SourceSyncService<'a> {
             manifest_preflight_matches(entry, stamp, &canonical_root)
                 && requested_scope_matches(entry, run.command)
         }) {
-            report.skipped.push(source_file);
-            return Ok(());
+            return Ok(PreparedSourceFile::Skipped {
+                source_file,
+                manifest_refresh: None,
+            });
         }
 
         let uri = format!("file://{}", canonical.display());
@@ -377,16 +593,19 @@ impl<'a> SourceSyncService<'a> {
         if let Some(entry) = existing.filter(|entry| {
             manifest_content_matches(entry, &hash) && requested_scope_matches(entry, run.command)
         }) {
-            self.store.upsert_source_manifest(SourceManifestWrite {
-                canonical_path: &source_file,
-                canonical_root: &canonical_root,
-                size_bytes: stamp.size_bytes,
-                mtime_ns: stamp.mtime_ns,
-                content_hash: &hash,
-                document_id: &entry.document_id,
-            })?;
-            report.skipped.push(source_file);
-            return Ok(());
+            return Ok(PreparedSourceFile::Skipped {
+                source_file: source_file.clone(),
+                manifest_refresh: Some(SourceManifestRefresh {
+                    stamp: SourceManifestStamp {
+                        canonical_path: source_file,
+                        canonical_root,
+                        size_bytes: stamp.size_bytes,
+                        mtime_ns: stamp.mtime_ns,
+                    },
+                    content_hash: hash,
+                    document_id: entry.document_id.clone(),
+                }),
+            });
         }
 
         let metadata_json = merge_metadata(
@@ -395,46 +614,125 @@ impl<'a> SourceSyncService<'a> {
         )
         .map_err(|error| AppError::config(error.to_string()))?;
         let (inferred_wing, inferred_room) = inferred_scope(run.root, &canonical);
-        let result = IngestService::new(self.store, self.embedder, self.config)
-            .ingest_source(
-                IngestCommand {
-                    text: extracted.text,
-                    title: canonical
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map(str::to_string),
-                    uri: Some(uri),
-                    metadata_json: Some(metadata_json),
-                    wing: requested_scope(run.command.wing.as_deref())
-                        .map(str::to_string)
-                        .or_else(|| existing.and_then(|entry| entry.document_wing.clone()))
-                        .or(Some(inferred_wing)),
-                    room: requested_scope(run.command.room.as_deref())
-                        .map(str::to_string)
-                        .or_else(|| existing.and_then(|entry| entry.document_room.clone()))
-                        .or(Some(inferred_room)),
-                    source_file: Some(source_file.clone()),
-                    layer: "raw".into(),
-                    kind: "document".into(),
-                    immutable: false,
-                },
-                SourceManifestStamp {
-                    canonical_path: source_file.clone(),
-                    canonical_root: canonical_root.clone(),
-                    size_bytes: stamp.size_bytes,
-                    mtime_ns: stamp.mtime_ns,
-                },
-            )
-            .await?;
-        if result.chunk_count > 0 {
-            report.counters.embedded = report.counters.embedded.saturating_add(1);
+        let prepared = IngestService::new(self.store, self.embedder, self.config).prepare_source(
+            IngestCommand {
+                text: extracted.text,
+                title: canonical
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_string),
+                uri: Some(uri),
+                metadata_json: Some(metadata_json),
+                wing: requested_scope(run.command.wing.as_deref())
+                    .map(str::to_string)
+                    .or_else(|| existing.and_then(|entry| entry.document_wing.clone()))
+                    .or(Some(inferred_wing)),
+                room: requested_scope(run.command.room.as_deref())
+                    .map(str::to_string)
+                    .or_else(|| existing.and_then(|entry| entry.document_room.clone()))
+                    .or(Some(inferred_room)),
+                source_file: Some(source_file.clone()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            },
+            SourceManifestStamp {
+                canonical_path: source_file.clone(),
+                canonical_root,
+                size_bytes: stamp.size_bytes,
+                mtime_ns: stamp.mtime_ns,
+            },
+        )?;
+        Ok(PreparedSourceFile::Ingest {
+            source_file,
+            prepared,
+        })
+    }
+
+    async fn flush_pending_batch(
+        &self,
+        pending: &mut Vec<PendingSourceIngest>,
+        control: &SourceSyncControl,
+        report: &mut SourceSyncReport,
+        total_files: usize,
+    ) -> BatchFlushOutcome {
+        debug_assert!(!pending.is_empty());
+        let batch = std::mem::take(pending);
+        let first_uncommitted = batch[0].file_index;
+        let positions = batch
+            .iter()
+            .map(|item| (item.file_index, item.source_file.clone()))
+            .collect::<Vec<_>>();
+        let prepared = batch
+            .into_iter()
+            .map(|item| item.prepared)
+            .collect::<Vec<_>>();
+
+        if control.is_cancelled() {
+            return BatchFlushOutcome::Cancelled(first_uncommitted);
         }
-        if result.op == "inserted" {
-            report.added.push(source_file);
-        } else {
-            report.updated.push(source_file);
+        let ingest = IngestService::new(self.store, self.embedder, self.config);
+        let embedding = ingest.embed_prepared_batch(prepared);
+        let embedded = tokio::select! {
+            biased;
+            () = control.cancelled() => {
+                return BatchFlushOutcome::Cancelled(first_uncommitted);
+            }
+            result = embedding => result,
+        };
+
+        let embedded = match embedded {
+            Ok(embedded) => embedded,
+            Err(error) => {
+                let error = error.to_string();
+                let mut processed_files = first_uncommitted;
+                for (file_index, source_file) in positions {
+                    report.errors.push(SourceSyncError {
+                        path: source_file,
+                        error: error.clone(),
+                    });
+                    processed_files = file_index + 1;
+                    publish_file_completion(control, report, total_files, processed_files);
+                    if control.is_cancelled() {
+                        return BatchFlushOutcome::Cancelled(processed_files);
+                    }
+                }
+                return BatchFlushOutcome::Completed(processed_files);
+            }
+        };
+
+        if control.is_cancelled() {
+            return BatchFlushOutcome::Cancelled(first_uncommitted);
         }
-        Ok(())
+        debug_assert_eq!(positions.len(), embedded.len());
+        let mut processed_files = first_uncommitted;
+        for ((file_index, source_file), embedded) in positions.into_iter().zip(embedded) {
+            if control.is_cancelled() {
+                return BatchFlushOutcome::Cancelled(processed_files);
+            }
+            match ingest.commit_embedded(embedded) {
+                Ok(result) => {
+                    if result.chunk_count > 0 {
+                        report.counters.embedded = report.counters.embedded.saturating_add(1);
+                    }
+                    if result.op == "inserted" {
+                        report.added.push(source_file);
+                    } else {
+                        report.updated.push(source_file);
+                    }
+                }
+                Err(error) => report.errors.push(SourceSyncError {
+                    path: source_file,
+                    error: error.to_string(),
+                }),
+            }
+            processed_files = file_index + 1;
+            publish_file_completion(control, report, total_files, processed_files);
+            if control.is_cancelled() {
+                return BatchFlushOutcome::Cancelled(processed_files);
+            }
+        }
+        BatchFlushOutcome::Completed(processed_files)
     }
 
     fn remove_deleted(
@@ -459,7 +757,9 @@ impl<'a> SourceSyncService<'a> {
         total_files: usize,
         metadata: impl Fn(&Path) -> std::io::Result<std::fs::Metadata>,
     ) -> Result<bool, AppError> {
-        for source in preloaded.keys() {
+        let mut sources = preloaded.keys().collect::<Vec<_>>();
+        sources.sort();
+        for source in sources {
             control.publish(SourceSyncProgress::from_report(
                 SourceSyncPhase::RemovingDeleted,
                 total_files,
@@ -517,10 +817,11 @@ fn metadata_means_missing(metadata: std::io::Result<std::fs::Metadata>) -> std::
 
 fn cancelled_outcome(
     control: &SourceSyncControl,
-    report: SourceSyncReport,
+    mut report: SourceSyncReport,
     total_files: usize,
     processed_files: usize,
 ) -> SourceSyncOutcome {
+    report.sort_paths();
     control.publish(SourceSyncProgress::from_report(
         SourceSyncPhase::Cancelled,
         total_files,
@@ -529,6 +830,21 @@ fn cancelled_outcome(
         &report,
     ));
     SourceSyncOutcome::Cancelled(report)
+}
+
+fn publish_file_completion(
+    control: &SourceSyncControl,
+    report: &SourceSyncReport,
+    total_files: usize,
+    processed_files: usize,
+) {
+    control.publish(SourceSyncProgress::from_report(
+        SourceSyncPhase::Syncing,
+        total_files,
+        processed_files,
+        None,
+        report,
+    ));
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -641,6 +957,16 @@ mod tests {
         release: Arc<tokio::sync::Notify>,
     }
 
+    struct RecordingEmbedder {
+        dims: usize,
+        calls: Arc<Mutex<Vec<Vec<String>>>>,
+    }
+
+    struct FailingBatchEmbedder {
+        dims: usize,
+        calls: Arc<AtomicUsize>,
+    }
+
     #[async_trait]
     impl EmbeddingProvider for CountingEmbedder {
         async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
@@ -665,6 +991,34 @@ mod tests {
 
         fn dimensions(&self) -> usize {
             self.inner.dimensions()
+        }
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for RecordingEmbedder {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.calls.lock().unwrap().push(texts.to_vec());
+            Ok(texts
+                .iter()
+                .enumerate()
+                .map(|(index, _)| vec![(index + 1) as f32; self.dims])
+                .collect())
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for FailingBatchEmbedder {
+        async fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Err(AppError::embeddings("injected batch embedding failure"))
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
         }
     }
 
@@ -824,6 +1178,454 @@ mod tests {
         let outcome = second.await.unwrap().unwrap();
         assert!(matches!(outcome, SourceSyncOutcome::Completed(_)));
         assert_eq!(store.list_documents().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn small_documents_share_one_embedding_call_and_keep_path_mapping() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            ("c.md", "charlie body"),
+            ("a.md", "alpha body"),
+            ("b.md", "bravo body"),
+        ] {
+            std::fs::write(root.path().join(name), body).unwrap();
+        }
+        let config = Config {
+            db_path: db.path().join("mapped-batch.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 1_024,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
+            dims: 4,
+            calls: calls.clone(),
+        });
+
+        let report = SourceSyncService::new(&store, &embedder, &config)
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+
+        let canonical_paths =
+            ["a.md", "b.md", "c.md"].map(|name| root.path().join(name).canonicalize().unwrap());
+        assert_eq!(
+            report.added,
+            canonical_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+        );
+        assert!(report.errors.is_empty());
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls.as_slice(),
+            &[vec![
+                "alpha body".to_string(),
+                "bravo body".to_string(),
+                "charlie body".to_string(),
+            ]]
+        );
+        for (index, path) in canonical_paths.iter().enumerate() {
+            let document = store
+                .find_by_uri(&format!("file://{}", path.display()))
+                .unwrap()
+                .unwrap();
+            let chunks = store.list_chunks_for_document(&document.id).unwrap();
+            assert_eq!(chunks.len(), 1);
+            assert_eq!(chunks[0].embedding[0], (index + 1) as f32);
+        }
+    }
+
+    #[tokio::test]
+    async fn sixty_five_small_documents_split_at_the_batch_cap() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        for index in 0..65 {
+            std::fs::write(
+                root.path().join(format!("{index:03}.md")),
+                format!("body {index}"),
+            )
+            .unwrap();
+        }
+        let config = Config {
+            db_path: db.path().join("batch-cap.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 1_024,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
+            dims: 4,
+            calls: calls.clone(),
+        });
+
+        let report = SourceSyncService::new(&store, &embedder, &config)
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+
+        assert!(report.errors.is_empty());
+        assert_eq!(report.added.len(), 65);
+        assert_eq!(store.list_documents().unwrap().len(), 65);
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![64, 1]
+        );
+    }
+
+    #[tokio::test]
+    async fn chunk_count_splits_a_batch_before_the_document_count_cap() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        for index in 0..33 {
+            std::fs::write(root.path().join(format!("{index:03}.md")), "abcdefgh").unwrap();
+        }
+        let config = Config {
+            db_path: db.path().join("chunk-batch-cap.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 4,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
+            dims: 4,
+            calls: calls.clone(),
+        });
+
+        let report = SourceSyncService::new(&store, &embedder, &config)
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+
+        assert!(report.errors.is_empty());
+        assert_eq!(report.added.len(), 33);
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![64, 2]
+        );
+    }
+
+    #[tokio::test]
+    async fn document_over_chunk_cap_is_embedded_alone_without_internal_splitting() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.md"), "aaaa").unwrap();
+        std::fs::write(root.path().join("b.md"), "b".repeat(260)).unwrap();
+        std::fs::write(root.path().join("c.md"), "cccc").unwrap();
+        let config = Config {
+            db_path: db.path().join("large-document-batch.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 4,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
+            dims: 4,
+            calls: calls.clone(),
+        });
+
+        let report = SourceSyncService::new(&store, &embedder, &config)
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+
+        assert!(report.errors.is_empty());
+        assert_eq!(report.added.len(), 3);
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![1, 65, 1]
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_failure_writes_none_of_a_multi_document_batch() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        for name in ["c.md", "a.md", "b.md"] {
+            std::fs::write(root.path().join(name), format!("body {name}")).unwrap();
+        }
+        let config = Config {
+            db_path: db.path().join("failed-batch.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 1_024,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailingBatchEmbedder {
+            dims: 4,
+            calls: calls.clone(),
+        });
+
+        let report = SourceSyncService::new(&store, &embedder, &config)
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+
+        let expected_paths = ["a.md", "b.md", "c.md"]
+            .map(|name| {
+                root.path()
+                    .join(name)
+                    .canonicalize()
+                    .unwrap()
+                    .display()
+                    .to_string()
+            })
+            .to_vec();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            report
+                .errors
+                .iter()
+                .map(|error| error.path.clone())
+                .collect::<Vec<_>>(),
+            expected_paths
+        );
+        assert!(report
+            .errors
+            .iter()
+            .all(|error| error.error.contains("injected batch embedding failure")));
+        assert!(report.added.is_empty());
+        assert_eq!(report.counters.embedded, 0);
+        assert!(store.list_documents().unwrap().is_empty());
+        assert!(store
+            .load_source_manifest_root(root.path())
+            .unwrap()
+            .is_empty());
+        assert!(store.list_graph_edges().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_embedding_writes_none_of_the_current_batch() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        for name in ["a.md", "b.md", "c.md"] {
+            std::fs::write(root.path().join(name), format!("body {name}")).unwrap();
+        }
+        let config = Arc::new(Config {
+            db_path: db.path().join("cancel-embedding.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 1_024,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        });
+        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(GatedEmbedder {
+            inner: MockEmbedder::new(4),
+            calls: AtomicUsize::new(0),
+            entered: entered.clone(),
+            release,
+        });
+        let cancellation = CancellationToken::new();
+        let task = {
+            let store = store.clone();
+            let config = config.clone();
+            let embedder = embedder.clone();
+            let cancellation = cancellation.clone();
+            let path = root.path().to_path_buf();
+            tokio::spawn(async move {
+                SourceSyncService::new(store.as_ref(), &embedder, config.as_ref())
+                    .sync_with_control(
+                        SourceSyncCommand::new(path),
+                        SourceSyncControl::new(cancellation, |_| {}),
+                    )
+                    .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .expect("batch reached embedding");
+
+        cancellation.cancel();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("cancelled sync returned")
+            .unwrap()
+            .unwrap();
+
+        let SourceSyncOutcome::Cancelled(report) = outcome else {
+            panic!("expected cancellation");
+        };
+        assert_eq!(report.counters.extracted, 3);
+        assert!(report.added.is_empty());
+        assert!(report.updated.is_empty());
+        assert!(store.list_documents().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        for name in ["c.md", "a.md", "b.md"] {
+            std::fs::write(root.path().join(name), format!("body {name}")).unwrap();
+        }
+        let config = Config {
+            db_path: db.path().join("cancel-commits.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 1_024,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
+            dims: 4,
+            calls: calls.clone(),
+        });
+        let cancellation = CancellationToken::new();
+        let cancellation_from_progress = cancellation.clone();
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let progress_from_callback = progress.clone();
+        let control = SourceSyncControl::new(cancellation, move |snapshot| {
+            if snapshot.phase == SourceSyncPhase::Syncing
+                && snapshot.current_path.is_none()
+                && snapshot.added == 1
+            {
+                cancellation_from_progress.cancel();
+            }
+            progress_from_callback.lock().unwrap().push(snapshot);
+        });
+
+        let outcome = SourceSyncService::new(&store, &embedder, &config)
+            .sync_with_control(SourceSyncCommand::new(root.path().to_path_buf()), control)
+            .await
+            .unwrap();
+
+        let SourceSyncOutcome::Cancelled(report) = outcome else {
+            panic!("expected cancellation");
+        };
+        let canonical_first = root
+            .path()
+            .join("a.md")
+            .canonicalize()
+            .unwrap()
+            .display()
+            .to_string();
+        assert_eq!(report.added, vec![canonical_first]);
+        assert_eq!(report.counters.embedded, 1);
+        assert_eq!(store.list_documents().unwrap().len(), 1);
+        assert_eq!(store.list_documents().unwrap()[0].title, "a.md");
+        assert_eq!(calls.lock().unwrap().len(), 1);
+        let progress = progress.lock().unwrap();
+        let final_snapshot = progress.last().unwrap();
+        assert_eq!(final_snapshot.phase, SourceSyncPhase::Cancelled);
+        assert_eq!(final_snapshot.processed_files, 1);
+    }
+
+    #[tokio::test]
+    async fn source_commit_keeps_the_revision_captured_before_embedding() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let source = root.path().join("a.md");
+        std::fs::write(&source, "initial source").unwrap();
+        let config = Arc::new(Config {
+            db_path: db.path().join("source-cas.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 4,
+            chunk_size: 1_024,
+            chunk_overlap: 0,
+            ..Config::for_tests()
+        });
+        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        let initial_embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(4));
+        SourceSyncService::new(store.as_ref(), &initial_embedder, config.as_ref())
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+
+        std::fs::write(&source, "source sync contender").unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let gated_embedder: Arc<dyn EmbeddingProvider> = Arc::new(GatedEmbedder {
+            inner: MockEmbedder::new(4),
+            calls: AtomicUsize::new(0),
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        let task = {
+            let store = store.clone();
+            let config = config.clone();
+            let embedder = gated_embedder.clone();
+            let path = root.path().to_path_buf();
+            tokio::spawn(async move {
+                SourceSyncService::new(store.as_ref(), &embedder, config.as_ref())
+                    .sync(SourceSyncCommand::new(path))
+                    .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .expect("source update reached embedding");
+
+        let canonical = source.canonicalize().unwrap();
+        let existing = store
+            .find_by_uri(&format!("file://{}", canonical.display()))
+            .unwrap()
+            .unwrap();
+        IngestService::new(store.as_ref(), &initial_embedder, config.as_ref())
+            .ingest(IngestCommand {
+                text: "external winner".into(),
+                title: Some("a.md".into()),
+                uri: Some(existing.uri.clone()),
+                metadata_json: Some(existing.metadata_json.clone()),
+                wing: existing.wing.clone(),
+                room: existing.room.clone(),
+                source_file: existing.source_file.clone(),
+                layer: existing.layer.clone(),
+                kind: existing.kind.clone(),
+                immutable: false,
+            })
+            .await
+            .unwrap();
+        release.notify_one();
+
+        let report = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("source sync completed")
+            .unwrap()
+            .unwrap();
+        let persisted = store.get_document(&existing.id).unwrap().unwrap();
+        assert_eq!(persisted.content, "external winner");
+        assert_eq!(persisted.revision, 2);
+        assert!(report.added.is_empty());
+        assert!(report.updated.is_empty());
+        assert_eq!(report.errors.len(), 1);
+        assert!(report.errors[0].error.contains("revision"));
     }
 
     #[tokio::test]

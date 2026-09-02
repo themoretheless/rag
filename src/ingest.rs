@@ -10,11 +10,11 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::store::DocumentDerivedWrite;
 use crate::db::{SourceManifestWrite, Store};
-use crate::document_indexer::DocumentIndexer;
+use crate::document_indexer::{DocumentIndexer, PreparedDocumentChunks};
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, merge_metadata};
-use crate::models::{Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
+use crate::models::{Chunk, Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
 use crate::util::{check_path_allowlist, content_hash};
 
 #[derive(Debug, Clone)]
@@ -38,6 +38,38 @@ pub(crate) struct SourceManifestStamp {
     pub canonical_root: String,
     pub size_bytes: u64,
     pub mtime_ns: i64,
+}
+
+/// An ingest whose document identity and chunks are fixed, but whose vectors
+/// have not been requested yet.
+pub(crate) struct PreparedIngest {
+    write: Box<PendingIngestWrite>,
+    chunks: PreparedDocumentChunks,
+}
+
+impl PreparedIngest {
+    pub(crate) fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
+}
+
+/// A prepared ingest with vectors mapped back to its document chunks.
+pub(crate) struct EmbeddedIngest {
+    write: Box<PendingIngestWrite>,
+    chunks: Vec<Chunk>,
+}
+
+struct PendingIngestWrite {
+    document: Document,
+    expected_revision: Option<i64>,
+    operation: &'static str,
+    content_hash: String,
+    manifest: Option<SourceManifestStamp>,
+}
+
+enum IngestPreparation {
+    Complete(IngestResult),
+    Pending(PreparedIngest),
 }
 
 /// Ingest one file from disk (`ingest_file` MCP tool / `POST /v1/ingest/file`).
@@ -154,22 +186,123 @@ impl<'a> IngestService<'a> {
     }
 
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
-        self.ingest_inner(command, None).await
+        match self.prepare_ingest(command, None)? {
+            IngestPreparation::Complete(result) => Ok(result),
+            IngestPreparation::Pending(prepared) => {
+                let embedded = self
+                    .embed_prepared_batch(vec![prepared])
+                    .await?
+                    .pop()
+                    .expect("one prepared ingest yields one embedded ingest");
+                self.commit_embedded(embedded)
+            }
+        }
     }
 
+    #[cfg(test)]
     pub(crate) async fn ingest_source(
         &self,
         command: IngestCommand,
         manifest: SourceManifestStamp,
     ) -> Result<IngestResult, AppError> {
-        self.ingest_inner(command, Some(manifest)).await
+        let prepared = self.prepare_source(command, manifest)?;
+        let embedded = self
+            .embed_prepared_batch(vec![prepared])
+            .await?
+            .pop()
+            .expect("one prepared source yields one embedded ingest");
+        self.commit_embedded(embedded)
     }
 
-    async fn ingest_inner(
+    /// Prepare a mutable source ingest without contacting the embedding
+    /// provider or writing document state.
+    pub(crate) fn prepare_source(
+        &self,
+        command: IngestCommand,
+        manifest: SourceManifestStamp,
+    ) -> Result<PreparedIngest, AppError> {
+        debug_assert!(!command.immutable);
+        match self.prepare_ingest(command, Some(manifest))? {
+            IngestPreparation::Pending(prepared) => Ok(prepared),
+            IngestPreparation::Complete(_) => Err(AppError::conflict(
+                "mutable source ingest unexpectedly completed during preparation",
+            )),
+        }
+    }
+
+    /// Embed all chunk plans in one provider request while retaining document
+    /// boundaries and input order.
+    pub(crate) async fn embed_prepared_batch(
+        &self,
+        batch: Vec<PreparedIngest>,
+    ) -> Result<Vec<EmbeddedIngest>, AppError> {
+        let (writes, chunk_plans): (Vec<_>, Vec<_>) = batch
+            .into_iter()
+            .map(|prepared| (prepared.write, prepared.chunks))
+            .unzip();
+        let chunk_groups = self.indexer.embed_prepared_batch(chunk_plans).await?;
+        Ok(writes
+            .into_iter()
+            .zip(chunk_groups)
+            .map(|(write, chunks)| EmbeddedIngest { write, chunks })
+            .collect())
+    }
+
+    /// Persist exactly one embedded document at the existing atomic/CAS
+    /// boundary. Source-sync callers invoke this in canonical path order.
+    pub(crate) fn commit_embedded(
+        &self,
+        embedded: EmbeddedIngest,
+    ) -> Result<IngestResult, AppError> {
+        let EmbeddedIngest { write, chunks } = embedded;
+        let PendingIngestWrite {
+            document,
+            expected_revision,
+            operation,
+            content_hash,
+            manifest,
+        } = *write;
+        let chunk_count = chunks.len();
+        let document_id = document.id.clone();
+        let persisted = if let Some(manifest) = manifest.as_ref() {
+            self.store.write_source_document_atomic(
+                &document,
+                expected_revision,
+                &chunks,
+                SourceManifestWrite {
+                    canonical_path: &manifest.canonical_path,
+                    canonical_root: &manifest.canonical_root,
+                    size_bytes: manifest.size_bytes,
+                    mtime_ns: manifest.mtime_ns,
+                    content_hash: &content_hash,
+                    document_id: &document_id,
+                },
+            )?
+        } else {
+            self.store.write_document_atomic(
+                &document,
+                expected_revision,
+                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+            )?
+        };
+
+        Ok(IngestResult {
+            document_id,
+            chunk_count,
+            node_id: persisted.node_id.unwrap_or_default(),
+            edge_count: persisted.edge_count,
+            content_hash,
+            op: operation.into(),
+            revision: persisted.revision,
+            etag: crate::models::format_document_etag(persisted.revision),
+        })
+    }
+
+    fn prepare_ingest(
         &self,
         command: IngestCommand,
         manifest: Option<SourceManifestStamp>,
-    ) -> Result<IngestResult, AppError> {
+    ) -> Result<IngestPreparation, AppError> {
         self.ensure_vector_compatibility()?;
         let command = NormalizedIngest::try_from(command)?;
         let new_hash = content_hash(&command.text);
@@ -191,7 +324,7 @@ impl<'a> IngestService<'a> {
                         .find_node_by_document_id(&existing.id)?
                         .map(|node| node.id)
                         .unwrap_or_default();
-                    return Ok(IngestResult {
+                    return Ok(IngestPreparation::Complete(IngestResult {
                         document_id: existing.id,
                         chunk_count,
                         node_id,
@@ -200,7 +333,7 @@ impl<'a> IngestService<'a> {
                         op: "unchanged".into(),
                         revision: existing.revision,
                         etag,
-                    });
+                    }));
                 }
                 return Err(AppError::conflict(format!(
                         "raw source uri '{}' is immutable; content differs from registered source (document_id={})",
@@ -233,40 +366,17 @@ impl<'a> IngestService<'a> {
             content_hash: Some(new_hash.clone()),
             ..Default::default()
         };
-        let chunks = self.indexer.build_chunks(&document).await?;
-        let chunk_count = chunks.len();
-        let write = if let Some(manifest) = manifest.as_ref() {
-            self.store.write_source_document_atomic(
-                &document,
+        let chunks = self.indexer.prepare_chunks(&document);
+        Ok(IngestPreparation::Pending(PreparedIngest {
+            write: Box::new(PendingIngestWrite {
+                document,
                 expected_revision,
-                &chunks,
-                SourceManifestWrite {
-                    canonical_path: &manifest.canonical_path,
-                    canonical_root: &manifest.canonical_root,
-                    size_bytes: manifest.size_bytes,
-                    mtime_ns: manifest.mtime_ns,
-                    content_hash: &new_hash,
-                    document_id: &document_id,
-                },
-            )?
-        } else {
-            self.store.write_document_atomic(
-                &document,
-                expected_revision,
-                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-            )?
-        };
-
-        Ok(IngestResult {
-            document_id,
-            chunk_count,
-            node_id: write.node_id.unwrap_or_default(),
-            edge_count: write.edge_count,
-            content_hash: new_hash,
-            op: operation.into(),
-            revision: write.revision,
-            etag: crate::models::format_document_etag(write.revision),
-        })
+                operation,
+                content_hash: new_hash,
+                manifest,
+            }),
+            chunks,
+        }))
     }
 
     pub async fn reembed_document(

@@ -12,6 +12,52 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::models::{Chunk, Document};
 
+/// Chunk contents and metadata prepared before the fallible embedding call.
+///
+/// Keeping this storage-free representation lets source synchronization group
+/// several small documents into one provider request without duplicating the
+/// chunking and annotation policy used by ordinary ingest.
+pub(crate) struct PreparedDocumentChunks {
+    document_id: String,
+    pieces: Vec<PreparedChunk>,
+}
+
+struct PreparedChunk {
+    content: String,
+    char_start: i32,
+    char_end: i32,
+    metadata_json: String,
+}
+
+impl PreparedDocumentChunks {
+    pub(crate) fn len(&self) -> usize {
+        self.pieces.len()
+    }
+
+    fn into_chunks(self, embeddings: &mut impl Iterator<Item = Vec<f32>>) -> Vec<Chunk> {
+        let Self {
+            document_id,
+            pieces,
+        } = self;
+        pieces
+            .into_iter()
+            .enumerate()
+            .map(|(index, piece)| Chunk {
+                id: Uuid::new_v4().to_string(),
+                document_id: document_id.clone(),
+                chunk_index: index as i32,
+                content: piece.content,
+                embedding: embeddings
+                    .next()
+                    .expect("embedding count was validated before chunk assembly"),
+                char_start: piece.char_start,
+                char_end: piece.char_end,
+                metadata_json: piece.metadata_json,
+            })
+            .collect()
+    }
+}
+
 /// Builds indexable chunks for a document without performing database writes.
 pub struct DocumentIndexer<'a> {
     embedder: &'a dyn EmbeddingProvider,
@@ -42,42 +88,51 @@ impl<'a> DocumentIndexer<'a> {
             .await
     }
 
+    /// Prepare one document synchronously for a later shared embedding call.
+    pub(crate) fn prepare_chunks(&self, document: &Document) -> PreparedDocumentChunks {
+        self.prepare_chunks_with_profile(document, ChunkingProfile::Auto)
+    }
+
+    /// Embed several prepared documents in one provider call and map vectors
+    /// back to their original document/chunk order.
+    pub(crate) async fn embed_prepared_batch(
+        &self,
+        prepared: Vec<PreparedDocumentChunks>,
+    ) -> Result<Vec<Vec<Chunk>>> {
+        let expected = prepared
+            .iter()
+            .map(PreparedDocumentChunks::len)
+            .sum::<usize>();
+        if expected == 0 {
+            return Ok(prepared.into_iter().map(|_| Vec::new()).collect());
+        }
+
+        let texts = prepared
+            .iter()
+            .flat_map(|document| document.pieces.iter())
+            .map(|piece| piece.content.clone())
+            .collect::<Vec<_>>();
+        let embeddings = self.embedder.embed(&texts).await?;
+        ensure_vector_count(embeddings.len(), expected)?;
+
+        let mut embeddings = embeddings.into_iter();
+        Ok(prepared
+            .into_iter()
+            .map(|document| document.into_chunks(&mut embeddings))
+            .collect())
+    }
+
     async fn build_chunks_with_profile(
         &self,
         document: &Document,
         profile: ChunkingProfile,
     ) -> Result<Vec<Chunk>> {
-        let pieces = self.normalized_pieces(document, profile);
-        if pieces.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let section_metadata = markdown_section_metadata(&document.content, &pieces);
-        let texts = pieces
-            .iter()
-            .map(|(content, _, _)| content.clone())
-            .collect::<Vec<_>>();
-        let embeddings = self.embedder.embed(&texts).await?;
-        ensure_vector_count(embeddings.len(), pieces.len())?;
-
-        Ok(pieces
-            .into_iter()
-            .zip(embeddings)
-            .zip(section_metadata)
-            .enumerate()
-            .map(
-                |(index, (((content, char_start, char_end), embedding), metadata_json))| Chunk {
-                    id: Uuid::new_v4().to_string(),
-                    document_id: document.id.clone(),
-                    chunk_index: index as i32,
-                    content,
-                    embedding,
-                    char_start,
-                    char_end,
-                    metadata_json,
-                },
-            )
-            .collect())
+        let prepared = self.prepare_chunks_with_profile(document, profile);
+        Ok(self
+            .embed_prepared_batch(vec![prepared])
+            .await?
+            .pop()
+            .expect("one prepared document yields one chunk group"))
     }
 
     /// Refresh vectors for existing chunks while preserving ids and metadata.
@@ -107,6 +162,30 @@ impl<'a> DocumentIndexer<'a> {
         } else {
             let chunker = from_config(self.chunk_size, self.chunk_overlap);
             Chunker::chunk(&chunker, &document.content)
+        }
+    }
+
+    fn prepare_chunks_with_profile(
+        &self,
+        document: &Document,
+        profile: ChunkingProfile,
+    ) -> PreparedDocumentChunks {
+        let pieces = self.normalized_pieces(document, profile);
+        let section_metadata = markdown_section_metadata(&document.content, &pieces);
+        PreparedDocumentChunks {
+            document_id: document.id.clone(),
+            pieces: pieces
+                .into_iter()
+                .zip(section_metadata)
+                .map(
+                    |((content, char_start, char_end), metadata_json)| PreparedChunk {
+                        content,
+                        char_start,
+                        char_end,
+                        metadata_json,
+                    },
+                )
+                .collect(),
         }
     }
 }
