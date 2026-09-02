@@ -29,8 +29,10 @@ cargo run -p rag-mcp-ui -- --http http://127.0.0.1:7432
 # Offline topology only
 cargo run -p rag-mcp-ui -- --snapshot ./graph.json --seed "Note title"
 
-# Exclusive development mode; stop the gateway first
-cargo run -p rag-mcp-ui -- --db ./rag.duckdb --seed some-node-id
+# Exclusive maintenance mode; stop the gateway first
+cargo run -p rag-mcp-ui -- \
+  --db /Users/themoretheless/.local/share/rag-mcp/rag.duckdb \
+  --seed some-node-id
 ```
 
 Optional graph flags are `--seed`, `--depth` (default 1, clamped 1–3) and
@@ -128,13 +130,16 @@ Route payload details are documented in [`CONNECT.md`](CONNECT.md).
 
 ## Export a topology snapshot
 
-Snapshot export opens DuckDB exclusively. Stop the gateway or export from a
-copy.
+Snapshot export opens DuckDB exclusively. Prefer a verified offline backup. If
+the canonical DB must be used directly, stop the gateway first.
 
 ```bash
-cargo run -p rag-mcp-ui -- export --db ./rag.duckdb -o graph.json
-cargo run -p rag-mcp-ui -- export --db ./rag.duckdb --pkb -o pkb-graph.json
-cargo run -p rag-mcp-ui -- export --db ./rag.duckdb \
+cargo run -p rag-mcp-ui -- export \
+  --db /path/to/a/verified/offline-backup.duckdb -o graph.json
+cargo run -p rag-mcp-ui -- export \
+  --db /path/to/a/verified/offline-backup.duckdb --pkb -o pkb-graph.json
+cargo run -p rag-mcp-ui -- export \
+  --db /path/to/a/verified/offline-backup.duckdb \
   --max-nodes 500 --kinds document,stub -o graph.json
 ```
 

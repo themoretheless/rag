@@ -4,10 +4,13 @@ ChatGPT (Developer mode / Connectors) expects a **remote** streamable-HTTP or SS
 
 ## 1. Start the shared gateway
 
+Normally `local.rag-mcp` is already running. The foreground command below is a
+replacement only: stop that service first and run exactly one gateway.
+
 ```bash
 cd /Users/themoretheless/Documents/Sources/rag
 
-export RAG_DB_PATH=./rag.duckdb
+export RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 export RAG_HTTP_BIND=127.0.0.1:7432
 export RAG_HTTP_ONLY=true
 export RAG_TOOLS=spine
@@ -33,7 +36,7 @@ Local-only bind. For ChatGPT cloud you need a public HTTPS tunnel (e.g. ngrok, c
 
 | Client | Config |
 |--------|--------|
-| Claude Desktop | `"url": "http://127.0.0.1:7432/mcp"` |
+| Claude Desktop | `mcp-remote` stdio bridge → `http://127.0.0.1:7432/mcp` |
 | Claude Code | `"type": "http", "url": "http://127.0.0.1:7432/mcp"` |
 | ChatGPT | Connector URL `…/mcp` |
 | rag-mcp-ui | `--http http://127.0.0.1:7432` |

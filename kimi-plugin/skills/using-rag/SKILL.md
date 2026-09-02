@@ -43,7 +43,9 @@ and wiki slugs in answers that rely on the store.
 
 ## Environment
 
-Configured by the plugin wrapper (`bin/run.sh`): binary from `$RAG_BIN` /
-`~/.cargo/bin/rag-mcp` / repo release build; DB at `$RAG_DB_PATH` or
-`~/.local/share/rag-mcp/rag.duckdb`. One writer per DB file — do not run a second
-rag-mcp (or the UI in live `--db` mode) against the same file concurrently.
+The plugin manifest connects to the shared gateway at
+`http://127.0.0.1:7432/mcp`; that one process owns
+`~/.local/share/rag-mcp/rag.duckdb`. `bin/run.sh` is a guarded legacy helper for
+an explicitly requested isolated offline smoke only: it refuses a live gateway
+and defaults to a disposable temporary DB. Never run another rag-mcp or UI
+`--db` process against the canonical file concurrently.

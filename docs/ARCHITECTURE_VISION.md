@@ -410,7 +410,9 @@ crates/rag-mcp-ui/           optional native gateway client
 | Ports | MCP tool families and HTTP route clusters are split; composition roots remain |
 | Invariant tests | immutable raw, CAS, embedding failure and graph rollback paths are covered |
 
-The remaining L0 move is an ownership cleanup, not permission to rewrite the
+The residual L0 compatibility concentration is not scheduled work. Extract it
+only when a tested behavior slice meets the measurable rule in
+[`SOLID_DRY_AUDIT.md`](SOLID_DRY_AUDIT.md); it is never permission to rewrite the
 public raw-source contract.
 
 ### 8.2 Current reality (honest)
@@ -659,11 +661,11 @@ compile-first store.
 
 ### Current release gate
 
-Native Operations and revision inspection are integrated and their package
-tests are green. The remaining release gate is full-workspace test/strict
-Clippy evidence, a live one-writer rollout including sync/revision/backup
-recovery, and native visual QA at default and compact window sizes. The exact
-acceptance list lives in `ROADMAP.md`.
+The release remains open until every item in [`ROADMAP.md`](ROADMAP.md) is
+verified on the same final tree and live corpus. Record the final build, terminal
+source-sync outcome, one-writer rollout, verified backup and native QA there only
+after the final sync and deployment complete; package tests alone do not close
+the gate.
 
 ### Evidence-gated expansion
 

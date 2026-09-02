@@ -29,8 +29,11 @@ ollama pull nomic-embed-text   # optional local embeddings
 
 ## Env (recommended local stack)
 
+Apply these settings to the single `local.rag-mcp` gateway. They are not a
+recipe for a second wiki-specific database or process.
+
 ```bash
-export RAG_DB_PATH="$HOME/.local/share/rag-mcp/wiki.duckdb"
+export RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 export RAG_INGEST_ROOTS="$HOME/Notes:$HOME/Sources"
 
 # embeddings via Ollama OpenAI-compat (dims must match model)
@@ -96,5 +99,8 @@ export RAG_LLM_ENABLED=false
 ```bash
 cd /path/to/rag
 cargo build --release
-./target/release/rag-mcp   # MCP stdio
 ```
+
+Deploy/restart the one gateway as described in [`PROD_RUN.md`](PROD_RUN.md),
+then connect over `http://127.0.0.1:7432/mcp`. Do not launch this artifact as a
+second stdio writer while `local.rag-mcp` owns the canonical DB.

@@ -133,36 +133,57 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_MAINT_NEAR_DUP_THRESHOLD` | `0.92` | Cosine threshold for near-duplicate detection in `analyze_corpus` |
 | `RUST_LOG` | `info` | Tracing filter (`tracing-subscriber`, stderr only) |
 
+The built-in `RAG_DB_PATH` fallback is useful for isolated development only. On
+this workstation the production source of truth is
+`/Users/themoretheless/.local/share/rag-mcp/rag.duckdb`, owned by the single
+gateway at `http://127.0.0.1:7432`. Clients connect to that gateway and do not
+start their own `rag-mcp` process.
+
 ## Build and run
 
 Requirements: Rust stable (edition 2021), network for first build (DuckDB bundled C++).
 
 ```bash
 cargo build --release
-./target/release/rag-mcp
 ```
+
+Deploy/restart the one installed gateway with [`docs/PROD_RUN.md`](docs/PROD_RUN.md).
+Running `./target/release/rag-mcp` in the foreground is an exclusive replacement,
+not a second production process: stop `local.rag-mcp` first and pass the
+canonical `RAG_DB_PATH` explicitly.
 
 Debug:
 
 ```bash
-cargo run
+# isolated disposable smoke only, with the production gateway stopped
+RAG_DB_PATH=/tmp/rag-mcp-debug.duckdb cargo run
 ```
 
-The process speaks MCP on **stdio**. Do not write application logs to stdout.
+Without `RAG_HTTP_BIND`, the process serves MCP on **stdio**. With a bind it
+also serves HTTP, and `RAG_HTTP_ONLY=true` disables stdio. Application logs
+always stay on stderr.
 
 Default workspace members build **only** `rag-mcp` (no egui). The optional
 native client is a separate package; see [Optional native client](#optional-native-client-rag-mcp-ui).
 
 ### Offline smoke (mock embeddings)
 
+This intentionally uses a disposable database. Stop the production gateway
+first so the smoke cannot be mistaken for, or race, the live service.
+
 ```bash
 export RAG_EMBEDDING_PROVIDER=mock
-export RAG_DB_PATH=./rag.duckdb
+export RAG_DB_PATH=/tmp/rag-mcp-offline-smoke.duckdb
 export RAG_DEFAULT_SEARCH_MODE=hybrid
 cargo run
 ```
 
 ### OpenAI-compatible embeddings
+
+These settings belong to the one gateway. Changing embedding dimensions
+requires a fresh compatible corpus or a full re-index; do not start a second
+`cargo run` process against either the canonical DB or an implicit
+`./rag.duckdb`.
 
 ```bash
 export RAG_EMBEDDING_PROVIDER=openai
@@ -170,7 +191,7 @@ export RAG_EMBEDDING_API_KEY=sk-...
 export RAG_EMBEDDING_MODEL=text-embedding-3-small
 export RAG_EMBEDDING_DIMS=1536
 # optional: RAG_EMBEDDING_BASE_URL=https://api.openai.com/v1
-cargo run
+# Apply to local.rag-mcp and restart the single gateway via docs/PROD_RUN.md.
 ```
 
 ### Local Ollama (quick start)
@@ -186,8 +207,8 @@ ollama serve
 ollama pull llama3.2
 ollama pull nomic-embed-text
 
-# terminal 2
-export RAG_DB_PATH=./rag.duckdb
+# Configure/restart the one gateway; do not start a second process beside it.
+export RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 export RAG_EMBEDDING_PROVIDER=ollama
 export RAG_EMBEDDING_BASE_URL=http://127.0.0.1:11434
 export RAG_EMBEDDING_API_KEY=ollama
@@ -198,7 +219,10 @@ export RAG_LLM_BASE_URL=http://127.0.0.1:11434/v1
 export RAG_LLM_MODEL=llama3.2
 export RAG_LLM_API_KEY=ollama
 export RAG_INGEST_ROOTS=/absolute/path/to/vault
-cargo run
+export RAG_HTTP_BIND=127.0.0.1:7432
+export RAG_HTTP_ONLY=true
+# Foreground replacement only after stopping local.rag-mcp.
+./target/release/rag-mcp
 ```
 
 ## Local LLM + maintenance
@@ -320,21 +344,16 @@ Design depth: [`docs/LOCAL_LLM_MAINTENANCE.md`](docs/LOCAL_LLM_MAINTENANCE.md) (
 
 ## MCP client config examples
 
+The normal configuration is one already-running HTTP gateway for every client.
+The gateway owns the canonical DuckDB file; client processes never open it.
+
 **Zed** (`~/.config/zed/settings.json`, or Settings → AI → MCP Servers):
 
 ```json
 {
   "context_servers": {
     "rag-mcp": {
-      "command": "/absolute/path/to/rag-mcp",
-      "args": [],
-      "env": {
-        "RAG_DB_PATH": "/absolute/path/to/rag.duckdb",
-        "RAG_EMBEDDING_PROVIDER": "mock",
-        "RAG_INGEST_ROOTS": "/absolute/path/to/allowed",
-        "RAG_LLM_ENABLED": "false",
-        "RUST_LOG": "info"
-      }
+      "url": "http://127.0.0.1:7432/mcp"
     }
   }
 }
@@ -342,48 +361,35 @@ Design depth: [`docs/LOCAL_LLM_MAINTENANCE.md`](docs/LOCAL_LLM_MAINTENANCE.md) (
 
 Ready-made snippet: [`examples/zed.settings.json`](examples/zed.settings.json). After edit: open **Settings → AI → MCP Servers** and confirm green indicator for `rag-mcp`. In Agent Panel mention `rag-mcp` or enable its tools.
 
-Claude Desktop / Cursor-style MCP config (adjust the binary path):
+**Claude Code / HTTP-capable clients:**
 
 ```json
 {
   "mcpServers": {
     "rag-mcp": {
-      "command": "/absolute/path/to/rag-mcp",
-      "args": [],
-      "env": {
-        "RAG_DB_PATH": "/absolute/path/to/rag.duckdb",
-        "RAG_EMBEDDING_PROVIDER": "mock",
-        "RAG_DEFAULT_SEARCH_MODE": "hybrid",
-        "RUST_LOG": "info"
-      }
+      "type": "http",
+      "url": "http://127.0.0.1:7432/mcp"
     }
   }
 }
 ```
 
-With OpenAI embeddings:
+**Claude Desktop:** use the `mcp-remote` stdio bridge to the same gateway:
 
 ```json
 {
   "mcpServers": {
     "rag-mcp": {
-      "command": "/absolute/path/to/rag-mcp",
-      "args": [],
-      "env": {
-        "RAG_DB_PATH": "/absolute/path/to/rag.duckdb",
-        "RAG_EMBEDDING_PROVIDER": "openai",
-        "RAG_EMBEDDING_API_KEY": "sk-...",
-        "RAG_EMBEDDING_MODEL": "text-embedding-3-small",
-        "RAG_EMBEDDING_DIMS": "1536",
-        "RAG_INGEST_ROOTS": "/absolute/path/to/vault",
-        "RUST_LOG": "info"
-      }
+      "command": "npx",
+      "args": ["-y", "mcp-remote@0.1.38", "http://127.0.0.1:7432/mcp"]
     }
   }
 }
 ```
 
-Also see [`examples/mcp.client.json`](examples/mcp.client.json).
+Ready-made gateway examples live under [`examples/`](examples). Direct stdio is
+an exclusive offline/legacy mode only: stop the gateway first and use an
+explicit disposable database or the canonical database with no other owner.
 
 ## MCP tools (implemented)
 
@@ -613,7 +619,9 @@ cargo build -p rag-mcp-ui
 cargo run -p rag-mcp-ui -- --http http://127.0.0.1:7432
 cargo run -p rag-mcp-ui -- --snapshot ./graph.json --seed "Note title"
 # exclusive live DB only when MCP is not holding the file:
-cargo run -p rag-mcp-ui -- --db ./rag.duckdb --seed some-node-id
+cargo run -p rag-mcp-ui -- \
+  --db /Users/themoretheless/.local/share/rag-mcp/rag.duckdb \
+  --seed some-node-id
 ```
 
 Use exactly one of `--http`, `--snapshot`, or `--db`. Optional graph flags are
@@ -626,9 +634,11 @@ server never persists canvas coordinates.
 Mode C dump (topology only, same shape as MCP `get_graph`). Exclusive open; path printed on stdout:
 
 ```bash
-# Prefer with MCP stopped, or export from a copy of the DB file.
-cargo run -p rag-mcp-ui -- export --db ./rag.duckdb -o graph.json
-cargo run -p rag-mcp-ui -- export --db ./rag.duckdb --pkb -o pkb-graph.json
+# Prefer a verified offline backup. Stop the gateway before opening live DB.
+cargo run -p rag-mcp-ui -- export \
+  --db /path/to/a/verified/offline-backup.duckdb -o graph.json
+cargo run -p rag-mcp-ui -- export \
+  --db /path/to/a/verified/offline-backup.duckdb --pkb -o pkb-graph.json
 cargo run -p rag-mcp-ui -- --snapshot graph.json --seed "Note title"
 ```
 

@@ -45,8 +45,8 @@ one backlinks query per raw document.
 `SourceSyncService` owns allowlist validation, scan policy, manifest preflight,
 repair detection and explicit deleted-source pruning. The source-manifest
 repository owns its SQL and root summaries. Progress/cancellation is a service
-contract, while `http_api::jobs` owns process-local lifecycle, retention,
-admission and the serialized background writer lane.
+contract, while `http_api::jobs` owns process-local lifecycle, retention and
+admission. The Store owns the shared source-sync/retrieval coordination lane.
 
 The Store owns a process-local read/write coordination lane: a source sync keeps
 the write guard for its complete run, while `lex`/`hybrid` acquire a non-blocking

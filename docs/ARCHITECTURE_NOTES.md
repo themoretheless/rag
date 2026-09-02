@@ -437,9 +437,9 @@ lint, memory depth, recovery, source sync, HTTP MCP and the native client. They
 are historical sequence labels, not remaining work.
 
 Current release acceptance and the only evidence-gated candidates live in
-[`ROADMAP.md`](ROADMAP.md). In particular, VSS/HNSW is not scheduled while the
-A recorded local 100,111-chunk exact-search observation remains below the
-300 ms p95 gate; a representative rerun is required before an ANN decision.
+[`ROADMAP.md`](ROADMAP.md). In particular, VSS/HNSW is not scheduled while a
+recorded local 100,111-chunk exact-search observation remains below the 300 ms
+p95 gate; a representative rerun is required before an ANN decision.
 
 Architecture continues through additive migrations and tested seams, not a
 rewrite.

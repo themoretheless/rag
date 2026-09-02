@@ -1,5 +1,12 @@
 # RAG MCP Server (Rust + DuckDB)
 
+> **Historical implementation contract.** This file preserves the original v1
+> target and is not current runtime documentation or an execution backlog.
+> Current behavior is owned by [`README.md`](README.md) and
+> [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md); current release gates and the only
+> scheduled/evidence-gated candidates live in
+> [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
 ## Goal
 
 Local stdio MCP server for Retrieval-Augmented Generation + Obsidian-like object graph:

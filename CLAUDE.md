@@ -21,7 +21,10 @@ Notes:
 - **`RAG_WIKI_REQUIRE_IF_MATCH`** (default **false**): when `true`, wiki page **updates** reject missing `if_match_revision` / `if_match_etag` (creates may still omit). Enable for multi-agent / multi-LLM setups.
 - If both `if_match_revision` and `if_match_etag` are set, **revision wins**.
 - MCP maps store `Conflict` to `invalid_params` (not a distinct conflict code). Treat that as CAS failure: re-get and retry. Missing if_match under require mode is a config/invalid-params style error, not conflict.
-- HTTP exposes wiki GET (and revision/etag) but has **no** write/If-Match routes; wiki writes are MCP-only.
+- HTTP exposes wiki GET plus CAS-protected `PUT /v1/wiki` with
+  `if_match_revision` / `if_match_etag`; stale writes return `409`. Agents should
+  still prefer the MCP wiki tools and always use read-then-CAS when concurrent
+  writers may run.
 - Internal ingest upserts often call CAS with `if_match=None`; that path is last-write-wins for raw docs. Wiki agent writes are the concurrency-sensitive path.
 
 ## Hooks queue and flush (Claude Code)

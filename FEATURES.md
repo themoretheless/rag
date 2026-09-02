@@ -1,5 +1,11 @@
 # rag-mcp Feature Research Report
 
+> **Historical research snapshot.** “Add next”, P0/P1/P2 and proposed DDL below
+> record the 2026-07-29 analysis; they are not current capability status or an
+> active backlog. Use [`README.md`](README.md) and
+> [`docs/SYSTEM_MAP.md`](docs/SYSTEM_MAP.md) for shipped behavior, and
+> [`docs/ROADMAP.md`](docs/ROADMAP.md) for the only current gates/candidates.
+
 **Product:** `rag-mcp` (Rust + DuckDB, stdio MCP)  
 **Date:** 2026-07-29  
 **Scope:** Karpathy LLM Wiki, MemPalace (Jovovich), retrieval/graph/ops/diff theme syntheses + ~100-repo pattern survey  

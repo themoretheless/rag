@@ -2,11 +2,16 @@
 
 Binary paths (after release build):
 
-| Binary | Path |
-|--------|------|
-| MCP server | `target/release/rag-mcp` |
-| Graph UI | `target/release/rag-mcp-ui` |
-| DB | `./rag.duckdb` (or absolute path) |
+| Artifact | Path |
+|----------|------|
+| Built MCP server | `target/release/rag-mcp` |
+| Installed live gateway | `/Users/themoretheless/.local/bin/rag-mcp` |
+| Built Graph UI | `target/release/rag-mcp-ui` |
+| Canonical live DB | `/Users/themoretheless/.local/share/rag-mcp/rag.duckdb` |
+
+The launchd service `local.rag-mcp` owns the canonical DB. All normal clients
+use `http://127.0.0.1:7432`; they do not start another binary or choose another
+database path.
 
 ---
 
@@ -22,10 +27,11 @@ cargo build --release -p rag-mcp-ui
 
 ## 2. MCP for agents (Claude Desktop / Code / Zed)
 
-**Prod-ish env example** (semantic search via Ollama; spine tools):
+The production environment belongs to the one gateway service, not to each MCP
+client. Its effective store/embedding configuration is equivalent to:
 
 ```bash
-export RAG_DB_PATH=/Users/themoretheless/Documents/Sources/rag/rag.duckdb
+export RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 export RAG_EMBEDDING_PROVIDER=ollama
 export RAG_EMBEDDING_BASE_URL=http://127.0.0.1:11434
 export RAG_EMBEDDING_MODEL=nomic-embed-text
@@ -37,23 +43,26 @@ export RAG_LLM_ENABLED=false
 export RUST_LOG=info
 ```
 
-Клиент запускает **только** binary (stdio), не `cargo run`:
+Clients connect to the already-running gateway:
 
 ```text
-command = /Users/themoretheless/Documents/Sources/rag/target/release/rag-mcp
+Zed / Claude Code: http://127.0.0.1:7432/mcp
+Claude Desktop: mcp-remote → http://127.0.0.1:7432/mcp
 ```
 
-Те же env: в `claude_desktop_config.json` / `.mcp.json` / Zed `context_servers`.
-
-Ручной smoke:
+For an isolated stdio smoke only, stop the gateway first and use a disposable
+database that cannot be confused with production:
 
 ```bash
-# не для продакшена UI: только проверка, что process стартует
+RAG_DB_PATH=/tmp/rag-mcp-offline-smoke.duckdb \
+RAG_EMBEDDING_PROVIDER=mock \
+RAG_INGEST_ROOTS=/tmp \
 ./target/release/rag-mcp
 # Ctrl+C: MCP ждёт JSON-RPC на stdin
 ```
 
-**Предпочтительный prod:** один HTTP gateway (§3) + клиенты через `mcp-remote` / URL, а не отдельный stdio process на тот же `.duckdb` (см. `docs/CONNECT.md`).
+Delete the disposable file after the smoke. Do not point a client-launched
+stdio process at the canonical DB while `local.rag-mcp` is running.
 
 ---
 
@@ -120,12 +129,13 @@ proxy and auth you trust.
 
 ### 3b. Рекомендуется (shared server)
 
-**Терминал 1: сервер (без stdio):**
+Normally launchd already runs this service. The foreground form below is only a
+replacement for it: stop `local.rag-mcp` first, then run exactly one process.
 
 ```bash
 cd /Users/themoretheless/Documents/Sources/rag
 
-export RAG_DB_PATH=./rag.duckdb
+export RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 export RAG_HTTP_BIND=127.0.0.1:7432
 export RAG_HTTP_ONLY=true
 export RAG_TOOLS=spine
@@ -166,8 +176,13 @@ Snapshot mode has graph only (no live wiki catalog / backlinks).
 
 ### 3d. Только UI (exclusive live DB, MCP выключен)
 
+This maintenance mode is allowed only after the gateway has stopped and no
+process owns the canonical file:
+
 ```bash
-./target/release/rag-mcp-ui --db ./rag.duckdb --seed "SEED"
+./target/release/rag-mcp-ui \
+  --db /Users/themoretheless/.local/share/rag-mcp/rag.duckdb \
+  --seed "SEED"
 ```
 
 Seed: title wiki/note, `node_id` или `document_id` (из `list_documents` / `list_wiki_pages` / `GET /v1/wiki`).
@@ -181,7 +196,8 @@ Do not use `--db` while another process holds the same DuckDB (single writer).
 
 ```bash
 rag-mcp-ui --http http://127.0.0.1:7432
-# or exclusive: rag-mcp-ui --db ./rag.duckdb
+# exclusive maintenance only after stopping the gateway:
+# rag-mcp-ui --db /Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 ```
 
 With `--http`, the app opens on **Home** and exposes Home, Library, Search,
@@ -228,7 +244,7 @@ export RAG_TOOLS=full
 | Шаг | Действие |
 |-----|----------|
 | 1 | `ollama serve` + model embeddings (если не mock) |
-| 2 | Gateway: `RAG_HTTP_ONLY=true RAG_HTTP_BIND=127.0.0.1:7432` + `target/release/rag-mcp` |
+| 2 | Gateway: confirm the single `local.rag-mcp` service is ready on `127.0.0.1:7432` |
 | 3 | Clients: Claude / Code / Zed → `http://127.0.0.1:7432/mcp` (mcp-remote or connector; see `docs/CONNECT.md`) |
 | 4 | UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Wiki + Graph) |
 | 5 | Работа: ingest, wiki, search (MCP); browse via UI or `GET /v1/*` |
@@ -247,13 +263,14 @@ existing documents является conflict и откатывает всю impo
 
 ## 7. Одной строкой (copy-paste)
 
-Gateway + UI (shared DB, preferred):
+Foreground gateway + UI (shared DB; only after stopping `local.rag-mcp`):
 
 ```bash
 cd /Users/themoretheless/Documents/Sources/rag
 cargo build --release -p rag-mcp -p rag-mcp-ui
 # terminal 1:
-RAG_DB_PATH=./rag.duckdb RAG_HTTP_BIND=127.0.0.1:7432 RAG_HTTP_ONLY=true \
+RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb \
+  RAG_HTTP_BIND=127.0.0.1:7432 RAG_HTTP_ONLY=true \
   RAG_TOOLS=spine RAG_EMBEDDING_PROVIDER=mock RAG_LLM_ENABLED=false \
   ./target/release/rag-mcp
 # terminal 2:
@@ -263,7 +280,9 @@ RAG_DB_PATH=./rag.duckdb RAG_HTTP_BIND=127.0.0.1:7432 RAG_HTTP_ONLY=true \
 Snapshot-only (no live DB):
 
 ```bash
-./target/release/rag-mcp-ui export --db ./rag.duckdb -o ./graph.json
+./target/release/rag-mcp-ui export \
+  --db /path/to/a/verified/offline-backup.duckdb \
+  -o ./graph.json
 ./target/release/rag-mcp-ui --snapshot ./graph.json --seed "SEED"
 ```
 

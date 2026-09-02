@@ -4,64 +4,57 @@
 
 | Field | Value |
 |-------|--------|
-| wing | `projects` |
-| room | `downloader` |
-| uri scheme | `project://projects/downloader/<relpath>` |
-| default DB | `data/downloader.duckdb` (or shared `rag.duckdb`) |
+| project / wing | `downloader` |
+| room | derived subdirectory or `root` |
+| source root | `/Users/themoretheless/Documents/Sources/downloader` |
+| database | canonical shared gateway store |
 
-## Ingest (one shot)
+Downloader is a project partition inside the main corpus, not a separate MCP
+server or DuckDB file.
 
-From the rag repo:
+## Sync through the gateway
 
-```bash
-mkdir -p data
-export RAG_DB_PATH="$PWD/data/downloader.duckdb"
-export RAG_EMBEDDING_PROVIDER=mock
-export RAG_EMBEDDING_DIMS=64
-export RAG_INGEST_ROOTS="/Users/themoretheless/Documents/Sources/downloader"
-
-cargo run --release --bin ingest_project -- \
-  --root /Users/themoretheless/Documents/Sources/downloader \
-  --wing projects \
-  --room downloader
-```
-
-Dry-run file list:
+The running `local.rag-mcp` service must already allow the source root through
+`RAG_INGEST_ROOTS`. Submit an incremental job to its sole-writer API:
 
 ```bash
-cargo run --release --bin ingest_project -- \
-  --root /Users/themoretheless/Documents/Sources/downloader \
-  --wing projects --room downloader --dry-run
+curl -sS -X POST http://127.0.0.1:7432/v1/jobs/sync \
+  -H 'content-type: application/json' \
+  --data '{
+    "path": "/Users/themoretheless/Documents/Sources/downloader",
+    "wing": "downloader",
+    "room": null,
+    "remove_deleted": false
+  }'
 ```
 
-Skips: `target/`, `.git/`, `.grok/`, large files (>512 KiB by default).  
-Extensions: `rs,md,toml,txt,json,yml,yaml,js,ts,html,css,sh,rhai`.
-
-With Ollama embeddings (optional):
+Poll the returned job id until it reaches a terminal state: `succeeded`,
+`completed_with_errors`, `failed`, or `cancelled`. For the latter two, inspect
+the returned `error` and partial `report` before retrying:
 
 ```bash
-export RAG_EMBEDDING_PROVIDER=ollama
-export RAG_EMBEDDING_BASE_URL=http://127.0.0.1:11434/v1
-export RAG_EMBEDDING_API_KEY=ollama
-export RAG_EMBEDDING_MODEL=nomic-embed-text
-export RAG_EMBEDDING_DIMS=768
-# re-run ingest_project (same uri → rewrite chunks)
+curl -sS http://127.0.0.1:7432/v1/jobs/JOB_ID
 ```
+
+Embedding provider/model/dimensions come from the shared gateway. Do not start a
+project-specific process with different embedding settings.
 
 ## MCP client
 
-See [`examples/downloader.mcp.json`](../examples/downloader.mcp.json).
+For Claude Code and other HTTP-capable clients, see
+[`examples/downloader.mcp.json`](../examples/downloader.mcp.json). It connects to
+the shared gateway and does not carry a database path. Claude Desktop uses the
+`mcp-remote` bridge shown in [`CONNECT.md`](CONNECT.md).
 
 Search scoped to this project:
 
 ```text
-search query="queue lock" wing=projects room=downloader mode=hybrid
-list_documents wing=projects room=downloader
-list_sources wing=projects room=downloader
+search query="queue lock" wing=downloader mode=hybrid
+list_documents wing=downloader
+list_sources wing=downloader
 ```
 
-## Re-ingest after code changes
+## Actualize after code changes
 
-Same command is idempotent by uri (`project://projects/downloader/...`):
-content change rewrites chunks; same content is a cheap re-register for
-immutable raw paths depending on store policy.
+Submit the same source-sync job. Manifest preflight skips healthy unchanged
+files; changed content is committed under the existing project partition.

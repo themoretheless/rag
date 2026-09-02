@@ -27,7 +27,8 @@
 |-----|------|
 | Репо | `/Users/themoretheless/Documents/Sources/rag` |
 | Binary | `.../target/release/rag-mcp` |
-| База | `.../rag.duckdb` |
+| Canonical live DB | `/Users/themoretheless/.local/share/rag-mcp/rag.duckdb` |
+| Gateway | `http://127.0.0.1:7432` (`local.rag-mcp`) |
 
 ---
 
@@ -66,7 +67,7 @@ query_with_index → search_wiki → search → neighbors → get_document → p
 Минимум (smoke, без API):
 
 ```bash
-RAG_DB_PATH=/Users/themoretheless/Documents/Sources/rag/rag.duckdb
+RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 RAG_EMBEDDING_PROVIDER=mock
 RAG_INGEST_ROOTS=/Users/themoretheless/Documents/Sources/rag,/Users/themoretheless/Documents
 RAG_TOOLS=spine
@@ -85,8 +86,9 @@ RAG_EMBEDDING_DIMS=768
 RAG_EMBEDDING_API_KEY=ollama
 ```
 
-Один и тот же `RAG_DB_PATH` = общая база у Desktop / Code / Zed.  
-Не гоняй несколько **stdio**-процессов одновременно на один файл.
+Это env **единственного gateway**, а не каждого клиента. Desktop / Code / Zed
+используют его `/mcp`; не запускай клиентские **stdio**-процессы рядом с
+`local.rag-mcp`.
 
 ---
 
@@ -94,11 +96,14 @@ RAG_EMBEDDING_API_KEY=ollama
 
 ### 4a. Рекомендуется: remote MCP → уже запущенный сервер
 
-Сначала подними **один** gateway (см. `docs/PROD_RUN.md` §3):
+Используй уже запущенный `local.rag-mcp`. Команда ниже нужна только как
+foreground replacement: сначала останови service, затем подними **один** gateway
+(см. `docs/PROD_RUN.md` §3):
 
 ```bash
 RAG_HTTP_ONLY=true RAG_HTTP_BIND=127.0.0.1:7432 \
-  RAG_DB_PATH=.../rag.duckdb ... ./target/release/rag-mcp
+  RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb \
+  ... ./target/release/rag-mcp
 ```
 
 **Файл:** `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -129,9 +134,11 @@ Gateway уже должен слушать `:7432` (`RAG_HTTP_ONLY=true`).
 
 Пример: `examples/claude-desktop.http.mcp.json`.
 
-### 4b. Legacy: local stdio (Claude сам стартует binary)
+### 4b. Legacy: exclusive local stdio (Claude сам стартует binary)
 
-Только если **не** крутится другой writer на тот же DB:
+Только для offline/legacy работы: сначала полностью останови `local.rag-mcp` и
+убедись, что другого owner у canonical DB нет. Не используй этот блок параллельно
+с gateway.
 
 ```json
 {
@@ -140,7 +147,7 @@ Gateway уже должен слушать `:7432` (`RAG_HTTP_ONLY=true`).
       "command": "/Users/themoretheless/Documents/Sources/rag/target/release/rag-mcp",
       "args": [],
       "env": {
-        "RAG_DB_PATH": "/Users/themoretheless/Documents/Sources/rag/rag.duckdb",
+        "RAG_DB_PATH": "/Users/themoretheless/.local/share/rag-mcp/rag.duckdb",
         "RAG_HTTP_BIND": "127.0.0.1:7432",
         "RAG_EMBEDDING_PROVIDER": "mock",
         "RAG_INGEST_ROOTS": "/Users/themoretheless/Documents/Sources/rag,/Users/themoretheless/Documents",
@@ -160,7 +167,10 @@ Gateway уже должен слушать `:7432` (`RAG_HTTP_ONLY=true`).
 3. Открыть снова → новый чат.
 4. Проверить tools / MCP → **rag-mcp** в списке.
 
-Пример stdio: `examples/claude-desktop.mcp.json`.
+Standalone examples use the safe shared-gateway bridge:
+`examples/claude-desktop.mcp.json` and
+`examples/claude-desktop.http.mcp.json`. The exclusive stdio block above is kept
+only as an explicitly guarded legacy reference.
 
 ---
 
@@ -216,14 +226,15 @@ claude mcp list
 claude mcp get rag-mcp
 ```
 
-### 5c. User-wide stdio (legacy, все проекты)
+### 5c. User-wide stdio (exclusive legacy, все проекты)
 
-Только если **нет** другого writer на `rag.duckdb` (и нет shared gateway):
+Только offline и только после полной остановки `local.rag-mcp`; canonical DB не
+может одновременно принадлежать shared gateway и этому stdio process:
 
 ```bash
 claude mcp add rag-mcp \
   -s user \
-  -e RAG_DB_PATH=/Users/themoretheless/Documents/Sources/rag/rag.duckdb \
+  -e RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb \
   -e RAG_EMBEDDING_PROVIDER=mock \
   -e RAG_INGEST_ROOTS=/Users/themoretheless/Documents/Sources/rag,/Users/themoretheless/Documents \
   -e RAG_TOOLS=spine \

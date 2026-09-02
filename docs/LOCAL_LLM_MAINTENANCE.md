@@ -2,7 +2,10 @@
 
 **Goal:** run models **on your machine** (Ollama / LM Studio / llama.cpp OpenAI-compatible), then use them to **analyze, organize, improve, compress, and refresh** both the wiki and the DuckDB (or vault) store.
 
-**Status:** design + partial code (`src/llm`, wiki compile hooks, FTS reindex, doctor). Full maintenance loop = this doc + implementation workflow.
+**Status:** historical design and operating notes. Current shipped behavior is
+owned by [`README.md`](../README.md), [`SYSTEM_MAP.md`](SYSTEM_MAP.md), and the
+code. The phase labels below record the original delivery sequence; they are not
+an active backlog or a source of roadmap commitments.
 
 **Product stance:** optional server-side chat for maintain/compile helpers, **not** mandatory graph NER. Default knowledge author remains the MCP client LLM via wiki tools. See [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) §1.9 · [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) §8.
 
@@ -236,7 +239,10 @@ src/maintain/
 
 ---
 
-## 7. Phased delivery
+## 7. Historical delivery sequence
+
+These labels explain how the maintenance surface arrived. Current scheduling is
+only in [`ROADMAP.md`](ROADMAP.md).
 
 | Phase | Deliverable |
 |-------|-------------|
@@ -249,7 +255,7 @@ src/maintain/
 
 ---
 
-## 8. Example session (local)
+## 8. Example session (shared local gateway)
 
 ```bash
 # Terminal 1
@@ -257,8 +263,9 @@ ollama serve
 ollama pull llama3.2
 ollama pull nomic-embed-text
 
-# Terminal 2
-# Preferred: native Ollama embeddings (POST /api/embed, fallback /api/embeddings)
+# Configure these values on the one local.rag-mcp gateway, then restart it.
+# Do not launch a second rag-mcp process.
+export RAG_DB_PATH=/Users/themoretheless/.local/share/rag-mcp/rag.duckdb
 export RAG_EMBEDDING_PROVIDER=ollama
 export RAG_EMBEDDING_BASE_URL=http://127.0.0.1:11434
 export RAG_EMBEDDING_MODEL=nomic-embed-text
@@ -270,8 +277,9 @@ export RAG_EMBEDDING_API_KEY=ollama
 # Or: RAG_EMBEDDING_PROVIDER=ollama with BASE_URL ending in /v1 (uses same OpenAI path)
 export RAG_LLM_BASE_URL=http://127.0.0.1:11434/v1
 export RAG_LLM_MODEL=llama3.2
-export RAG_DB_PATH=./rag.duckdb
-./target/release/rag-mcp
+
+# After the configured gateway is restarted:
+curl -sS http://127.0.0.1:7432/ready
 ```
 
 Agent tools:

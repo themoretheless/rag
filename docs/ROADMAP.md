@@ -40,6 +40,10 @@ same tree:
    and all Operations tabs at default and compact window sizes against the live
    gateway.
 
+**Final release evidence:** pending terminal full-source sync, final installed
+gateway rollout and verified final backup. Fill this only with evidence from the
+same final tree; do not infer closure from an earlier candidate build.
+
 ## Evidence-gated future work
 
 These are the only standing engineering candidates. They become scheduled work
