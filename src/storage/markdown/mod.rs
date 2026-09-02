@@ -6,6 +6,7 @@
 
 use std::ffi::OsStr;
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -14,11 +15,39 @@ use crate::{AppError, Document};
 
 use super::{BackendKind, BackendMetadata, Storage, StorageCapability};
 
+const SIDECAR_SCHEMA_VERSION: u32 = 1;
+const SIDECAR_DIRECTORY: &str = ".rag";
+const SIDECAR_FILE: &str = "documents.v1.jsonl";
+
 pub(super) const CAPABILITIES: &[StorageCapability] = &[StorageCapability::Documents];
 
 #[derive(Debug)]
 pub struct MarkdownVaultStorage {
     root: PathBuf,
+}
+
+/// One rebuildable lexical index entry. Markdown and frontmatter remain the
+/// source of truth; no content is read back from this sidecar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultIndexEntry {
+    pub schema_version: u32,
+    pub document_id: String,
+    pub relative_path: String,
+    pub content_hash: String,
+    pub title: String,
+    pub layer: String,
+    pub kind: String,
+    pub word_count: usize,
+    pub heading_count: usize,
+    pub wikilink_count: usize,
+    pub terms: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultReindexReport {
+    pub index_path: PathBuf,
+    pub documents_indexed: usize,
+    pub schema_version: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,6 +89,72 @@ impl MarkdownVaultStorage {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Rebuild `.rag/documents.v1.jsonl` from safe Markdown files in stable
+    /// path order and atomically replace the previous sidecar.
+    pub fn reindex(&self) -> Result<VaultReindexReport, AppError> {
+        let mut entries = Vec::new();
+        let mut ids = std::collections::BTreeSet::new();
+        for path in self.markdown_files()? {
+            let canonical = fs::canonicalize(&path)?;
+            if !canonical.starts_with(&self.root) {
+                return Err(AppError::forbidden(format!(
+                    "markdown index path '{}' escapes vault root",
+                    path.display()
+                )));
+            }
+            let relative = canonical.strip_prefix(&self.root).map_err(|_| {
+                AppError::forbidden("markdown index path escapes vault root")
+            })?;
+            let relative_path = relative.to_str().ok_or_else(|| {
+                AppError::config(format!(
+                    "markdown index path '{}' is not valid UTF-8",
+                    relative.display()
+                ))
+            })?;
+            let document = Self::read_document(&canonical)?;
+            if !ids.insert(document.id.clone()) {
+                return Err(AppError::conflict(format!(
+                    "duplicate markdown documents use id '{}'",
+                    document.id
+                )));
+            }
+            entries.push(VaultIndexEntry::from_document(
+                relative_path,
+                &document,
+            ));
+        }
+
+        let sidecar_directory = self.root.join(SIDECAR_DIRECTORY);
+        fs::create_dir_all(&sidecar_directory)?;
+        let destination = sidecar_directory.join(SIDECAR_FILE);
+        let temporary = sidecar_directory.join(format!(
+            ".{SIDECAR_FILE}.{}.tmp",
+            uuid::Uuid::new_v4()
+        ));
+        let write_result = (|| -> Result<(), AppError> {
+            let file = fs::File::create(&temporary)?;
+            let mut writer = BufWriter::new(file);
+            for entry in &entries {
+                serde_json::to_writer(&mut writer, entry)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+            writer.get_ref().sync_all()?;
+            fs::rename(&temporary, &destination)?;
+            Ok(())
+        })();
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        write_result?;
+
+        Ok(VaultReindexReport {
+            index_path: destination,
+            documents_indexed: entries.len(),
+            schema_version: SIDECAR_SCHEMA_VERSION,
+        })
     }
 
     fn document_path(&self, document: &Document) -> PathBuf {
@@ -139,6 +234,41 @@ impl MarkdownVaultStorage {
             }
         }
         Ok(found)
+    }
+}
+
+impl VaultIndexEntry {
+    fn from_document(relative_path: &str, document: &Document) -> Self {
+        let terms = document
+            .title
+            .split(|character: char| !character.is_alphanumeric())
+            .chain(
+                document
+                    .content
+                    .split(|character: char| !character.is_alphanumeric()),
+            )
+            .filter(|term| !term.is_empty())
+            .map(|term| term.to_lowercase())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Self {
+            schema_version: SIDECAR_SCHEMA_VERSION,
+            document_id: document.id.clone(),
+            relative_path: relative_path.replace(std::path::MAIN_SEPARATOR, "/"),
+            content_hash: crate::util::content_hash(&document.content),
+            title: document.title.clone(),
+            layer: document.layer.clone(),
+            kind: document.kind.clone(),
+            word_count: document.content.split_whitespace().count(),
+            heading_count: document
+                .content
+                .lines()
+                .filter(|line| line.trim_start().starts_with('#'))
+                .count(),
+            wikilink_count: document.content.match_indices("[[").count(),
+            terms,
+        }
     }
 }
 

@@ -6,7 +6,7 @@
 
 **Principles:** one logical store, pluggable physical backend. See [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) §1.2 · [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) · map: [`SYSTEM_MAP.md`](SYSTEM_MAP.md) §6.  
 
-Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the production adapter through the existing factory. The backend-neutral factory also supports opt-in `markdown` document CRUD when an explicit `RAG_VAULT_PATH` is set. `sqlite`, `postgres`, and `memory` remain recognized migration targets that fail explicitly. Markdown files and their frontmatter are the source of truth; search, chunks, graph, transactions, sidecars, and file watching are not yet adapter capabilities.
+Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the production adapter through the existing factory. The backend-neutral factory also supports opt-in `markdown` document CRUD when an explicit `RAG_VAULT_PATH` is set. `sqlite`, `postgres`, and `memory` remain recognized migration targets that fail explicitly. Markdown files and their frontmatter are the source of truth; search, chunks, graph, transactions, vectors, and file watching are not yet adapter capabilities. The Markdown adapter can rebuild a lightweight lexical JSONL sidecar without changing the default runtime.
 Remote vector DB alone is **not** the primary source of truth; DuckDB (or markdown vault / SQL) remains SoT for documents and graph.
 
 ---
@@ -183,6 +183,7 @@ $RAG_VAULT_PATH/                    # or RAG_DB_PATH when backend=markdown
     concepts/
   notes/                            # general notes (layer flexible)
   .rag/                             # machine sidecars (gitoptional)
+    documents.v1.jsonl              # deterministic lexical metadata; rebuildable
     manifest.json                   # embed model/dims, schema_version
     embeddings.duckdb               # optional: vectors only (hybrid mode)
     # OR embeddings.jsonl           # portable: {chunk_id, path, start, end, vec}
@@ -242,6 +243,8 @@ Recommended default: **Markdown + small DuckDB/SQLite sidecar** under `.rag/` so
 2. **Wiki files**: agent tools may write/update; always rewrite frontmatter + body atomically (temp file + rename).
 3. **Sidecar**: never hand-edited; rebuildable via `reindex` / `rebuild_index` / `doctor --repair`.
 4. **External Obsidian edits**: detect mtime/content_hash mismatch → invalidate chunk embeddings for that file; optional file watcher (P2).
+
+`MarkdownVaultStorage::reindex` scans regular `.md` files in sorted path order, skips symlinks and every `.rag` subtree, rejects canonical paths outside the vault, and atomically replaces `.rag/documents.v1.jsonl`. Each versioned JSONL record contains the frontmatter document ID, relative path, a BLAKE3 body hash, and small lexical fields (title/layer/kind, counts, and sorted unique terms). The sidecar contains no vectors and is always disposable.
 
 ### Graph
 
