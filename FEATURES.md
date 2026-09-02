@@ -26,8 +26,8 @@ Research across Karpathy-style **compile-once wikis**, MemPalace-style **palace 
 | Single binary, stdio MCP, zero Python | FTS/BM25 + hybrid RRF search | External vector DBs, Chroma multi-backend |
 | DuckDB single file, embeddings JSON | Wing/room scoped metadata columns | Mandatory LLM entity extract (cognify) |
 | Wikilink + tag + stub graph | Immutable raw + LLM wiki compile layer | AAAK dialect, 36-tool palace rename |
-| mock \| openai embeddings | Content-hash idempotent ingest | PDF parsers, local ONNX embed (later ops) |
-| Graph tools (neighbors/backlinks/…) | Lint suite + resolve_stub | Multi-tenant auth, HTTP MCP (v1) |
+| mock \| openai embeddings | Content-hash idempotent ingest | Local ONNX embed (later ops) |
+| Graph tools (neighbors/backlinks/…) | Lint suite + resolve_stub | Multi-tenant auth (v1) |
 | Brute-force cosine OK for personal corpus | Append-only ops/wiki log + index.md catalog | HNSW/VSS until scale hurts |
 
 **Top conflict resolved:** Karpathy theme says *anti-RAG / compile-once* as P0 and demotes hybrid; retrieval theme says hybrid BM25 is P0. **Resolution for rag-mcp:** ship **hybrid search as P0 substrate quality** (cheap, DuckDB-native, does not fight compile-layer), and ship **wiki compile layer as co-P0 product differentiator**. Hybrid does not replace compile; it makes raw fallback and large index navigation work. Do not treat rerank/HyDE/VSS as P0.
@@ -139,7 +139,7 @@ Frequency = how often the capability appears as a first-class product feature ac
 |---------|------|-------------|------------------|
 | Vector / embedding search | High | **Have** | Keep; improve provenance |
 | Document ingest text/file | High | **Have** | Keep |
-| Chunking + metadata | High | **Have** | P1: section-aware MD |
+| Chunking + metadata | High | **Have** | Section-aware Markdown shipped |
 | Hybrid BM25 + vector | High | Missing (non-goal v1) | **P0** promote |
 | RRF fusion | Med | Missing | **P0** with hybrid |
 | Collection/dataset CRUD | High | Missing | P2 multi-tenant only |
@@ -158,10 +158,10 @@ Frequency = how often the capability appears as a first-class product feature ac
 | Wiki compile / index.md / log | Low | Missing | **P0** differentiator |
 | Lint orphans / missing links | Low | Missing | **P1** |
 | MCP resources + prompts | Med | Missing | **P1** ops |
-| HTTP MCP transport | Med | Non-goal v1 | **P2** |
+| HTTP MCP transport | Med | **Have** | Shipped alongside stdio |
 | HNSW / VSS ANN | Med | Non-goal v1 | **P2** when scale |
 | Rerank / HyDE | Med | Missing | **P1 optional / P2** |
-| Eval harness (MRR, recall@k) | Low–Med | Missing | **P2** ops |
+| Eval harness (MRR, recall@k) | Low–Med | **Have** | Shipped with nDCG and diagnostics |
 | Single-binary local-first | Low among MCP | **Have** (design) | Protect as differentiator |
 | Zero mandatory cloud LLM for graph | Low | **Have** | Protect |
 
@@ -191,7 +191,7 @@ Legend: **Have** | **Partial** | **Missing**
 | status / index health | Partial | `stats` only |
 | graph_expand_search | Partial | SPEC “if time” → **P0** first-class (SPEC + this doc) |
 | Adjacent chunk expansion | Missing | P1 |
-| Section-aware MD chunking | Missing | P1 |
+| Section-aware MD chunking | Have | Shipped with heading paths and expansion |
 | multi_get | Missing | P1 |
 | find_similar document | Missing | P1 |
 | Rerank / HyDE / VSS | Missing | P2 (or P1 optional rerank) |
@@ -210,7 +210,7 @@ SPEC v1 substrate tools and behaviors stay required forever; P0 only **extends**
 | Graph cleanup on `delete_document` | Partial | P0 harden with `delete_by_source` |
 | `graph_expand_search` | Partial | **P0** first-class (vector/hybrid hits → neighbors) |
 | find_orphans / missing backlinks | Missing | P1 lint |
-| link_health | Missing | P1 |
+| link_health | Have | Shipped with stub resolution diagnostics |
 | get_subgraph | Partial | filter seed_ids in Store API sketch; tool P1 |
 | Tunnels (`rel_type=tunnel`) | Missing | **P0** allow edge type via `link_nodes`; CRUD/`follow_tunnels` **P1** |
 | Temporal edges / kg_facts | Missing | P1 |
@@ -243,17 +243,17 @@ SPEC v1 substrate tools and behaviors stay required forever; P0 only **extends**
 | tunnel edge type (`rel_type=tunnel`) | Missing | P0 allow; tunnel CRUD tools P1 |
 | graph_expand_search | Partial | **P0** (same as SPEC / Graph section) |
 | wake_up / diaries / kg_* | Missing | P1 |
-| sync_sources / repair | Missing | P2 |
-| multi-format / watch | Missing | P1–P2 |
+| sync_sources / repair | Partial | Source sync shipped; broader repair remains |
+| multi-format / watch | Partial | HTML/PDF/code ingest shipped; watcher remains |
 | export vault | Missing | P1 |
 | MCP resources/prompts | Missing | P1 |
 | read-only mode | Missing | P2 |
-| HTTP transport | Missing (non-goal v1) | P2 |
+| HTTP transport | Have | Shipped alongside stdio |
 | Local ONNX embed | Missing | P2 ops |
 
 ### Explicit non-goals still valid for early v1 ship
 
-From SPEC + diff theme (do not block first green binary): PDF parsers, HNSW, multi-tenant auth, force-directed layout UI, LangChain clone, LightRAG-style mandatory NER. **Exception:** BM25 hybrid is lifted from non-goal into post-v1 P0 once baseline tools work.
+From SPEC + diff theme (do not block first green binary): HNSW, multi-tenant auth, force-directed layout UI, LangChain clone, LightRAG-style mandatory NER. PDF extraction via Poppler is now shipped. **Exception:** BM25 hybrid is lifted from non-goal into post-v1 P0 once baseline tools work.
 
 ---
 
@@ -302,7 +302,7 @@ Cross-check vs `SPEC.md` § Research-derived backlog P0 (must match intent):
 - Temporal KG: `kg_add|query|invalidate|supersede|timeline|stats`  
 - Agent diaries + `wake_up` (L0 identity + L1 essential story)  
 - `checkpoint`, `follow_tunnels`, tunnel CRUD  
-- Adjacent chunk expand, section-aware markdown chunking, multi_get, find_similar  
+- Adjacent chunk expand, section-aware markdown chunking, multi_get, and find_similar shipped  
 - Optional LLM/cross-encoder rerank top-N  
 - Export markdown vault / wiki index+log (Obsidian/git-friendly)  
 - MCP resources (doc/chunk/graph URIs) + prompts (cited answer, folder ingest)  
@@ -312,9 +312,9 @@ Cross-check vs `SPEC.md` § Research-derived backlog P0 (must match intent):
 ### P2 — scale, polish, optional protocols
 
 - DuckDB VSS/HNSW when full-scan hurts  
-- HyDE mode, retrieval eval harness (MRR, recall@k, nDCG)  
-- File watcher auto-reingest, multi-format (html/pdf/code)  
-- HTTP+TLS MCP, read-only env gate  
+- HyDE mode; retrieval eval harness (MRR, recall@k, nDCG) shipped  
+- File watcher auto-reingest; multi-format ingest (HTML/PDF/code) shipped  
+- TLS and read-only env gate; HTTP MCP transport shipped  
 - Local embedding provider (ONNX/MiniLM)  
 - search_raw fallback explicit, git-backed export polish  
 - Client auto-save hooks protocol, integrity repair  

@@ -100,7 +100,7 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
 
 ### Organize (structure + compile + hygiene)
 
-- **Collections**: ordered sets (`collection_*` CRUD/reorder) + `pack_context` from collection
+- **Collections shipped**: ordered sets (`collection_*` CRUD/reorder) + `pack_context` from collection
 - **Outlines / tree**: `build_outline`, `get_outline`, `move_to_parent`, `sort_key`
 - **Dependency order**: `topo_order` on `depends_on` (and related) edges; cycle report
 - **Compile**: `consolidate` (propose/apply wiki page), richer `file_answer`
@@ -109,7 +109,7 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
 
 ### Storage adapters (multi-DB + markdown)
 
-- Introduce `src/storage` + `trait Storage`; move current DuckDB code to `storage/duckdb` as default adapter
+- `src/storage` + `trait Storage` abstraction and the default DuckDB adapter shipped; additional adapters remain
 - `RAG_STORAGE_BACKEND` + `RAG_DATABASE_URL` + `RAG_VAULT_PATH`; `doctor` reports backend + caps
 - **Markdown vault** adapter (P1 high): `.md` + YAML frontmatter SoT; `raw/` + `wiki/`; graph from `[[links]]`; vectors in `.rag/` sidecar (duckdb/sqlite/jsonl); `reindex`; works with Obsidian + git
 - **`export_vault`** from DuckDB → same folder layout (migration / dual use)
@@ -169,7 +169,7 @@ Full contract: [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md). Decision log: [`GRAPH_EGUI_
   diagnostics, and threshold-based full-scan vs future-ANN guidance
 - DuckDB VSS / HNSW remains a future option when documented thresholds are exceeded
 - `hyde_search` + feedback export
-- File watcher, multi-format ingest (html/pdf/code)
+- File watcher; multi-format ingest (HTML/PDF/code) shipped
 - HTTP+TLS MCP transport, read-only mode env gate
 - Local embedding provider (e.g. ONNX / MiniLM)
 - Explicit `search_raw` fallback; git-friendly export polish

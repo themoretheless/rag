@@ -68,7 +68,7 @@ See [`ORGANIZE.md`](ORGANIZE.md).
 | collection entry `depends_on` | Optional prerequisite links alongside reading order | Concept prerequisites | Traverse order | P1 shipped |
 | `consolidate` / `merge_*` / `lint_organization` | Compile + hygiene | Lint + synthesize | repair / dedupe | P1 |
 | `lint_wiki` (+ orphans, missing backlinks, contradictions, stale, gaps) | Health-check compiled graph | **Lint** operation | — (no wiki lint suite) | P1 |
-| `resolve_stub` / `link_health` | Promote stubs; edge hygiene | Fix missing concept pages | Reconnect after mine/sync | P1 |
+| `resolve_stub` / `link_health` | Promote stubs; edge hygiene | Fix missing concept pages | Reconnect after mine/sync | shipped |
 | `create_tunnel` / `list_tunnels` / `delete_tunnel` / `follow_tunnels` | Cross-scope links | Cross-topic wiki links | Full tunnel tool family | P1 |
 | `wake_up` | Bootstrap L0/L1 session memory | Schema + recent log on session start | `wake-up` CLI / protocol | P1 |
 | `diary_write` / `diary_read` | Per-agent chronological notes | log.md agent notes | `mempalace_diary_write` / `diary_read` | P1 |
@@ -76,10 +76,10 @@ See [`ORGANIZE.md`](ORGANIZE.md).
 | `checkpoint` | Batch file + optional diary | Multi-page ingest savepoint | `mempalace_checkpoint` | P1 |
 | `forget` / `undelete` | Soft-delete tombstone path | Remove without breaking node ids | Memory update/delete | P1 |
 | `consolidate_memory` | Diary/episode → wiki/kg compression | Compile pass over agent notes | Sleep / consolidate pattern | P1–P2 |
-| `backup_db` | Consistent DuckDB file snapshot | Before reembed / migration | Export outside core | P1 |
-| `multi_get` / `find_similar` / `expand_chunks` | Retrieval UX | Open several index hits | Multi-drawer fetch | P1 |
+| `backup_db` | Consistent DuckDB file snapshot | Before reembed / migration | Export outside core | shipped |
+| `multi_get` / `find_similar` / `expand_chunks` | Retrieval UX | Open several index hits | Multi-drawer fetch | shipped |
 | `export_vault` / `export_markdown` / `export_graph` | Obsidian/git-friendly dump | Wiki is markdown repo | Export outside core MCP | P1 |
-| `ingest_directory` / `sync_sources` | Bulk mine + prune orphans | Batch ingest + cleanup | `mine` + `mempalace_sync` | P1 |
+| `ingest_directory` / `sync_sources` | Bulk mine + prune orphans | Batch ingest + cleanup | `mine` + `mempalace_sync` | shipped |
 | `get_subgraph` | Seeded graph export | Local graph seed | Traverse with seeds | P1 |
 | `reindex` | Rebuild FTS / embeddings subset | Repair catalog search | Re-mine subset | P1 |
 | `record_feedback` | Label hits for eval (schema early) | — | Relevance labels | P1 schema / P2 harness |

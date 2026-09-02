@@ -126,7 +126,7 @@ Priority sequencing: [`ROADMAP.md`](ROADMAP.md).
 | Compile | `compile_source` / wiki write / `ingest_source` | §5.2; LOCAL_LLM_WIKI |
 | Query cascade | `query_with_index` → `search_wiki` → `search` → `graph_expand_search` | §5.3 |
 | Session memory | `wake_up`, diary, `checkpoint` | MEMPALACE_PARITY |
-| Organize | `refile`, pin/boost, archive, collections (P1) | ORGANIZE |
+| Organize | `refile`, pin/boost, archive, collections | ORGANIZE |
 | Maintain | `analyze_corpus` → plan → apply → compress/refresh | LOCAL_LLM_MAINTENANCE |
 | Graph inspect | MCP topology tools; optional `rag-mcp-ui` | GRAPH_DESIGN, EGUI_GRAPH_VIEW |
 

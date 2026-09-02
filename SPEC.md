@@ -497,9 +497,7 @@ Refactor steps: wrap current `Store` as `DuckDbStorage` implementing `Storage`; 
 
 - Hybrid BM25 (promoted to P0 in research roadmap; not all adapters day-one)
 - HNSW/VSS index (P2; backend-specific)
-- PDF/binary parsers (text files only)
 - Multi-tenant auth
-- HTTP MCP transport
 - Shipping every vector DB as primary store without SQL meta
 - Force-directed layout / canvas rendering (clients own visualization)
 - Block references `[[note#^block]]` (store full note link only)
@@ -532,12 +530,12 @@ Post-v1 priorities from `FEATURES.md` / `docs/ROADMAP.md` (Karpathy LLM Wiki, Me
 
 - Entity/concept/source_summary pages; lint suite (orphans, missing backlinks, resolve_stub, contradictions, stale claims, data gaps)
 - Temporal `kg_facts` + supersede/invalidate/timeline; `wake_up`, diaries, checkpoint, tunnels
-- Section-aware chunking, multi_get, find_similar, expand_chunks; optional rerank
-- Export vault/markdown; directory ingest + sync/prune; MCP resources/prompts
+- Section-aware chunking, multi_get, find_similar, and expand_chunks shipped; optional rerank remains
+- Export vault/markdown; source sync/prune shipped; MCP resources/prompts remain
 
 ### P2
 
-- VSS/HNSW when needed; HyDE; eval harness; file watch; multi-format ingest; HTTP MCP; local embedder; read-only mode; repair/hooks
+- VSS/HNSW when needed; HyDE; file watch; local embedder; read-only mode; repair/hooks. Eval harness, multi-format ingest, and HTTP MCP are shipped.
 
 ### Explicit non-builds (research)
 
