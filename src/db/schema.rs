@@ -280,6 +280,9 @@ pub const CREATE_IDX_DOCUMENT_REVISIONS_DOCUMENT: &str =
     "CREATE INDEX IF NOT EXISTS idx_document_revisions_document ON document_revisions(document_id, revision)";
 
 /// Optional index helpers for document scope / dedupe / organize columns.
+pub const CREATE_IDX_DOCUMENTS_URI: &str =
+    "CREATE INDEX IF NOT EXISTS idx_documents_uri ON documents(uri)";
+
 pub const CREATE_IDX_DOCUMENTS_CONTENT_HASH: &str =
     "CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)";
 
@@ -346,6 +349,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // Indexes that depend on document columns (after columns exist).
     conn.execute_batch(
         &[
+            CREATE_IDX_DOCUMENTS_URI,
             CREATE_IDX_DOCUMENTS_CONTENT_HASH,
             CREATE_IDX_DOCUMENTS_WING_ROOM,
             CREATE_IDX_DOCUMENTS_LAYER,
@@ -612,6 +616,7 @@ mod tests {
             assert!(table_exists(&conn, t), "missing table {t}");
         }
         assert!(index_exists(&conn, "idx_graph_nodes_uri"));
+        assert!(index_exists(&conn, "idx_documents_uri"));
 
         let source_manifest = column_names(&conn, "source_manifest");
         for col in [
@@ -700,6 +705,14 @@ mod tests {
             [],
         )
         .expect("insert legacy doc");
+        conn.execute(
+            r#"
+            INSERT INTO documents (id, uri, title, content, metadata_json, created_at, updated_at)
+            VALUES ('d2', 'u1', 't2', 'c2', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            "#,
+            [],
+        )
+        .expect("insert legacy duplicate-uri doc");
 
         migrate(&conn).expect("upgrade migrate");
 
@@ -745,6 +758,15 @@ mod tests {
         assert!(table_exists(&conn, "embedding_manifest"));
         assert!(table_exists(&conn, "kg_facts"));
         assert!(index_exists(&conn, "idx_graph_nodes_uri"));
+        assert!(index_exists(&conn, "idx_documents_uri"));
+        let duplicate_uri_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE uri = 'u1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count duplicate legacy uris");
+        assert_eq!(duplicate_uri_count, 2);
     }
 
     #[test]
