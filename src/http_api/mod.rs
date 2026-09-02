@@ -414,6 +414,7 @@ async fn http_metadata(
         .insert(RequestId(request_id.clone()));
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
+    let activity_path = activity_path(&path);
     let peer_ip = request
         .extensions()
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
@@ -454,7 +455,7 @@ async fn http_metadata(
         activity::record(
             "http",
             client.clone(),
-            format!("{method} {path}"),
+            format!("{method} {activity_path}"),
             Some(response.status().as_u16()),
             Some(elapsed_ms),
             None,
@@ -462,6 +463,25 @@ async fn http_metadata(
     }
     tracing::info!(%request_id, %method, %path, client = client.as_deref().unwrap_or("unknown"), status = response.status().as_u16(), %elapsed_ms, "HTTP request");
     response
+}
+
+/// Stable route label retained by the cross-client activity feed.
+///
+/// Job ids are generated resource identifiers carried in the path rather than
+/// the query string, so retain the route template instead. Static job routes
+/// and unrelated paths keep their exact action names.
+fn activity_path(path: &str) -> &str {
+    const JOB_RESOURCE_PREFIX: &str = "/v1/jobs/";
+    const JOB_RESOURCE_ROUTE: &str = "/v1/jobs/{id}";
+
+    match path.strip_prefix(JOB_RESOURCE_PREFIX) {
+        Some(resource_id)
+            if !resource_id.is_empty() && !resource_id.contains('/') && resource_id != "sync" =>
+        {
+            JOB_RESOURCE_ROUTE
+        }
+        _ => path,
+    }
 }
 
 fn anonymous_client(peer_ip: Option<&str>, user_agent: Option<&str>) -> Option<String> {
@@ -707,6 +727,85 @@ mod tests {
             .unwrap()
             .iter()
             .any(|event| event["action"] == "GET /v1/status" && event["request_id"].is_null()));
+    }
+
+    #[test]
+    fn activity_path_redacts_job_resource_ids_without_over_normalizing() {
+        for path in [
+            "/v1/jobs/3bb23ff0-f9ac-4d72-b47c-fb6d8508b2e1",
+            "/v1/jobs/private-job-resource",
+        ] {
+            assert_eq!(activity_path(path), "/v1/jobs/{id}");
+        }
+
+        for path in [
+            "/v1/jobs",
+            "/v1/jobs/",
+            "/v1/jobs/sync",
+            "/v1/jobs/private-job-resource/details",
+            "/v1/jobs-archive/private-job-resource",
+            "/v1/status",
+        ] {
+            assert_eq!(activity_path(path), path);
+        }
+    }
+
+    #[tokio::test]
+    async fn job_resource_ids_are_never_persisted_in_activity() {
+        let app = app();
+        let baseline = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/activity")
+                    .header("host", "localhost:7432")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let baseline = to_bytes(baseline.into_body(), 256 * 1024).await.unwrap();
+        let baseline: serde_json::Value = serde_json::from_slice(&baseline).unwrap();
+        let after = baseline["latest_seq"].as_u64().unwrap_or(0);
+        let resource_id = "3bb23ff0-f9ac-4d72-b47c-fb6d8508b2e1";
+
+        for method in ["GET", "DELETE"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(format!("/v1/jobs/{resource_id}"))
+                        .header("host", "localhost:7432")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+        }
+
+        let activity = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/activity?after={after}"))
+                    .header("host", "localhost:7432")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let activity = to_bytes(activity.into_body(), 256 * 1024).await.unwrap();
+        let activity_json: serde_json::Value = serde_json::from_slice(&activity).unwrap();
+        assert!(!String::from_utf8_lossy(&activity).contains(resource_id));
+        let actions = activity_json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|event| event["action"].as_str())
+            .collect::<Vec<_>>();
+        assert!(actions.contains(&"GET /v1/jobs/{id}"));
+        assert!(actions.contains(&"DELETE /v1/jobs/{id}"));
     }
 
     #[tokio::test]
