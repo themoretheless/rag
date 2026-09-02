@@ -1,5 +1,6 @@
 //! Application service for document ingestion and embedding refresh.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -12,8 +13,9 @@ use crate::db::{SourceManifestWrite, Store};
 use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
+use crate::file_ingest::{extract_file, merge_metadata};
 use crate::models::{Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
-use crate::util::content_hash;
+use crate::util::{check_path_allowlist, content_hash};
 
 #[derive(Debug, Clone)]
 pub struct IngestCommand {
@@ -36,6 +38,20 @@ pub(crate) struct SourceManifestStamp {
     pub canonical_root: String,
     pub size_bytes: u64,
     pub mtime_ns: i64,
+}
+
+/// Ingest one file from disk (`ingest_file` MCP tool / `POST /v1/ingest/file`).
+///
+/// The path must sit under `RAG_INGEST_ROOTS`; `uri` defaults to `file://` + the
+/// canonical path and `title` to the file name.
+#[derive(Debug, Clone, Default)]
+pub struct IngestFileCommand {
+    pub path: String,
+    pub title: Option<String>,
+    pub uri: Option<String>,
+    pub metadata_json: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,6 +109,48 @@ impl<'a> IngestService<'a> {
             indexer: DocumentIndexer::new(embedder.as_ref(), config),
             config,
         }
+    }
+
+    /// Read, extract, and ingest one allowlisted file as `layer=raw`, `kind=document`.
+    pub async fn ingest_file(&self, command: IngestFileCommand) -> Result<IngestResult, AppError> {
+        let path = Path::new(&command.path);
+        check_path_allowlist(path, &self.config.ingest_roots)?;
+        let extracted = extract_file(path).map_err(|error| {
+            if path.try_exists().ok() == Some(false) {
+                AppError::not_found(format!("file not found: {}", command.path))
+            } else {
+                AppError::config(error.to_string())
+            }
+        })?;
+        let metadata_json =
+            merge_metadata(command.metadata_json, extracted.metadata).map_err(|error| {
+                AppError::config(format!("metadata_json is not valid JSON: {error}"))
+            })?;
+        let canonical = path.canonicalize().ok();
+        let default_uri = canonical
+            .as_ref()
+            .map(|p| format!("file://{}", p.display()))
+            .unwrap_or_else(|| format!("file://{}", command.path));
+        let default_title = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string);
+        let source_file = canonical
+            .map(|p| p.display().to_string())
+            .or_else(|| Some(command.path.clone()));
+        self.ingest(IngestCommand {
+            text: extracted.text,
+            title: command.title.or(default_title),
+            uri: command.uri.or(Some(default_uri)),
+            metadata_json: Some(metadata_json),
+            wing: command.wing,
+            room: command.room,
+            source_file,
+            layer: "raw".into(),
+            kind: "document".into(),
+            immutable: false,
+        })
+        .await
     }
 
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
@@ -454,6 +512,50 @@ mod tests {
             kind: "wiki".into(),
             immutable: false,
         }
+    }
+
+    #[tokio::test]
+    async fn ingest_file_delegates_to_atomic_pipeline_with_canonical_source() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source.md");
+        std::fs::write(&source, "# Source\n\nBody links to [[Target]].").expect("write source");
+        let mut config = test_config(temp.path().join("ingest-file.duckdb"));
+        config.ingest_roots = vec![temp.path().to_path_buf()];
+        let store = Store::open(&config.db_path).expect("store");
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+
+        let result = IngestService::new(&store, &embedder, &config)
+            .ingest_file(IngestFileCommand {
+                path: source.display().to_string(),
+                wing: Some("tests".into()),
+                room: Some("files".into()),
+                ..Default::default()
+            })
+            .await
+            .expect("ingest file");
+
+        let canonical = source.canonicalize().expect("canonical source");
+        let document = store
+            .get_document(&result.document_id)
+            .expect("load document")
+            .expect("document");
+        assert_eq!(document.uri, format!("file://{}", canonical.display()));
+        assert_eq!(document.source_file.as_deref(), canonical.to_str());
+        assert_eq!(document.title, "source.md");
+        assert_eq!(document.layer, "raw");
+        assert_eq!(document.kind, "document");
+        assert_eq!(document.revision, 1);
+        assert_eq!(
+            store
+                .list_chunks_for_document(&document.id)
+                .expect("chunks")
+                .len(),
+            result.chunk_count
+        );
+        assert!(store
+            .find_node_by_document_id(&document.id)
+            .expect("graph lookup")
+            .is_some());
     }
 
     #[tokio::test]

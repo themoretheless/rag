@@ -463,6 +463,18 @@ pub struct SearchExplanation {
     pub retrieval_ms: f64,
     pub postprocess_ms: f64,
     pub total_ms: f64,
+    /// Query embedding time (vec / hybrid only; measured by the adapter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_ms: Option<f64>,
+    /// Dense candidate retrieval time (vec / hybrid).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vec_ms: Option<f64>,
+    /// Lexical candidate retrieval time (lex / hybrid).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lex_ms: Option<f64>,
+    /// RRF constant used for fusion (hybrid only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rrf_k: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deduplication: Option<String>,
 }
@@ -487,6 +499,12 @@ pub struct SearchHit {
     /// Reciprocal rank fusion score when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_rrf: Option<f32>,
+    /// 1-based rank in the dense candidate list before fusion (vec / hybrid).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank_vec: Option<u32>,
+    /// 1-based rank in the lexical candidate list before fusion (lex / hybrid).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank_lex: Option<u32>,
     /// Optional short excerpt for citations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
@@ -632,6 +650,21 @@ pub struct StatusReport {
     pub ready_for_search: bool,
     pub ingest_roots_configured: bool,
     pub db_path: String,
+    /// Gateway process id (single writer).
+    #[serde(default)]
+    pub pid: u32,
+    /// Seconds since process start.
+    #[serde(default)]
+    pub uptime_seconds: u64,
+    /// Main DuckDB file size in bytes when readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_file_bytes: Option<u64>,
+    /// WAL file size in bytes (0 when absent).
+    #[serde(default)]
+    pub wal_bytes: u64,
+    /// WAL warning threshold (`RAG_WAL_WARN_BYTES`).
+    #[serde(default)]
+    pub wal_warn_bytes: u64,
 }
 
 /// Local chat LLM + embedding config snapshot for the `llm_status` MCP tool.

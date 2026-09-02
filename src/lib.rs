@@ -38,6 +38,7 @@ pub mod search_pack;
 pub mod source_scan;
 pub mod source_sync;
 pub mod storage;
+pub mod telemetry;
 pub mod util;
 pub mod wiki;
 

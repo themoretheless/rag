@@ -123,6 +123,8 @@ pub struct SearchQuery {
     pub now: Option<chrono::DateTime<chrono::Utc>>,
     /// Synchronous search budget checked between retrieval stages.
     pub timeout_ms: Option<u64>,
+    /// Query embedding time measured by the caller (reported in `explanation.embed_ms`).
+    pub embed_ms: Option<f64>,
 }
 
 impl Default for SearchQuery {
@@ -150,8 +152,32 @@ impl Default for SearchQuery {
             fts_stemmer: "porter".into(),
             now: None,
             timeout_ms: Some(5_000),
+            embed_ms: None,
         }
     }
+}
+
+/// Per-stage wall-clock timings collected while running one search mode.
+#[derive(Debug, Clone, Copy, Default)]
+struct StageTimings {
+    vec_ms: Option<f64>,
+    lex_ms: Option<f64>,
+}
+
+/// Stamp 1-based candidate ranks (`rank_vec` / `rank_lex`) before fusion.
+fn stamp_ranks(hits: &mut [SearchHit], lexical: bool) {
+    for (index, hit) in hits.iter_mut().enumerate() {
+        let rank = Some((index + 1) as u32);
+        if lexical {
+            hit.rank_lex = rank;
+        } else {
+            hit.rank_vec = rank;
+        }
+    }
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1_000.0
 }
 
 /// Rank chunks by cosine similarity to `query_embedding` and return the top hits.
@@ -190,22 +216,34 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
 
     // Exhaustive dispatch only: new SearchMode variants must add a run_* arm here
     // (and update SearchMode::as_str / parse / needs_*). Do not use `_`.
+    let mut timings = StageTimings::default();
     let hits = match query.mode {
-        SearchMode::Vec => run_vec(store, query, pool, &filters)?,
-        SearchMode::Lex => run_lex(store, query, pool, &filters)?,
-        SearchMode::Hybrid => match run_hybrid(store, query, pool, &filters)? {
+        SearchMode::Vec => {
+            let mut hits = run_vec(store, query, pool, &filters)?;
+            timings.vec_ms = Some(elapsed_ms(started));
+            stamp_ranks(&mut hits, false);
+            hits
+        }
+        SearchMode::Lex => {
+            let mut hits = run_lex(store, query, pool, &filters)?;
+            timings.lex_ms = Some(elapsed_ms(started));
+            stamp_ranks(&mut hits, true);
+            hits
+        }
+        SearchMode::Hybrid => match run_hybrid(store, query, pool, &filters, &mut timings)? {
             HybridOutcome::Fused(h) => h,
             HybridOutcome::VecOnly(h) => h,
         },
     };
 
     enforce_timeout(started, query.timeout_ms, "retrieval")?;
-    let retrieval_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    let retrieval_ms = elapsed_ms(started);
     let post_started = Instant::now();
     let mut hits = finalize_hits(store, hits, query)?;
     enforce_timeout(started, query.timeout_ms, "post-processing")?;
-    let postprocess_ms = post_started.elapsed().as_secs_f64() * 1_000.0;
-    let total_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    let postprocess_ms = elapsed_ms(post_started);
+    let total_ms = elapsed_ms(started);
+    let rrf_k = matches!(query.mode, SearchMode::Hybrid).then_some(query.rrf_k);
     for hit in &mut hits {
         let explanation = hit
             .explanation
@@ -213,6 +251,10 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
         explanation.retrieval_ms = retrieval_ms;
         explanation.postprocess_ms = postprocess_ms;
         explanation.total_ms = total_ms;
+        explanation.embed_ms = query.embed_ms;
+        explanation.vec_ms = timings.vec_ms;
+        explanation.lex_ms = timings.lex_ms;
+        explanation.rrf_k = rrf_k;
     }
     Ok(hits)
 }
@@ -305,6 +347,7 @@ fn run_hybrid(
     query: &SearchQuery,
     pool: usize,
     filters: &LexFilters,
+    timings: &mut StageTimings,
 ) -> Result<HybridOutcome> {
     let emb = query
         .query_embedding
@@ -314,8 +357,16 @@ fn run_hybrid(
         .query_text
         .as_deref()
         .ok_or_else(|| AppError::fts("hybrid search requires query_text"))?;
-    let vec_hits = search_vec(store, emb, pool, filters)?;
-    let lex_hits = match fts::search_bm25_with_stemmer(
+    let vec_started = Instant::now();
+    // Scope before selecting the vector top-k. Filtering a global top-k after
+    // ranking can drop every in-project candidate when another project has
+    // enough stronger matches; `search_vec` also owns the generation-aware
+    // normalized snapshot cache.
+    let mut vec_hits = search_vec(store, emb, pool, filters)?;
+    stamp_ranks(&mut vec_hits, false);
+    timings.vec_ms = Some(elapsed_ms(vec_started));
+    let lex_started = Instant::now();
+    let mut lex_hits = match fts::search_bm25_with_stemmer(
         store,
         text,
         pool,
@@ -338,6 +389,8 @@ fn run_hybrid(
             }
         }
     };
+    stamp_ranks(&mut lex_hits, true);
+    timings.lex_ms = Some(elapsed_ms(lex_started));
     Ok(HybridOutcome::Fused(fuse_rrf(
         &vec_hits,
         &lex_hits,
@@ -954,6 +1007,8 @@ fn hydrate_vector_hits(
             section,
             context: None,
             explanation: None,
+            rank_vec: None,
+            rank_lex: None,
         });
     }
     Ok(hits)
@@ -1055,6 +1110,8 @@ fn search_lex_tf(
             section: chunk_section_metadata(chunk).1,
             context: None,
             explanation: None,
+            rank_vec: None,
+            rank_lex: None,
         });
     }
     Ok(hits)
@@ -1132,6 +1189,12 @@ fn merge_score_fields(dst: &mut SearchHit, src: &SearchHit) {
     }
     if dst.score_lex.is_none() {
         dst.score_lex = src.score_lex;
+    }
+    if dst.rank_vec.is_none() {
+        dst.rank_vec = src.rank_vec;
+    }
+    if dst.rank_lex.is_none() {
+        dst.rank_lex = src.rank_lex;
     }
     // Prefer longer content / filled offsets if somehow missing.
     if dst.char_start.is_none() {
@@ -1275,6 +1338,8 @@ mod tests {
             section: None,
             context: None,
             explanation: None,
+            rank_vec: None,
+            rank_lex: None,
         }
     }
 
@@ -1866,6 +1931,31 @@ mod tests {
         .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].document_id, "target");
+        assert_eq!(hits[0].rank_vec, Some(1));
+
+        // Hybrid must use the same scoped vector path, then retain both source
+        // ranks and expose its stage diagnostics on the fused hit.
+        let hybrid = search(
+            &store,
+            &SearchQuery {
+                mode: SearchMode::Hybrid,
+                top_k: 1,
+                query_text: Some("project result".into()),
+                query_embedding: Some(vec![1.0, 0.0]),
+                wing: Some("wanted".into()),
+                rrf_k: 37.0,
+                ..SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(hybrid.len(), 1);
+        assert_eq!(hybrid[0].document_id, "target");
+        assert_eq!(hybrid[0].rank_vec, Some(1));
+        assert_eq!(hybrid[0].rank_lex, Some(1));
+        let explanation = hybrid[0].explanation.as_ref().unwrap();
+        assert!(explanation.vec_ms.is_some());
+        assert!(explanation.lex_ms.is_some());
+        assert_eq!(explanation.rrf_k, Some(37.0));
     }
 
     #[test]

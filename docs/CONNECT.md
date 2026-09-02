@@ -278,11 +278,19 @@ claude mcp add-from-claude-desktop
 |------|-------|------------|
 | `/mcp` | GET, POST, DELETE | stateful streamable HTTP MCP clients |
 | `/health` | GET | counts, integrity, WAL and nested runtime/startup/autosync/backup state |
-| `/live`, `/ready` | GET | process liveness and store/FTS readiness |
-| `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports |
-| `/v1/capabilities`, `/v1/version`, `/v1/routes` | GET | feature, version and exact route discovery |
+| `/live`, `/ready` | GET | process liveness and store readiness |
+| `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports; status carries `pid`, `uptime_seconds`, `db_file_bytes`, `wal_bytes` |
+| `/v1/runtime` | GET | startup phases, autosync / auto-backup state |
+| `/v1/calls`, `/v1/agents` | GET | bounded in-memory call timing and per-agent presence; argument values and raw errors are never retained. `RAG_CALL_LOG_CAPACITY` defaults to 2000 |
+| `/v1/capabilities`, `/v1/version`, `/v1/routes` | GET | feature, version and exact method/path discovery |
 | `/v1/projects`, `/v1/project-home` | GET | project catalog and scoped inventory |
-| `/v1/search` | POST | lex/vector/hybrid retrieval with filters and diagnostics |
+| `/v1/search` | POST | full `SearchParams` mirror (`min_score`, `diversity`, `group_by`, `recency_half_life_days`, `max_chunks_per_document`, `context_expansion`, `neighbor_chunks`, `rrf_k`, …). Hits carry `rank_vec` / `rank_lex`; `timings` has `embed_ms`, `vec_ms`, `lex_ms`, `retrieval_ms`, `postprocess_ms`, `total_ms` |
+| `/v1/pack-context` | POST | `pack_context` mirror: hits → token-budgeted citation block |
+| `/v1/ops-log` | GET | `read_log` mirror (`limit`, `id`, `seq`; client filters `agent`, `prefix`) |
+| `/v1/taxonomy`, `/v1/wings`, `/v1/rooms` | GET | wing → room tree with counts |
+| `/v1/diary`, `/v1/kg`, `/v1/kg/timeline`, `/v1/kg/stats`, `/v1/tunnels` | GET | L4 reads (`agent`, `subject`, `predicate`, `object`, `at_time`, `node_id`) |
+| `/v1/llm-status`, `/v1/embedding-manifest`, `/v1/lint-wiki` | GET | model probe, manifest vs live config, wiki lint |
+| `/v1/eval/history` | GET | last runs from the `--history-jsonl` file named by `RAG_EVAL_HISTORY` (never a request path) |
 | `/v1/multi-get` | POST | ordered batch document retrieval |
 | `/v1/expand-chunks`, `/v1/find-similar` | GET | retrieval helpers |
 | `/v1/documents` | GET | lean unified library; server-side `q`, `wing`, `room`, `layer`, `kind`, `status`, archive filters and cursor pagination |
@@ -300,6 +308,11 @@ claude mcp add-from-claude-desktop
 | `/v1/revisions/restore` | POST | restore an old revision as a new CAS-protected head revision |
 | `/v1/operations/checkpoint` | POST | checkpoint/vacuum the live store through its sole writer process |
 | `/v1/operations/backup` | POST | create an allowlisted backup; `dry_run` defaults to `true` and the live DB target is refused |
+
+The additional console routes are read-only. The unauthenticated REST gateway
+does not expose generic ingest, delete, re-embed, vacuum, or repair mirrors;
+writes stay behind the existing CAS wiki/revision endpoints, serialized sync
+jobs, allowlisted backup/checkpoint operations, or the configured MCP surface.
 
 UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Home opens first in HTTP mode).
 Код: `src/http_api/`. Полный runbook: `docs/PROD_RUN.md`.

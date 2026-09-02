@@ -16,8 +16,8 @@
 //! Domain modules own route registration while [`tools`] keeps `*Params` flat and
 //! stable for callers. Public tool names and the rmcp schema surface are unchanged.
 
-mod facade;
 mod collections;
+pub(crate) mod facade;
 mod graph;
 mod ingest;
 mod kg;
@@ -31,10 +31,7 @@ mod wiki;
 
 use rmcp::handler::server::tool::ToolRouter;
 
-fn take_routes<S: Send + Sync + 'static>(
-    all: &mut ToolRouter<S>,
-    names: &[&str],
-) -> ToolRouter<S> {
+fn take_routes<S: Send + Sync + 'static>(all: &mut ToolRouter<S>, names: &[&str]) -> ToolRouter<S> {
     let mut cluster = ToolRouter::new();
     for name in names {
         if let Some(route) = all.map.remove(*name) {

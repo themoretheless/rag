@@ -6,6 +6,9 @@
 //! |------|------|
 //! | `/health`, `/v1/graph`, `/v1/neighbors`, `/v1/find`, `/v1/document` | Graph + document UI |
 //! | `GET /v1/wiki`, `PUT /v1/wiki`, `GET /v1/backlinks` | Wiki catalog, write (CAS), backlinks |
+//! | `POST /v1/search`, `POST /v1/pack-context` | Retrieval lab: full `SearchParams`, packing |
+//! | `/v1/status`, `/v1/doctor`, `/v1/runtime`, `/v1/calls`, `/v1/agents` | Console health + call log |
+//! | `/v1/ops-log`, `/v1/taxonomy`, `/v1/diary`, `/v1/kg*`, `/v1/tunnels`, `/v1/llm-status` | Read-only console views |
 //! | `/mcp` | Streamable HTTP MCP (Claude, ChatGPT, any remote MCP client) |
 //!
 //! Does **not** open a second DuckDB connection; shares the server's [`Store`].
@@ -26,6 +29,7 @@
 //! | [`wiki`] | Wiki list/put/backlinks |
 
 mod activity;
+mod admin;
 mod bind;
 mod error;
 mod graph;
@@ -103,11 +107,10 @@ pub fn mcp_http_service(
     );
     StreamableHttpService::new(
         move || {
-            Ok(RagServer::new(
-                store.clone(),
-                embedder.clone(),
-                config.clone(),
-            ))
+            Ok(
+                RagServer::new(store.clone(), embedder.clone(), config.clone())
+                    .with_transport("http-mcp"),
+            )
         },
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
@@ -340,6 +343,7 @@ fn api_router(state: HttpState) -> Router {
         .merge(ops::routes())
         .merge(retrieval::routes())
         .merge(wiki::routes())
+        .merge(admin::routes())
         .with_state(state)
         .layer(axum::extract::DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
 }
@@ -1000,6 +1004,128 @@ mod tests {
         );
         assert!(!client.contains("192.0.2.10"));
         assert!(!client.contains("Secret Browser"));
+    }
+
+    async fn get_json(app: &Router, uri: &str) -> (axum::http::StatusCode, serde_json::Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("host", "localhost:7432")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    async fn send_json(
+        app: &Router,
+        method: &str,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (axum::http::StatusCode, serde_json::Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("host", "localhost:7432")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    #[tokio::test]
+    async fn console_read_routes_respond_on_empty_store() {
+        let app = app();
+        for uri in [
+            "/v1/runtime",
+            "/v1/calls",
+            "/v1/agents",
+            "/v1/ops-log",
+            "/v1/taxonomy",
+            "/v1/wings",
+            "/v1/rooms",
+            "/v1/embedding-manifest",
+            "/v1/diary",
+            "/v1/kg",
+            "/v1/kg/stats",
+            "/v1/tunnels",
+            "/v1/lint-wiki",
+            "/v1/eval/history",
+            "/v1/kg/timeline?subject=rag-mcp",
+        ] {
+            let (status, body) = get_json(&app, uri).await;
+            assert_eq!(status, axum::http::StatusCode::OK, "{uri}: {body}");
+            assert_eq!(body["ok"], true, "{uri}: {body}");
+        }
+        let (status, body) = get_json(&app, "/v1/status").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body["pid"], std::process::id());
+        assert!(body["wal_warn_bytes"].as_u64().unwrap() > 0);
+        let (status, _) = get_json(&app, "/v1/ops-log?seq=999999").await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+        let (status, _) = send_json(
+            &app,
+            "POST",
+            "/v1/search",
+            serde_json::json!({"query": "x", "mode": "lex", "rrf_k": 0}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn legacy_console_mutations_are_not_mounted() {
+        let app = app();
+        for (method, uri) in [
+            ("POST", "/v1/ingest/text"),
+            ("POST", "/v1/ingest/file"),
+            ("POST", "/v1/sync-sources"),
+            ("PATCH", "/v1/document"),
+            ("DELETE", "/v1/document?id=missing"),
+            ("POST", "/v1/reembed"),
+            ("POST", "/v1/backup"),
+            ("POST", "/v1/vacuum"),
+            ("POST", "/v1/doctor/repair"),
+        ] {
+            let (status, _) = send_json(&app, method, uri, serde_json::json!({})).await;
+            assert!(
+                matches!(
+                    status,
+                    axum::http::StatusCode::NOT_FOUND | axum::http::StatusCode::METHOD_NOT_ALLOWED
+                ),
+                "unsafe legacy mutation route was mounted: {method} {uri} -> {status}"
+            );
+        }
+
+        let (status, _) = send_json(
+            &app,
+            "POST",
+            "/v1/pack-context",
+            serde_json::json!({"hits": [], "max_tokens": 400}),
+        )
+        .await;
+        assert_ne!(status, axum::http::StatusCode::NOT_FOUND);
+        assert_ne!(status, axum::http::StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]

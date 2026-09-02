@@ -54,9 +54,8 @@ use crate::diagnostics::DiagnosticsService;
 use crate::diary;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
-use crate::file_ingest::{extract_file, merge_metadata};
 use crate::ingest::{
-    IngestCommand, IngestService, ReembedDocumentResult, UpdateDocumentCommand,
+    IngestCommand, IngestFileCommand, IngestService, ReembedDocumentResult, UpdateDocumentCommand,
     UpdateDocumentResult,
 };
 use crate::llm::ChatClient;
@@ -64,23 +63,22 @@ use crate::maintain::{
     self, ApplyPlanOptions, CompressOptions, MaintainRefreshFlags, MaintenancePlanItem,
 };
 use crate::memory_lifecycle;
-#[cfg(test)]
-use crate::models::StatusReport;
 use crate::models::{
-    Chunk, Collection, CollectionEntry, DoctorReport, Document, DocumentFilter, DocumentMetaUpdate,
+    Chunk, Collection, CollectionEntry, Document, DocumentFilter, DocumentMetaUpdate,
     DrawerListItem, GraphEdge, GraphFilter, GraphNode, GraphView, IndexQueryPage, IndexQueryResult,
     IngestResult, LlmStatusReport, OpsLogEntry, SearchHit, SearchMode, Stats, VacuumStoreReport,
     WikiIndexEntry,
 };
+#[cfg(test)]
+use crate::models::{DoctorReport, StatusReport};
 use crate::retrieval::SearchCommand;
 use crate::retrieval::{self, DocumentWithChunks, SimilarDocumentsQuery};
 use crate::search_pack::pack_hits;
-use crate::source_sync::{SourceSyncCommand, SourceSyncError, SourceSyncService};
+use crate::source_sync::{SourceSyncCommand, SourceSyncService};
 #[cfg(test)]
-use crate::util::content_hash;
+use crate::util::{check_path_allowlist, content_hash};
 use crate::util::{
-    check_path_allowlist, refuse_live_database_target, resolve_allowlisted_output_file,
-    validate_backup_output_paths,
+    refuse_live_database_target, resolve_allowlisted_output_file, validate_backup_output_paths,
 };
 use crate::wiki;
 use crate::wiki::FileAnswerCitation;
@@ -88,19 +86,6 @@ use crate::wiki::FileAnswerCitation;
 /// Empty / whitespace-only optional strings become `None` (ingest wing/room/source_file).
 fn nonempty_opt(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
-}
-
-#[derive(Debug, Serialize)]
-struct DoctorRepairReport {
-    dry_run: bool,
-    documents_considered: usize,
-    documents_repaired: Vec<String>,
-    documents_failed: Vec<SourceSyncError>,
-    orphan_chunks_pruned: u64,
-    orphan_document_nodes_pruned: u64,
-    orphan_edges_pruned: u64,
-    before: DoctorReport,
-    after: DoctorReport,
 }
 
 /// RAG MCP server holding store, embedder, optional chat client, and config.
@@ -112,11 +97,19 @@ pub struct RagServer {
     llm: Option<ChatClient>,
     config: Config,
     tool_router: ToolRouter<Self>,
+    /// Transport label recorded in the call log (`stdio` | `http-mcp`).
+    transport: &'static str,
 }
 
 impl RagServer {
     pub(crate) fn tool_count(&self) -> usize {
         self.tool_router.map.len()
+    }
+
+    /// Label the transport this server instance serves (call-log attribution).
+    pub fn with_transport(mut self, transport: &'static str) -> Self {
+        self.transport = transport;
+        self
     }
     /// Start optional incremental source synchronization. Disabled unless
     /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
@@ -208,6 +201,7 @@ impl RagServer {
             llm,
             config,
             tool_router: super::server::compose_tool_router(Self::all_tools_router()),
+            transport: "stdio",
         };
         let advertised_tool_count = match server.config.tool_surface {
             ToolSurface::Spine => crate::mcp::surface::spine_tool_names().len(),
@@ -360,6 +354,11 @@ impl RagServer {
             embed_dims,
             ready_for_search,
             ingest_roots_configured,
+            pid: std::process::id(),
+            uptime_seconds: 0,
+            db_file_bytes: None,
+            wal_bytes: 0,
+            wal_warn_bytes: 0,
             db_path: self.store.path().display().to_string(),
         })
     }
@@ -435,46 +434,7 @@ impl RagServer {
 
     /// Probe local chat LLM and report embedding config (no corpus mutation).
     async fn llm_status_report(&self) -> Result<LlmStatusReport, AppError> {
-        let (reachable, error) = match &self.llm {
-            Some(client) => {
-                let probe = client.llm_status().await;
-                let error = if probe.ok { None } else { Some(probe.detail) };
-                (probe.ok, error)
-            }
-            None => (
-                false,
-                Some(
-                    "ChatClient not configured; check RAG_LLM_BASE_URL and RAG_LLM_MODEL"
-                        .to_string(),
-                ),
-            ),
-        };
-
-        let embed_base_url = match self.config.embedding_provider {
-            crate::config::EmbeddingProviderKind::Mock => None,
-            crate::config::EmbeddingProviderKind::OpenAi
-            | crate::config::EmbeddingProviderKind::Ollama => {
-                Some(self.config.embedding_base_url.clone())
-            }
-        };
-
-        let dialect = match self.config.llm_provider.dialect() {
-            crate::llm::LlmApiDialect::OpenAiCompat => "openai_compat",
-            crate::llm::LlmApiDialect::AnthropicMessages => "anthropic_messages",
-        };
-        Ok(LlmStatusReport {
-            llm_enabled: self.config.llm_enabled,
-            provider: self.config.llm_provider.as_str().to_string(),
-            dialect: dialect.to_string(),
-            base_url: self.config.llm_base_url.clone(),
-            model: self.config.llm_model.clone(),
-            reachable,
-            error,
-            embed_provider: self.config.embedding_provider.as_str().to_string(),
-            embed_model: self.config.embedding_model.clone(),
-            embed_dims: self.config.embedding_dims,
-            embed_base_url,
-        })
+        Ok(crate::diagnostics::llm_status(&self.config, self.llm.as_ref()).await)
     }
 
     /// Re-embed all existing chunks for one document with the live embedder, then
@@ -661,54 +621,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<IngestFileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let path = Path::new(&params.path);
-        check_path_allowlist(path, &self.config.ingest_roots).map_err(Self::map_err)?;
-
-        let extracted = extract_file(path).map_err(|e| {
-            if path.try_exists().ok() == Some(false) {
-                Self::map_err(AppError::not_found(format!(
-                    "file not found: {}",
-                    params.path
-                )))
-            } else {
-                Self::map_err(AppError::config(e.to_string()))
-            }
-        })?;
-        let metadata_json =
-            merge_metadata(params.metadata_json, extracted.metadata).map_err(|e| {
-                Self::map_err(AppError::config(format!(
-                    "metadata_json is not valid JSON: {e}"
-                )))
-            })?;
-
-        let default_uri = path
-            .canonicalize()
-            .map(|p| format!("file://{}", p.display()))
-            .unwrap_or_else(|_| format!("file://{}", params.path));
-
-        let default_title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|s| s.to_string());
-
-        let source_file = path
-            .canonicalize()
-            .map(|p| p.display().to_string())
-            .ok()
-            .or_else(|| Some(params.path.clone()));
-
-        let result = self
-            .ingest_pipeline(IngestCommand {
-                text: extracted.text,
-                title: params.title.or(default_title),
-                uri: params.uri.or(Some(default_uri)),
-                metadata_json: Some(metadata_json),
+        let result = IngestService::new(&self.store, &self.embedder, &self.config)
+            .ingest_file(IngestFileCommand {
+                path: params.path,
+                title: params.title,
+                uri: params.uri,
+                metadata_json: params.metadata_json,
                 wing: params.wing,
                 room: params.room,
-                source_file,
-                layer: "raw".into(),
-                kind: "document".into(),
-                immutable: false,
             })
             .await
             .map_err(Self::map_err)?;
@@ -1055,6 +975,7 @@ impl RagServer {
             neighbor_chunks: params.neighbor_chunks.map(|value| value as usize),
             timeout_ms: params.timeout_ms.or(Some(5_000)),
             fts_stemmer: self.config.fts_stemmer.clone(),
+            rrf_k: params.rrf_k,
         };
         let hits = crate::retrieval::execute_search(&self.store, self.embedder.as_ref(), command)
             .await
@@ -1409,83 +1330,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<DoctorRepairParams>,
     ) -> Result<CallToolResult, McpError> {
-        let dry_run = params.dry_run.unwrap_or(true);
-        let max_docs = params
-            .max_docs
-            .unwrap_or(self.config.maint_max_docs)
-            .max(1)
-            .min(self.config.maint_max_docs.max(1));
-        let before = DiagnosticsService::new(&self.store, &self.config)
-            .doctor()
+        let report = DiagnosticsService::new(&self.store, &self.config)
+            .repair(
+                &self.embedder,
+                params.dry_run.unwrap_or(true),
+                params.max_docs,
+            )
+            .await
             .map_err(Self::map_err)?;
-        let documents = self.store.list_documents().map_err(Self::map_err)?;
-        let mut missing = Vec::new();
-        for document in documents {
-            if document.layer == "schema" || document.content.trim().is_empty() {
-                continue;
-            }
-            let chunks = self
-                .store
-                .list_chunks_for_document(&document.id)
-                .map_err(Self::map_err)?;
-            if chunks.is_empty() {
-                missing.push(document);
-                if missing.len() >= max_docs {
-                    break;
-                }
-            }
-        }
-
-        let mut documents_repaired = Vec::new();
-        let mut documents_failed = Vec::new();
-        if !dry_run {
-            for document in &missing {
-                match self
-                    .ingest_pipeline(IngestCommand {
-                        text: document.content.clone(),
-                        title: Some(document.title.clone()),
-                        uri: Some(document.uri.clone()),
-                        metadata_json: Some(document.metadata_json.clone()),
-                        wing: document.wing.clone(),
-                        room: document.room.clone(),
-                        source_file: document.source_file.clone(),
-                        layer: document.layer.clone(),
-                        kind: document.kind.clone(),
-                        immutable: false,
-                    })
-                    .await
-                {
-                    Ok(_) => documents_repaired.push(document.id.clone()),
-                    Err(error) => documents_failed.push(SourceSyncError {
-                        path: document.uri.clone(),
-                        error: error.to_string(),
-                    }),
-                }
-            }
-        }
-        let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) =
-            self.store.prune_orphans(dry_run).map_err(Self::map_err)?;
-        if !dry_run {
-            self.store.checkpoint().map_err(Self::map_err)?;
-        }
-        let after = if dry_run {
-            before.clone()
-        } else {
-            DiagnosticsService::new(&self.store, &self.config)
-                .doctor()
-                .map_err(Self::map_err)?
-        };
-        Self::json_result(&DoctorRepairReport {
-            dry_run,
-            documents_considered: missing.len(),
-            documents_repaired,
-            documents_failed,
-            orphan_chunks_pruned,
-            orphan_document_nodes_pruned,
-            orphan_edges_pruned,
-            before,
-            after,
-        })
+        Self::json_result(&report)
     }
 
     #[tool(
@@ -3373,32 +3226,14 @@ fn decode_recovery_bundle(input: &str, format: &str) -> Result<RecoveryBundle, A
 }
 
 fn pack_hit_to_search_hit(h: PackHitParams) -> SearchHit {
-    SearchHit {
-        chunk_id: h.chunk_id,
-        document_id: h.document_id,
-        document_title: h.document_title,
-        document_uri: h.document_uri,
-        chunk_index: h.chunk_index,
-        content: h.content,
-        score: h.score,
-        score_vec: h.score_vec,
-        score_lex: h.score_lex,
-        score_rrf: h.score_rrf,
-        snippet: h.snippet,
-        char_start: h.char_start,
-        char_end: h.char_end,
-        heading_path: h.heading_path,
-        section: h.section,
-        context: None,
-        explanation: None,
-    }
+    SearchHit::from(h)
 }
 
 /// Parse optional MCP timestamp string into UTC.
 ///
 /// Accepts RFC3339 and common SQL / ISO forms (`YYYY-MM-DD[T ]HH:MM:SS[.f]`, date-only).
 /// Empty / whitespace-only → `None`. Invalid → [`AppError::Config`] (maps to invalid_params).
-fn parse_optional_ts(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, AppError> {
+pub(crate) fn parse_optional_ts(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, AppError> {
     let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
@@ -3492,8 +3327,8 @@ impl ServerHandler for RagServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let name = request.name.as_ref();
-        if !surface::tool_allowed(self.config.tool_surface, name) {
+        let name = request.name.to_string();
+        if !surface::tool_allowed(self.config.tool_surface, &name) {
             return Err(McpError::invalid_params(
                 format!(
                     "tool '{name}' is not in RAG_TOOLS=spine; set RAG_TOOLS=full to enable advanced tools"
@@ -3501,8 +3336,16 @@ impl ServerHandler for RagServer {
                 None,
             ));
         }
-        let tool_name = name.to_string();
-        let audit_action = mcp_audit_action(&tool_name, request.arguments.as_ref());
+        let audit_action = mcp_audit_action(&name, request.arguments.as_ref());
+        let agent = context
+            .peer
+            .peer_info()
+            .map(|info| info.client_info.name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        // Tool arguments can contain queries, document bodies, paths and project names.
+        // Both telemetry surfaces are remotely readable when the gateway is enabled,
+        // so record only the tool lineage here.
+        let call = crate::telemetry::begin(&agent, self.transport, &name, None);
         let started = std::time::Instant::now();
         let tcc = ToolCallContext::new(self, request, context);
         let result = self.tool_router.call(tcc).await;
@@ -3511,6 +3354,12 @@ impl ServerHandler for RagServer {
             if result.is_ok() { 200 } else { 500 },
             started.elapsed().as_secs_f64() * 1000.0,
         );
+        match &result {
+            Ok(value) => call.finish(!value.is_error.unwrap_or(false), None, result_hint(value)),
+            // Error strings may echo paths or other user input. The transport-level
+            // outcome is sufficient for the bounded operational call log.
+            Err(_) => call.finish(false, Some("tool call failed".to_string()), None),
+        }
         result
     }
 }
@@ -3526,7 +3375,8 @@ fn mcp_audit_action(
 
 #[cfg(test)]
 mod audit_tests {
-    use super::mcp_audit_action;
+    use super::{mcp_audit_action, result_hint};
+    use rmcp::model::{CallToolResult, Content};
 
     #[test]
     fn audit_action_keeps_lineage_and_omits_content() {
@@ -3546,6 +3396,34 @@ mod audit_tests {
         assert!(!action.contains("private search"));
         assert!(!action.contains("private-document"));
         assert!(!action.contains("secret-project"));
+    }
+
+    #[test]
+    fn result_hint_exposes_only_bounded_counts() {
+        let result = CallToolResult::success(vec![Content::json(serde_json::json!({
+            "count": 7,
+            "query": "private search",
+            "path": "/private/source.md"
+        }))
+        .unwrap()]);
+        assert_eq!(result_hint(&result).as_deref(), Some("count 7"));
+    }
+}
+
+/// Short human hint for the call log, derived from the first JSON content item.
+fn result_hint(result: &CallToolResult) -> Option<String> {
+    let text = result.content.first()?.as_text()?.text.as_str();
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    match value {
+        serde_json::Value::Array(items) => Some(format!("{} items", items.len())),
+        serde_json::Value::Object(map) => ["count", "chunk_count", "hits", "total"]
+            .iter()
+            .find_map(|key| {
+                map.get(*key)
+                    .and_then(|v| v.as_u64())
+                    .map(|n| format!("{key} {n}"))
+            }),
+        _ => None,
     }
 }
 

@@ -1,10 +1,13 @@
+use std::collections::BTreeMap;
+
 use axum::{
     extract::{Query, State},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{
@@ -14,6 +17,7 @@ use super::{
 use crate::diagnostics::DiagnosticsService;
 use crate::mcp::surface::spine_tool_names;
 use crate::mcp::RagServer;
+use crate::telemetry;
 use crate::util::resolve_allowlisted_output_file;
 
 const CAPABILITY_FEATURES: &[&str] = &[
@@ -23,6 +27,9 @@ const CAPABILITY_FEATURES: &[&str] = &[
     "project_home",
     "unified_library",
     "search",
+    "search_full_params",
+    "search_stage_timings",
+    "pack_context",
     "multi_get",
     "expand_chunks",
     "find_similar",
@@ -39,6 +46,18 @@ const CAPABILITY_FEATURES: &[&str] = &[
     "backup",
     "cursor_pagination",
     "conditional_get",
+    "ops_log",
+    "taxonomy",
+    "diary",
+    "kg",
+    "tunnels",
+    "llm_status",
+    "embedding_manifest",
+    "lint_wiki",
+    "eval_history",
+    "runtime",
+    "call_log",
+    "agents",
 ];
 
 const PRODUCT_ROUTES: &[(&str, &str)] = &[
@@ -48,7 +67,11 @@ const PRODUCT_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/status"),
     ("GET", "/v1/doctor"),
     ("GET", "/v1/activity"),
+    ("GET", "/v1/runtime"),
+    ("GET", "/v1/calls"),
+    ("GET", "/v1/agents"),
     ("POST", "/v1/search"),
+    ("POST", "/v1/pack-context"),
     ("POST", "/v1/multi-get"),
     ("GET", "/v1/expand-chunks"),
     ("GET", "/v1/find-similar"),
@@ -73,6 +96,19 @@ const PRODUCT_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/operations/backup"),
     ("GET", "/v1/projects"),
     ("GET", "/v1/project-home"),
+    ("GET", "/v1/ops-log"),
+    ("GET", "/v1/taxonomy"),
+    ("GET", "/v1/wings"),
+    ("GET", "/v1/rooms"),
+    ("GET", "/v1/diary"),
+    ("GET", "/v1/kg"),
+    ("GET", "/v1/kg/timeline"),
+    ("GET", "/v1/kg/stats"),
+    ("GET", "/v1/tunnels"),
+    ("GET", "/v1/llm-status"),
+    ("GET", "/v1/embedding-manifest"),
+    ("GET", "/v1/lint-wiki"),
+    ("GET", "/v1/eval/history"),
     ("GET", "/v1/capabilities"),
     ("GET", "/v1/version"),
     ("GET", "/v1/routes"),
@@ -89,6 +125,9 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/routes", get(route_inventory))
         .route("/v1/projects", get(projects))
         .route("/v1/project-home", get(project_home))
+        .route("/v1/runtime", get(runtime))
+        .route("/v1/calls", get(calls))
+        .route("/v1/agents", get(agents))
         .route("/v1/operations/checkpoint", post(checkpoint))
         .route("/v1/operations/backup", post(backup))
 }
@@ -119,7 +158,6 @@ async fn projects(State(st): State<HttpState>) -> impl IntoResponse {
         Err(error) => api_err(error),
     }
 }
-
 #[derive(Deserialize)]
 struct ProjectHomeQuery {
     project: String,
@@ -234,6 +272,9 @@ mod tests {
                 "project_home",
                 "unified_library",
                 "search",
+                "search_full_params",
+                "search_stage_timings",
+                "pack_context",
                 "multi_get",
                 "expand_chunks",
                 "find_similar",
@@ -250,6 +291,18 @@ mod tests {
                 "backup",
                 "cursor_pagination",
                 "conditional_get",
+                "ops_log",
+                "taxonomy",
+                "diary",
+                "kg",
+                "tunnels",
+                "llm_status",
+                "embedding_manifest",
+                "lint_wiki",
+                "eval_history",
+                "runtime",
+                "call_log",
+                "agents",
             ]
         );
         assert_eq!(
@@ -261,7 +314,11 @@ mod tests {
                 ("GET", "/v1/status"),
                 ("GET", "/v1/doctor"),
                 ("GET", "/v1/activity"),
+                ("GET", "/v1/runtime"),
+                ("GET", "/v1/calls"),
+                ("GET", "/v1/agents"),
                 ("POST", "/v1/search"),
+                ("POST", "/v1/pack-context"),
                 ("POST", "/v1/multi-get"),
                 ("GET", "/v1/expand-chunks"),
                 ("GET", "/v1/find-similar"),
@@ -286,6 +343,19 @@ mod tests {
                 ("POST", "/v1/operations/backup"),
                 ("GET", "/v1/projects"),
                 ("GET", "/v1/project-home"),
+                ("GET", "/v1/ops-log"),
+                ("GET", "/v1/taxonomy"),
+                ("GET", "/v1/wings"),
+                ("GET", "/v1/rooms"),
+                ("GET", "/v1/diary"),
+                ("GET", "/v1/kg"),
+                ("GET", "/v1/kg/timeline"),
+                ("GET", "/v1/kg/stats"),
+                ("GET", "/v1/tunnels"),
+                ("GET", "/v1/llm-status"),
+                ("GET", "/v1/embedding-manifest"),
+                ("GET", "/v1/lint-wiki"),
+                ("GET", "/v1/eval/history"),
                 ("GET", "/v1/capabilities"),
                 ("GET", "/v1/version"),
                 ("GET", "/v1/routes"),
@@ -320,4 +390,122 @@ mod tests {
         assert_eq!(capabilities["tool_count"], spine_tool_names().len());
         assert_eq!(capabilities["deprecated_tools"], json!([]));
     }
+}
+
+/// Process / startup / autosync / auto-backup snapshot (`pid`, uptime, phases).
+async fn runtime() -> impl IntoResponse {
+    api_ok(json!({"ok": true, "runtime": crate::ops::runtime_snapshot()}))
+}
+
+#[derive(Deserialize)]
+struct CallsQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    tool: Option<String>,
+}
+
+/// Recent MCP / HTTP calls from the in-memory ring buffer plus latency and share summary.
+async fn calls(Query(q): Query<CallsQuery>) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let agent = q.agent.filter(|v| !v.trim().is_empty());
+    let tool = q.tool.filter(|v| !v.trim().is_empty());
+    let items = telemetry::recent(limit, agent.as_deref(), tool.as_deref());
+    api_ok(json!({
+        "ok": true,
+        "summary": telemetry::summary(),
+        "count": items.len(),
+        "items": items,
+    }))
+}
+
+/// One console row per agent: live call activity merged with durable ops_log / diary footprint.
+#[derive(Debug, Default, Serialize)]
+struct AgentRow {
+    agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport: Option<String>,
+    online: bool,
+    calls_today: usize,
+    calls_total: usize,
+    call_errors: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_call_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_tool: Option<String>,
+    p95_ms: f64,
+    ops_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_op_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_op: Option<String>,
+    diary_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_diary_at: Option<DateTime<Utc>>,
+}
+
+const AGENT_SCAN_ROWS: usize = 500;
+
+async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
+    let mut rows: BTreeMap<String, AgentRow> = BTreeMap::new();
+    fn row<'a>(rows: &'a mut BTreeMap<String, AgentRow>, name: &str) -> &'a mut AgentRow {
+        let key = name.trim().to_ascii_lowercase();
+        rows.entry(key).or_insert_with(|| AgentRow {
+            agent: name.trim().to_string(),
+            ..Default::default()
+        })
+    }
+    for activity in telemetry::agent_activity() {
+        let entry = row(&mut rows, &activity.agent);
+        entry.transport = Some(activity.transport);
+        entry.online = activity.online;
+        entry.calls_today = activity.calls_today;
+        entry.calls_total = activity.calls_total;
+        entry.call_errors = activity.errors;
+        entry.last_call_at = Some(activity.last_call_at);
+        entry.last_tool = Some(activity.last_tool);
+        entry.p95_ms = activity.p95_ms;
+    }
+    let ops = match st.store.list_recent_ops(AGENT_SCAN_ROWS) {
+        Ok(value) => value,
+        Err(error) => return api_err(error),
+    };
+    for op in ops {
+        let Some(name) = op.agent_name.as_deref().filter(|n| !n.trim().is_empty()) else {
+            continue;
+        };
+        let entry = row(&mut rows, name);
+        entry.ops_count += 1;
+        if entry.last_op_at.is_none_or(|ts| op.ts > ts) {
+            entry.last_op_at = Some(op.ts);
+            entry.last_op = Some(op.prefix.clone().unwrap_or_else(|| op.op.clone()));
+        }
+    }
+    let diary = match st.store.list_diary_entries(None, AGENT_SCAN_ROWS) {
+        Ok(value) => value,
+        Err(error) => return api_err(error),
+    };
+    for entry in diary {
+        let agent = row(&mut rows, &entry.agent_name);
+        agent.diary_count += 1;
+        if agent.last_diary_at.is_none_or(|ts| entry.created_at > ts) {
+            agent.last_diary_at = Some(entry.created_at);
+        }
+    }
+    let mut items: Vec<AgentRow> = rows.into_values().collect();
+    items.sort_by(|a, b| {
+        b.online
+            .cmp(&a.online)
+            .then(b.last_call_at.cmp(&a.last_call_at))
+            .then(b.last_op_at.cmp(&a.last_op_at))
+            .then(a.agent.cmp(&b.agent))
+    });
+    api_ok(json!({
+        "ok": true,
+        "online_window_secs": telemetry::ONLINE_WINDOW_SECS,
+        "count": items.len(),
+        "items": items,
+    }))
 }
