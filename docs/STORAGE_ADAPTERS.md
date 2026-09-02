@@ -6,7 +6,7 @@
 
 **Principles:** one logical store, pluggable physical backend. See [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md) §1.2 · [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md) · map: [`SYSTEM_MAP.md`](SYSTEM_MAP.md) §6.  
 
-Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the production adapter through the storage factory. `sqlite`, `postgres`, `markdown`, and `memory` are recognized migration targets but deliberately fail at startup until their adapters are implemented. `status` and `doctor` expose the active backend and capability list; `export_bundle` and `export_vault` provide migration boundaries.
+Current implementation status: `RAG_STORAGE_BACKEND=duckdb` opens the production adapter through the existing factory. The backend-neutral factory also supports opt-in `markdown` document CRUD when an explicit `RAG_VAULT_PATH` is set. `sqlite`, `postgres`, and `memory` remain recognized migration targets that fail explicitly. Markdown files and their frontmatter are the source of truth; search, chunks, graph, transactions, sidecars, and file watching are not yet adapter capabilities.
 Remote vector DB alone is **not** the primary source of truth; DuckDB (or markdown vault / SQL) remains SoT for documents and graph.
 
 ---
@@ -253,7 +253,7 @@ Recommended default: **Markdown + small DuckDB/SQLite sidecar** under `.rag/` so
 | Env | Meaning |
 |-----|---------|
 | `RAG_STORAGE_BACKEND=markdown` | enable vault adapter |
-| `RAG_VAULT_PATH` | vault root (falls back to `RAG_DB_PATH` if unset) |
+| `RAG_VAULT_PATH` | explicit vault root (required; no `RAG_DB_PATH` fallback) |
 | `RAG_MARKDOWN_INDEX` | `duckdb` (default) \| `sqlite` \| `jsonl` \| `none` |
 | `RAG_MARKDOWN_WATCH` | `0` \| `1` file watch reindex (P2) |
 | `RAG_MARKDOWN_GITIGNORE_SIDECAR` | if `1`, ensure `.rag/` in vault `.gitignore` (default recommend true for embeddings) |

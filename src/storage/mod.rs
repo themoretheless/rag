@@ -4,13 +4,14 @@
 //! small document slice lets callers migrate behind [`Storage`] gradually
 //! without changing the existing `db::Store` API.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{AppError, Document, Store};
 
 pub mod duckdb;
+pub mod markdown;
 
 /// Stable identifier used by configuration and diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +111,35 @@ pub fn open_configured(path: &Path) -> Result<Store, AppError> {
             other.as_str()
         ))),
     }
+}
+
+/// Open the configured backend through the backend-neutral document contract.
+///
+/// The Markdown adapter is deliberately opt-in and requires an explicit
+/// `RAG_VAULT_PATH`; `RAG_DB_PATH` is never reinterpreted as a vault root.
+pub fn open_configured_storage(path: &Path) -> Result<Box<dyn Storage>, AppError> {
+    match configured_backend()? {
+        BackendKind::DuckDb => Ok(Box::new(Store::open(path)?)),
+        BackendKind::Markdown => {
+            let root = std::env::var_os("RAG_VAULT_PATH")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    AppError::config(
+                        "RAG_VAULT_PATH is required when RAG_STORAGE_BACKEND=markdown",
+                    )
+                })?;
+            Ok(Box::new(markdown::MarkdownVaultStorage::open(root)?))
+        }
+        other => Err(AppError::config(format!(
+            "storage backend '{}' is recognized but not implemented; export_bundle/export_vault before migrating",
+            other.as_str()
+        ))),
+    }
+}
+
+pub fn markdown_capability_names() -> Vec<String> {
+    markdown::CAPABILITIES.iter().map(|cap| cap.as_str().to_string()).collect()
 }
 
 pub fn duckdb_capability_names() -> Vec<String> {

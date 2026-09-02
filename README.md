@@ -85,7 +85,8 @@ Capabilities inspired by [MemPalace](https://github.com/MemPalace/mempalace), im
 | `RAG_CHUNK_SIZE` | `800` | Approx chars per chunk |
 | `RAG_CHUNK_OVERLAP` | `120` | Overlap chars (must be &lt; chunk size) |
 | `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
-| `RAG_STORAGE_BACKEND` | `duckdb` | Storage adapter. DuckDB is implemented; recognized future adapters fail explicitly at startup instead of silently using DuckDB |
+| `RAG_STORAGE_BACKEND` | `duckdb` | Storage adapter. DuckDB remains the application default; `markdown` opts abstraction users into document CRUD backed by vault files |
+| `RAG_VAULT_PATH` | — | Explicit vault root required by the Markdown storage adapter; never inferred from `RAG_DB_PATH` |
 | `RAG_STARTUP_WARN_MS` | `30000` | Warn when a measured startup phase exceeds this duration |
 | `RAG_PID_FILE` | `<RAG_DB_PATH with .pid>` | Optional PID metadata path used to flag stale crash metadata |
 | `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
