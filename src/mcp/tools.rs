@@ -342,6 +342,9 @@ pub struct SearchParams {
     /// End-to-end synchronous retrieval budget (default 5000 ms).
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// RRF constant `k` in `1 / (k + rank)` for hybrid fusion (default 60).
+    #[serde(default)]
+    pub rrf_k: Option<f32>,
 }
 
 /// Explicit multi-query rewrite/RRF. Callers provide rewrites; no LLM is invoked by default.
@@ -391,6 +394,29 @@ pub struct PackHitParams {
     pub heading_path: Option<Vec<String>>,
     #[serde(default)]
     pub section: Option<String>,
+}
+
+impl From<PackHitParams> for crate::models::SearchHit {
+    fn from(h: PackHitParams) -> Self {
+        Self {
+            chunk_id: h.chunk_id,
+            document_id: h.document_id,
+            document_title: h.document_title,
+            document_uri: h.document_uri,
+            chunk_index: h.chunk_index,
+            content: h.content,
+            score: h.score,
+            score_vec: h.score_vec,
+            score_lex: h.score_lex,
+            score_rrf: h.score_rrf,
+            snippet: h.snippet,
+            char_start: h.char_start,
+            char_end: h.char_end,
+            heading_path: h.heading_path,
+            section: h.section,
+            ..Self::default()
+        }
+    }
 }
 
 /// Parameters for `pack_context`.

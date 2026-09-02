@@ -3,7 +3,8 @@
 use serde::Serialize;
 
 use crate::db::search::{
-    search, ContextExpansion, DiversityMode, SearchQuery, MAX_QUERY_CHARS, MAX_TOP_K,
+    search, ContextExpansion, DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS,
+    MAX_TOP_K,
 };
 use crate::db::Store;
 use crate::embeddings::{l2_normalize, EmbeddingProvider};
@@ -36,6 +37,8 @@ pub struct SearchCommand {
     pub neighbor_chunks: Option<usize>,
     pub timeout_ms: Option<u64>,
     pub fts_stemmer: String,
+    /// RRF constant for hybrid fusion; `None` keeps [`crate::db::search::DEFAULT_RRF_K`].
+    pub rrf_k: Option<f32>,
 }
 
 pub async fn execute_search(
@@ -98,6 +101,13 @@ pub async fn prepare_search(
         .as_deref()
         .map(ContextExpansion::parse)
         .transpose()?;
+    if command
+        .rrf_k
+        .is_some_and(|k| !k.is_finite() || k <= 0.0)
+    {
+        return Err(AppError::config("rrf_k must be finite and greater than zero"));
+    }
+    let embed_started = std::time::Instant::now();
     let query_embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
         embedder
             .embed(&[text.to_owned()])
@@ -109,6 +119,9 @@ pub async fn prepare_search(
     } else {
         None
     };
+    let embed_ms = query_embedding
+        .as_ref()
+        .map(|_| embed_started.elapsed().as_secs_f64() * 1_000.0);
     Ok(SearchQuery {
         mode,
         top_k: command.top_k.unwrap_or(command.default_top_k),
@@ -129,6 +142,8 @@ pub async fn prepare_search(
         neighbor_chunks: command.neighbor_chunks.unwrap_or(1),
         timeout_ms: command.timeout_ms.or(Some(5_000)),
         fts_stemmer: command.fts_stemmer,
+        rrf_k: command.rrf_k.unwrap_or(DEFAULT_RRF_K),
+        embed_ms,
         ..SearchQuery::default()
     })
 }
@@ -285,7 +300,7 @@ mod tests {
             diversity: None, group_by: Some("document".into()), recency_half_life_days: None,
             max_context_tokens: Some(500), max_chunks_per_document: Some(2),
             context_expansion: Some("neighbors".into()), neighbor_chunks: Some(3), timeout_ms: None,
-            fts_stemmer: "porter".into(),
+            fts_stemmer: "porter".into(), rrf_k: None,
         }
     }
 

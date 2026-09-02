@@ -640,6 +640,11 @@ mod tests {
             embed_dims: dims,
             ready_for_search: true,
             ingest_roots_configured: false,
+            pid: 0,
+            uptime_seconds: 0,
+            db_file_bytes: None,
+            wal_bytes: 0,
+            wal_warn_bytes: 0,
             db_path: store.path().display().to_string(),
         };
         let report = wake_up(&store, status.clone(), Some("alice"), 5, 20).expect("wake");

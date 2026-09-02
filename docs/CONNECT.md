@@ -279,8 +279,19 @@ claude mcp add-from-claude-desktop
 | `/mcp` | streamable HTTP | MCP clients |
 | `/health` | GET | counts, integrity, WAL and nested runtime/startup/autosync/backup state |
 | `/live`, `/ready` | GET | process liveness and store readiness |
-| `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports |
-| `/v1/search` | POST | lex/vector/hybrid retrieval with filters and diagnostics |
+| `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports; status carries `pid`, `uptime_seconds`, `db_file_bytes`, `wal_bytes` |
+| `/v1/runtime` | GET | startup phases, autosync / auto-backup state |
+| `/v1/calls`, `/v1/agents` | GET | in-memory call log (every MCP tool call + HTTP mutation: agent, transport, latency, p50/p95, share by tool family) and per-agent presence merged with `ops_log` / diary. `RAG_CALL_LOG_CAPACITY` (default 2000) |
+| `/v1/search` | POST | full `SearchParams` mirror (`min_score`, `diversity`, `group_by`, `recency_half_life_days`, `max_chunks_per_document`, `context_expansion`, `neighbor_chunks`, `rrf_k`, …). Hits carry `rank_vec` / `rank_lex`; `timings` has `embed_ms`, `vec_ms`, `lex_ms`, `retrieval_ms`, `postprocess_ms`, `total_ms` |
+| `/v1/pack-context` | POST | `pack_context` mirror: hits → token-budgeted citation block |
+| `/v1/ops-log` | GET | `read_log` mirror (`limit`, `id`, `seq`; client filters `agent`, `prefix`) |
+| `/v1/taxonomy`, `/v1/wings`, `/v1/rooms` | GET | wing → room tree with counts |
+| `/v1/diary`, `/v1/kg`, `/v1/kg/timeline`, `/v1/kg/stats`, `/v1/tunnels` | GET | L4 reads (`agent`, `subject`, `predicate`, `object`, `at_time`, `node_id`) |
+| `/v1/llm-status`, `/v1/embedding-manifest`, `/v1/lint-wiki` | GET | model probe, manifest vs live config, wiki lint |
+| `/v1/eval/history` | GET | last runs from the `--history-jsonl` file named by `RAG_EVAL_HISTORY` (never a request path) |
+| `/v1/ingest/text`, `/v1/ingest/file`, `/v1/sync-sources` | POST | ingest mirrors; same `RAG_INGEST_ROOTS` allowlist as MCP |
+| `/v1/document` | PATCH, DELETE | `update_document_meta` mirror (wing/room/status/pinned/boost/content) and delete |
+| `/v1/reembed`, `/v1/backup`, `/v1/vacuum`, `/v1/doctor/repair` | POST | maintenance mirrors; repair defaults to `dry_run=true` |
 | `/v1/multi-get` | POST | ordered batch document retrieval |
 | `/v1/expand-chunks`, `/v1/find-similar` | GET | retrieval helpers |
 | `/v1/documents`, `/v1/wiki` | GET | cursor-paginated catalogs; read responses include ETags |

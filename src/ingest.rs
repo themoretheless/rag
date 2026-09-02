@@ -1,5 +1,6 @@
 //! Application service for document ingestion and embedding refresh.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -11,9 +12,10 @@ use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
+use crate::file_ingest::{extract_file, merge_metadata};
 use crate::graph::rebuild_document_graph;
 use crate::models::{Chunk, Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
-use crate::util::content_hash;
+use crate::util::{check_path_allowlist, content_hash};
 
 #[derive(Debug, Clone)]
 pub struct IngestCommand {
@@ -27,6 +29,20 @@ pub struct IngestCommand {
     pub layer: String,
     pub kind: String,
     pub immutable: bool,
+}
+
+/// Ingest one file from disk (`ingest_file` MCP tool / `POST /v1/ingest/file`).
+///
+/// The path must sit under `RAG_INGEST_ROOTS`; `uri` defaults to `file://` + the
+/// canonical path and `title` to the file name.
+#[derive(Debug, Clone, Default)]
+pub struct IngestFileCommand {
+    pub path: String,
+    pub title: Option<String>,
+    pub uri: Option<String>,
+    pub metadata_json: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +100,43 @@ impl<'a> IngestService<'a> {
             embedder,
             config,
         }
+    }
+
+    /// Read, extract, and ingest one allowlisted file as `layer=raw`, `kind=document`.
+    pub async fn ingest_file(&self, command: IngestFileCommand) -> Result<IngestResult, AppError> {
+        let path = Path::new(&command.path);
+        check_path_allowlist(path, &self.config.ingest_roots)?;
+        let extracted = extract_file(path).map_err(|error| {
+            if path.try_exists().ok() == Some(false) {
+                AppError::not_found(format!("file not found: {}", command.path))
+            } else {
+                AppError::config(error.to_string())
+            }
+        })?;
+        let metadata_json = merge_metadata(command.metadata_json, extracted.metadata)
+            .map_err(|error| AppError::config(format!("metadata_json is not valid JSON: {error}")))?;
+        let canonical = path.canonicalize().ok();
+        let default_uri = canonical
+            .as_ref()
+            .map(|p| format!("file://{}", p.display()))
+            .unwrap_or_else(|| format!("file://{}", command.path));
+        let default_title = path.file_name().and_then(|n| n.to_str()).map(str::to_string);
+        let source_file = canonical
+            .map(|p| p.display().to_string())
+            .or_else(|| Some(command.path.clone()));
+        self.ingest(IngestCommand {
+            text: extracted.text,
+            title: command.title.or(default_title),
+            uri: command.uri.or(Some(default_uri)),
+            metadata_json: Some(metadata_json),
+            wing: command.wing,
+            room: command.room,
+            source_file,
+            layer: "raw".into(),
+            kind: "document".into(),
+            immutable: false,
+        })
+        .await
     }
 
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {

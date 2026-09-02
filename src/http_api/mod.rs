@@ -6,6 +6,10 @@
 //! |------|------|
 //! | `/health`, `/v1/graph`, `/v1/neighbors`, `/v1/find`, `/v1/document` | Graph + document UI |
 //! | `GET /v1/wiki`, `PUT /v1/wiki`, `GET /v1/backlinks` | Wiki catalog, write (CAS), backlinks |
+//! | `POST /v1/search`, `POST /v1/pack-context` | Retrieval lab: full `SearchParams`, packing |
+//! | `/v1/status`, `/v1/doctor`, `/v1/runtime`, `/v1/calls`, `/v1/agents` | Console health + call log |
+//! | `/v1/ops-log`, `/v1/taxonomy`, `/v1/diary`, `/v1/kg*`, `/v1/tunnels`, `/v1/llm-status` | Console reads |
+//! | `POST /v1/ingest/*`, `PATCH /v1/document`, `POST /v1/backup`, … | Console mutations (see [`admin`]) |
 //! | `/mcp` | Streamable HTTP MCP (Claude, ChatGPT, any remote MCP client) |
 //!
 //! Does **not** open a second DuckDB connection; shares the server's [`Store`].
@@ -25,6 +29,7 @@
 //! | [`graph`] | Graph + document handlers |
 //! | [`wiki`] | Wiki list/put/backlinks |
 
+mod admin;
 mod bind;
 mod error;
 mod graph;
@@ -73,7 +78,10 @@ pub fn mcp_http_service(
     cancellation_token: CancellationToken,
 ) -> StreamableHttpService<RagServer, LocalSessionManager> {
     StreamableHttpService::new(
-        move || Ok(RagServer::new(store.clone(), embedder.clone(), config.clone())),
+        move || {
+            Ok(RagServer::new(store.clone(), embedder.clone(), config.clone())
+                .with_transport("http-mcp"))
+        },
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig {
             stateful_mode: true,
@@ -121,6 +129,7 @@ fn api_router(state: HttpState) -> Router {
         .merge(ops::routes())
         .merge(retrieval::routes())
         .merge(wiki::routes())
+        .merge(admin::routes())
         .with_state(state)
         .layer(axum::middleware::from_fn(http_metadata))
 }
@@ -213,6 +222,111 @@ mod tests {
         assert!(!loopback_origin("https://example.com"));
         assert_eq!(retrieval::decode_cursor(Some(&retrieval::encode_cursor(42))).unwrap(), 42);
         assert!(retrieval::decode_cursor(Some("42")).is_err());
+    }
+
+    async fn get_json(app: &Router, uri: &str) -> (axum::http::StatusCode, serde_json::Value) {
+        let response = app.clone().oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+    }
+
+    async fn send_json(app: &Router, method: &str, uri: &str, body: serde_json::Value) -> (axum::http::StatusCode, serde_json::Value) {
+        let response = app.clone().oneshot(Request::builder().method(method).uri(uri).header("content-type", "application/json")
+            .body(Body::from(body.to_string())).unwrap()).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+    }
+
+    #[tokio::test]
+    async fn console_read_routes_respond_on_empty_store() {
+        let app = app();
+        for uri in ["/v1/runtime", "/v1/calls", "/v1/agents", "/v1/ops-log", "/v1/taxonomy", "/v1/wings", "/v1/rooms",
+            "/v1/embedding-manifest", "/v1/diary", "/v1/kg", "/v1/kg/stats", "/v1/tunnels", "/v1/lint-wiki", "/v1/eval/history",
+            "/v1/kg/timeline?subject=rag-mcp"] {
+            let (status, body) = get_json(&app, uri).await;
+            assert_eq!(status, axum::http::StatusCode::OK, "{uri}: {body}");
+            assert_eq!(body["ok"], true, "{uri}: {body}");
+        }
+        let (status, body) = get_json(&app, "/v1/status").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body["pid"], std::process::id());
+        assert!(body["wal_warn_bytes"].as_u64().unwrap() > 0);
+        let (status, _) = get_json(&app, "/v1/ops-log?seq=999999").await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+        let (status, _) = send_json(&app, "POST", "/v1/search", serde_json::json!({"query": "x", "mode": "lex", "rrf_k": 0})).await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn console_mutations_search_lab_and_call_log_roundtrip() {
+        let app = app();
+        let (status, body) = send_json(&app, "POST", "/v1/ingest/text", serde_json::json!({
+            "text": "# Manifest\n\nThe embedding manifest makes vec and hybrid search fail closed on a dims mismatch.",
+            "title": "manifest-note", "uri": "raw://manifest-note", "wing": "rag", "room": "docs"
+        })).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        let document_id = body["result"]["document_id"].as_str().unwrap().to_string();
+        assert!(body["result"]["chunk_count"].as_u64().unwrap() >= 1);
+
+        let (status, body) = send_json(&app, "POST", "/v1/search", serde_json::json!({
+            "query": "manifest mismatch", "mode": "hybrid", "top_k": 5, "rrf_k": 30, "wing": "rag"
+        })).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        assert_eq!(body["mode"], "hybrid");
+        assert!(body["count"].as_u64().unwrap() >= 1);
+        let hit = &body["items"][0];
+        assert!(hit["rank_lex"].is_number() || hit["rank_vec"].is_number(), "{hit}");
+        assert_eq!(hit["explanation"]["rrf_k"], 30.0);
+        assert!(body["timings"]["embed_ms"].is_number(), "{body}");
+        assert!(body["timings"]["vec_ms"].is_number(), "{body}");
+        assert!(body["timings"]["lex_ms"].is_number(), "{body}");
+
+        let (status, packed) = send_json(&app, "POST", "/v1/pack-context", serde_json::json!({
+            "hits": body["items"], "max_tokens": 400, "context_expansion": "neighbors"
+        })).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{packed}");
+        assert!(packed["total_tokens"].as_u64().unwrap() > 0);
+        assert!(packed["context_text"].as_str().unwrap().contains("manifest"));
+
+        let (status, body) = send_json(&app, "PATCH", "/v1/document", serde_json::json!({
+            "document_id": document_id, "pinned": true, "room": "wiki", "boost": 1.5
+        })).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["pinned"], true);
+        assert_eq!(body["result"]["room"], "wiki");
+        let (_, docs) = get_json(&app, "/v1/documents?room=wiki").await;
+        assert_eq!(docs["page"]["total"], 1);
+        let (_, tax) = get_json(&app, "/v1/taxonomy").await;
+        assert_eq!(tax["taxonomy"]["wings"][0]["wing"], "rag");
+
+        let (status, body) = send_json(&app, "POST", "/v1/doctor/repair", serde_json::json!({})).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["dry_run"], true);
+        let (status, body) = send_json(&app, "POST", "/v1/vacuum", serde_json::json!({})).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["checkpointed"], true);
+        let (status, body) = send_json(&app, "POST", "/v1/reembed", serde_json::json!({"document_id": document_id})).await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+
+        let (_, calls) = get_json(&app, "/v1/calls?agent=http&limit=100").await;
+        let tools: Vec<&str> = calls["items"].as_array().unwrap().iter().map(|c| c["tool"].as_str().unwrap()).collect();
+        for expected in ["ingest_text", "search", "update_document_meta", "doctor_repair", "vacuum_store", "reembed_document"] {
+            assert!(tools.contains(&expected), "missing {expected} in {tools:?}");
+        }
+        assert!(calls["summary"]["buffered"].as_u64().unwrap() >= 6);
+        let (_, agents) = get_json(&app, "/v1/agents").await;
+        let http = agents["items"].as_array().unwrap().iter().find(|a| a["agent"] == "http").expect("http agent row");
+        assert_eq!(http["online"], true);
+        assert!(http["calls_total"].as_u64().unwrap() >= 6, "{http}");
+
+        let (status, _) = send_json(&app, "DELETE", &format!("/v1/document?id={document_id}"), serde_json::json!({})).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let (status, _) = send_json(&app, "DELETE", &format!("/v1/document?id={document_id}"), serde_json::json!({})).await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+        let (status, _) = send_json(&app, "POST", "/v1/ingest/file", serde_json::json!({"path": "/nowhere/x.md"})).await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

@@ -16,7 +16,7 @@
 //! Domain modules own route registration while [`tools`] keeps `*Params` flat and
 //! stable for callers. Public tool names and the rmcp schema surface are unchanged.
 
-mod facade;
+pub(crate) mod facade;
 mod collections;
 mod graph;
 mod ingest;

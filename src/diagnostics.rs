@@ -1,10 +1,72 @@
-//! Transport-independent status and integrity diagnostics.
+//! Transport-independent status, integrity diagnostics, and doctor repair.
 
-use crate::config::Config;
+use std::sync::Arc;
+
+use serde::Serialize;
+
+use crate::config::{Config, EmbeddingProviderKind};
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::Store;
+use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
-use crate::models::{DoctorReport, StatusReport};
+use crate::ingest::{IngestCommand, IngestService};
+use crate::llm::{ChatClient, LlmApiDialect};
+use crate::models::{DoctorReport, LlmStatusReport, StatusReport};
+use crate::source_sync::SourceSyncError;
+
+/// Outcome of `doctor_repair` (MCP) / `POST /v1/doctor/repair` (HTTP).
+#[derive(Debug, Serialize)]
+pub struct DoctorRepairReport {
+    pub dry_run: bool,
+    pub documents_considered: usize,
+    pub documents_repaired: Vec<String>,
+    pub documents_failed: Vec<SourceSyncError>,
+    pub orphan_chunks_pruned: u64,
+    pub orphan_document_nodes_pruned: u64,
+    pub orphan_edges_pruned: u64,
+    pub before: DoctorReport,
+    pub after: DoctorReport,
+}
+
+/// Probe the configured chat LLM and describe embedding config (no corpus mutation).
+///
+/// Shared by MCP `llm_status` and `GET /v1/llm-status`.
+pub async fn llm_status(config: &Config, llm: Option<&ChatClient>) -> LlmStatusReport {
+    let (reachable, error) = match llm {
+        Some(client) => {
+            let probe = client.llm_status().await;
+            let error = if probe.ok { None } else { Some(probe.detail) };
+            (probe.ok, error)
+        }
+        None => (
+            false,
+            Some("ChatClient not configured; check RAG_LLM_BASE_URL and RAG_LLM_MODEL".to_string()),
+        ),
+    };
+    let embed_base_url = match config.embedding_provider {
+        EmbeddingProviderKind::Mock => None,
+        EmbeddingProviderKind::OpenAi | EmbeddingProviderKind::Ollama => {
+            Some(config.embedding_base_url.clone())
+        }
+    };
+    let dialect = match config.llm_provider.dialect() {
+        LlmApiDialect::OpenAiCompat => "openai_compat",
+        LlmApiDialect::AnthropicMessages => "anthropic_messages",
+    };
+    LlmStatusReport {
+        llm_enabled: config.llm_enabled,
+        provider: config.llm_provider.as_str().to_string(),
+        dialect: dialect.to_string(),
+        base_url: config.llm_base_url.clone(),
+        model: config.llm_model.clone(),
+        reachable,
+        error,
+        embed_provider: config.embedding_provider.as_str().to_string(),
+        embed_model: config.embedding_model.clone(),
+        embed_dims: config.embedding_dims,
+        embed_base_url,
+    }
+}
 
 pub struct DiagnosticsService<'a> {
     store: &'a Store,
@@ -14,6 +76,77 @@ pub struct DiagnosticsService<'a> {
 impl<'a> DiagnosticsService<'a> {
     pub fn new(store: &'a Store, config: &'a Config) -> Self {
         Self { store, config }
+    }
+
+    /// Preview (`dry_run=true`) or apply doctor findings: reingest non-schema documents
+    /// that lost their chunks, prune orphan chunks / nodes / edges, then checkpoint.
+    ///
+    /// `max_docs` is clamped to `1..=RAG_MAINT_MAX_DOCS`.
+    pub async fn repair(
+        &self,
+        embedder: &Arc<dyn EmbeddingProvider>,
+        dry_run: bool,
+        max_docs: Option<usize>,
+    ) -> Result<DoctorRepairReport, AppError> {
+        let cap = self.config.maint_max_docs.max(1);
+        let max_docs = max_docs.unwrap_or(cap).clamp(1, cap);
+        let before = self.doctor()?;
+        let mut missing = Vec::new();
+        for document in self.store.list_documents()? {
+            if document.layer == "schema" {
+                continue;
+            }
+            if self.store.list_chunks_for_document(&document.id)?.is_empty() {
+                missing.push(document);
+                if missing.len() >= max_docs {
+                    break;
+                }
+            }
+        }
+
+        let mut documents_repaired = Vec::new();
+        let mut documents_failed = Vec::new();
+        if !dry_run {
+            let ingest = IngestService::new(self.store, embedder, self.config);
+            for document in &missing {
+                let command = IngestCommand {
+                    text: document.content.clone(),
+                    title: Some(document.title.clone()),
+                    uri: Some(document.uri.clone()),
+                    metadata_json: Some(document.metadata_json.clone()),
+                    wing: document.wing.clone(),
+                    room: document.room.clone(),
+                    source_file: document.source_file.clone(),
+                    layer: document.layer.clone(),
+                    kind: document.kind.clone(),
+                    immutable: false,
+                };
+                match ingest.ingest(command).await {
+                    Ok(_) => documents_repaired.push(document.id.clone()),
+                    Err(error) => documents_failed.push(SourceSyncError {
+                        path: document.uri.clone(),
+                        error: error.to_string(),
+                    }),
+                }
+            }
+        }
+        let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) =
+            self.store.prune_orphans(dry_run)?;
+        if !dry_run {
+            self.store.checkpoint()?;
+        }
+        let after = if dry_run { before.clone() } else { self.doctor()? };
+        Ok(DoctorRepairReport {
+            dry_run,
+            documents_considered: missing.len(),
+            documents_repaired,
+            documents_failed,
+            orphan_chunks_pruned,
+            orphan_document_nodes_pruned,
+            orphan_edges_pruned,
+            before,
+            after,
+        })
     }
 
     pub fn status(&self) -> Result<StatusReport, AppError> {
@@ -41,6 +174,7 @@ impl<'a> DiagnosticsService<'a> {
             indexed_pages as f64 / wiki_count as f64
         };
         let uncompiled_raw_count = self.uncompiled_raw_count(&raw_documents, wiki_count)?;
+        let runtime = crate::ops::runtime_snapshot();
         let manifest = self.store.get_embedding_manifest()?;
         let embedding_manifest_match = manifest.as_ref().map_or(chunk_count == 0, |item| {
             item.dims as usize == self.config.embedding_dims
@@ -70,6 +204,11 @@ impl<'a> DiagnosticsService<'a> {
             ready_for_search: chunk_count > 0 && schema_version >= SCHEMA_VERSION,
             ingest_roots_configured: !self.config.ingest_roots.is_empty(),
             db_path: self.store.path().display().to_string(),
+            pid: runtime.pid,
+            uptime_seconds: runtime.uptime_seconds,
+            db_file_bytes: self.store.db_file_size_bytes(),
+            wal_bytes: self.store.wal_file_size_bytes(),
+            wal_warn_bytes: crate::ops::wal_warn_bytes(),
         })
     }
 

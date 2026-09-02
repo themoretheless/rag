@@ -11,13 +11,18 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
+use crate::db::search::{attach_context, ContextExpansion};
 use crate::error::AppError;
-use crate::models::{DocumentFilter, DrawerListItem};
+use crate::mcp::tools::PackHitParams;
+use crate::models::{DocumentFilter, DrawerListItem, SearchHit};
 use crate::retrieval::{self, SearchCommand, SimilarDocumentsQuery};
+use crate::search_pack::pack_hits;
+use crate::telemetry;
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
         .route("/v1/search", post(search_http))
+        .route("/v1/pack-context", post(pack_context_http))
         .route("/v1/multi-get", post(multi_get))
         .route("/v1/expand-chunks", get(expand_chunks))
         .route("/v1/find-similar", get(find_similar))
@@ -35,6 +40,7 @@ async fn revisions(State(state): State<HttpState>, Query(query): Query<Revisions
     }
 }
 
+/// Full `SearchParams` mirror (same names as the MCP `search` tool).
 #[derive(Deserialize)]
 struct SearchBody {
     query: String,
@@ -42,6 +48,8 @@ struct SearchBody {
     mode: Option<String>,
     #[serde(default)]
     top_k: Option<usize>,
+    #[serde(default)]
+    document_id: Option<String>,
     #[serde(default)]
     wing: Option<String>,
     #[serde(default)]
@@ -53,6 +61,27 @@ struct SearchBody {
     #[serde(default)]
     include_archived: bool,
     #[serde(default)]
+    min_score: Option<f32>,
+    /// `mmr` | `collapse_by_document`.
+    #[serde(default)]
+    diversity: Option<String>,
+    /// `document` | `none`.
+    #[serde(default)]
+    group_by: Option<String>,
+    #[serde(default)]
+    recency_half_life_days: Option<f64>,
+    #[serde(default)]
+    max_context_tokens: Option<usize>,
+    #[serde(default)]
+    max_chunks_per_document: Option<usize>,
+    /// `neighbors` | `parent_section`.
+    #[serde(default)]
+    context_expansion: Option<String>,
+    #[serde(default)]
+    neighbor_chunks: Option<usize>,
+    #[serde(default)]
+    rrf_k: Option<f32>,
+    #[serde(default)]
     timeout_ms: Option<u64>,
 }
 
@@ -60,33 +89,94 @@ async fn search_http(
     State(state): State<HttpState>,
     Json(body): Json<SearchBody>,
 ) -> impl IntoResponse {
+    let call = telemetry::begin(
+        "http",
+        "http",
+        "search",
+        Some(&json!({"query": body.query, "mode": body.mode, "top_k": body.top_k})),
+    );
     let command = SearchCommand {
         query: body.query,
         mode: body.mode,
         default_mode: state.config.default_search_mode,
         top_k: body.top_k,
         default_top_k: state.config.default_top_k,
-        document_id: None,
+        document_id: clean(body.document_id),
         wing: clean(body.wing),
         room: clean(body.room),
         layer: clean(body.layer),
         source_file: clean(body.source_file),
         include_archived: body.include_archived,
-        min_score: None,
-        diversity: None,
-        group_by: None,
-        recency_half_life_days: None,
-        max_context_tokens: None,
-        max_chunks_per_document: None,
-        context_expansion: None,
-        neighbor_chunks: None,
+        min_score: body.min_score,
+        diversity: clean(body.diversity),
+        group_by: clean(body.group_by),
+        recency_half_life_days: body.recency_half_life_days,
+        max_context_tokens: body.max_context_tokens.or(Some(state.config.max_context_tokens)),
+        max_chunks_per_document: body
+            .max_chunks_per_document
+            .or(Some(state.config.max_chunks_per_doc)),
+        context_expansion: clean(body.context_expansion),
+        neighbor_chunks: body.neighbor_chunks,
         timeout_ms: body.timeout_ms.or(Some(5_000)),
         fts_stemmer: state.config.fts_stemmer.clone(),
+        rrf_k: body.rrf_k,
     };
+    let mode = command.mode.clone().unwrap_or_else(|| command.default_mode.as_str().to_string());
     match retrieval::execute_search(&state.store, state.embedder.as_ref(), command).await {
-        Ok(hits) => api_ok(json!({"ok": true, "count": hits.len(), "items": hits})),
-        Err(error) => api_err(error),
+        Ok(hits) => {
+            call.finish(true, None, Some(format!("{} hits", hits.len())));
+            let timings = hits.first().and_then(|hit| hit.explanation.clone());
+            api_ok(json!({
+                "ok": true,
+                "mode": mode,
+                "count": hits.len(),
+                "timings": timings,
+                "items": hits,
+            }))
+        }
+        Err(error) => {
+            call.finish(false, Some(error.to_string()), None);
+            api_err(error)
+        }
     }
+}
+
+/// `pack_context` mirror: pack ranked hits under a token budget with optional expansion.
+#[derive(Deserialize)]
+struct PackContextBody {
+    hits: Vec<PackHitParams>,
+    #[serde(default)]
+    max_tokens: Option<usize>,
+    #[serde(default)]
+    context_expansion: Option<String>,
+    #[serde(default)]
+    neighbor_chunks: Option<usize>,
+}
+
+async fn pack_context_http(
+    State(state): State<HttpState>,
+    Json(body): Json<PackContextBody>,
+) -> impl IntoResponse {
+    let expansion = match clean(body.context_expansion).as_deref().map(ContextExpansion::parse) {
+        Some(Ok(value)) => Some(value),
+        Some(Err(error)) => return api_err(error),
+        None => None,
+    };
+    let mut hits: Vec<SearchHit> = body.hits.into_iter().map(SearchHit::from).collect();
+    if let Err(error) =
+        attach_context(&state.store, &mut hits, expansion, body.neighbor_chunks.unwrap_or(1))
+    {
+        return api_err(error);
+    }
+    let packed = pack_hits(&hits, body.max_tokens.unwrap_or(state.config.max_context_tokens));
+    api_ok(json!({
+        "ok": true,
+        "total_tokens": packed.total_tokens,
+        "max_tokens": packed.max_tokens,
+        "omitted_count": packed.omitted_count,
+        "context_text": packed.context_text,
+        "hits": packed.hits,
+    }))
 }
 
 #[derive(Deserialize)]
