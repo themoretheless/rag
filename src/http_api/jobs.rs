@@ -197,14 +197,9 @@ impl JobRegistry {
         let registry = self.clone();
         tokio::spawn(async move {
             let _writer_guard = registry.inner.writer_lane.lock().await;
-            if cancellation.is_cancelled() {
-                registry.finish_cancelled(&id, SourceSyncReport::default());
+            if !registry.mark_running_if_queued(&id) {
                 return;
             }
-            registry.update(&id, |job| {
-                job.status = JobStatus::Running;
-                job.started_at = Some(Utc::now());
-            });
 
             let progress_registry = registry.clone();
             let progress_id = id.clone();
@@ -253,20 +248,53 @@ impl JobRegistry {
     }
 
     pub fn cancel(&self, id: &str) -> Result<JobSnapshot, AppError> {
-        let (snapshot, cancellation) = {
+        let (snapshot, cancellation, should_cancel) = {
             let mut jobs = self.jobs();
             let entry = jobs
                 .get_mut(id)
                 .ok_or_else(|| AppError::not_found(format!("job not found: {id}")))?;
-            if !entry.snapshot.status.is_terminal() {
-                entry.snapshot.cancel_requested = true;
-            }
-            (entry.snapshot.clone(), entry.cancellation.clone())
+
+            let should_cancel = match entry.snapshot.status {
+                JobStatus::Queued => {
+                    entry.snapshot.cancel_requested = true;
+                    mark_cancelled(&mut entry.snapshot, SourceSyncReport::default());
+                    true
+                }
+                JobStatus::Running => {
+                    entry.snapshot.cancel_requested = true;
+                    true
+                }
+                _ => false,
+            };
+            (
+                entry.snapshot.clone(),
+                entry.cancellation.clone(),
+                should_cancel,
+            )
         };
-        if !snapshot.status.is_terminal() {
+        if should_cancel {
             cancellation.cancel();
         }
         Ok(snapshot)
+    }
+
+    /// Atomically claim a queued job for the writer lane.
+    ///
+    /// Cancellation uses the same registry mutex, so a queued job either
+    /// becomes terminal `cancelled` or transitions to `running`; it can never
+    /// be resurrected from `cancelled` by a worker that was waiting for the
+    /// writer lane.
+    fn mark_running_if_queued(&self, id: &str) -> bool {
+        let mut jobs = self.jobs();
+        let Some(entry) = jobs.get_mut(id) else {
+            return false;
+        };
+        if entry.snapshot.status != JobStatus::Queued {
+            return false;
+        }
+        entry.snapshot.status = JobStatus::Running;
+        entry.snapshot.started_at = Some(Utc::now());
+        true
     }
 
     fn update(&self, id: &str, update: impl FnOnce(&mut JobSnapshot)) {
@@ -288,6 +316,9 @@ impl JobRegistry {
     ) {
         let mut jobs = self.jobs();
         if let Some(entry) = jobs.get_mut(id) {
+            if entry.snapshot.status.is_terminal() {
+                return;
+            }
             entry.snapshot.status = status;
             entry.snapshot.report = report.map(SourceSyncJobReport::from);
             entry.snapshot.error = error;
@@ -302,6 +333,13 @@ impl JobRegistry {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+fn mark_cancelled(snapshot: &mut JobSnapshot, report: SourceSyncReport) {
+    snapshot.status = JobStatus::Cancelled;
+    snapshot.report = Some(report.into());
+    snapshot.error = None;
+    snapshot.finished_at = Some(Utc::now());
 }
 
 fn prune_jobs(jobs: &mut HashMap<String, JobEntry>) {
@@ -432,6 +470,24 @@ mod tests {
         }
     }
 
+    fn assert_immediately_cancelled(snapshot: &JobSnapshot) {
+        assert_eq!(snapshot.status, JobStatus::Cancelled);
+        assert!(snapshot.cancel_requested);
+        assert!(snapshot.started_at.is_none());
+        assert!(snapshot.finished_at.is_some());
+        assert!(snapshot.error.is_none());
+        let report = snapshot.report.as_ref().expect("cancelled job report");
+        assert_eq!(report.added_count, 0);
+        assert_eq!(report.updated_count, 0);
+        assert_eq!(report.skipped_count, 0);
+        assert_eq!(report.deleted_count, 0);
+        assert_eq!(report.error_count, 0);
+        assert!(report.error_samples.is_empty());
+        assert_eq!(report.counters.preflight, 0);
+        assert_eq!(report.counters.extracted, 0);
+        assert_eq!(report.counters.embedded, 0);
+    }
+
     #[tokio::test]
     async fn source_sync_job_reports_lifecycle_and_result() {
         let root = tempfile::tempdir().unwrap();
@@ -509,12 +565,67 @@ mod tests {
             )
             .unwrap();
         let cancelled = state.jobs.cancel(&job.id).unwrap();
-        assert!(cancelled.cancel_requested);
-        drop(writer_guard);
+        assert_immediately_cancelled(&cancelled);
+        assert_immediately_cancelled(&state.jobs.get(&job.id).unwrap());
+        assert!(!state.jobs.mark_running_if_queued(&job.id));
 
-        let finished = wait_for_terminal(&state.jobs, &job.id).await;
-        assert_eq!(finished.status, JobStatus::Cancelled);
+        drop(writer_guard);
+        tokio::task::yield_now().await;
+
+        assert_immediately_cancelled(&state.jobs.get(&job.id).unwrap());
         assert!(state.store.list_documents().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_cancel_and_running_transition_never_resurrect_a_cancelled_job() {
+        let registry = JobRegistry::default();
+        let id = "job-1".to_string();
+        registry
+            .jobs()
+            .insert(id.clone(), entry(1, JobStatus::Queued));
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+
+        let cancel_task = tokio::spawn({
+            let registry = registry.clone();
+            let id = id.clone();
+            let barrier = barrier.clone();
+            async move {
+                barrier.wait().await;
+                registry.cancel(&id).unwrap()
+            }
+        });
+        let start_task = tokio::spawn({
+            let registry = registry.clone();
+            let id = id.clone();
+            let barrier = barrier.clone();
+            async move {
+                barrier.wait().await;
+                registry.mark_running_if_queued(&id)
+            }
+        });
+
+        barrier.wait().await;
+        let cancelled = cancel_task.await.unwrap();
+        let transitioned_to_running = start_task.await.unwrap();
+        let final_snapshot = registry.get(&id).unwrap();
+        let token_cancelled = registry
+            .jobs()
+            .get(&id)
+            .expect("job remains retained")
+            .cancellation
+            .is_cancelled();
+
+        assert!(token_cancelled);
+        if transitioned_to_running {
+            assert_eq!(cancelled.status, JobStatus::Running);
+            assert_eq!(final_snapshot.status, JobStatus::Running);
+            assert!(final_snapshot.cancel_requested);
+            assert!(final_snapshot.started_at.is_some());
+            assert!(final_snapshot.finished_at.is_none());
+        } else {
+            assert_immediately_cancelled(&cancelled);
+            assert_immediately_cancelled(&final_snapshot);
+        }
     }
 
     #[tokio::test]
@@ -541,7 +652,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let id = body["job"]["id"].as_str().unwrap();
+        let id = body["job"]["id"].as_str().unwrap().to_string();
 
         for uri in ["/v1/jobs".to_string(), format!("/v1/jobs/{id}")] {
             let response = app
@@ -552,6 +663,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK);
         }
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("DELETE")
@@ -561,11 +673,36 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-        drop(writer_guard);
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["job"]["status"], "cancelled");
+        assert_eq!(body["job"]["cancel_requested"], true);
+        assert!(body["job"]["started_at"].is_null());
+        assert!(body["job"]["finished_at"].is_string());
+        assert!(body["job"]["report"].is_object());
+        assert_eq!(body["job"]["report"]["error_count"], 0);
 
-        let finished = wait_for_terminal(&state.jobs, id).await;
-        assert_eq!(finished.status, JobStatus::Cancelled);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/jobs/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["job"]["status"], "cancelled");
+        assert!(body["job"]["finished_at"].is_string());
+        assert!(body["job"]["report"].is_object());
+
+        drop(writer_guard);
+        tokio::task::yield_now().await;
+        assert_immediately_cancelled(&state.jobs.get(&id).unwrap());
+        assert!(state.store.list_documents().unwrap().is_empty());
     }
 
     #[test]

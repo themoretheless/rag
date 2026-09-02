@@ -157,6 +157,7 @@ impl Store {
                 include_tags,
             )?);
         }
+        enrich_document_placements_locked(&conn, &mut nodes)?;
         let node_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
         let edges = load_bounded_scoped_edges_locked(&conn, project, &node_ids, include_tags)?;
         Ok(GraphView { nodes, edges })
@@ -216,7 +217,8 @@ impl Store {
             frontier = next_frontier;
         }
 
-        let nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        enrich_document_placements_locked(&conn, &mut nodes)?;
         let edges = load_bounded_scoped_edges_locked(&conn, project, &visited, include_tags)?;
         Ok(GraphView { nodes, edges })
     }
@@ -932,6 +934,88 @@ fn values_clause(len: usize) -> String {
     (0..len).map(|_| "(?)").collect::<Vec<_>>().join(", ")
 }
 
+/// Make project-scoped graph exports self-describing for UI-side room/layer filters.
+///
+/// Graph extraction intentionally keeps node metadata independent from document
+/// metadata, so placement is joined from the authoritative document row only at
+/// the project export boundary. Document placement wins over stale graph metadata;
+/// unrelated graph metadata is preserved.
+fn enrich_document_placements_locked(
+    conn: &duckdb::Connection,
+    nodes: &mut [GraphNode],
+) -> Result<()> {
+    let mut document_ids = nodes
+        .iter()
+        .filter_map(|node| node.document_id.as_ref())
+        .collect::<Vec<_>>();
+    document_ids.sort_unstable();
+    document_ids.dedup();
+    if document_ids.is_empty() {
+        return Ok(());
+    }
+
+    let selected = values_clause(document_ids.len());
+    let sql = format!(
+        r#"
+        WITH selected_documents(id) AS (VALUES {selected})
+        SELECT d.id, d.wing, d.room, d.layer
+        FROM selected_documents selected
+        JOIN documents d ON d.id = selected.id
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(document_ids.iter()))?;
+    let mut placements = HashMap::with_capacity(document_ids.len());
+    while let Some(row) = rows.next()? {
+        placements.insert(
+            row.get::<_, String>(0)?,
+            (
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "raw".into()),
+            ),
+        );
+    }
+
+    for node in nodes {
+        let Some(document_id) = node.document_id.as_ref() else {
+            continue;
+        };
+        let Some((wing, room, layer)) = placements.get(document_id) else {
+            continue;
+        };
+        let mut metadata = serde_json::from_str::<serde_json::Value>(&node.metadata_json)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        set_optional_metadata(&mut metadata, "wing", wing.as_deref());
+        set_optional_metadata(&mut metadata, "room", room.as_deref());
+        set_optional_metadata(&mut metadata, "layer", Some(layer));
+        node.metadata_json = serde_json::Value::Object(metadata).to_string();
+    }
+    Ok(())
+}
+
+fn set_optional_metadata(
+    metadata: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => {
+            metadata.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+        }
+        None => {
+            metadata.remove(key);
+        }
+    }
+}
+
 fn load_bounded_project_nodes_locked(
     conn: &duckdb::Connection,
     project: &str,
@@ -1627,26 +1711,40 @@ mod tests {
                     title: title.into(),
                     content: title.into(),
                     wing: Some(wing.into()),
+                    room: (wing == "alpha").then(|| "docs".into()),
+                    layer: "raw".into(),
                     ..Default::default()
                 })
                 .unwrap();
         }
+        // Additive migrations historically allowed NULL here. Project exports
+        // must expose the same effective `raw` layer as the document codec.
         store
-            .upsert_graph_node(&node(
-                "alpha-node",
-                "document",
-                "Zed project note",
-                Some("alpha-doc"),
-            ))
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE documents SET layer = NULL WHERE id = ?",
+                duckdb::params!["alpha-doc"],
+            )
             .unwrap();
-        store
-            .upsert_graph_node(&node(
-                "beta-node",
-                "document",
-                "Aardvark other note",
-                Some("beta-doc"),
-            ))
-            .unwrap();
+        let mut alpha_node = node(
+            "alpha-node",
+            "document",
+            "Zed project note",
+            Some("alpha-doc"),
+        );
+        alpha_node.metadata_json =
+            r#"{"wing":"stale","room":"old","layer":"index","custom":true}"#.into();
+        store.upsert_graph_node(&alpha_node).unwrap();
+        let mut beta_node = node(
+            "beta-node",
+            "document",
+            "Aardvark other note",
+            Some("beta-doc"),
+        );
+        beta_node.metadata_json =
+            r#"{"wing":"stale","room":"old","layer":"index","custom":"beta"}"#.into();
+        store.upsert_graph_node(&beta_node).unwrap();
         store
             .upsert_graph_node(&node("alpha-stub", "stub", "Missing alpha", None))
             .unwrap();
@@ -1684,6 +1782,32 @@ mod tests {
         assert!(!graph.nodes.iter().any(|node| node.id == "alpha-tag"));
         assert!(!graph.nodes.iter().any(|node| node.id == "beta-node"));
         assert_eq!(graph.edges.len(), 2);
+        let alpha = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "alpha-node")
+            .expect("project document node");
+        let alpha_meta: serde_json::Value =
+            serde_json::from_str(&alpha.metadata_json).expect("placement metadata");
+        assert_eq!(alpha_meta["wing"], "alpha");
+        assert_eq!(alpha_meta["room"], "docs");
+        assert_eq!(alpha_meta["layer"], "raw");
+        assert_eq!(alpha_meta["custom"], true);
+
+        let beta_graph = store
+            .export_project_graph_for_ui("beta", Some(10), false)
+            .unwrap();
+        let beta = beta_graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "beta-node")
+            .expect("other project document node");
+        let beta_meta: serde_json::Value =
+            serde_json::from_str(&beta.metadata_json).expect("placement metadata");
+        assert_eq!(beta_meta["wing"], "beta");
+        assert!(beta_meta.get("room").is_none());
+        assert_eq!(beta_meta["layer"], "raw");
+        assert_eq!(beta_meta["custom"], "beta");
 
         let graph_with_tags = store
             .export_project_graph_for_ui("alpha", Some(10), true)
@@ -1708,6 +1832,15 @@ mod tests {
         assert!(lazy.nodes.iter().any(|node| node.id == "alpha-entity"));
         assert!(!lazy.nodes.iter().any(|node| node.id == "alpha-tag"));
         assert!(!lazy.nodes.iter().any(|node| node.id == "beta-node"));
+        let lazy_alpha = lazy
+            .nodes
+            .iter()
+            .find(|node| node.id == "alpha-node")
+            .expect("lazy project document node");
+        let lazy_meta: serde_json::Value =
+            serde_json::from_str(&lazy_alpha.metadata_json).expect("placement metadata");
+        assert_eq!(lazy_meta["wing"], "alpha");
+        assert_eq!(lazy_meta["room"], "docs");
         assert!(store
             .export_project_neighbors_for_ui("alpha", "Aardvark other note", 1, 10, false)
             .unwrap()
