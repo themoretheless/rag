@@ -416,7 +416,9 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                         .show_percentage()
                         .text(format!(
                             "{} · {}/{} files",
-                            progress.phase, progress.processed_files, progress.total_files
+                            phase_label(&progress.phase),
+                            progress.processed_files,
+                            progress.total_files
                         )),
                 );
                 ui.horizontal_wrapped(|ui| {
@@ -552,6 +554,26 @@ fn status_label(status: &str) -> String {
     status.replace('_', " ")
 }
 
+fn phase_label(phase: &str) -> String {
+    match phase {
+        "scanning" => "Scanning files".to_string(),
+        "syncing" => "Indexing files".to_string(),
+        "removing_deleted" => "Removing deleted files".to_string(),
+        "refreshing_fts" => "Preparing search".to_string(),
+        "completed" => "Completed".to_string(),
+        "cancelled" => "Cancelled".to_string(),
+        other => sentence_case(other.replace('_', " ")),
+    }
+}
+
+fn sentence_case(value: String) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => "Working".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,6 +627,22 @@ mod tests {
             status_color("completed_with_errors"),
             status_color("succeeded")
         );
+    }
+
+    #[test]
+    fn source_sync_phases_use_user_facing_labels() {
+        assert_eq!(phase_label("scanning"), "Scanning files");
+        assert_eq!(phase_label("syncing"), "Indexing files");
+        assert_eq!(phase_label("removing_deleted"), "Removing deleted files");
+        assert_eq!(phase_label("refreshing_fts"), "Preparing search");
+        assert_eq!(phase_label("completed"), "Completed");
+        assert_eq!(phase_label("cancelled"), "Cancelled");
+    }
+
+    #[test]
+    fn unknown_source_sync_phase_stays_visible_without_snake_case() {
+        assert_eq!(phase_label("hydrating_links"), "Hydrating links");
+        assert_eq!(phase_label(""), "Working");
     }
 
     #[test]
