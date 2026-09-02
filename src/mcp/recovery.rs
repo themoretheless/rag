@@ -4,7 +4,12 @@ use super::facade::RagServer;
 use super::take_routes;
 use rmcp::handler::server::tool::ToolRouter;
 
-const TOOLS: &[&str] = &["backup_db", "export_bundle", "export_vault", "import_bundle"];
+const TOOLS: &[&str] = &[
+    "backup_db",
+    "export_bundle",
+    "export_vault",
+    "import_bundle",
+];
 
 pub(super) fn router(all: &mut ToolRouter<RagServer>) -> ToolRouter<RagServer> {
     take_routes(all, TOOLS)

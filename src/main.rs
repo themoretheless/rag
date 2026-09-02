@@ -4,6 +4,7 @@ use std::time::Instant;
 use anyhow::Context;
 use rag_mcp::config::Config;
 use rag_mcp::db::schema::SCHEMA_VERSION;
+use rag_mcp::db::store::embedding_manifest_matches_config;
 use rag_mcp::db::Store;
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
 use rag_mcp::http_api;
@@ -47,20 +48,37 @@ async fn main() -> anyhow::Result<()> {
     // Corpus embedding fingerprint (does not overwrite an existing row).
     rag_mcp::ops::set_startup_phase("embedding_manifest");
     let phase = Instant::now();
-    let manifest = store
-        .ensure_embedding_manifest(&config)
-        .context("failed to record embedding_manifest")?;
+    let manifest = match store.ensure_embedding_manifest(&config) {
+        Ok(manifest) => Some(manifest),
+        Err(rag_mcp::AppError::Embeddings(error)) => {
+            // Keep the gateway available for fail-closed diagnosis and a full
+            // reembed_all migration. Vector reads/writes remain refused until
+            // that migration publishes a verified manifest.
+            tracing::warn!(error = %error, "embedding manifest is not verified; vector operations remain disabled");
+            None
+        }
+        Err(error) => return Err(error).context("failed to record embedding_manifest"),
+    };
     rag_mcp::ops::set_startup_timing("manifest", phase.elapsed());
     // Persist migration, FTS DDL, and manifest writes before accepting traffic.
     // Otherwise a SIGTERM/restart can leave FTS catalog DDL in WAL that DuckDB
     // cannot replay on the next open because extension objects depend on it.
-    store.checkpoint().context("post-initialization DuckDB CHECKPOINT failed")?;
+    store
+        .checkpoint()
+        .context("post-initialization DuckDB CHECKPOINT failed")?;
 
-    let schema_version = store.schema_version().context("schema_version")?.unwrap_or(0);
+    let schema_version = store
+        .schema_version()
+        .context("schema_version")?
+        .unwrap_or(0);
     let fts_ready = store.fts_ready().context("fts_ready")?;
     let (document_count, chunk_count, node_count, edge_count) =
         store.stats().context("store stats")?;
-    let ready_for_search = chunk_count > 0 && schema_version >= SCHEMA_VERSION;
+    let embedding_identity_ready = manifest
+        .as_ref()
+        .is_some_and(|manifest| embedding_manifest_matches_config(manifest, &config));
+    let ready_for_search =
+        chunk_count > 0 && schema_version >= SCHEMA_VERSION && embedding_identity_ready;
 
     // Tracing is configured for stderr only (MCP owns stdout when using stdio).
     tracing::info!(
@@ -73,9 +91,10 @@ async fn main() -> anyhow::Result<()> {
         chunk_count,
         node_count,
         edge_count,
-        embed_provider = %manifest.provider,
-        embed_model = %manifest.model,
-        embed_dims = manifest.dims,
+        embed_provider = manifest.as_ref().map(|item| item.provider.as_str()).unwrap_or("missing"),
+        embed_model = manifest.as_ref().map(|item| item.model.as_str()).unwrap_or("missing"),
+        embed_dims = manifest.as_ref().map(|item| item.dims),
+        embedding_identity_ready,
         ready_for_search,
         "rag-mcp store ready"
     );
@@ -89,7 +108,10 @@ async fn main() -> anyhow::Result<()> {
     rag_mcp::ops::set_startup_phase("shutdown_checkpoint");
     let checkpointed = match store.checkpoint() {
         Ok(()) => true,
-        Err(error) => { tracing::error!(error = %error, "shutdown checkpoint failed"); false }
+        Err(error) => {
+            tracing::error!(error = %error, "shutdown checkpoint failed");
+            false
+        }
     };
     rag_mcp::ops::mark_shutdown(checkpointed);
     tracing::info!(checkpointed, shutdown = %serde_json::to_string(&rag_mcp::ops::runtime_snapshot()).unwrap_or_default(), "rag-mcp shutdown complete");
@@ -184,7 +206,8 @@ async fn run_serve_modes(
 async fn shutdown_signal() -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         tokio::select! {
             result = tokio::signal::ctrl_c() => result,
             _ = terminate.recv() => Ok(()),

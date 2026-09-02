@@ -14,9 +14,9 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::load::{
-    local_neighbors_bounded, resolve_seed, sort_wiki_pages, ActivityEvent, CliSource, DocumentBody,
-    GatewayHealth, GraphSourceKind, LoadedGraph, OpenArgs, WikiPageMeta, WikiPutRequest,
-    UI_HARD_MAX_NODES,
+    local_neighbors_bounded, resolve_exact_seed, resolve_seed, sort_wiki_pages, ActivityEvent,
+    CliSource, DocumentBody, GatewayHealth, GraphSourceKind, LoadedGraph, OpenArgs, WikiPageMeta,
+    WikiPutRequest, UI_HARD_MAX_NODES,
 };
 use crate::operations::{JobSnapshot, MaintenanceResult, OperationsSnapshot};
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest, ProjectHome};
@@ -49,6 +49,19 @@ fn nonempty(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+fn http_base_for_sources(
+    loaded: Option<&GraphSourceKind>,
+    configured: Option<&CliSource>,
+) -> Option<String> {
+    match loaded {
+        Some(GraphSourceKind::HttpService { base }) => Some(base.clone()),
+        _ => match configured {
+            Some(CliSource::Http(base)) => Some(base.clone()),
+            _ => None,
+        },
+    }
+}
+
 /// Product workspaces. Graph and Wiki retain their focused tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum ViewMode {
@@ -68,6 +81,51 @@ enum WikiPane {
     #[default]
     A,
     B,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseRisk {
+    UnsavedWikiEdits,
+    WikiSaveInFlight,
+}
+
+const fn close_risk(dirty_wiki_edit: bool, wiki_save_in_flight: bool) -> Option<CloseRisk> {
+    if wiki_save_in_flight {
+        Some(CloseRisk::WikiSaveInFlight)
+    } else if dirty_wiki_edit {
+        Some(CloseRisk::UnsavedWikiEdits)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GraphWikiTarget {
+    CatalogId(String),
+    WikiUri(String),
+}
+
+fn graph_wiki_target(
+    document_id: Option<&str>,
+    uri: Option<&str>,
+    pages: &[WikiPageMeta],
+) -> Option<GraphWikiTarget> {
+    if let Some(page) = pages.iter().find(|page| {
+        document_id.is_some_and(|id| page.id == id) || uri.is_some_and(|uri| page.uri == uri)
+    }) {
+        return Some(GraphWikiTarget::CatalogId(page.id.clone()));
+    }
+    uri.filter(|uri| uri.starts_with("wiki://"))
+        .map(|uri| GraphWikiTarget::WikiUri(uri.to_string()))
+}
+
+fn seed_target_on_enter(
+    view: Option<&GraphView>,
+    input: &str,
+    first_suggestion: Option<&str>,
+) -> Option<String> {
+    view.and_then(|view| resolve_exact_seed(view, input))
+        .or_else(|| first_suggestion.map(str::to_string))
 }
 
 fn mode_after_project_switch(mode: ViewMode) -> ViewMode {
@@ -124,9 +182,11 @@ fn prepare_library_request_from_search(
     project: &str,
     title: &str,
     uri: &str,
+    include_archived: bool,
 ) {
     request.clear_filters();
     request.wing = project.trim().to_string();
+    request.include_archived = include_archived;
     request.q = if uri.trim().is_empty() {
         title.to_string()
     } else {
@@ -166,6 +226,7 @@ pub struct GraphApp {
     /// Monotonic job counter; every pending slot stores the seq it waits for.
     seq: u64,
     pending_graph: Option<u64>,
+    pending_project_catalog: Option<u64>,
     pending_catalog: Option<u64>,
     pending_page_a: Option<u64>,
     pending_page_b: Option<u64>,
@@ -187,9 +248,12 @@ pub struct GraphApp {
     pending_revision_restore: Option<u64>,
     /// HTTP base URL editable on the no-source start screen.
     connect_url: String,
+    close_confirmation_open: bool,
+    force_close: bool,
 
     full_view: Option<GraphView>,
     project_catalog: Vec<String>,
+    project_catalog_error: Option<String>,
     /// True after the first successful source bootstrap. This distinguishes an
     /// initial default from the user's later explicit "All projects" choice.
     project_bootstrap_done: bool,
@@ -293,6 +357,7 @@ pub struct GraphApp {
     /// History stack of wiki page ids for Back (Obsidian-like).
     wiki_history: Vec<String>,
     wiki_backlinks: Vec<crate::load::BacklinkItem>,
+    wiki_backlinks_error: Option<String>,
     /// In-app editor buffers (None = read mode). Applies to pane A only.
     wiki_edit: Option<WikiEditBuffers>,
     /// Last successful save note (status strip).
@@ -305,7 +370,6 @@ pub struct GraphApp {
     wiki_selected_id_b: Option<String>,
     wiki_article_b: Option<DocumentBody>,
     wiki_error_b: Option<String>,
-    wiki_backlinks_b: Vec<crate::load::BacklinkItem>,
 }
 
 impl GraphApp {
@@ -334,11 +398,16 @@ impl GraphApp {
         let depth = open.depth.clamp(1, 3);
         let max_nodes = open.max_nodes.clamp(1, UI_HARD_MAX_NODES as u32);
         let seed_input = open.seed.clone().unwrap_or_default();
+        let connect_url = match open.source.as_ref() {
+            Some(CliSource::Http(base)) => base.clone(),
+            _ => "http://127.0.0.1:7432".into(),
+        };
         let mut app = Self {
             open,
             worker: crate::worker::spawn(cc.egui_ctx.clone()),
             seq: 0,
             pending_graph: None,
+            pending_project_catalog: None,
             pending_catalog: None,
             pending_page_a: None,
             pending_page_b: None,
@@ -358,9 +427,12 @@ impl GraphApp {
             pending_revision_snapshot: None,
             pending_revision_diff: None,
             pending_revision_restore: None,
-            connect_url: "http://127.0.0.1:7432".into(),
+            connect_url,
+            close_confirmation_open: false,
+            force_close: false,
             full_view: None,
             project_catalog: Vec::new(),
+            project_catalog_error: None,
             project_bootstrap_done: false,
             source: None,
             load_error: None,
@@ -443,6 +515,7 @@ impl GraphApp {
             wiki_loaded: false,
             wiki_history: Vec::new(),
             wiki_backlinks: Vec::new(),
+            wiki_backlinks_error: None,
             wiki_edit: None,
             wiki_save_note: None,
             wiki_dual_pane: false,
@@ -450,7 +523,6 @@ impl GraphApp {
             wiki_selected_id_b: None,
             wiki_article_b: None,
             wiki_error_b: None,
-            wiki_backlinks_b: Vec::new(),
         };
         app.dispatch_graph_load();
         app
@@ -463,6 +535,7 @@ impl GraphApp {
 
     fn any_pending(&self) -> bool {
         self.pending_graph.is_some()
+            || self.pending_project_catalog.is_some()
             || self.pending_catalog.is_some()
             || self.pending_page_a.is_some()
             || self.pending_page_b.is_some()
@@ -505,10 +578,43 @@ impl GraphApp {
     }
 
     fn activity_base(&self) -> Option<String> {
-        match self.source.as_ref() {
-            Some(GraphSourceKind::HttpService { base }) => Some(base.clone()),
-            _ => None,
+        // Product APIs remain usable while the graph endpoint is busy or
+        // unavailable; only Connections depends on topology.
+        http_base_for_sources(self.source.as_ref(), self.open.source.as_ref())
+    }
+
+    fn topology_query_requires_reload(&self) -> bool {
+        self.activity_base().is_some()
+            || matches!(self.source, Some(GraphSourceKind::LiveStore { .. }))
+            || matches!(self.open.source, Some(CliSource::Db(_)))
+    }
+
+    fn available_load_source(&self) -> Option<LoadSource> {
+        self.source
+            .as_ref()
+            .and_then(LoadSource::from_graph_source)
+            .or_else(|| match self.open.source.as_ref() {
+                // A configured HTTP gateway is sufficient for document/wiki
+                // APIs even before the independent graph load succeeds.
+                Some(CliSource::Http(base)) => Some(LoadSource::Http(base.clone())),
+                _ => None,
+            })
+    }
+
+    fn reload_project_catalog(&mut self) {
+        if self.pending_project_catalog.is_some() {
+            return;
         }
+        let Some(base) = self.activity_base() else {
+            self.project_catalog_error =
+                Some("Project catalog requires an HTTP gateway connection".into());
+            return;
+        };
+        self.project_catalog_error = None;
+        let seq = self.next_seq();
+        self.pending_project_catalog = Some(seq);
+        self.worker
+            .send(WorkerCmd::LoadProjectCatalog { seq, base });
     }
 
     fn refresh_activity(&mut self) {
@@ -892,6 +998,7 @@ impl GraphApp {
         let Some(src) = self.open.source.clone() else {
             return;
         };
+        let refresh_project_catalog = matches!(&src, CliSource::Http(_));
         self.worker.cancel_topology_reads();
         // A request can change project, tag inclusion or focus. Do not paint the
         // previous topology under the new controls while the worker is pending.
@@ -914,6 +1021,9 @@ impl GraphApp {
         self.raw_node_count = 0;
         let seq = self.next_seq();
         self.pending_graph = Some(seq);
+        if refresh_project_catalog {
+            self.reload_project_catalog();
+        }
         self.worker.send(WorkerCmd::LoadGraph {
             seq,
             source: src,
@@ -925,7 +1035,7 @@ impl GraphApp {
     }
 
     fn submit_graph_focus(&mut self) {
-        if matches!(self.source, Some(GraphSourceKind::HttpService { .. })) {
+        if self.topology_query_requires_reload() {
             self.seed_id = None;
             self.seed_error = None;
             self.dispatch_graph_load();
@@ -938,9 +1048,7 @@ impl GraphApp {
         self.seed_input = query;
         self.mode = ViewMode::Graph;
         self.submit_graph_focus();
-        if !matches!(self.source, Some(GraphSourceKind::HttpService { .. }))
-            && self.seed_error.is_some()
-        {
+        if self.activity_base().is_none() && self.seed_error.is_some() {
             if let Some(fallback) = fallback_label {
                 self.seed_input = fallback;
                 self.submit_graph_focus();
@@ -955,9 +1063,12 @@ impl GraphApp {
             self.load_error = Some("http URL is empty".into());
             return;
         }
+        self.connect_url.clone_from(&url);
         self.open.source = Some(CliSource::Http(url));
         self.load_error = None;
         self.project_bootstrap_done = false;
+        self.project_catalog.clear();
+        self.project_catalog_error = None;
         self.wiki_loaded = false;
         self.project_home = None;
         self.project_home_project = None;
@@ -970,7 +1081,10 @@ impl GraphApp {
         self.raw_truncated = loaded.truncated;
         self.raw_node_count = loaded.raw_node_count;
         self.ops_health = loaded.health;
-        self.project_catalog = loaded.projects;
+        if let Some(projects) = loaded.projects {
+            self.project_catalog = projects;
+            self.project_catalog_error = None;
+        }
         self.source = Some(loaded.source);
         self.full_view = Some(loaded.view);
         let mut selected_default_project = false;
@@ -988,11 +1102,9 @@ impl GraphApp {
             }
         }
         self.project_bootstrap_done = true;
-        if selected_default_project
-            && matches!(self.source, Some(GraphSourceKind::HttpService { .. }))
-        {
+        if selected_default_project && self.topology_query_requires_reload() {
             // The bootstrap request discovers the project catalog. Immediately
-            // replace its bounded global graph with a server-scoped export.
+            // replace its bounded global graph with a source-scoped export.
             self.dispatch_graph_load();
             return;
         }
@@ -1019,28 +1131,22 @@ impl GraphApp {
 
     fn reload_wiki_catalog(&mut self) {
         self.wiki_error = None;
-        match self.source.as_ref() {
-            Some(s) => match LoadSource::from_graph_source(s) {
-                Some(source) => {
-                    let seq = self.next_seq();
-                    self.pending_catalog = Some(seq);
-                    self.worker.send(WorkerCmd::LoadWikiCatalog {
-                        seq,
-                        source,
-                        project: nonempty(&self.filter_wing),
-                    });
-                }
-                None => {
-                    self.wiki_loaded = true;
-                    self.wiki_error =
-                        Some("snapshot mode has no wiki catalog; use --http or --db".into());
-                }
-            },
-            None => {
-                self.wiki_loaded = true;
-                self.wiki_error = Some("no data source".into());
-            }
-        }
+        let Some(source) = self.available_load_source() else {
+            self.wiki_loaded = true;
+            self.wiki_error = Some(if self.open.source.is_some() {
+                "snapshot mode has no wiki catalog; use --http or --db".into()
+            } else {
+                "no data source".into()
+            });
+            return;
+        };
+        let seq = self.next_seq();
+        self.pending_catalog = Some(seq);
+        self.worker.send(WorkerCmd::LoadWikiCatalog {
+            seq,
+            source,
+            project: nonempty(&self.filter_wing),
+        });
     }
 
     /// Default page after the catalog lands: seed title match, else overview/first.
@@ -1107,7 +1213,7 @@ impl GraphApp {
         self.wiki_error = None;
         self.wiki_edit = None;
         self.wiki_save_note = None;
-        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
+        let Some(source) = self.available_load_source() else {
             self.wiki_error = Some("wiki articles require --http or --db".into());
             return;
         };
@@ -1132,7 +1238,7 @@ impl GraphApp {
     fn open_wiki_page_in_b(&mut self, id: &str) {
         self.wiki_selected_id_b = Some(id.to_string());
         self.wiki_error_b = None;
-        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
+        let Some(source) = self.available_load_source() else {
             self.wiki_error_b = Some("wiki articles require --http or --db".into());
             return;
         };
@@ -1156,7 +1262,6 @@ impl GraphApp {
         self.wiki_selected_id_b = None;
         self.wiki_article_b = None;
         self.wiki_error_b = None;
-        self.wiki_backlinks_b.clear();
         self.pending_page_b = None;
     }
 
@@ -1170,6 +1275,7 @@ impl GraphApp {
         self.wiki_selected_id = None;
         self.wiki_article = None;
         self.wiki_backlinks.clear();
+        self.wiki_backlinks_error = None;
         self.wiki_history.clear();
         self.wiki_error = None;
         self.wiki_edit = None;
@@ -1188,10 +1294,10 @@ impl GraphApp {
         pane_b: bool,
         push_history: bool,
         q: Option<&str>,
-        result: Result<(DocumentBody, Vec<crate::load::BacklinkItem>), String>,
+        result: Result<DocumentBody, String>,
     ) {
         match result {
-            Ok((body, backlinks)) => {
+            Ok(body) => {
                 // Unresolved-link fallback may open a page that is not in the
                 // catalog yet; add a row so the sidebar stays consistent.
                 if !self.wiki_pages.iter().any(|p| p.id == body.id) {
@@ -1213,9 +1319,9 @@ impl GraphApp {
                 if pane_b {
                     self.wiki_selected_id_b = Some(body.id.clone());
                     self.wiki_article_b = Some(body);
-                    self.wiki_backlinks_b = backlinks;
                     self.wiki_error_b = None;
                 } else {
+                    let body_id = body.id.clone();
                     if push_history {
                         if let Some(prev) = self.wiki_selected_id.clone() {
                             if prev != body.id {
@@ -1228,9 +1334,11 @@ impl GraphApp {
                     }
                     self.wiki_selected_id = Some(body.id.clone());
                     self.wiki_article = Some(body);
-                    self.wiki_backlinks = backlinks;
+                    self.wiki_backlinks.clear();
+                    self.wiki_backlinks_error = None;
                     self.wiki_error = None;
                     self.wiki_save_note = None;
+                    self.refresh_backlinks(&body_id);
                 }
             }
             Err(e) => {
@@ -1242,11 +1350,11 @@ impl GraphApp {
                 };
                 if pane_b {
                     self.wiki_article_b = None;
-                    self.wiki_backlinks_b.clear();
                     self.wiki_error_b = Some(msg);
                 } else {
                     self.wiki_article = None;
                     self.wiki_backlinks.clear();
+                    self.wiki_backlinks_error = None;
                     self.wiki_error = Some(msg);
                 }
             }
@@ -1254,10 +1362,7 @@ impl GraphApp {
     }
 
     fn wiki_can_write(&self) -> bool {
-        matches!(
-            self.source.as_ref(),
-            Some(GraphSourceKind::HttpService { .. } | GraphSourceKind::LiveStore { .. })
-        )
+        self.activity_base().is_some()
     }
 
     fn start_wiki_edit(&mut self) {
@@ -1265,7 +1370,8 @@ impl GraphApp {
             return;
         };
         if !self.wiki_can_write() {
-            self.wiki_error = Some("editing requires --http or --db".into());
+            self.wiki_error =
+                Some("editing requires the HTTP gateway; direct --db mode is read-only".into());
             return;
         }
         self.wiki_save_note = None;
@@ -1315,10 +1421,15 @@ impl GraphApp {
             self.wiki_error = Some("no page open to save".into());
             return;
         };
-        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
-            self.wiki_error = Some("wiki save requires --http or --db".into());
+        let Some(source) = self.available_load_source() else {
+            self.wiki_error = Some("wiki save requires the HTTP gateway".into());
             return;
         };
+        if !matches!(&source, LoadSource::Http(_)) {
+            self.wiki_error =
+                Some("direct --db mode is read-only; reconnect through the HTTP gateway".into());
+            return;
+        }
         let req = WikiPutRequest {
             id: art.id.clone(),
             slug: slug_from_wiki_uri(&art.uri),
@@ -1367,15 +1478,17 @@ impl GraphApp {
     }
 
     fn refresh_backlinks(&mut self, document_id: &str) {
-        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
+        let Some(source) = self.available_load_source() else {
             return;
         };
         let seq = self.next_seq();
         self.pending_backlinks = Some(seq);
+        self.wiki_backlinks_error = None;
         self.worker.send(WorkerCmd::LoadBacklinks {
             seq,
             document_id: document_id.to_string(),
             source,
+            project: nonempty(&self.filter_wing),
         });
     }
 
@@ -1433,8 +1546,20 @@ impl GraphApp {
             self.open_wiki_page_id(&id);
             return;
         }
+        if !self.filter_wing.trim().is_empty() {
+            let msg = format!(
+                "unresolved link [[{q}]] is not present in project {}",
+                self.filter_wing.trim()
+            );
+            if into_b {
+                self.wiki_error_b = Some(msg);
+            } else {
+                self.wiki_error = Some(msg);
+            }
+            return;
+        }
         // Exact wiki uri fallback (no fuzzy label pick) - fetched on the worker.
-        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
+        let Some(source) = self.available_load_source() else {
             let msg = "wiki links require --http or --db".to_string();
             if into_b {
                 self.wiki_error_b = Some(msg);
@@ -1459,42 +1584,71 @@ impl GraphApp {
         });
     }
 
+    fn selected_graph_wiki_target(&self) -> Option<GraphWikiTarget> {
+        let selected = self.selected.as_deref()?;
+        let node = self
+            .ui_graph
+            .as_ref()?
+            .nodes
+            .iter()
+            .find(|node| node.id == selected)?;
+        graph_wiki_target(
+            node.document_id.as_deref(),
+            node.uri.as_deref(),
+            &self.wiki_pages,
+        )
+    }
+
     fn open_selected_graph_node_in_wiki(&mut self) {
         let Some(sel) = self.selected.clone() else {
             return;
         };
-        let (doc_id, uri, label) = {
+        let (doc_id, target) = {
             let Some(g) = self.ui_graph.as_ref() else {
                 return;
             };
             let Some(node) = g.nodes.iter().find(|n| n.id == sel) else {
                 return;
             };
-            (
-                node.document_id.clone(),
-                node.uri.clone(),
-                node.label.clone(),
-            )
+            let target = graph_wiki_target(
+                node.document_id.as_deref(),
+                node.uri.as_deref(),
+                &self.wiki_pages,
+            );
+            (node.document_id.clone(), target)
+        };
+        let Some(target) = target else {
+            self.content_error =
+                Some("Selected node is not a wiki page; use Preview or Library instead".into());
+            return;
         };
         self.mode = ViewMode::Wiki;
         self.wiki_focus = WikiPane::A;
-        self.ensure_wiki_loaded();
-        if let Some(doc_id) = doc_id.as_deref() {
-            if self.wiki_pages.iter().any(|p| p.id == doc_id) {
-                self.open_wiki_page_id(doc_id);
-                return;
-            }
-        }
-        if let Some(uri) = uri.as_deref() {
-            if uri.starts_with("wiki://") {
-                if let Some(p) = self.wiki_pages.iter().find(|p| p.uri == uri) {
-                    let id = p.id.clone();
-                    self.open_wiki_page_id(&id);
-                    return;
+        match target {
+            GraphWikiTarget::CatalogId(id) => self.open_wiki_page_id(&id),
+            GraphWikiTarget::WikiUri(uri) => {
+                if !self.filter_wing.trim().is_empty() {
+                    if !self.wiki_loaded {
+                        if let Some(id) = doc_id {
+                            self.wiki_open_after_catalog = Some(id);
+                            self.ensure_wiki_loaded();
+                        } else {
+                            self.wiki_error = Some(format!(
+                                "cannot resolve {uri} inside project {} until it appears in the project wiki catalog",
+                                self.filter_wing.trim()
+                            ));
+                        }
+                    } else {
+                        self.wiki_error = Some(format!(
+                            "wiki page {uri} is not present in project {}",
+                            self.filter_wing.trim()
+                        ));
+                    }
+                } else {
+                    self.open_wiki_link(&uri);
                 }
             }
         }
-        self.open_wiki_link(label.as_str());
     }
 
     fn apply_seed_from_input(&mut self) {
@@ -1553,7 +1707,7 @@ impl GraphApp {
             node.label.clone(),
         );
 
-        let Some(source) = self.source.as_ref().and_then(LoadSource::from_graph_source) else {
+        let Some(source) = self.available_load_source() else {
             self.content_error =
                 Some("snapshot mode has no document bodies; use --http or --db".into());
             return;
@@ -1796,6 +1950,19 @@ impl GraphApp {
                                 self.ensure_wiki_loaded();
                             }
                         }
+                    }
+                }
+                WorkerEvt::ProjectCatalogLoaded { seq, result } => {
+                    if self.pending_project_catalog != Some(seq) {
+                        continue;
+                    }
+                    self.pending_project_catalog = None;
+                    match result {
+                        Ok(projects) => {
+                            self.project_catalog = projects;
+                            self.project_catalog_error = None;
+                        }
+                        Err(error) => self.project_catalog_error = Some(error),
                     }
                 }
                 WorkerEvt::ProjectHomeLoaded {
@@ -2145,11 +2312,18 @@ impl GraphApp {
                         continue;
                     }
                     self.pending_backlinks = None;
-                    let Ok(bl) = result else {
-                        continue;
-                    };
                     if self.wiki_selected_id.as_deref() == Some(document_id.as_str()) {
-                        self.wiki_backlinks = bl;
+                        match result {
+                            Ok(backlinks) => {
+                                self.wiki_backlinks = backlinks;
+                                self.wiki_backlinks_error = None;
+                            }
+                            Err(error) => {
+                                // Preserve the last known list, but make its
+                                // potentially stale status explicit.
+                                self.wiki_backlinks_error = Some(error);
+                            }
+                        }
                     }
                 }
                 WorkerEvt::Content {
@@ -2274,12 +2448,100 @@ impl GraphApp {
             self.wiki_go_back();
         }
     }
+
+    fn current_close_risk(&self) -> Option<CloseRisk> {
+        close_risk(
+            self.wiki_edit.as_ref().is_some_and(|edit| edit.dirty),
+            self.pending_save.is_some(),
+        )
+    }
+
+    fn intercept_native_close(&mut self, ctx: &egui::Context) {
+        if self.force_close || !ctx.input(|input| input.viewport().close_requested()) {
+            return;
+        }
+        if self.current_close_risk().is_some() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_confirmation_open = true;
+        }
+    }
+
+    fn draw_close_confirmation(&mut self, ctx: &egui::Context) {
+        if !self.close_confirmation_open {
+            return;
+        }
+        let Some(risk) = self.current_close_risk() else {
+            // The requested save completed successfully while the close dialog
+            // was waiting. Honor the original close request automatically.
+            self.close_confirmation_open = false;
+            self.force_close = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        };
+
+        #[derive(Clone, Copy)]
+        enum Choice {
+            None,
+            KeepOpen,
+            CloseAnyway,
+        }
+        let choice = egui::Modal::new(egui::Id::new("native_close_confirmation"))
+            .show(ctx, |ui| {
+                ui.set_max_width(440.0);
+                match risk {
+                    CloseRisk::UnsavedWikiEdits => {
+                        ui.heading("Unsaved Wiki edits");
+                        ui.label(
+                            "Closing now will discard the title or content changes in the editor.",
+                        );
+                    }
+                    CloseRisk::WikiSaveInFlight => {
+                        ui.heading("Wiki save is still in progress");
+                        ui.label(
+                            "Keep the app open until the gateway reports the result. It will close automatically after a successful save.",
+                        );
+                    }
+                }
+                ui.add_space(12.0);
+                let mut choice = Choice::None;
+                ui.horizontal(|ui| {
+                    let keep_label = match risk {
+                        CloseRisk::UnsavedWikiEdits => "Keep editing",
+                        CloseRisk::WikiSaveInFlight => "Keep app open",
+                    };
+                    if ui.button(keep_label).clicked() {
+                        choice = Choice::KeepOpen;
+                    }
+                    if ui
+                        .button(match risk {
+                            CloseRisk::UnsavedWikiEdits => "Discard and close",
+                            CloseRisk::WikiSaveInFlight => "Close anyway",
+                        })
+                        .clicked()
+                    {
+                        choice = Choice::CloseAnyway;
+                    }
+                });
+                choice
+            })
+            .inner;
+        match choice {
+            Choice::None => {}
+            Choice::KeepOpen => self.close_confirmation_open = false,
+            Choice::CloseAnyway => {
+                self.close_confirmation_open = false;
+                self.force_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
 }
 
 impl eframe::App for GraphApp {
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
         self.drain_worker_events();
+        self.intercept_native_close(&ctx);
         self.handle_hotkeys(&ctx);
         if self.mode == ViewMode::Activity
             && self.operations_tab == OperationsTab::Activity
@@ -2301,6 +2563,7 @@ impl eframe::App for GraphApp {
             self.reload_jobs();
         }
         let project_options = self.project_catalog.clone();
+        let project_catalog_error = self.project_catalog_error.clone();
 
         egui::Panel::top("toolbar").show(root_ui, |ui| {
             // Stable first tier: product navigation and project scope. Wrapping
@@ -2410,6 +2673,16 @@ impl eframe::App for GraphApp {
                     project_selector.response.on_disabled_hover_text(
                         "Finish or cancel edits, then wait for the active write to complete",
                     );
+                }
+                if self.pending_project_catalog.is_some() {
+                    ui.spinner();
+                    ui.weak("projects…");
+                } else if let Some(error) = project_catalog_error.as_deref() {
+                    ui.colored_label(egui::Color32::from_rgb(220, 150, 65), "project list unavailable")
+                        .on_hover_text(error);
+                    if ui.small_button("Retry").clicked() {
+                        self.reload_project_catalog();
+                    }
                 }
                 if let Some(status) = self.mutation_status_label() {
                     ui.spinner();
@@ -2687,7 +2960,7 @@ impl eframe::App for GraphApp {
                                     self.wiki_article.is_some() && self.wiki_can_write(),
                                     egui::Button::new("Edit"),
                                 )
-                                .on_hover_text("Edit pane A (Save via HTTP PUT or --db)")
+                                .on_hover_text("Edit pane A (Save via the HTTP gateway)")
                                 .clicked()
                             {
                                 self.wiki_focus = WikiPane::A;
@@ -2783,8 +3056,13 @@ impl eframe::App for GraphApp {
                         let first_pick = suggestions.first().map(|(id, _)| id.clone());
                         drop(suggestions);
                         if seed_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            // Enter: exact input, or first suggestion when one matches.
-                            if let Some(id) = first_pick {
+                            // Exact id/document/label wins even when an earlier
+                            // substring suggestion happens to be listed first.
+                            if let Some(id) = seed_target_on_enter(
+                                self.full_view.as_ref(),
+                                &self.seed_input,
+                                first_pick.as_deref(),
+                            ) {
                                 self.seed_input = id;
                             }
                             self.submit_graph_focus();
@@ -2803,10 +3081,7 @@ impl eframe::App for GraphApp {
                                 let mut d = self.depth as i32;
                                 if ui.add(egui::DragValue::new(&mut d).range(1..=3)).changed() {
                                     self.depth = d as u32;
-                                    if matches!(
-                                        self.source,
-                                        Some(GraphSourceKind::HttpService { .. })
-                                    ) {
+                                    if self.topology_query_requires_reload() {
                                         self.dispatch_graph_load();
                                     } else {
                                         self.rebuild_ui_graph();
@@ -2859,8 +3134,11 @@ impl eframe::App for GraphApp {
                             ui.spinner();
                         }
                         if ui
-                            .add_enabled(self.selected.is_some(), egui::Button::new("Open page"))
-                            .on_hover_text("Open selected node as article")
+                            .add_enabled(
+                                self.selected_graph_wiki_target().is_some(),
+                                egui::Button::new("Open page"),
+                            )
+                            .on_hover_text("Open the selected wiki page")
                             .clicked()
                         {
                             self.open_selected_graph_node_in_wiki();
@@ -2911,13 +3189,8 @@ impl eframe::App for GraphApp {
                 self.content = None;
                 self.content_error = None;
             }
-            let project_needs_reload =
-                project_changed && matches!(self.source, Some(GraphSourceKind::HttpService { .. }));
-            let tags_need_reload = tags_changed
-                && matches!(
-                    self.source,
-                    Some(GraphSourceKind::HttpService { .. } | GraphSourceKind::LiveStore { .. })
-                );
+            let project_needs_reload = project_changed && self.topology_query_requires_reload();
+            let tags_need_reload = tags_changed && self.topology_query_requires_reload();
             if project_needs_reload || tags_need_reload {
                 self.dispatch_graph_load();
             } else {
@@ -3145,7 +3418,7 @@ impl eframe::App for GraphApp {
         match self.mode {
             ViewMode::Home => {
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.full_view.is_none() {
+                    if self.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending_graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -3182,7 +3455,7 @@ impl eframe::App for GraphApp {
                         }
                         HomeAction::OpenGraph => {
                             self.mode = ViewMode::Graph;
-                            if matches!(self.source, Some(GraphSourceKind::HttpService { .. })) {
+                            if self.activity_base().is_some() {
                                 self.seed_input.clear();
                                 self.seed_id = None;
                                 self.dispatch_graph_load();
@@ -3237,7 +3510,7 @@ impl eframe::App for GraphApp {
                 }
 
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.full_view.is_none() {
+                    if self.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending_graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -3293,7 +3566,7 @@ impl eframe::App for GraphApp {
             }
             ViewMode::Search => {
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.full_view.is_none() {
+                    if self.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending_graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -3337,6 +3610,7 @@ impl eframe::App for GraphApp {
                             document_id,
                             title,
                             uri,
+                            include_archived,
                         } => {
                             self.mode = ViewMode::Library;
                             prepare_library_request_from_search(
@@ -3344,6 +3618,7 @@ impl eframe::App for GraphApp {
                                 &self.filter_wing,
                                 &title,
                                 &uri,
+                                include_archived,
                             );
                             self.library_cursor_history.clear();
                             self.library_selected_id = None;
@@ -3609,8 +3884,14 @@ impl eframe::App for GraphApp {
                                 ui,
                                 self.wiki_article.as_ref(),
                                 &self.wiki_backlinks,
+                                self.wiki_backlinks_error.as_deref(),
+                                self.pending_backlinks.is_some(),
                             );
-                            if let Some(id) = action.open_id {
+                            if action.retry {
+                                if let Some(id) = self.wiki_selected_id.clone() {
+                                    self.refresh_backlinks(&id);
+                                }
+                            } else if let Some(id) = action.open_id {
                                 self.open_wiki_page_id(&id);
                             } else if let Some(link) = action.open_link {
                                 self.open_wiki_link(&link);
@@ -3623,7 +3904,7 @@ impl eframe::App for GraphApp {
                     // locked file): same start screen as Graph mode, so Retry
                     // re-runs LoadGraph on `open.source` instead of only
                     // re-fetching the catalog.
-                    if self.full_view.is_none() {
+                    if self.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending_graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -3656,6 +3937,27 @@ impl eframe::App for GraphApp {
                             }
                         });
                         ui.separator();
+                    }
+                    if self.wiki_dual_pane || !self.wiki_info_visible {
+                        if self.pending_backlinks.is_some() {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.weak("Refreshing backlinks…");
+                            });
+                        }
+                        if let Some(error) = self.wiki_backlinks_error.clone() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(215, 100, 85),
+                                    format!("Backlinks unavailable: {error}"),
+                                );
+                                if ui.button("Retry").clicked() {
+                                    if let Some(id) = self.wiki_selected_id.clone() {
+                                        self.refresh_backlinks(&id);
+                                    }
+                                }
+                            });
+                        }
                     }
                     let can_write = self.wiki_can_write();
                     let saving = self.pending_save.is_some();
@@ -3835,6 +4137,8 @@ impl eframe::App for GraphApp {
             }
         }
 
+        self.draw_close_confirmation(&ctx);
+
         // Keep spinner animations / pending states alive while the worker runs.
         if self.any_pending() {
             ctx.request_repaint_after(Duration::from_millis(120));
@@ -3845,6 +4149,88 @@ impl eframe::App for GraphApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wiki_page(id: &str, uri: &str) -> WikiPageMeta {
+        WikiPageMeta {
+            id: id.into(),
+            uri: uri.into(),
+            slug: "page".into(),
+            title: "Page".into(),
+            kind: "page".into(),
+            summary: None,
+            category: None,
+            revision: 1,
+            etag: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn configured_http_remains_available_before_graph_load() {
+        let configured = CliSource::Http("http://remote.example:7432".into());
+        assert_eq!(
+            http_base_for_sources(None, Some(&configured)).as_deref(),
+            Some("http://remote.example:7432")
+        );
+        assert!(http_base_for_sources(None, Some(&CliSource::Db("db.duckdb".into()))).is_none());
+    }
+
+    #[test]
+    fn native_close_risk_prefers_in_flight_save_over_dirty_draft() {
+        assert_eq!(close_risk(false, false), None);
+        assert_eq!(close_risk(true, false), Some(CloseRisk::UnsavedWikiEdits));
+        assert_eq!(close_risk(false, true), Some(CloseRisk::WikiSaveInFlight));
+        assert_eq!(close_risk(true, true), Some(CloseRisk::WikiSaveInFlight));
+    }
+
+    #[test]
+    fn graph_open_page_accepts_only_proven_wiki_targets() {
+        let pages = vec![wiki_page("wiki-1", "wiki://one")];
+        assert_eq!(
+            graph_wiki_target(Some("wiki-1"), Some("file:///wrong.md"), &pages),
+            Some(GraphWikiTarget::CatalogId("wiki-1".into()))
+        );
+        assert_eq!(
+            graph_wiki_target(Some("unknown"), Some("wiki://missing"), &pages),
+            Some(GraphWikiTarget::WikiUri("wiki://missing".into()))
+        );
+        assert_eq!(
+            graph_wiki_target(Some("doc-1"), Some("file:///doc.md"), &pages),
+            None
+        );
+        assert_eq!(graph_wiki_target(None, None, &pages), None);
+    }
+
+    #[test]
+    fn enter_prefers_exact_seed_over_first_substring_suggestion() {
+        let exact = rag_mcp::GraphNode {
+            id: "z-exact".into(),
+            kind: "document".into(),
+            label: "Alpha".into(),
+            document_id: Some("doc-alpha".into()),
+            uri: None,
+            resolved: true,
+            metadata_json: "{}".into(),
+        };
+        let misleading = rag_mcp::GraphNode {
+            id: "a-substring".into(),
+            label: "Alpha appendix".into(),
+            ..exact.clone()
+        };
+        let view = GraphView {
+            nodes: vec![misleading, exact],
+            edges: Vec::new(),
+        };
+
+        assert_eq!(
+            seed_target_on_enter(Some(&view), "Alpha", Some("a-substring")).as_deref(),
+            Some("z-exact")
+        );
+        assert_eq!(
+            seed_target_on_enter(Some(&view), "unknown", Some("a-substring")).as_deref(),
+            Some("a-substring")
+        );
+    }
 
     #[test]
     fn project_switch_clears_revision_workspace_and_leaves_history_mode() {
@@ -3984,6 +4370,7 @@ mod tests {
             "alpha",
             "Result title",
             "file:///alpha/result.md",
+            true,
         );
         assert_eq!(request.q, "file:///alpha/result.md");
         assert_eq!(request.wing, "alpha");
@@ -3991,7 +4378,7 @@ mod tests {
         assert!(request.layer.is_empty());
         assert!(request.kind.is_empty());
         assert!(request.status.is_empty());
-        assert!(!request.include_archived);
+        assert!(request.include_archived);
         assert!(request.cursor.is_none());
     }
 

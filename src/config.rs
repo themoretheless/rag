@@ -15,7 +15,7 @@ pub enum EmbeddingProviderKind {
     OpenAi,
     /// Native Ollama embeddings (`POST /api/embeddings` or batch `/api/embed`).
     /// Base URL may be `http://127.0.0.1:11434` or `.../v1` (the `/v1` suffix is stripped for native calls;
-    /// when the URL ends with `/v1`, the OpenAI-compatible path is used instead via [`OpenAi`]-style client).
+    /// when the URL ends with `/v1`, the OpenAI-compatible path is used instead via an `OpenAi`-style client).
     Ollama,
 }
 
@@ -162,22 +162,19 @@ impl Config {
             env::var("RAG_EMBEDDING_PROVIDER").unwrap_or_else(|_| "mock".to_string());
         let embedding_provider = EmbeddingProviderKind::from_str(&provider_raw)?;
 
-        let embedding_base_url = env::var("RAG_EMBEDDING_BASE_URL").unwrap_or_else(|_| {
-            match embedding_provider {
+        let embedding_base_url =
+            env::var("RAG_EMBEDDING_BASE_URL").unwrap_or_else(|_| match embedding_provider {
                 EmbeddingProviderKind::Ollama => "http://127.0.0.1:11434".to_string(),
                 _ => "https://api.openai.com/v1".to_string(),
-            }
-        });
+            });
 
-        let embedding_api_key =
-            env::var("RAG_EMBEDDING_API_KEY").unwrap_or_else(|_| String::new());
+        let embedding_api_key = env::var("RAG_EMBEDDING_API_KEY").unwrap_or_else(|_| String::new());
 
-        let embedding_model = env::var("RAG_EMBEDDING_MODEL").unwrap_or_else(|_| {
-            match embedding_provider {
+        let embedding_model =
+            env::var("RAG_EMBEDDING_MODEL").unwrap_or_else(|_| match embedding_provider {
                 EmbeddingProviderKind::Ollama => "nomic-embed-text".to_string(),
                 _ => "text-embedding-3-small".to_string(),
-            }
-        });
+            });
 
         let dims_default = match embedding_provider {
             EmbeddingProviderKind::Ollama => "768",
@@ -195,8 +192,7 @@ impl Config {
 
         let fts_stemmer = env::var("RAG_FTS_STEMMER").unwrap_or_else(|_| "porter".to_string());
 
-        let mode_raw =
-            env::var("RAG_DEFAULT_SEARCH_MODE").unwrap_or_else(|_| "vec".to_string());
+        let mode_raw = env::var("RAG_DEFAULT_SEARCH_MODE").unwrap_or_else(|_| "vec".to_string());
         let default_search_mode = parse_search_mode(&mode_raw)?;
 
         // LLM providers: ollama | openai | codex | claude | kimi | deepseek | custom
@@ -210,8 +206,8 @@ impl Config {
             .parse::<LlmProviderKind>()?;
         let llm_base_url = env::var("RAG_LLM_BASE_URL")
             .unwrap_or_else(|_| llm_provider.default_base_url().to_string());
-        let llm_model = env::var("RAG_LLM_MODEL")
-            .unwrap_or_else(|_| llm_provider.default_model().to_string());
+        let llm_model =
+            env::var("RAG_LLM_MODEL").unwrap_or_else(|_| llm_provider.default_model().to_string());
         let llm_api_key_raw = env::var("RAG_LLM_API_KEY").unwrap_or_default();
         let llm_api_key = resolve_api_key(llm_provider, &llm_api_key_raw);
         let llm_enabled = parse_bool_env("RAG_LLM_ENABLED", true)?;
@@ -289,9 +285,7 @@ impl Config {
         }
 
         if self.default_top_k == 0 {
-            return Err(AppError::config(
-                "RAG_DEFAULT_TOP_K must be greater than 0",
-            ));
+            return Err(AppError::config("RAG_DEFAULT_TOP_K must be greater than 0"));
         }
 
         if self.max_context_tokens == 0 {
@@ -459,9 +453,8 @@ fn parse_f64(var: &str, default: &str) -> Result<f64, AppError> {
 
 /// Parse `RAG_DEFAULT_SEARCH_MODE`: `vec` | `lex` | `hybrid` (case-insensitive).
 fn parse_search_mode(raw: &str) -> Result<SearchMode, AppError> {
-    SearchMode::parse(raw).map_err(|e| {
-        AppError::config(format!("invalid RAG_DEFAULT_SEARCH_MODE: {e}"))
-    })
+    SearchMode::parse(raw)
+        .map_err(|e| AppError::config(format!("invalid RAG_DEFAULT_SEARCH_MODE: {e}")))
 }
 
 #[cfg(test)]

@@ -63,6 +63,9 @@ static BUFFER: LazyLock<RwLock<Buffer>> = LazyLock::new(|| {
     })
 });
 
+#[cfg(test)]
+pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Started call; call [`CallStart::finish`] to record it.
 #[must_use = "a started call is only recorded by finish()"]
 pub struct CallStart {
@@ -472,8 +475,6 @@ pub fn clear() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn records_group_and_summarize() {

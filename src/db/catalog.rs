@@ -9,11 +9,15 @@ use crate::error::{AppError, Result};
 use crate::models::DrawerListItem;
 use crate::util::parse_db_timestamp;
 
+pub const DEFAULT_CATALOG_PAGE_SIZE: usize = 50;
+pub const MAX_CATALOG_PAGE_SIZE: usize = 200;
+
 #[derive(Debug, Clone, Default)]
 pub struct DocumentCatalogFilter {
     pub q: Option<String>,
     pub wing: Option<String>,
     pub room: Option<String>,
+    pub source_file: Option<String>,
     pub layer: Option<String>,
     pub kind: Option<String>,
     pub status: Option<String>,
@@ -60,7 +64,7 @@ impl Store {
             row.get(0)
         })?;
 
-        let limit = filter.limit.clamp(1, 200);
+        let limit = filter.limit.clamp(1, MAX_CATALOG_PAGE_SIZE);
         let sql = format!(
             r#"
             SELECT
@@ -201,6 +205,7 @@ fn catalog_where(filter: &DocumentCatalogFilter, alias: &str) -> (String, Vec<St
     for (column, value) in [
         ("wing", filter.wing.as_deref()),
         ("room", filter.room.as_deref()),
+        ("source_file", filter.source_file.as_deref()),
         ("layer", filter.layer.as_deref()),
         ("kind", filter.kind.as_deref()),
         ("status", filter.status.as_deref()),

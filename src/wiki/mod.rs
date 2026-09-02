@@ -491,7 +491,8 @@ pub async fn write_wiki_page_command(
     let if_match = opts.if_match_revision;
     // Never delete chunks before CAS succeeds: a stale if_match (or a concurrent
     // loser) must leave the previous body+chunks intact for retrieval.
-    let (document_id, created_at) = if let Some(existing) = store.find_by_uri(&uri)? {
+    let existing = store.find_by_uri(&uri)?;
+    let (document_id, created_at) = if let Some(existing) = existing.as_ref() {
         // Multi-LLM CAS: when RAG_WIKI_REQUIRE_IF_MATCH=true, updates must pass if_match.
         if config.wiki_require_if_match && if_match.is_none() {
             return Err(AppError::config(format!(
@@ -500,7 +501,7 @@ pub async fn write_wiki_page_command(
             )));
         }
         // Enforce raw immutability: never rewrite raw content via wiki write.
-        assert_content_mutable(&existing)?;
+        assert_content_mutable(existing)?;
         // Fail-fast CAS check (store upsert still enforces under the write lock).
         if let Some(expected) = if_match {
             if existing.revision != expected {
@@ -510,7 +511,7 @@ pub async fn write_wiki_page_command(
                 )));
             }
         }
-        (existing.id, existing.created_at)
+        (existing.id.clone(), existing.created_at)
     } else {
         if if_match.is_some() {
             return Err(AppError::conflict(format!(
@@ -526,53 +527,63 @@ pub async fn write_wiki_page_command(
         title.trim().to_string()
     };
 
-    let mut meta = serde_json::Map::new();
-    if let Some(c) = category.as_deref() {
-        meta.insert("category".into(), serde_json::Value::String(c.to_string()));
-    }
-    if let Some(s) = summary.as_deref() {
-        meta.insert("summary".into(), serde_json::Value::String(s.to_string()));
-    }
-    if let Some(extra) = opts.extra_metadata {
-        if let serde_json::Value::Object(map) = extra {
-            for (k, v) in map {
-                meta.insert(k, v);
-            }
-        } else {
-            meta.insert("extra".into(), extra);
-        }
-    }
-
-    let mut doc = Document {
-        id: document_id.clone(),
-        uri: uri.clone(),
-        title: title.clone(),
-        content: content.clone(),
-        metadata_json: serde_json::Value::Object(meta).to_string(),
-        created_at,
-        updated_at: now,
-        layer: LAYER_WIKI.into(),
-        kind: kind.to_string(),
-        content_hash: Some(content_hash(&content)),
-        ..Default::default()
+    // Updating a page must not silently turn a project-scoped/pinned document
+    // into an unscoped default row. Start from the persisted document and
+    // replace only fields owned by this command. Optional metadata overlays are
+    // merged into the existing object so unrelated application keys survive.
+    let metadata_overlay_requested =
+        category.is_some() || summary.is_some() || opts.extra_metadata.is_some();
+    let metadata_json = merge_wiki_metadata(
+        existing
+            .as_ref()
+            .map(|document| document.metadata_json.as_str()),
+        category.as_deref(),
+        summary.as_deref(),
+        opts.extra_metadata,
+        metadata_overlay_requested,
+    )?;
+    let existing_index = if existing.is_some() {
+        store.get_wiki_index_by_slug(&slug)?
+    } else {
+        None
     };
+
+    let mut doc = existing.clone().unwrap_or_default();
+    doc.id = document_id.clone();
+    doc.uri = uri.clone();
+    doc.title = title.clone();
+    doc.content = content.clone();
+    doc.metadata_json = metadata_json;
+    doc.created_at = created_at;
+    doc.updated_at = now;
+    doc.layer = LAYER_WIKI.into();
+    doc.kind = kind.to_string();
+    doc.content_hash = Some(content_hash(&content));
     let chunks = DocumentIndexer::new(embedder.as_ref(), config)
         .build_plain_chunks(&doc)
         .await?;
     let chunk_count = chunks.len();
-    let write = store.write_document_atomic(
-        &doc,
-        if_match,
-        DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-    )?;
-    let revision = write.revision;
-    doc.revision = revision;
-    let node_id = write.node_id.unwrap_or_default();
-    let edge_count = write.edge_count;
 
-    let summary = summary.unwrap_or_else(|| first_line(&content, 240));
-    let index_id = format!("idx-{document_id}");
-    store.upsert_wiki_index_entry(&WikiIndexEntry {
+    let metadata = serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok();
+    let category = category.or_else(|| {
+        existing_index
+            .as_ref()
+            .and_then(|entry| entry.category.clone())
+            .or_else(|| metadata_string_field(metadata.as_ref(), "category").map(str::to_string))
+    });
+    let summary = summary
+        .or_else(|| {
+            existing_index
+                .as_ref()
+                .and_then(|entry| entry.summary.clone())
+        })
+        .or_else(|| metadata_string_field(metadata.as_ref(), "summary").map(str::to_string))
+        .unwrap_or_else(|| first_line(&content, 240));
+    let index_id = existing_index
+        .as_ref()
+        .map(|entry| entry.id.clone())
+        .unwrap_or_else(|| format!("idx-{document_id}"));
+    let index_entry = WikiIndexEntry {
         id: index_id.clone(),
         slug: slug.clone(),
         title: title.clone(),
@@ -581,7 +592,7 @@ pub async fn write_wiki_page_command(
         summary: Some(summary),
         page_id: Some(document_id.clone()),
         updated_at: now,
-    })?;
+    };
 
     let op = opts.op.unwrap_or_else(|| "wiki_write".into());
     let prefix = opts.prefix.unwrap_or_else(|| "WIKI".into());
@@ -597,7 +608,7 @@ pub async fn write_wiki_page_command(
         }
     }
 
-    let _ = store.append_ops_log(&OpsLogEntry {
+    let audit_entry = OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: now,
@@ -608,7 +619,12 @@ pub async fn write_wiki_page_command(
         entity_kind: Some(LAYER_WIKI.into()),
         payload_json: payload.to_string(),
         agent_name: agent,
-    })?;
+    };
+    let write =
+        store.write_wiki_document_atomic(&doc, if_match, &chunks, &index_entry, &audit_entry)?;
+    let revision = write.revision;
+    let node_id = write.node_id.unwrap_or_default();
+    let edge_count = write.edge_count;
 
     Ok(WikiWriteResult {
         document_id,
@@ -621,6 +637,68 @@ pub async fn write_wiki_page_command(
         revision,
         etag: crate::models::format_document_etag(revision),
     })
+}
+
+fn merge_wiki_metadata(
+    existing: Option<&str>,
+    category: Option<&str>,
+    summary: Option<&str>,
+    extra: Option<serde_json::Value>,
+    overlay_requested: bool,
+) -> Result<String> {
+    let existing = existing.unwrap_or("{}");
+    if !overlay_requested {
+        return Ok(if existing.trim().is_empty() {
+            "{}".into()
+        } else {
+            existing.to_string()
+        });
+    }
+
+    let mut metadata = if existing.trim().is_empty() {
+        serde_json::Map::new()
+    } else {
+        match serde_json::from_str::<serde_json::Value>(existing) {
+            Ok(serde_json::Value::Object(map)) => map,
+            Ok(_) => {
+                return Err(AppError::config(
+                    "existing wiki metadata_json is not an object; refusing to discard it while applying metadata fields",
+                ))
+            }
+            Err(error) => {
+                return Err(AppError::config(format!(
+                    "existing wiki metadata_json is invalid; refusing to discard it while applying metadata fields: {error}"
+                )))
+            }
+        }
+    };
+    if let Some(category) = category {
+        metadata.insert(
+            "category".into(),
+            serde_json::Value::String(category.to_string()),
+        );
+    }
+    if let Some(summary) = summary {
+        metadata.insert(
+            "summary".into(),
+            serde_json::Value::String(summary.to_string()),
+        );
+    }
+    if let Some(extra) = extra {
+        if let serde_json::Value::Object(map) = extra {
+            metadata.extend(map);
+        } else {
+            metadata.insert("extra".into(), extra);
+        }
+    }
+    Ok(serde_json::Value::Object(metadata).to_string())
+}
+
+fn metadata_string_field<'a>(
+    metadata: Option<&'a serde_json::Value>,
+    field: &str,
+) -> Option<&'a str> {
+    metadata?.as_object()?.get(field)?.as_str()
 }
 
 /// Update an existing wiki page (by document id, `wiki://slug`, or slug).
@@ -676,17 +754,6 @@ pub async fn update_wiki_page_cas(
         .filter(|s| !s.is_empty())
         .unwrap_or(existing.kind.as_str());
 
-    // Preserve category from metadata when caller omits it.
-    let category_owned = category.map(|s| s.to_string()).or_else(|| {
-        serde_json::from_str::<serde_json::Value>(&existing.metadata_json)
-            .ok()
-            .and_then(|v| {
-                v.get("category")
-                    .and_then(|c| c.as_str())
-                    .map(|s| s.to_string())
-            })
-    });
-
     write_wiki_page_with_opts(
         store,
         embedder,
@@ -695,7 +762,7 @@ pub async fn update_wiki_page_cas(
         title,
         content,
         kind,
-        category_owned.as_deref(),
+        category,
         summary,
         agent,
         WriteWikiOpts {
@@ -800,7 +867,8 @@ pub async fn ingest_raw(
     room: Option<String>,
     source_file: Option<String>,
 ) -> Result<crate::models::IngestResult> {
-    store.require_embedding_dims_match(config.embedding_dims)?;
+    store.ensure_embedding_manifest(config)?;
+    store.require_embedding_manifest_match(config)?;
     let now = Utc::now();
     let uri = uri
         .filter(|u| !u.trim().is_empty())
@@ -2345,6 +2413,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() {
+        let store = open_store();
+        let dims = 16usize;
+        let config = sample_config(dims);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(dims));
+
+        let written = write_wiki_page(
+            &store,
+            &embedder,
+            &config,
+            "preserved-page",
+            "Preserved page",
+            "original body",
+            "concept",
+            Some("architecture"),
+            Some("original summary"),
+            None,
+        )
+        .await
+        .expect("create wiki page");
+        let original_index = store
+            .get_wiki_index_by_slug("preserved-page")
+            .expect("read index")
+            .expect("index exists");
+
+        let mut persisted = store
+            .get_document(&written.document_id)
+            .expect("read document")
+            .expect("document exists");
+        persisted.wing = Some("alpha".into());
+        persisted.room = Some("design".into());
+        persisted.source_file = Some("/sources/alpha/design.md".into());
+        persisted.status = "archived".into();
+        persisted.pinned = true;
+        persisted.boost = 2.75;
+        persisted.metadata_json =
+            r#"{"category":"architecture","summary":"original summary","custom":{"retained":true},"rank":7}"#
+                .into();
+        let prior_revision = persisted.revision;
+        persisted.revision = store
+            .upsert_document_cas(&persisted, Some(prior_revision))
+            .expect("seed placement and state");
+        let metadata_before = persisted.metadata_json.clone();
+
+        let updated = update_wiki_page_cas(
+            &store,
+            &embedder,
+            &config,
+            "preserved-page",
+            Some("Edited title"),
+            "edited body",
+            None,
+            None,
+            None,
+            None,
+            Some(persisted.revision),
+        )
+        .await
+        .expect("update with omitted optional fields");
+
+        let after = store
+            .get_document(&updated.document_id)
+            .expect("read updated document")
+            .expect("updated document exists");
+        assert_eq!(after.wing.as_deref(), Some("alpha"));
+        assert_eq!(after.room.as_deref(), Some("design"));
+        assert_eq!(
+            after.source_file.as_deref(),
+            Some("/sources/alpha/design.md")
+        );
+        assert_eq!(after.status, "archived");
+        assert!(after.pinned);
+        assert_eq!(after.boost, 2.75);
+        assert_eq!(after.kind, "concept");
+        assert_eq!(after.metadata_json, metadata_before);
+        let after_index = store
+            .get_wiki_index_by_slug("preserved-page")
+            .expect("read updated index")
+            .expect("updated index exists");
+        assert_eq!(after_index.id, original_index.id);
+        assert_eq!(after_index.kind, "concept");
+        assert_eq!(after_index.category.as_deref(), Some("architecture"));
+        assert_eq!(after_index.summary.as_deref(), Some("original summary"));
+
+        let overlaid = update_wiki_page_cas(
+            &store,
+            &embedder,
+            &config,
+            "preserved-page",
+            None,
+            "edited body again",
+            None,
+            Some("systems"),
+            Some("new summary"),
+            None,
+            Some(after.revision),
+        )
+        .await
+        .expect("metadata overlay update");
+        let overlaid = store
+            .get_document(&overlaid.document_id)
+            .expect("read overlaid document")
+            .expect("overlaid document exists");
+        let metadata: serde_json::Value =
+            serde_json::from_str(&overlaid.metadata_json).expect("valid metadata object");
+        assert_eq!(metadata["custom"]["retained"], true);
+        assert_eq!(metadata["rank"], 7);
+        assert_eq!(metadata["category"], "systems");
+        assert_eq!(metadata["summary"], "new summary");
+        assert_eq!(overlaid.wing.as_deref(), Some("alpha"));
+        assert!(overlaid.pinned);
+    }
+
+    #[tokio::test]
     async fn wiki_require_if_match_blocks_update_without_revision() {
         let store = open_store();
         let dims = 16usize;
@@ -2816,6 +2999,137 @@ mod tests {
             wiki_index_state(&store, "atomic-wiki-update"),
             original_index
         );
+        assert_eq!(store.list_ops_log(100).unwrap().len(), original_ops_count);
+    }
+
+    #[tokio::test]
+    async fn late_catalog_fault_rolls_back_new_wiki_page_and_audit() {
+        let store = open_store();
+        let dims = 16usize;
+        let config = sample_config(dims);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(dims));
+        let ops_before = store.list_ops_log(100).unwrap().len();
+
+        let error = write_wiki_page_with_opts(
+            &store,
+            &embedder,
+            &config,
+            "late-create-rollback",
+            "Late create rollback",
+            "New body links to [[Never committed]].",
+            "wiki",
+            Some("tests"),
+            Some("must roll back"),
+            Some("agent-test"),
+            WriteWikiOpts {
+                op: Some(crate::db::store::TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("late catalog fault must roll back the complete wiki write");
+
+        assert!(error
+            .to_string()
+            .contains("injected wiki write failure after catalog update"));
+        assert!(store
+            .find_by_uri("wiki://late-create-rollback")
+            .unwrap()
+            .is_none());
+        assert!(wiki_index_state(&store, "late-create-rollback").is_none());
+        assert!(store
+            .find_nodes_by_label("Never committed")
+            .unwrap()
+            .is_empty());
+        assert_eq!(store.list_ops_log(100).unwrap().len(), ops_before);
+    }
+
+    #[tokio::test]
+    async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state() {
+        let store = open_store();
+        let dims = 16usize;
+        let config = sample_config(dims);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(dims));
+        let written = write_wiki_page(
+            &store,
+            &embedder,
+            &config,
+            "late-update-rollback",
+            "Original title",
+            "Original body links to [[Old target]].",
+            "concept",
+            Some("original"),
+            Some("original summary"),
+            Some("agent-test"),
+        )
+        .await
+        .expect("initial wiki write");
+        let original_document = store
+            .get_document(&written.document_id)
+            .unwrap()
+            .expect("original document");
+        let original_chunks = chunk_state(&store, &written.document_id);
+        let original_node = store
+            .find_node_by_document_id(&written.document_id)
+            .unwrap()
+            .expect("original node");
+        let original_edges = outgoing_edge_state(&store, &original_node.id);
+        let original_index = wiki_index_state(&store, "late-update-rollback");
+        let original_ops_count = store.list_ops_log(100).unwrap().len();
+
+        let error = write_wiki_page_with_opts(
+            &store,
+            &embedder,
+            &config,
+            "late-update-rollback",
+            "Changed title",
+            "Changed body links to [[New target]].",
+            "concept",
+            Some("changed"),
+            Some("changed summary"),
+            Some("agent-test"),
+            WriteWikiOpts {
+                op: Some(crate::db::store::TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP.into()),
+                if_match_revision: Some(written.revision),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("late catalog fault must roll back the existing wiki update");
+
+        assert!(error
+            .to_string()
+            .contains("injected wiki write failure after catalog update"));
+        let persisted = store
+            .get_document(&written.document_id)
+            .unwrap()
+            .expect("document survives rollback");
+        assert_eq!(persisted.revision, original_document.revision);
+        assert_eq!(persisted.title, original_document.title);
+        assert_eq!(persisted.content, original_document.content);
+        assert_eq!(persisted.metadata_json, original_document.metadata_json);
+        assert_eq!(chunk_state(&store, &written.document_id), original_chunks);
+        let persisted_node = store
+            .find_node_by_document_id(&written.document_id)
+            .unwrap()
+            .expect("node survives rollback");
+        assert_eq!(persisted_node.id, original_node.id);
+        assert_eq!(persisted_node.label, original_node.label);
+        assert_eq!(
+            outgoing_edge_state(&store, &persisted_node.id),
+            original_edges
+        );
+        assert!(store.find_nodes_by_label("New target").unwrap().is_empty());
+        assert_eq!(
+            wiki_index_state(&store, "late-update-rollback"),
+            original_index
+        );
+        assert!(store
+            .list_document_revisions(&written.document_id)
+            .unwrap()
+            .is_empty());
         assert_eq!(store.list_ops_log(100).unwrap().len(), original_ops_count);
     }
 

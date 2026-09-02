@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use duckdb::{params, Connection};
+use duckdb::{params, AccessMode, Config as DuckDbConfig, Connection};
 
 use super::rows;
 use super::schema;
@@ -20,6 +20,11 @@ use crate::util::{
     content_hash, format_db_timestamp as format_ts, parse_db_timestamp, slugify as shared_slugify,
     wiki_slug_from_uri, SlugPolicy,
 };
+
+const EMBEDDING_MIGRATION_FINGERPRINT_PREFIX: &str = "migration-incomplete:";
+
+#[cfg(test)]
+pub(crate) const TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP: &str = "__test_fail_wiki_write_after_index__";
 
 /// Shared SELECT list for document rows (order matches [`rows::document`]).
 pub(super) const DOCUMENT_SELECT: &str = r#"
@@ -56,7 +61,17 @@ pub struct WikiPageMetaFilter {
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
     path: PathBuf,
-    source_sync_lane: Arc<tokio::sync::RwLock<()>>,
+    corpus_mutation_lane: Arc<tokio::sync::RwLock<()>>,
+}
+
+pub(crate) type CorpusMutationGuard = tokio::sync::OwnedRwLockWriteGuard<()>;
+
+/// Persisted safety outcome for a failed derived-index finalization.
+pub(crate) struct FtsFinalizationFailure {
+    pub message: String,
+    pub dirty_marker_written: bool,
+    pub dirty_marker_error: Option<String>,
+    pub ops_log_error: Option<String>,
 }
 
 /// Derived state that must stay consistent with a document write.
@@ -77,6 +92,16 @@ pub(crate) struct AtomicDocumentWriteResult {
     pub edge_count: usize,
 }
 
+/// Outcome of one exact-duplicate maintenance group.
+///
+/// `merged` contains every source that was archived or deleted. Raw sources
+/// protected from a requested hard delete are also listed in `raw_protected`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExactDuplicateMergeResult {
+    pub merged: Vec<String>,
+    pub raw_protected: Vec<String>,
+}
+
 /// Aggregate layer/index health used by diagnostics without loading document bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LayerHealthCounts {
@@ -85,6 +110,20 @@ pub(crate) struct LayerHealthCounts {
     pub index_entry_count: u64,
     pub indexed_pages: u64,
     pub uncompiled_raw_count: u64,
+}
+
+/// Lean first-chunk vector sample for bounded maintenance comparisons.
+///
+/// Keeping this shape in the data plane prevents maintenance code from loading
+/// complete document bodies and every persisted chunk merely to compare a
+/// deterministic, capped set of representative vectors.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DocumentEmbeddingSample {
+    pub document_id: String,
+    pub title: String,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub embedding: Vec<f32>,
 }
 
 impl Store {
@@ -102,7 +141,66 @@ impl Store {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
-            source_sync_lane: Arc::new(tokio::sync::RwLock::new(())),
+            corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
+        })
+    }
+
+    /// Open an existing, current-schema rag-mcp database without any writes.
+    ///
+    /// Unlike [`Self::open`], this never creates parent directories or a new
+    /// database and never runs schema migrations. It is intended for direct
+    /// inspectors; all durable mutations must still go through the one-writer
+    /// gateway.
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let metadata = std::fs::metadata(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!(
+                    "read-only DuckDB file '{}' does not exist",
+                    path.display()
+                ))
+            } else {
+                AppError::Io(error)
+            }
+        })?;
+        if !metadata.is_file() {
+            return Err(AppError::config(format!(
+                "read-only DuckDB path '{}' is not a file",
+                path.display()
+            )));
+        }
+
+        let config = DuckDbConfig::default()
+            .access_mode(AccessMode::ReadOnly)
+            .map_err(|error| {
+                AppError::db(format!("cannot configure DuckDB read-only mode: {error}"))
+            })?;
+        let conn = Connection::open_with_flags(path, config).map_err(|error| {
+            AppError::db(format!(
+                "cannot open DuckDB '{}' read-only: {error}",
+                path.display()
+            ))
+        })?;
+        let version = schema::current_schema_version(&conn).map_err(|error| {
+            AppError::config(format!(
+                "DuckDB '{}' is not a compatible rag-mcp database: {error}",
+                path.display()
+            ))
+        })?;
+        if version != Some(schema::SCHEMA_VERSION) {
+            return Err(AppError::config(format!(
+                "DuckDB '{}' has incompatible schema version {}; expected {}. Upgrade a writable copy through the gateway before inspecting it",
+                path.display(),
+                version
+                    .map(|version| version.to_string())
+                    .unwrap_or_else(|| "missing".into()),
+                schema::SCHEMA_VERSION
+            )));
+        }
+
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            path: path.to_path_buf(),
+            corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
         })
     }
 
@@ -123,23 +221,115 @@ impl Store {
             .map_err(|e| AppError::db(format!("database lock poisoned: {e}")))
     }
 
-    /// Process-local writer lane shared by every clone that synchronizes source trees.
+    /// Process-local corpus-mutation lane shared by every store clone.
     ///
-    /// Source synchronization owns the write side for its full run. Hybrid
-    /// searches briefly own the read side, so concurrent searches remain
-    /// possible while a newly-starting sync cannot race past their idle check.
-    pub(crate) fn source_sync_lane(&self) -> Arc<tokio::sync::RwLock<()>> {
-        self.source_sync_lane.clone()
+    /// Source synchronization and guarded bulk mutations own the write side
+    /// through their derived-index refresh. Searches briefly
+    /// own the read side, so a mutation cannot race past their idle check.
+    pub(crate) fn corpus_mutation_lane(&self) -> Arc<tokio::sync::RwLock<()>> {
+        self.corpus_mutation_lane.clone()
     }
 
-    /// Acquire the non-exclusive side of the source-sync lane without waiting.
+    /// Acquire the exclusive side of the corpus lane without waiting.
     ///
-    /// `None` means a source synchronization run is active. Keeping the guard
-    /// alive prevents a new run from starting until the guarded search ends.
-    pub(crate) fn try_source_sync_idle_guard(
+    /// A writer can be blocked by another corpus mutation or by an admitted
+    /// guarded search. Keeping this diagnostic in the store prevents
+    /// each transport workflow from inventing a stale source-sync-only reason.
+    pub(crate) fn try_corpus_mutation_guard(&self, operation: &str) -> Result<CorpusMutationGuard> {
+        self.corpus_mutation_lane
+            .clone()
+            .try_write_owned()
+            .map_err(|_| {
+                AppError::busy(format!(
+                    "another exclusive corpus mutation or guarded search is active; retry {operation} after it completes"
+                ))
+            })
+    }
+
+    /// Acquire the non-exclusive side of the corpus-mutation lane without waiting.
+    ///
+    /// `None` means an exclusive corpus mutation is active. Keeping the guard
+    /// alive prevents a new mutation from starting until the guarded search ends.
+    pub(crate) fn try_corpus_idle_guard(&self) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
+        self.corpus_mutation_lane.clone().try_read_owned().ok()
+    }
+
+    /// Leave lexical state explicitly stale after a failed eager finalization.
+    ///
+    /// Bulk workflows call this only after their durable mutation has already
+    /// committed. Advancing the generation is a safe false-positive: it may
+    /// invalidate one vector snapshot and force one lexical rebuild, but it can
+    /// never publish stale BM25 rows as current.
+    pub(crate) fn mark_fts_dirty_for_retry(&self) -> Result<()> {
+        let conn = self.lock()?;
+        super::fts::mark_fts_dirty(&conn)?;
+        Ok(())
+    }
+
+    /// Persist the fail-safe state and a sanitized terminal audit record after
+    /// eager FTS finalization fails. The payload says whether preceding corpus
+    /// work actually committed, including the legitimate no-op case.
+    ///
+    /// This method is intentionally safe to call from detached blocking work:
+    /// even if the transport waiter disappears, operators can still distinguish
+    /// committed corpus work, a no-op failure, and a clean terminal success.
+    pub(crate) fn record_fts_finalization_failure(
         &self,
-    ) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
-        self.source_sync_lane.clone().try_read_owned().ok()
+        operation: &str,
+        durable_mutation_committed: bool,
+        error: &str,
+    ) -> FtsFinalizationFailure {
+        let marker_error = self
+            .mark_fts_dirty_for_retry()
+            .err()
+            .map(|marker_error| marker_error.to_string());
+        let log_error = self
+            .append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: Utc::now(),
+                op: "fts_finalization_failed".into(),
+                prefix: Some("FTS".into()),
+                message: format!("{operation} FTS finalization failed"),
+                entity_id: None,
+                entity_kind: Some("corpus".into()),
+                payload_json: serde_json::json!({
+                    "operation": operation,
+                    "code": "FTS_FINALIZATION_FAILED",
+                    "durable_mutation_committed": durable_mutation_committed,
+                    "retryable": true,
+                    "dirty_marker_written": marker_error.is_none(),
+                })
+                .to_string(),
+                agent_name: None,
+            })
+            .err()
+            .map(|log_error| log_error.to_string());
+
+        let mutation_state = if durable_mutation_committed {
+            "durable corpus work was committed"
+        } else {
+            "no durable corpus mutation was detected"
+        };
+        let mut message = format!(
+            "FTS_FINALIZATION_FAILED: {operation} final FTS refresh failed ({mutation_state}): {error}; retryable=true"
+        );
+        if let Some(marker_error) = &marker_error {
+            message.push_str(&format!(
+                "; additionally failed to mark FTS dirty for retry: {marker_error}"
+            ));
+        }
+        if let Some(log_error) = &log_error {
+            message.push_str(&format!(
+                "; additionally failed to append terminal ops log: {log_error}"
+            ));
+        }
+        FtsFinalizationFailure {
+            message,
+            dirty_marker_written: marker_error.is_none(),
+            dirty_marker_error: marker_error,
+            ops_log_error: log_error,
+        }
     }
 
     /// Insert or replace a document row by primary key `id` (last-write-wins).
@@ -240,31 +430,75 @@ impl Store {
 
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-        let revision = upsert_document_cas_locked(&tx, doc, if_match_revision)?;
-        let (node_id, edge_count) = match (derived, prepared_embeddings) {
-            (DocumentDerivedWrite::Preserve, None) => (None, 0),
-            (DocumentDerivedWrite::RefreshGraphLabel, None) => {
-                (refresh_document_graph_label_locked(&tx, doc)?, 0)
-            }
-            (DocumentDerivedWrite::ReplaceChunksAndGraph(chunks), Some(embedding_json)) => {
-                super::fts::mark_fts_dirty(&tx)?;
-                tx.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
-                insert_chunks_locked(&tx, chunks, &embedding_json)?;
-                let (node_id, edge_count) =
-                    crate::graph::resolve::rebuild_document_graph_locked(&tx, doc)?;
-                (Some(node_id), edge_count)
-            }
-            _ => unreachable!("derived write and prepared embedding state must match"),
-        };
-        if let Some(manifest) = manifest {
-            super::source_manifest::upsert_source_manifest_locked(&tx, manifest)?;
-        }
+        let result = write_document_locked(
+            &tx,
+            doc,
+            if_match_revision,
+            derived,
+            prepared_embeddings.as_deref(),
+            manifest,
+        )?;
         tx.commit()?;
-        Ok(AtomicDocumentWriteResult {
-            revision,
-            node_id,
-            edge_count,
-        })
+        Ok(result)
+    }
+
+    /// Persist a wiki document and its chunks, graph, catalog row, and audit
+    /// event under one transaction.
+    pub(crate) fn write_wiki_document_atomic(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+        chunks: &[Chunk],
+        index_entry: &WikiIndexEntry,
+        audit_entry: &OpsLogEntry,
+    ) -> Result<AtomicDocumentWriteResult> {
+        if index_entry.page_id.as_deref() != Some(doc.id.as_str()) {
+            return Err(AppError::config(format!(
+                "wiki index page id {:?} does not match document {}",
+                index_entry.page_id, doc.id
+            )));
+        }
+        if let Some(entity_id) = audit_entry.entity_id.as_deref() {
+            if entity_id != doc.id {
+                return Err(AppError::config(format!(
+                    "wiki audit entity id {entity_id} does not match document {}",
+                    doc.id
+                )));
+            }
+        }
+        let prepared_embeddings = chunks
+            .iter()
+            .map(|chunk| {
+                if chunk.document_id != doc.id {
+                    return Err(AppError::config(format!(
+                        "chunk {} belongs to document {}, expected {}",
+                        chunk.id, chunk.document_id, doc.id
+                    )));
+                }
+                Ok(serde_json::to_string(&chunk.embedding)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let result = write_document_locked(
+            &tx,
+            doc,
+            if_match_revision,
+            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
+            Some(&prepared_embeddings),
+            None,
+        )?;
+        upsert_wiki_index_entry_locked(&tx, index_entry)?;
+        #[cfg(test)]
+        if audit_entry.op == TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP {
+            return Err(AppError::db(
+                "injected wiki write failure after catalog update",
+            ));
+        }
+        append_ops_log_locked(&tx, audit_entry)?;
+        tx.commit()?;
+        Ok(result)
     }
 
     /// Historical document snapshots, newest revision first.
@@ -388,6 +622,198 @@ impl Store {
         Ok(deleted)
     }
 
+    /// Apply a maintenance batch of hard deletes and tombstones atomically.
+    ///
+    /// Every target must exist and an id may occur only once across the two
+    /// lists. Any validation or storage failure rolls back the entire group, so
+    /// a compression caller never loses a partial prefix without a report.
+    pub(crate) fn apply_document_dispositions_atomic(
+        &self,
+        delete_ids: &[String],
+        tombstone_ids: &[String],
+    ) -> Result<(u64, u64, u64)> {
+        let mut seen = std::collections::HashSet::new();
+        for id in delete_ids.iter().chain(tombstone_ids) {
+            if id.trim().is_empty() || !seen.insert(id.as_str()) {
+                return Err(AppError::config(format!(
+                    "duplicate or empty document disposition id '{id}'"
+                )));
+            }
+        }
+
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let mut deleted = 0u64;
+        let mut tombstoned = 0u64;
+        let mut chunks_deleted = 0u64;
+
+        for id in tombstone_ids {
+            let Some(document) = get_document_locked(&tx, id)? else {
+                return Err(AppError::not_found(format!(
+                    "document not found for tombstone: {id}"
+                )));
+            };
+            let expected_revision = document.revision;
+            let mut applied = apply_document_meta_update(
+                document,
+                &DocumentMetaUpdate {
+                    status: Some("tombstone".into()),
+                    ..Default::default()
+                },
+            )?;
+            applied.document.revision =
+                upsert_document_cas_locked(&tx, &applied.document, Some(expected_revision))?;
+            tombstoned += 1;
+        }
+
+        for id in delete_ids {
+            let chunk_count: i64 = tx.query_row(
+                "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
+                params![id],
+                |row| row.get(0),
+            )?;
+            if !delete_document_locked(&tx, id)? {
+                return Err(AppError::not_found(format!(
+                    "document not found for delete: {id}"
+                )));
+            }
+            deleted += 1;
+            chunks_deleted = chunks_deleted.saturating_add(chunk_count.max(0) as u64);
+        }
+
+        tx.commit()?;
+        Ok((deleted, tombstoned, chunks_deleted))
+    }
+
+    /// Validate and apply one exact-content duplicate group atomically.
+    ///
+    /// Actual document bodies are hashed inside the transaction; persisted
+    /// `content_hash` values and caller-provided ids are never trusted as proof
+    /// of equality. All sources are validated before the first mutation and any
+    /// later storage failure rolls the whole group back.
+    pub(crate) fn merge_exact_duplicates_atomic(
+        &self,
+        keep_id: &str,
+        source_ids: &[String],
+        declared_hash: Option<&str>,
+        hard_delete: bool,
+        allow_raw_delete: bool,
+    ) -> Result<ExactDuplicateMergeResult> {
+        self.merge_exact_duplicates_atomic_with(
+            keep_id,
+            source_ids,
+            declared_hash,
+            hard_delete,
+            allow_raw_delete,
+            |_| Ok(()),
+        )
+    }
+
+    fn merge_exact_duplicates_atomic_with(
+        &self,
+        keep_id: &str,
+        source_ids: &[String],
+        declared_hash: Option<&str>,
+        hard_delete: bool,
+        allow_raw_delete: bool,
+        mut after_mutation: impl FnMut(usize) -> Result<()>,
+    ) -> Result<ExactDuplicateMergeResult> {
+        let keep_id = keep_id.trim();
+        if keep_id.is_empty() {
+            return Err(AppError::config(
+                "merge_exact_dup requires a non-empty canonical document id",
+            ));
+        }
+        if source_ids.is_empty() {
+            return Err(AppError::config(
+                "merge_exact_dup requires at least one source document id",
+            ));
+        }
+        let mut seen = std::collections::HashSet::with_capacity(source_ids.len());
+        for source_id in source_ids {
+            let normalized = source_id.trim();
+            if normalized.is_empty()
+                || normalized != source_id
+                || normalized == keep_id
+                || !seen.insert(normalized)
+            {
+                return Err(AppError::config(format!(
+                    "merge_exact_dup source ids must be non-empty, unique, and different from canonical id '{keep_id}'"
+                )));
+            }
+        }
+
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let keep = get_document_locked(&tx, keep_id)?
+            .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
+        let expected_hash = content_hash(&keep.content);
+        if declared_hash.is_some_and(|declared| declared != expected_hash) {
+            return Err(AppError::conflict(format!(
+                "merge_exact_dup declared content_hash does not match canonical document {keep_id}"
+            )));
+        }
+
+        let mut sources = Vec::with_capacity(source_ids.len());
+        for source_id in source_ids {
+            let source = get_document_locked(&tx, source_id)?
+                .ok_or_else(|| AppError::not_found(format!("document not found: {source_id}")))?;
+            if content_hash(&source.content) != expected_hash {
+                return Err(AppError::conflict(format!(
+                    "merge_exact_dup source {source_id} is not an exact content duplicate of {keep_id}"
+                )));
+            }
+            sources.push(source);
+        }
+
+        let mut merged = Vec::with_capacity(sources.len());
+        let mut raw_protected = Vec::new();
+        for (index, source) in sources.into_iter().enumerate() {
+            if hard_delete && (!source.layer.eq_ignore_ascii_case("raw") || allow_raw_delete) {
+                if !delete_document_locked(&tx, &source.id)? {
+                    return Err(AppError::not_found(format!(
+                        "document disappeared during merge_exact_dup: {}",
+                        source.id
+                    )));
+                }
+            } else {
+                let expected_revision = source.revision;
+                let mut applied = apply_document_meta_update(
+                    source,
+                    &DocumentMetaUpdate {
+                        status: Some("archived".into()),
+                        ..Default::default()
+                    },
+                )?;
+                let source_id = applied.document.id.clone();
+                applied.document.revision =
+                    upsert_document_cas_locked(&tx, &applied.document, Some(expected_revision))?;
+                if hard_delete {
+                    raw_protected.push(source_id);
+                }
+            }
+            merged.push(source_ids[index].clone());
+            after_mutation(index + 1)?;
+        }
+
+        tx.commit()?;
+        Ok(ExactDuplicateMergeResult {
+            merged,
+            raw_protected,
+        })
+    }
+
+    /// Count chunks without loading their text or vectors.
+    pub(crate) fn count_chunks_for_document(&self, document_id: &str) -> Result<u64> {
+        let conn = self.lock()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
+            params![document_id],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
     /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
     pub fn delete_chunks_for_document(&self, document_id: &str) -> Result<()> {
         let conn = self.lock()?;
@@ -403,8 +829,15 @@ impl Store {
     ///
     /// Returns the number of document rows removed.
     pub fn delete_by_source(&self, source: &str) -> Result<u64> {
-        self.delete_source_state(source)
-            .map(|(documents, _)| documents)
+        self.delete_by_source_ids(source)
+            .map(|document_ids| document_ids.len() as u64)
+    }
+
+    /// Delete by exact source and return the ids selected inside the same
+    /// transaction that performs the deletion.
+    pub fn delete_by_source_ids(&self, source: &str) -> Result<Vec<String>> {
+        self.delete_source_state_ids_with(source, |_| Ok(()))
+            .map(|(document_ids, _)| document_ids)
     }
 
     /// Atomically remove every document/derived row and manifest ownership for
@@ -416,8 +849,17 @@ impl Store {
     fn delete_source_state_with(
         &self,
         source: &str,
-        mut after_document: impl FnMut(usize) -> Result<()>,
+        after_document: impl FnMut(usize) -> Result<()>,
     ) -> Result<(u64, bool)> {
+        self.delete_source_state_ids_with(source, after_document)
+            .map(|(document_ids, manifest_deleted)| (document_ids.len() as u64, manifest_deleted))
+    }
+
+    fn delete_source_state_ids_with(
+        &self,
+        source: &str,
+        mut after_document: impl FnMut(usize) -> Result<()>,
+    ) -> Result<(Vec<String>, bool)> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let manifest_present: bool = tx.query_row(
@@ -442,20 +884,13 @@ impl Store {
             params![source],
         )?;
         tx.commit()?;
-        Ok((ids.len() as u64, manifest_present))
+        Ok((ids, manifest_present))
     }
 
     /// Fetch a document by id.
     pub fn get_document(&self, id: &str) -> Result<Option<Document>> {
         let conn = self.lock()?;
-        let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE id = ?");
-        let mut stmt = conn.prepare(&sql)?;
-
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(rows::document(row)?)),
-            None => Ok(None),
-        }
+        get_document_locked(&conn, id)
     }
 
     /// Fetch a document by stable URI (re-ingest lookup).
@@ -593,6 +1028,214 @@ impl Store {
         Ok(out)
     }
 
+    /// Count documents without loading document bodies.
+    pub(crate) fn count_documents(&self) -> Result<usize> {
+        let conn = self.lock()?;
+        let count: i64 = conn.query_row("SELECT COUNT(*)::BIGINT FROM documents", [], |row| {
+            row.get(0)
+        })?;
+        usize::try_from(count).map_err(|_| AppError::db(format!("invalid document count: {count}")))
+    }
+
+    /// Count documents in one layer without loading their bodies.
+    pub(crate) fn count_documents_by_layer(&self, layer: &str) -> Result<usize> {
+        let conn = self.lock()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM documents WHERE layer = ?",
+            params![layer],
+            |row| row.get(0),
+        )?;
+        usize::try_from(count).map_err(|_| AppError::db(format!("invalid document count: {count}")))
+    }
+
+    /// Count documents eligible for a graph rebuild.
+    pub(crate) fn count_graph_rebuild_candidates(&self, dirty_only: bool) -> Result<usize> {
+        let conn = self.lock()?;
+        let count: i64 = conn.query_row(
+            r#"
+            SELECT COUNT(*)::BIGINT
+            FROM documents d
+            WHERE NOT ? OR NOT EXISTS (
+                SELECT 1 FROM graph_nodes n WHERE n.document_id = d.id
+            )
+            "#,
+            params![dirty_only],
+            |row| row.get(0),
+        )?;
+        usize::try_from(count)
+            .map_err(|_| AppError::db(format!("invalid graph rebuild candidate count: {count}")))
+    }
+
+    /// Load one deterministic bounded page of graph rebuild candidates.
+    pub(crate) fn list_graph_rebuild_candidates_after(
+        &self,
+        dirty_only: bool,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Document>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.lock()?;
+        let sql = format!(
+            "SELECT {DOCUMENT_SELECT} FROM documents d \
+             WHERE (NOT ? OR NOT EXISTS (SELECT 1 FROM graph_nodes n WHERE n.document_id = d.id)) \
+               AND d.id > ? ORDER BY d.id ASC LIMIT ?"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = statement.query(params![dirty_only, after_id.unwrap_or(""), limit])?;
+        let mut documents = Vec::new();
+        while let Some(row) = rows.next()? {
+            documents.push(rows::document(row)?);
+        }
+        Ok(documents)
+    }
+
+    /// Load one deterministic bounded page of document ids for full-corpus work.
+    pub(crate) fn list_document_ids_after(
+        &self,
+        after_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.lock()?;
+        let mut statement =
+            conn.prepare("SELECT id FROM documents WHERE id > ? ORDER BY id ASC LIMIT ?")?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = statement.query(params![after_id.unwrap_or(""), limit])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            ids.push(row.get(0)?);
+        }
+        Ok(ids)
+    }
+
+    /// Count chunks attached to the first `limit` documents in keyset order.
+    pub(crate) fn count_chunks_for_document_limit(&self, limit: usize) -> Result<usize> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        let conn = self.lock()?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let count: i64 = conn.query_row(
+            r#"
+            SELECT COUNT(*)::BIGINT
+            FROM chunks c
+            INNER JOIN (
+                SELECT id FROM documents ORDER BY id ASC LIMIT ?
+            ) d ON d.id = c.document_id
+            "#,
+            params![limit],
+            |row| row.get(0),
+        )?;
+        usize::try_from(count)
+            .map_err(|_| AppError::db(format!("invalid bounded chunk count: {count}")))
+    }
+
+    /// Count and return a bounded deterministic prefix of persisted-hash matches.
+    ///
+    /// Callers must still validate actual body hashes before mutation.
+    pub(crate) fn exact_duplicate_source_ids(
+        &self,
+        hash: &str,
+        keep_id: &str,
+        limit: usize,
+    ) -> Result<(usize, Vec<String>)> {
+        let conn = self.lock()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM documents WHERE content_hash = ? AND id <> ?",
+            params![hash, keep_id],
+            |row| row.get(0),
+        )?;
+        let count = usize::try_from(count)
+            .map_err(|_| AppError::db(format!("invalid duplicate source count: {count}")))?;
+        if limit == 0 {
+            return Ok((count, Vec::new()));
+        }
+        let mut statement = conn.prepare(
+            "SELECT id FROM documents WHERE content_hash = ? AND id <> ? \
+             ORDER BY created_at ASC, id ASC LIMIT ?",
+        )?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = statement.query(params![hash, keep_id, limit])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            ids.push(row.get(0)?);
+        }
+        Ok((count, ids))
+    }
+
+    /// Count and load only the bounded active, user-organizable unscoped set.
+    /// Full document bodies are selected because the optional LLM workflow may
+    /// inspect them later, but the SQL limit is applied before rows reach Rust.
+    pub(crate) fn list_active_unscoped_documents(
+        &self,
+        limit: usize,
+    ) -> Result<(usize, Vec<Document>)> {
+        let conn = self.lock()?;
+        let predicate = r#"
+            COALESCE(status, 'active') NOT IN ('archived', 'tombstone')
+            AND COALESCE(layer, '') NOT IN ('schema', 'index', 'log')
+            AND (wing IS NULL OR TRIM(wing) = '')
+        "#;
+        let count: i64 = conn.query_row(
+            &format!("SELECT COUNT(*)::BIGINT FROM documents WHERE {predicate}"),
+            [],
+            |row| row.get(0),
+        )?;
+        let sql = format!(
+            "SELECT {DOCUMENT_SELECT} FROM documents WHERE {predicate} \
+             ORDER BY updated_at DESC, title ASC, id ASC LIMIT ?"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
+        let mut rows = statement.query(params![limit])?;
+        let mut documents = Vec::new();
+        while let Some(row) = rows.next()? {
+            documents.push(rows::document(row)?);
+        }
+        Ok((count.max(0) as usize, documents))
+    }
+
+    /// Count and load a bounded batch of searchable documents whose derived
+    /// chunks are missing.
+    ///
+    /// The anti-join and limit both run in DuckDB so doctor repair never
+    /// materializes the whole corpus or performs one chunk query per document.
+    pub(crate) fn list_documents_missing_chunks(
+        &self,
+        limit: usize,
+    ) -> Result<(usize, Vec<Document>)> {
+        let conn = self.lock()?;
+        let predicate = r#"
+            LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) <> 'schema'
+            AND TRIM(COALESCE(content, '')) <> ''
+            AND NOT EXISTS (
+                SELECT 1 FROM chunks WHERE chunks.document_id = documents.id
+            )
+        "#;
+        let count: i64 = conn.query_row(
+            &format!("SELECT COUNT(*)::BIGINT FROM documents WHERE {predicate}"),
+            [],
+            |row| row.get(0),
+        )?;
+        let sql = format!(
+            "SELECT {DOCUMENT_SELECT} FROM documents WHERE {predicate} \
+             ORDER BY updated_at DESC, id ASC LIMIT ?"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
+        let mut rows = statement.query(params![limit])?;
+        let mut documents = Vec::new();
+        while let Some(row) = rows.next()? {
+            documents.push(rows::document(row)?);
+        }
+        Ok((count.max(0) as usize, documents))
+    }
+
     /// List documents with the given `layer` (`raw`, `wiki`, …), ordered by `created_at`.
     pub fn list_documents_by_layer(&self, layer: &str) -> Result<Vec<Document>> {
         let conn = self.lock()?;
@@ -634,10 +1277,7 @@ impl Store {
         filter: &WikiPageMetaFilter,
     ) -> Result<(Vec<crate::models::WikiPageListItem>, usize)> {
         let conn = self.lock()?;
-        let mut items = fetch_wiki_page_meta_items(&conn, filter)?;
-        drop(conn);
-        post_filter_wiki_page_metas(&mut items, filter);
-        Ok(page_wiki_page_metas(items, filter.offset, filter.limit))
+        fetch_wiki_page_meta_items(&conn, filter)
     }
 
     /// Incoming wikilink sources for a document (label, document_id or node id).
@@ -660,6 +1300,50 @@ impl Store {
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out.dedup_by(|a, b| a.1 == b.1);
+        Ok(out)
+    }
+
+    /// Incoming wikilink sources constrained to the same project wing.
+    ///
+    /// Both the target and each returned source must be backed by a document
+    /// in `wing`; unowned stubs are intentionally excluded because their
+    /// project membership cannot be proven.
+    pub fn wiki_backlinks_for_document_in_wing(
+        &self,
+        document_id: &str,
+        wing: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let document_id = document_id.trim();
+        let wing = wing.trim();
+        if document_id.is_empty() || wing.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT MIN(source_node.label), source_node.document_id
+            FROM graph_nodes target_node
+            JOIN documents target_document
+              ON target_document.id = target_node.document_id
+            JOIN graph_edges edge
+              ON edge.target_id = target_node.id
+             AND edge.rel_type = 'wikilink'
+            JOIN graph_nodes source_node
+              ON source_node.id = edge.source_id
+            JOIN documents source_document
+              ON source_document.id = source_node.document_id
+            WHERE target_node.document_id = ?
+              AND target_document.wing = ?
+              AND source_document.wing = ?
+            GROUP BY source_node.document_id
+            ORDER BY MIN(source_node.label), source_node.document_id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![document_id, wing, wing])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push((row.get(0)?, row.get(1)?));
+        }
         Ok(out)
     }
 
@@ -937,21 +1621,110 @@ impl Store {
     /// List chunks for a document ordered by `chunk_index`.
     pub fn list_chunks_for_document(&self, doc_id: &str) -> Result<Vec<Chunk>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
+        list_chunks_for_document_locked(&conn, doc_id)
+    }
+
+    /// Load one representative vector for at most `limit` deterministic
+    /// documents without materializing full document bodies or the corpus.
+    pub(crate) fn representative_document_embeddings(
+        &self,
+        limit: usize,
+        active_only: bool,
+        require_wing: bool,
+        exclude_system_layers: bool,
+    ) -> Result<Vec<DocumentEmbeddingSample>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let active_clause = if active_only {
+            "AND COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')"
+        } else {
+            ""
+        };
+        let wing_clause = if require_wing {
+            "AND d.wing IS NOT NULL AND TRIM(d.wing) <> ''"
+        } else {
+            ""
+        };
+        let layer_clause = if exclude_system_layers {
+            "AND COALESCE(d.layer, '') NOT IN ('schema', 'index', 'log')"
+        } else {
+            ""
+        };
+        let sql = format!(
             r#"
-            SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
+            WITH candidates AS (
+                SELECT d.id, d.title, d.wing, d.room
+                FROM documents d
+                WHERE EXISTS (
+                    SELECT 1 FROM chunks candidate_chunk
+                    WHERE candidate_chunk.document_id = d.id
+                )
+                {active_clause}
+                {wing_clause}
+                {layer_clause}
+                ORDER BY d.id ASC
+                LIMIT ?
+            )
+            SELECT d.id, d.title, d.wing, d.room,
+                   (
+                       SELECT c.embedding_json
+                       FROM chunks c
+                       WHERE c.document_id = d.id
+                       ORDER BY c.chunk_index ASC, c.id ASC
+                       LIMIT 1
+                   ) AS embedding_json
+            FROM candidates d
+            ORDER BY d.id ASC
+            "#
+        );
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let conn = self.lock()?;
+        let mut statement = conn.prepare(&sql)?;
+        let mut rows = statement.query(params![limit])?;
+        let mut samples = Vec::new();
+        while let Some(row) = rows.next()? {
+            let document_id: String = row.get(0)?;
+            let raw: String = row.get(4)?;
+            let embedding = serde_json::from_str(&raw).map_err(|error| {
+                AppError::db(format!(
+                    "invalid representative embedding JSON for document {document_id}: {error}"
+                ))
+            })?;
+            samples.push(DocumentEmbeddingSample {
+                document_id,
+                title: row.get(1)?,
+                wing: row.get(2)?,
+                room: row.get(3)?,
+                embedding,
+            });
+        }
+        Ok(samples)
+    }
+
+    /// Load only the first chunk vector for a specific document.
+    pub(crate) fn first_chunk_embedding(&self, document_id: &str) -> Result<Option<Vec<f32>>> {
+        let conn = self.lock()?;
+        let raw = match conn.query_row(
+            r#"
+            SELECT embedding_json
             FROM chunks
             WHERE document_id = ?
-            ORDER BY chunk_index ASC
+            ORDER BY chunk_index ASC, id ASC
+            LIMIT 1
             "#,
-        )?;
-
-        let mut rows = stmt.query(params![doc_id])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::chunk(row)?);
-        }
-        Ok(out)
+            params![document_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(raw) => raw,
+            Err(duckdb::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        serde_json::from_str(&raw).map(Some).map_err(|error| {
+            AppError::db(format!(
+                "invalid representative embedding JSON for document {document_id}: {error}"
+            ))
+        })
     }
 
     /// Load every chunk with its embedding (for in-process vector search).
@@ -1237,36 +2010,43 @@ impl Store {
     /// Insert or replace the embedding corpus fingerprint.
     pub fn set_embedding_manifest(&self, manifest: &EmbeddingManifest) -> Result<()> {
         let conn = self.lock()?;
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO embedding_manifest
-              (id, provider, model, dims, base_url, content_fingerprint, updated_at)
-            VALUES
-              (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
-            "#,
-            params![
-                manifest.id,
-                manifest.provider,
-                manifest.model,
-                manifest.dims,
-                manifest.base_url,
-                manifest.content_fingerprint,
-                format_ts(manifest.updated_at),
-            ],
-        )?;
-        Ok(())
+        set_embedding_manifest_locked(&conn, manifest)
     }
 
     /// Record the default embedding manifest from config if none is stored yet.
     ///
     /// Does **not** overwrite an existing row (preserves corpus fingerprint so
-    /// dim/model drift can be detected). Call on server start and before first ingest.
+    /// embedding identity drift can be detected). Call on server start and before
+    /// first ingest.
     pub fn ensure_embedding_manifest(&self, config: &Config) -> Result<EmbeddingManifest> {
         if let Some(existing) = self.get_embedding_manifest()? {
             return Ok(existing);
         }
+
+        // Never infer the identity of already-persisted vectors. A missing
+        // manifest on a non-empty corpus is an unknown legacy identity and must
+        // be migrated explicitly through a complete reembed_all.
+        let conn = self.lock()?;
+        let manifest_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM embedding_manifest WHERE id = 'default')",
+            [],
+            |row| row.get(0),
+        )?;
+        if manifest_exists {
+            drop(conn);
+            return self.get_embedding_manifest()?.ok_or_else(|| {
+                AppError::db("embedding manifest disappeared during initialization")
+            });
+        }
+        let chunk_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+        if chunk_count > 0 {
+            return Err(AppError::embeddings(format!(
+                "embedding manifest is missing for a non-empty corpus ({chunk_count} chunks); run a complete uncapped reembed_all to establish a verified corpus identity"
+            )));
+        }
         let manifest = embedding_manifest_from_config(config);
-        self.set_embedding_manifest(&manifest)?;
+        set_embedding_manifest_locked(&conn, &manifest)?;
         tracing::info!(
             provider = %manifest.provider,
             model = %manifest.model,
@@ -1286,8 +2066,71 @@ impl Store {
         Ok(manifest)
     }
 
-    /// Refuse vec/hybrid search (and ingest of new vectors) when corpus dims differ
-    /// from the live config. No stored manifest means no check (empty or pre-manifest DB).
+    /// True when the persisted corpus embedding identity matches runtime config.
+    ///
+    /// A missing manifest is not a match. Call [`Self::ensure_embedding_manifest`]
+    /// first only when initializing a corpus whose current identity is already
+    /// known to be the configured one (the normal server/ingest startup path).
+    pub fn embedding_manifest_matches_config(&self, config: &Config) -> Result<bool> {
+        Ok(self
+            .get_embedding_manifest()?
+            .as_ref()
+            .is_some_and(|manifest| embedding_manifest_matches_config(manifest, config)))
+    }
+
+    /// Refuse vector-producing or vector-consuming work on identity mismatch.
+    ///
+    /// A complete, uncapped `reembed_all` is the only supported migration path.
+    /// Single-document refreshes must never publish a new corpus identity while
+    /// other chunks may still contain vectors from the old model or endpoint.
+    pub fn require_embedding_manifest_match(&self, config: &Config) -> Result<()> {
+        let Some(manifest) = self.get_embedding_manifest()? else {
+            return Err(AppError::embeddings(
+                "embedding manifest is missing; initialize an empty corpus or run a complete uncapped reembed_all before vector operations",
+            ));
+        };
+        if embedding_manifest_matches_config(&manifest, config) {
+            return Ok(());
+        }
+
+        let configured = embedding_manifest_from_config(config);
+        let comparison = if manifest
+            .content_fingerprint
+            .as_deref()
+            .is_some_and(|fingerprint| {
+                fingerprint.starts_with(EMBEDDING_MIGRATION_FINGERPRINT_PREFIX)
+            }) {
+            format!(
+                "incomplete corpus migration marker={}",
+                manifest.content_fingerprint.as_deref().unwrap_or_default()
+            )
+        } else if manifest.content_fingerprint.is_some() {
+            format!(
+                "stored fingerprint={}, configured fingerprint={}",
+                manifest.content_fingerprint.as_deref().unwrap_or_default(),
+                configured
+                    .content_fingerprint
+                    .as_deref()
+                    .unwrap_or_default()
+            )
+        } else {
+            "legacy provider/model/dims comparison".to_string()
+        };
+        Err(AppError::embeddings(format!(
+            "embedding manifest mismatch ({comparison}): stored provider='{}', model='{}', dims={}; configured provider='{}', model='{}', dims={}. Run a complete uncapped reembed_all to migrate the corpus; reembed_document cannot migrate embedding identity",
+            manifest.provider,
+            manifest.model,
+            manifest.dims,
+            configured.provider,
+            configured.model,
+            configured.dims,
+        )))
+    }
+
+    /// Legacy dimensions-only compatibility probe.
+    ///
+    /// Production vector paths use [`Self::require_embedding_manifest_match`]
+    /// so equal-dimensional vectors from another model cannot be mixed.
     pub fn require_embedding_dims_match(&self, config_dims: usize) -> Result<()> {
         let Some(manifest) = self.get_embedding_manifest()? else {
             return Ok(());
@@ -1298,8 +2141,8 @@ impl Store {
         }
         Err(AppError::embeddings(format!(
             "embedding dimension mismatch: corpus has dims={} (provider={}, model={}), \
-             config has dims={}. Call reembed_document for each document after changing \
-             RAG_EMBEDDING_DIMS (or embedding model), then verify with get_embedding_manifest.",
+             config has dims={}. Run a complete uncapped reembed_all after changing \
+             RAG_EMBEDDING_DIMS (or embedding identity), then verify with get_embedding_manifest.",
             manifest.dims, manifest.provider, manifest.model, expected
         )))
     }
@@ -1322,6 +2165,167 @@ impl Store {
         Ok(())
     }
 
+    /// Atomically replace only the embeddings of an unchanged chunk set.
+    ///
+    /// `expected_chunks` is the snapshot embedded by the caller outside the
+    /// database lock. Both the document revision and every persisted chunk
+    /// field (including the prior vector) form the CAS boundary, so a concurrent
+    /// content write or re-embed cannot be overwritten. Chunk ids, text,
+    /// offsets, metadata, timestamps, and document revision are preserved.
+    ///
+    /// When supplied, `manifest` commits in the same transaction as the new
+    /// vectors. The chunk generation advances to invalidate vector snapshots;
+    /// a clean FTS generation advances with it because indexed text did not
+    /// change, while an already-dirty FTS stays dirty.
+    pub(crate) fn update_chunk_embeddings_atomic(
+        &self,
+        document_id: &str,
+        if_match_revision: i64,
+        expected_chunks: &[Chunk],
+        embeddings: &[Vec<f32>],
+        manifest: Option<&EmbeddingManifest>,
+    ) -> Result<usize> {
+        self.update_chunk_embeddings_atomic_with(
+            document_id,
+            if_match_revision,
+            expected_chunks,
+            embeddings,
+            manifest,
+            |_| Ok(()),
+        )
+    }
+
+    fn update_chunk_embeddings_atomic_with(
+        &self,
+        document_id: &str,
+        if_match_revision: i64,
+        expected_chunks: &[Chunk],
+        embeddings: &[Vec<f32>],
+        manifest: Option<&EmbeddingManifest>,
+        mut after_chunk_update: impl FnMut(usize) -> Result<()>,
+    ) -> Result<usize> {
+        let document_id = document_id.trim();
+        if document_id.is_empty() {
+            return Err(AppError::config("document_id must be non-empty"));
+        }
+        if if_match_revision < 1 {
+            return Err(AppError::config("if_match_revision must be >= 1"));
+        }
+        if expected_chunks.len() != embeddings.len() {
+            return Err(AppError::embeddings(format!(
+                "embedder returned {} vectors for {} chunks",
+                embeddings.len(),
+                expected_chunks.len()
+            )));
+        }
+        if let Some(chunk) = expected_chunks
+            .iter()
+            .find(|chunk| chunk.document_id != document_id)
+        {
+            return Err(AppError::config(format!(
+                "chunk {} belongs to document {}, expected {}",
+                chunk.id, chunk.document_id, document_id
+            )));
+        }
+        let mut chunk_ids = std::collections::HashSet::with_capacity(expected_chunks.len());
+        if let Some(chunk) = expected_chunks
+            .iter()
+            .find(|chunk| !chunk_ids.insert(chunk.id.as_str()))
+        {
+            return Err(AppError::config(format!(
+                "duplicate chunk id in embedding update: {}",
+                chunk.id
+            )));
+        }
+        if let Some(manifest) = manifest {
+            let expected_dims = usize::try_from(manifest.dims).map_err(|_| {
+                AppError::embeddings(format!(
+                    "embedding manifest dims must be positive (got {})",
+                    manifest.dims
+                ))
+            })?;
+            if expected_dims == 0 {
+                return Err(AppError::embeddings(
+                    "embedding manifest dims must be positive",
+                ));
+            }
+            if let Some((index, embedding)) = embeddings
+                .iter()
+                .enumerate()
+                .find(|(_, embedding)| embedding.len() != expected_dims)
+            {
+                return Err(AppError::embeddings(format!(
+                    "embedding {} has dims={}, expected {} from manifest",
+                    index,
+                    embedding.len(),
+                    expected_dims
+                )));
+            }
+        }
+        let embedding_json = embeddings
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let current_revision = match tx.query_row(
+            "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
+            params![document_id],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(revision) => revision,
+            Err(duckdb::Error::QueryReturnedNoRows) => {
+                return Err(AppError::not_found(format!(
+                    "document not found: {document_id}"
+                )))
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if current_revision != if_match_revision {
+            return Err(AppError::conflict(format!(
+                "etag mismatch for document {document_id}: expected revision {} ({}), current revision {} ({})",
+                if_match_revision,
+                crate::models::format_document_etag(if_match_revision),
+                current_revision,
+                crate::models::format_document_etag(current_revision),
+            )));
+        }
+
+        let current_chunks = list_chunks_for_document_locked(&tx, document_id)?;
+        if !same_chunk_snapshot(&current_chunks, expected_chunks) {
+            return Err(AppError::conflict(format!(
+                "chunk snapshot changed while re-embedding document {document_id}; retry from a fresh read"
+            )));
+        }
+
+        // A migration marker (or replacement manifest) becomes part of the
+        // transaction before the first vector write. The transaction boundary
+        // keeps it invisible until the vectors commit and rolls it back on any
+        // later failure.
+        if let Some(manifest) = manifest {
+            set_embedding_manifest_locked(&tx, manifest)?;
+        }
+        if !expected_chunks.is_empty() {
+            super::fts::mark_embeddings_changed(&tx)?;
+            let mut stmt = tx.prepare("UPDATE chunks SET embedding_json = ? WHERE id = ?")?;
+            for (index, (chunk, embedding_json)) in
+                expected_chunks.iter().zip(&embedding_json).enumerate()
+            {
+                let updated = stmt.execute(params![embedding_json, chunk.id])?;
+                if updated != 1 {
+                    return Err(AppError::conflict(format!(
+                        "chunk {} changed while re-embedding document {document_id}",
+                        chunk.id
+                    )));
+                }
+                after_chunk_update(index + 1)?;
+            }
+        }
+        tx.commit()?;
+        Ok(expected_chunks.len())
+    }
+
     // --- Karpathy wiki: ops_log + wiki_index + layer helpers ---
 
     /// Next ops_log sequence number (max+1, starting at 1).
@@ -1335,55 +2339,8 @@ impl Store {
     /// Append an ops_log row (append-only). Fills `id`, `seq`, `ts`, and
     /// `payload_json` defaults when missing. Requires non-empty `op`.
     pub fn append_ops_log(&self, entry: &OpsLogEntry) -> Result<OpsLogEntry> {
-        let op = entry.op.trim();
-        if op.is_empty() {
-            return Err(AppError::config("ops_log op must be non-empty"));
-        }
-        let mut out = entry.clone();
-        out.op = op.to_string();
-        if out.id.is_empty() {
-            out.id = uuid::Uuid::new_v4().to_string();
-        }
-        if out.ts.timestamp() == 0 {
-            out.ts = Utc::now();
-        }
-        if out.payload_json.trim().is_empty() {
-            out.payload_json = "{}".into();
-        }
-        if let Some(ref p) = out.prefix {
-            let t = p.trim();
-            out.prefix = if t.is_empty() {
-                None
-            } else {
-                Some(t.to_string())
-            };
-        }
-
         let conn = self.lock()?;
-        if out.seq <= 0 {
-            out.seq = next_ops_seq_locked(&conn)?;
-        }
-        conn.execute(
-            r#"
-            INSERT INTO ops_log
-              (id, seq, ts, op, prefix, message, entity_id, entity_kind, payload_json, agent_name)
-            VALUES
-              (?, ?, CAST(? AS TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            params![
-                out.id,
-                out.seq,
-                format_ts(out.ts),
-                out.op,
-                out.prefix,
-                out.message,
-                out.entity_id,
-                out.entity_kind,
-                out.payload_json,
-                out.agent_name,
-            ],
-        )?;
-        Ok(out)
+        append_ops_log_locked(&conn, entry)
     }
 
     /// Whether the `ops_log` table exists (false on pre-migration / partial DBs).
@@ -1520,36 +2477,8 @@ impl Store {
 
     /// Upsert a wiki index catalog entry (by primary key `id` or by `slug`).
     pub fn upsert_wiki_index_entry(&self, entry: &WikiIndexEntry) -> Result<()> {
-        let title = if entry.title.is_empty() {
-            entry.slug.clone()
-        } else {
-            entry.title.clone()
-        };
-        let label = title.clone();
-        let page_id = entry.page_id.clone();
-        let document_id = page_id.clone();
         let conn = self.lock()?;
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO wiki_index
-              (id, slug, title, label, kind, summary, category, document_id, page_id, updated_at)
-            VALUES
-              (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
-            "#,
-            params![
-                entry.id,
-                entry.slug,
-                title,
-                label,
-                entry.kind,
-                entry.summary,
-                entry.category,
-                document_id,
-                page_id,
-                format_ts(entry.updated_at),
-            ],
-        )?;
-        Ok(())
+        upsert_wiki_index_entry_locked(&conn, entry)
     }
 
     /// List all wiki index entries (catalog).
@@ -1885,6 +2814,40 @@ impl Store {
     }
 }
 
+fn write_document_locked(
+    conn: &Connection,
+    doc: &Document,
+    if_match_revision: Option<i64>,
+    derived: DocumentDerivedWrite<'_>,
+    prepared_embeddings: Option<&[String]>,
+    manifest: Option<crate::db::SourceManifestWrite<'_>>,
+) -> Result<AtomicDocumentWriteResult> {
+    let revision = upsert_document_cas_locked(conn, doc, if_match_revision)?;
+    let (node_id, edge_count) = match (derived, prepared_embeddings) {
+        (DocumentDerivedWrite::Preserve, None) => (None, 0),
+        (DocumentDerivedWrite::RefreshGraphLabel, None) => {
+            (refresh_document_graph_label_locked(conn, doc)?, 0)
+        }
+        (DocumentDerivedWrite::ReplaceChunksAndGraph(chunks), Some(embedding_json)) => {
+            super::fts::mark_fts_dirty(conn)?;
+            conn.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
+            insert_chunks_locked(conn, chunks, embedding_json)?;
+            let (node_id, edge_count) =
+                crate::graph::resolve::rebuild_document_graph_locked(conn, doc)?;
+            (Some(node_id), edge_count)
+        }
+        _ => unreachable!("derived write and prepared embedding state must match"),
+    };
+    if let Some(manifest) = manifest {
+        super::source_manifest::upsert_source_manifest_locked(conn, manifest)?;
+    }
+    Ok(AtomicDocumentWriteResult {
+        revision,
+        node_id,
+        edge_count,
+    })
+}
+
 fn apply_document_meta_update(
     mut doc: Document,
     update: &DocumentMetaUpdate,
@@ -2009,6 +2972,16 @@ fn apply_document_meta_update(
         content_changed,
         title_changed,
     })
+}
+
+fn get_document_locked(conn: &Connection, id: &str) -> Result<Option<Document>> {
+    let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE id = ?");
+    let mut statement = conn.prepare(&sql)?;
+    let mut rows = statement.query(params![id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(rows::document(row)?)),
+        None => Ok(None),
+    }
 }
 
 pub(super) fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Result<bool> {
@@ -2267,6 +3240,68 @@ fn insert_chunks_locked(
     Ok(())
 }
 
+fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Result<Vec<Chunk>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
+        FROM chunks
+        WHERE document_id = ?
+        ORDER BY chunk_index ASC, id ASC
+        "#,
+    )?;
+    let mut rows = stmt.query(params![document_id])?;
+    let mut chunks = Vec::new();
+    while let Some(row) = rows.next()? {
+        chunks.push(rows::chunk(row)?);
+    }
+    Ok(chunks)
+}
+
+fn same_chunk_snapshot(current: &[Chunk], expected: &[Chunk]) -> bool {
+    if current.len() != expected.len() {
+        return false;
+    }
+    let expected = expected
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect::<std::collections::HashMap<_, _>>();
+    current.iter().all(|current| {
+        expected.get(current.id.as_str()).is_some_and(|expected| {
+            current.document_id == expected.document_id
+                && current.chunk_index == expected.chunk_index
+                && current.content == expected.content
+                && current.embedding == expected.embedding
+                && current.char_start == expected.char_start
+                && current.char_end == expected.char_end
+                && current.metadata_json == expected.metadata_json
+        })
+    })
+}
+
+pub(crate) fn set_embedding_manifest_locked(
+    conn: &Connection,
+    manifest: &EmbeddingManifest,
+) -> Result<()> {
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO embedding_manifest
+          (id, provider, model, dims, base_url, content_fingerprint, updated_at)
+        VALUES
+          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
+        "#,
+        params![
+            manifest.id,
+            manifest.provider,
+            manifest.model,
+            manifest.dims,
+            manifest.base_url,
+            manifest.content_fingerprint,
+            format_ts(manifest.updated_at),
+        ],
+    )?;
+    Ok(())
+}
+
 fn refresh_document_graph_label_locked(
     conn: &Connection,
     doc: &Document,
@@ -2393,27 +3428,18 @@ fn first_line_summary(content: &str, max: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Wiki catalog listing: SQL fetch + DTO map + post-filter / page
+// Wiki catalog listing: SQL filter/count/page + lean DTO map
 // (kept free of search ranking and CAS upsert paths)
 // ---------------------------------------------------------------------------
 
-/// SQL equality filters (kind/wing/room) + row map to [`crate::models::WikiPageListItem`].
+/// SQL filters, total count, bounded page, and lean row projection.
 ///
 /// SELECT intentionally omits `content` so list stays lean (ISP vs full [`Document`]).
 fn fetch_wiki_page_meta_items(
     conn: &Connection,
     filter: &WikiPageMetaFilter,
-) -> Result<Vec<crate::models::WikiPageListItem>> {
-    let mut sql = String::from(
-        r#"
-            SELECT id, uri, title, kind,
-                   metadata_json,
-                   COALESCE(revision, 1),
-                   CAST(updated_at AS VARCHAR)
-            FROM documents
-            WHERE layer = 'wiki'
-            "#,
-    );
+) -> Result<(Vec<crate::models::WikiPageListItem>, usize)> {
+    let mut predicates = vec!["layer = 'wiki'".to_string()];
     let mut binds: Vec<String> = Vec::new();
 
     if let Some(ref kind) = filter.kind {
@@ -2421,9 +3447,9 @@ fn fetch_wiki_page_meta_items(
         if !kind.is_empty() {
             // Match stored kind; empty DB kind is projected as "wiki" in the DTO map.
             if kind == "wiki" {
-                sql.push_str(" AND (COALESCE(kind, '') = '' OR kind = ?)");
+                predicates.push("(COALESCE(kind, '') = '' OR kind = ?)".into());
             } else {
-                sql.push_str(" AND kind = ?");
+                predicates.push("kind = ?".into());
             }
             binds.push(kind.to_string());
         }
@@ -2431,31 +3457,84 @@ fn fetch_wiki_page_meta_items(
     if let Some(ref wing) = filter.wing {
         let wing = wing.trim();
         if !wing.is_empty() {
-            sql.push_str(" AND wing = ?");
+            predicates.push("wing = ?".into());
             binds.push(wing.to_string());
         }
     }
     if let Some(ref room) = filter.room {
         let room = room.trim();
         if !room.is_empty() {
-            sql.push_str(" AND room = ?");
+            predicates.push("room = ?".into());
             binds.push(room.to_string());
         }
     }
+    if let Some(ref category) = filter.category {
+        let category = category.trim();
+        if !category.is_empty() {
+            predicates.push(
+                "LOWER(TRIM(COALESCE(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.category'), ''))) = ?"
+                    .into(),
+            );
+            binds.push(category.to_lowercase());
+        }
+    }
+    if let Some(ref query) = filter.q {
+        let query = query.trim();
+        if !query.is_empty() {
+            predicates.push(
+                r#"contains(
+                    LOWER(
+                        COALESCE(title, '') || '\n' ||
+                        COALESCE(uri, '') || '\n' ||
+                        COALESCE(NULLIF(kind, ''), 'wiki') || '\n' ||
+                        COALESCE(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.summary'), '') || '\n' ||
+                        COALESCE(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.category'), '')
+                    ),
+                    ?
+                )"#
+                .into(),
+            );
+            binds.push(query.to_lowercase());
+        }
+    }
 
-    sql.push_str(" ORDER BY title ASC");
-
-    let mut stmt = conn.prepare(&sql)?;
+    let where_sql = format!("WHERE {}", predicates.join(" AND "));
+    let count_sql = format!("SELECT COUNT(*)::BIGINT FROM documents {where_sql}");
     let params_dyn: Vec<&dyn duckdb::types::ToSql> = binds
         .iter()
         .map(|s| s as &dyn duckdb::types::ToSql)
         .collect();
+    let total: i64 = conn.query_row(&count_sql, params_dyn.as_slice(), |row| row.get(0))?;
+
+    let mut sql = format!(
+        r#"
+        SELECT id, uri, title, kind,
+               metadata_json,
+               COALESCE(revision, 1),
+               CAST(updated_at AS VARCHAR)
+        FROM documents
+        {where_sql}
+        ORDER BY title ASC, id ASC
+        "#
+    );
+    if let Some(limit) = filter.limit {
+        let limit = limit.clamp(1, crate::db::MAX_CATALOG_PAGE_SIZE);
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+    if let Some(offset) = filter.offset.filter(|offset| *offset > 0) {
+        if filter.limit.is_none() {
+            sql.push_str(" LIMIT 9223372036854775807");
+        }
+        sql.push_str(&format!(" OFFSET {offset}"));
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_dyn.as_slice())?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         out.push(map_wiki_page_meta_row(row)?);
     }
-    Ok(out)
+    Ok((out, total.max(0) as usize))
 }
 
 /// Project one catalog SELECT row into lean [`crate::models::WikiPageListItem`] (no body).
@@ -2490,62 +3569,6 @@ fn map_wiki_page_meta_row(row: &duckdb::Row<'_>) -> Result<crate::models::WikiPa
     })
 }
 
-/// Category (metadata) and free-text `q` filters applied after DTO projection.
-fn post_filter_wiki_page_metas(
-    items: &mut Vec<crate::models::WikiPageListItem>,
-    filter: &WikiPageMetaFilter,
-) {
-    if let Some(ref cat) = filter.category {
-        let cat = cat.trim();
-        if !cat.is_empty() {
-            let cat_lc = cat.to_ascii_lowercase();
-            items.retain(|item| {
-                item.category
-                    .as_deref()
-                    .map(|c| c.eq_ignore_ascii_case(&cat_lc))
-                    .unwrap_or(false)
-            });
-        }
-    }
-
-    if let Some(ref q) = filter.q {
-        let q = q.trim();
-        if !q.is_empty() {
-            let q_lc = q.to_ascii_lowercase();
-            items.retain(|item| wiki_meta_matches_q(item, &q_lc));
-        }
-    }
-}
-
-/// Slice filtered catalog items; returns `(page, total_before_pagination)`.
-fn page_wiki_page_metas(
-    items: Vec<crate::models::WikiPageListItem>,
-    offset: Option<usize>,
-    limit: Option<usize>,
-) -> (Vec<crate::models::WikiPageListItem>, usize) {
-    let total = items.len();
-    let offset = offset.unwrap_or(0).min(total);
-    let mut page: Vec<_> = items.into_iter().skip(offset).collect();
-    if let Some(limit) = limit {
-        let limit = limit.max(1);
-        if page.len() > limit {
-            page.truncate(limit);
-        }
-    }
-    (page, total)
-}
-
-/// Case-insensitive substring match for wiki catalog free-text `q`.
-fn wiki_meta_matches_q(item: &crate::models::WikiPageListItem, q_lc: &str) -> bool {
-    let hit = |s: &str| s.to_ascii_lowercase().contains(q_lc);
-    hit(&item.title)
-        || hit(&item.slug)
-        || hit(&item.uri)
-        || hit(&item.kind)
-        || item.summary.as_deref().map(hit).unwrap_or(false)
-        || item.category.as_deref().map(hit).unwrap_or(false)
-}
-
 /// Pull optional `summary` / `category` strings from document metadata JSON.
 fn meta_summary_category(metadata_json: &str) -> (Option<String>, Option<String>) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(metadata_json) else {
@@ -2564,6 +3587,88 @@ fn meta_summary_category(metadata_json: &str) -> (Option<String>, Option<String>
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
     (summary, category)
+}
+
+fn append_ops_log_locked(conn: &Connection, entry: &OpsLogEntry) -> Result<OpsLogEntry> {
+    let op = entry.op.trim();
+    if op.is_empty() {
+        return Err(AppError::config("ops_log op must be non-empty"));
+    }
+    let mut out = entry.clone();
+    out.op = op.to_string();
+    if out.id.is_empty() {
+        out.id = uuid::Uuid::new_v4().to_string();
+    }
+    if out.ts.timestamp() == 0 {
+        out.ts = Utc::now();
+    }
+    if out.payload_json.trim().is_empty() {
+        out.payload_json = "{}".into();
+    }
+    if let Some(ref prefix) = out.prefix {
+        let prefix = prefix.trim();
+        out.prefix = if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix.to_string())
+        };
+    }
+    if out.seq <= 0 {
+        out.seq = next_ops_seq_locked(conn)?;
+    }
+    conn.execute(
+        r#"
+        INSERT INTO ops_log
+          (id, seq, ts, op, prefix, message, entity_id, entity_kind, payload_json, agent_name)
+        VALUES
+          (?, ?, CAST(? AS TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)
+        "#,
+        params![
+            out.id,
+            out.seq,
+            format_ts(out.ts),
+            out.op,
+            out.prefix,
+            out.message,
+            out.entity_id,
+            out.entity_kind,
+            out.payload_json,
+            out.agent_name,
+        ],
+    )?;
+    Ok(out)
+}
+
+fn upsert_wiki_index_entry_locked(conn: &Connection, entry: &WikiIndexEntry) -> Result<()> {
+    let title = if entry.title.is_empty() {
+        entry.slug.clone()
+    } else {
+        entry.title.clone()
+    };
+    let label = title.clone();
+    let page_id = entry.page_id.clone();
+    let document_id = page_id.clone();
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO wiki_index
+          (id, slug, title, label, kind, summary, category, document_id, page_id, updated_at)
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
+        "#,
+        params![
+            entry.id,
+            entry.slug,
+            title,
+            label,
+            entry.kind,
+            entry.summary,
+            entry.category,
+            document_id,
+            page_id,
+            format_ts(entry.updated_at),
+        ],
+    )?;
+    Ok(())
 }
 
 fn next_ops_seq_locked(conn: &Connection) -> Result<i64> {
@@ -2618,10 +3723,7 @@ fn row_to_wiki_index(row: &duckdb::Row<'_>) -> Result<WikiIndexEntry> {
 /// Build a default-id [`EmbeddingManifest`] snapshot from runtime config.
 pub fn embedding_manifest_from_config(config: &Config) -> EmbeddingManifest {
     let provider = config.embedding_provider.as_str().to_string();
-    let fingerprint = content_hash(&format!(
-        "{}|{}|{}|{}",
-        provider, config.embedding_model, config.embedding_dims, config.embedding_base_url
-    ));
+    let fingerprint = embedding_config_fingerprint(config);
     EmbeddingManifest {
         id: "default".into(),
         provider,
@@ -2631,6 +3733,64 @@ pub fn embedding_manifest_from_config(config: &Config) -> EmbeddingManifest {
         content_fingerprint: Some(fingerprint),
         updated_at: Utc::now(),
     }
+}
+
+/// Build a durable fail-closed marker for an in-progress corpus migration.
+///
+/// Its descriptive fields identify the target vectors (and therefore validate
+/// their dimensions), while its authoritative fingerprint cannot match either
+/// the old or target config. The first successful vector mutation writes this
+/// marker in the same transaction; only a complete migration may replace it.
+pub(crate) fn embedding_migration_manifest(config: &Config) -> EmbeddingManifest {
+    let mut marker = embedding_manifest_from_config(config);
+    let target_fingerprint = marker
+        .content_fingerprint
+        .as_deref()
+        .unwrap_or_default()
+        .to_string();
+    marker.content_fingerprint = Some(format!(
+        "{EMBEDDING_MIGRATION_FINGERPRINT_PREFIX}{}",
+        target_fingerprint
+    ));
+    marker.updated_at = Utc::now();
+    marker
+}
+
+/// Canonical corpus identity predicate.
+///
+/// New manifests carry a fingerprint over provider/model/dims/base endpoint.
+/// All descriptive fields and that fingerprint must agree with live config;
+/// a missing fingerprint is unverifiable and remains fail-closed.
+pub fn embedding_manifest_matches_config(manifest: &EmbeddingManifest, config: &Config) -> bool {
+    match manifest.content_fingerprint.as_deref() {
+        Some(fingerprint) => {
+            manifest.id == "default"
+                && manifest.provider == config.embedding_provider.as_str()
+                && manifest.model == config.embedding_model
+                && manifest.dims == config.embedding_dims as i32
+                && manifest.base_url.as_deref() == Some(config.embedding_base_url.as_str())
+                && fingerprint == embedding_config_fingerprint(config)
+        }
+        None => false,
+    }
+}
+
+fn embedding_config_fingerprint(config: &Config) -> String {
+    embedding_identity_fingerprint(
+        config.embedding_provider.as_str(),
+        &config.embedding_model,
+        config.embedding_dims as i32,
+        &config.embedding_base_url,
+    )
+}
+
+pub(crate) fn embedding_identity_fingerprint(
+    provider: &str,
+    model: &str,
+    dims: i32,
+    base_url: &str,
+) -> String {
+    content_hash(&format!("{}|{}|{}|{}", provider, model, dims, base_url))
 }
 
 fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
@@ -2663,6 +3823,103 @@ mod tests {
             updated_at: now,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn read_only_open_requires_an_existing_file_and_never_creates_parents() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let missing_parent = root.path().join("missing");
+        let missing = missing_parent.join("rag.duckdb");
+
+        let error = match Store::open_read_only(&missing) {
+            Ok(_) => panic!("missing DB must fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, AppError::NotFound(_)));
+        assert!(error.to_string().contains("does not exist"));
+        assert!(!missing.exists());
+        assert!(!missing_parent.exists());
+    }
+
+    #[test]
+    fn read_only_open_supports_queries_rejects_writes_and_preserves_backup_bytes() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source = root.path().join("source.duckdb");
+        let backup = root.path().join("backup.duckdb");
+        let writer = Store::open(&source).expect("create source");
+        writer
+            .upsert_document(&sample_doc("kept", "recovery://kept"))
+            .expect("seed source");
+        drop(writer);
+        std::fs::copy(&source, &backup).expect("copy backup");
+        let bytes_before = std::fs::read(&backup).expect("backup bytes");
+        let modified_before = std::fs::metadata(&backup)
+            .expect("backup metadata")
+            .modified()
+            .expect("backup mtime");
+
+        let reader = Store::open_read_only(&backup).expect("open backup read-only");
+        assert_eq!(reader.stats().expect("read counts").0, 1);
+        assert_eq!(
+            reader
+                .get_document("kept")
+                .expect("read document")
+                .expect("seeded document")
+                .uri,
+            "recovery://kept"
+        );
+        let mutation_error = reader
+            .upsert_document(&sample_doc("blocked", "recovery://blocked"))
+            .expect_err("read-only store must reject mutation");
+        assert!(mutation_error
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("read-only"));
+        drop(reader);
+
+        assert_eq!(
+            std::fs::read(&backup).expect("backup after read"),
+            bytes_before
+        );
+        assert_eq!(
+            std::fs::metadata(&backup)
+                .expect("backup metadata after read")
+                .modified()
+                .expect("backup mtime after read"),
+            modified_before
+        );
+        assert!(!PathBuf::from(format!("{}.wal", backup.display())).exists());
+    }
+
+    #[test]
+    fn read_only_open_rejects_old_schema_without_migrating_it() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let old = root.path().join("old.duckdb");
+        drop(Store::open(&old).expect("create current DB"));
+        let conn = Connection::open(&old).expect("open old fixture for setup");
+        conn.execute("DELETE FROM schema_version", [])
+            .expect("remove current version");
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, note) VALUES (?, CURRENT_TIMESTAMP, 'old fixture')",
+            params![schema::SCHEMA_VERSION - 1],
+        )
+        .expect("record old version");
+        drop(conn);
+        let bytes_before = std::fs::read(&old).expect("old DB bytes");
+
+        let error = match Store::open_read_only(&old) {
+            Ok(_) => panic!("old schema must fail clearly"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, AppError::Config(_)));
+        assert!(error.to_string().contains("incompatible schema version"));
+        assert_eq!(
+            std::fs::read(&old).expect("old DB after inspect"),
+            bytes_before
+        );
+        assert!(!PathBuf::from(format!("{}.wal", old.display())).exists());
     }
 
     #[test]
@@ -2705,6 +3962,13 @@ mod tests {
 
         let all = store.all_chunks_with_embeddings().unwrap();
         assert_eq!(all.len(), 1);
+
+        let representatives = store
+            .representative_document_embeddings(1, false, false, false)
+            .unwrap();
+        assert_eq!(representatives.len(), 1);
+        assert_eq!(representatives[0].document_id, "d1");
+        assert_eq!(representatives[0].embedding, vec![0.1, 0.2, 0.3]);
 
         let (docs, ch, nodes, edges) = store.stats().unwrap();
         assert_eq!(docs, 1);
@@ -2753,6 +4017,80 @@ mod tests {
         assert_eq!(doc.content, "content revision 49");
         assert_eq!(doc.revision, 50);
         assert_eq!(reopened.integrity_counts().unwrap().1, 0);
+    }
+
+    #[test]
+    fn atomic_document_dispositions_roll_back_a_partial_delete_prefix() {
+        let store = open_temp();
+        let document = sample_doc("atomic-delete", "wiki://atomic-delete");
+        store.upsert_document(&document).unwrap();
+        store
+            .insert_chunks(&[Chunk {
+                id: "atomic-delete-chunk".into(),
+                document_id: document.id.clone(),
+                chunk_index: 0,
+                content: document.content.clone(),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: document.content.len() as i32,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+
+        let error = store
+            .apply_document_dispositions_atomic(
+                &[document.id.clone(), "missing-after-prefix".into()],
+                &[],
+            )
+            .expect_err("missing later target must roll back the entire batch");
+        assert!(matches!(error, AppError::NotFound(_)));
+        assert!(store.get_document(&document.id).unwrap().is_some());
+        assert_eq!(store.count_chunks_for_document(&document.id).unwrap(), 1);
+    }
+
+    #[test]
+    fn exact_duplicate_merge_rolls_back_after_an_injected_late_failure() {
+        let store = open_temp();
+        let keep = sample_doc("merge-keep", "wiki://merge-keep");
+        let source_a = sample_doc("merge-a", "wiki://merge-a");
+        let source_b = sample_doc("merge-b", "wiki://merge-b");
+        for document in [&keep, &source_a, &source_b] {
+            store.upsert_document(document).unwrap();
+            store
+                .insert_chunks(&[Chunk {
+                    id: format!("{}-chunk", document.id),
+                    document_id: document.id.clone(),
+                    chunk_index: 0,
+                    content: document.content.clone(),
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: document.content.len() as i32,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+
+        let error = store
+            .merge_exact_duplicates_atomic_with(
+                &keep.id,
+                &[source_a.id.clone(), source_b.id.clone()],
+                Some(&content_hash(&keep.content)),
+                true,
+                true,
+                |mutated| {
+                    if mutated == 1 {
+                        Err(AppError::db("injected merge failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .expect_err("late failure must roll back the first source deletion");
+        assert!(error.to_string().contains("injected merge failure"));
+        for source in [&source_a, &source_b] {
+            assert!(store.get_document(&source.id).unwrap().is_some());
+            assert_eq!(store.count_chunks_for_document(&source.id).unwrap(), 1);
+        }
     }
 
     #[test]
@@ -3488,6 +4826,91 @@ mod tests {
     }
 
     #[test]
+    fn ensure_embedding_manifest_refuses_to_self_certify_existing_vectors() {
+        let store = open_temp();
+        let now = Utc::now();
+        store
+            .upsert_document(&Document {
+                id: "legacy-document".into(),
+                uri: "legacy://document".into(),
+                title: "Legacy".into(),
+                content: "unknown embedding identity".into(),
+                created_at: now,
+                updated_at: now,
+                ..Document::default()
+            })
+            .unwrap();
+        store
+            .insert_chunks(&[Chunk {
+                id: "legacy-chunk".into(),
+                document_id: "legacy-document".into(),
+                chunk_index: 0,
+                content: "unknown embedding identity".into(),
+                embedding: vec![0.5; 32],
+                char_start: 0,
+                char_end: 26,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+
+        let error = store
+            .ensure_embedding_manifest(&sample_config(32))
+            .expect_err("unknown vectors must remain fail-closed");
+        assert!(error.to_string().contains("non-empty corpus"));
+        assert!(error.to_string().contains("uncapped reembed_all"));
+        assert!(store.get_embedding_manifest().unwrap().is_none());
+    }
+
+    #[test]
+    fn canonical_embedding_identity_refuses_legacy_rows_without_fingerprint() {
+        let store = open_temp();
+        let config = sample_config(32);
+        let exact = embedding_manifest_from_config(&config);
+        assert!(embedding_manifest_matches_config(&exact, &config));
+        store.set_embedding_manifest(&exact).unwrap();
+        store.require_embedding_manifest_match(&config).unwrap();
+
+        let mut different_model = config.clone();
+        different_model.embedding_model = "different-model-same-dims".into();
+        assert!(!embedding_manifest_matches_config(&exact, &different_model));
+
+        let mut stale_fingerprint = exact.clone();
+        stale_fingerprint.content_fingerprint = Some("stale-fingerprint".into());
+        assert!(!embedding_manifest_matches_config(
+            &stale_fingerprint,
+            &config
+        ));
+        store.set_embedding_manifest(&stale_fingerprint).unwrap();
+        let mismatch = store
+            .require_embedding_manifest_match(&config)
+            .expect_err("persisted fingerprint is authoritative");
+        assert!(mismatch.to_string().contains("stored fingerprint"));
+
+        let mut forged_fields = exact.clone();
+        forged_fields.dims = 999;
+        assert!(!embedding_manifest_matches_config(&forged_fields, &config));
+        store.set_embedding_manifest(&forged_fields).unwrap();
+        store
+            .require_embedding_manifest_match(&config)
+            .expect_err("matching hash must not authorize forged manifest fields");
+
+        let mut empty_fingerprint = exact.clone();
+        empty_fingerprint.content_fingerprint = Some(String::new());
+        assert!(!embedding_manifest_matches_config(
+            &empty_fingerprint,
+            &config
+        ));
+
+        let mut legacy = exact;
+        legacy.content_fingerprint = None;
+        assert!(!embedding_manifest_matches_config(&legacy, &config));
+        assert!(!embedding_manifest_matches_config(
+            &legacy,
+            &different_model
+        ));
+    }
+
+    #[test]
     fn write_manifest_and_replace_chunks() {
         let store = open_temp();
         let cfg = sample_config(4);
@@ -3537,6 +4960,326 @@ mod tests {
         let chunks = store.list_chunks_for_document("d1").unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].embedding, vec![0.0, 1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn embedding_only_update_preserves_rows_and_clean_fts_without_rebuild() {
+        let store = open_temp();
+        let doc = sample_doc("embedding-only", "wiki://embedding-only");
+        store.upsert_document(&doc).unwrap();
+        store
+            .insert_chunks(&[
+                Chunk {
+                    id: "embedding-only-0".into(),
+                    document_id: doc.id.clone(),
+                    chunk_index: 0,
+                    content: "unchanged first text".into(),
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: 20,
+                    metadata_json: r#"{"section":"first"}"#.into(),
+                },
+                Chunk {
+                    id: "embedding-only-1".into(),
+                    document_id: doc.id.clone(),
+                    chunk_index: 1,
+                    content: "unchanged second text".into(),
+                    embedding: vec![0.0, 1.0],
+                    char_start: 21,
+                    char_end: 42,
+                    metadata_json: r#"{"section":"second"}"#.into(),
+                },
+            ])
+            .unwrap();
+        store.ensure_fts("porter").unwrap();
+
+        let persisted_doc = store.get_document(&doc.id).unwrap().unwrap();
+        let expected = store.list_chunks_for_document(&doc.id).unwrap();
+        let created_before: Vec<String> = {
+            let conn = store.lock().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT CAST(created_at AS VARCHAR) FROM chunks WHERE document_id = ? ORDER BY chunk_index, id",
+                )
+                .unwrap();
+            stmt.query_map(params![doc.id], |row| row.get(0))
+                .unwrap()
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        let fts_before = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(!fts_before.dirty);
+
+        let manifest = EmbeddingManifest {
+            id: "default".into(),
+            provider: "mock".into(),
+            model: "replacement-model".into(),
+            dims: 2,
+            base_url: None,
+            content_fingerprint: Some("replacement-fingerprint".into()),
+            updated_at: Utc::now(),
+        };
+        let updated = store
+            .update_chunk_embeddings_atomic(
+                &doc.id,
+                persisted_doc.revision,
+                &expected,
+                &[vec![0.25, 0.75], vec![0.75, 0.25]],
+                Some(&manifest),
+            )
+            .unwrap();
+        assert_eq!(updated, 2);
+
+        let current_doc = store.get_document(&doc.id).unwrap().unwrap();
+        assert_eq!(current_doc.revision, persisted_doc.revision);
+        let current = store.list_chunks_for_document(&doc.id).unwrap();
+        assert_eq!(current[0].id, expected[0].id);
+        assert_eq!(current[0].content, expected[0].content);
+        assert_eq!(current[0].char_start, expected[0].char_start);
+        assert_eq!(current[0].char_end, expected[0].char_end);
+        assert_eq!(current[0].metadata_json, expected[0].metadata_json);
+        assert_eq!(current[0].embedding, vec![0.25, 0.75]);
+        assert_eq!(current[1].id, expected[1].id);
+        assert_eq!(current[1].content, expected[1].content);
+        assert_eq!(current[1].embedding, vec![0.75, 0.25]);
+        let created_after: Vec<String> = {
+            let conn = store.lock().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT CAST(created_at AS VARCHAR) FROM chunks WHERE document_id = ? ORDER BY chunk_index, id",
+                )
+                .unwrap();
+            stmt.query_map(params![doc.id], |row| row.get(0))
+                .unwrap()
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(created_after, created_before);
+        let stored_manifest = store.get_embedding_manifest().unwrap().unwrap();
+        assert_eq!(stored_manifest.model, manifest.model);
+        assert_eq!(
+            stored_manifest.content_fingerprint,
+            manifest.content_fingerprint
+        );
+
+        let fts_after = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(!fts_after.dirty);
+        assert_eq!(
+            fts_after.chunks_generation,
+            fts_before.chunks_generation + 1
+        );
+        assert_eq!(
+            fts_after.index_generation,
+            Some(fts_after.chunks_generation)
+        );
+        assert_eq!(fts_after.rebuild_count, fts_before.rebuild_count);
+    }
+
+    #[test]
+    fn embedding_only_update_keeps_dirty_fts_dirty_and_rejects_stale_snapshots() {
+        let store = open_temp();
+        let doc = sample_doc("embedding-cas", "wiki://embedding-cas");
+        store.upsert_document(&doc).unwrap();
+        store
+            .insert_chunks(&[Chunk {
+                id: "embedding-cas-0".into(),
+                document_id: doc.id.clone(),
+                chunk_index: 0,
+                content: "stable text".into(),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: 11,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+        store.ensure_fts("porter").unwrap();
+        let persisted = store.get_document(&doc.id).unwrap().unwrap();
+        let original = store.list_chunks_for_document(&doc.id).unwrap();
+
+        {
+            let conn = store.lock().unwrap();
+            crate::db::fts::mark_fts_dirty(&conn).unwrap();
+        }
+        let dirty_before = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(dirty_before.dirty);
+        store
+            .update_chunk_embeddings_atomic(
+                &doc.id,
+                persisted.revision,
+                &original,
+                &[vec![0.0, 1.0]],
+                None,
+            )
+            .unwrap();
+        let dirty_after = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(dirty_after.dirty);
+        assert_eq!(
+            dirty_after.chunks_generation,
+            dirty_before.chunks_generation + 1
+        );
+        assert_eq!(dirty_after.index_generation, dirty_before.index_generation);
+        assert_eq!(dirty_after.rebuild_count, dirty_before.rebuild_count);
+
+        let manifest_before = EmbeddingManifest {
+            id: "default".into(),
+            provider: "mock".into(),
+            model: "before-conflict".into(),
+            dims: 2,
+            base_url: None,
+            content_fingerprint: None,
+            updated_at: Utc::now(),
+        };
+        store.set_embedding_manifest(&manifest_before).unwrap();
+        let rejected_manifest = EmbeddingManifest {
+            model: "must-not-commit".into(),
+            ..manifest_before.clone()
+        };
+        let generation_before_conflict = dirty_after.chunks_generation;
+        let conflict = store
+            .update_chunk_embeddings_atomic(
+                &doc.id,
+                persisted.revision,
+                &original,
+                &[vec![0.5, 0.5]],
+                Some(&rejected_manifest),
+            )
+            .unwrap_err();
+        assert!(matches!(conflict, AppError::Conflict(_)));
+        assert_eq!(
+            store.list_chunks_for_document(&doc.id).unwrap()[0].embedding,
+            vec![0.0, 1.0]
+        );
+        assert_eq!(
+            store.get_embedding_manifest().unwrap().unwrap().model,
+            manifest_before.model
+        );
+        let generation_after_conflict = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::chunks_generation(&conn).unwrap()
+        };
+        assert_eq!(generation_after_conflict, generation_before_conflict);
+
+        let fresh_chunks = store.list_chunks_for_document(&doc.id).unwrap();
+        let mut revised = store.get_document(&doc.id).unwrap().unwrap();
+        revised.title = "concurrent metadata update".into();
+        revised.updated_at = Utc::now();
+        store
+            .upsert_document_cas(&revised, Some(persisted.revision))
+            .unwrap();
+        let revision_conflict = store
+            .update_chunk_embeddings_atomic(
+                &doc.id,
+                persisted.revision,
+                &fresh_chunks,
+                &[vec![0.75, 0.25]],
+                Some(&rejected_manifest),
+            )
+            .unwrap_err();
+        assert!(matches!(revision_conflict, AppError::Conflict(_)));
+        assert_eq!(
+            store.list_chunks_for_document(&doc.id).unwrap()[0].embedding,
+            vec![0.0, 1.0]
+        );
+        assert_eq!(
+            store.get_embedding_manifest().unwrap().unwrap().model,
+            manifest_before.model
+        );
+    }
+
+    #[test]
+    fn embedding_only_update_rolls_back_partial_vectors_generation_and_manifest() {
+        let store = open_temp();
+        let doc = sample_doc("embedding-rollback", "wiki://embedding-rollback");
+        store.upsert_document(&doc).unwrap();
+        store
+            .insert_chunks(&[
+                Chunk {
+                    id: "embedding-rollback-0".into(),
+                    document_id: doc.id.clone(),
+                    chunk_index: 0,
+                    content: "first stable text".into(),
+                    embedding: vec![1.0, 0.0],
+                    char_start: 0,
+                    char_end: 17,
+                    metadata_json: "{}".into(),
+                },
+                Chunk {
+                    id: "embedding-rollback-1".into(),
+                    document_id: doc.id.clone(),
+                    chunk_index: 1,
+                    content: "second stable text".into(),
+                    embedding: vec![0.0, 1.0],
+                    char_start: 18,
+                    char_end: 36,
+                    metadata_json: "{}".into(),
+                },
+            ])
+            .unwrap();
+        store.ensure_fts("porter").unwrap();
+        let original_manifest = EmbeddingManifest {
+            id: "default".into(),
+            provider: "mock".into(),
+            model: "original-model".into(),
+            dims: 2,
+            base_url: None,
+            content_fingerprint: None,
+            updated_at: Utc::now(),
+        };
+        store.set_embedding_manifest(&original_manifest).unwrap();
+        let replacement_manifest = EmbeddingManifest {
+            model: "replacement-model".into(),
+            ..original_manifest.clone()
+        };
+        let persisted = store.get_document(&doc.id).unwrap().unwrap();
+        let original_chunks = store.list_chunks_for_document(&doc.id).unwrap();
+        let generation_before = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+
+        let error = store
+            .update_chunk_embeddings_atomic_with(
+                &doc.id,
+                persisted.revision,
+                &original_chunks,
+                &[vec![0.25, 0.75], vec![0.75, 0.25]],
+                Some(&replacement_manifest),
+                |updated| {
+                    if updated == 1 {
+                        Err(AppError::db("injected embedding update failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("injected embedding update failure"));
+        let after = store.list_chunks_for_document(&doc.id).unwrap();
+        assert_eq!(after[0].embedding, original_chunks[0].embedding);
+        assert_eq!(after[1].embedding, original_chunks[1].embedding);
+        assert_eq!(
+            store.get_embedding_manifest().unwrap().unwrap().model,
+            original_manifest.model
+        );
+        let generation_after = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert_eq!(generation_after, generation_before);
     }
 
     #[test]
@@ -4367,5 +6110,58 @@ mod tests {
             .wiki_backlinks_for_document("doc-src-a")
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn wiki_backlinks_project_scope_excludes_foreign_documents_and_stubs() {
+        let store = open_temp();
+        for (id, wing) in [
+            ("target", "alpha"),
+            ("source-alpha", "alpha"),
+            ("source-beta", "beta"),
+        ] {
+            let mut document = sample_doc(id, &format!("wiki://{id}"));
+            document.wing = Some(wing.into());
+            store.upsert_document(&document).unwrap();
+        }
+        let graph_node = |id: &str, document_id: Option<&str>| crate::models::GraphNode {
+            id: format!("node-{id}"),
+            kind: if document_id.is_some() {
+                "document".into()
+            } else {
+                "stub".into()
+            },
+            label: id.into(),
+            document_id: document_id.map(str::to_string),
+            uri: None,
+            resolved: document_id.is_some(),
+            metadata_json: "{}".into(),
+        };
+        for node in [
+            graph_node("target", Some("target")),
+            graph_node("source-alpha", Some("source-alpha")),
+            graph_node("source-beta", Some("source-beta")),
+            graph_node("unowned", None),
+        ] {
+            store.upsert_graph_node(&node).unwrap();
+        }
+        for source in ["source-alpha", "source-beta", "unowned"] {
+            store
+                .link_nodes(&format!("node-{source}"), "node-target", "wikilink", 1.0)
+                .unwrap();
+        }
+
+        let scoped = store
+            .wiki_backlinks_for_document_in_wing("target", "alpha")
+            .unwrap();
+        assert_eq!(scoped, vec![("source-alpha".into(), "source-alpha".into())]);
+        assert!(store
+            .wiki_backlinks_for_document_in_wing("target", "beta")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store.wiki_backlinks_for_document("target").unwrap().len(),
+            3
+        );
     }
 }

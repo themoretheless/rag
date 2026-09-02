@@ -2,10 +2,11 @@
 //!
 //! EGUI_GRAPH_VIEW §2.5 / §8.3: the egui frame thread must never touch DuckDB or
 //! blocking network. `GraphApp` sends [`WorkerCmd`] values carrying everything the
-//! job needs (sources are cheap clones; views are ≤ UI hard cap), the worker runs
-//! them serially and answers with [`WorkerEvt`]. Each job carries a `seq`; the app
-//! ignores events whose `seq` no longer matches the pending slot (stale answers
-//! after a newer request was issued).
+//! job needs (sources are cheap clones; views are ≤ UI hard cap). Interactive
+//! work runs serially on one lane, while checkpoint/backup use a separate long
+//! maintenance lane so a verified copy cannot freeze reads for 30 minutes. Both
+//! lanes answer with [`WorkerEvt`]. Each job carries a `seq`; the app ignores
+//! events whose `seq` no longer matches the pending slot.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -17,8 +18,8 @@ use rag_mcp::GraphView;
 
 use crate::load::{
     expand_neighbors_http, expand_neighbors_local, expand_neighbors_store, fetch_activity_http,
-    fetch_backlinks_http, fetch_document_db, fetch_document_http, fetch_wiki_list_db,
-    fetch_wiki_list_http, load_cli_source, put_wiki_http, save_wiki_db, ActivityEvent,
+    fetch_backlinks_http, fetch_document_db, fetch_document_http, fetch_project_catalog_http,
+    fetch_wiki_list_db, fetch_wiki_list_http, load_cli_source, put_wiki_http, ActivityEvent,
     BacklinkItem, CliSource, DocumentBody, GraphSourceKind, LoadedGraph, WikiPageMeta,
     WikiPutRequest,
 };
@@ -36,7 +37,7 @@ use crate::revisions::{
 };
 use crate::search::{fetch_search_http, SearchRequest, SearchResults};
 
-/// Read/write-capable source for document/wiki jobs (HTTP gateway or exclusive DB).
+/// Document/wiki source: writable HTTP gateway or strictly read-only direct DB.
 #[derive(Debug, Clone)]
 pub enum LoadSource {
     Http(String),
@@ -57,7 +58,7 @@ impl LoadSource {
 /// Jobs dispatched from the UI thread to the worker.
 #[derive(Debug)]
 pub enum WorkerCmd {
-    /// Initial / retry topology load (snapshot, exclusive db, or http export).
+    /// Initial / retry topology load (snapshot, read-only db, or http export).
     LoadGraph {
         seq: u64,
         source: CliSource,
@@ -65,6 +66,11 @@ pub enum WorkerCmd {
         depth: u32,
         project: Option<String>,
         include_tags: bool,
+    },
+    /// Authoritative project list, retried independently from topology.
+    LoadProjectCatalog {
+        seq: u64,
+        base: String,
     },
     /// Project-scoped inventory for the Project Home dashboard.
     LoadProjectHome {
@@ -151,7 +157,8 @@ pub enum WorkerCmd {
         source: LoadSource,
         project: Option<String>,
     },
-    /// Open a wiki page body + its backlinks.
+    /// Open a wiki page body. Backlinks use their own replaceable command so a
+    /// slow backlink query never delays article rendering.
     ///
     /// `meta` set: fetch by catalog id/uri. `meta` None + `q`: unresolved
     /// `[[link]]` fallback by exact wiki uri. `push_history` mirrors the
@@ -169,6 +176,7 @@ pub enum WorkerCmd {
         seq: u64,
         document_id: String,
         source: LoadSource,
+        project: Option<String>,
     },
     /// Full document body for a selected graph node ("Read content").
     ReadContent {
@@ -182,7 +190,7 @@ pub enum WorkerCmd {
     /// One-hop neighbor expansion of `selected`, merged into `current`.
     ///
     /// Client-side BFS on `full` for snapshot/http; `Store::neighbors` when
-    /// `db_path` is set (exclusive re-open, dual-live still forbidden).
+    /// `db_path` is set (brief read-only re-open; direct writes stay disabled).
     ExpandNeighbors {
         seq: u64,
         selected: String,
@@ -194,7 +202,7 @@ pub enum WorkerCmd {
         include_tags: bool,
         max_nodes: u32,
     },
-    /// Save a wiki page (HTTP PUT /v1/wiki or exclusive `--db` write).
+    /// Save a wiki page through the HTTP gateway (`PUT /v1/wiki`).
     ///
     /// `req` carries the CAS fields (If-Match revision/etag); a 409 / revision
     /// conflict comes back as `Err` with a "conflict" message so the edit view
@@ -216,6 +224,10 @@ pub enum WorkerEvt {
     GraphLoaded {
         seq: u64,
         result: Result<LoadedGraph, String>,
+    },
+    ProjectCatalogLoaded {
+        seq: u64,
+        result: Result<Vec<String>, String>,
     },
     ProjectHomeLoaded {
         seq: u64,
@@ -286,7 +298,7 @@ pub enum WorkerEvt {
         push_history: bool,
         /// Original `[[link]]` query for the unresolved-link error message.
         q: Option<String>,
-        result: Result<(DocumentBody, Vec<BacklinkItem>), String>,
+        result: Result<DocumentBody, String>,
     },
     Backlinks {
         seq: u64,
@@ -318,6 +330,7 @@ pub enum WorkerEvt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum WorkerSlot {
     Graph,
+    ProjectCatalog,
     ProjectHome,
     Library,
     LibraryDocument,
@@ -337,9 +350,14 @@ enum WorkerSlot {
 }
 
 impl WorkerCmd {
+    const fn runs_on_maintenance_lane(&self) -> bool {
+        matches!(self, Self::Checkpoint { .. } | Self::Backup { .. })
+    }
+
     fn slot_and_seq(&self) -> Option<(WorkerSlot, u64)> {
         let (slot, seq) = match self {
             Self::LoadGraph { seq, .. } => (WorkerSlot::Graph, *seq),
+            Self::LoadProjectCatalog { seq, .. } => (WorkerSlot::ProjectCatalog, *seq),
             Self::LoadProjectHome { seq, .. } => (WorkerSlot::ProjectHome, *seq),
             Self::LoadLibrary { seq, .. } => (WorkerSlot::Library, *seq),
             Self::LoadLibraryDocument { seq, .. } => (WorkerSlot::LibraryDocument, *seq),
@@ -380,7 +398,10 @@ impl WorkerCmd {
             | Self::Backup { .. }
             | Self::RestoreRevision { .. }
             | Self::SavePage { .. } => 0,
-            Self::LoadProjectHome { .. } | Self::LoadLibrary { .. } | Self::Search { .. } => 1,
+            Self::LoadProjectCatalog { .. }
+            | Self::LoadProjectHome { .. }
+            | Self::LoadLibrary { .. }
+            | Self::Search { .. } => 1,
             Self::LoadGraph { .. }
             | Self::LoadLibraryDocument { .. }
             | Self::LoadOperations { .. }
@@ -399,6 +420,7 @@ impl WorkerCmd {
 /// Channel endpoints owned by `GraphApp`.
 pub struct WorkerHandle {
     tx: Sender<WorkerCmd>,
+    maintenance_tx: Sender<WorkerCmd>,
     pub rx: Receiver<WorkerEvt>,
     latest: Arc<Mutex<HashMap<WorkerSlot, u64>>>,
 }
@@ -409,7 +431,12 @@ impl WorkerHandle {
             lock_latest(&self.latest).insert(slot, seq);
         }
         // A dead worker means the window is going away; ignore send errors.
-        let _ = self.tx.send(cmd);
+        let tx = if cmd.runs_on_maintenance_lane() {
+            &self.maintenance_tx
+        } else {
+            &self.tx
+        };
+        let _ = tx.send(cmd);
     }
 
     /// Invalidate reads whose answer belongs to the previous project. The app
@@ -477,11 +504,40 @@ fn command_is_current(cmd: &WorkerCmd, latest: &Mutex<HashMap<WorkerSlot, u64>>)
 /// Spawn the worker thread. `ctx` is only used to wake the UI when a result lands.
 pub fn spawn(ctx: egui::Context) -> WorkerHandle {
     let (cmd_tx, cmd_rx) = channel::<WorkerCmd>();
+    let (maintenance_tx, maintenance_rx) = channel::<WorkerCmd>();
     let (evt_tx, evt_rx) = channel::<WorkerEvt>();
     let latest = Arc::new(Mutex::new(HashMap::new()));
-    let worker_latest = Arc::clone(&latest);
+    spawn_worker_loop(
+        "rag-mcp-ui-worker",
+        cmd_rx,
+        evt_tx.clone(),
+        Arc::clone(&latest),
+        ctx.clone(),
+    );
+    spawn_worker_loop(
+        "rag-mcp-ui-maintenance",
+        maintenance_rx,
+        evt_tx,
+        Arc::clone(&latest),
+        ctx,
+    );
+    WorkerHandle {
+        tx: cmd_tx,
+        maintenance_tx,
+        rx: evt_rx,
+        latest,
+    }
+}
+
+fn spawn_worker_loop(
+    name: &str,
+    cmd_rx: Receiver<WorkerCmd>,
+    evt_tx: Sender<WorkerEvt>,
+    latest: Arc<Mutex<HashMap<WorkerSlot, u64>>>,
+    ctx: egui::Context,
+) {
     thread::Builder::new()
-        .name("rag-mcp-ui-worker".into())
+        .name(name.into())
         .spawn(move || {
             let mut queued = VecDeque::new();
             loop {
@@ -492,7 +548,7 @@ pub fn spawn(ctx: egui::Context) -> WorkerHandle {
                     queued.push_back(cmd);
                 }
                 queued.extend(cmd_rx.try_iter());
-                queued.retain(|cmd| command_is_current(cmd, &worker_latest));
+                queued.retain(|cmd| command_is_current(cmd, &latest));
                 let Some(next) = queued
                     .iter()
                     .enumerate()
@@ -504,7 +560,7 @@ pub fn spawn(ctx: egui::Context) -> WorkerHandle {
                 let cmd = queued
                     .remove(next)
                     .expect("priority index comes from the worker queue");
-                if !command_is_current(&cmd, &worker_latest) {
+                if !command_is_current(&cmd, &latest) {
                     continue;
                 }
                 // A panicking job must not kill the worker (the UI would spin
@@ -523,12 +579,7 @@ pub fn spawn(ctx: egui::Context) -> WorkerHandle {
                 ctx.request_repaint();
             }
         })
-        .expect("spawn rag-mcp-ui worker thread");
-    WorkerHandle {
-        tx: cmd_tx,
-        rx: evt_rx,
-        latest,
-    }
+        .unwrap_or_else(|error| panic!("spawn {name} thread: {error}"));
 }
 
 fn run(cmd: WorkerCmd) -> WorkerEvt {
@@ -549,6 +600,10 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
                 project.as_deref(),
                 include_tags,
             ),
+        },
+        WorkerCmd::LoadProjectCatalog { seq, base } => WorkerEvt::ProjectCatalogLoaded {
+            seq,
+            result: fetch_project_catalog_http(&base),
         },
         WorkerCmd::LoadProjectHome { seq, base, project } => WorkerEvt::ProjectHomeLoaded {
             seq,
@@ -670,10 +725,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             q,
             source,
         } => {
-            let result = fetch_page(meta.as_ref(), q.as_deref(), &source).map(|body| {
-                let backlinks = fetch_backlinks(&body.id, &source);
-                (body, backlinks)
-            });
+            let result = fetch_page(meta.as_ref(), q.as_deref(), &source);
             WorkerEvt::PageOpened {
                 seq,
                 pane_b,
@@ -686,9 +738,10 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             seq,
             document_id,
             source,
+            project,
         } => WorkerEvt::Backlinks {
             seq,
-            result: Ok(fetch_backlinks(&document_id, &source)),
+            result: fetch_backlinks(&document_id, project.as_deref(), &source),
             document_id,
         },
         WorkerCmd::ReadContent {
@@ -731,9 +784,14 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
                     project.as_deref(),
                     include_tags,
                 ),
-                (None, Some(path)) => {
-                    expand_neighbors_store(&path, &current, &selected, max_nodes, full.as_ref())
-                }
+                (None, Some(path)) => expand_neighbors_store(
+                    &path,
+                    &current,
+                    &selected,
+                    max_nodes,
+                    project.as_deref(),
+                    include_tags,
+                ),
                 (None, None) => match full {
                     Some(full) => Ok(expand_neighbors_local(
                         &full,
@@ -753,12 +811,9 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
         WorkerCmd::SavePage { seq, req, source } => {
             let result = match &source {
                 LoadSource::Http(base) => put_wiki_http(base, &req),
-                LoadSource::Db(path) => save_wiki_db(
-                    path,
-                    &req.id,
-                    &req.title,
-                    &req.content,
-                    req.if_match_revision,
+                LoadSource::Db(_) => Err(
+                    "direct --db mode is read-only; use the HTTP gateway to rebuild derived state"
+                        .into(),
                 ),
             };
             WorkerEvt::SavedPage { seq, result }
@@ -778,6 +833,10 @@ fn panic_fallback(cmd: &WorkerCmd) -> WorkerEvt {
     }
     match cmd {
         WorkerCmd::LoadGraph { seq, .. } => WorkerEvt::GraphLoaded {
+            seq: *seq,
+            result: err(),
+        },
+        WorkerCmd::LoadProjectCatalog { seq, .. } => WorkerEvt::ProjectCatalogLoaded {
             seq: *seq,
             result: err(),
         },
@@ -938,21 +997,28 @@ fn fetch_page(
     }
 }
 
-/// Backlinks for a document id; transport errors degrade to an empty list
-/// (same policy as the previous synchronous path).
-fn fetch_backlinks(document_id: &str, source: &LoadSource) -> Vec<BacklinkItem> {
+/// Backlinks for a document id. Transport/store errors remain explicit so the
+/// UI cannot misreport an unavailable query as "No incoming links".
+fn fetch_backlinks(
+    document_id: &str,
+    project: Option<&str>,
+    source: &LoadSource,
+) -> Result<Vec<BacklinkItem>, String> {
     match source {
-        LoadSource::Http(base) => fetch_backlinks_http(base, document_id).unwrap_or_default(),
+        LoadSource::Http(base) => fetch_backlinks_http(base, document_id, project),
         LoadSource::Db(path) => {
-            if let Ok(store) = rag_mcp::Store::open(path) {
-                if let Ok(rows) = store.wiki_backlinks_for_document(document_id) {
-                    return rows
-                        .into_iter()
-                        .map(|(label, id)| BacklinkItem { label, id })
-                        .collect();
-                }
+            let store = rag_mcp::Store::open_read_only(path).map_err(|error| {
+                format!("open {} read-only for backlinks: {error}", path.display())
+            })?;
+            let rows = match project.map(str::trim).filter(|project| !project.is_empty()) {
+                Some(project) => store.wiki_backlinks_for_document_in_wing(document_id, project),
+                None => store.wiki_backlinks_for_document(document_id),
             }
-            Vec::new()
+            .map_err(|error| format!("load backlinks from {}: {error}", path.display()))?;
+            Ok(rows
+                .into_iter()
+                .map(|(label, id)| BacklinkItem { label, id })
+                .collect())
         }
     }
 }
@@ -994,6 +1060,38 @@ mod tests {
             project: Some("alpha".into()),
         };
         assert!(library(2, "alpha").priority() < wiki.priority());
+    }
+
+    #[test]
+    fn long_maintenance_does_not_share_the_interactive_worker_lane() {
+        let backup = WorkerCmd::Backup {
+            seq: 1,
+            base: "http://gateway".into(),
+            request: BackupRequest {
+                path: "/tmp/backup.duckdb".into(),
+                dry_run: false,
+                overwrite: false,
+            },
+        };
+        let checkpoint = WorkerCmd::Checkpoint {
+            seq: 2,
+            base: "http://gateway".into(),
+        };
+        assert!(backup.runs_on_maintenance_lane());
+        assert!(checkpoint.runs_on_maintenance_lane());
+        assert!(!library(3, "alpha").runs_on_maintenance_lane());
+    }
+
+    #[test]
+    fn backlink_store_errors_are_not_converted_to_empty_results() {
+        let directory_is_not_a_database = std::env::temp_dir();
+        let error = fetch_backlinks(
+            "document",
+            Some("alpha"),
+            &LoadSource::Db(directory_is_not_a_database),
+        )
+        .expect_err("opening a directory as DuckDB must stay visible");
+        assert!(error.contains("backlinks"));
     }
 
     #[test]

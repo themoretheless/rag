@@ -485,6 +485,9 @@ fn sync_request(form: &SyncJobForm, project: Option<&str>) -> Result<SyncJobRequ
             .trim()
             .parse::<u64>()
             .map_err(|_| "Max MiB must be a positive integer".to_string())?;
+        if mib == 0 {
+            return Err("Max MiB must be a positive integer".to_string());
+        }
         Some(
             mib.checked_mul(1_048_576)
                 .ok_or_else(|| "Max MiB is too large".to_string())?,
@@ -601,6 +604,20 @@ mod tests {
         assert_eq!(request.wing.as_deref(), Some("alpha"));
         assert_eq!(request.room.as_deref(), Some("docs"));
         assert_eq!(request.max_file_bytes, Some(8 * 1_048_576));
+    }
+
+    #[test]
+    fn sync_form_rejects_zero_max_mib() {
+        let error = sync_request(
+            &SyncJobForm {
+                path: "/sources".to_string(),
+                max_file_mib: "0".to_string(),
+                ..SyncJobForm::default()
+            },
+            Some("alpha"),
+        )
+        .expect_err("zero would reject every non-empty file");
+        assert_eq!(error, "Max MiB must be a positive integer");
     }
 
     #[test]

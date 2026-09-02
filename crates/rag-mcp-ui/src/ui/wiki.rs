@@ -1,5 +1,5 @@
 //! Obsidian/Notion-style wiki browser: page list + article body with `[[wikilinks]]`.
-//! Supports read view and an in-app editor (Save via HTTP PUT or exclusive `--db`).
+//! Supports read view and an in-app editor (writes go through HTTP PUT).
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -252,9 +252,9 @@ pub fn draw_wiki_edit_view(
                 .on_hover_text(if saving {
                     "Save in flight on the worker…"
                 } else if can_write {
-                    "Write via HTTP PUT /v1/wiki or exclusive --db"
+                    "Write via HTTP PUT /v1/wiki"
                 } else {
-                    "Read-only source (snapshot has no write path)"
+                    "Read-only source (connect through the HTTP gateway to edit)"
                 })
                 .clicked()
             {
@@ -374,9 +374,9 @@ pub fn draw_wiki_read_view(
             if ui
                 .add_enabled(context.can_write, egui::Button::new("Edit"))
                 .on_hover_text(if context.can_write {
-                    "Edit this page (Save uses HTTP PUT or --db)"
+                    "Edit this page (Save uses HTTP PUT /v1/wiki)"
                 } else {
-                    "Editing requires --http or --db"
+                    "Editing requires an HTTP gateway connection"
                 })
                 .clicked()
             {
@@ -418,6 +418,8 @@ pub fn draw_wiki_info_panel(
     ui: &mut Ui,
     page: Option<&DocumentBody>,
     backlinks: &[BacklinkItem],
+    backlinks_error: Option<&str>,
+    backlinks_loading: bool,
 ) -> WikiNavAction {
     let mut action = WikiNavAction::default();
     ui.heading("Page info");
@@ -437,9 +439,34 @@ pub fn draw_wiki_info_panel(
     }
 
     ui.add_space(18.0);
-    ui.strong(format!("Backlinks · {}", backlinks.len()));
+    if backlinks_error.is_some() && backlinks.is_empty() {
+        ui.strong("Backlinks · unavailable");
+    } else {
+        ui.strong(format!("Backlinks · {}", backlinks.len()));
+    }
     ui.separator();
-    if backlinks.is_empty() {
+    if backlinks_loading {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.weak("Refreshing incoming links…");
+        });
+    }
+    if let Some(error) = backlinks_error {
+        let prefix = if backlinks.is_empty() {
+            "Could not load incoming links"
+        } else {
+            "Could not refresh incoming links; the list below may be stale"
+        };
+        ui.colored_label(
+            egui::Color32::from_rgb(215, 100, 85),
+            format!("{prefix}: {error}"),
+        );
+        if ui.button("Retry backlinks").clicked() {
+            action.retry = true;
+        }
+        ui.add_space(6.0);
+    }
+    if backlinks.is_empty() && backlinks_error.is_none() && !backlinks_loading {
         ui.weak("No incoming links.");
     } else {
         for backlink in backlinks {
@@ -478,7 +505,7 @@ pub fn content_summary_line(content: &str) -> Option<String> {
         .map(|l| l.chars().take(240).collect::<String>())
 }
 
-/// Markdown-ish: headings, lists, fences, **bold**, `code`, [[links]], #tags.
+/// Markdown-ish: headings, lists, fences, **bold**, `code`, `[[links]]`, #tags.
 fn render_wiki_markdown(
     ui: &mut Ui,
     content: &str,

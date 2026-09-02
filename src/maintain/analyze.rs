@@ -2,7 +2,6 @@
 //!
 //! MCP tool: `analyze_corpus` → [`AnalysisReport`] JSON.
 
-use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use chrono::{DateTime, Duration, Utc};
@@ -11,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::db::schema::SCHEMA_VERSION;
 use crate::db::Store;
+use crate::diagnostics::DiagnosticsService;
 use crate::embeddings::cosine_similarity;
 use crate::error::Result;
 use crate::models::{DoctorReport, OpsLogEntry};
@@ -226,7 +225,7 @@ pub fn analyze_corpus(
     let (document_count, chunk_count, node_count, edge_count) = store.stats()?;
     let counts = collect_counts(store, document_count, chunk_count, node_count, edge_count)?;
     let size = collect_size_stats(store, db_size_bytes)?;
-    let doctor = build_doctor(store, config)?;
+    let doctor = DiagnosticsService::new(store, config).doctor()?;
     let fts_ready = doctor.fts_ready;
 
     let embed_mismatch = if doctor.embed_ok {
@@ -240,17 +239,24 @@ pub fn analyze_corpus(
             manifest_dims: manifest.as_ref().map(|m| m.dims),
             manifest_provider: manifest.as_ref().map(|m| m.provider.clone()),
             manifest_model: manifest.as_ref().map(|m| m.model.clone()),
-            message: format!(
-                "embedding_manifest dims/provider/model disagree with config (manifest_dims={:?}, config_dims={})",
-                manifest.as_ref().map(|m| m.dims),
-                config.embedding_dims
-            ),
+            message: store
+                .require_embedding_manifest_match(config)
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| {
+                    "embedding identity changed while corpus analysis was running".into()
+                }),
         })
     };
 
     let exact_duplicates = find_exact_duplicates(store)?;
     let near_duplicates = if opts.include_near_dups {
-        find_near_duplicates(store, opts.near_dup_threshold)?
+        let corpus_guard =
+            crate::db::search::acquire_corpus_search_guard(store, crate::models::SearchMode::Vec)?;
+        store.require_embedding_manifest_match(config)?;
+        let pairs = find_near_duplicates(store, opts.near_dup_threshold)?;
+        drop(corpus_guard);
+        pairs
     } else {
         Vec::new()
     };
@@ -413,73 +419,6 @@ pub fn analyze_corpus(
     Ok(report)
 }
 
-fn build_doctor(store: &Store, config: &Config) -> Result<DoctorReport> {
-    let schema_version = store.schema_version()?.unwrap_or(0);
-    let schema_ok = schema_version >= SCHEMA_VERSION;
-    let fts_ready = store.fts_ready()?;
-    let (document_count, chunk_count, node_count, edge_count) = store.stats()?;
-    let embed_dims = config.embedding_dims;
-    let manifest = store.get_embedding_manifest()?;
-    let manifest_dims = manifest.as_ref().map(|m| m.dims);
-    let embed_ok = match manifest_dims {
-        None => true,
-        Some(d) => d as usize == embed_dims,
-    };
-    let ingest_roots_configured = !config.ingest_roots.is_empty();
-    let ready_for_search = chunk_count > 0 && schema_ok && embed_ok;
-    let (
-        documents_without_chunks,
-        orphan_chunks,
-        orphan_document_nodes,
-        orphan_edges,
-        unscoped_documents,
-    ) = store.integrity_counts()?;
-    let relational_integrity_ok =
-        orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
-    let wal_bytes = store.wal_file_size_bytes();
-    let wal_warn_bytes = crate::ops::wal_warn_bytes();
-    let wal_too_large = wal_bytes >= wal_warn_bytes;
-    let repair_hint = if !relational_integrity_ok {
-        Some("Create a backup, run maintain_refresh, and use offline db_repair for fatal DuckDB index errors.".to_string())
-    } else if documents_without_chunks > 0 {
-        Some("Reingest documents without chunks before relying on retrieval.".to_string())
-    } else if wal_too_large {
-        Some("WAL exceeds the configured warning threshold; checkpoint the store.".to_string())
-    } else {
-        None
-    };
-    let ok = schema_ok && embed_ok && relational_integrity_ok && documents_without_chunks == 0;
-    Ok(DoctorReport {
-        backend: "duckdb".to_string(),
-        storage_capabilities: crate::storage::duckdb_capability_names(),
-        schema_version,
-        expected_schema_version: SCHEMA_VERSION,
-        schema_ok,
-        fts_ready,
-        document_count,
-        chunk_count,
-        node_count,
-        edge_count,
-        embed_dims,
-        manifest_dims,
-        embed_ok,
-        ready_for_search,
-        ingest_roots_configured,
-        db_path: store.path().display().to_string(),
-        wal_bytes,
-        wal_warn_bytes,
-        wal_too_large,
-        documents_without_chunks,
-        orphan_chunks,
-        orphan_document_nodes,
-        orphan_edges,
-        unscoped_documents,
-        relational_integrity_ok,
-        repair_hint,
-        ok,
-    })
-}
-
 fn push_doctor_issues(issues: &mut Vec<AnalysisIssue>, doctor: &DoctorReport) {
     if !doctor.schema_ok {
         issues.push(AnalysisIssue {
@@ -635,38 +574,21 @@ fn find_exact_duplicates(store: &Store) -> Result<Vec<DuplicateGroup>> {
 
 fn find_near_duplicates(store: &Store, threshold: f64) -> Result<Vec<NearDuplicatePair>> {
     let threshold = threshold.clamp(0.0, 1.0) as f32;
-    // One representative vector per document (lowest chunk_index).
-    let chunks = store.all_chunks_with_embeddings()?;
-    let docs = store.list_documents()?;
-    let title_by_id: HashMap<String, String> = docs
-        .iter()
-        .map(|d| (d.id.clone(), d.title.clone()))
-        .collect();
-
-    let mut first_chunk: BTreeMap<String, Vec<f32>> = BTreeMap::new();
-    for c in chunks {
-        first_chunk
-            .entry(c.document_id)
-            .or_insert_with(|| c.embedding);
-    }
-
-    let mut entries: Vec<(String, Vec<f32>)> = first_chunk.into_iter().collect();
-    if entries.len() > NEAR_DUP_MAX_DOCS {
-        entries.truncate(NEAR_DUP_MAX_DOCS);
-    }
+    // The cap belongs in SQL: loading every vector and truncating afterwards
+    // can exhaust the sole gateway writer on a large corpus.
+    let entries =
+        store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, false, false, false)?;
 
     let mut pairs = Vec::new();
     for i in 0..entries.len() {
         for j in (i + 1)..entries.len() {
-            let cos = cosine_similarity(&entries[i].1, &entries[j].1);
+            let cos = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
             if cos >= threshold {
-                let id_a = &entries[i].0;
-                let id_b = &entries[j].0;
                 pairs.push(NearDuplicatePair {
-                    document_id_a: id_a.clone(),
-                    document_id_b: id_b.clone(),
-                    title_a: title_by_id.get(id_a).cloned().unwrap_or_default(),
-                    title_b: title_by_id.get(id_b).cloned().unwrap_or_default(),
+                    document_id_a: entries[i].document_id.clone(),
+                    document_id_b: entries[j].document_id.clone(),
+                    title_a: entries[i].title.clone(),
+                    title_b: entries[j].title.clone(),
                     cosine: cos,
                 });
                 if pairs.len() >= REPORT_LIST_CAP {
@@ -898,7 +820,7 @@ fn parse_ts(raw: &str) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Document, GraphEdge, GraphNode, SearchMode};
+    use crate::models::{Chunk, Document, GraphEdge, GraphNode, SearchMode};
     use crate::util::content_hash;
     use std::path::PathBuf;
 
@@ -1008,6 +930,47 @@ mod tests {
         assert_eq!(report.unresolved_stubs.len(), 1);
         assert!(report.issues.iter().any(|i| i.code == "exact_dup"));
         assert!(report.issues.iter().any(|i| i.code == "unresolved_stub"));
+    }
+
+    #[test]
+    fn near_duplicate_analysis_fails_closed_during_embedding_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("near-dups-migration-incomplete.duckdb");
+        let store = Store::open(&path).unwrap();
+        let cfg = test_config(path);
+        for id in ["a", "b"] {
+            let document = doc(
+                id,
+                &format!("raw://{id}"),
+                &format!("Document {id}"),
+                &format!("unique body {id}"),
+                "raw",
+            );
+            store.upsert_document(&document).unwrap();
+            store
+                .insert_chunks(&[Chunk {
+                    id: format!("{id}-c0"),
+                    document_id: id.into(),
+                    chunk_index: 0,
+                    content: document.content,
+                    embedding: vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    char_start: 0,
+                    char_end: 13,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+        store
+            .set_embedding_manifest(&crate::db::store::embedding_migration_manifest(&cfg))
+            .unwrap();
+        let mut opts = AnalyzeOptions::from_config(&cfg);
+        opts.include_near_dups = true;
+
+        let error = analyze_corpus(&store, &cfg, &opts).unwrap_err();
+
+        assert!(matches!(error, crate::error::AppError::Embeddings(_)));
+        assert!(error.to_string().contains("incomplete corpus migration"));
+        assert!(store.list_ops_log(10).unwrap().is_empty());
     }
 
     #[test]

@@ -199,10 +199,12 @@ async fn backup(State(st): State<HttpState>, Json(body): Json<BackupBody>) -> im
     {
         return api_err(error);
     }
-    match st
-        .store
-        .backup_database(&path, body.dry_run, body.overwrite)
-    {
+    let store = st.store.clone();
+    let backup = super::run_blocking("backup", move || {
+        store.backup_database(&path, body.dry_run, body.overwrite)
+    })
+    .await;
+    match backup {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
     }

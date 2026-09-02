@@ -635,7 +635,9 @@ pub struct StatusReport {
     /// graph walk is empty.
     #[serde(default)]
     pub uncompiled_raw_count: u64,
-    /// Live config embedding dims/provider/model match stored `embedding_manifest`.
+    /// Live embedding identity matches stored `embedding_manifest`.
+    /// Persisted canonical fingerprints are authoritative; legacy rows without
+    /// one are unverifiable and remain fail-closed until a complete re-embed.
     #[serde(default)]
     pub embedding_manifest_match: bool,
     /// Configured embedding provider name.
@@ -716,7 +718,8 @@ pub struct DoctorReport {
     /// Dims from `embedding_manifest` when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_dims: Option<i32>,
-    /// True when no manifest, or manifest dims match live config.
+    /// True when the stored embedding identity matches live config (or when
+    /// both the manifest and corpus chunks are absent).
     pub embed_ok: bool,
     pub ready_for_search: bool,
     pub ingest_roots_configured: bool,
@@ -801,19 +804,21 @@ pub const PKB_NODE_KINDS: &[&str] = &["document", "stub", "entity"];
 impl GraphFilter {
     /// PKB defaults for exclusive `--db` inspector and Mode C snapshot dumps.
     ///
-    /// - `rel_types`: wikilink + related
+    /// - `rel_types`: wikilink + related (`include_tags` adds `tagged`)
     /// - kinds: document + stub + entity (`include_tags` adds `tag`)
     /// - `max_nodes`: `max_nodes` or [`UI_GRAPH_EXPORT_MAX_NODES`] (300)
     ///
     /// Topology only; no layout positions.
     pub fn pkb_ui_export(max_nodes: Option<u32>, include_tags: bool) -> Self {
         let mut kinds: Vec<String> = PKB_NODE_KINDS.iter().map(|s| (*s).to_string()).collect();
+        let mut rel_types: Vec<String> = PKB_REL_TYPES.iter().map(|s| (*s).to_string()).collect();
         if include_tags {
             kinds.push("tag".into());
+            rel_types.push("tagged".into());
         }
         Self {
             kinds: Some(kinds),
-            rel_types: Some(PKB_REL_TYPES.iter().map(|s| (*s).to_string()).collect()),
+            rel_types: Some(rel_types),
             seed_ids: None,
             max_nodes: Some(max_nodes.unwrap_or(UI_GRAPH_EXPORT_MAX_NODES)),
         }

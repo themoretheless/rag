@@ -1,17 +1,21 @@
-//! Single-file ingest CLI (parity with MCP `ingest_file`).
+//! Offline single-file ingest CLI.
+//!
+//! This binary opens DuckDB directly. It therefore requires an explicit database
+//! path and an `--offline` acknowledgement. Stop the rag-mcp gateway before using
+//! it. For a live database, use the MCP/HTTP `ingest_file` operation instead.
 //!
 //! Example (from rag repo root):
 //! ```bash
 //! RAG_INGEST_ROOTS=/path/to/allowed RAG_EMBEDDING_PROVIDER=mock \
 //!   cargo run --release --bin ingest_file -- \
-//!   --path /path/to/allowed/notes.md --wing projects --room notes --db ./rag.duckdb
+//!   --offline --db ./rag.duckdb --path /path/to/allowed/notes.md \
+//!   --wing projects --room notes
 //! ```
 
 use anyhow::{bail, Context, Result};
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
-use rag_mcp::wiki;
-use rag_mcp::file_ingest::extract_file;
-use rag_mcp::{check_path_allowlist, Config, Store};
+use rag_mcp::ingest::{IngestFileCommand, IngestService};
+use rag_mcp::{Config, Store};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -33,7 +37,7 @@ struct Args {
     path: PathBuf,
     wing: Option<String>,
     room: Option<String>,
-    db: Option<PathBuf>,
+    db: PathBuf,
 }
 
 fn parse_args() -> Result<Args> {
@@ -41,6 +45,7 @@ fn parse_args() -> Result<Args> {
     let mut wing = None;
     let mut room = None;
     let mut db = None;
+    let mut offline = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -56,12 +61,15 @@ fn parse_args() -> Result<Args> {
             "--db" => {
                 db = Some(PathBuf::from(it.next().context("--db needs path")?));
             }
+            "--offline" => offline = true,
             "-h" | "--help" => {
                 eprintln!(
-                    "Usage: ingest_file --path FILE [--wing WING] [--room ROOM] [--db PATH]\n\
-                     Read text, Markdown, HTML, PDF, or source code and upsert into DuckDB.\n\
+                    "Usage: ingest_file --offline --db PATH --path FILE [--wing WING] [--room ROOM]\n\
+                     Offline-only direct DuckDB writer. Stop the rag-mcp gateway first.\n\
+                     For a live database, use the MCP/HTTP ingest_file operation.\n\
+                     Reads text, Markdown, HTML, PDF, or source code.\n\
                      Path must be under RAG_INGEST_ROOTS (same as MCP ingest_file).\n\
-                     Env: RAG_DB_PATH (overridden by --db), RAG_INGEST_ROOTS, RAG_EMBEDDING_*"
+                     Env: RAG_INGEST_ROOTS, RAG_EMBEDDING_*"
                 );
                 std::process::exit(0);
             }
@@ -69,6 +77,15 @@ fn parse_args() -> Result<Args> {
         }
     }
     let path = path.context("required: --path FILE")?;
+    let db = db.context(
+        "required: --db PATH; this offline tool never inherits RAG_DB_PATH or a default database",
+    )?;
+    if !offline {
+        bail!(
+            "refusing direct DuckDB access without --offline; stop the rag-mcp gateway first, \
+             then pass --offline, or use the MCP/HTTP ingest_file operation"
+        );
+    }
     if !path.is_file() {
         bail!("--path is not a file: {}", path.display());
     }
@@ -82,55 +99,39 @@ fn parse_args() -> Result<Args> {
 
 async fn run(args: Args) -> Result<()> {
     let mut config = Config::from_env().context("Config::from_env")?;
-    if let Some(db) = args.db {
-        config.db_path = db;
-    }
-
-    check_path_allowlist(&args.path, &config.ingest_roots)
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("RAG_INGEST_ROOTS allowlist")?;
+    config.db_path = args.db;
 
     let store = Store::open(&config.db_path).context("open DuckDB")?;
-    let _ = store.ensure_embedding_manifest(&config);
+    store
+        .ensure_embedding_manifest(&config)
+        .context("validate embedding manifest")?;
     let embedder: Arc<dyn EmbeddingProvider> =
         build_provider(&config).context("embedding provider")?;
 
-    let canon = args
-        .path
-        .canonicalize()
-        .unwrap_or_else(|_| args.path.clone());
-    let uri = format!("file://{}", canon.display());
-    let title = args
-        .path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|s| s.to_string());
-    let source_file = Some(canon.display().to_string());
-
-    let extracted = extract_file(&args.path).with_context(|| format!("extract {}", args.path.display()))?;
-
     eprintln!(
-        "ingest_file: path={} wing={:?} room={:?} db={} uri={}",
+        "ingest_file: path={} wing={:?} room={:?} db={}",
         args.path.display(),
         args.wing,
         args.room,
-        config.db_path.display(),
-        uri
+        config.db_path.display()
     );
 
-    let result = wiki::ingest_raw(
-        &store,
-        &embedder,
-        &config,
-        extracted.text,
-        title,
-        Some(uri),
-        args.wing,
-        args.room,
-        source_file,
-    )
-    .await
-    .context("ingest")?;
+    let result = IngestService::new(&store, &embedder, &config)
+        .ingest_file(IngestFileCommand {
+            path: args.path.display().to_string(),
+            title: None,
+            uri: None,
+            metadata_json: None,
+            wing: args.wing,
+            room: args.room,
+        })
+        .await
+        .context("ingest")?;
+
+    store
+        .ensure_fts(&config.fts_stemmer)
+        .context("refresh lexical index")?;
+    store.checkpoint().context("checkpoint DuckDB")?;
 
     println!(
         "{}",

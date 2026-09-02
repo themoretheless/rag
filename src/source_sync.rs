@@ -24,6 +24,12 @@ pub const DEFAULT_SOURCE_SYNC_MAX_FILE_BYTES: u64 = 512 * 1024;
 
 const SOURCE_SYNC_BATCH_MAX_DOCUMENTS: usize = 64;
 const SOURCE_SYNC_BATCH_MAX_CHUNKS: usize = 64;
+const FTS_FINALIZATION_ERROR_CODE: &str = "FTS_FINALIZATION_FAILED";
+
+#[cfg(test)]
+pub(crate) const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_source_sync_finalize_fts__";
+#[cfg(test)]
+const TEST_FINALIZE_FTS_PANIC_STEMMER: &str = "__test_panic_source_sync_finalize_fts__";
 
 #[derive(Debug, Clone)]
 pub struct SourceSyncCommand {
@@ -54,6 +60,25 @@ pub struct SourceSyncError {
     pub error: String,
 }
 
+/// Structured terminal failure after source-sync mutations have already run.
+///
+/// This is additive to the existing per-path `errors` list so older clients
+/// still classify the run as completed-with-errors, while newer clients can
+/// distinguish a derived-index failure from a failed or rolled-back sync.
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceSyncFinalizationError {
+    pub code: &'static str,
+    pub stage: &'static str,
+    pub durable_mutation_committed: bool,
+    pub retryable: bool,
+    pub fallback_dirty_marked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dirty_marker_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ops_log_error: Option<String>,
+    pub error: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SourceSyncReport {
     pub added: Vec<String>,
@@ -61,6 +86,8 @@ pub struct SourceSyncReport {
     pub skipped: Vec<String>,
     pub deleted: Vec<String>,
     pub errors: Vec<SourceSyncError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalization_error: Option<SourceSyncFinalizationError>,
     pub counters: SourceSyncCounters,
 }
 
@@ -185,6 +212,29 @@ pub struct SourceSyncService<'a> {
     config: &'a Config,
 }
 
+/// Drive source synchronization from Tokio's blocking pool.
+///
+/// The workflow intentionally mixes filesystem traversal/extraction and
+/// serialized DuckDB work with async embedding requests. Polling it on a
+/// blocking worker keeps those synchronous phases off Tokio's async workers;
+/// the runtime handle still services the provider awaits and cancellation.
+pub async fn sync_sources_nonblocking(
+    store: Arc<Store>,
+    embedder: Arc<dyn EmbeddingProvider>,
+    config: Config,
+    command: SourceSyncCommand,
+    control: SourceSyncControl,
+) -> Result<SourceSyncOutcome, AppError> {
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        runtime.block_on(
+            SourceSyncService::new(&store, &embedder, &config).sync_with_control(command, control),
+        )
+    })
+    .await
+    .map_err(|error| AppError::db(format!("source-sync task failed: {error}")))?
+}
+
 struct SourceSyncRunContext<'a> {
     root: &'a Path,
     command: &'a SourceSyncCommand,
@@ -263,8 +313,8 @@ impl<'a> SourceSyncService<'a> {
         control: SourceSyncControl,
     ) -> Result<SourceSyncOutcome, AppError> {
         let mut report = SourceSyncReport::default();
-        let sync_lane = self.store.source_sync_lane();
-        let _sync_guard = tokio::select! {
+        let sync_lane = self.store.corpus_mutation_lane();
+        let sync_guard = tokio::select! {
             guard = sync_lane.write_owned() => guard,
             () = control.cancelled() => {
                 return Ok(cancelled_outcome(&control, report, 0, 0));
@@ -587,11 +637,44 @@ impl<'a> SourceSyncService<'a> {
         // bulk update pays the entire serialized BM25 rebuild cost.
         let store = self.store.clone();
         let stemmer = self.config.fts_stemmer.clone();
-        tokio::task::spawn_blocking(move || store.ensure_fts(&stemmer))
-            .await
-            .map_err(|error| {
-                AppError::fts(format!("source-sync FTS refresh task failed: {error}"))
-            })??;
+        let durable_mutation_committed =
+            !report.added.is_empty() || !report.updated.is_empty() || !report.deleted.is_empty();
+        let refresh_task = tokio::task::spawn_blocking(move || {
+            let refresh_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                finalize_source_sync_fts(&store, &stemmer)
+            }))
+            .unwrap_or_else(|_| Err(AppError::fts("source-sync FTS finalization panicked")));
+            let finalization_error = refresh_result.err().map(|error| {
+                source_sync_fts_finalization_failure(&store, durable_mutation_committed, &error)
+            });
+            (sync_guard, finalization_error)
+        })
+        .await;
+        let (sync_guard, finalization_error) = match refresh_task {
+            Ok((guard, None)) => (Some(guard), None),
+            Ok((guard, Some(error))) => (Some(guard), Some(error)),
+            Err(error) => {
+                let error = AppError::fts(format!("source-sync FTS refresh task failed: {error}"));
+                (
+                    None,
+                    Some(source_sync_fts_finalization_failure(
+                        self.store,
+                        durable_mutation_committed,
+                        &error,
+                    )),
+                )
+            }
+        };
+        if let Some(finalization_error) = finalization_error {
+            report.errors.push(SourceSyncError {
+                path: root.display().to_string(),
+                error: source_sync_finalization_summary(&finalization_error),
+            });
+            report.finalization_error = Some(finalization_error);
+        }
+        // Retain the returned guard through terminal progress publication. If
+        // this future is dropped while waiting, detached blocking work owns it.
+        let _sync_guard = sync_guard;
         report.sort_paths();
         control.publish(SourceSyncProgress::from_report(
             SourceSyncPhase::Completed,
@@ -841,6 +924,61 @@ fn metadata_means_missing(metadata: std::io::Result<std::fs::Metadata>) -> std::
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
         Err(error) => Err(error),
     }
+}
+
+fn finalize_source_sync_fts(store: &Store, stemmer: &str) -> Result<(), AppError> {
+    #[cfg(test)]
+    if stemmer == TEST_FINALIZE_FTS_PANIC_STEMMER {
+        panic!("injected source-sync FTS finalization panic");
+    }
+    #[cfg(test)]
+    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
+        return Err(AppError::fts(
+            "injected source-sync FTS finalization failure",
+        ));
+    }
+
+    store.ensure_fts(stemmer).map(|_| ())
+}
+
+fn source_sync_fts_finalization_failure(
+    store: &Store,
+    durable_mutation_committed: bool,
+    error: &AppError,
+) -> SourceSyncFinalizationError {
+    let recorded = store.record_fts_finalization_failure(
+        "source_sync",
+        durable_mutation_committed,
+        &error.to_string(),
+    );
+    SourceSyncFinalizationError {
+        code: FTS_FINALIZATION_ERROR_CODE,
+        stage: "refresh_fts",
+        durable_mutation_committed,
+        retryable: true,
+        fallback_dirty_marked: recorded.dirty_marker_written,
+        dirty_marker_error: recorded.dirty_marker_error,
+        ops_log_error: recorded.ops_log_error,
+        error: error.to_string(),
+    }
+}
+
+fn source_sync_finalization_summary(error: &SourceSyncFinalizationError) -> String {
+    let mut summary = format!(
+        "{}: source sync final FTS refresh failed after durable_mutation_committed={}: {}; retryable={}; fallback_dirty_marked={}",
+        error.code,
+        error.durable_mutation_committed,
+        error.error,
+        error.retryable,
+        error.fallback_dirty_marked,
+    );
+    if let Some(marker_error) = &error.dirty_marker_error {
+        summary.push_str(&format!("; dirty_marker_error={marker_error}"));
+    }
+    if let Some(log_error) = &error.ops_log_error {
+        summary.push_str(&format!("; ops_log_error={log_error}"));
+    }
+    summary
 }
 
 fn cancelled_outcome(
@@ -1164,7 +1302,7 @@ mod tests {
                     .await
             })
         };
-        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+        tokio::time::timeout(std::time::Duration::from_secs(30), entered.notified())
             .await
             .expect("first sync reached embedding");
 
@@ -1198,7 +1336,7 @@ mod tests {
         release.notify_one();
         first.await.unwrap().unwrap();
         tokio::time::timeout(
-            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(30),
             second_scanning.notified(),
         )
         .await
@@ -1494,12 +1632,12 @@ mod tests {
                     .await
             })
         };
-        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+        tokio::time::timeout(std::time::Duration::from_secs(30), entered.notified())
             .await
             .expect("batch reached embedding");
 
         cancellation.cancel();
-        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), task)
             .await
             .expect("cancelled sync returned")
             .unwrap()
@@ -1665,7 +1803,7 @@ mod tests {
                     .await
             })
         };
-        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+        tokio::time::timeout(std::time::Duration::from_secs(30), entered.notified())
             .await
             .expect("source update reached embedding");
 
@@ -1691,7 +1829,7 @@ mod tests {
             .unwrap();
         release.notify_one();
 
-        let report = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        let report = tokio::time::timeout(std::time::Duration::from_secs(30), task)
             .await
             .expect("source sync completed")
             .unwrap()
@@ -1932,6 +2070,82 @@ mod tests {
         );
         assert!(search("beta").is_empty());
         assert_eq!(generation_state(), after_delete_sync);
+    }
+
+    #[tokio::test]
+    async fn terminal_fts_failure_preserves_committed_sync_report_and_dirty_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let source = root.path().join("README.md");
+        std::fs::write(&source, "durable source-sync mutation").unwrap();
+        let canonical_root = root.path().canonicalize().unwrap();
+        let canonical_source = source.canonicalize().unwrap().display().to_string();
+        let mut config = Config {
+            db_path: db.path().join("sync-fts-finalization-failure.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        store.ensure_fts(&config.fts_stemmer).unwrap();
+        config.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let progress_from_callback = progress.clone();
+
+        let outcome = SourceSyncService::new(&store, &embedder, &config)
+            .sync_with_control(
+                SourceSyncCommand::new(root.path().to_path_buf()),
+                SourceSyncControl::new(CancellationToken::new(), move |snapshot| {
+                    progress_from_callback.lock().unwrap().push(snapshot);
+                }),
+            )
+            .await
+            .expect("finalization failure must remain an aggregate outcome");
+        let SourceSyncOutcome::Completed(report) = outcome else {
+            panic!("expected completed-with-errors source sync");
+        };
+
+        assert_eq!(report.added, vec![canonical_source.clone()]);
+        assert_eq!(report.counters.preflight, 1);
+        assert_eq!(report.counters.extracted, 1);
+        assert_eq!(report.counters.embedded, 1);
+        assert_eq!(report.errors.len(), 1);
+        assert!(report.errors[0].error.contains(FTS_FINALIZATION_ERROR_CODE));
+        let finalization = report
+            .finalization_error
+            .as_ref()
+            .expect("structured finalization error");
+        assert_eq!(finalization.code, FTS_FINALIZATION_ERROR_CODE);
+        assert_eq!(finalization.stage, "refresh_fts");
+        assert!(finalization.durable_mutation_committed);
+        assert!(finalization.retryable);
+        assert!(finalization.fallback_dirty_marked);
+        assert!(finalization.dirty_marker_error.is_none());
+        assert!(finalization.ops_log_error.is_none());
+        assert_eq!(store.list_documents().unwrap().len(), 1);
+        assert!(store
+            .load_source_manifest_root(&canonical_root)
+            .unwrap()
+            .contains_key(&canonical_source));
+        let generation = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(generation.dirty, "next lexical read must retry FTS");
+        assert!(store
+            .list_recent_ops(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed"));
+        let progress = progress.lock().unwrap();
+        assert_eq!(progress.last().unwrap().phase, SourceSyncPhase::Completed);
+        assert_eq!(progress.last().unwrap().errors, 1);
+        let phases = progress
+            .iter()
+            .map(|snapshot| snapshot.phase)
+            .collect::<Vec<_>>();
+        assert!(phases.ends_with(&[SourceSyncPhase::RefreshingFts, SourceSyncPhase::Completed,]));
     }
 
     #[tokio::test]

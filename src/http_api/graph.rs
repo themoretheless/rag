@@ -36,17 +36,16 @@ struct GraphQuery {
 async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl IntoResponse {
     let max = q.max_nodes.unwrap_or(500);
     let tags = q.include_tags.unwrap_or(false);
-    let result = match q
-        .project
-        .as_deref()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-    {
-        Some(project) => st
-            .store
-            .export_project_graph_for_ui(project, Some(max), tags),
-        None => st.store.export_graph_for_ui(Some(max), tags),
-    };
+    let project = q.project.and_then(|project| {
+        let project = project.trim();
+        (!project.is_empty()).then(|| project.to_owned())
+    });
+    let store = st.store.clone();
+    let result = super::run_blocking("graph", move || match project.as_deref() {
+        Some(project) => store.export_project_graph_for_ui(project, Some(max), tags),
+        None => store.export_graph_for_ui(Some(max), tags),
+    })
+    .await;
     match result {
         Ok(view) => api_ok(view),
         Err(e) => api_err(e),
@@ -77,19 +76,27 @@ async fn neighbors(
     let depth = q.depth.unwrap_or(1).clamp(1, 3);
     let max_nodes = q.max_nodes.unwrap_or(100).clamp(1, 300);
 
-    if let Some(project) = q
-        .project
-        .as_deref()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-    {
-        return match st.store.export_project_neighbors_for_ui(
-            project,
-            seed,
-            depth,
-            max_nodes,
-            q.include_tags.unwrap_or(false),
-        ) {
+    let seed = seed.to_owned();
+    let include_tags = q.include_tags.unwrap_or(false);
+    let project = q.project.and_then(|project| {
+        let project = project.trim();
+        (!project.is_empty()).then(|| project.to_owned())
+    });
+    let store = st.store.clone();
+    if let Some(project) = project {
+        let query_project = project.clone();
+        let query_seed = seed.clone();
+        let result = super::run_blocking("project neighbors", move || {
+            store.export_project_neighbors_for_ui(
+                &query_project,
+                &query_seed,
+                depth,
+                max_nodes,
+                include_tags,
+            )
+        })
+        .await;
+        return match result {
             Ok(view) if view.nodes.is_empty() => api_err(AppError::not_found(format!(
                 "no graph node for seed '{seed}' in project '{project}'"
             ))),
@@ -98,13 +105,15 @@ async fn neighbors(
         };
     }
 
-    // Resolve seed like UI: id, document_id, or label.
-    let node_id = match resolve_seed(&st.store, seed) {
-        Ok(id) => id,
-        Err(e) => return api_err(e),
-    };
-
-    match st.store.neighbors(&node_id, depth, max_nodes) {
+    let query_seed = seed.clone();
+    let result = super::run_blocking("neighbors", move || {
+        store.export_pkb_neighbors_for_ui(&query_seed, depth, max_nodes, include_tags)
+    })
+    .await;
+    match result {
+        Ok(view) if view.nodes.is_empty() => api_err(AppError::not_found(format!(
+            "no graph node for seed '{seed}'"
+        ))),
         Ok(view) => api_ok(view),
         Err(e) => api_err(e),
     }
@@ -120,12 +129,17 @@ async fn find_node(State(st): State<HttpState>, Query(q): Query<FindQuery>) -> i
     if key.is_empty() {
         return api_err(AppError::config("q required"));
     }
-    match resolve_seed(&st.store, key) {
-        Ok(id) => match st.store.find_node_by_id(&id) {
-            Ok(Some(n)) => api_ok(n),
-            Ok(None) => api_err(AppError::not_found(format!("node {id}"))),
-            Err(e) => api_err(e),
-        },
+    let key = key.to_owned();
+    let store = st.store.clone();
+    let result = super::run_blocking("find graph node", move || {
+        let id = resolve_seed(&store, &key)?;
+        store
+            .find_node_by_id(&id)?
+            .ok_or_else(|| AppError::not_found(format!("node {id}")))
+    })
+    .await;
+    match result {
+        Ok(node) => api_ok(node),
         Err(e) => api_err(e),
     }
 }
@@ -148,7 +162,9 @@ async fn document(
     Query(q): Query<DocumentQuery>,
     headers: HeaderMap,
 ) -> Response {
-    match resolve_document(&st.store, &q) {
+    let store = st.store.clone();
+    let result = super::run_blocking("get document", move || resolve_document(&store, &q)).await;
+    match result {
         Ok(doc) => {
             let etag = doc.etag();
             if headers

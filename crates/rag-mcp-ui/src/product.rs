@@ -8,8 +8,8 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use crate::gateway::{
-    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
-    Response,
+    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
+    ReqwestGatewayClient, Response,
 };
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -132,6 +132,9 @@ pub struct LibraryPage {
     pub items: Vec<LibraryItem>,
     pub total: u64,
     pub next_cursor: Option<String>,
+    /// Exact request that produced this page. The UI keeps a separate mutable
+    /// draft and must not reuse this page's cursor after those filters change.
+    pub request: LibraryRequest,
 }
 
 #[derive(Deserialize)]
@@ -175,7 +178,7 @@ fn fetch_project_home_with_client(
     ensure_success(response, "Project Home").and_then(|body| {
         serde_json::from_str::<ProjectHomeEnvelope>(&body)
             .map(|envelope| envelope.project)
-            .map_err(|error| format!("parse Project Home from {url}: {error}"))
+            .map_err(|error| format_json_parse_error("Project Home", &error))
     })
 }
 
@@ -197,8 +200,9 @@ fn fetch_library_with_client(
                 items: envelope.items,
                 total: envelope.page.total,
                 next_cursor: envelope.page.next_cursor,
+                request: request.clone(),
             })
-            .map_err(|error| format!("parse Unified Library from {url}: {error}"))
+            .map_err(|error| format_json_parse_error("Unified Library", &error))
     })
 }
 
@@ -343,6 +347,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(page.total, 120);
+        assert_eq!(page.request.q, "design notes");
+        assert_eq!(page.request.cursor.as_deref(), Some("v1:0"));
         assert_eq!(page.items[0].scope_label(), "Project A/B / docs");
         assert_eq!(page.next_cursor.as_deref(), Some("v1:50"));
         let request = &gateway.requests.lock().unwrap()[0];
@@ -382,5 +388,21 @@ mod tests {
         let error =
             fetch_project_home_with_client(&gateway, "http://gateway", "alpha").unwrap_err();
         assert_eq!(error, "HTTP 503 · Project Home: temporarily unavailable");
+    }
+
+    #[test]
+    fn malformed_success_never_exposes_scoped_url() {
+        let gateway = FakeGateway::ok(r#"{"project":{"project_id":"private-value""#);
+        let error = fetch_project_home_with_client(
+            &gateway,
+            "http://user:secret@gateway",
+            "private-project?token=private-token",
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("Could not parse Project Home response"));
+        for secret in ["user", "secret", "private-project", "private-token"] {
+            assert!(!error.contains(secret));
+        }
     }
 }

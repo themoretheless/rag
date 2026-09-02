@@ -19,14 +19,14 @@ use crate::llm::{ChatClient, ChatMessage};
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use crate::models::{Document, DocumentMetaUpdate, OpsLogEntry, Taxonomy};
 
-/// Layers never auto-refiled (system / catalog).
-const SKIP_LAYERS: &[&str] = &["schema", "index", "log"];
 /// Cap titles / samples sent to the LLM.
 const LLM_SAMPLE_CAP: usize = 40;
 /// Max labeled neighbors considered for embedding vote.
 const EMBED_NEIGHBOR_K: usize = 8;
 /// Min cosine to count an embedding neighbor vote.
 const EMBED_MIN_COSINE: f32 = 0.55;
+/// Bounded deterministic reference pool for embedding placement votes.
+const EMBED_LABEL_MAX_DOCS: usize = 4_096;
 
 /// How suggestions are produced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -139,6 +139,9 @@ pub struct RefileApplyResult {
 pub struct OrganizeReport {
     pub dry_run: bool,
     pub mode: String,
+    /// Whether embedding kNN suggestions were safely available for this run.
+    /// False means the run used only path/title/LLM signals.
+    pub embedding_heuristics_enabled: bool,
     /// Documents missing wing that were eligible (before cap).
     pub unscoped_total: usize,
     /// Unscoped considered after `max_docs` cap.
@@ -177,22 +180,43 @@ pub async fn maintain_organize(
     let max_docs = opts.max_docs.max(1);
     let min_confidence = opts.min_confidence.clamp(0.0, 1.0);
     let dry_run = opts.dry_run;
+    // Keep both the document snapshot and any slow LLM-derived decision under
+    // one corpus lease. Non-dry runs own the write side; previews own the read
+    // side so they cannot observe mixed embedding generations.
+    let _mutation_guard = if dry_run {
+        None
+    } else {
+        Some(store.try_corpus_mutation_guard("maintenance organize")?)
+    };
+    let _search_guard = if dry_run {
+        Some(crate::db::search::acquire_corpus_search_guard(
+            store,
+            crate::models::SearchMode::Vec,
+        )?)
+    } else {
+        None
+    };
     let taxonomy = store.get_taxonomy()?;
-    let unscoped = list_unscoped_documents(store)?;
-    let unscoped_total = unscoped.len();
-    let skipped_cap = unscoped_total.saturating_sub(max_docs);
-    let considered: Vec<Document> = unscoped.into_iter().take(max_docs).collect();
+    let (unscoped_total, considered) = store.list_active_unscoped_documents(max_docs)?;
+    let skipped_cap = unscoped_total.saturating_sub(considered.len());
     let unscoped_considered = considered.len();
 
+    let mut embedding_heuristics_enabled = false;
     let mut suggestions = match opts.mode {
-        OrganizeMode::Heuristic => suggest_heuristic(store, &taxonomy, &considered)?,
+        OrganizeMode::Heuristic => {
+            let (suggestions, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+            embedding_heuristics_enabled = enabled;
+            suggestions
+        }
         OrganizeMode::Llm => {
             if let Some(client) = llm.filter(|_| config.llm_enabled) {
                 match suggest_llm(client, &taxonomy, &considered).await {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(error = %e, "organize LLM failed; falling back to heuristic");
-                        let mut s = suggest_heuristic(store, &taxonomy, &considered)?;
+                        let (mut s, enabled) =
+                            suggest_heuristic(store, config, &taxonomy, &considered)?;
+                        embedding_heuristics_enabled = enabled;
                         for item in &mut s {
                             item.reason = format!("llm_fallback: {}; {}", e, item.reason);
                         }
@@ -200,7 +224,8 @@ pub async fn maintain_organize(
                     }
                 }
             } else {
-                let mut s = suggest_heuristic(store, &taxonomy, &considered)?;
+                let (mut s, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+                embedding_heuristics_enabled = enabled;
                 for item in &mut s {
                     item.reason = format!(
                         "llm unavailable (enabled={}, client={}); {}",
@@ -213,7 +238,8 @@ pub async fn maintain_organize(
             }
         }
         OrganizeMode::Auto => {
-            let mut s = suggest_heuristic(store, &taxonomy, &considered)?;
+            let (mut s, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+            embedding_heuristics_enabled = enabled;
             let need_llm: Vec<Document> = considered
                 .iter()
                 .filter(|d| {
@@ -428,11 +454,13 @@ pub async fn maintain_organize(
         min_confidence,
         dry_run,
         llm.is_some() && config.llm_enabled,
+        embedding_heuristics_enabled,
     );
 
     let mut report = OrganizeReport {
         dry_run,
         mode: opts.mode.as_str().into(),
+        embedding_heuristics_enabled,
         unscoped_total,
         unscoped_considered,
         skipped_cap,
@@ -493,16 +521,18 @@ fn build_notes(
     min_confidence: f64,
     dry_run: bool,
     llm_ready: bool,
+    embedding_heuristics_enabled: bool,
 ) -> String {
     let above: usize = suggestions
         .iter()
         .filter(|s| s.confidence >= min_confidence)
         .count();
     format!(
-        "mode={} dry_run={} llm_ready={} unscoped={} suggestions={} actionable>={:.2}:{}{}",
+        "mode={} dry_run={} llm_ready={} embedding_heuristics_enabled={} unscoped={} suggestions={} actionable>={:.2}:{}{}",
         mode.as_str(),
         dry_run,
         llm_ready,
+        embedding_heuristics_enabled,
         unscoped_total,
         suggestions.len(),
         min_confidence,
@@ -515,39 +545,14 @@ fn build_notes(
     )
 }
 
-/// Active (non-archived) documents with empty/null wing, excluding system layers.
-fn list_unscoped_documents(store: &Store) -> Result<Vec<Document>> {
-    let docs = store.list_documents()?;
-    let mut out = Vec::new();
-    for d in docs {
-        if SKIP_LAYERS.iter().any(|l| d.layer == *l) {
-            continue;
-        }
-        let status = d.status.trim().to_ascii_lowercase();
-        if status == "archived" || status == "tombstone" {
-            continue;
-        }
-        let wing_empty = d.wing.as_ref().map(|w| w.trim().is_empty()).unwrap_or(true);
-        if wing_empty {
-            out.push(d);
-        }
-    }
-    // Prefer recently updated first so maintain touches hot docs under cap.
-    out.sort_by(|a, b| {
-        b.updated_at
-            .cmp(&a.updated_at)
-            .then_with(|| a.title.cmp(&b.title))
-    });
-    Ok(out)
-}
-
 fn suggest_heuristic(
     store: &Store,
+    config: &Config,
     taxonomy: &Taxonomy,
     unscoped: &[Document],
-) -> Result<Vec<RefileSuggestion>> {
+) -> Result<(Vec<RefileSuggestion>, bool)> {
     if unscoped.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
 
     let wing_names: Vec<String> = taxonomy.wings.iter().map(|w| w.wing.clone()).collect();
@@ -562,23 +567,25 @@ fn suggest_heuristic(
         })
         .collect();
 
-    // Preload embeddings for kNN labels when corpus has labeled docs.
-    let labeled = store.list_documents()?.into_iter().filter(|d| {
-        d.wing
-            .as_ref()
-            .map(|w| !w.trim().is_empty())
-            .unwrap_or(false)
-            && !SKIP_LAYERS.iter().any(|l| d.layer == *l)
-    });
-    let first_emb = first_chunk_embeddings(store)?;
-    let labeled_emb: Vec<(String, String, Option<String>, Vec<f32>)> = labeled
-        .filter_map(|d| {
-            let emb = first_emb.get(&d.id)?.clone();
-            let wing = d.wing?;
-            Some((d.id, wing, d.room, emb))
-        })
-        .collect();
-
+    // Snapshot embedding signals only while the corpus identity is stable. An
+    // incomplete migration disables this heuristic explicitly; deterministic
+    // path/title rules remain available and cannot mislabel mixed vectors as a
+    // trustworthy kNN result.
+    let embedding_heuristics_enabled = store.embedding_manifest_matches_config(config)?;
+    let (first_emb, labeled_emb) = if embedding_heuristics_enabled {
+        let first_emb = first_chunk_embeddings(store, unscoped)?;
+        let labeled_emb = store
+            .representative_document_embeddings(EMBED_LABEL_MAX_DOCS, true, true, true)?
+            .into_iter()
+            .filter_map(|sample| {
+                let wing = sample.wing?;
+                Some((sample.document_id, wing, sample.room, sample.embedding))
+            })
+            .collect();
+        (first_emb, labeled_emb)
+    } else {
+        (BTreeMap::new(), Vec::new())
+    };
     let mut out = Vec::with_capacity(unscoped.len());
     for doc in unscoped {
         if let Some(s) = heuristic_path(doc, &wing_names, &room_by_wing) {
@@ -595,7 +602,7 @@ fn suggest_heuristic(
         }
         // No signal: skip (no forced default wing).
     }
-    Ok(out)
+    Ok((out, embedding_heuristics_enabled))
 }
 
 fn heuristic_path(
@@ -767,11 +774,15 @@ fn heuristic_embedding(
     })
 }
 
-fn first_chunk_embeddings(store: &Store) -> Result<BTreeMap<String, Vec<f32>>> {
-    let chunks = store.all_chunks_with_embeddings()?;
+fn first_chunk_embeddings(
+    store: &Store,
+    documents: &[Document],
+) -> Result<BTreeMap<String, Vec<f32>>> {
     let mut first: BTreeMap<String, Vec<f32>> = BTreeMap::new();
-    for c in chunks {
-        first.entry(c.document_id).or_insert(c.embedding);
+    for document in documents {
+        if let Some(embedding) = store.first_chunk_embedding(&document.id)? {
+            first.insert(document.id.clone(), embedding);
+        }
     }
     Ok(first)
 }
@@ -1228,6 +1239,50 @@ mod tests {
         assert_eq!(doc.wing.as_deref(), Some("research"));
         let ops = store.list_ops_log(5).unwrap();
         assert!(ops.iter().any(|o| o.op == "maintain_organize"));
+    }
+
+    #[tokio::test]
+    async fn migration_disables_embedding_heuristics_without_false_suggestions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("org-migration-incomplete.duckdb");
+        let store = Store::open(&path).unwrap();
+        let cfg = test_config(path);
+        seed_doc(
+            &store,
+            "placed",
+            "Seed",
+            "labeled vector seed",
+            Some("research"),
+            Some("core"),
+            None,
+            "text://raw/a",
+        );
+        seed_doc(
+            &store,
+            "loose",
+            "Loose",
+            "unscoped vector candidate",
+            None,
+            None,
+            None,
+            "text://raw/b",
+        );
+        store
+            .set_embedding_manifest(&crate::db::store::embedding_migration_manifest(&cfg))
+            .unwrap();
+
+        let report = maintain_organize(&store, &cfg, None, &OrganizeOptions::from_config(&cfg))
+            .await
+            .unwrap();
+
+        assert!(!report.embedding_heuristics_enabled);
+        assert!(report.suggestions.is_empty());
+        assert!(report
+            .notes
+            .as_deref()
+            .unwrap_or_default()
+            .contains("embedding_heuristics_enabled=false"));
+        assert!(store.get_document("loose").unwrap().unwrap().wing.is_none());
     }
 
     #[tokio::test]

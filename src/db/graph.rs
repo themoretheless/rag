@@ -223,6 +223,63 @@ impl Store {
         Ok(GraphView { nodes, edges })
     }
 
+    /// Resolve and expand a seed with the same PKB relation/kind policy as the
+    /// global UI graph export.
+    ///
+    /// Filtering happens while discovering neighbors, before `max_nodes` is
+    /// applied. This prevents hidden tag, tunnel, or dependency edges from
+    /// consuming the focused-view budget.
+    pub fn export_pkb_neighbors_for_ui(
+        &self,
+        seed: &str,
+        depth: u32,
+        max_nodes: u32,
+        include_tags: bool,
+    ) -> Result<GraphView> {
+        let seed = seed.trim();
+        if seed.is_empty() {
+            return Ok(GraphView::default());
+        }
+        let depth = depth.clamp(1, 3);
+        let max_nodes = max_nodes.clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
+        let conn = self.lock()?;
+        let Some(seed_node) = resolve_ui_seed_locked(&conn, seed, include_tags)? else {
+            return Ok(GraphView::default());
+        };
+
+        let mut visited = vec![seed_node.id.clone()];
+        let mut seen = HashSet::from([seed_node.id.clone()]);
+        let mut frontier = vec![seed_node.id];
+        for _ in 0..depth {
+            let remaining = max_nodes - visited.len();
+            if remaining == 0 {
+                break;
+            }
+            let candidate_limit = remaining + seen.len();
+            let candidates =
+                discover_ui_neighbors_locked(&conn, &frontier, candidate_limit, include_tags)?;
+            let mut next_frontier = Vec::new();
+            for candidate in candidates {
+                if seen.insert(candidate.clone()) {
+                    next_frontier.push(candidate);
+                    if next_frontier.len() == remaining {
+                        break;
+                    }
+                }
+            }
+            if next_frontier.is_empty() {
+                break;
+            }
+            visited.extend(next_frontier.iter().cloned());
+            frontier = next_frontier;
+        }
+
+        let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        enrich_document_placements_locked(&conn, &mut nodes)?;
+        let edges = load_bounded_ui_edges_locked(&conn, &visited, include_tags)?;
+        Ok(GraphView { nodes, edges })
+    }
+
     /// Resolve a UI seed string: exact node id, then `document_id`, then exact label.
     ///
     /// Label matches prefer resolved `document` nodes, then any document, else first hit.
@@ -930,6 +987,14 @@ fn scoped_companion_kinds(include_tags: bool) -> &'static str {
     }
 }
 
+fn ui_node_kinds(include_tags: bool) -> &'static str {
+    if include_tags {
+        "'document', 'stub', 'entity', 'tag'"
+    } else {
+        "'document', 'stub', 'entity'"
+    }
+}
+
 fn values_clause(len: usize) -> String {
     (0..len).map(|_| "(?)").collect::<Vec<_>>().join(", ")
 }
@@ -1105,6 +1170,38 @@ fn resolve_project_seed_locked(
     Ok(None)
 }
 
+fn resolve_ui_seed_locked(
+    conn: &duckdb::Connection,
+    seed: &str,
+    include_tags: bool,
+) -> Result<Option<GraphNode>> {
+    let node_kinds = ui_node_kinds(include_tags);
+    for column in ["id", "document_id", "label"] {
+        let sql = format!(
+            r#"
+            SELECT id, kind, label, document_id, uri, resolved, metadata_json
+            FROM graph_nodes
+            WHERE {column} = ?
+              AND kind IN ({node_kinds})
+            ORDER BY
+              CASE
+                WHEN kind = 'document' AND resolved THEN 0
+                WHEN kind = 'document' THEN 1
+                ELSE 2
+              END,
+              id
+            LIMIT 1
+            "#
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![seed])?;
+        if let Some(row) = rows.next()? {
+            return Ok(Some(row_to_node(row)?));
+        }
+    }
+    Ok(None)
+}
+
 fn find_scoped_node_locked(
     conn: &duckdb::Connection,
     project: &str,
@@ -1250,6 +1347,64 @@ fn discover_scoped_neighbors_locked(
     Ok(neighbors)
 }
 
+fn discover_ui_neighbors_locked(
+    conn: &duckdb::Connection,
+    frontier: &[String],
+    limit: usize,
+    include_tags: bool,
+) -> Result<Vec<String>> {
+    if frontier.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let frontier_values = (0..frontier.len())
+        .map(|ordinal| format!("(?, {ordinal})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let relation_types = scoped_relation_types(include_tags);
+    let node_kinds = ui_node_kinds(include_tags);
+    let sql = format!(
+        r#"
+        WITH frontier(id, ordinal) AS (VALUES {frontier_values}),
+        incident AS (
+          SELECT
+            frontier.ordinal AS frontier_ordinal,
+            e.id AS edge_id,
+            e.target_id AS neighbor_id,
+            e.rel_type
+          FROM frontier
+          JOIN graph_edges e ON e.source_id = frontier.id
+          UNION ALL
+          SELECT
+            frontier.ordinal AS frontier_ordinal,
+            e.id AS edge_id,
+            e.source_id AS neighbor_id,
+            e.rel_type
+          FROM frontier
+          JOIN graph_edges e ON e.target_id = frontier.id
+        )
+        SELECT incident.neighbor_id
+        FROM incident
+        JOIN graph_nodes neighbor ON neighbor.id = incident.neighbor_id
+        WHERE incident.rel_type IN ({relation_types})
+          AND neighbor.kind IN ({node_kinds})
+        GROUP BY incident.neighbor_id
+        ORDER BY
+          MIN(incident.frontier_ordinal),
+          MIN(incident.edge_id),
+          incident.neighbor_id
+        LIMIT {limit}
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(frontier.iter()))?;
+    let mut neighbors = Vec::with_capacity(limit);
+    while let Some(row) = rows.next()? {
+        neighbors.push(row.get(0)?);
+    }
+    Ok(neighbors)
+}
+
 fn load_nodes_by_ids_locked(
     conn: &duckdb::Connection,
     node_ids: &[String],
@@ -1316,6 +1471,43 @@ fn load_bounded_scoped_edges_locked(
     binds.extend([project.to_string(), project.to_string()]);
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(binds.iter()))?;
+    let mut edges = Vec::with_capacity(max_edges.min(1024));
+    while let Some(row) = rows.next()? {
+        edges.push(row_to_edge(row)?);
+    }
+    Ok(edges)
+}
+
+fn load_bounded_ui_edges_locked(
+    conn: &duckdb::Connection,
+    node_ids: &[String],
+    include_tags: bool,
+) -> Result<Vec<GraphEdge>> {
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let selected = values_clause(node_ids.len());
+    let relation_types = scoped_relation_types(include_tags);
+    let relation_count = if include_tags { 3 } else { 2 };
+    let max_edges = node_ids
+        .len()
+        .saturating_mul(node_ids.len())
+        .saturating_mul(relation_count)
+        .max(1);
+    let sql = format!(
+        r#"
+        WITH selected(id) AS (VALUES {selected})
+        SELECT e.id, e.source_id, e.target_id, e.rel_type, e.weight, e.context
+        FROM graph_edges e
+        JOIN selected source_selected ON source_selected.id = e.source_id
+        JOIN selected target_selected ON target_selected.id = e.target_id
+        WHERE e.rel_type IN ({relation_types})
+        ORDER BY e.id
+        LIMIT {max_edges}
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(node_ids.iter()))?;
     let mut edges = Vec::with_capacity(max_edges.min(1024));
     while let Some(row) = rows.next()? {
         edges.push(row_to_edge(row)?);
@@ -1685,8 +1877,7 @@ mod tests {
 
         let with_tags = store.export_graph_for_ui(Some(300), true).unwrap();
         assert!(with_tags.nodes.iter().any(|n| n.kind == "tag"));
-        // tagged edges still excluded by PKB rel_types
-        assert!(!with_tags.edges.iter().any(|e| e.rel_type == "tagged"));
+        assert!(with_tags.edges.iter().any(|e| e.rel_type == "tagged"));
 
         let by_label = store.find_seed_node("A").unwrap().expect("label seed");
         assert_eq!(by_label.id, "n1");
@@ -1695,6 +1886,57 @@ mod tests {
         let local = store.export_neighbors_for_ui("A", 1, 100).unwrap();
         assert!(local.nodes.iter().any(|n| n.id == "n1"));
         assert!(local.nodes.iter().any(|n| n.id == "n2"));
+    }
+
+    #[test]
+    fn pkb_neighbors_filter_hidden_relations_before_budget_and_honor_tags() {
+        let store = open_temp();
+        for (id, kind, label) in [
+            ("seed", "document", "Seed"),
+            ("wanted", "document", "Wanted"),
+            ("hidden", "document", "Hidden"),
+            ("tag", "tag", "Tag"),
+        ] {
+            store
+                .upsert_graph_node(&node(id, kind, label, None))
+                .unwrap();
+        }
+        store
+            .insert_graph_edges(&[
+                edge("00-tunnel", "seed", "hidden", "tunnel"),
+                edge("01-wikilink", "seed", "wanted", "wikilink"),
+                edge("02-tagged", "seed", "tag", "tagged"),
+                edge("03-dependency", "seed", "hidden", "depends_on"),
+            ])
+            .unwrap();
+
+        let without_tags = store
+            .export_pkb_neighbors_for_ui("Seed", 1, 2, false)
+            .unwrap();
+        let without_ids = without_tags
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(without_ids, HashSet::from(["seed", "wanted"]));
+        assert_eq!(without_tags.edges.len(), 1);
+        assert_eq!(without_tags.edges[0].rel_type, "wikilink");
+
+        let with_tags = store
+            .export_pkb_neighbors_for_ui("Seed", 1, 3, true)
+            .unwrap();
+        let with_ids = with_tags
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(with_ids, HashSet::from(["seed", "tag", "wanted"]));
+        assert!(with_tags.edges.iter().any(|edge| edge.rel_type == "tagged"));
+        assert!(!with_tags.nodes.iter().any(|node| node.id == "hidden"));
+        assert!(with_tags
+            .edges
+            .iter()
+            .all(|edge| matches!(edge.rel_type.as_str(), "wikilink" | "tagged")));
     }
 
     #[test]

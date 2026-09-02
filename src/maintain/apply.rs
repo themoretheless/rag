@@ -15,10 +15,12 @@ use uuid::Uuid;
 
 use super::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use super::refresh::{
-    rebuild_graph_for_all_or_dirty, rebuild_wiki_index, reembed_all, reindex_fts,
+    ensure_fts_nonblocking, rebuild_graph_for_all_or_dirty, rebuild_wiki_index, reembed_all,
+    reembed_all_incomplete, reembed_all_incomplete_message, reindex_fts_nonblocking,
+    REEMBED_ALL_INCOMPLETE_CODE,
 };
 use crate::config::Config;
-use crate::db::Store;
+use crate::db::{self, Store};
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::{rebuild_document_graph, REL_TAGGED};
@@ -91,6 +93,9 @@ pub struct ApplyMaintenancePlanReport {
     pub ops_log_seq: Option<i64>,
 }
 
+#[cfg(test)]
+const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_finalize_fts__";
+
 /// Apply (or dry-run) a list of whitelist maintenance plan items.
 ///
 /// Invalid items become `errors` and are not executed. Document-scoped actions
@@ -116,6 +121,12 @@ pub async fn apply_maintenance_plan(
     let mut errors = Vec::new();
     let mut docs_touched = 0usize;
     let total_actions = actions.len();
+    let chunks_generation_before = if dry_run {
+        None
+    } else {
+        let conn = store.lock()?;
+        Some(db::chunks_generation(&conn)?)
+    };
 
     for (index, raw) in actions.into_iter().enumerate() {
         let action_name = raw.action.as_str().to_string();
@@ -167,6 +178,7 @@ pub async fn apply_maintenance_plan(
             llm,
             dry_run,
             agent,
+            remaining_docs: max_docs.saturating_sub(docs_touched),
         };
         let step = execute_one(&context, &action, index).await;
 
@@ -184,6 +196,49 @@ pub async fn apply_maintenance_plan(
             }
             ActionOutcomeKind::Skipped => skipped.push(outcome),
             ActionOutcomeKind::Error => errors.push(outcome),
+        }
+    }
+
+    if let Some(chunks_generation_before) = chunks_generation_before {
+        let chunks_generation_after = {
+            let conn = store.lock()?;
+            db::chunks_generation(&conn)?
+        };
+        if chunks_generation_after != chunks_generation_before {
+            // A plan may combine reindex with later delete/re-embed/write
+            // actions. Reconcile once at the plan boundary, independent of
+            // action ordering, before returning the aggregate result.
+            if let Err(error) = finalize_fts_after_plan(store, &config.fts_stemmer).await {
+                // Durable mutations have already committed. Preserve their
+                // aggregate outcomes and make the derived-index failure an
+                // additive result that the next lexical read can retry.
+                let error_message = error.to_string();
+                let dirty_marker_error = store
+                    .mark_fts_dirty_for_retry()
+                    .err()
+                    .map(|marker_error| marker_error.to_string());
+                let mut outcome = ActionOutcome {
+                    index: total_actions,
+                    action: "finalize_fts".into(),
+                    target_id: None,
+                    outcome: ActionOutcomeKind::Error,
+                    message: format!(
+                        "durable corpus mutation committed, but final FTS refresh failed: {error_message}"
+                    ),
+                    detail: Some(json!({
+                        "code": "FTS_FINALIZATION_FAILED",
+                        "stage": "finalize_fts",
+                        "durable_mutation_committed": true,
+                        "retryable": true,
+                        "fallback_dirty_marked": dirty_marker_error.is_none(),
+                        "dirty_marker_error": dirty_marker_error,
+                        "error": error_message,
+                    })),
+                    ops_log_id: None,
+                };
+                outcome.ops_log_id = log_action(store, &outcome, false, agent);
+                errors.push(outcome);
+            }
         }
     }
 
@@ -229,6 +284,15 @@ pub async fn apply_maintenance_plan(
     Ok(report)
 }
 
+async fn finalize_fts_after_plan(store: &Store, stemmer: &str) -> Result<()> {
+    #[cfg(test)]
+    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
+        return Err(AppError::fts("injected final FTS refresh failure"));
+    }
+
+    ensure_fts_nonblocking(store, stemmer, "apply_maintenance_plan final refresh").await
+}
+
 struct StepResult {
     outcome: ActionOutcome,
     docs_delta: usize,
@@ -241,6 +305,7 @@ struct MaintenanceExecutionContext<'a> {
     llm: Option<&'a ChatClient>,
     dry_run: bool,
     agent: Option<&'a str>,
+    remaining_docs: usize,
 }
 
 async fn execute_one(
@@ -283,9 +348,11 @@ async fn execute_one(
         MaintenanceAction::RebuildGraph => {
             apply_rebuild_graph(store, index, name, params, config, dry_run)
         }
-        MaintenanceAction::ReindexFts => apply_reindex_fts(store, index, name, config, dry_run),
+        MaintenanceAction::ReindexFts => {
+            apply_reindex_fts(store, index, name, config, dry_run).await
+        }
         MaintenanceAction::Reembed => {
-            apply_reembed_one(store, embedder, index, name, target, dry_run).await
+            apply_reembed_one(store, embedder, config, index, name, target, dry_run).await
         }
         MaintenanceAction::ReembedAll => {
             apply_reembed_all(store, embedder, config, index, name, params, dry_run).await
@@ -323,7 +390,15 @@ async fn execute_one(
             docs_delta: 0,
         }),
         MaintenanceAction::MergeExactDup => {
-            apply_merge_exact_dup(store, index, name, target, params, dry_run)
+            apply_merge_exact_dup(
+                store,
+                index,
+                name,
+                target,
+                params,
+                dry_run,
+                context.remaining_docs,
+            )
         }
         MaintenanceAction::MergeNearDup => Ok(StepResult {
             outcome: skip_outcome(
@@ -610,7 +685,14 @@ fn apply_refile(
 
     if dry_run {
         return Ok(StepResult {
-            outcome: ok_outcome(index, name, Some(id), true, "refile document meta", Some(detail)),
+            outcome: ok_outcome(
+                index,
+                name,
+                Some(id),
+                true,
+                "refile document meta",
+                Some(detail),
+            ),
             docs_delta: 1,
         });
     }
@@ -688,9 +770,8 @@ fn apply_set_boost(
     dry_run: bool,
 ) -> Result<StepResult> {
     let id = require_target(target, name)?;
-    let boost = param_f64(params, "boost").ok_or_else(|| {
-        AppError::config("set_boost requires params.boost (finite number > 0)")
-    })?;
+    let boost = param_f64(params, "boost")
+        .ok_or_else(|| AppError::config("set_boost requires params.boost (finite number > 0)"))?;
     if !boost.is_finite() || boost <= 0.0 {
         return Err(AppError::config(format!(
             "boost must be finite and > 0 (got {boost})"
@@ -839,9 +920,9 @@ fn apply_set_tags_inner(
                 .get_document(id)?
                 .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
             let (node_id, _) = rebuild_document_graph(store, &doc)?;
-            store
-                .find_node_by_id(&node_id)?
-                .ok_or_else(|| AppError::db(format!("graph node missing after rebuild: {node_id}")))?
+            store.find_node_by_id(&node_id)?.ok_or_else(|| {
+                AppError::db(format!("graph node missing after rebuild: {node_id}"))
+            })?
         }
     };
 
@@ -924,7 +1005,7 @@ fn apply_rebuild_index(
     dry_run: bool,
 ) -> Result<StepResult> {
     if dry_run {
-        let n = store.list_documents_by_layer("wiki")?.len();
+        let n = store.count_documents_by_layer("wiki")?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,
@@ -963,20 +1044,11 @@ fn apply_rebuild_graph(
     let max_docs = param_f64(params, "max_docs")
         .map(|n| n as usize)
         .unwrap_or(config.maint_max_docs)
-        .max(1);
+        .max(1)
+        .min(config.maint_max_docs.max(1));
 
     if dry_run {
-        let docs = store.list_documents()?;
-        let mut candidate_count = 0usize;
-        for doc in &docs {
-            if dirty_only {
-                if store.find_node_by_document_id(&doc.id)?.is_none() {
-                    candidate_count += 1;
-                }
-            } else {
-                candidate_count += 1;
-            }
-        }
+        let candidate_count = store.count_graph_rebuild_candidates(dirty_only)?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,
@@ -1013,7 +1085,7 @@ fn apply_rebuild_graph(
     })
 }
 
-fn apply_reindex_fts(
+async fn apply_reindex_fts(
     store: &Store,
     index: usize,
     name: &str,
@@ -1033,7 +1105,9 @@ fn apply_reindex_fts(
             docs_delta: 0,
         });
     }
-    let report = reindex_fts(store, Some(&config.fts_stemmer))?;
+    let report =
+        reindex_fts_nonblocking(store, &config.fts_stemmer, "apply_maintenance_plan reindex")
+            .await?;
     Ok(StepResult {
         outcome: ok_outcome(
             index,
@@ -1053,6 +1127,7 @@ fn apply_reindex_fts(
 async fn apply_reembed_one(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
     index: usize,
     name: &str,
     target: Option<&str>,
@@ -1062,6 +1137,7 @@ async fn apply_reembed_one(
     let doc = store
         .get_document(id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
+    store.require_embedding_manifest_match(config)?;
     let chunks = store.list_chunks_for_document(&doc.id)?;
     if dry_run {
         return Ok(StepResult {
@@ -1077,7 +1153,6 @@ async fn apply_reembed_one(
         });
     }
 
-    let mut chunks = chunks;
     if !chunks.is_empty() {
         let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
         let embeddings = embedder.embed(&texts).await?;
@@ -1088,10 +1163,7 @@ async fn apply_reembed_one(
                 chunks.len()
             )));
         }
-        for (chunk, emb) in chunks.iter_mut().zip(embeddings) {
-            chunk.embedding = emb;
-        }
-        store.replace_chunks_for_document(&doc.id, &chunks)?;
+        store.update_chunk_embeddings_atomic(&doc.id, doc.revision, &chunks, &embeddings, None)?;
     }
     Ok(StepResult {
         outcome: ok_outcome(
@@ -1118,10 +1190,11 @@ async fn apply_reembed_all(
     let max_docs = param_f64(params, "max_docs")
         .map(|n| n as usize)
         .unwrap_or(config.maint_max_docs)
-        .max(1);
+        .max(1)
+        .min(config.maint_max_docs.max(1));
 
     if dry_run {
-        let n = store.list_documents()?.len();
+        let n = store.count_documents()?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,
@@ -1136,6 +1209,24 @@ async fn apply_reembed_all(
     }
 
     let report = reembed_all(store, embedder, config, max_docs).await?;
+    if reembed_all_incomplete(&report) {
+        return Ok(StepResult {
+            outcome: ActionOutcome {
+                index,
+                action: name.into(),
+                target_id: None,
+                outcome: ActionOutcomeKind::Error,
+                message: reembed_all_incomplete_message(&report),
+                detail: Some(json!({
+                    "code": REEMBED_ALL_INCOMPLETE_CODE,
+                    "retryable": true,
+                    "report": report,
+                })),
+                ops_log_id: None,
+            },
+            docs_delta: 0,
+        });
+    }
     Ok(StepResult {
         outcome: ok_outcome(
             index,
@@ -1187,10 +1278,7 @@ async fn apply_compile_source(
                     true,
                     format!(
                         "compile_source proposed {} pages",
-                        res.proposed
-                            .as_ref()
-                            .map(|p| p.pages.len())
-                            .unwrap_or(0)
+                        res.proposed.as_ref().map(|p| p.pages.len()).unwrap_or(0)
                     ),
                     Some(serde_json::to_value(&res).unwrap_or(json!({}))),
                 ),
@@ -1343,20 +1431,16 @@ async fn apply_refresh_stale(
     let dry_run = context.dry_run;
     let agent = context.agent;
     let max_docs = param_f64(params, "max_docs").map(|n| n as usize);
-    let nested_dry = param_bool(params, "dry_run").unwrap_or(dry_run);
+    // A nested action may opt into preview inside an applying plan, but it may
+    // never override the plan-wide safety boundary in the mutating direction.
+    let nested_dry = dry_run || param_bool(params, "dry_run").unwrap_or(false);
     let llm_ref = if !nested_dry && config.llm_enabled {
         llm
     } else {
         None
     };
     let res = wiki::refresh_stale_wiki(
-        store,
-        embedder,
-        config,
-        llm_ref,
-        nested_dry,
-        max_docs,
-        agent,
+        store, embedder, config, llm_ref, nested_dry, max_docs, agent,
     )
     .await?;
     Ok(StepResult {
@@ -1364,7 +1448,7 @@ async fn apply_refresh_stale(
             index,
             name,
             None,
-            dry_run,
+            nested_dry,
             format!(
                 "refresh_stale_wiki stale={} applied_nested={}",
                 res.stale_count, !nested_dry
@@ -1448,6 +1532,7 @@ fn apply_merge_exact_dup(
     target: Option<&str>,
     params: &serde_json::Value,
     dry_run: bool,
+    remaining_docs: usize,
 ) -> Result<StepResult> {
     let keep_id = target
         .map(str::trim)
@@ -1461,6 +1546,16 @@ fn apply_merge_exact_dup(
     let keep = store
         .get_document(&keep_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
+    let expected_hash = crate::util::content_hash(&keep.content);
+    let declared_hash = param_str(params, "content_hash");
+    if declared_hash
+        .as_deref()
+        .is_some_and(|declared| declared != expected_hash)
+    {
+        return Err(AppError::conflict(format!(
+            "merge_exact_dup declared content_hash does not match canonical document {keep_id}"
+        )));
+    }
 
     let mut source_ids = param_str_list(params, "source_ids");
     if source_ids.is_empty() {
@@ -1474,26 +1569,38 @@ fn apply_merge_exact_dup(
             source_ids.push(b);
         }
     }
-    source_ids.retain(|id| id != &keep_id);
+    let mut seen = std::collections::HashSet::new();
+    source_ids = source_ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && id != &keep_id && seen.insert(id.clone()))
+        .collect();
     // If document_ids included keep, drop it; if only keep remains empty, expand via hash.
+    let requested_sources = if source_ids.is_empty() {
+        let (candidate_count, candidates) =
+            store.exact_duplicate_source_ids(&expected_hash, &keep_id, remaining_docs)?;
+        source_ids = candidates;
+        candidate_count
+    } else {
+        source_ids.len()
+    };
+
     if source_ids.is_empty() {
-        if let Some(ref h) = keep.content_hash {
-            source_ids = store
-                .list_by_content_hash(h)?
-                .into_iter()
-                .map(|d| d.id)
-                .filter(|id| id != &keep_id)
-                .collect();
-        }
+        return Ok(StepResult {
+            outcome: skip_outcome(index, name, Some(&keep_id), "no duplicate sources to merge"),
+            docs_delta: 0,
+        });
     }
 
+    source_ids.truncate(remaining_docs);
+    let skipped_cap = requested_sources.saturating_sub(source_ids.len());
     if source_ids.is_empty() {
         return Ok(StepResult {
             outcome: skip_outcome(
                 index,
                 name,
                 Some(&keep_id),
-                "no duplicate sources to merge",
+                "no remaining document budget for duplicate sources",
             ),
             docs_delta: 0,
         });
@@ -1503,6 +1610,18 @@ fn apply_merge_exact_dup(
     let hard_delete = param_bool(params, "delete").unwrap_or(false);
 
     if dry_run {
+        // Dry-run uses the same fail-closed body proof without invoking the
+        // mutating transaction.
+        for source_id in &source_ids {
+            let source = store
+                .get_document(source_id)?
+                .ok_or_else(|| AppError::not_found(format!("document not found: {source_id}")))?;
+            if crate::util::content_hash(&source.content) != expected_hash {
+                return Err(AppError::conflict(format!(
+                    "merge_exact_dup source {source_id} is not an exact content duplicate of {keep_id}"
+                )));
+            }
+        }
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,
@@ -1516,50 +1635,33 @@ fn apply_merge_exact_dup(
                 Some(json!({
                     "keep_id": keep_id,
                     "source_ids": source_ids,
+                    "skipped_cap": skipped_cap,
                     "hard_delete": hard_delete,
                     "allow_raw_delete": allow_raw_delete,
                 })),
             ),
-            docs_delta: source_ids.len().saturating_add(1),
+            docs_delta: source_ids.len(),
         });
     }
 
-    let mut merged = Vec::new();
-    let mut blocked = Vec::new();
-    for sid in &source_ids {
-        let Some(src) = store.get_document(sid)? else {
-            blocked.push(json!({"id": sid, "error": "not found"}));
-            continue;
-        };
-        if hard_delete {
-            if src.layer == "raw" && !allow_raw_delete {
-                store.update_document_meta(
-                    sid,
-                    &DocumentMetaUpdate {
-                        status: Some("archived".into()),
-                        ..Default::default()
-                    },
-                )?;
-                blocked.push(json!({
-                    "id": sid,
-                    "note": "raw not hard-deleted (allow_raw_delete=false); archived instead",
-                }));
-                merged.push(sid.clone());
-            } else {
-                store.delete_document(sid)?;
-                merged.push(sid.clone());
-            }
-        } else {
-            store.update_document_meta(
-                sid,
-                &DocumentMetaUpdate {
-                    status: Some("archived".into()),
-                    ..Default::default()
-                },
-            )?;
-            merged.push(sid.clone());
-        }
-    }
+    let merge = store.merge_exact_duplicates_atomic(
+        &keep_id,
+        &source_ids,
+        declared_hash.as_deref(),
+        hard_delete,
+        allow_raw_delete,
+    )?;
+    let blocked = merge
+        .raw_protected
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "note": "raw not hard-deleted (allow_raw_delete=false); archived instead",
+            })
+        })
+        .collect::<Vec<_>>();
+    let merged = merge.merged;
 
     Ok(StepResult {
         outcome: ok_outcome(
@@ -1572,10 +1674,11 @@ fn apply_merge_exact_dup(
                 "keep_id": keep_id,
                 "merged": merged,
                 "blocked": blocked,
+                "skipped_cap": skipped_cap,
                 "hard_delete": hard_delete,
             })),
         ),
-        docs_delta: merged.len().saturating_add(1),
+        docs_delta: merged.len(),
     })
 }
 
@@ -1591,7 +1694,8 @@ fn apply_drop_tombstones(
     let max_docs = param_f64(params, "max_docs")
         .map(|n| n as usize)
         .unwrap_or(config.maint_max_docs)
-        .max(1);
+        .max(1)
+        .min(config.maint_max_docs.max(1));
 
     let conn = store.lock()?;
     let mut stmt = conn.prepare(
@@ -1602,7 +1706,8 @@ fn apply_drop_tombstones(
         LIMIT ?
         "#,
     )?;
-    let mut rows = stmt.query(duckdb::params![max_docs as i64])?;
+    let limit = i64::try_from(max_docs).unwrap_or(i64::MAX);
+    let mut rows = stmt.query(duckdb::params![limit])?;
     let mut candidates: Vec<(String, String)> = Vec::new();
     while let Some(row) = rows.next()? {
         candidates.push((row.get(0)?, row.get(1)?));
@@ -1635,17 +1740,18 @@ fn apply_drop_tombstones(
         });
     }
 
-    let mut deleted = 0usize;
-    let mut skipped_raw = 0usize;
-    for (id, layer) in &candidates {
-        if layer == "raw" && !allow_raw_delete {
-            skipped_raw += 1;
-            continue;
-        }
-        if store.delete_document(id)? {
-            deleted += 1;
-        }
-    }
+    let delete_ids = candidates
+        .iter()
+        .filter(|(_, layer)| allow_raw_delete || !layer.eq_ignore_ascii_case("raw"))
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    let skipped_raw = candidates.len().saturating_sub(delete_ids.len());
+    let deleted = if delete_ids.is_empty() {
+        0
+    } else {
+        let (deleted, _, _) = store.apply_document_dispositions_atomic(&delete_ids, &[])?;
+        usize::try_from(deleted).unwrap_or(usize::MAX)
+    };
 
     Ok(StepResult {
         outcome: ok_outcome(
@@ -1658,6 +1764,7 @@ fn apply_drop_tombstones(
                 "deleted": deleted,
                 "skipped_raw": skipped_raw,
                 "candidates": candidates.len(),
+                "max_docs": max_docs,
             })),
         ),
         docs_delta: 0,
@@ -1699,7 +1806,28 @@ mod tests {
     use crate::embeddings::MockEmbedder;
     use crate::models::{Chunk, Document, SearchMode};
     use crate::util::content_hash;
+    use async_trait::async_trait;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct FailAfterFirstEmbedder {
+        calls: AtomicUsize,
+        dims: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for FailAfterFirstEmbedder {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if self.calls.fetch_add(1, Ordering::Relaxed) > 0 {
+                return Err(AppError::embeddings("injected provider failure"));
+            }
+            Ok(texts.iter().map(|_| vec![0.25; self.dims]).collect())
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
 
     fn test_config(db_path: PathBuf, max_docs: usize) -> Config {
         Config {
@@ -1802,6 +1930,57 @@ mod tests {
         let doc = store.get_document("d1").unwrap().unwrap();
         assert!(doc.wing.is_none());
         assert!(report.ops_log_id.is_some());
+    }
+
+    #[tokio::test]
+    async fn plan_dry_run_cannot_be_disabled_by_refresh_stale_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("refresh-stale-authoritative-dry-run.duckdb");
+        let store = Store::open(&path).unwrap();
+        let mut config = test_config(path, 50);
+        config.llm_enabled = true;
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+
+        seed_doc(&store, "raw", "Raw", "new source body", "raw");
+        seed_doc(&store, "wiki", "Wiki", "compiled body", "wiki");
+        let mut raw = store.get_document("raw").unwrap().unwrap();
+        raw.updated_at = Utc::now();
+        store.upsert_document(&raw).unwrap();
+        let mut wiki = store.get_document("wiki").unwrap().unwrap();
+        wiki.updated_at = raw.updated_at - chrono::Duration::days(1);
+        wiki.metadata_json = json!({"source_id": raw.id}).to_string();
+        store.upsert_document(&wiki).unwrap();
+        let wiki_before = store.get_document("wiki").unwrap().unwrap();
+
+        // If the nested `dry_run=false` escaped the plan-wide boundary, this
+        // unreachable client would be called and the action would fail instead
+        // of returning a pure preview.
+        let llm = ChatClient::with_limits("http://127.0.0.1:9/v1", "x", "m", 1, 16).unwrap();
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            Some(&llm),
+            vec![item(
+                MaintenanceAction::RefreshStaleWiki,
+                None,
+                json!({"dry_run": false, "max_docs": 10}),
+            )],
+            &ApplyPlanOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        assert!(report.dry_run);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.applied.len(), 1);
+        assert!(report.applied[0].message.starts_with("would_apply:"));
+        assert_eq!(report.applied[0].detail.as_ref().unwrap()["dry_run"], true);
+        let wiki_after = store.get_document("wiki").unwrap().unwrap();
+        assert_eq!(wiki_after.revision, wiki_before.revision);
+        assert_eq!(wiki_after.content, wiki_before.content);
     }
 
     #[tokio::test]
@@ -1909,7 +2088,222 @@ mod tests {
             store.get_document("dup2").unwrap().unwrap().status,
             "archived"
         );
-        assert_eq!(store.get_document("keep").unwrap().unwrap().status, "active");
+        assert_eq!(
+            store.get_document("keep").unwrap().unwrap().status,
+            "active"
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_exact_dup_rejects_one_unrelated_source_without_partial_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dup-unrelated.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 50);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        seed_doc(&store, "keep", "Keep", "same body", "wiki");
+        seed_doc(&store, "dup", "Dup", "same body", "wiki");
+        seed_doc(&store, "unrelated", "Other", "different body", "wiki");
+        let mut unrelated = store.get_document("unrelated").unwrap().unwrap();
+        unrelated.content_hash = Some(content_hash("same body"));
+        store.upsert_document(&unrelated).unwrap();
+
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            vec![item(
+                MaintenanceAction::MergeExactDup,
+                Some("keep"),
+                json!({"source_ids": ["dup", "unrelated"], "delete": true}),
+            )],
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.errors.len(), 1);
+        assert!(report.errors[0]
+            .message
+            .contains("not an exact content duplicate"));
+        for id in ["keep", "dup", "unrelated"] {
+            let document = store.get_document(id).unwrap().expect("document retained");
+            assert_eq!(document.status, "active");
+        }
+    }
+
+    #[tokio::test]
+    async fn merge_exact_dup_fallback_hashes_canonical_body_instead_of_trusting_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dup-canonical-hash.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 50);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        seed_doc(&store, "keep", "Keep", "same body", "wiki");
+        seed_doc(&store, "dup", "Dup", "same body", "wiki");
+        let mut keep = store.get_document("keep").unwrap().unwrap();
+        keep.content_hash = Some("forged-canonical-hash".into());
+        store.upsert_document(&keep).unwrap();
+
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            vec![item(
+                MaintenanceAction::MergeExactDup,
+                Some("keep"),
+                json!({}),
+            )],
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(
+            store.get_document("dup").unwrap().unwrap().status,
+            "archived"
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_exact_dup_uses_unique_sources_and_remaining_global_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dup-cap.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 1);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        for id in ["keep", "dup1", "dup2"] {
+            seed_doc(&store, id, id, "same body", "wiki");
+        }
+
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            vec![item(
+                MaintenanceAction::MergeExactDup,
+                Some("keep"),
+                json!({"source_ids": ["dup1", "dup1", "dup2"]}),
+            )],
+            &ApplyPlanOptions {
+                dry_run: false,
+                max_docs: Some(99),
+                agent: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.max_docs, 1);
+        assert_eq!(report.docs_touched, 1);
+        assert_eq!(report.applied[0].detail.as_ref().unwrap()["skipped_cap"], 1);
+        assert_eq!(
+            store.get_document("dup1").unwrap().unwrap().status,
+            "archived"
+        );
+        assert_eq!(
+            store.get_document("dup2").unwrap().unwrap().status,
+            "active"
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_exact_dup_raw_guard_is_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dup-raw-case.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 50);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        seed_doc(&store, "keep", "Keep", "same body", "wiki");
+        seed_doc(&store, "raw-dup", "Raw dup", "same body", "RaW");
+
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            vec![item(
+                MaintenanceAction::MergeExactDup,
+                Some("keep"),
+                json!({"source_ids": ["raw-dup"], "delete": true}),
+            )],
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let source = store.get_document("raw-dup").unwrap().unwrap();
+        assert_eq!(source.status, "archived");
+        assert_eq!(
+            report.applied[0].detail.as_ref().unwrap()["blocked"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("drop-tombstones-cap.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 1);
+        for (id, layer) in [("wiki-a", "wiki"), ("wiki-b", "wiki"), ("raw", "RaW")] {
+            seed_doc(&store, id, id, "body", layer);
+            let mut document = store.get_document(id).unwrap().unwrap();
+            document.status = "tombstone".into();
+            store.upsert_document(&document).unwrap();
+        }
+
+        let first = apply_drop_tombstones(
+            &store,
+            0,
+            "drop_tombstones",
+            &json!({"max_docs": 99, "allow_raw_delete": true}),
+            &config,
+            false,
+        )
+        .unwrap();
+        assert_eq!(first.outcome.detail.as_ref().unwrap()["max_docs"], 1);
+        let remaining_after_cap = ["wiki-a", "wiki-b", "raw"]
+            .into_iter()
+            .filter(|id| store.get_document(id).unwrap().is_some())
+            .count();
+        assert_eq!(remaining_after_cap, 2);
+
+        let raw_only_path = dir.path().join("drop-tombstones-raw.duckdb");
+        let raw_store = Store::open(&raw_only_path).unwrap();
+        let raw_config = test_config(raw_only_path, 50);
+        seed_doc(&raw_store, "raw", "Raw", "body", "rAw");
+        let mut raw = raw_store.get_document("raw").unwrap().unwrap();
+        raw.status = "tombstone".into();
+        raw_store.upsert_document(&raw).unwrap();
+        let guarded = apply_drop_tombstones(
+            &raw_store,
+            0,
+            "drop_tombstones",
+            &json!({"max_docs": 50, "allow_raw_delete": false}),
+            &raw_config,
+            false,
+        )
+        .unwrap();
+        assert!(raw_store.get_document("raw").unwrap().is_some());
+        assert_eq!(guarded.outcome.detail.as_ref().unwrap()["skipped_raw"], 1);
     }
 
     #[tokio::test]
@@ -1969,5 +2363,229 @@ mod tests {
             .unwrap();
         assert_eq!(report.applied.len(), 2);
         assert_eq!(store.list_wiki_index().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reembed_plan_finishes_with_generation_clean_fts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reembed-plan.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 50);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        store.ensure_embedding_manifest(&config).unwrap();
+        seed_doc(&store, "d1", "Alpha", "searchable reembed body", "wiki");
+        store.ensure_fts(&config.fts_stemmer).unwrap();
+
+        let plan = vec![item(MaintenanceAction::Reembed, Some("d1"), json!({}))];
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            plan,
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.errors.len(), 0, "{:?}", report.errors);
+        assert_eq!(report.applied.len(), 1);
+        let generation_after_plan = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(!generation_after_plan.dirty);
+
+        let hits = crate::db::search::search(
+            &store,
+            &crate::db::search::SearchQuery {
+                mode: SearchMode::Lex,
+                query_text: Some("searchable".into()),
+                top_k: 5,
+                fts_stemmer: config.fts_stemmer.clone(),
+                ..crate::db::search::SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        let generation_after_search = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert_eq!(generation_after_search, generation_after_plan);
+    }
+
+    #[tokio::test]
+    async fn partial_reembed_failure_is_structured_error_and_keeps_migration_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial-reembed-plan.duckdb");
+        let store = Store::open(&path).unwrap();
+        let mut config = test_config(path, 50);
+        let mut old_config = config.clone();
+        old_config.embedding_model = "old-model".into();
+        config.embedding_model = "target-model".into();
+        store
+            .write_embedding_manifest_from_config(&old_config)
+            .unwrap();
+        seed_doc(&store, "d1", "One", "first body", "wiki");
+        seed_doc(&store, "d2", "Two", "second body", "wiki");
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailAfterFirstEmbedder {
+            calls: AtomicUsize::new(0),
+            dims: 8,
+        });
+
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            vec![item(
+                MaintenanceAction::ReembedAll,
+                None,
+                json!({"max_docs": 2}),
+            )],
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.applied.is_empty());
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        let error = &report.errors[0];
+        assert_eq!(error.action, "reembed_all");
+        assert_eq!(error.outcome, ActionOutcomeKind::Error);
+        assert_eq!(
+            error.detail.as_ref().unwrap()["code"],
+            "REEMBED_ALL_INCOMPLETE"
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["report"]["documents_failed"],
+            1
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["report"]["documents_succeeded"],
+            1
+        );
+        let target_error = store
+            .require_embedding_manifest_match(&config)
+            .expect_err("target identity must stay blocked after partial migration");
+        assert!(target_error
+            .to_string()
+            .contains("incomplete corpus migration"));
+        store
+            .require_embedding_manifest_match(&old_config)
+            .expect_err("configuration rollback must also stay blocked");
+    }
+
+    #[tokio::test]
+    async fn capped_reembed_is_structured_plan_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capped-reembed-plan.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 50);
+        store.write_embedding_manifest_from_config(&config).unwrap();
+        seed_doc(&store, "d1", "One", "first body", "wiki");
+        seed_doc(&store, "d2", "Two", "second body", "wiki");
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            vec![item(
+                MaintenanceAction::ReembedAll,
+                None,
+                json!({"max_docs": 1}),
+            )],
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.applied.is_empty());
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        let detail = report.errors[0].detail.as_ref().unwrap();
+        assert_eq!(detail["code"], "REEMBED_ALL_INCOMPLETE");
+        assert_eq!(detail["report"]["skipped_cap"], 1);
+        assert_eq!(detail["report"]["documents_failed"], 0);
+    }
+
+    #[tokio::test]
+    async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("final-fts-failure.duckdb");
+        let store = Store::open(&path).unwrap();
+        let mut config = test_config(path, 50);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        let body = "same durable body before failed finalization";
+        seed_doc(&store, "keep", "Keep", body, "wiki");
+        seed_doc(&store, "drop", "Drop", body, "wiki");
+        store.ensure_fts(&config.fts_stemmer).unwrap();
+        config.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+
+        let report = apply_maintenance_plan(
+            &store,
+            &embedder,
+            &config,
+            None,
+            vec![item(
+                MaintenanceAction::MergeExactDup,
+                Some("keep"),
+                json!({"document_ids": ["keep", "drop"], "delete": true}),
+            )],
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("aggregate report survives final FTS failure");
+
+        assert!(store.get_document("keep").unwrap().is_some());
+        assert!(store.get_document("drop").unwrap().is_none());
+        assert_eq!(report.applied.len(), 1);
+        let finalization = report
+            .errors
+            .iter()
+            .find(|outcome| outcome.action == "finalize_fts")
+            .expect("structured finalization error");
+        assert_eq!(finalization.outcome, ActionOutcomeKind::Error);
+        assert_eq!(
+            finalization.detail.as_ref().unwrap()["code"],
+            "FTS_FINALIZATION_FAILED"
+        );
+        assert_eq!(
+            finalization.detail.as_ref().unwrap()["fallback_dirty_marked"],
+            true
+        );
+        let generation = {
+            let conn = store.lock().unwrap();
+            db::fts_generation_state(&conn).unwrap()
+        };
+        assert!(generation.dirty, "next lexical read must retry FTS");
+
+        let summary_id = report.ops_log_id.as_deref().expect("terminal summary id");
+        let summary = store
+            .list_ops_log(10)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.id == summary_id)
+            .expect("terminal summary ops_log row");
+        assert_eq!(summary.op, "apply_maintenance_plan");
+        let payload: serde_json::Value = serde_json::from_str(&summary.payload_json).unwrap();
+        assert!(payload["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|error| error["action"] == "finalize_fts"));
     }
 }

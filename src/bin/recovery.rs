@@ -1,13 +1,12 @@
 //! Offline recovery CLI. Stop the live single-writer service before opening its DB.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use rag_mcp::db::recovery::{
-    backup_inventory, publish_recovery_artifact, retention_preview, verify_backup, BundleDocument,
-    ConflictPolicy, RecoveryBundle, BUNDLE_VERSION,
+    backup_inventory, decode_recovery_bundle, encode_recovery_bundle, publish_recovery_artifact,
+    read_recovery_bundle_file, retention_preview, verify_backup, ConflictPolicy, RecoveryBundle,
+    BUNDLE_VERSION,
 };
 use rag_mcp::util::refuse_live_database_target;
 use rag_mcp::Store;
@@ -138,9 +137,10 @@ fn export_bundle(args: &[String]) -> Result<()> {
     if out.exists() && !overwrite {
         bail!("output exists: {}", out.display());
     }
+    store.portable_recovery_preflight()?;
     let bundle = store.recovery_bundle()?;
     let format = bundle_format(args, &out)?;
-    let encoded = encode_bundle(&bundle, format)?;
+    let encoded = encode_recovery_bundle(&bundle, format)?;
     if !dry_run {
         publish_recovery_artifact(&out, &encoded, overwrite)?;
     }
@@ -156,14 +156,37 @@ fn import_bundle(args: &[String]) -> Result<()> {
     let db = required_path(args, "--db")?;
     let input = required_path(args, "--in")?;
     let format = bundle_format(args, &input)?;
-    let raw = fs::read_to_string(&input)?;
-    let bundle = decode_bundle(&raw, format)?;
+    let raw = read_recovery_bundle_file(&input)?;
+    let bundle = prepare_offline_import_bundle(decode_bundle(&raw, format)?)?;
     let store = Store::open(&db)?;
     let policy = ConflictPolicy::parse(value(args, "--conflict-policy"))?;
     let dry_run = !flag(args, "--apply");
     let report = store.import_recovery_bundle(&bundle, policy, dry_run, &input, format)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
+    if !report.success {
+        bail!("recovery bundle import did not commit; inspect the structured report above");
+    }
     Ok(())
+}
+
+fn prepare_offline_import_bundle(mut bundle: RecoveryBundle) -> Result<RecoveryBundle> {
+    if bundle.version != 1 {
+        return Ok(bundle);
+    }
+    let chunks = bundle
+        .documents
+        .iter()
+        .map(|document| document.chunks.len())
+        .sum::<usize>();
+    if chunks > 0 {
+        bail!(
+            "legacy recovery bundle v1 contains {chunks} chunks with unverifiable vectors; import it through the running gateway with reembed_legacy=true"
+        );
+    }
+    // Metadata-only v1 bundles contain no vector identity to trust or migrate.
+    bundle.embedding_manifest = None;
+    bundle.version = BUNDLE_VERSION;
+    Ok(bundle)
 }
 
 fn value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -189,57 +212,8 @@ fn bundle_format(args: &[String], path: &Path) -> Result<&'static str> {
     }
 }
 
-fn encode_bundle(bundle: &RecoveryBundle, format: &str) -> Result<Vec<u8>> {
-    if format == "json" {
-        return Ok(serde_json::to_vec_pretty(bundle)?);
-    }
-    let mut lines = vec![serde_json::to_string(
-        &serde_json::json!({"record_type":"manifest",
-        "format": bundle.format, "version": bundle.version, "exported_at": bundle.exported_at}),
-    )?];
-    for item in &bundle.documents {
-        lines.push(serde_json::to_string(
-            &serde_json::json!({"record_type":"document","value":item}),
-        )?);
-    }
-    Ok((lines.join("\n") + "\n").into_bytes())
-}
-
 fn decode_bundle(input: &str, format: &str) -> Result<RecoveryBundle> {
-    if format == "json" {
-        return Ok(serde_json::from_str(input)?);
-    }
-    let mut bundle = RecoveryBundle {
-        format: "rag-recovery-bundle".into(),
-        version: BUNDLE_VERSION,
-        exported_at: Utc::now(),
-        documents: Vec::new(),
-    };
-    for (line_no, line) in input
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .enumerate()
-    {
-        let value: serde_json::Value =
-            serde_json::from_str(line).with_context(|| format!("JSONL line {}", line_no + 1))?;
-        match value.get("record_type").and_then(|v| v.as_str()) {
-            Some("manifest") => {
-                bundle.format = value["format"].as_str().unwrap_or_default().into();
-                bundle.version = value["version"].as_u64().unwrap_or(BUNDLE_VERSION as u64) as u32;
-                bundle.exported_at = serde_json::from_value(value["exported_at"].clone())?;
-            }
-            Some("document") => bundle
-                .documents
-                .push(serde_json::from_value::<BundleDocument>(
-                    value["value"].clone(),
-                )?),
-            other => bail!(
-                "unknown JSONL record_type {other:?} at line {}",
-                line_no + 1
-            ),
-        }
-    }
-    Ok(bundle)
+    Ok(decode_recovery_bundle(input, format)?)
 }
 
 fn usage() {
@@ -248,6 +222,139 @@ fn usage() {
       recovery verify --backup FILE\nrecovery inventory|retention --dir DIR [--keep N]\n\
       recovery export-vault --db DB --out DIR [--apply] [--overwrite]\n\
       recovery export-bundle --db DB --out FILE [--format json|jsonl] [--dry-run]\n\
-      recovery import-bundle --db DB --in FILE [--apply] [--conflict-policy error|skip|overwrite]"
+      recovery import-bundle --db DB --in FILE [--apply] [--conflict-policy error|skip|overwrite]\n\
+      Portable JSON/JSONL is bounded in memory; use `recovery backup` plus `recovery verify` for a large corpus."
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_bundle, prepare_offline_import_bundle};
+    use chrono::Utc;
+    use rag_mcp::db::recovery::{BundleDocument, RecoveryBundle, BUNDLE_VERSION};
+    use rag_mcp::models::{Chunk, Document};
+
+    const EXPORTED_AT: &str = "2026-09-02T12:34:56Z";
+
+    fn manifest(extra: &str) -> String {
+        format!(
+            r#"{{"record_type":"manifest","format":"rag-recovery-bundle","version":1,"exported_at":"{EXPORTED_AT}"{extra}}}"#
+        )
+    }
+
+    #[test]
+    fn jsonl_v1_manifest_may_omit_embedding_manifest() {
+        let bundle = decode_bundle(&manifest(""), "jsonl").expect("valid v1 bundle");
+
+        assert_eq!(bundle.format, "rag-recovery-bundle");
+        assert_eq!(bundle.version, 1);
+        assert_eq!(bundle.exported_at.to_rfc3339(), "2026-09-02T12:34:56+00:00");
+        assert!(bundle.embedding_manifest.is_none());
+        assert!(bundle.documents.is_empty());
+    }
+
+    #[test]
+    fn offline_v1_import_only_upgrades_metadata_without_vectors() {
+        let metadata_only = RecoveryBundle {
+            format: "rag-recovery-bundle".into(),
+            version: 1,
+            exported_at: Utc::now(),
+            embedding_manifest: None,
+            documents: Vec::new(),
+        };
+        assert_eq!(
+            prepare_offline_import_bundle(metadata_only)
+                .expect("metadata-only v1 is safe")
+                .version,
+            BUNDLE_VERSION
+        );
+
+        let with_vector = RecoveryBundle {
+            format: "rag-recovery-bundle".into(),
+            version: 1,
+            exported_at: Utc::now(),
+            embedding_manifest: None,
+            documents: vec![BundleDocument {
+                document: Document::default(),
+                chunks: vec![Chunk {
+                    id: "legacy-chunk".into(),
+                    document_id: String::new(),
+                    chunk_index: 0,
+                    content: "legacy".into(),
+                    embedding: vec![1.0],
+                    char_start: 0,
+                    char_end: 6,
+                    metadata_json: "{}".into(),
+                }],
+            }],
+        };
+        let error = prepare_offline_import_bundle(with_vector)
+            .expect_err("legacy vectors need a live embedder");
+        assert!(error.to_string().contains("reembed_legacy=true"));
+    }
+
+    #[test]
+    fn jsonl_requires_one_manifest_before_documents() {
+        for (input, expected) in [
+            ("", "requires exactly one manifest"),
+            ("  \n\t", "requires exactly one manifest"),
+            (
+                r#"{"record_type":"document","value":{}}"#,
+                "document precedes manifest",
+            ),
+            (
+                &format!("{}\n{}", manifest(""), manifest("")),
+                "duplicate JSONL manifest",
+            ),
+        ] {
+            let error = decode_bundle(input, "jsonl").expect_err("invalid JSONL must fail");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?} in {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn jsonl_manifest_requires_typed_identity_fields() {
+        for (input, expected) in [
+            (
+                format!(
+                    r#"{{"record_type":"manifest","version":1,"exported_at":"{EXPORTED_AT}"}}"#
+                ),
+                "field 'format'",
+            ),
+            (
+                format!(
+                    r#"{{"record_type":"manifest","format":"rag-recovery-bundle","exported_at":"{EXPORTED_AT}"}}"#
+                ),
+                "field 'version'",
+            ),
+            (
+                r#"{"record_type":"manifest","format":"rag-recovery-bundle","version":1}"#
+                    .to_owned(),
+                "requires 'exported_at'",
+            ),
+        ] {
+            let error = decode_bundle(&input, "jsonl").expect_err("missing field must fail");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?} in {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn jsonl_version_is_checked_without_current_version_fallback() {
+        for (version, expected) in [("0", "greater than zero"), ("4294967296", "exceeds u32")] {
+            let input = format!(
+                r#"{{"record_type":"manifest","format":"rag-recovery-bundle","version":{version},"exported_at":"{EXPORTED_AT}"}}"#
+            );
+            let error = decode_bundle(&input, "jsonl").expect_err("invalid version must fail");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?} in {error:#}"
+            );
+        }
+    }
 }

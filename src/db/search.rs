@@ -209,44 +209,38 @@ pub fn search(store: &Store, query: &SearchQuery) -> Result<Vec<SearchHit>> {
         return Ok(Vec::new());
     }
 
-    let source_sync_guard = acquire_source_sync_search_guard(store, query.mode)?;
-    search_with_source_sync_guard(store, query, &source_sync_guard)
+    let corpus_guard = acquire_corpus_search_guard(store, query.mode)?;
+    search_with_corpus_guard(store, query, &corpus_guard)
 }
 
-/// Acquire the source-sync coordination guard required by exact lexical modes.
+/// Acquire the corpus coordination guard required by every retrieval mode.
 ///
-/// The returned read guard permits concurrent searches and prevents a source
-/// synchronization run from starting until the caller finishes. An active sync
-/// produces a retryable [`AppError::Busy`] before embedding, FTS, or vector work.
-pub(crate) struct SourceSyncSearchGuard {
-    _guard: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+/// The returned read guard permits concurrent searches and prevents an
+/// exclusive corpus mutation from starting until the caller finishes. An
+/// active mutation produces a retryable [`AppError::Busy`] before embedding,
+/// FTS, or vector work.
+pub(crate) struct CorpusSearchGuard {
+    _guard: tokio::sync::OwnedRwLockReadGuard<()>,
 }
 
-pub(crate) fn acquire_source_sync_search_guard(
+pub(crate) fn acquire_corpus_search_guard(
     store: &Store,
-    mode: SearchMode,
-) -> Result<SourceSyncSearchGuard> {
-    if matches!(mode, SearchMode::Lex | SearchMode::Hybrid) {
-        let guard = store.try_source_sync_idle_guard().ok_or_else(|| {
-            AppError::busy(
-                "source synchronization is active; retry lexical or hybrid search after it completes",
-            )
-        })?;
-        return Ok(SourceSyncSearchGuard {
-            _guard: Some(guard),
-        });
-    }
-    Ok(SourceSyncSearchGuard { _guard: None })
+    _mode: SearchMode,
+) -> Result<CorpusSearchGuard> {
+    let guard = store.try_corpus_idle_guard().ok_or_else(|| {
+        AppError::busy("exclusive corpus mutation is active; retry search after it completes")
+    })?;
+    Ok(CorpusSearchGuard { _guard: guard })
 }
 
-/// Run search while the caller keeps its source-sync guard alive.
+/// Run search while the caller keeps its corpus read guard alive.
 ///
 /// Transport orchestration uses this after acquiring the guard before an async
 /// embedding request. Direct synchronous callers should use [`search`].
-pub(crate) fn search_with_source_sync_guard(
+pub(crate) fn search_with_corpus_guard(
     store: &Store,
     query: &SearchQuery,
-    _source_sync_guard: &SourceSyncSearchGuard,
+    _corpus_guard: &CorpusSearchGuard,
 ) -> Result<Vec<SearchHit>> {
     validate_query(query)?;
     // Source sync advances the global chunk generation once per committed
@@ -2103,6 +2097,7 @@ mod tests {
                 top_k: 1,
                 query_embedding: Some(vec![1.0, 0.0]),
                 wing: Some("wanted".into()),
+                timeout_ms: None,
                 ..SearchQuery::default()
             },
         )
@@ -2122,6 +2117,7 @@ mod tests {
                 query_embedding: Some(vec![1.0, 0.0]),
                 wing: Some("wanted".into()),
                 rrf_k: 37.0,
+                timeout_ms: None,
                 ..SearchQuery::default()
             },
         )
@@ -2202,8 +2198,72 @@ mod tests {
         assert_eq!(cached_generation, second_generation);
     }
 
+    #[test]
+    fn vector_snapshot_refreshes_after_embedding_only_update() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("vector-embedding-only-generation.duckdb");
+        let store = Store::open(&path).expect("open");
+        for (document_id, chunk_id, embedding) in [
+            ("a-target", "chunk-target", vec![1.0, 0.0]),
+            ("z-rival", "chunk-rival", vec![0.0, 1.0]),
+        ] {
+            store
+                .upsert_document(&Document {
+                    id: document_id.into(),
+                    uri: format!("uri://{document_id}"),
+                    title: document_id.into(),
+                    content: "unchanged searchable text".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            store
+                .insert_chunks(&[Chunk {
+                    id: chunk_id.into(),
+                    document_id: document_id.into(),
+                    chunk_index: 0,
+                    content: "unchanged searchable text".into(),
+                    embedding,
+                    char_start: 0,
+                    char_end: 25,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
+        }
+
+        let before = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
+        assert_eq!(before[0].document_id, "z-rival");
+        let cached_before = vector_snapshots()
+            .lock()
+            .unwrap()
+            .get(&path)
+            .unwrap()
+            .generation;
+
+        let document = store.get_document("a-target").unwrap().unwrap();
+        let chunks = store.list_chunks_for_document(&document.id).unwrap();
+        store
+            .update_chunk_embeddings_atomic(
+                &document.id,
+                document.revision,
+                &chunks,
+                &[vec![0.0, 1.0]],
+                None,
+            )
+            .unwrap();
+
+        let after = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
+        assert_eq!(after[0].document_id, "a-target");
+        let cached_after = vector_snapshots()
+            .lock()
+            .unwrap()
+            .get(&path)
+            .unwrap()
+            .generation;
+        assert!(cached_after > cached_before);
+    }
+
     #[tokio::test]
-    async fn active_source_sync_rejects_lexical_modes_before_refresh_and_releases_cleanly() {
+    async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("hybrid-source-sync-busy.duckdb");
         let store = Store::open(&path).expect("open");
@@ -2248,7 +2308,7 @@ mod tests {
         };
         assert!(lifecycle_before.dirty);
 
-        let sync_guard = store.source_sync_lane().write_owned().await;
+        let sync_guard = store.corpus_mutation_lane().write_owned().await;
         let hybrid_query = SearchQuery {
             mode: SearchMode::Hybrid,
             top_k: 5,
@@ -2263,14 +2323,21 @@ mod tests {
             wing: Some("project".into()),
             ..SearchQuery::default()
         };
-        for query in [&lex_query, &hybrid_query] {
+        let vec_query = SearchQuery {
+            mode: SearchMode::Vec,
+            top_k: 5,
+            query_embedding: Some(vec![1.0, 0.0]),
+            wing: Some("project".into()),
+            ..SearchQuery::default()
+        };
+        for query in [&lex_query, &vec_query, &hybrid_query] {
             let error = search(&store, query).unwrap_err();
             let AppError::Busy(message) = error else {
                 panic!("expected retryable busy error, got {error}");
             };
             assert_eq!(
                 message,
-                "source synchronization is active; retry lexical or hybrid search after it completes"
+                "exclusive corpus mutation is active; retry search after it completes"
             );
             assert!(!message.contains("http"));
             assert!(!message.contains(&path.display().to_string()));

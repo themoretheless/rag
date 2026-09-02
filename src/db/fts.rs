@@ -6,10 +6,17 @@
 //! 2. `PRAGMA create_fts_index('chunks', 'id', 'content', stemmer := …, overwrite := 1)`
 //! 3. Rank with `fts_main_chunks.match_bm25(id, query)`
 //!
-//! The FTS inverted index does **not** update when `chunks` changes. Chunk
-//! mutations call [`mark_fts_dirty`], and the next lexical search performs one
-//! serialized [`refresh_fts_if_stale`] before ranking. Clean, warm searches do
-//! not execute FTS DDL. [`reindex`] remains the explicit force-rebuild API.
+//! The FTS inverted index does **not** update when indexed chunk rows change.
+//! Text/row mutations call [`mark_fts_dirty`], and [`refresh_fts_if_stale`] owns
+//! the one serialized generation refresh. Embedding-only updates instead
+//! advance the chunk and clean index generations together: this invalidates
+//! vector snapshots without rebuilding unchanged BM25 text. Guarded corpus-wide
+//! workflows (source sync, doctor repair, duplicate cleanup, delete-by-source,
+//! recovery import, and maintenance apply/refresh/compress) eagerly finalize a
+//! stale index before normal terminal success. Ordinary single-document writes
+//! and interrupted or failed workflows retain the next lexical search as their
+//! single-flight consistency fallback. Clean, warm searches do not execute FTS DDL.
+//! [`reindex`] remains the explicit force-rebuild API.
 //!
 //! # Fallback: term-frequency in Rust
 //!
@@ -79,9 +86,11 @@ pub struct FtsState {
 ///
 /// `chunks_generation` advances before a mutation can change `chunks`.
 /// `index_generation` advances only after a successful BM25 rebuild (or after
-/// selecting the live-row term-frequency fallback). A mismatch is therefore a
-/// crash-safe dirty marker: false positives can cause one extra rebuild, while
-/// a completed mutation cannot be hidden behind a clean generation.
+/// selecting the live-row term-frequency fallback), except that an
+/// embedding-only transaction may advance both because indexed text is
+/// unchanged. A mismatch is therefore a crash-safe dirty marker: false
+/// positives can cause one extra rebuild, while a completed text mutation
+/// cannot be hidden behind a clean generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FtsGenerationState {
     pub chunks_generation: u64,
@@ -151,6 +160,24 @@ pub fn mark_fts_dirty(conn: &Connection) -> Result<u64> {
         .checked_add(1)
         .ok_or_else(|| AppError::fts("FTS chunks generation overflow"))?;
     upsert_meta(conn, META_CHUNKS_GENERATION, &next.to_string())?;
+    Ok(next)
+}
+
+/// Advance the chunk generation after changing only `embedding_json` values.
+///
+/// Vector snapshots key off the chunk generation, so it must advance even
+/// though the indexed text rows are unchanged. When the lexical index was
+/// clean before the mutation, advancing its generation in the same transaction
+/// preserves that clean state without rebuilding BM25. An already-dirty or
+/// unconfigured index stays dirty. Callers must invoke this on the same
+/// transaction that owns the embedding updates so data and both generations
+/// commit or roll back together.
+pub(crate) fn mark_embeddings_changed(conn: &Connection) -> Result<u64> {
+    let fts_was_clean = !fts_generation_state(conn)?.dirty;
+    let next = mark_fts_dirty(conn)?;
+    if fts_was_clean {
+        upsert_meta(conn, META_INDEX_GENERATION, &next.to_string())?;
+    }
     Ok(next)
 }
 
@@ -348,8 +375,8 @@ pub fn fts_index_present(conn: &Connection) -> bool {
         .is_ok()
 }
 
-/// Best-effort: extension loadable **and** index present (same contract as
-/// [`super::schema::probe_fts_ready`], but lives next to index management).
+/// Best-effort: extension loadable **and** index present; this probe lives next
+/// to index management so callers do not need schema internals.
 pub fn probe_ready(conn: &Connection) -> bool {
     if !load_fts_extension(conn) {
         return false;

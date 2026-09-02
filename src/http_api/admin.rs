@@ -6,7 +6,10 @@
 //! mounted: writes must use the existing guarded job/operation routes instead
 //! of bypassing the single writer lane.
 
-use std::path::PathBuf;
+use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
 
 use axum::{
     extract::{Query, State},
@@ -255,6 +258,8 @@ struct EvalHistoryQuery {
     limit: Option<usize>,
 }
 
+const MAX_EVAL_HISTORY_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Path of the eval history JSONL written by `cargo run --bin eval -- --history-jsonl`.
 ///
 /// Read from `RAG_EVAL_HISTORY`; never from the request, so the gateway cannot be
@@ -274,22 +279,69 @@ async fn eval_history(Query(q): Query<EvalHistoryQuery>) -> impl IntoResponse {
             "hint": "set RAG_EVAL_HISTORY to the --history-jsonl file written by the eval binary",
         }));
     };
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return api_err(AppError::from(error)),
+    let read_path = path.clone();
+    let result =
+        super::run_blocking("eval history", move || read_eval_history(&read_path, limit)).await;
+    let (total, items) = match result {
+        Ok(result) => result,
+        Err(error) => return api_err(error),
     };
-    let mut items: Vec<Value> = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-    let total = items.len();
-    if items.len() > limit {
-        items.drain(..items.len() - limit);
-    }
     api_ok(json!({
         "ok": true, "configured": true, "path": path.display().to_string(),
         "total": total, "count": items.len(), "items": items,
     }))
+}
+
+fn read_eval_history(path: &Path, limit: usize) -> Result<(usize, Vec<Value>), AppError> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, Vec::new())),
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(AppError::config(format!(
+            "RAG_EVAL_HISTORY '{}' is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > MAX_EVAL_HISTORY_BYTES {
+        return Err(eval_history_too_large(path, metadata.len()));
+    }
+
+    let mut reader = BufReader::new(file.take(MAX_EVAL_HISTORY_BYTES.saturating_add(1)));
+    let mut line = String::new();
+    let mut bytes_read = 0u64;
+    let mut total = 0usize;
+    let mut items = VecDeque::with_capacity(limit);
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line)?;
+        if read == 0 {
+            break;
+        }
+        bytes_read = bytes_read.saturating_add(read as u64);
+        if bytes_read > MAX_EVAL_HISTORY_BYTES {
+            return Err(eval_history_too_large(path, bytes_read));
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str(&line) else {
+            continue;
+        };
+        total = total.saturating_add(1);
+        if items.len() == limit {
+            items.pop_front();
+        }
+        items.push_back(value);
+    }
+    Ok((total, items.into_iter().collect()))
+}
+
+fn eval_history_too_large(path: &Path, bytes: u64) -> AppError {
+    AppError::config(format!(
+        "RAG_EVAL_HISTORY '{}' is {bytes} bytes; maximum is {MAX_EVAL_HISTORY_BYTES}. Rotate or compact the JSONL history file before reading it through HTTP",
+        path.display()
+    ))
 }

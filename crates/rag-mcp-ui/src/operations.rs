@@ -5,7 +5,8 @@ use serde_json::Value;
 use std::time::Duration;
 
 use crate::gateway::{
-    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
+    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
+    ReqwestGatewayClient,
 };
 
 const BACKUP_TIMEOUT_SECS: u64 = 30 * 60;
@@ -281,7 +282,7 @@ fn send_json<T: DeserializeOwned>(
         return Err(format_http_error(&response, operation_context(path)));
     }
     serde_json::from_str(&response.body)
-        .map_err(|error| format!("parse response from {url}: {error}"))
+        .map_err(|error| format_json_parse_error(operation_context(path), &error))
 }
 
 fn join(base: &str, path: &str) -> Result<String, String> {
@@ -402,5 +403,29 @@ mod tests {
         assert_eq!(operation_context("v1/doctor"), "Diagnostics");
         assert_eq!(operation_context("v1/jobs/private-job-id"), "Sync jobs");
         assert_eq!(operation_context("v1/operations/backup"), "Backup");
+    }
+
+    #[test]
+    fn malformed_job_success_does_not_echo_private_path() {
+        let gateway = FakeGateway::new(vec![r#"{"job":"private-value""#.to_string()]);
+        let error = send_json::<JobEnvelope>(
+            &gateway,
+            "http://user:secret@gateway",
+            "v1/jobs/private-job?token=private-token",
+            Method::Get,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("Could not parse Sync jobs response"));
+        for secret in [
+            "user",
+            "secret",
+            "private-job",
+            "private-token",
+            "private-value",
+        ] {
+            assert!(!error.contains(secret));
+        }
     }
 }

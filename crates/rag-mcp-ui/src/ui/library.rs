@@ -37,14 +37,27 @@ pub fn draw_library_workspace(
     has_previous_page: bool,
 ) -> LibraryAction {
     let mut action = LibraryAction::None;
+    let filters_dirty = page.is_some_and(|page| !library_filters_match(request, &page.request));
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.heading("Unified Library");
             ui.weak("Every indexed document, without loading document bodies.");
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            if ui.button("Refresh").clicked() {
-                action = LibraryAction::Refresh;
+            let refresh_label = if filters_dirty {
+                "Apply & refresh"
+            } else {
+                "Refresh"
+            };
+            if ui
+                .add_enabled(!loading, egui::Button::new(refresh_label))
+                .clicked()
+            {
+                action = if filters_dirty {
+                    LibraryAction::ApplyFilters
+                } else {
+                    LibraryAction::Refresh
+                };
             }
             if loading {
                 ui.spinner();
@@ -111,14 +124,23 @@ pub fn draw_library_workspace(
         return action;
     };
 
+    let filters_dirty = !library_filters_match(request, &page.request);
+    if filters_dirty {
+        ui.colored_label(
+            egui::Color32::from_rgb(220, 150, 65),
+            "Filters changed. Apply them before paging through these results.",
+        );
+        ui.add_space(5.0);
+    }
+
     ui.horizontal(|ui| {
         ui.strong(format!("{} documents", page.total));
-        let scope = request.wing.trim();
+        let scope = page.request.wing.trim();
         if !scope.is_empty() {
             ui.separator();
             ui.weak(format!("Project: {scope}"));
         }
-        let active_filters = active_filter_count(request);
+        let active_filters = active_filter_count(&page.request);
         if active_filters > 0 {
             ui.separator();
             ui.weak(format!("{active_filters} active filters"));
@@ -175,20 +197,29 @@ pub fn draw_library_workspace(
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                has_previous_page && !loading,
-                egui::Button::new("← Previous"),
-            )
-            .clicked()
-        {
+        let previous = ui.add_enabled(
+            has_previous_page && !loading && !filters_dirty,
+            egui::Button::new("← Previous"),
+        );
+        let previous = if filters_dirty {
+            previous.on_disabled_hover_text("Apply changed filters before changing pages")
+        } else {
+            previous
+        };
+        if previous.clicked() {
             action = LibraryAction::PreviousPage;
         }
         let has_next = page.next_cursor.is_some();
-        if ui
-            .add_enabled(has_next && !loading, egui::Button::new("Next →"))
-            .clicked()
-        {
+        let next = ui.add_enabled(
+            has_next && !loading && !filters_dirty,
+            egui::Button::new("Next →"),
+        );
+        let next = if filters_dirty {
+            next.on_disabled_hover_text("Apply changed filters before changing pages")
+        } else {
+            next
+        };
+        if next.clicked() {
             if let Some(cursor) = &page.next_cursor {
                 action = LibraryAction::NextPage(cursor.clone());
             }
@@ -352,6 +383,18 @@ fn active_filter_count(request: &LibraryRequest) -> usize {
         + usize::from(request.include_archived)
 }
 
+fn library_filters_match(left: &LibraryRequest, right: &LibraryRequest) -> bool {
+    let same_text = |left: &str, right: &str| left.trim() == right.trim();
+    same_text(&left.q, &right.q)
+        && same_text(&left.wing, &right.wing)
+        && same_text(&left.room, &right.room)
+        && same_text(&left.layer, &right.layer)
+        && same_text(&left.kind, &right.kind)
+        && same_text(&left.status, &right.status)
+        && left.include_archived == right.include_archived
+        && left.limit.clamp(1, 200) == right.limit.clamp(1, 200)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +409,23 @@ mod tests {
             ..LibraryRequest::default()
         };
         assert_eq!(active_filter_count(&request), 3);
+    }
+
+    #[test]
+    fn cursor_is_reusable_only_while_applied_filters_match() {
+        let applied = LibraryRequest {
+            q: "design".to_string(),
+            wing: "alpha".to_string(),
+            cursor: Some("v1:50".to_string()),
+            limit: 50,
+            ..LibraryRequest::default()
+        };
+        let mut draft = applied.clone();
+        draft.cursor = Some("v1:100".to_string());
+        assert!(library_filters_match(&draft, &applied));
+
+        draft.room = "docs".to_string();
+        assert!(!library_filters_match(&draft, &applied));
     }
 
     #[test]

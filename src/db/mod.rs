@@ -27,7 +27,10 @@ mod source_manifest;
 pub mod store;
 pub mod vault;
 
-pub use catalog::{DocumentCatalogFilter, DocumentCatalogPage, ProjectHome};
+pub use catalog::{
+    DocumentCatalogFilter, DocumentCatalogPage, ProjectHome, DEFAULT_CATALOG_PAGE_SIZE,
+    MAX_CATALOG_PAGE_SIZE,
+};
 pub use fts::{
     chunks_generation, ensure_fts, ensure_fts_with_stemmer, fts_generation_state,
     fts_index_present, fts_status, load_fts_extension, mark_fts_dirty, probe_ready,

@@ -90,6 +90,10 @@ pub struct ImportBundleParams {
     /// Parse and report the import without changing DuckDB. Defaults to true.
     #[serde(default)]
     pub dry_run: Option<bool>,
+    /// Re-embed every chunk from a legacy v1 bundle with the live provider.
+    /// Required for v1 bundles that contain vectors; defaults to false.
+    #[serde(default)]
+    pub reembed_legacy: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
@@ -271,6 +275,12 @@ pub struct ListSourcesParams {
     /// Optional filter: only sources in this room.
     #[serde(default)]
     pub room: Option<String>,
+    /// Max rows to return (default 50, hard cap 200).
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Rows to skip after filters (default 0).
+    #[serde(default)]
+    pub offset: Option<u32>,
 }
 
 /// Parameters for `get_source` (fetch one raw-layer document).
@@ -285,6 +295,9 @@ pub struct GetSourceParams {
     /// When true, include chunk texts (no embeddings).
     #[serde(default)]
     pub include_chunks: Option<bool>,
+    /// Per-document chunk cap when `include_chunks=true` (default 100, hard cap 500).
+    #[serde(default)]
+    pub chunk_limit: Option<u32>,
 }
 
 // --- Search / packing ---
@@ -464,6 +477,9 @@ pub struct ListDocumentsParams {
     /// Max rows to return.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Rows to skip after filters (default 0).
+    #[serde(default)]
+    pub offset: Option<u32>,
 }
 
 /// Parameters for `get_document`.
@@ -474,6 +490,9 @@ pub struct GetDocumentParams {
     /// When true, include chunk texts (no embeddings).
     #[serde(default)]
     pub include_chunks: Option<bool>,
+    /// Per-document chunk cap when `include_chunks=true` (default 100, hard cap 500).
+    #[serde(default)]
+    pub chunk_limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -481,6 +500,32 @@ pub struct MultiGetParams {
     pub document_ids: Vec<String>,
     #[serde(default)]
     pub include_chunks: Option<bool>,
+    /// Per-document chunk cap when `include_chunks=true` (default 100, hard cap 500).
+    /// One call also has an 8 MiB aggregate chunk-text budget.
+    #[serde(default)]
+    pub chunk_limit: Option<u32>,
+}
+
+/// Parameters for `list_wiki_pages` (lean wiki catalog inventory).
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct ListWikiPagesParams {
+    /// Case-insensitive substring on title, slug, URI, summary, category, or kind.
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub wing: Option<String>,
+    #[serde(default)]
+    pub room: Option<String>,
+    /// Max rows to return (default 50, hard cap 200).
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Rows to skip after filters (default 0).
+    #[serde(default)]
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -1284,13 +1329,14 @@ pub struct MaintainRefreshParams {
     #[serde(default)]
     pub rebuild_wiki_index: Option<bool>,
     /// Opt-in: re-embed all document chunks with the live embedder and refresh
-    /// `embedding_manifest` (use after model/dims change). Cap: `RAG_MAINT_MAX_DOCS`.
+    /// `embedding_manifest` (use complete corpus pass after embedding identity
+    /// change). Cap: `RAG_MAINT_MAX_DOCS`.
     #[serde(default)]
     pub reembed_all: Option<bool>,
     /// When true, report planned work without mutating store (still logs dry_run).
     #[serde(default)]
     pub dry_run: Option<bool>,
-    /// Override `RAG_MAINT_MAX_DOCS` for this call (graph rebuild / reembed cap).
+    /// Requested graph/reembed cap; values above `RAG_MAINT_MAX_DOCS` are clamped.
     #[serde(default)]
     pub max_docs: Option<u32>,
 }
@@ -1341,7 +1387,7 @@ pub struct ApplyMaintenancePlanParams {
     /// Set `false` to execute.
     #[serde(default)]
     pub dry_run: Option<bool>,
-    /// Override `RAG_MAINT_MAX_DOCS` for document-scoped steps this run.
+    /// Requested document cap; values above `RAG_MAINT_MAX_DOCS` are clamped.
     #[serde(default)]
     pub max_docs: Option<u32>,
     /// Optional agent name for ops_log.

@@ -22,11 +22,11 @@
 //!
 //! | Module | Role |
 //! |--------|------|
-//! | [`bind`] | `parse_bind` + loopback gate |
-//! | [`error`] | `api_ok` / `api_err` / `status_for` |
-//! | [`health`] | `/health` |
-//! | [`graph`] | Graph + document handlers |
-//! | [`wiki`] | Wiki list/put/backlinks |
+//! | `bind` | `parse_bind` + loopback gate |
+//! | `error` | `api_ok` / `api_err` / `status_for` |
+//! | `health` | `/health` |
+//! | `graph` | Graph + document handlers |
+//! | `wiki` | Wiki list/put/backlinks |
 
 mod activity;
 mod admin;
@@ -161,7 +161,8 @@ fn configured_http_allowed_hosts(config: &Config, explicit: Option<&str>) -> Vec
 /// Start HTTP server (graph API + MCP `/mcp`); runs until process exit.
 ///
 /// Builds embedder/config from env for `PUT /v1/wiki` (same process env as MCP).
-/// Route tables come from [`health::routes`], [`graph::routes`], [`wiki::routes`] (merge-only).
+/// Route tables come from the private `health`, `graph`, and `wiki` route
+/// builders and are combined here without duplicating handlers.
 pub async fn serve(
     bind: SocketAddr,
     store: Arc<Store>,
@@ -350,6 +351,16 @@ fn api_router(state: HttpState) -> Router {
 
 const MAX_HTTP_BODY_BYTES: usize = 1_048_576;
 
+async fn run_blocking<T, F>(operation: &'static str, work: F) -> Result<T, crate::error::AppError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| crate::error::AppError::db(format!("{operation} task failed: {error}")))?
+}
+
 #[derive(Clone)]
 struct RequestId(String);
 
@@ -505,6 +516,14 @@ pub(crate) fn record_mcp_tool(action: &str, status: u16, elapsed_ms: f64) {
         None,
     );
 }
+
+#[cfg(test)]
+pub(crate) fn latest_mcp_activity_for_test(action: &str) -> Option<activity::ActivityEvent> {
+    activity::latest_matching("mcp_tool", action)
+}
+
+#[cfg(test)]
+pub(crate) use activity::TEST_LOCK as ACTIVITY_TEST_LOCK;
 
 pub(crate) fn record_rag_action(action: &str) {
     activity::record("rag", None, action, Some(200), None, None);

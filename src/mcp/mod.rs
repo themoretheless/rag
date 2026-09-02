@@ -1,5 +1,5 @@
 //! MCP surface: thin router composition ([`server`]), domain tool clusters,
-//! implementations ([`facade`]), and schemars param structs ([`tools`]).
+//! implementations (`facade`), and schemars param structs ([`tools`]).
 //!
 //! Transports (same tools / same DuckDB):
 //! - **stdio** — Claude Desktop/Code local `command` (subprocess)

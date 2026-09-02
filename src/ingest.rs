@@ -8,7 +8,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::db::store::DocumentDerivedWrite;
+use crate::db::store::{embedding_manifest_from_config, DocumentDerivedWrite};
 use crate::db::{SourceManifestWrite, Store};
 use crate::document_indexer::{DocumentIndexer, PreparedDocumentChunks};
 use crate::embeddings::EmbeddingProvider;
@@ -391,16 +391,25 @@ impl<'a> IngestService<'a> {
             .store
             .get_document(document_id)?
             .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-        let mut chunks = self.store.list_chunks_for_document(&document.id)?;
+        self.store.require_embedding_manifest_match(self.config)?;
+        let expected_chunks = self.store.list_chunks_for_document(&document.id)?;
+        let mut chunks = expected_chunks.clone();
         let chunk_count = chunks.len();
         if !chunks.is_empty() {
             self.indexer.reembed_chunks(&mut chunks).await?;
-            self.store
-                .replace_chunks_for_document(&document.id, &chunks)?;
         }
-        let manifest = self
-            .store
-            .write_embedding_manifest_from_config(self.config)?;
+        let embeddings = chunks
+            .into_iter()
+            .map(|chunk| chunk.embedding)
+            .collect::<Vec<_>>();
+        let manifest = embedding_manifest_from_config(self.config);
+        self.store.update_chunk_embeddings_atomic(
+            &document.id,
+            document.revision,
+            &expected_chunks,
+            &embeddings,
+            Some(&manifest),
+        )?;
         Ok(ReembedDocumentResult {
             document_id: document.id,
             chunk_count,
@@ -498,8 +507,7 @@ impl<'a> IngestService<'a> {
 
     fn ensure_vector_compatibility(&self) -> Result<(), AppError> {
         self.store.ensure_embedding_manifest(self.config)?;
-        self.store
-            .require_embedding_dims_match(self.config.embedding_dims)
+        self.store.require_embedding_manifest_match(self.config)
     }
 }
 

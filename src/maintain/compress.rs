@@ -17,8 +17,8 @@ use crate::config::Config;
 use crate::db::{self, Store};
 use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
-use crate::models::{Document, DocumentMetaUpdate, OpsLogEntry};
 use crate::maintain::analyze::{DuplicateGroup, NearDuplicatePair};
+use crate::models::{Document, OpsLogEntry};
 
 /// Highest compression level implemented (L0–L2).
 pub const COMPRESS_LEVEL_MAX: u8 = 2;
@@ -90,9 +90,7 @@ impl CompressOptions {
             )));
         }
         if self.max_docs == 0 {
-            return Err(AppError::config(
-                "maintain_compress max_docs must be >= 1",
-            ));
+            return Err(AppError::config("maintain_compress max_docs must be >= 1"));
         }
         Ok(())
     }
@@ -171,6 +169,13 @@ pub struct MaintainCompressReport {
     pub skipped_cap: usize,
     /// Raw dups that were tombstoned (or planned) because `allow_raw_delete=false`.
     pub raw_protected: usize,
+    /// Terminal finalization failures after compression phases.
+    ///
+    /// These are additive so older consumers can continue reading the report,
+    /// while callers can distinguish already-durable corpus mutations from a
+    /// clean derived-index publication.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ops_log_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,6 +184,11 @@ pub struct MaintainCompressReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
+
+#[cfg(test)]
+const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_finalize_fts__";
+#[cfg(test)]
+const TEST_FINALIZE_FTS_PANIC_STEMMER: &str = "__test_panic_finalize_fts__";
 
 /// Run compression according to `opts.level`.
 ///
@@ -192,6 +202,12 @@ pub fn maintain_compress(
     opts.validate()?;
 
     let level = opts.level;
+    // L2 decisions compare stored vectors and may delete or tombstone documents.
+    // Refuse the entire workflow before CHECKPOINT, L1 merges, or ops-log writes
+    // when a corpus migration is incomplete or the runtime identity differs.
+    if level >= 2 {
+        store.require_embedding_manifest_match(config)?;
+    }
     let dry_run = opts.dry_run;
     let max_docs = opts.max_docs.max(1);
     let bytes_before = store.db_file_size_bytes();
@@ -206,21 +222,22 @@ pub fn maintain_compress(
     let mut removed_budget = max_docs;
     let mut skipped_cap = 0usize;
     let mut raw_protected = 0usize;
+    let mut errors: Vec<String> = Vec::new();
     let mut exact_dup_groups: Vec<DuplicateGroup> = Vec::new();
     let mut near_duplicates: Vec<NearDuplicatePair> = Vec::new();
+    let mut planned_deletes: Vec<String> = Vec::new();
+    let mut planned_tombstones: Vec<String> = Vec::new();
     // --- L0: checkpoint + FTS ---
     actions.push("checkpoint".into());
     actions.push("reindex_fts".into());
-    let l0_report = if dry_run {
+    let mut l0_report = if dry_run {
         let status = {
             let conn = store.lock()?;
             db::fts_status(&conn)?
         };
         Some(CompressL0Report {
             checkpointed: false,
-            fts_backend: status
-                .as_ref()
-                .map(|s| s.backend.as_str().to_string()),
+            fts_backend: status.as_ref().map(|s| s.backend.as_str().to_string()),
             fts_stemmer: status
                 .map(|s| s.stemmer)
                 .or_else(|| Some(config.fts_stemmer.clone())),
@@ -231,14 +248,19 @@ pub fn maintain_compress(
             let conn = store.lock()?;
             conn.execute_batch("CHECKPOINT")?;
         }
-        let fts = {
+        let fts = if level == 0 {
             let conn = store.lock()?;
-            db::reindex_with_stemmer(&conn, &config.fts_stemmer)?
+            Some(db::reindex_with_stemmer(&conn, &config.fts_stemmer)?)
+        } else {
+            // Levels 1 and 2 rebuild once after their merge phases.
+            None
         };
         Some(CompressL0Report {
             checkpointed: true,
-            fts_backend: Some(fts.backend.as_str().to_string()),
-            fts_stemmer: Some(fts.stemmer),
+            fts_backend: fts.as_ref().map(|state| state.backend.as_str().to_string()),
+            fts_stemmer: fts
+                .map(|state| state.stemmer)
+                .or_else(|| Some(config.fts_stemmer.clone())),
             dry_run: false,
         })
     };
@@ -296,15 +318,14 @@ pub fn maintain_compress(
                 };
 
                 if !dry_run {
-                    let chunk_n = store.list_chunks_for_document(&doc.id)?.len() as u64;
                     if action_name == "tombstone_raw_dup" {
-                        tombstone_document(store, &doc.id)?;
+                        planned_tombstones.push(doc.id.clone());
                         docs_tombstoned += 1;
                         raw_protected += 1;
                         // Chunks stay; no chunk removal.
                     } else {
-                        store.delete_document(&doc.id)?;
-                        cleanup_wiki_index_for_doc(store, doc)?;
+                        let chunk_n = store.count_chunks_for_document(&doc.id)?;
+                        planned_deletes.push(doc.id.clone());
                         docs_removed += 1;
                         chunks_removed += chunk_n;
                     }
@@ -312,7 +333,7 @@ pub fn maintain_compress(
                     raw_protected += 1;
                     docs_tombstoned += 1; // planned
                 } else {
-                    let chunk_n = store.list_chunks_for_document(&doc.id)?.len() as u64;
+                    let chunk_n = store.count_chunks_for_document(&doc.id)?;
                     docs_removed += 1; // planned
                     chunks_removed += chunk_n;
                 }
@@ -340,8 +361,7 @@ pub fn maintain_compress(
     // --- L2: near-dup list (+ merge with confirm) ---
     if level >= 2 {
         actions.push("list_near_dup".into());
-        near_duplicates =
-            find_near_duplicate_pairs(store, opts.near_dup_threshold)?;
+        near_duplicates = find_near_duplicate_pairs(store, opts.near_dup_threshold)?;
 
         let apply_near = opts.confirm && !dry_run;
         if apply_near {
@@ -359,8 +379,7 @@ pub fn maintain_compress(
         }
 
         // Build undirected merge plan: greedy, highest cosine first, each id once.
-        let mut consumed: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut consumed: std::collections::HashSet<String> = std::collections::HashSet::new();
         // Already removed/tombstoned ids this run (exact phase).
         for m in &merges {
             if m.disposition == "deleted" || m.disposition == "tombstoned" {
@@ -369,8 +388,7 @@ pub fn maintain_compress(
         }
 
         for pair in &near_duplicates {
-            if consumed.contains(&pair.document_id_a) || consumed.contains(&pair.document_id_b)
-            {
+            if consumed.contains(&pair.document_id_a) || consumed.contains(&pair.document_id_b) {
                 continue;
             }
             let Some(doc_a) = store.get_document(&pair.document_id_a)? else {
@@ -426,7 +444,7 @@ pub fn maintain_compress(
 
             let is_raw = remove.layer.eq_ignore_ascii_case("raw");
             if is_raw && !opts.allow_raw_delete {
-                tombstone_document(store, &remove.id)?;
+                planned_tombstones.push(remove.id.clone());
                 docs_tombstoned += 1;
                 raw_protected += 1;
                 removed_budget = removed_budget.saturating_sub(1);
@@ -446,9 +464,8 @@ pub fn maintain_compress(
                     });
                 }
             } else {
-                let chunk_n = store.list_chunks_for_document(&remove.id)?.len() as u64;
-                store.delete_document(&remove.id)?;
-                cleanup_wiki_index_for_doc(store, remove)?;
+                let chunk_n = store.count_chunks_for_document(&remove.id)?;
+                planned_deletes.push(remove.id.clone());
                 docs_removed += 1;
                 chunks_removed += chunk_n;
                 removed_budget = removed_budget.saturating_sub(1);
@@ -469,18 +486,65 @@ pub fn maintain_compress(
                 }
             }
         }
+    }
 
-        // After bulk deletes, reindex FTS again so lex stays consistent.
-        if apply_near && (docs_removed > 0 || docs_tombstoned > 0) && !dry_run {
-            let conn = store.lock()?;
-            let _ = db::reindex_with_stemmer(&conn, &config.fts_stemmer)?;
+    // Destructive dispositions are planned completely before this point and
+    // committed as one transaction. A later target/storage failure therefore
+    // cannot leave an invisible partial prefix of deleted documents.
+    if !dry_run && (!planned_deletes.is_empty() || !planned_tombstones.is_empty()) {
+        let (deleted, tombstoned, deleted_chunks) =
+            store.apply_document_dispositions_atomic(&planned_deletes, &planned_tombstones)?;
+        if deleted != docs_removed
+            || tombstoned != docs_tombstoned
+            || deleted_chunks != chunks_removed
+        {
+            return Err(AppError::db(format!(
+                "compression disposition counts changed during atomic apply: planned deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
+            )));
+        }
+    }
+
+    // Levels 1 and 2 rebuild exactly once after every merge phase. This keeps
+    // the terminal generation clean without rebuilding both before and after
+    // hard deletes.
+    if !dry_run && level >= 1 {
+        let durable_mutation_committed = docs_removed > 0 || docs_tombstoned > 0;
+        let finalization = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            finalize_compress_fts(store, &config.fts_stemmer)
+        }))
+        .unwrap_or_else(|_| Err(AppError::fts("maintain_compress FTS finalization panicked")));
+        match finalization {
+            Ok(fts) => {
+                if let Some(report) = l0_report.as_mut() {
+                    report.fts_backend = Some(fts.backend.as_str().to_string());
+                    report.fts_stemmer = Some(fts.stemmer);
+                }
+            }
+            Err(error) => {
+                // Compression work may already be durable, and even a no-op
+                // run can encounter pre-existing FTS debt. Preserve the
+                // aggregate in both cases, persist a retry marker/audit row,
+                // and still append the terminal maintain_compress summary.
+                let failure = store.record_fts_finalization_failure(
+                    "maintain_compress",
+                    durable_mutation_committed,
+                    &error.to_string(),
+                );
+                errors.push(failure.message);
+            }
         }
     }
 
     // Final checkpoint after mutations so size stats are meaningful.
     if !dry_run && level >= 1 && (docs_removed > 0 || docs_tombstoned > 0) {
-        let conn = store.lock()?;
-        conn.execute_batch("CHECKPOINT")?;
+        let checkpoint = store
+            .lock()
+            .and_then(|conn| conn.execute_batch("CHECKPOINT").map_err(Into::into));
+        if let Err(error) = checkpoint {
+            errors.push(format!(
+                "CHECKPOINT_FINALIZATION_FAILED retryable=true durable_mutation_committed=true: {error}"
+            ));
+        }
     }
 
     let bytes_after = store.db_file_size_bytes();
@@ -488,7 +552,19 @@ pub fn maintain_compress(
         (Some(b), Some(a)) => Some(a as i64 - b as i64),
         _ => None,
     };
-    let (docs_after, chunks_after, _, _) = store.stats()?;
+    let (docs_after, chunks_after) = match store.stats() {
+        Ok((documents, chunks, _, _)) => (documents, chunks),
+        Err(error) => {
+            errors.push(format!(
+                "POST_MUTATION_STATS_FAILED retryable=true durable_mutation_committed={}: {error}",
+                docs_removed > 0 || docs_tombstoned > 0
+            ));
+            (
+                docs_before.saturating_sub(docs_removed),
+                chunks_before.saturating_sub(chunks_removed),
+            )
+        }
+    };
 
     // dry_run planned counts are synthetic; report live stats as after == before.
     let (docs_after_out, chunks_after_out) = if dry_run {
@@ -523,6 +599,7 @@ pub fn maintain_compress(
         merges,
         skipped_cap,
         raw_protected,
+        errors,
         ops_log_id: None,
         ops_log_seq: None,
         notes,
@@ -535,12 +612,13 @@ pub fn maintain_compress(
             "maintain_compress"
         };
         let message = format!(
-            "maintain_compress level={} dry_run={} removed={} tombstoned={} near_pairs={}",
+            "maintain_compress level={} dry_run={} removed={} tombstoned={} near_pairs={} errors={}",
             level,
             dry_run,
             report.docs_removed,
             report.docs_tombstoned,
-            report.near_duplicates.len()
+            report.near_duplicates.len(),
+            report.errors.len()
         );
         let payload = serde_json::to_string(&report).unwrap_or_else(|_| "{}".into());
         let written = store.append_ops_log(&OpsLogEntry {
@@ -554,44 +632,39 @@ pub fn maintain_compress(
             entity_kind: Some("corpus".into()),
             payload_json: payload,
             agent_name: None,
-        })?;
-        report.ops_log_id = Some(written.id);
-        report.ops_log_seq = Some(written.seq);
+        });
+        match written {
+            Ok(written) => {
+                report.ops_log_id = Some(written.id);
+                report.ops_log_seq = Some(written.seq);
+            }
+            Err(error) => report.errors.push(format!(
+                "TERMINAL_AUDIT_FAILED durable_mutation_committed={}: {error}",
+                report.docs_removed > 0 || report.docs_tombstoned > 0
+            )),
+        }
     }
 
     Ok(report)
 }
 
+fn finalize_compress_fts(store: &Store, stemmer: &str) -> Result<db::FtsState> {
+    #[cfg(test)]
+    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
+        return Err(AppError::fts("injected final FTS reindex failure"));
+    }
+    #[cfg(test)]
+    if stemmer == TEST_FINALIZE_FTS_PANIC_STEMMER {
+        panic!("injected final FTS reindex panic");
+    }
+
+    let conn = store.lock()?;
+    db::reindex_with_stemmer(&conn, stemmer)
+}
+
 fn is_inactive(doc: &Document) -> bool {
     let s = doc.status.to_ascii_lowercase();
     s == "archived" || s == "tombstone"
-}
-
-fn tombstone_document(store: &Store, id: &str) -> Result<()> {
-    let update = DocumentMetaUpdate {
-        status: Some("tombstone".into()),
-        ..Default::default()
-    };
-    store
-        .update_document_meta(id, &update)?
-        .ok_or_else(|| AppError::not_found(format!("document not found for tombstone: {id}")))?;
-    Ok(())
-}
-
-fn cleanup_wiki_index_for_doc(store: &Store, doc: &Document) -> Result<()> {
-    if !doc.layer.eq_ignore_ascii_case("wiki") {
-        return Ok(());
-    }
-    // Best-effort: drop catalog rows pointing at this page id.
-    let entries = store.list_wiki_index()?;
-    for e in entries {
-        let page_match = e.page_id.as_deref() == Some(doc.id.as_str());
-        let id_match = e.id == doc.id;
-        if page_match || id_match {
-            let _ = store.delete_wiki_index_entry(&e.id);
-        }
-    }
-    Ok(())
 }
 
 /// Prefer pinned, then higher boost, then older created_at, then smaller id.
@@ -680,45 +753,22 @@ fn find_exact_duplicate_groups(store: &Store) -> Result<Vec<DuplicateGroup>> {
 }
 
 fn find_near_duplicate_pairs(store: &Store, threshold: f64) -> Result<Vec<NearDuplicatePair>> {
-    use std::collections::{BTreeMap, HashMap};
-
     let threshold = threshold.clamp(0.0, 1.0) as f32;
-    let chunks = store.all_chunks_with_embeddings()?;
-    let docs = store.list_documents()?;
-    let title_by_id: HashMap<String, String> = docs
-        .iter()
-        .filter(|d| !is_inactive(d))
-        .map(|d| (d.id.clone(), d.title.clone()))
-        .collect();
-    let active: std::collections::HashSet<String> = title_by_id.keys().cloned().collect();
-
-    let mut first_chunk: BTreeMap<String, Vec<f32>> = BTreeMap::new();
-    for c in chunks {
-        if !active.contains(&c.document_id) {
-            continue;
-        }
-        first_chunk
-            .entry(c.document_id)
-            .or_insert_with(|| c.embedding);
-    }
-
-    let mut entries: Vec<(String, Vec<f32>)> = first_chunk.into_iter().collect();
-    if entries.len() > NEAR_DUP_MAX_DOCS {
-        entries.truncate(NEAR_DUP_MAX_DOCS);
-    }
+    // Keep the advertised cap in the data query rather than materializing the
+    // entire vector corpus before truncation.
+    let entries =
+        store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, true, false, false)?;
 
     let mut pairs = Vec::new();
     for i in 0..entries.len() {
         for j in (i + 1)..entries.len() {
-            let cos = cosine_similarity(&entries[i].1, &entries[j].1);
+            let cos = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
             if cos >= threshold {
-                let id_a = &entries[i].0;
-                let id_b = &entries[j].0;
                 pairs.push(NearDuplicatePair {
-                    document_id_a: id_a.clone(),
-                    document_id_b: id_b.clone(),
-                    title_a: title_by_id.get(id_a).cloned().unwrap_or_default(),
-                    title_b: title_by_id.get(id_b).cloned().unwrap_or_default(),
+                    document_id_a: entries[i].document_id.clone(),
+                    document_id_b: entries[j].document_id.clone(),
+                    title_a: entries[i].title.clone(),
+                    title_b: entries[j].title.clone(),
                     cosine: cos,
                 });
                 if pairs.len() >= REPORT_LIST_CAP {
@@ -811,6 +861,53 @@ mod tests {
             .unwrap();
     }
 
+    fn assert_finalization_failure_audit(
+        store: &Store,
+        report: &MaintainCompressReport,
+        expected_error: &str,
+        expected_durable: bool,
+    ) {
+        assert_eq!(report.errors.len(), 1);
+        assert!(report.errors[0].contains("FTS_FINALIZATION_FAILED"));
+        if expected_durable {
+            assert!(report.errors[0].contains("durable corpus work was committed"));
+        } else {
+            assert!(report.errors[0].contains("no durable corpus mutation was detected"));
+        }
+        assert!(report.errors[0].contains("retryable=true"));
+        assert!(report.errors[0].contains(expected_error));
+
+        let entries = store.list_ops_log(10).unwrap();
+        let summary_id = report.ops_log_id.as_deref().expect("terminal summary id");
+        let summary = entries
+            .iter()
+            .find(|entry| entry.id == summary_id)
+            .expect("terminal summary ops_log row");
+        assert_eq!(summary.op, "maintain_compress");
+        let summary_payload: serde_json::Value =
+            serde_json::from_str(&summary.payload_json).unwrap();
+        assert_eq!(summary_payload["errors"].as_array().unwrap().len(), 1);
+        assert!(summary_payload["errors"][0]
+            .as_str()
+            .unwrap()
+            .contains(expected_error));
+
+        let failure = entries
+            .iter()
+            .find(|entry| entry.op == "fts_finalization_failed")
+            .expect("durable FTS failure ops_log row");
+        let failure_payload: serde_json::Value =
+            serde_json::from_str(&failure.payload_json).unwrap();
+        assert_eq!(failure_payload["operation"], "maintain_compress");
+        assert_eq!(failure_payload["code"], "FTS_FINALIZATION_FAILED");
+        assert_eq!(
+            failure_payload["durable_mutation_committed"],
+            expected_durable
+        );
+        assert_eq!(failure_payload["retryable"], true);
+        assert_eq!(failure_payload["dirty_marker_written"], true);
+    }
+
     #[test]
     fn level_out_of_range_rejected() {
         let dir = tempfile::tempdir().unwrap();
@@ -828,14 +925,7 @@ mod tests {
         let path = dir.path().join("l0.duckdb");
         let store = Store::open(&path).unwrap();
         let cfg = test_config(path);
-        seed_doc(
-            &store,
-            "d1",
-            "A",
-            "hello world body",
-            "wiki",
-            vec![0.1; 8],
-        );
+        seed_doc(&store, "d1", "A", "hello world body", "wiki", vec![0.1; 8]);
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 0;
@@ -879,6 +969,33 @@ mod tests {
         assert_eq!(remaining.len(), 1);
         // oldest / smaller id kept
         assert_eq!(remaining[0].id, "w1");
+        let generation_after_compress = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(!generation_after_compress.dirty);
+        assert_eq!(
+            generation_after_compress.index_generation,
+            Some(generation_after_compress.chunks_generation)
+        );
+
+        let hits = crate::db::search::search(
+            &store,
+            &crate::db::search::SearchQuery {
+                mode: SearchMode::Lex,
+                query_text: Some("identical wiki".into()),
+                top_k: 5,
+                fts_stemmer: cfg.fts_stemmer.clone(),
+                ..crate::db::search::SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        let generation_after_search = {
+            let conn = store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert_eq!(generation_after_search, generation_after_compress);
     }
 
     #[test]
@@ -908,14 +1025,8 @@ mod tests {
             .map(|d| (d.id, d.status))
             .collect();
         // one active, one tombstone
-        let active = statuses
-            .iter()
-            .filter(|(_, s)| s != "tombstone")
-            .count();
-        let tomb = statuses
-            .iter()
-            .filter(|(_, s)| s == "tombstone")
-            .count();
+        let active = statuses.iter().filter(|(_, s)| s != "tombstone").count();
+        let tomb = statuses.iter().filter(|(_, s)| s == "tombstone").count();
         assert_eq!(active, 1);
         assert_eq!(tomb, 1);
     }
@@ -947,8 +1058,16 @@ mod tests {
         let cfg = test_config(path);
         // Same embedding → cosine 1.0
         let emb = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        seed_doc(&store, "a", "Alpha", "body alpha unique", "wiki", emb.clone());
+        seed_doc(
+            &store,
+            "a",
+            "Alpha",
+            "body alpha unique",
+            "wiki",
+            emb.clone(),
+        );
         seed_doc(&store, "b", "Beta", "body beta unique", "wiki", emb);
+        store.write_embedding_manifest_from_config(&cfg).unwrap();
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 2;
@@ -970,8 +1089,16 @@ mod tests {
         let store = Store::open(&path).unwrap();
         let cfg = test_config(path);
         let emb = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        seed_doc(&store, "a", "Alpha", "body alpha unique", "wiki", emb.clone());
+        seed_doc(
+            &store,
+            "a",
+            "Alpha",
+            "body alpha unique",
+            "wiki",
+            emb.clone(),
+        );
         seed_doc(&store, "b", "Beta", "body beta unique", "wiki", emb);
+        store.write_embedding_manifest_from_config(&cfg).unwrap();
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 2;
@@ -982,6 +1109,56 @@ mod tests {
         assert_eq!(r.docs_removed, 1);
         assert_eq!(store.list_documents().unwrap().len(), 1);
         assert!(r.merges.iter().any(|m| m.action == "merge_near_dup"));
+    }
+
+    #[test]
+    fn l2_apply_fails_before_any_mutation_during_embedding_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("l2-migration-incomplete.duckdb");
+        let store = Store::open(&path).unwrap();
+        let cfg = test_config(path);
+        let emb = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        seed_doc(
+            &store,
+            "keep",
+            "Keep",
+            "unique body one",
+            "wiki",
+            emb.clone(),
+        );
+        seed_doc(&store, "drop", "Drop", "unique body two", "wiki", emb);
+        let migration = crate::db::store::embedding_migration_manifest(&cfg);
+        store.set_embedding_manifest(&migration).unwrap();
+        let stats_before = store.stats().unwrap();
+        let documents_before = serde_json::to_value(store.list_documents().unwrap()).unwrap();
+        let chunks_before =
+            serde_json::to_value(store.all_chunks_with_embeddings().unwrap()).unwrap();
+        assert!(store.list_ops_log(10).unwrap().is_empty());
+
+        let mut opts = CompressOptions::from_config(&cfg);
+        opts.level = 2;
+        opts.dry_run = false;
+        opts.confirm = true;
+        opts.allow_raw_delete = true;
+        opts.near_dup_threshold = 0.9;
+        let error = maintain_compress(&store, &cfg, &opts).unwrap_err();
+
+        assert!(matches!(error, AppError::Embeddings(_)));
+        assert!(error.to_string().contains("incomplete corpus migration"));
+        assert_eq!(store.stats().unwrap(), stats_before);
+        assert_eq!(
+            serde_json::to_value(store.list_documents().unwrap()).unwrap(),
+            documents_before
+        );
+        assert_eq!(
+            serde_json::to_value(store.all_chunks_with_embeddings().unwrap()).unwrap(),
+            chunks_before
+        );
+        assert!(store.list_ops_log(10).unwrap().is_empty());
+        assert_eq!(
+            serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap(),
+            serde_json::to_value(Some(migration)).unwrap()
+        );
     }
 
     #[test]
@@ -1001,14 +1178,116 @@ mod tests {
         assert!(r.dry_run);
         assert_eq!(r.docs_removed, 1); // planned
         assert_eq!(store.list_documents().unwrap().len(), 2);
-        assert!(r
-            .merges
-            .iter()
-            .any(|m| m.disposition == "planned"));
+        assert!(r.merges.iter().any(|m| m.disposition == "planned"));
         assert!(store
             .list_ops_log(5)
             .unwrap()
             .iter()
             .any(|o| o.op == "maintain_compress_dry_run"));
+    }
+
+    #[test]
+    fn final_fts_failure_returns_durable_merge_report_and_terminal_ops_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("final-fts-failure.duckdb");
+        let store = Store::open(&path).unwrap();
+        let mut cfg = test_config(path);
+        let body = "same durable compression body";
+        seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
+        seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
+        store.ensure_fts(&cfg.fts_stemmer).unwrap();
+        cfg.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+
+        let mut opts = CompressOptions::from_config(&cfg);
+        opts.level = 1;
+        opts.dry_run = false;
+        let report = maintain_compress(&store, &cfg, &opts)
+            .expect("aggregate report survives final FTS failure");
+
+        assert_eq!(report.docs_removed, 1);
+        assert_eq!(store.list_documents().unwrap().len(), 1);
+        assert_finalization_failure_audit(
+            &store,
+            &report,
+            "injected final FTS reindex failure",
+            true,
+        );
+        let generation = {
+            let conn = store.lock().unwrap();
+            db::fts_generation_state(&conn).unwrap()
+        };
+        assert!(generation.dirty, "next lexical read must retry FTS");
+
+        let mut legacy_payload = serde_json::to_value(&report).unwrap();
+        legacy_payload.as_object_mut().unwrap().remove("errors");
+        let decoded: MaintainCompressReport = serde_json::from_value(legacy_payload).unwrap();
+        assert!(decoded.errors.is_empty());
+    }
+
+    #[test]
+    fn final_fts_panic_returns_durable_merge_report_and_terminal_ops_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("final-fts-panic.duckdb");
+        let store = Store::open(&path).unwrap();
+        let mut cfg = test_config(path);
+        let body = "same durable compression panic body";
+        seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
+        seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
+        store.ensure_fts(&cfg.fts_stemmer).unwrap();
+        cfg.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+
+        let mut opts = CompressOptions::from_config(&cfg);
+        opts.level = 1;
+        opts.dry_run = false;
+        let report = maintain_compress(&store, &cfg, &opts)
+            .expect("aggregate report survives final FTS panic");
+
+        assert_eq!(report.docs_removed, 1);
+        assert_eq!(store.list_documents().unwrap().len(), 1);
+        assert_finalization_failure_audit(
+            &store,
+            &report,
+            "maintain_compress FTS finalization panicked",
+            true,
+        );
+        let generation = {
+            let conn = store.lock().unwrap();
+            db::fts_generation_state(&conn).unwrap()
+        };
+        assert!(generation.dirty, "next lexical read must retry FTS");
+    }
+
+    #[test]
+    fn final_fts_panic_without_merge_preserves_noop_report_and_audit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("final-fts-panic-noop.duckdb");
+        let store = Store::open(&path).unwrap();
+        let mut cfg = test_config(path);
+        seed_doc(
+            &store,
+            "only",
+            "Only",
+            "unique compression body",
+            "wiki",
+            vec![0.2; 8],
+        );
+        store.ensure_fts(&cfg.fts_stemmer).unwrap();
+        cfg.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+
+        let mut opts = CompressOptions::from_config(&cfg);
+        opts.level = 1;
+        opts.dry_run = false;
+        let report = maintain_compress(&store, &cfg, &opts)
+            .expect("no-op aggregate survives final FTS panic");
+
+        assert_eq!(report.docs_removed, 0);
+        assert_eq!(report.docs_tombstoned, 0);
+        assert_eq!(store.list_documents().unwrap().len(), 1);
+        assert_finalization_failure_audit(
+            &store,
+            &report,
+            "maintain_compress FTS finalization panicked",
+            false,
+        );
     }
 }

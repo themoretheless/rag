@@ -14,7 +14,7 @@ use super::{
     HttpState,
 };
 use crate::db::search::{attach_context, ContextExpansion};
-use crate::db::DocumentCatalogFilter;
+use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
 use crate::mcp::tools::PackHitParams;
 use crate::models::SearchHit;
@@ -50,7 +50,13 @@ async fn source_file(
     State(state): State<HttpState>,
     Query(query): Query<SourceFileQuery>,
 ) -> axum::response::Response {
-    let document = match state.store.get_document(&query.document_id) {
+    let store = state.store.clone();
+    let document_id = query.document_id;
+    let document = match super::run_blocking("source document", move || {
+        store.get_document(&document_id)
+    })
+    .await
+    {
         Ok(Some(document)) => document,
         Ok(None) => return api_err(AppError::not_found("document not found")),
         Err(error) => return api_err(error),
@@ -154,10 +160,13 @@ async fn revisions(
         Ok(value) => value,
         Err(error) => return api_err(error),
     };
-    match state
-        .store
-        .list_document_revision_summaries(&query.document_id, limit, offset)
-    {
+    let store = state.store.clone();
+    let document_id = query.document_id;
+    let page = super::run_blocking("revision catalog", move || {
+        store.list_document_revision_summaries(&document_id, limit, offset)
+    })
+    .await;
+    match page {
         Ok(page) => {
             let next_cursor = (offset + page.items.len() < page.total as usize)
                 .then(|| encode_cursor(offset + page.items.len()));
@@ -181,9 +190,15 @@ async fn revision_snapshot(
     State(state): State<HttpState>,
     Query(query): Query<RevisionSnapshotQuery>,
 ) -> impl IntoResponse {
-    match RevisionService::new(&state.store, &state.embedder, &state.config)
-        .snapshot_at(&query.document_id, query.revision)
-    {
+    let store = state.store.clone();
+    let embedder = state.embedder.clone();
+    let config = state.config.clone();
+    let result = super::run_blocking("revision snapshot", move || {
+        RevisionService::new(&store, &embedder, &config)
+            .snapshot_at(&query.document_id, query.revision)
+    })
+    .await;
+    match result {
         Ok(snapshot) => api_ok(json!({"ok":true, "result":snapshot})),
         Err(error) => api_err(error),
     }
@@ -214,11 +229,18 @@ async fn revision_diff(
     State(state): State<HttpState>,
     Query(query): Query<RevisionDiffQuery>,
 ) -> impl IntoResponse {
-    match RevisionService::new(&state.store, &state.embedder, &state.config).diff(
-        &query.document_id,
-        query.from_revision,
-        query.to_revision,
-    ) {
+    let store = state.store.clone();
+    let embedder = state.embedder.clone();
+    let config = state.config.clone();
+    let result = super::run_blocking("revision diff", move || {
+        RevisionService::new(&store, &embedder, &config).diff(
+            &query.document_id,
+            query.from_revision,
+            query.to_revision,
+        )
+    })
+    .await;
+    match result {
         Ok(result) => api_ok(json!({"ok": true, "result": result})),
         Err(error) => api_err(error),
     }
@@ -303,11 +325,23 @@ async fn search_http(
         fts_stemmer: state.config.fts_stemmer.clone(),
         rrf_k: body.rrf_k,
     };
-    let mode = command
-        .mode
-        .clone()
-        .unwrap_or_else(|| command.default_mode.as_str().to_string());
-    match retrieval::execute_search(&state.store, state.embedder.as_ref(), command).await {
+    let resolved_mode =
+        match retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode) {
+            Ok(mode) => mode,
+            Err(error) => {
+                call.finish(false, Some(search_error_kind(&error).into()), None);
+                return api_err(error);
+            }
+        };
+    let mode = resolved_mode.as_str();
+    match retrieval::execute_search(
+        &state.store,
+        state.embedder.as_ref(),
+        &state.config,
+        command,
+    )
+    .await
+    {
         Ok(hits) => {
             call.finish(true, None, Some(format!("{} hits", hits.len())));
             let timings = hits.first().and_then(|hit| hit.explanation.clone());
@@ -373,15 +407,19 @@ async fn pack_context_http(
         Some(Err(error)) => return api_err(error),
         None => None,
     };
-    let mut hits: Vec<SearchHit> = body.hits.into_iter().map(SearchHit::from).collect();
-    if let Err(error) = attach_context(
-        &state.store,
-        &mut hits,
-        expansion,
-        body.neighbor_chunks.unwrap_or(1),
-    ) {
-        return api_err(error);
-    }
+    let hits: Vec<SearchHit> = body.hits.into_iter().map(SearchHit::from).collect();
+    let store = state.store.clone();
+    let neighbor_chunks = body.neighbor_chunks.unwrap_or(1);
+    let hits = match super::run_blocking("pack-context expansion", move || {
+        let mut hits = hits;
+        attach_context(&store, &mut hits, expansion, neighbor_chunks)?;
+        Ok(hits)
+    })
+    .await
+    {
+        Ok(hits) => hits,
+        Err(error) => return api_err(error),
+    };
     let packed = pack_hits(
         &hits,
         body.max_tokens.unwrap_or(state.config.max_context_tokens),
@@ -401,13 +439,25 @@ struct MultiGetBody {
     document_ids: Vec<String>,
     #[serde(default)]
     include_chunks: bool,
+    #[serde(default)]
+    chunk_limit: Option<usize>,
 }
 
 async fn multi_get(
     State(state): State<HttpState>,
     Json(body): Json<MultiGetBody>,
 ) -> impl IntoResponse {
-    match retrieval::multi_get(&state.store, body.document_ids, body.include_chunks) {
+    let store = state.store.clone();
+    let result = super::run_blocking("multi-get", move || {
+        retrieval::multi_get(
+            &store,
+            body.document_ids,
+            body.include_chunks,
+            body.chunk_limit,
+        )
+    })
+    .await;
+    match result {
         Ok(result) => api_ok(json!({
             "ok": true,
             "items": result.documents,
@@ -429,12 +479,17 @@ async fn expand_chunks(
     State(state): State<HttpState>,
     Query(query): Query<ExpandQuery>,
 ) -> impl IntoResponse {
-    match retrieval::expand_chunks(
-        &state.store,
-        &query.document_id,
-        query.chunk_index,
-        query.radius.unwrap_or(1),
-    ) {
+    let store = state.store.clone();
+    let result = super::run_blocking("expand chunks", move || {
+        retrieval::expand_chunks(
+            &store,
+            &query.document_id,
+            query.chunk_index,
+            query.radius.unwrap_or(1),
+        )
+    })
+    .await;
+    match result {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
     }
@@ -458,7 +513,13 @@ async fn find_similar(
         room: None,
         fts_stemmer: state.config.fts_stemmer.clone(),
     };
-    match retrieval::find_similar(&state.store, query) {
+    let store = state.store.clone();
+    let config = state.config.clone();
+    let result = super::run_blocking("find similar", move || {
+        retrieval::find_similar(&store, &config, query)
+    })
+    .await;
+    match result {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
     }
@@ -490,7 +551,10 @@ async fn documents(
     State(state): State<HttpState>,
     Query(query): Query<DocumentsQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_CATALOG_PAGE_SIZE)
+        .clamp(1, MAX_CATALOG_PAGE_SIZE);
     let offset = match decode_cursor(query.cursor.as_deref()) {
         Ok(value) => value,
         Err(error) => return api_err(error),
@@ -499,6 +563,7 @@ async fn documents(
         q: clean(query.q),
         wing: clean(query.wing),
         room: clean(query.room),
+        source_file: None,
         layer: clean(query.layer),
         kind: clean(query.kind),
         status: clean(query.status),
@@ -506,7 +571,12 @@ async fn documents(
         limit,
         offset,
     };
-    match state.store.list_document_catalog(&filter) {
+    let store = state.store.clone();
+    let page = super::run_blocking("document catalog", move || {
+        store.list_document_catalog(&filter)
+    })
+    .await;
+    match page {
         Ok(page) => {
             let next_cursor = (offset + page.items.len() < page.total as usize)
                 .then(|| encode_cursor(offset + page.items.len()));

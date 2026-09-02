@@ -2,7 +2,7 @@
 name = "rag-mcp-ui"
 version = "0.1.0"
 edition = "2021"
-description = "Optional read-only egui graph inspector for rag-mcp (snapshot / exclusive DB)"
+description = "Optional read-only egui graph inspector for rag-mcp (snapshot / read-only DB)"
 license = "MIT"
 publish = false
 

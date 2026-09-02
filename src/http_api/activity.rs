@@ -37,6 +37,9 @@ struct ActivityQuery {
 static EVENTS: OnceLock<Mutex<VecDeque<ActivityEvent>>> = OnceLock::new();
 static NEXT_SEQ: AtomicU64 = AtomicU64::new(1);
 
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
+
 fn events() -> &'static Mutex<VecDeque<ActivityEvent>> {
     EVENTS.get_or_init(|| Mutex::new(VecDeque::with_capacity(MAX_ACTIVITY_EVENTS)))
 }
@@ -98,6 +101,17 @@ fn select_activity(
     items
 }
 
+#[cfg(test)]
+pub(crate) fn latest_matching(kind: &str, action: &str) -> Option<ActivityEvent> {
+    events()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .rev()
+        .find(|event| event.kind == kind && event.action == action)
+        .cloned()
+}
+
 pub fn routes() -> Router<super::HttpState> {
     Router::new().route("/v1/activity", get(list_activity))
 }
@@ -108,6 +122,7 @@ mod tests {
 
     #[test]
     fn ring_buffer_is_bounded() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         for n in 0..(MAX_ACTIVITY_EVENTS + 5) {
             record("test", None, format!("event-{n}"), None, None, None);
         }
@@ -121,6 +136,7 @@ mod tests {
 
     #[test]
     fn selection_is_incremental_and_keeps_chronological_order() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let queue = (1..=4)
             .map(|seq| ActivityEvent {
                 seq,

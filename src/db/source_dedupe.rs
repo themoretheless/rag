@@ -62,6 +62,9 @@ pub struct SourceDuplicateGroup {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceDuplicateCleanupReport {
     pub success: bool,
+    /// Terminal derived-index failures after committed cleanup work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
     pub dry_run: bool,
     pub confirmed: bool,
     pub max_candidates: usize,
@@ -98,17 +101,216 @@ pub struct SourceDuplicateCleanupReport {
     pub groups: Vec<SourceDuplicateGroup>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct GroupKey {
     source_file: String,
     content_hash: String,
 }
 
 #[derive(Debug, Clone)]
+struct GroupMetrics {
+    key: GroupKey,
+    document_count: u64,
+    canonical_count: u64,
+    survivor_document_id: Option<String>,
+    source_manifest_document_id: Option<String>,
+    canonical_chunks: u64,
+    candidate_chunks: u64,
+    candidate_wiki_references: u64,
+    candidate_collection_references: u64,
+    candidate_foreign_manifest_references: u64,
+    candidate_revisions: u64,
+    source_manifest_owner_is_member: bool,
+    actionable: bool,
+    candidate_count: u64,
+}
+
+#[derive(Debug, Clone)]
 struct BatchSelection {
-    group_index: usize,
+    metrics: GroupMetrics,
     candidate_ids: Vec<String>,
 }
+
+/// Classify every same-source/same-hash group inside DuckDB. The Rust side only
+/// receives scalar totals plus explicitly limited candidate/detail rows.
+const CLASSIFIED_GROUPS_CTE: &str = r#"
+WITH
+raw_documents AS (
+  SELECT
+    d.id,
+    d.uri,
+    d.title,
+    d.source_file,
+    d.content_hash,
+    d.uri = ('file://' || d.source_file) AS canonical_uri_match,
+    source_owner.document_id AS source_manifest_document_id
+  FROM documents d
+  LEFT JOIN source_manifest source_owner ON source_owner.canonical_path = d.source_file
+  WHERE LOWER(COALESCE(NULLIF(TRIM(d.layer), ''), 'raw')) = 'raw'
+    AND LOWER(COALESCE(NULLIF(TRIM(d.status), ''), 'active')) = 'active'
+    AND d.source_file IS NOT NULL AND TRIM(d.source_file) <> ''
+    AND d.content_hash IS NOT NULL AND TRIM(d.content_hash) <> ''
+),
+duplicate_members_base AS (
+  SELECT member.*
+  FROM raw_documents member
+  JOIN (
+    SELECT source_file, content_hash
+    FROM raw_documents
+    GROUP BY source_file, content_hash
+    HAVING COUNT(*) > 1
+  ) duplicate_group USING (source_file, content_hash)
+),
+chunk_counts AS (
+  SELECT chunk.document_id, COUNT(*)::BIGINT AS chunks
+  FROM chunks chunk
+  JOIN duplicate_members_base member ON member.id = chunk.document_id
+  GROUP BY chunk.document_id
+),
+wiki_reference_rows AS (
+  SELECT entry.id AS row_id, entry.document_id AS referenced_document_id
+  FROM wiki_index entry
+  JOIN duplicate_members_base member ON member.id = entry.document_id
+  UNION
+  SELECT entry.id AS row_id, entry.page_id AS referenced_document_id
+  FROM wiki_index entry
+  JOIN duplicate_members_base member ON member.id = entry.page_id
+),
+wiki_reference_counts AS (
+  SELECT referenced_document_id AS document_id, COUNT(*)::BIGINT AS reference_count
+  FROM wiki_reference_rows
+  GROUP BY referenced_document_id
+),
+collection_entry_reference_rows AS (
+  SELECT entry.collection_id, entry.document_id AS entry_document_id,
+         entry.document_id AS referenced_document_id
+  FROM collection_entries entry
+  JOIN duplicate_members_base member ON member.id = entry.document_id
+  UNION
+  SELECT entry.collection_id, entry.document_id AS entry_document_id,
+         entry.parent_document_id AS referenced_document_id
+  FROM collection_entries entry
+  JOIN duplicate_members_base member ON member.id = entry.parent_document_id
+),
+collection_entry_reference_counts AS (
+  SELECT referenced_document_id AS document_id, COUNT(*)::BIGINT AS reference_count
+  FROM collection_entry_reference_rows
+  GROUP BY referenced_document_id
+),
+collection_dependency_reference_rows AS (
+  SELECT dependency.collection_id, dependency.document_id,
+         dependency.depends_on_document_id,
+         dependency.document_id AS referenced_document_id
+  FROM collection_dependencies dependency
+  JOIN duplicate_members_base member ON member.id = dependency.document_id
+  UNION
+  SELECT dependency.collection_id, dependency.document_id,
+         dependency.depends_on_document_id,
+         dependency.depends_on_document_id AS referenced_document_id
+  FROM collection_dependencies dependency
+  JOIN duplicate_members_base member ON member.id = dependency.depends_on_document_id
+),
+collection_dependency_reference_counts AS (
+  SELECT referenced_document_id AS document_id, COUNT(*)::BIGINT AS reference_count
+  FROM collection_dependency_reference_rows
+  GROUP BY referenced_document_id
+),
+collection_reference_counts AS (
+  SELECT document_id, SUM(reference_count)::BIGINT AS reference_count
+  FROM (
+    SELECT document_id, reference_count FROM collection_entry_reference_counts
+    UNION ALL
+    SELECT document_id, reference_count FROM collection_dependency_reference_counts
+  ) reference_counts_by_table
+  GROUP BY document_id
+),
+foreign_manifest_reference_counts AS (
+  SELECT member.id AS document_id, COUNT(*)::BIGINT AS reference_count
+  FROM duplicate_members_base member
+  JOIN source_manifest manifest ON manifest.document_id = member.id
+  WHERE manifest.canonical_path <> member.source_file
+  GROUP BY member.id
+),
+revision_counts AS (
+  SELECT revision.document_id, COUNT(*)::BIGINT AS revisions
+  FROM document_revisions revision
+  JOIN duplicate_members_base member ON member.id = revision.document_id
+  GROUP BY revision.document_id
+),
+active_raw AS (
+  SELECT
+    member.id,
+    member.uri,
+    member.title,
+    member.source_file,
+    member.content_hash,
+    member.canonical_uri_match,
+    COALESCE(chunks.chunks, 0)::BIGINT AS chunks,
+    COALESCE(wiki_refs.reference_count, 0)::BIGINT AS wiki_references,
+    COALESCE(collection_refs.reference_count, 0)::BIGINT AS collection_references,
+    COALESCE(foreign_manifest_refs.reference_count, 0)::BIGINT
+      AS foreign_source_manifest_references,
+    COALESCE(revisions.revisions, 0)::BIGINT AS revisions,
+    member.source_manifest_document_id
+  FROM duplicate_members_base member
+  LEFT JOIN chunk_counts chunks ON chunks.document_id = member.id
+  LEFT JOIN wiki_reference_counts wiki_refs ON wiki_refs.document_id = member.id
+  LEFT JOIN collection_reference_counts collection_refs ON collection_refs.document_id = member.id
+  LEFT JOIN foreign_manifest_reference_counts foreign_manifest_refs
+    ON foreign_manifest_refs.document_id = member.id
+  LEFT JOIN revision_counts revisions ON revisions.document_id = member.id
+),
+grouped AS (
+  SELECT
+    source_file,
+    content_hash,
+    COUNT(*)::BIGINT AS document_count,
+    SUM(CASE WHEN canonical_uri_match THEN 1 ELSE 0 END)::BIGINT AS canonical_count,
+    MAX(CASE WHEN canonical_uri_match THEN id END) AS survivor_document_id,
+    MAX(source_manifest_document_id) AS source_manifest_document_id,
+    SUM(CASE WHEN NOT canonical_uri_match THEN 1 ELSE 0 END)::BIGINT
+      AS raw_candidate_count,
+    SUM(CASE WHEN canonical_uri_match THEN chunks ELSE 0 END)::BIGINT
+      AS canonical_chunks,
+    SUM(CASE WHEN NOT canonical_uri_match THEN chunks ELSE 0 END)::BIGINT
+      AS candidate_chunks,
+    SUM(CASE WHEN NOT canonical_uri_match THEN wiki_references ELSE 0 END)::BIGINT
+      AS candidate_wiki_references,
+    SUM(CASE WHEN NOT canonical_uri_match THEN collection_references ELSE 0 END)::BIGINT
+      AS candidate_collection_references,
+    SUM(CASE WHEN NOT canonical_uri_match
+             THEN foreign_source_manifest_references ELSE 0 END)::BIGINT
+      AS candidate_foreign_manifest_references,
+    SUM(CASE WHEN NOT canonical_uri_match THEN revisions ELSE 0 END)::BIGINT
+      AS candidate_revisions,
+    SUM(CASE WHEN source_manifest_document_id = id THEN 1 ELSE 0 END)::BIGINT
+      AS source_manifest_owner_members
+  FROM active_raw
+  GROUP BY source_file, content_hash
+),
+classified AS (
+  SELECT
+    *,
+    source_manifest_document_id IS NULL OR source_manifest_owner_members > 0
+      AS source_manifest_owner_is_member,
+    canonical_count = 1
+      AND raw_candidate_count > 0
+      AND NOT (canonical_chunks = 0 AND candidate_chunks > 0)
+      AND candidate_wiki_references = 0
+      AND candidate_collection_references = 0
+      AND candidate_foreign_manifest_references = 0
+      AND candidate_revisions = 0
+      AND (source_manifest_document_id IS NULL OR source_manifest_owner_members > 0)
+      AS actionable
+  FROM grouped
+),
+group_metrics AS (
+  SELECT
+    *,
+    CASE WHEN actionable THEN raw_candidate_count ELSE 0 END::BIGINT AS candidate_count
+  FROM classified
+)
+"#;
 
 impl Store {
     /// Preview or atomically remove legacy raw documents that duplicate the
@@ -150,48 +352,44 @@ impl Store {
             [],
             |row| row.get::<_, i64>(0),
         )?;
-        let keys = duplicate_group_keys(&tx)?;
-        let mut groups = Vec::with_capacity(keys.len());
-        for key in keys {
-            groups.push(inspect_group(&tx, &key)?);
-        }
-
-        let candidate_count = groups
-            .iter()
-            .filter(|group| group.actionable)
-            .map(|group| group.candidate_count)
-            .sum::<u64>();
-        let actionable_groups = groups.iter().filter(|group| group.actionable).count();
-        let skipped_groups = groups.len().saturating_sub(actionable_groups);
-        let batch = select_batch(&groups, max_candidates);
+        let totals = load_cleanup_totals(&tx)?;
+        let batch = load_batch(&tx, max_candidates)?;
         let batch_candidates = batch
             .iter()
             .map(|selection| selection.candidate_ids.len() as u64)
             .sum::<u64>();
-        for selection in &batch {
-            let group = &mut groups[selection.group_index];
-            group.batch_candidate_count = selection.candidate_ids.len() as u64;
-            group.remaining_candidate_count = group
-                .candidate_count
-                .saturating_sub(group.batch_candidate_count);
-        }
-        let remaining_candidates = candidate_count.saturating_sub(batch_candidates);
-        let remaining_groups = groups
+        let fully_drained_groups = batch
             .iter()
-            .filter(|group| group.actionable && group.remaining_candidate_count > 0)
+            .filter(|selection| {
+                selection.candidate_ids.len() as u64 >= selection.metrics.candidate_count
+            })
             .count();
+        let remaining_candidates = totals.candidate_count.saturating_sub(batch_candidates);
+        let remaining_groups = totals
+            .actionable_groups
+            .saturating_sub(fully_drained_groups);
         let cap_exceeded = remaining_candidates > 0;
+
+        let groups = load_report_groups(&tx, &batch, totals.matched_groups)?;
+        let reported_groups = groups.len();
+        let groups_truncated = reported_groups < totals.matched_groups;
+        let reported_members = groups.iter().map(|group| group.members.len()).sum();
+        let members_truncated =
+            groups_truncated || groups.iter().any(|group| group.members_truncated);
 
         let mut report = SourceDuplicateCleanupReport {
             success: true,
+            errors: Vec::new(),
             dry_run,
             confirmed: confirm,
             max_candidates,
             scanned_active_raw_documents: scanned_active_raw_documents.max(0) as u64,
-            matched_groups: groups.len(),
-            actionable_groups,
-            skipped_groups,
-            candidate_count,
+            matched_groups: totals.matched_groups,
+            actionable_groups: totals.actionable_groups,
+            skipped_groups: totals
+                .matched_groups
+                .saturating_sub(totals.actionable_groups),
+            candidate_count: totals.candidate_count,
             batch_groups: batch.len(),
             batch_candidates,
             remaining_groups,
@@ -204,16 +402,16 @@ impl Store {
             removed_graph_self_edges: 0,
             rewired_kg_facts: 0,
             rebound_source_manifests: 0,
-            reported_groups: 0,
-            groups_truncated: false,
-            reported_members: 0,
-            members_truncated: false,
+            reported_groups,
+            groups_truncated,
+            reported_members,
+            members_truncated,
             groups,
         };
 
         for selection in if dry_run { &[][..] } else { batch.as_slice() } {
-            let group = &report.groups[selection.group_index];
-            let survivor_id = group
+            let survivor_id = selection
+                .metrics
                 .survivor_document_id
                 .as_deref()
                 .expect("actionable group has one survivor");
@@ -241,7 +439,7 @@ impl Store {
             }
             report.rebound_source_manifests += tx.execute(
                 "UPDATE source_manifest SET document_id = ? WHERE canonical_path = ? AND document_id <> ?",
-                params![survivor_id, group.source_file, survivor_id],
+                params![survivor_id, selection.metrics.key.source_file, survivor_id],
             )? as u64;
 
             for candidate_id in candidate_ids {
@@ -256,120 +454,289 @@ impl Store {
         }
 
         report.applied = !dry_run && report.deleted_documents > 0;
-        let detail = truncate_report_details(&mut report.groups);
-        report.reported_groups = detail.reported_groups;
-        report.groups_truncated = detail.groups_truncated;
-        report.reported_members = detail.reported_members;
-        report.members_truncated = detail.members_truncated;
         tx.commit()?;
         Ok(report)
     }
 }
 
-fn select_batch(groups: &[SourceDuplicateGroup], max_candidates: usize) -> Vec<BatchSelection> {
-    let mut remaining = max_candidates;
-    let mut batch = Vec::new();
-    for (group_index, group) in groups.iter().enumerate() {
-        if remaining == 0 {
-            break;
-        }
-        if !group.actionable {
-            continue;
-        }
-        let candidate_ids = group
-            .members
-            .iter()
-            .filter(|member| !member.canonical_uri_match)
-            .take(remaining)
-            .map(|member| member.document_id.clone())
-            .collect::<Vec<_>>();
-        if candidate_ids.is_empty() {
-            continue;
-        }
-        remaining = remaining.saturating_sub(candidate_ids.len());
-        batch.push(BatchSelection {
-            group_index,
-            candidate_ids,
-        });
-    }
-    batch
-}
-
 #[derive(Debug, Clone, Copy, Default)]
-struct ReportDetailCounts {
-    reported_groups: usize,
-    groups_truncated: bool,
-    reported_members: usize,
-    members_truncated: bool,
+struct CleanupTotals {
+    matched_groups: usize,
+    actionable_groups: usize,
+    candidate_count: u64,
 }
 
-fn truncate_report_details(groups: &mut Vec<SourceDuplicateGroup>) -> ReportDetailCounts {
-    let matched_groups = groups.len();
-    let matched_members = groups
+fn load_cleanup_totals(conn: &Connection) -> Result<CleanupTotals> {
+    let sql = format!(
+        r#"
+        {CLASSIFIED_GROUPS_CTE}
+        SELECT
+          COUNT(*)::BIGINT,
+          COALESCE(SUM(CASE WHEN actionable THEN 1 ELSE 0 END), 0)::BIGINT,
+          COALESCE(SUM(candidate_count), 0)::BIGINT
+        FROM group_metrics
+        "#
+    );
+    let (matched_groups, actionable_groups, candidate_count) = conn.query_row(&sql, [], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    })?;
+    Ok(CleanupTotals {
+        matched_groups: nonnegative(matched_groups) as usize,
+        actionable_groups: nonnegative(actionable_groups) as usize,
+        candidate_count: nonnegative(candidate_count),
+    })
+}
+
+fn load_batch(conn: &Connection, max_candidates: usize) -> Result<Vec<BatchSelection>> {
+    let sql = format!(
+        r#"
+        {CLASSIFIED_GROUPS_CTE}
+        SELECT
+          metrics.source_file,
+          metrics.content_hash,
+          metrics.document_count,
+          metrics.canonical_count,
+          metrics.survivor_document_id,
+          metrics.source_manifest_document_id,
+          metrics.raw_candidate_count,
+          metrics.canonical_chunks,
+          metrics.candidate_chunks,
+          metrics.candidate_wiki_references,
+          metrics.candidate_collection_references,
+          metrics.candidate_foreign_manifest_references,
+          metrics.candidate_revisions,
+          metrics.source_manifest_owner_is_member,
+          metrics.actionable,
+          metrics.candidate_count,
+          member.id
+        FROM group_metrics metrics
+        JOIN active_raw member USING (source_file, content_hash)
+        WHERE metrics.actionable AND NOT member.canonical_uri_match
+        ORDER BY metrics.source_file ASC, metrics.content_hash ASC, member.id ASC
+        LIMIT ?
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query([sql_limit(max_candidates)])?;
+    let mut batch = Vec::<BatchSelection>::new();
+    while let Some(row) = rows.next()? {
+        let metrics = group_metrics_from_row(row)?;
+        let candidate_id: String = row.get(16)?;
+        if batch
+            .last()
+            .is_none_or(|selection| selection.metrics.key != metrics.key)
+        {
+            batch.push(BatchSelection {
+                metrics,
+                candidate_ids: Vec::new(),
+            });
+        }
+        batch
+            .last_mut()
+            .expect("batch contains current group")
+            .candidate_ids
+            .push(candidate_id);
+    }
+    Ok(batch)
+}
+
+fn load_report_groups(
+    conn: &Connection,
+    batch: &[BatchSelection],
+    matched_groups: usize,
+) -> Result<Vec<SourceDuplicateGroup>> {
+    let mut metrics = batch
         .iter()
-        .map(|group| group.members.len())
-        .sum::<usize>();
-    // Applied/planned groups are the most actionable evidence. Stable
-    // partitioning keeps their source/hash order, then preserves the original
-    // order of all remaining diagnostic groups.
-    let (mut selected, unselected): (Vec<_>, Vec<_>) = groups
-        .drain(..)
-        .partition(|group| group.batch_candidate_count > 0);
-    selected.extend(unselected);
-    *groups = selected;
-    groups.truncate(REPORT_GROUP_LIMIT);
+        .take(REPORT_GROUP_LIMIT)
+        .map(|selection| selection.metrics.clone())
+        .collect::<Vec<_>>();
+    if metrics.len() < REPORT_GROUP_LIMIT && metrics.len() < matched_groups {
+        for diagnostic in load_group_metrics_limited(conn, REPORT_GROUP_LIMIT)? {
+            if metrics
+                .iter()
+                .any(|existing| existing.key == diagnostic.key)
+            {
+                continue;
+            }
+            metrics.push(diagnostic);
+            if metrics.len() == REPORT_GROUP_LIMIT {
+                break;
+            }
+        }
+    }
 
     let mut member_budget = REPORT_MEMBER_LIMIT;
-    for group in groups.iter_mut() {
-        let before = group.members.len();
-        let keep = before.min(member_budget);
-        group.members.truncate(keep);
-        group.members_truncated = keep < before;
-        member_budget = member_budget.saturating_sub(keep);
+    let mut groups = Vec::with_capacity(metrics.len());
+    for metric in metrics {
+        let batch_candidate_count = batch
+            .iter()
+            .find(|selection| selection.metrics.key == metric.key)
+            .map(|selection| selection.candidate_ids.len() as u64)
+            .unwrap_or(0);
+        let members = load_group_members(conn, &metric.key, member_budget)?;
+        member_budget = member_budget.saturating_sub(members.len());
+        groups.push(group_from_metrics(metric, batch_candidate_count, members));
     }
-    let reported_members = groups.iter().map(|group| group.members.len()).sum();
-    ReportDetailCounts {
-        reported_groups: groups.len(),
-        groups_truncated: groups.len() < matched_groups,
-        reported_members,
-        members_truncated: reported_members < matched_members,
-    }
+    Ok(groups)
 }
 
-fn duplicate_group_keys(conn: &Connection) -> Result<Vec<GroupKey>> {
-    let mut stmt = conn.prepare(
+fn load_group_metrics_limited(conn: &Connection, limit: usize) -> Result<Vec<GroupMetrics>> {
+    let sql = format!(
         r#"
-        SELECT source_file, content_hash
-        FROM documents
-        WHERE LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) = 'raw'
-          AND LOWER(COALESCE(NULLIF(TRIM(status), ''), 'active')) = 'active'
-          AND source_file IS NOT NULL AND TRIM(source_file) <> ''
-          AND content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-        GROUP BY source_file, content_hash
-        HAVING COUNT(*) > 1
+        {CLASSIFIED_GROUPS_CTE}
+        SELECT
+          source_file,
+          content_hash,
+          document_count,
+          canonical_count,
+          survivor_document_id,
+          source_manifest_document_id,
+          raw_candidate_count,
+          canonical_chunks,
+          candidate_chunks,
+          candidate_wiki_references,
+          candidate_collection_references,
+          candidate_foreign_manifest_references,
+          candidate_revisions,
+          source_manifest_owner_is_member,
+          actionable,
+          candidate_count
+        FROM group_metrics
         ORDER BY source_file ASC, content_hash ASC
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut keys = Vec::new();
+        LIMIT ?
+        "#
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query([sql_limit(limit)])?;
+    let mut metrics = Vec::with_capacity(limit);
     while let Some(row) = rows.next()? {
-        keys.push(GroupKey {
+        metrics.push(group_metrics_from_row(row)?);
+    }
+    Ok(metrics)
+}
+
+fn group_metrics_from_row(row: &duckdb::Row<'_>) -> Result<GroupMetrics> {
+    Ok(GroupMetrics {
+        key: GroupKey {
             source_file: row.get(0)?,
             content_hash: row.get(1)?,
-        });
-    }
-    Ok(keys)
+        },
+        document_count: nonnegative(row.get(2)?),
+        canonical_count: nonnegative(row.get(3)?),
+        survivor_document_id: row.get(4)?,
+        source_manifest_document_id: row.get(5)?,
+        canonical_chunks: nonnegative(row.get(7)?),
+        candidate_chunks: nonnegative(row.get(8)?),
+        candidate_wiki_references: nonnegative(row.get(9)?),
+        candidate_collection_references: nonnegative(row.get(10)?),
+        candidate_foreign_manifest_references: nonnegative(row.get(11)?),
+        candidate_revisions: nonnegative(row.get(12)?),
+        source_manifest_owner_is_member: row.get(13)?,
+        actionable: row.get(14)?,
+        candidate_count: nonnegative(row.get(15)?),
+    })
 }
 
-fn inspect_group(conn: &Connection, key: &GroupKey) -> Result<SourceDuplicateGroup> {
+fn group_from_metrics(
+    metrics: GroupMetrics,
+    batch_candidate_count: u64,
+    members: Vec<SourceDuplicateDocument>,
+) -> SourceDuplicateGroup {
+    let mut skip_reasons = Vec::new();
+    if metrics.canonical_count != 1 {
+        skip_reasons.push(format!(
+            "expected exactly one canonical URI file://{}, found {}",
+            metrics.key.source_file, metrics.canonical_count
+        ));
+    } else {
+        if metrics.canonical_chunks == 0 && metrics.candidate_chunks > 0 {
+            skip_reasons.push(format!(
+                "canonical survivor has no chunks while legacy candidates have {}; reindex before cleanup",
+                metrics.candidate_chunks
+            ));
+        }
+        if metrics.candidate_wiki_references > 0 {
+            skip_reasons.push(format!(
+                "legacy candidates have {} wiki_index references",
+                metrics.candidate_wiki_references
+            ));
+        }
+        if metrics.candidate_collection_references > 0 {
+            skip_reasons.push(format!(
+                "legacy candidates have {} collection references",
+                metrics.candidate_collection_references
+            ));
+        }
+        if metrics.candidate_foreign_manifest_references > 0 {
+            skip_reasons.push(format!(
+                "legacy candidates own {} foreign source_manifest references",
+                metrics.candidate_foreign_manifest_references
+            ));
+        }
+        if metrics.candidate_revisions > 0 {
+            skip_reasons.push(format!(
+                "legacy candidates have {} document revisions requiring manual preservation",
+                metrics.candidate_revisions
+            ));
+        }
+    }
+    if let Some(owner) = metrics.source_manifest_document_id.as_deref() {
+        if !metrics.source_manifest_owner_is_member {
+            skip_reasons.push(format!(
+                "canonical source_manifest path is owned by non-member document {owner}"
+            ));
+        }
+    }
+    debug_assert_eq!(metrics.actionable, skip_reasons.is_empty());
+    let members_truncated = (members.len() as u64) < metrics.document_count;
+    SourceDuplicateGroup {
+        source_file: metrics.key.source_file,
+        content_hash: metrics.key.content_hash,
+        document_count: metrics.document_count,
+        survivor_document_id: metrics.survivor_document_id,
+        source_manifest_document_id: metrics.source_manifest_document_id,
+        candidate_count: metrics.candidate_count,
+        batch_candidate_count,
+        remaining_candidate_count: metrics
+            .candidate_count
+            .saturating_sub(batch_candidate_count),
+        actionable: metrics.actionable,
+        skip_reasons,
+        members,
+        members_truncated,
+    }
+}
+
+fn load_group_members(
+    conn: &Connection,
+    key: &GroupKey,
+    limit: usize,
+) -> Result<Vec<SourceDuplicateDocument>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
     let canonical_uri = format!("file://{}", key.source_file);
     let mut stmt = conn.prepare(
         r#"
+        WITH selected_members AS (
+          SELECT d.id, d.uri, d.title, d.source_file,
+                 d.uri = ? AS canonical_uri_match
+          FROM documents d
+          WHERE d.source_file = ? AND d.content_hash = ?
+            AND LOWER(COALESCE(NULLIF(TRIM(d.layer), ''), 'raw')) = 'raw'
+            AND LOWER(COALESCE(NULLIF(TRIM(d.status), ''), 'active')) = 'active'
+          ORDER BY canonical_uri_match DESC, d.id ASC
+          LIMIT ?
+        )
         SELECT
           d.id,
           d.uri,
           d.title,
-          d.uri = ? AS canonical_uri_match,
+          d.canonical_uri_match,
           (SELECT COUNT(*)::BIGINT FROM chunks c WHERE c.document_id = d.id),
           (SELECT COUNT(*)::BIGINT FROM graph_nodes n WHERE n.document_id = d.id),
           (SELECT COUNT(*)::BIGINT
@@ -385,14 +752,16 @@ fn inspect_group(conn: &Connection, key: &GroupKey) -> Result<SourceDuplicateGro
           (SELECT COUNT(*)::BIGINT FROM source_manifest sm
             WHERE sm.document_id = d.id AND sm.canonical_path <> d.source_file),
           (SELECT COUNT(*)::BIGINT FROM document_revisions r WHERE r.document_id = d.id)
-        FROM documents d
-        WHERE d.source_file = ? AND d.content_hash = ?
-          AND LOWER(COALESCE(NULLIF(TRIM(d.layer), ''), 'raw')) = 'raw'
-          AND LOWER(COALESCE(NULLIF(TRIM(d.status), ''), 'active')) = 'active'
+        FROM selected_members d
         ORDER BY canonical_uri_match DESC, d.id ASC
         "#,
     )?;
-    let mut rows = stmt.query(params![canonical_uri, key.source_file, key.content_hash])?;
+    let mut rows = stmt.query(params![
+        canonical_uri,
+        key.source_file,
+        key.content_hash,
+        sql_limit(limit)
+    ])?;
     let mut members = Vec::new();
     while let Some(row) = rows.next()? {
         members.push(SourceDuplicateDocument {
@@ -410,108 +779,11 @@ fn inspect_group(conn: &Connection, key: &GroupKey) -> Result<SourceDuplicateGro
         });
     }
 
-    let canonical = members
-        .iter()
-        .filter(|member| member.canonical_uri_match)
-        .collect::<Vec<_>>();
-    let mut skip_reasons = Vec::new();
-    if canonical.len() != 1 {
-        skip_reasons.push(format!(
-            "expected exactly one canonical URI {canonical_uri}, found {}",
-            canonical.len()
-        ));
-    }
-    let candidates = if canonical.len() == 1 {
-        members
-            .iter()
-            .filter(|member| !member.canonical_uri_match)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    let canonical_chunks = canonical.first().map(|member| member.chunks).unwrap_or(0);
-    let candidate_chunks = candidates.iter().map(|member| member.chunks).sum::<u64>();
-    if canonical_chunks == 0 && candidate_chunks > 0 {
-        skip_reasons.push(format!(
-            "canonical survivor has no chunks while legacy candidates have {candidate_chunks}; reindex before cleanup"
-        ));
-    }
-    let wiki_references = candidates
-        .iter()
-        .map(|member| member.wiki_references)
-        .sum::<u64>();
-    if wiki_references > 0 {
-        skip_reasons.push(format!(
-            "legacy candidates have {wiki_references} wiki_index references"
-        ));
-    }
-    let collection_references = candidates
-        .iter()
-        .map(|member| member.collection_references)
-        .sum::<u64>();
-    if collection_references > 0 {
-        skip_reasons.push(format!(
-            "legacy candidates have {collection_references} collection references"
-        ));
-    }
-    let foreign_source_manifest_references = candidates
-        .iter()
-        .map(|member| member.foreign_source_manifest_references)
-        .sum::<u64>();
-    if foreign_source_manifest_references > 0 {
-        skip_reasons.push(format!(
-            "legacy candidates own {foreign_source_manifest_references} foreign source_manifest references"
-        ));
-    }
+    Ok(members)
+}
 
-    let candidate_revisions = candidates
-        .iter()
-        .map(|member| member.revisions)
-        .sum::<u64>();
-    if candidate_revisions > 0 {
-        skip_reasons.push(format!(
-            "legacy candidates have {candidate_revisions} document revisions requiring manual preservation"
-        ));
-    }
-
-    let source_manifest_document_id = conn
-        .query_row(
-            "SELECT document_id FROM source_manifest WHERE canonical_path = ?",
-            params![key.source_file],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    if let Some(owner) = source_manifest_document_id.as_deref() {
-        if !members.iter().any(|member| member.document_id == owner) {
-            skip_reasons.push(format!(
-                "canonical source_manifest path is owned by non-member document {owner}"
-            ));
-        }
-    }
-    let survivor_document_id = canonical.first().map(|member| member.document_id.clone());
-    let actionable = skip_reasons.is_empty() && !candidates.is_empty();
-    Ok(SourceDuplicateGroup {
-        source_file: key.source_file.clone(),
-        content_hash: key.content_hash.clone(),
-        document_count: members.len() as u64,
-        survivor_document_id,
-        source_manifest_document_id,
-        candidate_count: if actionable {
-            candidates.len() as u64
-        } else {
-            0
-        },
-        batch_candidate_count: 0,
-        remaining_candidate_count: if actionable {
-            candidates.len() as u64
-        } else {
-            0
-        },
-        actionable,
-        skip_reasons,
-        members,
-        members_truncated: false,
-    })
+fn sql_limit(limit: usize) -> i64 {
+    i64::try_from(limit).unwrap_or(i64::MAX)
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -701,20 +973,6 @@ fn load_document_locked(conn: &Connection, document_id: &str) -> Result<Option<D
 
 fn nonnegative(value: i64) -> u64 {
     value.max(0) as u64
-}
-
-trait OptionalRow<T> {
-    fn optional(self) -> Result<Option<T>>;
-}
-
-impl<T> OptionalRow<T> for std::result::Result<T, duckdb::Error> {
-    fn optional(self) -> Result<Option<T>> {
-        match self {
-            Ok(value) => Ok(Some(value)),
-            Err(duckdb::Error::QueryReturnedNoRows) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
 }
 
 #[cfg(test)]

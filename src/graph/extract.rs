@@ -25,7 +25,7 @@ pub struct ExtractedLink {
     pub target_label: String,
     /// `wikilink` or `tagged`.
     pub rel_type: String,
-    /// Snippet around the match (±[`CONTEXT_RADIUS`] chars), when non-empty.
+    /// Snippet around the match (up to 40 surrounding characters), when non-empty.
     pub context: Option<String>,
     /// Display alias from `[[Target|alias]]`, if any.
     pub alias: Option<String>,
@@ -241,9 +241,7 @@ fn parse_wikilink_inner(
         return None;
     }
 
-    let alias = alias_raw
-        .filter(|a| !a.is_empty())
-        .map(|a| a.to_string());
+    let alias = alias_raw.filter(|a| !a.is_empty()).map(|a| a.to_string());
 
     Some(ExtractedLink {
         target_label: target_raw.to_string(),

@@ -95,6 +95,25 @@ pub fn format_http_error(response: &Response, context: &str) -> String {
     }
 }
 
+/// Format a malformed successful JSON response without echoing its URL,
+/// query string, response body, or an offending JSON value into the UI.
+///
+/// `serde_json::Error` messages can include input-derived enum values. Only
+/// its structural location is safe and still useful for gateway diagnostics.
+pub fn format_json_parse_error(context: &str, error: &serde_json::Error) -> String {
+    let context = compact_text(context, 80);
+    let context = if context.is_empty() {
+        "gateway".to_string()
+    } else {
+        context
+    };
+    format!(
+        "Could not parse {context} response (line {}, column {})",
+        error.line(),
+        error.column()
+    )
+}
+
 fn error_detail(body: &str) -> Option<String> {
     let trimmed = body.trim();
     if trimmed.is_empty() {
@@ -327,5 +346,26 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, TRANSPORT_FAILURE_MESSAGE);
+    }
+
+    #[test]
+    fn parse_error_never_exposes_url_query_or_offending_value() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Expected {
+            Safe,
+        }
+        let error = serde_json::from_str::<Expected>(r#""private-token""#)
+            .err()
+            .expect("private enum value is rejected");
+        let formatted = format_json_parse_error("Project graph", &error);
+
+        assert_eq!(
+            formatted,
+            "Could not parse Project graph response (line 1, column 15)"
+        );
+        assert!(!formatted.contains("private-token"));
+        assert!(!formatted.contains("http"));
+        assert!(!formatted.contains('?'));
     }
 }

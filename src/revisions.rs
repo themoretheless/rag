@@ -126,8 +126,7 @@ impl<'a> RevisionService<'a> {
         restored.updated_at = Utc::now();
 
         self.store.ensure_embedding_manifest(self.config)?;
-        self.store
-            .require_embedding_dims_match(self.config.embedding_dims)?;
+        self.store.require_embedding_manifest_match(self.config)?;
         let chunks = DocumentIndexer::new(self.embedder.as_ref(), self.config)
             .build_chunks(&restored)
             .await?;
@@ -347,6 +346,7 @@ mod tests {
             ..Config::for_tests()
         };
         let store = Store::open(&config.db_path).unwrap();
+        store.ensure_embedding_manifest(&config).unwrap();
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
         let indexer = DocumentIndexer::new(embedder.as_ref(), &config);
         let mut document = Document {

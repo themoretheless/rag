@@ -23,8 +23,9 @@ use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::source_sync::{
-    SourceSyncCommand, SourceSyncControl, SourceSyncCounters, SourceSyncError, SourceSyncOutcome,
-    SourceSyncProgress, SourceSyncReport, SourceSyncService,
+    sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncCounters,
+    SourceSyncError, SourceSyncFinalizationError, SourceSyncOutcome, SourceSyncProgress,
+    SourceSyncReport,
 };
 
 const MAX_RETAINED_JOBS: usize = 100;
@@ -90,6 +91,8 @@ pub struct SourceSyncJobReport {
     pub deleted_count: usize,
     pub error_count: usize,
     pub error_samples: Vec<SourceSyncError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finalization_error: Option<SourceSyncFinalizationError>,
     pub counters: SourceSyncCounters,
 }
 
@@ -102,6 +105,7 @@ impl From<SourceSyncReport> for SourceSyncJobReport {
             deleted_count: report.deleted.len(),
             error_count: report.errors.len(),
             error_samples: report.errors.into_iter().take(MAX_ERROR_SAMPLES).collect(),
+            finalization_error: report.finalization_error,
             counters: report.counters,
         }
     }
@@ -160,6 +164,9 @@ impl JobRegistry {
         embedder: Arc<dyn EmbeddingProvider>,
         config: Config,
     ) -> Result<JobSnapshot, AppError> {
+        if request.max_file_bytes == Some(0) {
+            return Err(AppError::config("max_file_bytes must be greater than zero"));
+        }
         let id = Uuid::new_v4().to_string();
         let cancellation = CancellationToken::new();
         let snapshot = JobSnapshot {
@@ -208,9 +215,8 @@ impl JobRegistry {
                     job.progress = Some(progress);
                 });
             });
-            let result = SourceSyncService::new(&store, &embedder, &config)
-                .sync_with_control(request.command(), control)
-                .await;
+            let result =
+                sync_sources_nonblocking(store, embedder, config, request.command(), control).await;
             match result {
                 Ok(SourceSyncOutcome::Completed(report)) => {
                     let status = if report.errors.is_empty() {
@@ -433,14 +439,20 @@ mod tests {
     }
 
     async fn wait_for_terminal(registry: &JobRegistry, id: &str) -> JobSnapshot {
-        for _ in 0..200 {
-            let snapshot = registry.get(id).unwrap();
-            if snapshot.status.is_terminal() {
-                return snapshot;
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let snapshot = registry.get(id).unwrap();
+                if snapshot.status.is_terminal() {
+                    return snapshot;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        panic!("job did not reach terminal state");
+        })
+        .await;
+        terminal.unwrap_or_else(|_| {
+            let last = registry.get(id).map(|snapshot| snapshot.status);
+            panic!("job did not reach terminal state within 30s; last status: {last:?}")
+        })
     }
 
     fn entry(sequence: u64, status: JobStatus) -> JobEntry {
@@ -518,6 +530,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_api_rejects_zero_max_file_bytes_without_enqueuing_a_job() {
+        let root = tempfile::tempdir().unwrap();
+        let state = state(root.path());
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/jobs/sync")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"path": root.path(), "max_file_bytes": 0}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("max_file_bytes"));
+        assert!(state.jobs.list().is_empty());
+    }
+
+    #[tokio::test]
     async fn per_file_errors_are_terminal_but_not_reported_as_success() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("large.md"), "larger than one byte").unwrap();
@@ -541,6 +578,65 @@ mod tests {
         let finished = wait_for_terminal(&state.jobs, &job.id).await;
         assert_eq!(finished.status, JobStatus::CompletedWithErrors);
         assert_eq!(finished.report.unwrap().error_count, 1);
+    }
+
+    #[tokio::test]
+    async fn final_fts_failure_is_completed_with_errors_and_retains_report() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "durable job mutation").unwrap();
+        let mut state = state(root.path());
+        state.store.ensure_fts(&state.config.fts_stemmer).unwrap();
+        state.config.fts_stemmer = crate::source_sync::TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+        let job = state
+            .jobs
+            .start_source_sync(
+                SyncJobRequest {
+                    path: root.path().display().to_string(),
+                    remove_deleted: false,
+                    wing: Some("jobs-test".into()),
+                    room: None,
+                    max_file_bytes: None,
+                },
+                state.store.clone(),
+                state.embedder.clone(),
+                state.config.clone(),
+            )
+            .unwrap();
+
+        let finished = wait_for_terminal(&state.jobs, &job.id).await;
+        assert_eq!(finished.status, JobStatus::CompletedWithErrors);
+        assert!(finished.error.is_none());
+        let progress = finished.progress.as_ref().expect("terminal progress");
+        assert_eq!(
+            progress.phase,
+            crate::source_sync::SourceSyncPhase::Completed
+        );
+        assert_eq!(progress.errors, 1);
+        let report = finished.report.as_ref().expect("retained job report");
+        assert_eq!(report.added_count, 1);
+        assert_eq!(report.error_count, 1);
+        assert_eq!(report.counters.preflight, 1);
+        assert_eq!(report.counters.extracted, 1);
+        assert_eq!(report.counters.embedded, 1);
+        assert!(report.error_samples[0]
+            .error
+            .contains("FTS_FINALIZATION_FAILED"));
+        let finalization = report
+            .finalization_error
+            .as_ref()
+            .expect("structured finalization error");
+        assert_eq!(finalization.code, "FTS_FINALIZATION_FAILED");
+        assert_eq!(finalization.stage, "refresh_fts");
+        assert!(finalization.durable_mutation_committed);
+        assert!(finalization.retryable);
+        assert!(finalization.fallback_dirty_marked);
+        assert!(finalization.dirty_marker_error.is_none());
+        assert_eq!(state.store.list_documents().unwrap().len(), 1);
+        let generation = {
+            let conn = state.store.lock().unwrap();
+            crate::db::fts::fts_generation_state(&conn).unwrap()
+        };
+        assert!(generation.dirty, "next lexical read must retry FTS");
     }
 
     #[tokio::test]

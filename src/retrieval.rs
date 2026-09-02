@@ -1,18 +1,26 @@
 //! Transport-independent retrieval use cases shared by MCP and HTTP adapters.
 
+use duckdb::params;
 use serde::Serialize;
 
+use crate::config::Config;
 use crate::db::search::{
-    acquire_source_sync_search_guard, search, search_with_source_sync_guard, ContextExpansion,
-    DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
+    acquire_corpus_search_guard, search_with_corpus_guard, ContextExpansion, DiversityMode,
+    SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
 };
 use crate::db::Store;
 use crate::embeddings::{l2_normalize, EmbeddingProvider};
 use crate::error::AppError;
-use crate::models::{Chunk, Document, SearchHit, SearchMode};
+use crate::models::{Document, SearchHit, SearchMode};
 
 pub const MAX_MULTI_GET_DOCUMENTS: usize = 100;
 pub const MAX_NEIGHBOR_RADIUS: u32 = 20;
+/// Default number of text-only chunks returned by an explicit `include_chunks` read.
+pub const DEFAULT_INCLUDED_CHUNKS: usize = 100;
+/// Hard per-document cap for text-only chunks returned by document reads.
+pub const MAX_INCLUDED_CHUNKS: usize = 500;
+/// Hard aggregate chunk-content budget for one document or multi-get response.
+pub const MAX_INCLUDED_CHUNK_CONTENT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SearchCommand {
@@ -44,15 +52,21 @@ pub struct SearchCommand {
 pub async fn execute_search(
     store: &Store,
     embedder: &dyn EmbeddingProvider,
+    config: &Config,
     command: SearchCommand,
 ) -> Result<Vec<SearchHit>, AppError> {
     let mode = resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
     // Acquire before the potentially slow async embedding request. The read
     // guard both fast-fails an already-running source sync and prevents a new
-    // sync from starting between embedding and exact retrieval.
-    let source_sync_guard = acquire_source_sync_search_guard(store, mode)?;
+    // sync from starting between the identity check, embedding, and exact
+    // retrieval.
+    let corpus_guard = acquire_corpus_search_guard(store, mode)?;
+    if mode.needs_embedding() {
+        store.ensure_embedding_manifest(config)?;
+        store.require_embedding_manifest_match(config)?;
+    }
     let query = prepare_search_with_mode(embedder, command, mode).await?;
-    search_with_source_sync_guard(store, &query, &source_sync_guard)
+    search_with_corpus_guard(store, &query, &corpus_guard)
 }
 
 pub async fn prepare_search(
@@ -171,7 +185,28 @@ async fn prepare_search_with_mode(
 pub struct DocumentWithChunks {
     pub document: Document,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub chunks: Option<Vec<Chunk>>,
+    pub chunks: Option<Vec<ChunkText>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunks_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunks_truncated: Option<bool>,
+}
+
+/// Public document-read chunk projection. Embedding vectors are deliberately
+/// excluded from transport responses.
+#[derive(Debug, Serialize)]
+pub struct ChunkText {
+    pub id: String,
+    pub chunk_index: i32,
+    pub content: String,
+    pub char_start: i32,
+    pub char_end: i32,
+}
+
+struct ChunkTextPage {
+    items: Vec<ChunkText>,
+    total: u64,
+    content_bytes: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -193,21 +228,39 @@ pub fn get_document(
     store: &Store,
     document_id: &str,
     include_chunks: bool,
+    chunk_limit: Option<usize>,
 ) -> Result<DocumentWithChunks, AppError> {
     let document_id = document_id.trim();
     let document = store
         .get_document(document_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-    let chunks = include_chunks
-        .then(|| store.list_chunks_for_document(&document.id))
+    document_with_chunks(store, document, include_chunks, chunk_limit)
+}
+
+pub(crate) fn document_with_chunks(
+    store: &Store,
+    document: Document,
+    include_chunks: bool,
+    chunk_limit: Option<usize>,
+) -> Result<DocumentWithChunks, AppError> {
+    let page = include_chunks
+        .then(|| {
+            list_chunk_text_page(
+                store,
+                &document.id,
+                included_chunk_limit(chunk_limit),
+                MAX_INCLUDED_CHUNK_CONTENT_BYTES,
+            )
+        })
         .transpose()?;
-    Ok(DocumentWithChunks { document, chunks })
+    Ok(with_chunk_page(document, page))
 }
 
 pub fn multi_get(
     store: &Store,
     document_ids: Vec<String>,
     include_chunks: bool,
+    chunk_limit: Option<usize>,
 ) -> Result<MultiGetResult, AppError> {
     if document_ids.is_empty() || document_ids.len() > MAX_MULTI_GET_DOCUMENTS {
         return Err(AppError::config(format!(
@@ -217,18 +270,113 @@ pub fn multi_get(
 
     let mut documents = Vec::with_capacity(document_ids.len());
     let mut missing = Vec::new();
+    let chunk_limit = included_chunk_limit(chunk_limit);
+    let mut remaining_chunk_bytes = MAX_INCLUDED_CHUNK_CONTENT_BYTES;
     for requested_id in document_ids {
         let document_id = requested_id.trim();
         let Some(document) = store.get_document(document_id)? else {
             missing.push(requested_id);
             continue;
         };
-        let chunks = include_chunks
-            .then(|| store.list_chunks_for_document(&document.id))
+        let page = include_chunks
+            .then(|| list_chunk_text_page(store, &document.id, chunk_limit, remaining_chunk_bytes))
             .transpose()?;
-        documents.push(DocumentWithChunks { document, chunks });
+        if let Some(page) = &page {
+            remaining_chunk_bytes = remaining_chunk_bytes.saturating_sub(page.content_bytes);
+        }
+        documents.push(with_chunk_page(document, page));
     }
     Ok(MultiGetResult { documents, missing })
+}
+
+fn included_chunk_limit(requested: Option<usize>) -> usize {
+    requested
+        .unwrap_or(DEFAULT_INCLUDED_CHUNKS)
+        .clamp(1, MAX_INCLUDED_CHUNKS)
+}
+
+fn with_chunk_page(document: Document, page: Option<ChunkTextPage>) -> DocumentWithChunks {
+    match page {
+        Some(page) => DocumentWithChunks {
+            document,
+            chunks_truncated: Some((page.items.len() as u64) < page.total),
+            chunks_total: Some(page.total),
+            chunks: Some(page.items),
+        },
+        None => DocumentWithChunks {
+            document,
+            chunks: None,
+            chunks_total: None,
+            chunks_truncated: None,
+        },
+    }
+}
+
+/// Read a bounded text-only page under one connection lock. The SQL byte
+/// preflight runs before any chunk content is materialized and excludes stored
+/// embedding vectors from both memory and the response model.
+fn list_chunk_text_page(
+    store: &Store,
+    document_id: &str,
+    limit: usize,
+    max_content_bytes: usize,
+) -> Result<ChunkTextPage, AppError> {
+    let conn = store.lock()?;
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
+        [document_id],
+        |row| row.get(0),
+    )?;
+    let limit = limit.clamp(1, MAX_INCLUDED_CHUNKS);
+    let content_bytes: i64 = conn.query_row(
+        r#"
+        SELECT COALESCE(SUM(octet_length(encode(content))), 0)::BIGINT
+        FROM (
+            SELECT content
+            FROM chunks
+            WHERE document_id = ?
+            ORDER BY chunk_index, id
+            LIMIT ?
+        ) selected
+        "#,
+        params![document_id, i64::try_from(limit).unwrap_or(i64::MAX)],
+        |row| row.get(0),
+    )?;
+    let content_bytes = usize::try_from(content_bytes.max(0)).unwrap_or(usize::MAX);
+    if content_bytes > max_content_bytes {
+        return Err(AppError::config(format!(
+            "included chunk text needs {content_bytes} bytes, exceeding the {max_content_bytes}-byte response budget; lower chunk_limit or set include_chunks=false"
+        )));
+    }
+
+    let mut statement = conn.prepare(
+        r#"
+        SELECT id, chunk_index, content, char_start, char_end
+        FROM chunks
+        WHERE document_id = ?
+        ORDER BY chunk_index, id
+        LIMIT ?
+        "#,
+    )?;
+    let mut rows = statement.query(params![
+        document_id,
+        i64::try_from(limit).unwrap_or(i64::MAX)
+    ])?;
+    let mut items = Vec::with_capacity(limit.min(total.max(0) as usize));
+    while let Some(row) = rows.next()? {
+        items.push(ChunkText {
+            id: row.get(0)?,
+            chunk_index: row.get(1)?,
+            content: row.get(2)?,
+            char_start: row.get(3)?,
+            char_end: row.get(4)?,
+        });
+    }
+    Ok(ChunkTextPage {
+        items,
+        total: total.max(0) as u64,
+        content_bytes,
+    })
 }
 
 pub fn expand_chunks(
@@ -236,15 +384,66 @@ pub fn expand_chunks(
     document_id: &str,
     chunk_index: i32,
     radius: u32,
-) -> Result<Vec<Chunk>, AppError> {
+) -> Result<Vec<ChunkText>, AppError> {
     let radius = radius.min(MAX_NEIGHBOR_RADIUS) as i32;
     let start = chunk_index.saturating_sub(radius);
     let end = chunk_index.saturating_add(radius);
-    let chunks = store
-        .list_chunks_for_document(document_id.trim())?
-        .into_iter()
-        .filter(|chunk| chunk.chunk_index >= start && chunk.chunk_index <= end)
-        .collect::<Vec<_>>();
+    let limit = usize::try_from(radius)
+        .unwrap_or(MAX_NEIGHBOR_RADIUS as usize)
+        .saturating_mul(2)
+        .saturating_add(1);
+    let conn = store.lock()?;
+    let content_bytes: i64 = conn.query_row(
+        r#"
+        SELECT COALESCE(SUM(octet_length(encode(content))), 0)::BIGINT
+        FROM (
+            SELECT content
+            FROM chunks
+            WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
+            ORDER BY chunk_index, id
+            LIMIT ?
+        ) selected
+        "#,
+        params![
+            document_id.trim(),
+            start,
+            end,
+            i64::try_from(limit).unwrap_or(i64::MAX)
+        ],
+        |row| row.get(0),
+    )?;
+    if usize::try_from(content_bytes.max(0)).unwrap_or(usize::MAX)
+        > MAX_INCLUDED_CHUNK_CONTENT_BYTES
+    {
+        return Err(AppError::config(format!(
+            "expanded chunk text exceeds the {MAX_INCLUDED_CHUNK_CONTENT_BYTES}-byte response budget; lower radius"
+        )));
+    }
+    let mut statement = conn.prepare(
+        r#"
+        SELECT id, chunk_index, content, char_start, char_end
+        FROM chunks
+        WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
+        ORDER BY chunk_index, id
+        LIMIT ?
+        "#,
+    )?;
+    let mut rows = statement.query(params![
+        document_id.trim(),
+        start,
+        end,
+        i64::try_from(limit).unwrap_or(i64::MAX)
+    ])?;
+    let mut chunks = Vec::with_capacity(limit);
+    while let Some(row) = rows.next()? {
+        chunks.push(ChunkText {
+            id: row.get(0)?,
+            chunk_index: row.get(1)?,
+            content: row.get(2)?,
+            char_start: row.get(3)?,
+            char_end: row.get(4)?,
+        });
+    }
     if chunks.is_empty() {
         return Err(AppError::not_found(format!(
             "no chunks around document_id={} chunk_index={chunk_index}",
@@ -256,8 +455,11 @@ pub fn expand_chunks(
 
 pub fn find_similar(
     store: &Store,
+    config: &Config,
     query: SimilarDocumentsQuery,
 ) -> Result<Vec<SearchHit>, AppError> {
+    let corpus_guard = acquire_corpus_search_guard(store, SearchMode::Vec)?;
+    store.require_embedding_manifest_match(config)?;
     let document_id = query.document_id.trim();
     let document = store
         .get_document(document_id)?
@@ -282,7 +484,7 @@ pub fn find_similar(
     l2_normalize(&mut centroid);
 
     let top_k = query.top_k.clamp(1, MAX_TOP_K.saturating_sub(1));
-    let mut hits = search(
+    let mut hits = search_with_corpus_guard(
         store,
         &SearchQuery {
             mode: SearchMode::Vec,
@@ -296,6 +498,7 @@ pub fn find_similar(
             fts_stemmer: query.fts_stemmer,
             ..SearchQuery::default()
         },
+        &corpus_guard,
     )?;
     hits.retain(|hit| hit.document_id != document_id);
     hits.truncate(top_k);
@@ -396,14 +599,18 @@ mod tests {
     async fn active_source_sync_rejects_hybrid_before_embedding_provider_call() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = Store::open(&dir.path().join("pre-embed-busy.duckdb")).expect("open");
-        let sync_guard = store.source_sync_lane().write_owned().await;
+        let sync_guard = store.corpus_mutation_lane().write_owned().await;
         let embedder = CountingEmbedder {
             calls: AtomicUsize::new(0),
+        };
+        let config = Config {
+            db_path: store.path().to_path_buf(),
+            ..Config::for_tests()
         };
         let mut request = command("needle");
         request.mode = Some("hybrid".into());
 
-        let error = execute_search(&store, &embedder, request)
+        let error = execute_search(&store, &embedder, &config, request)
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::Busy(_)));

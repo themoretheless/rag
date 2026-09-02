@@ -4,7 +4,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::gateway::{
-    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
+    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
+    ReqwestGatewayClient,
 };
 use crate::load::DocumentBody;
 
@@ -230,7 +231,7 @@ fn send_json<T: DeserializeOwned>(
         return Err(format_http_error(&response, revision_context(path)));
     }
     serde_json::from_str(&response.body)
-        .map_err(|error| format!("parse response from {url}: {error}"))
+        .map_err(|error| format_json_parse_error(revision_context(path), &error))
 }
 
 fn join(base: &str, path: &str) -> Result<String, String> {
@@ -390,5 +391,28 @@ mod tests {
             "Revision comparison"
         );
         assert_eq!(revision_context("v1/revisions/restore"), "Revision restore");
+    }
+
+    #[test]
+    fn malformed_revision_success_does_not_echo_private_query() {
+        let gateway = FakeGateway::new(vec![r#"{"items":["private-value""#.to_string()]);
+        let error = get_json::<RevisionsEnvelope>(
+            &gateway,
+            "http://user:secret@gateway",
+            "v1/revisions?document_id=private-id&token=private-token",
+        )
+        .err()
+        .expect("malformed response is rejected");
+
+        assert!(error.starts_with("Could not parse Revision history response"));
+        for secret in [
+            "user",
+            "secret",
+            "private-id",
+            "private-token",
+            "private-value",
+        ] {
+            assert!(!error.contains(secret));
+        }
     }
 }

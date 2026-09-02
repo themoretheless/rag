@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::gateway::{
-    execute_request, format_http_error, GatewayClient, Method, Request, ReqwestGatewayClient,
+    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
+    ReqwestGatewayClient,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -69,6 +70,9 @@ impl SearchHit {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResults {
     pub items: Vec<SearchHit>,
+    /// Exact controls used for these hits. Search controls remain editable
+    /// while results are visible, so result provenance cannot come from them.
+    pub request: SearchRequest,
 }
 
 #[derive(Deserialize)]
@@ -113,8 +117,9 @@ fn fetch_search_with_client(
     serde_json::from_str::<SearchEnvelope>(&response.body)
         .map(|envelope| SearchResults {
             items: envelope.items,
+            request: request.clone(),
         })
-        .map_err(|error| format!("parse search results from {url}: {error}"))
+        .map_err(|error| format_json_parse_error("Search", &error))
 }
 
 #[cfg(test)]
@@ -155,6 +160,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(results.items[0].document_id, "d1");
+        assert_eq!(results.request.mode, "hybrid");
+        assert_eq!(results.request.wing.as_deref(), Some("alpha"));
         assert_eq!(
             results.items[0].visible_excerpt(),
             "responsibility boundary"

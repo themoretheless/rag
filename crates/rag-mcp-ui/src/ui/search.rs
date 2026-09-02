@@ -13,6 +13,7 @@ pub enum SearchAction {
         document_id: String,
         title: String,
         uri: String,
+        include_archived: bool,
     },
     OpenGraph {
         document_id: String,
@@ -140,16 +141,24 @@ pub fn draw_search_workspace(
                 return;
             };
 
+            let controls_dirty = request != &results.request;
+
             ui.add_space(14.0);
             ui.horizontal(|ui| {
                 ui.strong(format!("{} results", results.items.len()));
-                if let Some(project) = request.wing.as_deref() {
+                if let Some(project) = results.request.wing.as_deref() {
                     ui.separator();
                     ui.weak(format!("Project: {project}"));
                 }
                 ui.separator();
-                ui.weak(mode_label(&request.mode));
+                ui.weak(mode_label(&results.request.mode));
             });
+            if controls_dirty {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 150, 65),
+                    "Search controls changed. Run Search to replace the results below.",
+                );
+            }
             ui.add_space(6.0);
 
             if results.items.is_empty() {
@@ -195,6 +204,7 @@ pub fn draw_search_workspace(
                                     document_id: hit.document_id.clone(),
                                     title: hit.document_title.clone(),
                                     uri: hit.document_uri.clone(),
+                                    include_archived: results.request.include_archived,
                                 };
                             }
                             if ui.button("Connections").clicked() {
@@ -254,6 +264,21 @@ mod tests {
         assert_eq!(mode_label("hybrid"), "Hybrid");
         assert_eq!(mode_label("lex"), "Lexical");
         assert_eq!(mode_label("vec"), "Semantic");
+    }
+
+    #[test]
+    fn result_provenance_is_independent_from_editable_controls() {
+        let applied = SearchRequest {
+            query: "needle".to_string(),
+            mode: "lex".to_string(),
+            include_archived: true,
+            ..SearchRequest::default()
+        };
+        let mut draft = applied.clone();
+        draft.mode = "vec".to_string();
+        assert_ne!(draft, applied);
+        assert_eq!(mode_label(&applied.mode), "Lexical");
+        assert!(applied.include_archived);
     }
 
     #[test]
