@@ -6,7 +6,7 @@
 //! slot are dropped (race protection per EGUI_GRAPH_VIEW §2.5 / §8.3).
 
 use egui::Vec2;
-use rag_mcp::GraphView;
+use rag_mcp::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 
 use crate::adapter::{adapt, topology_generation, AdaptOptions, UiGraph};
 use crate::layout::{place_missing_near_neighbors, radial_place, PosCache};
@@ -386,7 +386,7 @@ impl GraphApp {
     pub fn new(cc: &eframe::CreationContext<'_>, open: OpenArgs) -> Self {
         theme::install(&cc.egui_ctx);
         let depth = open.depth.clamp(1, 3);
-        let max_nodes = open.max_nodes.clamp(1, UI_HARD_MAX_NODES as u32);
+        let max_nodes = open.max_nodes.clamp(1, UI_GRAPH_EXPORT_MAX_NODES);
         let seed_input = open.seed.clone().unwrap_or_default();
         let connect_url = match open.source.as_ref() {
             Some(CliSource::Http(base)) => base.clone(),

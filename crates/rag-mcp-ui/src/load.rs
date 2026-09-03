@@ -19,7 +19,7 @@ use crate::gateway::{
 /// Hard layout caps (EGUI_GRAPH_VIEW §8.1).
 pub const UI_HARD_MAX_NODES: usize = 300;
 pub const UI_MAX_DRAW_EDGES: usize = 2000;
-pub const UI_LOCAL_MAX_NODES: u32 = 100;
+pub const UI_LOCAL_MAX_NODES: u32 = UI_GRAPH_EXPORT_MAX_NODES;
 pub const UI_DEFAULT_DEPTH: u32 = 1;
 
 /// CLI open mode (XOR snapshot | db | http service).
@@ -119,7 +119,8 @@ pub struct OpenArgs {
     #[arg(long, default_value_t = UI_DEFAULT_DEPTH)]
     pub depth: u32,
 
-    /// Max nodes in the local neighbor view (default 100, clamped to hard cap 300).
+    /// Max nodes fetched for the local neighbor view (default 1,000,000).
+    /// The renderer applies its own smaller viewport cap after traversal.
     #[arg(long, default_value_t = UI_LOCAL_MAX_NODES)]
     pub max_nodes: u32,
 
@@ -145,8 +146,8 @@ impl OpenArgs {
     /// Finalize source field after parse.
     pub fn with_source(mut self) -> Self {
         self.depth = self.depth.clamp(1, 3);
-        // Keep local load under layout hard cap; floor at 1 so BFS is defined.
-        self.max_nodes = self.max_nodes.clamp(1, UI_HARD_MAX_NODES as u32);
+        // Keep traversal finite; rendering has an independent viewport cap.
+        self.max_nodes = self.max_nodes.clamp(1, UI_GRAPH_EXPORT_MAX_NODES);
         self.source = match (
             &self.snapshot,
             &self.db,
