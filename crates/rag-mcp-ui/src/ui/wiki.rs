@@ -7,6 +7,8 @@ use egui::{RichText, Sense, Ui};
 
 use crate::load::{BacklinkItem, DocumentBody, WikiPageMeta};
 
+use super::theme;
+
 /// Persistent focus id of the sidebar filter field (Ctrl+F targets it).
 pub fn wiki_filter_id() -> egui::Id {
     egui::Id::new("wiki_filter_edit")
@@ -406,6 +408,7 @@ pub fn draw_wiki_read_view(
                     action.open_link = render_wiki_markdown(
                         ui,
                         &page.content,
+                        &page.title,
                         context.known_titles,
                         context.known_slugs,
                     );
@@ -514,6 +517,7 @@ pub fn content_summary_line(content: &str) -> Option<String> {
 fn render_wiki_markdown(
     ui: &mut Ui,
     content: &str,
+    page_title: &str,
     known_titles: &HashSet<String>,
     known_slugs: &HashSet<String>,
 ) -> Option<String> {
@@ -521,17 +525,11 @@ fn render_wiki_markdown(
     let mut in_code = false;
     let mut code_buf = String::new();
 
-    for line in content.lines() {
+    for (line_index, line) in content.lines().enumerate() {
         let trimmed = line.trim_end();
         if trimmed.starts_with("```") {
             if in_code {
-                ui.group(|ui| {
-                    ui.add(
-                        egui::Label::new(RichText::new(&code_buf).monospace())
-                            .wrap()
-                            .selectable(true),
-                    );
-                });
+                draw_wiki_code_block(ui, &code_buf);
                 code_buf.clear();
                 in_code = false;
             } else {
@@ -552,28 +550,41 @@ fn render_wiki_markdown(
 
         if let Some(rest) = trimmed.strip_prefix("### ") {
             ui.add_space(8.0);
-            ui.label(RichText::new(rest).strong().size(16.0));
+            ui.label(RichText::new(rest).strong().size(17.0).color(theme::TEXT));
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("## ") {
-            ui.add_space(10.0);
-            ui.label(RichText::new(rest).strong().size(18.0));
+            ui.add_space(13.0);
+            ui.label(RichText::new(rest).strong().size(21.0).color(theme::TEXT));
+            ui.separator();
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("# ") {
-            ui.add_space(12.0);
-            ui.label(RichText::new(rest).strong().size(22.0));
+            if line_index == 0 && rest.trim().eq_ignore_ascii_case(page_title.trim()) {
+                continue;
+            }
+            ui.add_space(17.0);
+            ui.label(RichText::new(rest).strong().size(28.0).color(theme::TEXT));
+            ui.add_space(2.0);
+            ui.separator();
             continue;
         }
 
         if let Some(rest) = trimmed.strip_prefix("> ") {
-            ui.horizontal(|ui| {
-                ui.weak("│");
-                if let Some(link) = draw_inline_with_wikilinks(ui, rest, known_titles, known_slugs)
-                {
-                    open_link = Some(link);
-                }
-            });
+            egui::Frame::new()
+                .fill(theme::rgba(theme::L3, 12))
+                .stroke(egui::Stroke::new(1.0, theme::rgba(theme::L3, 85)))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(13, 10))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        if let Some(link) =
+                            draw_inline_with_wikilinks(ui, rest, known_titles, known_slugs)
+                        {
+                            open_link = Some(link);
+                        }
+                    });
+                });
             continue;
         }
 
@@ -602,9 +613,9 @@ fn render_wiki_markdown(
 
         ui.horizontal_wrapped(|ui| {
             if bullet.is_some() {
-                ui.label("•");
+                ui.label(RichText::new("•").strong().color(theme::L3));
             } else if let Some((n, _)) = numbered {
-                ui.label(format!("{n}."));
+                ui.label(RichText::new(format!("{n}.")).strong().color(theme::L3));
             }
             let text = bullet.or(numbered.map(|(_, r)| r)).unwrap_or(trimmed);
             if let Some(link) = draw_inline_with_wikilinks(ui, text, known_titles, known_slugs) {
@@ -614,16 +625,32 @@ fn render_wiki_markdown(
     }
 
     if in_code && !code_buf.is_empty() {
-        ui.group(|ui| {
-            ui.add(
-                egui::Label::new(RichText::new(&code_buf).monospace())
-                    .wrap()
-                    .selectable(true),
-            );
-        });
+        draw_wiki_code_block(ui, &code_buf);
     }
 
     open_link
+}
+
+fn draw_wiki_code_block(ui: &mut Ui, code: &str) {
+    theme::inset().fill(theme::RAIL).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("CODE").small().strong().color(theme::L1));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Копировать").clicked() {
+                    ui.ctx().copy_text(code.trim_end().to_string());
+                }
+            });
+        });
+        ui.separator();
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.add(
+                egui::Label::new(RichText::new(code.trim_end()).monospace().size(12.0))
+                    .selectable(true)
+                    .extend(),
+            );
+        });
+    });
+    ui.add_space(5.0);
 }
 
 fn link_resolved(key: &str, titles: &HashSet<String>, slugs: &HashSet<String>) -> bool {
@@ -702,7 +729,8 @@ fn emit_rich_plain(ui: &mut Ui, text: &str) {
                 ui.label(
                     RichText::new(&after[..c1])
                         .monospace()
-                        .background_color(egui::Color32::from_rgb(40, 40, 48)),
+                        .color(theme::L1)
+                        .background_color(theme::RAIL),
                 );
                 rest = &after[c1 + 1..];
                 continue;
@@ -724,7 +752,7 @@ fn emit_bold_and_tags(ui: &mut Ui, text: &str) {
         }
         let after = &rest[b0 + 2..];
         if let Some(b1) = after.find("**") {
-            ui.label(RichText::new(&after[..b1]).strong());
+            ui.add(egui::Label::new(RichText::new(&after[..b1]).strong()).wrap());
             rest = &after[b1 + 2..];
         } else {
             emit_tags_only(ui, &rest[b0..]);
@@ -741,7 +769,7 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
     while let Some(hash_at) = rest.find('#') {
         let before = &rest[..hash_at];
         if !before.is_empty() {
-            ui.label(before);
+            ui.add(egui::Label::new(before).wrap());
         }
         let after = &rest[hash_at + 1..];
         let tag_end = after
@@ -757,7 +785,7 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
         rest = &after[tag_end..];
     }
     if !rest.is_empty() {
-        ui.label(rest);
+        ui.add(egui::Label::new(rest).wrap());
     }
 }
 
