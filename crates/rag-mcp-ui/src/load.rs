@@ -119,7 +119,7 @@ pub struct OpenArgs {
     #[arg(long, default_value_t = UI_DEFAULT_DEPTH)]
     pub depth: u32,
 
-    /// Max nodes fetched for the local neighbor view (default 1,000,000).
+    /// Max nodes fetched for the local neighbor view (default 100,000).
     /// The renderer applies its own smaller viewport cap after traversal.
     #[arg(long, default_value_t = UI_LOCAL_MAX_NODES)]
     pub max_nodes: u32,
@@ -963,7 +963,7 @@ fn http_neighbors_path(
 /// [`Store::export_graph_for_ui`].
 ///
 /// PKB defaults centralized on Store: `rel_types = [wikilink, related]` and
-/// `max_nodes = 1,000,000` ([`UI_GRAPH_EXPORT_MAX_NODES`]); tag inclusion follows the
+/// `max_nodes = 100,000` ([`UI_GRAPH_EXPORT_MAX_NODES`]); tag inclusion follows the
 /// UI toggle.
 /// Fails clearly if the path cannot be opened (missing file, lock, corrupt DB).
 /// Direct writes are unsupported; if a writer lock blocks the read-only open,

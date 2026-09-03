@@ -26,7 +26,12 @@ pub fn overview_grid_place(graph: &UiGraph, cache: &mut PosCache) {
     }
     let mut ids: Vec<&str> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
     ids.sort_unstable();
-    let columns = (ids.len() as f64).sqrt().ceil().max(1.0) as usize;
+    // Match the native canvas' usual widescreen shape so Fit uses its full
+    // width instead of leaving large empty gutters around a square grid.
+    const OVERVIEW_ASPECT: f64 = 16.0 / 9.0;
+    let columns = ((ids.len() as f64 * OVERVIEW_ASPECT).sqrt())
+        .ceil()
+        .max(1.0) as usize;
     let rows = ids.len().div_ceil(columns);
     let spacing = 18.0_f32;
     let width = columns.saturating_sub(1) as f32 * spacing;
