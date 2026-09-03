@@ -38,7 +38,7 @@ pub const EXPORT_DEFAULT_MAX_NODES: u32 = 500;
 #[derive(Debug, Clone, clap::Parser)]
 #[command(
     name = "rag-mcp-ui",
-    about = "Optional read-only GraphView inspector (snapshot default; dual-live MCP write unsupported)",
+    about = "Native rag-mcp console (HTTP product UI; DB/snapshot modes stay read-only)",
     subcommand_negates_reqs = true
 )]
 pub struct Cli {
@@ -260,10 +260,6 @@ pub struct GatewayHealth {
     pub backend: String,
     pub schema_version: i32,
     pub fts_ready: bool,
-    pub documents: u64,
-    pub chunks: u64,
-    pub wal_bytes: u64,
-    pub wal_warn_bytes: u64,
     pub wal_too_large: bool,
     pub documents_without_chunks: u64,
     pub relational_integrity_ok: bool,

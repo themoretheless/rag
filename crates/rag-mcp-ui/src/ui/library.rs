@@ -2,7 +2,8 @@
 
 use crate::load::DocumentBody;
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest};
-use crate::ui::closing_selectable_value;
+use crate::ui::document::draw_document_reader;
+use crate::ui::{closing_selectable_value, theme};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum LibraryAction {
@@ -40,14 +41,14 @@ pub fn draw_library_workspace(
     let filters_dirty = page.is_some_and(|page| !library_filters_match(request, &page.request));
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.heading("Unified Library");
-            ui.weak("Every indexed document, without loading document bodies.");
+            ui.heading("Единый корпус");
+            ui.weak("Все индексированные документы; содержимое загружается только при открытии.");
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
             let refresh_label = if filters_dirty {
-                "Apply & refresh"
+                "Применить и обновить"
             } else {
-                "Refresh"
+                "Обновить"
             };
             if ui
                 .add_enabled(!loading, egui::Button::new(refresh_label))
@@ -73,30 +74,30 @@ pub fn draw_library_workspace(
                 let search = ui.add_sized(
                     [260.0, 30.0],
                     egui::TextEdit::singleline(&mut request.q)
-                        .hint_text("Title, URI or source file…"),
+                        .hint_text("Название, URI или исходный файл…"),
                 );
                 if search.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
                     action = LibraryAction::ApplyFilters;
                 }
                 ui.add(
                     egui::TextEdit::singleline(&mut request.room)
-                        .hint_text("Room")
+                        .hint_text("Комната")
                         .desired_width(100.0),
                 );
-                filter_combo(ui, "library_layer", "Layer", &mut request.layer, LAYERS);
-                filter_combo(ui, "library_kind", "Kind", &mut request.kind, KINDS);
+                filter_combo(ui, "library_layer", "Слой", &mut request.layer, LAYERS);
+                filter_combo(ui, "library_kind", "Тип", &mut request.kind, KINDS);
                 filter_combo(
                     ui,
                     "library_status",
-                    "Status",
+                    "Статус",
                     &mut request.status,
                     STATUSES,
                 );
-                ui.checkbox(&mut request.include_archived, "Include archived");
-                if ui.button("Apply").clicked() {
+                ui.checkbox(&mut request.include_archived, "Включая архив");
+                if ui.button("Применить").clicked() {
                     action = LibraryAction::ApplyFilters;
                 }
-                if ui.button("Clear").clicked() {
+                if ui.button("Сбросить").clicked() {
                     action = LibraryAction::ResetFilters;
                 }
             });
@@ -106,7 +107,7 @@ pub fn draw_library_workspace(
     if let Some(error) = error {
         ui.colored_label(
             egui::Color32::from_rgb(215, 100, 85),
-            format!("Could not load the library: {error}"),
+            format!("Не удалось загрузить корпус: {error}"),
         );
         ui.add_space(8.0);
     }
@@ -116,10 +117,10 @@ pub fn draw_library_workspace(
             ui.add_space(50.0);
             ui.vertical_centered(|ui| {
                 ui.spinner();
-                ui.weak("Loading catalog…");
+                ui.weak("Загружаю каталог…");
             });
         } else if error.is_none() {
-            ui.weak("The catalog has not been loaded yet.");
+            ui.weak("Каталог ещё не загружен.");
         }
         return action;
     };
@@ -128,22 +129,22 @@ pub fn draw_library_workspace(
     if filters_dirty {
         ui.colored_label(
             egui::Color32::from_rgb(220, 150, 65),
-            "Filters changed. Apply them before paging through these results.",
+            "Фильтры изменены. Примените их перед переключением страниц.",
         );
         ui.add_space(5.0);
     }
 
     ui.horizontal(|ui| {
-        ui.strong(format!("{} documents", page.total));
+        ui.strong(format!("Документов: {}", page.total));
         let scope = page.request.wing.trim();
         if !scope.is_empty() {
             ui.separator();
-            ui.weak(format!("Project: {scope}"));
+            ui.weak(format!("Проект: {scope}"));
         }
         let active_filters = active_filter_count(&page.request);
         if active_filters > 0 {
             ui.separator();
-            ui.weak(format!("{active_filters} active filters"));
+            ui.weak(format!("Активных фильтров: {active_filters}"));
         }
     });
     ui.add_space(5.0);
@@ -152,24 +153,42 @@ pub fn draw_library_workspace(
         egui::Frame::group(ui.style())
             .inner_margin(18.0)
             .show(ui, |ui| {
-                ui.strong("No matching documents");
-                ui.label("Try clearing a filter or switching the project scope.");
+                ui.strong("Документы не найдены");
+                ui.label("Сбросьте фильтры или выберите другой проект.");
             });
     } else {
-        egui::ScrollArea::vertical()
+        const TITLE_MIN_WIDTH: f32 = 240.0;
+        const SCOPE_WIDTH: f32 = 190.0;
+        const LAYER_WIDTH: f32 = 88.0;
+        const KIND_WIDTH: f32 = 110.0;
+        const UPDATED_WIDTH: f32 = 176.0;
+        const COLUMN_SPACING: f32 = 14.0;
+        const COLUMN_GAPS: f32 = COLUMN_SPACING * 4.0;
+
+        let scroll_reserve =
+            ui.spacing().scroll.bar_width + ui.spacing().scroll.bar_outer_margin * 2.0;
+        let fixed_width = SCOPE_WIDTH + LAYER_WIDTH + KIND_WIDTH + UPDATED_WIDTH + COLUMN_GAPS;
+        let title_width =
+            (ui.available_width() - fixed_width - scroll_reserve).max(TITLE_MIN_WIDTH);
+        let table_width = title_width + fixed_width;
+        let row_height = ui.spacing().interact_size.y;
+
+        egui::ScrollArea::both()
+            .min_scrolled_width(table_width)
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_width(table_width);
                 egui::Grid::new("unified_library_rows")
                     .num_columns(5)
                     .striped(true)
-                    .min_col_width(92.0)
-                    .spacing([14.0, 9.0])
+                    .min_col_width(0.0)
+                    .spacing([COLUMN_SPACING, 9.0])
                     .show(ui, |ui| {
-                        ui.strong("Document");
-                        ui.strong("Scope");
-                        ui.strong("Layer");
-                        ui.strong("Kind");
-                        ui.strong("Updated");
+                        table_header(ui, "Документ", title_width, row_height);
+                        table_header(ui, "Контекст", SCOPE_WIDTH, row_height);
+                        table_header(ui, "Слой", LAYER_WIDTH, row_height);
+                        table_header(ui, "Тип", KIND_WIDTH, row_height);
+                        table_header(ui, "Обновлён", UPDATED_WIDTH, row_height);
                         ui.end_row();
                         for item in &page.items {
                             let selected = selected_id == Some(item.id.as_str());
@@ -182,13 +201,41 @@ pub fn draw_library_workspace(
                             } else {
                                 title.to_string()
                             };
-                            if ui.selectable_label(selected, title).clicked() {
+                            let title_response = ui
+                                .add_sized(
+                                    [title_width, row_height],
+                                    egui::Button::selectable(selected, title.as_str()).truncate(),
+                                )
+                                .on_hover_text(&title);
+                            if title_response.clicked() {
                                 action = LibraryAction::Select(item.id.clone());
                             }
-                            ui.weak(item.scope_label());
-                            badge(ui, &item.layer, layer_color(&item.layer));
-                            ui.label(&item.kind);
-                            ui.weak(short_timestamp(&item.updated_at));
+                            let scope = item.scope_label();
+                            ui.add_sized(
+                                [SCOPE_WIDTH, row_height],
+                                egui::Label::new(
+                                    egui::RichText::new(scope.as_str()).color(theme::MUTED),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(scope);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(LAYER_WIDTH, row_height),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| badge(ui, &item.layer, layer_color(&item.layer)),
+                            );
+                            ui.add_sized(
+                                [KIND_WIDTH, row_height],
+                                egui::Label::new(kind_label(&item.kind)).truncate(),
+                            );
+                            ui.add_sized(
+                                [UPDATED_WIDTH, row_height],
+                                egui::Label::new(
+                                    egui::RichText::new(short_timestamp(&item.updated_at))
+                                        .color(theme::MUTED),
+                                )
+                                .truncate(),
+                            );
                             ui.end_row();
                         }
                     });
@@ -199,10 +246,11 @@ pub fn draw_library_workspace(
     ui.horizontal(|ui| {
         let previous = ui.add_enabled(
             has_previous_page && !loading && !filters_dirty,
-            egui::Button::new("← Previous"),
+            egui::Button::new("← Назад"),
         );
         let previous = if filters_dirty {
-            previous.on_disabled_hover_text("Apply changed filters before changing pages")
+            previous
+                .on_disabled_hover_text("Примените изменённые фильтры перед переключением страниц")
         } else {
             previous
         };
@@ -212,10 +260,10 @@ pub fn draw_library_workspace(
         let has_next = page.next_cursor.is_some();
         let next = ui.add_enabled(
             has_next && !loading && !filters_dirty,
-            egui::Button::new("Next →"),
+            egui::Button::new("Вперёд →"),
         );
         let next = if filters_dirty {
-            next.on_disabled_hover_text("Apply changed filters before changing pages")
+            next.on_disabled_hover_text("Примените изменённые фильтры перед переключением страниц")
         } else {
             next
         };
@@ -225,7 +273,7 @@ pub fn draw_library_workspace(
             }
         }
         ui.separator();
-        ui.weak(format!("Showing {} on this page", page.items.len()));
+        ui.weak(format!("На странице: {}", page.items.len()));
     });
     action
 }
@@ -239,14 +287,19 @@ pub fn draw_library_detail(
 ) -> LibraryDetailAction {
     let mut action = LibraryDetailAction::None;
     ui.horizontal(|ui| {
-        ui.strong("Document preview");
+        ui.label(
+            egui::RichText::new("ПРЕДПРОСМОТР")
+                .monospace()
+                .small()
+                .color(theme::FAINT),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Close").clicked() {
+            if ui.small_button("Закрыть ×").clicked() {
                 action = LibraryDetailAction::Close;
             }
         });
     });
-    ui.separator();
+    ui.add_space(10.0);
     ui.heading(if item.title.trim().is_empty() {
         &item.uri
     } else {
@@ -254,30 +307,40 @@ pub fn draw_library_detail(
     });
     ui.horizontal_wrapped(|ui| {
         badge(ui, &item.layer, layer_color(&item.layer));
-        badge(ui, &item.kind, egui::Color32::from_rgb(100, 120, 155));
+        badge(
+            ui,
+            kind_label(&item.kind),
+            egui::Color32::from_rgb(100, 120, 155),
+        );
         if item.status != "active" {
-            badge(ui, &item.status, egui::Color32::from_rgb(190, 125, 65));
+            badge(
+                ui,
+                status_label(&item.status),
+                egui::Color32::from_rgb(190, 125, 65),
+            );
         }
         if item.pinned {
-            ui.strong("Pinned");
+            ui.label(egui::RichText::new("◆ закреплён").color(theme::WARN));
         }
     });
-    ui.add_space(8.0);
-    metadata_row(ui, "Scope", &item.scope_label());
-    metadata_row(ui, "URI", &item.uri);
-    if let Some(source_file) = item.source_file.as_deref() {
-        metadata_row(ui, "Source", source_file);
-    }
-    metadata_row(ui, "Updated", &short_timestamp(&item.updated_at));
+    ui.add_space(9.0);
+    theme::inset().show(ui, |ui| {
+        metadata_row(ui, "Проект / комната", &item.scope_label());
+        metadata_row(ui, "URI", &item.uri);
+        if let Some(source_file) = item.source_file.as_deref() {
+            metadata_row(ui, "Источник", source_file);
+        }
+        metadata_row(ui, "Обновлён", &short_timestamp(&item.updated_at));
+    });
     ui.add_space(10.0);
     ui.horizontal_wrapped(|ui| {
-        if body.is_some() && ui.button("History").clicked() {
+        if body.is_some() && ui.button("История").clicked() {
             action = LibraryDetailAction::History(item.id.clone());
         }
-        if item.is_wiki() && ui.button("Open in Wiki").clicked() {
+        if item.is_wiki() && ui.button("Открыть в Вики").clicked() {
             action = LibraryDetailAction::OpenWiki(item.id.clone());
         }
-        if ui.button("Show connections").clicked() {
+        if ui.button("Показать связи").clicked() {
             action = LibraryDetailAction::OpenGraph(item.id.clone());
         }
     });
@@ -286,34 +349,38 @@ pub fn draw_library_detail(
     if loading {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.weak("Loading full body…");
+            ui.weak("Загружаю полный документ…");
         });
     }
     if let Some(error) = error {
         ui.colored_label(egui::Color32::from_rgb(215, 100, 85), error);
-        if ui.button("Retry preview").clicked() {
+        if ui.button("Повторить").clicked() {
             action = LibraryDetailAction::Retry;
         }
     }
     if let Some(body) = body {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.label(egui::RichText::new(&body.content).monospace());
-        });
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt("library_document_reader")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                draw_document_reader(ui, &body.content, &body.kind, &body.uri);
+            });
     }
     action
 }
 
-const LAYERS: &[(&str, &str)] = &[("raw", "Raw"), ("wiki", "Wiki"), ("diary", "Diary")];
+const LAYERS: &[(&str, &str)] = &[("raw", "Raw"), ("wiki", "Wiki"), ("diary", "Журнал")];
 const KINDS: &[(&str, &str)] = &[
-    ("document", "Document"),
+    ("document", "Документ"),
     ("wiki", "Wiki"),
-    ("diary", "Diary"),
-    ("code", "Code"),
+    ("diary", "Журнал"),
+    ("code", "Код"),
 ];
 const STATUSES: &[(&str, &str)] = &[
-    ("active", "Active"),
-    ("archived", "Archived"),
-    ("tombstone", "Tombstone"),
+    ("active", "Активен"),
+    ("archived", "В архиве"),
+    ("tombstone", "Метка удаления"),
 ];
 
 fn filter_combo(
@@ -349,6 +416,13 @@ fn badge(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
         });
 }
 
+fn table_header(ui: &mut egui::Ui, text: &str, width: f32, height: f32) {
+    ui.add_sized(
+        [width, height],
+        egui::Label::new(egui::RichText::new(text).strong()).truncate(),
+    );
+}
+
 fn metadata_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.weak(format!("{label}:"));
@@ -357,16 +431,36 @@ fn metadata_row(ui: &mut egui::Ui, label: &str, value: &str) {
 }
 
 fn layer_color(layer: &str) -> egui::Color32 {
-    match layer {
-        "wiki" => egui::Color32::from_rgb(125, 105, 205),
-        "diary" => egui::Color32::from_rgb(70, 155, 145),
-        "raw" => egui::Color32::from_rgb(80, 130, 190),
-        _ => egui::Color32::from_rgb(120, 125, 135),
-    }
+    theme::layer_color(layer)
 }
 
 fn short_timestamp(value: &str) -> String {
-    value.strip_suffix('Z').unwrap_or(value).replace('T', " ")
+    value
+        .strip_suffix('Z')
+        .unwrap_or(value)
+        .replace('T', " ")
+        .chars()
+        .take(19)
+        .collect()
+}
+
+fn kind_label(value: &str) -> &str {
+    match value {
+        "document" => "документ",
+        "wiki" => "wiki",
+        "diary" => "журнал",
+        "code" => "код",
+        _ => value,
+    }
+}
+
+fn status_label(value: &str) -> &str {
+    match value {
+        "active" => "активен",
+        "archived" => "в архиве",
+        "tombstone" => "метка удаления",
+        _ => value,
+    }
 }
 
 fn active_filter_count(request: &LibraryRequest) -> usize {
@@ -434,13 +528,14 @@ mod tests {
             short_timestamp("2026-09-02T12:34:56Z"),
             "2026-09-02 12:34:56"
         );
+        assert_eq!(
+            short_timestamp("2026-09-02T12:34:56.123456Z"),
+            "2026-09-02 12:34:56"
+        );
     }
 
     #[test]
     fn unknown_layer_gets_neutral_color() {
-        assert_eq!(
-            layer_color("custom"),
-            egui::Color32::from_rgb(120, 125, 135)
-        );
+        assert_eq!(layer_color("custom"), theme::MUTED);
     }
 }

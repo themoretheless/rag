@@ -13,24 +13,24 @@ fn mode_label(source: Option<&GraphSourceKind>) -> &'static str {
     match source {
         Some(GraphSourceKind::LiveStore { .. }) => "db",
         Some(GraphSourceKind::SnapshotFile { .. } | GraphSourceKind::VaultGraphJson { .. }) => {
-            "snapshot"
+            "снимок"
         }
         Some(GraphSourceKind::HttpService { .. }) => "http",
-        None => "none",
+        None => "нет",
     }
 }
 
 fn source_detail(source: Option<&GraphSourceKind>) -> String {
     match source {
-        Some(GraphSourceKind::HttpService { base }) => format!("HTTP gateway: {base}"),
+        Some(GraphSourceKind::HttpService { base }) => format!("HTTP-шлюз: {base}"),
         Some(source) => {
             let mut detail = format!("{}: {}", source.label(), source.path().display());
             if let Some(age) = source.mtime().and_then(|modified| modified.elapsed().ok()) {
-                detail.push_str(&format!(" · updated {}s ago", age.as_secs()));
+                detail.push_str(&format!(" · возраст: {} с", age.as_secs()));
             }
             detail
         }
-        None => "No data source".into(),
+        None => "Источник данных не выбран".into(),
     }
 }
 
@@ -59,42 +59,46 @@ pub fn draw_status(
                 egui::Color32::from_rgb(220, 105, 90)
             },
             if connected {
-                "● Connected"
+                "● Подключено"
             } else {
-                "● Offline"
+                "● Нет связи"
             },
         )
         .on_hover_text(source_detail(source));
         ui.separator();
         ui.label(
             seed_label
-                .map(|seed| format!("Focus: {seed}"))
-                .unwrap_or_else(|| "No focus selected".into()),
+                .map(|seed| format!("Фокус: {seed}"))
+                .unwrap_or_else(|| "Фокус не выбран".into()),
         );
         let (n, e) = match graph {
             Some(g) => (g.nodes.len(), g.edges.len()),
             None => (0, 0),
         };
         ui.separator();
-        ui.label(format!("{n} items · {e} connections"));
+        ui.label(format!("{n} узлов · {e} связей"));
 
         let capped = truncated || graph.is_some_and(|g| g.truncated_nodes || g.truncated_edges);
         if capped {
-            ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "capped");
+            ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "ограничено");
         }
 
         if pending {
             ui.separator();
             ui.spinner();
-            ui.weak("Updating…");
+            ui.weak("Обновление…");
         }
         let details = format!(
-            "mode={} · depth={} · caps={}/{} · layout={}",
+            "режим={} · глубина={} · лимиты={}/{} · раскладка={}",
             mode_label(source),
             depth,
             UI_HARD_MAX_NODES,
             UI_MAX_DRAW_EDGES,
-            if layout_frozen { "ready" } else { "pending" }
+            if layout_frozen {
+                "готова"
+            } else {
+                "ожидание"
+            }
         );
         ui.weak("ⓘ").on_hover_text(details);
         if let Some(msg) = banner {

@@ -63,12 +63,12 @@ pub fn draw_jobs(
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.heading("Background jobs");
-                ui.weak("Long-running writes stay in the gateway's single writer lane.");
+                ui.heading("Фоновые задачи");
+                ui.weak("Длительные операции записи выполняются в очереди единственного писателя gateway.");
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 if ui
-                    .add_enabled(!loading, egui::Button::new("Refresh"))
+                    .add_enabled(!loading, egui::Button::new("Обновить"))
                     .clicked()
                 {
                     action = OperationsAction::RefreshJobs;
@@ -82,30 +82,30 @@ pub fn draw_jobs(
         egui::Frame::group(ui.style())
             .inner_margin(14.0)
             .show(ui, |ui| {
-                ui.strong("Sync a source tree");
-                ui.weak("Files are preflighted first; unchanged healthy documents avoid extraction and embedding.");
+                ui.strong("Синхронизация дерева источников");
+                ui.weak("Сначала файлы проходят предварительную проверку; исправные документы без изменений не извлекаются и не векторизуются повторно.");
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut form.path)
-                            .hint_text("Allowlisted source directory")
+                            .hint_text("Разрешённый каталог источника")
                             .desired_width(330.0),
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut form.room)
-                            .hint_text("Room (optional)")
+                            .hint_text("Раздел (необязательно)")
                             .desired_width(130.0),
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut form.max_file_mib)
-                            .hint_text("Max MiB")
+                            .hint_text("Макс. MiB")
                             .desired_width(75.0),
                     );
-                    ui.checkbox(&mut form.remove_deleted, "Remove deleted");
+                    ui.checkbox(&mut form.remove_deleted, "Удалять отсутствующие");
                     if ui
                         .add_enabled(
                             can_start_sync(loading, &form.path),
-                            egui::Button::new("Start sync"),
+                            egui::Button::new("Запустить синхронизацию"),
                         )
                         .clicked()
                     {
@@ -119,7 +119,7 @@ pub fn draw_jobs(
                     ui.colored_label(egui::Color32::from_rgb(215, 100, 85), error);
                 }
                 if let Some(project) = project {
-                    ui.weak(format!("New documents will be scoped to project “{project}”."));
+                    ui.weak(format!("Новые документы будут привязаны к проекту «{project}»."));
                 }
             });
 
@@ -129,7 +129,7 @@ pub fn draw_jobs(
         }
         ui.add_space(14.0);
         if jobs.is_empty() && !loading {
-            ui.weak("No retained jobs yet.");
+            ui.weak("Сохранённых задач пока нет.");
         }
         for job in jobs {
             job_card(ui, job, loading, &mut action);
@@ -145,17 +145,18 @@ pub fn draw_maintenance(
     backup: &mut BackupForm,
     last_result: Option<&MaintenanceResult>,
     error: Option<&str>,
+    snapshot_stale: bool,
     loading: bool,
 ) -> OperationsAction {
     let mut action = OperationsAction::None;
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.heading("Health & maintenance");
-                ui.weak("Diagnostics and writes run through the live gateway; the UI never opens DuckDB.");
+                ui.heading("Состояние и обслуживание");
+                ui.weak("Диагностика и запись выполняются через работающий gateway; интерфейс не открывает DuckDB напрямую.");
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if ui.button("Refresh diagnostics").clicked() {
+                if ui.button("Обновить диагностику").clicked() {
                     action = OperationsAction::RefreshHealth;
                 }
                 if loading {
@@ -166,6 +167,13 @@ pub fn draw_maintenance(
         if let Some(error) = error {
             ui.add_space(8.0);
             ui.colored_label(egui::Color32::from_rgb(215, 100, 85), error);
+        }
+        if snapshot_stale && snapshot.is_some() {
+            ui.add_space(8.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(220, 150, 65),
+                "Показан последний успешный снимок; текущая диагностика gateway устарела.",
+            );
         }
         ui.add_space(12.0);
         if let Some(snapshot) = snapshot {
@@ -180,10 +188,10 @@ pub fn draw_maintenance(
                 .inner_margin(14.0)
                 .show(&mut columns[0], |ui| {
                     ui.strong("Checkpoint");
-                    ui.label("Flush the DuckDB WAL and report the main file size delta.");
+                    ui.label("Сбросить WAL DuckDB и показать изменение размера основного файла.");
                     ui.add_space(8.0);
                     if ui
-                        .add_enabled(!loading, egui::Button::new("Run checkpoint"))
+                        .add_enabled(!loading, egui::Button::new("Выполнить checkpoint"))
                         .clicked()
                     {
                         action = OperationsAction::Checkpoint;
@@ -192,21 +200,21 @@ pub fn draw_maintenance(
             egui::Frame::group(columns[1].style())
                 .inner_margin(14.0)
                 .show(&mut columns[1], |ui| {
-                    ui.strong("Verified backup");
-                    ui.label("Destination must be inside a configured allowlisted root.");
+                    ui.strong("Проверенный бэкап");
+                    ui.label("Путь назначения должен находиться внутри настроенного разрешённого корня.");
                     ui.add_space(6.0);
                     ui.add(
                         egui::TextEdit::singleline(&mut backup.path)
-                            .hint_text("/allowlisted/path/rag-backup.duckdb")
+                            .hint_text("/разрешённый/путь/rag-backup.duckdb")
                             .desired_width(f32::INFINITY),
                     );
                     ui.horizontal_wrapped(|ui| {
-                        ui.checkbox(&mut backup.dry_run, "Dry run");
-                        ui.checkbox(&mut backup.overwrite, "Overwrite existing");
+                        ui.checkbox(&mut backup.dry_run, "Проверка без записи");
+                        ui.checkbox(&mut backup.overwrite, "Перезаписать существующий");
                         let label = if backup.dry_run {
-                            "Validate backup"
+                            "Проверить бэкап"
                         } else {
-                            "Create backup"
+                            "Создать бэкап"
                         };
                         if ui
                             .add_enabled(
@@ -227,7 +235,7 @@ pub fn draw_maintenance(
 
         if let Some(result) = last_result {
             ui.add_space(14.0);
-            egui::CollapsingHeader::new(format!("{} result", result.operation))
+            egui::CollapsingHeader::new(format!("Результат: {}", result.operation))
                 .default_open(true)
                 .show(ui, |ui| {
                     let pretty = serde_json::to_string_pretty(&result.report)
@@ -246,27 +254,27 @@ fn health_cards(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
     ui.columns(4, |columns| {
         health_metric(
             &mut columns[0],
-            "Search",
+            "Поиск",
             if doctor.ready_for_search {
-                "Ready"
+                "Готов"
             } else {
-                "Not ready"
+                "Не готов"
             },
             doctor.ready_for_search,
         );
         health_metric(
             &mut columns[1],
-            "Integrity",
+            "Целостность",
             if doctor.relational_integrity_ok {
-                "Clean"
+                "В норме"
             } else {
-                "Attention"
+                "Требует внимания"
             },
             doctor.relational_integrity_ok,
         );
         health_metric(
             &mut columns[2],
-            "Schema",
+            "Схема",
             &format!(
                 "{} / {}",
                 doctor.schema_version, doctor.expected_schema_version
@@ -286,23 +294,23 @@ fn health_cards(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!(
-                    "{} · schema {}",
+                    "{} · схема {}",
                     status.backend, status.schema_version
                 ));
                 ui.separator();
                 ui.label(if status.fts_ready {
-                    "FTS ready"
+                    "FTS готов"
                 } else {
-                    "FTS not ready"
+                    "FTS не готов"
                 });
                 ui.separator();
-                ui.label(format!("{} documents", status.document_count));
+                ui.label(format!("документов: {}", status.document_count));
                 ui.separator();
-                ui.label(format!("{} chunks", status.chunk_count));
+                ui.label(format!("чанков: {}", status.chunk_count));
                 ui.separator();
-                ui.label(format!("{} graph nodes", status.node_count));
+                ui.label(format!("узлов графа: {}", status.node_count));
                 ui.separator();
-                ui.label(format!("{} graph edges", status.edge_count));
+                ui.label(format!("рёбер графа: {}", status.edge_count));
                 ui.separator();
                 ui.weak(&status.db_path);
             });
@@ -312,47 +320,47 @@ fn health_cards(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
                     status.raw_count, status.wiki_count
                 ));
                 ui.separator();
-                ui.label(format!("wiki index {:.0}%", status.index_coverage * 100.0));
+                ui.label(format!("индекс Wiki {:.0}%", status.index_coverage * 100.0));
                 ui.separator();
-                ui.label(format!("uncompiled raw={}", status.uncompiled_raw_count));
+                ui.label(format!("нескомпилированных RAW={}", status.uncompiled_raw_count));
                 ui.separator();
                 ui.label(if status.embedding_manifest_match {
-                    "embedding manifest matches"
+                    "манифест эмбеддингов совпадает"
                 } else {
-                    "embedding manifest mismatch"
+                    "манифест эмбеддингов не совпадает"
                 });
                 ui.separator();
                 ui.label(if status.ready_for_search {
-                    "status search-ready"
+                    "статус: поиск готов"
                 } else {
-                    "status not search-ready"
+                    "статус: поиск не готов"
                 });
                 ui.separator();
                 ui.label(if status.ingest_roots_configured {
-                    "ingest roots configured"
+                    "корни индексации настроены"
                 } else {
-                    "no ingest roots"
+                    "корни индексации не настроены"
                 });
             });
             ui.horizontal_wrapped(|ui| {
                 ui.label(if doctor.fts_ready {
-                    "doctor FTS ok"
+                    "doctor: FTS в норме"
                 } else {
-                    "doctor FTS failed"
+                    "doctor: ошибка FTS"
                 });
                 ui.separator();
                 ui.label(if doctor.embed_ok {
-                    "embedding dimensions ok"
+                    "размерности эмбеддингов совпадают"
                 } else {
-                    "embedding dimensions mismatch"
+                    "размерности эмбеддингов не совпадают"
                 });
                 ui.separator();
                 ui.label(format!(
-                    "WAL warning at {} MiB",
+                    "порог предупреждения WAL: {} MiB",
                     doctor.wal_warn_bytes / 1_048_576
                 ));
                 ui.separator();
-                ui.label(format!("unscoped={}", doctor.unscoped_documents));
+                ui.label(format!("без проекта={}", doctor.unscoped_documents));
             });
             if let Some(hint) = doctor.repair_hint.as_deref() {
                 ui.add_space(6.0);
@@ -367,7 +375,7 @@ fn health_cards(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
                 ui.colored_label(
                     egui::Color32::from_rgb(215, 100, 85),
                     format!(
-                        "missing chunks={} · orphan chunks={} · orphan nodes={} · orphan edges={}",
+                        "без чанков={} · потерянных чанков={} · потерянных узлов={} · потерянных рёбер={}",
                         doctor.documents_without_chunks,
                         doctor.orphan_chunks,
                         doctor.orphan_document_nodes,
@@ -389,7 +397,7 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                     if ui
                         .add_enabled(
                             can_cancel_job(loading, job.can_cancel()),
-                            egui::Button::new("Cancel"),
+                            egui::Button::new("Отменить"),
                         )
                         .clicked()
                     {
@@ -399,14 +407,14 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                 });
             });
             ui.horizontal_wrapped(|ui| {
-                ui.weak(format!("{} · created {}", job.kind, short_timestamp(&job.created_at)));
+                ui.weak(format!("{} · создана {}", job.kind, short_timestamp(&job.created_at)));
                 if let Some(started) = job.started_at.as_deref() {
                     ui.separator();
-                    ui.weak(format!("started {}", short_timestamp(started)));
+                    ui.weak(format!("запущена {}", short_timestamp(started)));
                 }
                 if let Some(finished) = job.finished_at.as_deref() {
                     ui.separator();
-                    ui.weak(format!("finished {}", short_timestamp(finished)));
+                    ui.weak(format!("завершена {}", short_timestamp(finished)));
                 }
             });
             if let Some(progress) = &job.progress {
@@ -415,7 +423,7 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                     egui::ProgressBar::new(fraction)
                         .show_percentage()
                         .text(format!(
-                            "{} · {}/{} files",
+                            "{} · файлов: {}/{}",
                             phase_label(&progress.phase),
                             progress.processed_files,
                             progress.total_files
@@ -423,7 +431,7 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                 );
                 ui.horizontal_wrapped(|ui| {
                     ui.weak(format!(
-                        "+{} ~{} ={} -{} · {} errors",
+                        "+{} ~{} ={} -{} · ошибок: {}",
                         progress.added,
                         progress.updated,
                         progress.skipped,
@@ -436,7 +444,7 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                     }
                     ui.separator();
                     ui.weak(format!(
-                        "preflight={} extracted={} embedded={}",
+                        "проверено={} извлечено={} векторизовано={}",
                         progress.counters.preflight,
                         progress.counters.extracted,
                         progress.counters.embedded
@@ -445,7 +453,7 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
             }
             if let Some(report) = &job.report {
                 ui.label(format!(
-                    "Completed: +{} updated={} skipped={} deleted={} errors={} · preflight={} extracted={} embedded={}",
+                    "Завершено: добавлено={} обновлено={} пропущено={} удалено={} ошибок={} · проверено={} извлечено={} векторизовано={}",
                     report.added_count,
                     report.updated_count,
                     report.skipped_count,
@@ -484,13 +492,13 @@ fn sync_request(form: &SyncJobForm, project: Option<&str>) -> Result<SyncJobRequ
             .max_file_mib
             .trim()
             .parse::<u64>()
-            .map_err(|_| "Max MiB must be a positive integer".to_string())?;
+            .map_err(|_| "Макс. MiB должен быть положительным целым числом".to_string())?;
         if mib == 0 {
-            return Err("Max MiB must be a positive integer".to_string());
+            return Err("Макс. MiB должен быть положительным целым числом".to_string());
         }
         Some(
             mib.checked_mul(1_048_576)
-                .ok_or_else(|| "Max MiB is too large".to_string())?,
+                .ok_or_else(|| "Макс. MiB слишком велик".to_string())?,
         )
     };
     Ok(SyncJobRequest {
@@ -554,17 +562,26 @@ fn status_color(status: &str) -> egui::Color32 {
 }
 
 fn status_label(status: &str) -> String {
-    status.replace('_', " ")
+    match status {
+        "queued" => "в очереди".to_string(),
+        "running" => "выполняется".to_string(),
+        "cancelling" => "отменяется".to_string(),
+        "cancelled" => "отменено".to_string(),
+        "succeeded" => "успешно".to_string(),
+        "failed" => "ошибка".to_string(),
+        "completed_with_errors" => "завершено с ошибками".to_string(),
+        other => other.replace('_', " "),
+    }
 }
 
 fn phase_label(phase: &str) -> String {
     match phase {
-        "scanning" => "Scanning files".to_string(),
-        "syncing" => "Indexing files".to_string(),
-        "removing_deleted" => "Removing deleted files".to_string(),
-        "refreshing_fts" => "Preparing search".to_string(),
-        "completed" => "Completed".to_string(),
-        "cancelled" => "Cancelled".to_string(),
+        "scanning" => "Сканирование файлов".to_string(),
+        "syncing" => "Индексация файлов".to_string(),
+        "removing_deleted" => "Удаление отсутствующих файлов".to_string(),
+        "refreshing_fts" => "Подготовка поиска".to_string(),
+        "completed" => "Завершено".to_string(),
+        "cancelled" => "Отменено".to_string(),
         other => sentence_case(other.replace('_', " ")),
     }
 }
@@ -573,7 +590,7 @@ fn sentence_case(value: String) -> String {
     let mut chars = value.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => "Working".to_string(),
+        None => "Выполняется".to_string(),
     }
 }
 
@@ -617,7 +634,7 @@ mod tests {
             Some("alpha"),
         )
         .expect_err("zero would reject every non-empty file");
-        assert_eq!(error, "Max MiB must be a positive integer");
+        assert_eq!(error, "Макс. MiB должен быть положительным целым числом");
     }
 
     #[test]
@@ -630,7 +647,7 @@ mod tests {
     fn completed_with_errors_uses_readable_warning_status() {
         assert_eq!(
             status_label("completed_with_errors"),
-            "completed with errors"
+            "завершено с ошибками"
         );
         assert_eq!(
             status_color("completed_with_errors"),
@@ -648,18 +665,21 @@ mod tests {
 
     #[test]
     fn source_sync_phases_use_user_facing_labels() {
-        assert_eq!(phase_label("scanning"), "Scanning files");
-        assert_eq!(phase_label("syncing"), "Indexing files");
-        assert_eq!(phase_label("removing_deleted"), "Removing deleted files");
-        assert_eq!(phase_label("refreshing_fts"), "Preparing search");
-        assert_eq!(phase_label("completed"), "Completed");
-        assert_eq!(phase_label("cancelled"), "Cancelled");
+        assert_eq!(phase_label("scanning"), "Сканирование файлов");
+        assert_eq!(phase_label("syncing"), "Индексация файлов");
+        assert_eq!(
+            phase_label("removing_deleted"),
+            "Удаление отсутствующих файлов"
+        );
+        assert_eq!(phase_label("refreshing_fts"), "Подготовка поиска");
+        assert_eq!(phase_label("completed"), "Завершено");
+        assert_eq!(phase_label("cancelled"), "Отменено");
     }
 
     #[test]
     fn unknown_source_sync_phase_stays_visible_without_snake_case() {
         assert_eq!(phase_label("hydrating_links"), "Hydrating links");
-        assert_eq!(phase_label(""), "Working");
+        assert_eq!(phase_label(""), "Выполняется");
     }
 
     #[test]

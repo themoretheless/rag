@@ -77,9 +77,9 @@ pub fn draw_wiki_sidebar(
     let mut clicked: Option<String> = None;
 
     ui.horizontal(|ui| {
-        ui.heading("Library");
+        ui.heading("Библиотека");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.weak(format!("{} pages", pages.len()));
+            ui.weak(format!("Страниц: {}", pages.len()));
         });
     });
     ui.horizontal(|ui| {
@@ -87,18 +87,18 @@ pub fn draw_wiki_sidebar(
             egui::TextEdit::singleline(filter)
                 .id(wiki_filter_id())
                 .desired_width(f32::INFINITY)
-                .hint_text("Search pages…  (Ctrl+F)"),
+                .hint_text("Поиск страниц…  (Ctrl+F)"),
         );
         if ui
             .add_enabled(!filter.is_empty(), egui::Button::new("✕"))
-            .on_hover_text("Clear filter")
+            .on_hover_text("Очистить фильтр")
             .clicked()
         {
             filter.clear();
         }
     });
-    ui.checkbox(show_summaries, "Show summaries")
-        .on_hover_text("Show a short description under each page");
+    ui.checkbox(show_summaries, "Показывать аннотации")
+        .on_hover_text("Показывать краткое описание под каждой страницей");
     ui.separator();
 
     let q = filter.trim().to_lowercase();
@@ -124,8 +124,8 @@ pub fn draw_wiki_sidebar(
             if pages.is_empty() {
                 ui.add_space(24.0);
                 ui.vertical_centered(|ui| {
-                    ui.strong("No pages in this project");
-                    ui.weak("Choose another project or create a wiki page.");
+                    ui.strong("В этом проекте пока нет страниц");
+                    ui.weak("Выберите другой проект или создайте wiki-страницу.");
                 });
                 return;
             }
@@ -135,8 +135,8 @@ pub fn draw_wiki_sidebar(
                 if matches.is_empty() {
                     ui.add_space(20.0);
                     ui.vertical_centered(|ui| {
-                        ui.strong("Nothing found");
-                        ui.weak("Try a shorter or different search.");
+                        ui.strong("Ничего не найдено");
+                        ui.weak("Измените или сократите запрос.");
                     });
                 }
                 for p in matches {
@@ -170,7 +170,7 @@ pub fn draw_wiki_sidebar(
                         draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
                     }
                 } else {
-                    egui::CollapsingHeader::new("Uncategorized")
+                    egui::CollapsingHeader::new("Без категории")
                         .id_salt("wiki_cat_uncategorized")
                         .default_open(true)
                         .show(ui, |ui| {
@@ -231,8 +231,8 @@ pub fn draw_wiki_edit_view(
             let conflict = err.contains("conflict") || err.contains("409");
             if conflict
                 && ui
-                    .add_enabled(!saving, egui::Button::new("Reload page"))
-                    .on_hover_text("Discard edits and refetch the current revision")
+                    .add_enabled(!saving, egui::Button::new("Обновить страницу"))
+                    .on_hover_text("Отменить изменения и загрузить текущую ревизию")
                     .clicked()
             {
                 action.reload = true;
@@ -242,19 +242,22 @@ pub fn draw_wiki_edit_view(
     }
 
     ui.horizontal(|ui| {
-        ui.heading("Edit");
+        ui.heading("Редактирование");
         if edit.dirty {
-            ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "unsaved");
+            ui.colored_label(
+                egui::Color32::from_rgb(220, 160, 60),
+                "не сохранено",
+            );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .add_enabled(can_write && !saving, egui::Button::new("Save"))
+                .add_enabled(can_write && !saving, egui::Button::new("Сохранить"))
                 .on_hover_text(if saving {
-                    "Save in flight on the worker…"
+                    "Идёт сохранение…"
                 } else if can_write {
-                    "Write via HTTP PUT /v1/wiki"
+                    "Записать через HTTP PUT /v1/wiki"
                 } else {
-                    "Read-only source (connect through the HTTP gateway to edit)"
+                    "Источник доступен только для чтения (для редактирования подключитесь через HTTP-шлюз)"
                 })
                 .clicked()
             {
@@ -264,32 +267,32 @@ pub fn draw_wiki_edit_view(
                 ui.spinner();
             }
             if ui
-                .add_enabled(can_cancel_edit(saving), egui::Button::new("Cancel"))
-                .on_disabled_hover_text("Wait for the save result")
+                .add_enabled(can_cancel_edit(saving), egui::Button::new("Отменить"))
+                .on_disabled_hover_text("Дождитесь завершения сохранения")
                 .clicked()
             {
                 action.cancel = true;
             }
             if let Some(r) = edit.base_revision {
-                ui.weak(format!("base r{r}"));
+                ui.weak(format!("исходная r{r}"));
             }
         });
     });
     ui.weak(format!("{} · {}", page.layer, page.uri));
     ui.separator();
 
-    ui.label("Title");
+    ui.label("Заголовок");
     let title_resp = ui.add_enabled(
         !saving,
         egui::TextEdit::singleline(&mut edit.title)
             .desired_width(f32::INFINITY)
-            .hint_text("Page title"),
+            .hint_text("Заголовок страницы"),
     );
     if title_resp.changed() {
         edit.dirty = true;
     }
     ui.add_space(6.0);
-    ui.label("Content");
+    ui.label("Содержимое");
     egui::ScrollArea::vertical()
         .id_salt("wiki_edit_scroll")
         .auto_shrink([false, false])
@@ -304,7 +307,7 @@ pub fn draw_wiki_edit_view(
                         egui::TextEdit::multiline(&mut edit.content)
                             .desired_width(f32::INFINITY)
                             .font(egui::TextStyle::Monospace)
-                            .hint_text("Markdown body…"),
+                            .hint_text("Текст Markdown…"),
                     )
                 })
                 .inner;
@@ -335,7 +338,7 @@ pub fn draw_wiki_read_view(
     if let Some(err) = error {
         ui.horizontal(|ui| {
             ui.colored_label(egui::Color32::from_rgb(220, 100, 100), err);
-            if ui.button("Retry").clicked() {
+            if ui.button("Повторить").clicked() {
                 action.retry = true;
             }
         });
@@ -347,11 +350,13 @@ pub fn draw_wiki_read_view(
             ui.add_space(80.0);
             if context.loading {
                 ui.spinner();
-                ui.label("Loading page…");
+                ui.label("Загрузка страницы…");
             } else {
-                ui.heading("Select a page");
-                ui.weak("Pick a wiki note in the left sidebar.");
-                ui.weak("Blue [[links]] resolve; grey = missing page.");
+                ui.heading("Выберите страницу");
+                ui.weak("Выберите wiki-заметку на левой панели.");
+                ui.weak(
+                    "Синие [[ссылки]] ведут на существующие страницы, серые — на отсутствующие.",
+                );
             }
         });
         return action;
@@ -366,17 +371,17 @@ pub fn draw_wiki_read_view(
     });
     ui.horizontal(|ui| {
         ui.weak(format!(
-            "{} · revision {}",
+            "{} · ревизия {}",
             page.layer,
             page.revision.unwrap_or(1)
         ));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .add_enabled(context.can_write, egui::Button::new("Edit"))
+                .add_enabled(context.can_write, egui::Button::new("Редактировать"))
                 .on_hover_text(if context.can_write {
-                    "Edit this page (Save uses HTTP PUT /v1/wiki)"
+                    "Редактировать страницу (сохранение через HTTP PUT /v1/wiki)"
                 } else {
-                    "Editing requires an HTTP gateway connection"
+                    "Для редактирования нужно подключение к HTTP-шлюзу"
                 })
                 .clicked()
             {
@@ -422,52 +427,52 @@ pub fn draw_wiki_info_panel(
     backlinks_loading: bool,
 ) -> WikiNavAction {
     let mut action = WikiNavAction::default();
-    ui.heading("Page info");
+    ui.heading("Сведения о странице");
     ui.separator();
     let Some(page) = page else {
-        ui.weak("Select a page to see its details.");
+        ui.weak("Выберите страницу, чтобы увидеть её сведения.");
         return action;
     };
 
-    ui.weak("Location");
+    ui.weak("Расположение");
     ui.monospace(&page.uri);
     ui.add_space(10.0);
-    ui.weak("Type");
+    ui.weak("Тип");
     ui.label(format!("{} · {}", page.layer, page.kind));
     if let Some(revision) = page.revision {
-        ui.label(format!("Revision {revision}"));
+        ui.label(format!("Ревизия {revision}"));
     }
 
     ui.add_space(18.0);
     if backlinks_error.is_some() && backlinks.is_empty() {
-        ui.strong("Backlinks · unavailable");
+        ui.strong("Обратные ссылки · недоступны");
     } else {
-        ui.strong(format!("Backlinks · {}", backlinks.len()));
+        ui.strong(format!("Обратные ссылки · {}", backlinks.len()));
     }
     ui.separator();
     if backlinks_loading {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.weak("Refreshing incoming links…");
+            ui.weak("Обновление входящих ссылок…");
         });
     }
     if let Some(error) = backlinks_error {
         let prefix = if backlinks.is_empty() {
-            "Could not load incoming links"
+            "Не удалось загрузить входящие ссылки"
         } else {
-            "Could not refresh incoming links; the list below may be stale"
+            "Не удалось обновить входящие ссылки; список ниже может быть устаревшим"
         };
         ui.colored_label(
             egui::Color32::from_rgb(215, 100, 85),
             format!("{prefix}: {error}"),
         );
-        if ui.button("Retry backlinks").clicked() {
+        if ui.button("Повторить загрузку ссылок").clicked() {
             action.retry = true;
         }
         ui.add_space(6.0);
     }
     if backlinks.is_empty() && backlinks_error.is_none() && !backlinks_loading {
-        ui.weak("No incoming links.");
+        ui.weak("Входящих ссылок нет.");
     } else {
         for backlink in backlinks {
             let response = ui.add(
@@ -665,7 +670,7 @@ fn draw_inline_with_wikilinks(
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             if !resolved {
-                resp = resp.on_hover_text("Unresolved - no page with this title/slug");
+                resp = resp.on_hover_text("Не найдено: страницы с таким заголовком/slug нет");
             }
             if resp.clicked() && !link_key.is_empty() {
                 clicked = Some(link_key.to_string());

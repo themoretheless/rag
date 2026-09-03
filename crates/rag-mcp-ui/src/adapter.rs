@@ -4,6 +4,7 @@ use rag_mcp::{GraphEdge, GraphNode, GraphView};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::load::{UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES};
+use crate::ui::theme;
 
 /// Display node after clamp + style derivation.
 #[derive(Debug, Clone)]
@@ -426,11 +427,12 @@ pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
 
 fn node_to_ui(n: &GraphNode, depth: u32, degree: u32) -> UiNode {
     let (layer, wing, room) = parse_placement_meta(&n.metadata_json);
+    let color = node_color(&n.kind, layer.as_deref());
     UiNode {
         id: n.id.clone(),
         kind: n.kind.clone(),
         label: n.label.clone(),
-        color: kind_color(&n.kind),
+        color,
         document_id: n.document_id.clone(),
         uri: n.uri.clone(),
         resolved: n.resolved,
@@ -489,23 +491,35 @@ fn parse_placement_meta(metadata_json: &str) -> (Option<String>, Option<String>,
 /// Kind → fill color (EGUI_GRAPH_VIEW §7.2).
 pub fn kind_color(kind: &str) -> egui::Color32 {
     match kind {
-        "document" => egui::Color32::from_rgb(70, 130, 200),
-        "tag" => egui::Color32::from_rgb(220, 170, 60),
-        "stub" => egui::Color32::from_rgb(140, 140, 140),
-        "entity" => egui::Color32::from_rgb(150, 100, 200),
-        _ => egui::Color32::from_rgb(100, 100, 120),
+        "document" => theme::L0,
+        "tag" => theme::L1,
+        "stub" => egui::Color32::from_rgb(100, 116, 139),
+        "entity" => theme::L2,
+        _ => theme::MUTED,
+    }
+}
+
+fn node_color(kind: &str, layer: Option<&str>) -> egui::Color32 {
+    if kind == "document" {
+        match layer {
+            Some("wiki") => theme::L3,
+            Some("diary") => theme::L4,
+            _ => theme::L0,
+        }
+    } else {
+        kind_color(kind)
     }
 }
 
 /// Rel type → edge stroke color.
 pub fn edge_color(rel_type: &str) -> egui::Color32 {
     match rel_type {
-        "wikilink" => egui::Color32::from_rgb(180, 180, 200),
-        "related" => egui::Color32::from_rgb(120, 160, 180),
-        "tagged" => egui::Color32::from_rgb(200, 160, 80),
-        "tunnel" => egui::Color32::from_rgb(220, 100, 100),
-        "depends_on" | "derived_from" | "supersedes" => egui::Color32::from_rgb(100, 180, 140),
-        _ => egui::Color32::from_gray(150),
+        "wikilink" => theme::rgba(theme::L3, 150),
+        "related" => theme::rgba(theme::L0, 115),
+        "tagged" | "mentions" => theme::rgba(theme::L1, 130),
+        "tunnel" => theme::rgba(theme::DANGER, 175),
+        "depends_on" | "derived_from" | "supersedes" => theme::rgba(theme::OK, 150),
+        _ => theme::rgba(theme::MUTED, 120),
     }
 }
 

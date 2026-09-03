@@ -2,13 +2,17 @@
 
 pub mod canvas;
 pub mod detail;
+pub mod document;
 pub mod empty;
 pub mod home;
+pub mod insights;
 pub mod library;
 pub mod operations;
 pub mod revisions;
 pub mod search;
+pub mod shell;
 pub mod status;
+pub mod theme;
 pub mod wiki;
 
 /// `ComboBox` 0.36 closes on pointer clicks by default, but keyboard and

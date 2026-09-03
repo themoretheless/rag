@@ -41,15 +41,15 @@ pub struct RevisionsView<'a> {
 pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> RevisionsAction {
     let mut action = RevisionsAction::None;
     ui.horizontal(|ui| {
-        if ui.button("← Library").clicked() {
+        if ui.button("← Библиотека").clicked() {
             action = RevisionsAction::BackToLibrary;
         }
         ui.vertical(|ui| {
-            ui.heading("Revision history");
+            ui.heading("История ревизий");
             ui.weak(view.document_title);
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            if ui.button("Refresh").clicked() {
+            if ui.button("Обновить").clicked() {
                 action = RevisionsAction::Refresh;
             }
             if view.loading_timeline || view.loading_snapshot || view.loading_diff {
@@ -69,11 +69,11 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
             .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.strong(format!(
-                    "Restored revision {} as new head revision {}",
+                    "Ревизия {} восстановлена как новая головная ревизия {}",
                     result.restored_from_revision, result.revision
                 ));
                 ui.label(format!(
-                    "{} chunks · {} graph edges · {}",
+                    "чанков: {} · рёбер графа: {} · {}",
                     result.chunk_count, result.edge_count, result.etag
                 ));
             });
@@ -90,21 +90,21 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
             .inner_margin(14.0)
             .show(ui, |ui| {
                 ui.strong(if view.loading_restore {
-                    format!("Restoring historical revision {revision}…")
+                    format!("Восстанавливается историческая ревизия {revision}…")
                 } else {
-                    format!("Restore historical revision {revision}?")
+                    format!("Восстановить историческую ревизию {revision}?")
                 });
-                ui.label("This creates a new head revision and rebuilds chunks and graph. The current head remains in history. Optimistic concurrency prevents overwriting a newer edit.");
+                ui.label("Будет создана новая головная ревизия, а чанки и граф перестроятся. Текущая версия останется в истории. Оптимистичная блокировка не позволит перезаписать более новое изменение.");
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(!view.loading_restore, egui::Button::new("Confirm restore"))
+                        .add_enabled(!view.loading_restore, egui::Button::new("Подтвердить"))
                         .clicked()
                     {
                         action = RevisionsAction::ConfirmRestore(revision);
                     }
                     if ui
-                        .add_enabled(!view.loading_restore, egui::Button::new("Cancel"))
-                        .on_disabled_hover_text("Wait for the restore result")
+                        .add_enabled(!view.loading_restore, egui::Button::new("Отмена"))
+                        .on_disabled_hover_text("Дождитесь результата восстановления")
                         .clicked()
                     {
                         action = RevisionsAction::CancelRestore;
@@ -118,16 +118,16 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
     }
 
     ui.columns(3, |columns| {
-        columns[0].strong("Current head");
+        columns[0].strong("Текущая головная ревизия");
         columns[0].label(
             view.head_revision
-                .map(|revision| format!("Revision {revision}"))
-                .unwrap_or_else(|| "Load the document preview first".to_string()),
+                .map(|revision| format!("Ревизия {revision}"))
+                .unwrap_or_else(|| "Сначала загрузите предпросмотр документа".to_string()),
         );
 
         columns[0].add_space(12.0);
         columns[0].strong(format!(
-            "{} of {} historical snapshots",
+            "Исторических снимков: {} из {}",
             view.revisions.len(),
             view.total
         ));
@@ -136,7 +136,7 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
             .id_salt("revision_timeline")
             .show(&mut columns[0], |ui| {
                 if view.revisions.is_empty() && !view.loading_timeline {
-                    ui.weak("No previous revisions. The first edit will create one.");
+                    ui.weak("Предыдущих ревизий нет. Первая правка создаст снимок.");
                 }
                 for revision in view.revisions {
                     let selected = view.selected_revision == Some(revision.revision);
@@ -161,7 +161,7 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
                     if ui
                         .add_enabled(
                             !view.loading_timeline,
-                            egui::Button::new("Load more revisions"),
+                            egui::Button::new("Загрузить ещё"),
                         )
                         .clicked()
                     {
@@ -173,7 +173,7 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
                 }
             });
 
-        columns[1].strong("Changes to current head");
+        columns[1].strong("Изменения относительно текущей версии");
         columns[1].separator();
         columns[1].set_min_width(320.0);
         columns[2].set_min_width(260.0);
@@ -181,20 +181,20 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
             columns[1].horizontal_wrapped(|ui| {
                 ui.colored_label(
                     egui::Color32::from_rgb(75, 165, 105),
-                    format!("+{} lines", diff.added_lines),
+                    format!("+{} строк", diff.added_lines),
                 );
                 ui.colored_label(
                     egui::Color32::from_rgb(215, 100, 85),
-                    format!("-{} lines", diff.removed_lines),
+                    format!("-{} строк", diff.removed_lines),
                 );
                 if diff.title_changed {
-                    ui.label("title changed");
+                    ui.label("заголовок изменён");
                 }
                 if diff.metadata_changed {
-                    ui.label("metadata changed");
+                    ui.label("метаданные изменены");
                 }
                 if diff.placement_changed {
-                    ui.label("scope changed");
+                    ui.label("область изменена");
                 }
             });
             egui::ScrollArea::vertical()
@@ -212,47 +212,47 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
                         });
                     }
                     if diff.truncated {
-                        ui.weak("Diff is truncated to the first 400 changes.");
+                        ui.weak("Diff ограничен первыми 400 изменениями.");
                     }
                 });
         } else if let Some(error) = view.diff_error {
             columns[1].colored_label(egui::Color32::from_rgb(215, 100, 85), error);
             if let Some(revision) = view.selected_revision {
-                if columns[1].button("Retry diff").clicked() {
+                if columns[1].button("Повторить загрузку diff").clicked() {
                     action = RevisionsAction::Select(revision);
                 }
             }
         } else if view.loading_diff {
             columns[1].spinner();
-            columns[1].weak("Loading diff…");
+            columns[1].weak("Загрузка diff…");
         } else {
-            columns[1].weak("Select a historical revision to inspect its diff.");
+            columns[1].weak("Выберите историческую ревизию, чтобы просмотреть diff.");
         }
 
-        columns[2].strong("Selected snapshot");
+        columns[2].strong("Выбранный снимок");
         columns[2].separator();
         if let Some(selected) = view.selected_revision.and_then(|selected| {
             view.revisions
                 .iter()
                 .find(|item| item.revision == selected)
         }) {
-            columns[2].label(format!("Revision {}", selected.revision));
+            columns[2].label(format!("Ревизия {}", selected.revision));
             columns[2].weak(short_timestamp(&selected.updated_at));
             columns[2].label(format!(
                 "{} · {} · {}",
                 selected.layer, selected.kind, selected.status
             ));
             columns[2].weak(format!(
-                "{} lines · {} characters",
+                "строк: {} · символов: {}",
                 selected.content_lines, selected.content_chars
             ));
             columns[2].add_space(8.0);
             if view.loading_snapshot {
                 columns[2].spinner();
-                columns[2].weak("Loading this snapshot…");
+                columns[2].weak("Загрузка снимка…");
             } else if let Some(error) = view.snapshot_error {
                 columns[2].colored_label(egui::Color32::from_rgb(215, 100, 85), error);
-                if columns[2].button("Retry snapshot").clicked() {
+                if columns[2].button("Повторить загрузку снимка").clicked() {
                     action = RevisionsAction::Select(selected.revision);
                 }
             } else if let Some(snapshot) = view.snapshot {
@@ -263,7 +263,7 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
                         ui.monospace(truncate(&snapshot.content, 6_000));
                     });
             } else {
-                columns[2].weak("The body is loaded only when you select a revision.");
+                columns[2].weak("Содержимое загрузится после выбора ревизии.");
             }
             columns[2].add_space(10.0);
             let source_controlled =
@@ -273,8 +273,8 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
                     .fill(egui::Color32::from_rgb(190, 125, 55).gamma_multiply(0.10))
                     .inner_margin(10.0)
                     .show(&mut columns[2], |ui| {
-                        ui.strong("Source-controlled document");
-                        ui.label("Raw revisions cannot be restored here. Restore the source file, then sync it to create a new indexed revision.");
+                        ui.strong("Документ управляется источником");
+                        ui.label("Ревизии RAW нельзя восстановить здесь. Восстановите исходный файл, затем синхронизируйте его, чтобы создать новую индексированную ревизию.");
                     });
             } else if columns[2]
                 .add_enabled(
@@ -283,14 +283,14 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
                         && view.confirming_restore.is_none()
                         && !view.loading_snapshot
                         && !view.loading_restore,
-                    egui::Button::new("Restore as new head"),
+                    egui::Button::new("Восстановить как новую версию"),
                 )
                 .clicked()
             {
                 action = RevisionsAction::RequestRestore(selected.revision);
             }
         } else {
-            columns[2].weak("Nothing selected.");
+            columns[2].weak("Ничего не выбрано.");
         }
     });
     action
@@ -298,7 +298,7 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
 
 fn summary(item: &RevisionItem) -> String {
     format!(
-        "{} · {} lines · {} chars",
+        "{} · строк: {} · символов: {}",
         item.layer, item.content_lines, item.content_chars
     )
 }
@@ -353,6 +353,6 @@ mod tests {
             content_chars: 120,
             content_lines: 7,
         };
-        assert_eq!(summary(&item), "wiki · 7 lines · 120 chars");
+        assert_eq!(summary(&item), "wiki · строк: 7 · символов: 120");
     }
 }

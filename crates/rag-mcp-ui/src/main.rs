@@ -1,4 +1,4 @@
-//! Optional read-only graph inspector binary (`rag-mcp-ui`).
+//! Native rag-mcp console with HTTP product workspaces and read-only DB/snapshot inspection.
 //!
 //! Headless `rag-mcp` stays free of egui. This process never attaches to MCP stdio.
 //! Logging goes to stderr only.
@@ -75,7 +75,7 @@ fn main() {
 fn run_gui(open: load::OpenArgs) -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Knowledge Base — Home, Search & Operations")
+            .with_title("RAG Console — Native")
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([1100.0, 700.0]),
         ..Default::default()

@@ -7,6 +7,8 @@ use egui::Ui;
 use rag_mcp::GraphView;
 use std::collections::BTreeMap;
 
+use super::theme;
+
 /// Why the central panel is not drawing a local graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyKind {
@@ -77,59 +79,67 @@ pub fn draw_empty_banner(
 ) {
     let (title, hint) = match kind {
         EmptyKind::NoSource => (
-            "Open a snapshot or database",
-            "Launch with --http URL, --snapshot PATH, or --db PATH",
+            "Подключите источник",
+            "Запустите с --http URL, --snapshot PATH или --db PATH",
         ),
         EmptyKind::EmptyGraph => (
-            "Graph is empty",
-            "Ingest documents or open another file",
+            "Граф пуст",
+            "Проиндексируйте документы или откройте другой источник",
         ),
         EmptyKind::MissingSeed => (
-            "Pick a seed node",
-            "Enter a seed label or id in the toolbar, then Apply seed (or press Enter). Pass --seed at launch to skip this step.",
+            "Выберите стартовый узел",
+            "Введите метку или id в панели графа и нажмите Enter. При запуске можно передать --seed.",
         ),
         EmptyKind::SeedNotFound => (
-            "No node matches seed",
-            "Clear the seed field and retype a node id, display label, or document_id",
+            "Узел не найден",
+            "Введите node id, отображаемую метку или document_id",
         ),
-        EmptyKind::LoadError => ("Load failed", "Retry / switch to snapshot"),
+        EmptyKind::LoadError => ("Источник не загружен", "Повторите или откройте снимок"),
         EmptyKind::FiltersEmpty => (
-            "Filters hide all nodes",
-            "Enable tags/stubs or clear filters, then Rebuild",
+            "Фильтры скрыли все узлы",
+            "Включите tags/stubs или сбросьте фильтры и перестройте граф",
         ),
         EmptyKind::OverCap => (
-            "Too large for layout",
-            "Enter a seed for local BFS (hard cap 300 nodes / 2000 edges)",
+            "Граф слишком велик для раскладки",
+            "Задайте seed для локального BFS: максимум 300 узлов / 2000 рёбер",
         ),
     };
 
     ui.vertical_centered(|ui| {
         ui.add_space(ui.available_height() * 0.18);
-        ui.heading(title);
-        if let Some(d) = detail {
-            ui.add_space(6.0);
-            ui.colored_label(egui::Color32::from_rgb(220, 120, 100), d);
-        }
-        ui.add_space(4.0);
-        ui.label(hint);
+        ui.set_max_width(620.0);
+        theme::card().show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("СОСТОЯНИЕ ГРАФА")
+                    .monospace()
+                    .small()
+                    .color(theme::L2),
+            );
+            ui.heading(title);
+            if let Some(d) = detail {
+                ui.add_space(6.0);
+                ui.colored_label(theme::DANGER, d);
+            }
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(hint).color(theme::MUTED));
 
-        // Explicit seed prompt on the two states where a seed is the blocker.
-        if matches!(kind, EmptyKind::MissingSeed | EmptyKind::SeedNotFound) {
-            ui.add_space(12.0);
-            ui.group(|ui| {
-                ui.set_max_width(420.0);
-                ui.label("Seed accepts:");
-                ui.label("  · node id");
-                ui.label("  · display label");
-                ui.label("  · document_id");
-                ui.weak("Local neighbors (depth 1, max 100) load only after a seed resolves.");
-            });
-        }
+            // Explicit seed prompt on the two states where a seed is the blocker.
+            if matches!(kind, EmptyKind::MissingSeed | EmptyKind::SeedNotFound) {
+                ui.add_space(12.0);
+                theme::inset().show(ui, |ui| {
+                    ui.strong("Для seed можно указать");
+                    ui.label("node id · отображаемая метка · document_id");
+                    ui.weak(
+                        "Соседи глубины 1 (максимум 100) загружаются только после разрешения seed.",
+                    );
+                });
+            }
 
-        if let Some(s) = stats {
-            ui.add_space(16.0);
-            draw_loaded_stats(ui, s);
-        }
+            if let Some(s) = stats {
+                ui.add_space(16.0);
+                draw_loaded_stats(ui, s);
+            }
+        });
     });
 }
 
@@ -156,73 +166,136 @@ pub fn draw_no_source(
 ) -> NoSourceAction {
     let mut action = NoSourceAction::None;
     ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() * 0.15);
-        ui.heading(if error.is_some() {
-            "Load failed"
-        } else {
-            "Open a data source"
-        });
-        if let Some(err) = error {
-            ui.add_space(6.0);
-            ui.colored_label(egui::Color32::from_rgb(220, 120, 100), err);
-        }
-        ui.add_space(8.0);
-        ui.group(|ui| {
-            ui.set_max_width(520.0);
-            ui.label("Three ways to run:");
-            ui.monospace("  rag-mcp-ui --http http://127.0.0.1:7432");
-            ui.weak("    live via HTTP gateway (server: RAG_HTTP_BIND=…)");
-            ui.monospace("  rag-mcp-ui --snapshot graph.json");
-            ui.weak("    read-only Mode C export (safe while MCP holds the DB)");
-            ui.monospace("  rag-mcp-ui --db rag.duckdb");
-            ui.weak("    exclusive DuckDB open (MCP must not be running)");
-        });
-        ui.add_space(10.0);
-        if ui
-            .add_enabled(can_retry, egui::Button::new("Retry"))
-            .on_hover_text("Retry the source given on the command line")
-            .clicked()
-        {
-            action = NoSourceAction::Retry;
-        }
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label("HTTP URL");
-            ui.add(
-                egui::TextEdit::singleline(connect_url)
-                    .desired_width(240.0)
-                    .hint_text("http://127.0.0.1:7432"),
+        ui.add_space(ui.available_height() * 0.12);
+        ui.set_max_width(620.0);
+        theme::card().show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("RAG-КОНСОЛЬ · НАТИВНЫЙ ИНТЕРФЕЙС")
+                    .monospace()
+                    .small()
+                    .color(theme::L3),
             );
-            if ui.button("Connect").clicked() {
-                action = NoSourceAction::Connect;
+            ui.heading(if error.is_some() {
+                "Не удалось открыть источник"
+            } else {
+                "Подключите базу знаний"
+            });
+            ui.label(
+                egui::RichText::new(
+                    "Полный продуктовый режим работает через единый HTTP-сервис записи.",
+                )
+                .color(theme::MUTED),
+            );
+            if let Some(err) = error {
+                ui.add_space(8.0);
+                theme::inset()
+                    .fill(theme::rgba(theme::DANGER, 14))
+                    .show(ui, |ui| {
+                        ui.colored_label(theme::DANGER, err);
+                    });
+            }
+
+            ui.add_space(14.0);
+            ui.strong("HTTP-шлюз");
+            ui.horizontal(|ui| {
+                let field_width = (ui.available_width() - 130.0).max(240.0);
+                let response = ui.add(
+                    egui::TextEdit::singleline(connect_url)
+                        .desired_width(field_width)
+                        .hint_text("http://127.0.0.1:7432"),
+                );
+                let enter =
+                    response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                if ui.button("Подключить").clicked() || enter {
+                    action = NoSourceAction::Connect;
+                }
+            });
+            ui.label(
+                egui::RichText::new("Переключение происходит без перезапуска приложения.")
+                    .small()
+                    .color(theme::FAINT),
+            );
+
+            ui.add_space(14.0);
+            theme::inset().show(ui, |ui| {
+                mode_row(
+                    ui,
+                    "ОНЛАЙН",
+                    "rag-mcp-ui --http http://127.0.0.1:7432",
+                    "проекты · корпус · поиск · вики · операции",
+                    theme::OK,
+                );
+                ui.separator();
+                mode_row(
+                    ui,
+                    "СНИМОК",
+                    "rag-mcp-ui --snapshot graph.json",
+                    "безопасный просмотр графа только для чтения",
+                    theme::L2,
+                );
+                ui.separator();
+                mode_row(
+                    ui,
+                    "DUCKDB",
+                    "rag-mcp-ui --db rag.duckdb",
+                    "эксклюзивное открытие только для чтения; MCP должен быть остановлен",
+                    theme::L0,
+                );
+            });
+
+            if can_retry {
+                ui.add_space(10.0);
+                if ui
+                    .button("Повторить исходное подключение")
+                    .on_hover_text("Повторить источник, переданный в командной строке")
+                    .clicked()
+                {
+                    action = NoSourceAction::Retry;
+                }
             }
         });
-        ui.weak("Connect switches to the HTTP gateway without restarting.");
     });
     action
 }
 
+fn mode_row(ui: &mut Ui, badge: &str, command: &str, detail: &str, color: egui::Color32) {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [76.0, 24.0],
+            egui::Label::new(egui::RichText::new(badge).monospace().small().color(color)),
+        );
+        ui.vertical(|ui| {
+            ui.add(
+                egui::Label::new(egui::RichText::new(command).monospace())
+                    .selectable(true)
+                    .wrap(),
+            );
+            ui.label(egui::RichText::new(detail).small().color(theme::FAINT));
+        });
+    });
+}
+
 fn draw_loaded_stats(ui: &mut Ui, s: &EmptyGraphStats) {
-    ui.group(|ui| {
+    theme::inset().show(ui, |ui| {
         ui.set_max_width(480.0);
-        ui.heading("Loaded graph");
+        ui.strong("Загруженный граф");
         ui.horizontal(|ui| {
-            ui.label(format!("nodes={}", s.nodes));
+            ui.label(format!("узлы={}", s.nodes));
             ui.separator();
-            ui.label(format!("edges={}", s.edges));
+            ui.label(format!("рёбра={}", s.edges));
             if s.truncated {
-                ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "capped");
+                ui.colored_label(theme::WARN, "ограничено");
             }
         });
         if let Some(raw) = s.raw_nodes {
             ui.weak(format!(
-                "raw nodes {raw} (showing {} after hard cap)",
+                "в источнике {raw} узлов; после жёсткого лимита показано {}",
                 s.nodes
             ));
         }
         if !s.nodes_by_kind.is_empty() {
             ui.add_space(4.0);
-            ui.label("Nodes by kind");
+            ui.label("Узлы по kind");
             ui.horizontal_wrapped(|ui| {
                 for (kind, n) in &s.nodes_by_kind {
                     ui.monospace(format!("{kind}:{n}"));
@@ -231,7 +304,7 @@ fn draw_loaded_stats(ui: &mut Ui, s: &EmptyGraphStats) {
         }
         if !s.edges_by_rel_type.is_empty() {
             ui.add_space(2.0);
-            ui.label("Edges by rel_type");
+            ui.label("Рёбра по rel_type");
             ui.horizontal_wrapped(|ui| {
                 for (rel, n) in &s.edges_by_rel_type {
                     ui.monospace(format!("{rel}:{n}"));
@@ -239,7 +312,9 @@ fn draw_loaded_stats(ui: &mut Ui, s: &EmptyGraphStats) {
             });
         }
         ui.add_space(4.0);
-        ui.weak("Paint starts after seed → local neighbors (RadialLocal). No global layout.");
+        ui.weak(
+            "Отрисовка начинается после seed: только локальные соседи (RadialLocal), без глобального графа.",
+        );
     });
 }
 

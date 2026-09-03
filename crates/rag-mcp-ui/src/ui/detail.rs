@@ -8,6 +8,8 @@ use egui::Ui;
 
 use crate::adapter::{UiEdge, UiGraph, UiNode};
 use crate::load::DocumentBody;
+use crate::ui::document::draw_document_reader;
+use crate::ui::theme;
 
 /// User action from the detail panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -31,10 +33,11 @@ pub fn draw_detail(
     body: Option<&DocumentBody>,
     body_error: Option<&str>,
     body_loading: bool,
+    content_available: bool,
 ) -> DetailAction {
     let mut action = DetailAction::None;
     let Some(node) = graph.nodes.iter().find(|n| n.id == selected_id) else {
-        ui.label("Selection not in current view.");
+        ui.label("Выбранного узла нет в текущем представлении.");
         return action;
     };
 
@@ -45,55 +48,72 @@ pub fn draw_detail(
 
     ui.separator();
     ui.horizontal(|ui| {
-        let can_read = node.document_id.is_some() || node.uri.is_some();
-        if ui
-            .add_enabled(can_read, egui::Button::new("Read content"))
-            .on_hover_text("Load full wiki/raw text via HTTP /v1/document or --db")
-            .clicked()
-        {
+        let has_document = node.document_id.is_some() || node.uri.is_some();
+        let can_read = content_available && has_document;
+        let read = ui
+            .add_enabled(can_read, egui::Button::new("Читать документ"))
+            .on_hover_text(if content_available {
+                "Загрузить полный wiki/raw-текст через HTTP /v1/document или --db"
+            } else {
+                "Snapshot содержит только топологию; содержимое требует HTTP или DB"
+            });
+        if read.clicked() {
             action = DetailAction::ReadContent;
         }
-        if body.is_some() && ui.button("Close content").clicked() {
+        if body.is_some() && ui.button("Закрыть текст").clicked() {
             action = DetailAction::CloseContent;
         }
-        if !can_read {
-            ui.weak("no document_id/uri (stub/tag)");
+        if !content_available {
+            ui.weak("только топология");
+        } else if !has_document {
+            ui.weak("нет document_id/uri (stub/tag)");
         }
         if body_loading {
             ui.spinner();
-            ui.weak("loading…");
+            ui.weak("загрузка…");
         }
     });
 
     if let Some(err) = body_error {
-        ui.colored_label(egui::Color32::from_rgb(220, 100, 100), err);
+        ui.colored_label(theme::DANGER, err);
     }
 
     if let Some(doc) = body {
         ui.separator();
-        ui.horizontal(|ui| {
-            ui.strong(&doc.title);
-            ui.weak(format!("{} · {}", doc.layer, doc.kind));
+        theme::inset().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.strong(&doc.title);
+                ui.label(
+                    egui::RichText::new(format!("{} · {}", doc.layer, doc.kind))
+                        .monospace()
+                        .small()
+                        .color(theme::layer_color(&doc.layer)),
+                );
+            });
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&doc.uri)
+                        .monospace()
+                        .color(theme::MUTED),
+                )
+                .selectable(true)
+                .wrap(),
+            );
+            ui.weak(format!("id {}", doc.id));
+            if let Some(h) = doc.content_hash.as_deref() {
+                ui.weak(format!("hash {}", &h[..h.len().min(12)]));
+            }
+            if let Some(ts) = doc.updated_at.as_deref() {
+                ui.weak(ts);
+            }
         });
-        ui.monospace(&doc.uri);
-        ui.weak(format!("id {}", doc.id));
-        if let Some(h) = doc.content_hash.as_deref() {
-            ui.weak(format!("hash {}", &h[..h.len().min(12)]));
-        }
-        if let Some(ts) = doc.updated_at.as_deref() {
-            ui.weak(ts);
-        }
-        ui.add_space(4.0);
+        ui.add_space(7.0);
         egui::ScrollArea::vertical()
             .id_salt("doc_content_scroll")
             .max_height(420.0)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(&doc.content).monospace())
-                        .wrap()
-                        .selectable(true),
-                );
+                draw_document_reader(ui, &doc.content, &doc.kind, &doc.uri);
             });
     }
 
@@ -116,11 +136,11 @@ fn draw_node_fields(ui: &mut Ui, node: &UiNode) {
             ui.monospace(&node.id);
             ui.end_row();
 
-            ui.label("kind");
+            ui.label("тип");
             ui.label(&node.kind);
             ui.end_row();
 
-            ui.label("label");
+            ui.label("название");
             ui.label(&node.label);
             ui.end_row();
 
@@ -132,15 +152,15 @@ fn draw_node_fields(ui: &mut Ui, node: &UiNode) {
             ui.monospace(node.uri.as_deref().unwrap_or("-"));
             ui.end_row();
 
-            ui.label("resolved");
-            ui.label(node.resolved.to_string());
+            ui.label("разрешён");
+            ui.label(if node.resolved { "да" } else { "нет" });
             ui.end_row();
 
-            ui.label("depth");
+            ui.label("глубина");
             ui.label(node.depth.to_string());
             ui.end_row();
 
-            ui.label("degree");
+            ui.label("степень");
             ui.label(node.degree.to_string());
             ui.end_row();
         });
@@ -176,11 +196,11 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
     });
 
     ui.horizontal(|ui| {
-        ui.strong("Incident edges");
+        ui.strong("Связи узла");
         ui.weak(format!("({})", incident.len()));
     });
     if incident.is_empty() {
-        ui.weak("No edges in current view.");
+        ui.weak("В текущем представлении связей нет.");
         return;
     }
 
@@ -201,7 +221,7 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
                     .find(|n| n.id == other_id)
                     .map(|n| n.label.as_str())
                     .unwrap_or(other_id);
-                let dir = if outgoing { "out" } else { "in" };
+                let dir = if outgoing { "исх." } else { "вх." };
 
                 ui.group(|ui| {
                     ui.horizontal_wrapped(|ui| {
@@ -214,7 +234,7 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
                         }
                     });
                     ui.horizontal(|ui| {
-                        ui.weak("other id");
+                        ui.weak("id соседа");
                         ui.monospace(other_id);
                     });
 
@@ -236,16 +256,16 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
 
 fn draw_copy_actions(ui: &mut Ui, node: &UiNode) {
     ui.horizontal(|ui| {
-        if ui.button("Copy id").clicked() {
+        if ui.button("Копировать id").clicked() {
             ui.ctx().copy_text(node.id.clone());
         }
         if let Some(doc) = &node.document_id {
-            if ui.button("Copy document_id").clicked() {
+            if ui.button("Копировать document_id").clicked() {
                 ui.ctx().copy_text(doc.clone());
             }
         }
         if let Some(uri) = &node.uri {
-            if ui.button("Copy uri").clicked() {
+            if ui.button("Копировать uri").clicked() {
                 ui.ctx().copy_text(uri.clone());
             }
         }

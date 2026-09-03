@@ -10,8 +10,9 @@ use std::f32::consts::TAU;
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use crate::adapter::{edge_color, kind_color, UiGraph, UiNode};
+use crate::adapter::{edge_color, UiGraph, UiNode};
 use crate::layout::{fit_transform, PosCache};
+use crate::ui::theme;
 
 pub struct CanvasOut {
     /// Node id under a click.
@@ -41,14 +42,28 @@ pub fn draw_canvas(
     let (response, painter) =
         ui.allocate_painter(ui.available_size_before_wrap(), Sense::click_and_drag());
     let rect = response.rect;
+    let canvas_size = rect.size();
+    let canvas_size_id = response.id.with("last_fitted_canvas_size");
+    let canvas_size_changed = if positions.is_empty() {
+        false
+    } else {
+        ui.ctx().data_mut(|data| {
+            let previous = data.get_temp::<Vec2>(canvas_size_id);
+            let changed = real_canvas_size_change(previous, canvas_size);
+            if changed {
+                data.insert_temp(canvas_size_id, canvas_size);
+            }
+            changed
+        })
+    };
     let canvas_pointer = ui
         .input(|input| input.pointer.hover_pos())
         .filter(|pointer| rect.contains(*pointer));
 
     // Subtle canvas background so empty vs graph is obvious.
-    painter.rect_filled(rect, 0.0, Color32::from_rgb(18, 18, 24));
+    painter.rect_filled(rect, 0.0, Color32::from_rgb(10, 14, 24));
 
-    if *need_fit && !positions.is_empty() {
+    if (*need_fit || canvas_size_changed) && !positions.is_empty() {
         let (offset, scale) = fit_transform(positions, rect);
         *pan = offset;
         *zoom = scale;
@@ -249,11 +264,7 @@ pub fn draw_canvas(
         }
 
         if focused_here {
-            painter.circle_stroke(
-                center,
-                radius + 5.0,
-                Stroke::new(2.0, Color32::from_rgb(105, 170, 255)),
-            );
+            painter.circle_stroke(center, radius + 5.0, Stroke::new(2.0, theme::L0));
         }
 
         let show_label = selected_here
@@ -261,8 +272,8 @@ pub fn draw_canvas(
             || node.depth == 0
             || show_all_labels;
         if show_label {
-            let font = egui::FontId::proportional(12.0);
-            let text_color = Color32::from_gray(230);
+            let font = egui::FontId::proportional(13.0);
+            let text_color = Color32::from_rgb(226, 232, 240);
             let galley = painter.layout_no_wrap(node.label.clone(), font, text_color);
             // Semi-transparent backing so labels stay readable over edges.
             let label_pos = center + Vec2::new(0.0, radius + 4.0);
@@ -274,7 +285,7 @@ pub fn draw_canvas(
             painter.rect_filled(
                 label_rect,
                 2.0,
-                Color32::from_rgba_unmultiplied(18, 18, 24, 180),
+                Color32::from_rgba_unmultiplied(10, 14, 24, 215),
             );
             painter.galley(label_rect.min + Vec2::splat(2.0), galley, text_color);
         }
@@ -283,20 +294,28 @@ pub fn draw_canvas(
     // View controls are registered after node hit targets so they remain the
     // topmost interaction if a node sits beneath the overlay.
     let ctl_rect = Rect::from_min_size(
-        rect.right_top() + Vec2::new(-132.0, 6.0),
-        Vec2::new(126.0, 24.0),
+        rect.right_top() + Vec2::new(-146.0, 6.0),
+        Vec2::new(140.0, 30.0),
     );
     let mut ctl = ui.new_child(egui::UiBuilder::new().max_rect(ctl_rect));
     ctl.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if ui.button("+").on_hover_text("Zoom in").clicked() {
+        if ui
+            .add_sized([30.0, 30.0], egui::Button::new("+"))
+            .on_hover_text("Приблизить")
+            .clicked()
+        {
             zoom_at(zoom, pan, rect.center(), 1.25);
         }
-        if ui.button("−").on_hover_text("Zoom out").clicked() {
+        if ui
+            .add_sized([30.0, 30.0], egui::Button::new("−"))
+            .on_hover_text("Отдалить")
+            .clicked()
+        {
             zoom_at(zoom, pan, rect.center(), 0.8);
         }
         if ui
-            .button("Fit")
-            .on_hover_text("Fit graph to view")
+            .add_sized([58.0, 30.0], egui::Button::new("Вписать"))
+            .on_hover_text("Вписать граф в область")
             .clicked()
         {
             *need_fit = true;
@@ -316,13 +335,16 @@ pub fn draw_canvas(
                 .max()
                 .unwrap_or(1);
             let multi_note = if multi > 1 {
-                format!("\nmax multi-edge ×{multi}")
+                format!("\nмакс. кратность ребра ×{multi}")
             } else {
                 String::new()
             };
             response.on_hover_text(format!(
-                "{}\nkind={} degree={}{}",
-                node.label, node.kind, node.degree, multi_note
+                "{}\nтип={} · связей={}{}",
+                node.label,
+                localized_kind(&node.kind),
+                node.degree,
+                multi_note
             ));
         }
     }
@@ -336,14 +358,56 @@ pub fn draw_canvas(
 
 fn node_accessibility_label(node: &UiNode) -> String {
     let resolution = if node.resolved {
-        "resolved"
+        "разрешён"
     } else {
-        "unresolved"
+        "не разрешён"
     };
     format!(
-        "{}; {} node; {resolution}; {} connections; depth {}",
-        node.label, node.kind, node.degree, node.depth
+        "{}; узел типа {}; {resolution}; связей: {}; глубина: {}",
+        node.label,
+        localized_kind(&node.kind),
+        node.degree,
+        node.depth
     )
+}
+
+fn real_canvas_size_change(previous: Option<Vec2>, current: Vec2) -> bool {
+    previous.is_none_or(|previous| {
+        (previous.x - current.x).abs() > 0.5 || (previous.y - current.y).abs() > 0.5
+    })
+}
+
+fn localized_kind(kind: &str) -> &str {
+    match kind {
+        "document" => "документ",
+        "tag" => "тег",
+        "stub" => "заглушка",
+        "entity" => "сущность",
+        other => other,
+    }
+}
+
+fn localized_layer(layer: &str) -> &str {
+    match layer {
+        "raw" => "сырой корпус",
+        "wiki" => "вики",
+        "document" => "документ",
+        other => other,
+    }
+}
+
+fn localized_relation(relation: &str) -> &str {
+    match relation {
+        "wikilink" => "вики-ссылка",
+        "related" => "связано",
+        "tunnel" => "туннель",
+        "tagged" => "с тегом",
+        "mentions" => "упоминает",
+        "depends_on" => "зависит от",
+        "derived_from" => "производное от",
+        "supersedes" => "замещает",
+        other => other,
+    }
 }
 
 /// Zoom around a pivot point (screen coords), clamped like scroll zoom.
@@ -369,8 +433,16 @@ fn draw_arrowhead(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
 
 /// Compact legend of kind / rel_type colors present in the view (bottom-left).
 fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
-    use std::collections::BTreeSet;
-    let kinds: BTreeSet<&str> = graph.nodes.iter().map(|n| n.kind.as_str()).collect();
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut kinds = BTreeMap::new();
+    for node in &graph.nodes {
+        let label = if node.kind == "document" {
+            localized_layer(node.layer.as_deref().unwrap_or("document"))
+        } else {
+            localized_kind(&node.kind)
+        };
+        kinds.entry(label).or_insert(node.color);
+    }
     let rels: BTreeSet<&str> = graph.edges.iter().map(|e| e.rel_type.as_str()).collect();
     let rows = kinds.len() + rels.len();
     if rows == 0 {
@@ -389,13 +461,13 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
     );
     let font = egui::FontId::proportional(11.0);
     let text_color = Color32::from_gray(200);
-    for k in kinds {
+    for (kind, color) in kinds {
         let cy = y + line_h * 0.5;
-        painter.circle_filled(Pos2::new(x + 4.0, cy), 4.0, kind_color(k));
+        painter.circle_filled(Pos2::new(x + 4.0, cy), 4.0, color);
         painter.text(
             Pos2::new(x + 14.0, y),
             egui::Align2::LEFT_TOP,
-            k,
+            kind,
             font.clone(),
             text_color,
         );
@@ -410,7 +482,7 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
         painter.text(
             Pos2::new(x + 14.0, y),
             egui::Align2::LEFT_TOP,
-            r,
+            localized_relation(r),
             font.clone(),
             text_color,
         );
@@ -497,8 +569,20 @@ mod tests {
         };
         let label = node_accessibility_label(&node);
         assert!(label.contains("Architecture"));
-        assert!(label.contains("document node"));
-        assert!(label.contains("7 connections"));
-        assert!(label.contains("depth 2"));
+        assert!(label.contains("узел типа документ"));
+        assert!(label.contains("связей: 7"));
+        assert!(label.contains("глубина: 2"));
+    }
+
+    #[test]
+    fn canvas_refits_only_after_a_real_size_change() {
+        let size = Vec2::new(800.0, 600.0);
+        assert!(real_canvas_size_change(None, size));
+        assert!(!real_canvas_size_change(Some(size), size));
+        assert!(!real_canvas_size_change(
+            Some(size),
+            Vec2::new(800.25, 599.75)
+        ));
+        assert!(real_canvas_size_change(Some(size), Vec2::new(801.0, 600.0)));
     }
 }

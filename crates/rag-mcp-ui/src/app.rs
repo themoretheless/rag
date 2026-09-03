@@ -1,4 +1,4 @@
-//! GraphApp: eframe::App - graph inspector + Obsidian/Notion-style wiki browser.
+//! GraphApp: eframe::App - native project, retrieval, document, wiki, and graph console.
 //!
 //! All blocking IO (HTTP / DuckDB) runs on the worker thread (`crate::worker`);
 //! this file only dispatches [`WorkerCmd`] and applies [`WorkerEvt`] in `update()`.
@@ -28,6 +28,9 @@ use crate::ui::empty::{
     draw_empty_banner, draw_no_source, EmptyGraphStats, EmptyKind, NoSourceAction,
 };
 use crate::ui::home::{draw_project_home, HomeAction};
+use crate::ui::insights::{
+    draw_evaluation_workspace, draw_models_workspace, EvaluationAction, ModelsAction,
+};
 use crate::ui::library::{
     draw_library_detail, draw_library_workspace, LibraryAction, LibraryDetailAction,
 };
@@ -36,7 +39,9 @@ use crate::ui::operations::{
 };
 use crate::ui::revisions::{draw_revisions_workspace, RevisionsAction, RevisionsView};
 use crate::ui::search::{draw_search_workspace, SearchAction};
+use crate::ui::shell::{draw_rail, draw_topbar, ShellRoute, TopbarState};
 use crate::ui::status::draw_status;
+use crate::ui::theme;
 use crate::ui::wiki::{
     can_cancel_edit, content_summary_line, draw_wiki_edit_view, draw_wiki_info_panel,
     draw_wiki_read_view, draw_wiki_sidebar, slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
@@ -73,6 +78,8 @@ enum ViewMode {
     Wiki,
     Graph,
     Activity,
+    Evaluation,
+    Models,
 }
 
 /// Which wiki article column is focused (sidebar / links land here when dual-pane is on).
@@ -291,6 +298,9 @@ pub struct GraphApp {
     // --- Operations state ---
     operations_tab: OperationsTab,
     operations_snapshot: Option<OperationsSnapshot>,
+    /// The last health snapshot is retained for diagnosis, but must never be
+    /// presented as current after a failed status/doctor refresh.
+    operations_snapshot_stale: bool,
     operations_jobs: Vec<JobSnapshot>,
     operations_error: Option<String>,
     operations_last_result: Option<MaintenanceResult>,
@@ -374,27 +384,7 @@ pub struct GraphApp {
 
 impl GraphApp {
     pub fn new(cc: &eframe::CreationContext<'_>, open: OpenArgs) -> Self {
-        cc.egui_ctx.all_styles_mut(|style| {
-            style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-            style.spacing.button_padding = egui::vec2(12.0, 7.0);
-            style.spacing.interact_size.y = 30.0;
-            style.text_styles.insert(
-                egui::TextStyle::Heading,
-                egui::FontId::new(24.0, egui::FontFamily::Proportional),
-            );
-            style.text_styles.insert(
-                egui::TextStyle::Body,
-                egui::FontId::new(16.0, egui::FontFamily::Proportional),
-            );
-            style.text_styles.insert(
-                egui::TextStyle::Button,
-                egui::FontId::new(15.0, egui::FontFamily::Proportional),
-            );
-            style.text_styles.insert(
-                egui::TextStyle::Small,
-                egui::FontId::new(13.0, egui::FontFamily::Proportional),
-            );
-        });
+        theme::install(&cc.egui_ctx);
         let depth = open.depth.clamp(1, 3);
         let max_nodes = open.max_nodes.clamp(1, UI_HARD_MAX_NODES as u32);
         let seed_input = open.seed.clone().unwrap_or_default();
@@ -467,6 +457,7 @@ impl GraphApp {
             search_error: None,
             operations_tab: OperationsTab::Activity,
             operations_snapshot: None,
+            operations_snapshot_stale: false,
             operations_jobs: Vec::new(),
             operations_error: None,
             operations_last_result: None,
@@ -567,13 +558,144 @@ impl GraphApp {
 
     fn mutation_status_label(&self) -> Option<&'static str> {
         if self.pending_save.is_some() {
-            Some("saving…")
+            Some("сохранение…")
         } else if self.pending_revision_restore.is_some() {
-            Some("restoring…")
+            Some("восстановление…")
         } else if self.pending_operation_action.is_some() {
-            Some("operation…")
+            Some("операция…")
         } else {
             None
+        }
+    }
+
+    fn shell_route(&self) -> ShellRoute {
+        match self.mode {
+            ViewMode::Home => ShellRoute::Console,
+            ViewMode::Library | ViewMode::Revisions => ShellRoute::Corpus,
+            ViewMode::Search => ShellRoute::Search,
+            ViewMode::Graph => ShellRoute::Graph,
+            ViewMode::Wiki => ShellRoute::Wiki,
+            ViewMode::Activity => ShellRoute::Agents,
+            ViewMode::Evaluation => ShellRoute::Evaluation,
+            ViewMode::Models => ShellRoute::Models,
+        }
+    }
+
+    fn activate_shell_route(&mut self, route: ShellRoute) {
+        if route.requires_http() && self.activity_base().is_none() {
+            return;
+        }
+        if route == ShellRoute::Wiki && self.available_load_source().is_none() {
+            return;
+        }
+        match route {
+            ShellRoute::Console => {
+                self.mode = ViewMode::Home;
+                self.ensure_project_home_loaded();
+                if self.operations_snapshot.is_none() && self.pending_operations.is_none() {
+                    self.reload_operations();
+                }
+                if self.pending_activity.is_none() {
+                    self.refresh_activity();
+                }
+            }
+            ShellRoute::Corpus => {
+                self.mode = ViewMode::Library;
+                self.ensure_library_loaded();
+            }
+            ShellRoute::Search => {
+                self.mode = ViewMode::Search;
+                self.search_request.wing = nonempty(&self.filter_wing);
+            }
+            ShellRoute::Graph => self.mode = ViewMode::Graph,
+            ShellRoute::Wiki => {
+                self.mode = ViewMode::Wiki;
+                self.ensure_wiki_loaded();
+            }
+            ShellRoute::Agents => {
+                self.mode = ViewMode::Activity;
+                self.operations_tab = OperationsTab::Activity;
+                self.refresh_activity();
+            }
+            ShellRoute::Evaluation => {
+                self.mode = ViewMode::Evaluation;
+                self.refresh_activity();
+            }
+            ShellRoute::Models => {
+                self.mode = ViewMode::Models;
+                if self.operations_snapshot.is_none() && self.pending_operations.is_none() {
+                    self.reload_operations();
+                }
+            }
+        }
+    }
+
+    fn shell_health(&self) -> (Option<bool>, String) {
+        if self.activity_base().is_none() {
+            if self.load_error.is_some() && self.shell_read_only_source().is_some() {
+                return (None, "источник только для чтения не загружен".into());
+            }
+            return (
+                None,
+                self.shell_read_only_source()
+                    .unwrap_or("gateway · офлайн")
+                    .into(),
+            );
+        }
+        if self.pending_operations.is_some() {
+            return (None, "gateway · обновление состояния…".into());
+        }
+        if self.operations_snapshot_stale {
+            return (None, "gateway · состояние устарело".into());
+        }
+        if self.operations_error.is_some() {
+            return (None, "gateway · требуется внимание".into());
+        }
+        if let Some(snapshot) = &self.operations_snapshot {
+            let healthy = snapshot.doctor.ok && snapshot.status.ready_for_search;
+            return (
+                Some(healthy),
+                format!(
+                    "{} · schema v{} · fts {}",
+                    snapshot.status.backend,
+                    snapshot.status.schema_version,
+                    if snapshot.status.fts_ready {
+                        "✓"
+                    } else {
+                        "!"
+                    }
+                ),
+            );
+        }
+        if let Some(health) = &self.ops_health {
+            let healthy = health.fts_ready
+                && health.relational_integrity_ok
+                && !health.wal_too_large
+                && health.documents_without_chunks == 0;
+            return (
+                Some(healthy),
+                format!(
+                    "{} · schema v{} · fts {}",
+                    health.backend,
+                    health.schema_version,
+                    if health.fts_ready { "✓" } else { "!" }
+                ),
+            );
+        }
+        (None, "gateway · проверка состояния…".into())
+    }
+
+    fn shell_read_only_source(&self) -> Option<&'static str> {
+        match self.source.as_ref() {
+            Some(GraphSourceKind::LiveStore { .. }) => Some("duckdb · только чтение"),
+            Some(GraphSourceKind::SnapshotFile { .. }) => Some("snapshot · только чтение"),
+            Some(GraphSourceKind::VaultGraphJson { .. }) => Some("vault graph · только чтение"),
+            Some(GraphSourceKind::HttpService { .. }) => None,
+            None => match self.open.source.as_ref() {
+                Some(CliSource::Db(_)) => Some("duckdb · загрузка только для чтения"),
+                Some(CliSource::Snapshot(_)) => Some("snapshot · загрузка только для чтения"),
+                Some(CliSource::Http(_)) | None => None,
+            },
         }
     }
 
@@ -607,7 +729,7 @@ impl GraphApp {
         }
         let Some(base) = self.activity_base() else {
             self.project_catalog_error =
-                Some("Project catalog requires an HTTP gateway connection".into());
+                Some("Для каталога проектов требуется HTTP gateway".into());
             return;
         };
         self.project_catalog_error = None;
@@ -622,7 +744,7 @@ impl GraphApp {
             return;
         }
         let Some(base) = self.activity_base() else {
-            self.activity_error = Some("Activity requires an HTTP gateway connection".into());
+            self.activity_error = Some("Для журнала требуется HTTP gateway".into());
             return;
         };
         let seq = self.next_seq();
@@ -636,12 +758,11 @@ impl GraphApp {
         self.project_home_error = None;
         self.project_home_project = None;
         if project.is_empty() {
-            self.project_home_error = Some("Select a project in the top bar".into());
+            self.pending_project_home = None;
             return;
         }
         let Some(base) = self.activity_base() else {
-            self.project_home_error =
-                Some("Project Home requires an HTTP gateway connection".into());
+            self.project_home_error = Some("Для пульта проекта требуется HTTP gateway".into());
             return;
         };
         let seq = self.next_seq();
@@ -659,7 +780,7 @@ impl GraphApp {
 
     fn reload_library(&mut self) {
         let Some(base) = self.activity_base() else {
-            self.library_error = Some("Unified Library requires an HTTP gateway connection".into());
+            self.library_error = Some("Для корпуса требуется HTTP gateway".into());
             self.library_page = None;
             return;
         };
@@ -703,7 +824,7 @@ impl GraphApp {
         self.library_document_error = None;
         let Some(base) = self.activity_base() else {
             self.library_document_error =
-                Some("Document preview requires an HTTP gateway connection".into());
+                Some("Для превью документа требуется HTTP gateway".into());
             return;
         };
         let seq = self.next_seq();
@@ -718,11 +839,11 @@ impl GraphApp {
 
     fn run_search(&mut self) {
         if self.search_request.query.trim().is_empty() {
-            self.search_error = Some("Enter a search query".into());
+            self.search_error = Some("Введите поисковый запрос".into());
             return;
         }
         let Some(base) = self.activity_base() else {
-            self.search_error = Some("Search requires an HTTP gateway connection".into());
+            self.search_error = Some("Для поиска требуется HTTP gateway".into());
             return;
         };
         self.search_request.wing = nonempty(&self.filter_wing);
@@ -739,7 +860,7 @@ impl GraphApp {
 
     fn reload_operations(&mut self) {
         let Some(base) = self.activity_base() else {
-            self.operations_error = Some("Operations require an HTTP gateway connection".into());
+            self.operations_error = Some("Для операций требуется HTTP gateway".into());
             return;
         };
         self.operations_error = None;
@@ -753,7 +874,7 @@ impl GraphApp {
             return;
         }
         let Some(base) = self.activity_base() else {
-            self.operations_error = Some("Jobs require an HTTP gateway connection".into());
+            self.operations_error = Some("Для фоновых задач требуется HTTP gateway".into());
             return;
         };
         let seq = self.next_seq();
@@ -771,7 +892,7 @@ impl GraphApp {
             OperationsAction::RefreshJobs => self.reload_jobs(),
             OperationsAction::StartSync(request) => {
                 let Some(base) = self.activity_base() else {
-                    self.operations_error = Some("Jobs require an HTTP gateway connection".into());
+                    self.operations_error = Some("Для фоновых задач требуется HTTP gateway".into());
                     return;
                 };
                 let seq = self.next_seq();
@@ -781,7 +902,7 @@ impl GraphApp {
             }
             OperationsAction::CancelJob(id) => {
                 let Some(base) = self.activity_base() else {
-                    self.operations_error = Some("Jobs require an HTTP gateway connection".into());
+                    self.operations_error = Some("Для фоновых задач требуется HTTP gateway".into());
                     return;
                 };
                 let seq = self.next_seq();
@@ -790,8 +911,7 @@ impl GraphApp {
             }
             OperationsAction::Checkpoint => {
                 let Some(base) = self.activity_base() else {
-                    self.operations_error =
-                        Some("Maintenance requires an HTTP gateway connection".into());
+                    self.operations_error = Some("Для обслуживания требуется HTTP gateway".into());
                     return;
                 };
                 let seq = self.next_seq();
@@ -800,8 +920,7 @@ impl GraphApp {
             }
             OperationsAction::Backup(request) => {
                 let Some(base) = self.activity_base() else {
-                    self.operations_error =
-                        Some("Maintenance requires an HTTP gateway connection".into());
+                    self.operations_error = Some("Для обслуживания требуется HTTP gateway".into());
                     return;
                 };
                 let seq = self.next_seq();
@@ -815,8 +934,7 @@ impl GraphApp {
         if self.pending_revision_restore.is_some() {
             self.mode = ViewMode::Revisions;
             self.revision.error = Some(
-                "Restore is in progress. Wait for its result before opening another history."
-                    .into(),
+                "Идёт восстановление. Дождитесь результата перед открытием другой истории.".into(),
             );
             return;
         }
@@ -853,11 +971,11 @@ impl GraphApp {
 
     fn request_revisions(&mut self, cursor: Option<String>, append: bool) {
         let Some(document_id) = self.revision.document_id.clone() else {
-            self.revision.error = Some("Open History from a Library document".into());
+            self.revision.error = Some("Откройте историю из документа в корпусе".into());
             return;
         };
         let Some(base) = self.activity_base() else {
-            self.revision.error = Some("Revision history requires an HTTP gateway".into());
+            self.revision.error = Some("Для истории версий требуется HTTP gateway".into());
             return;
         };
         self.revision.error = None;
@@ -880,7 +998,7 @@ impl GraphApp {
             return;
         };
         let Some(base) = self.activity_base() else {
-            self.revision.error = Some("Revision details require an HTTP gateway".into());
+            self.revision.error = Some("Для деталей версии требуется HTTP gateway".into());
             return;
         };
         self.revision.selected = Some(from_revision);
@@ -916,7 +1034,7 @@ impl GraphApp {
             .is_some_and(|item| item.layer == "raw");
         if self.revision.document_layer == "raw" || selected_is_raw {
             self.revision.error = Some(
-                "Raw documents are source-controlled. Restore the source file, then sync it to create a new indexed revision."
+                "Raw-документы управляются исходным файлом. Восстановите файл и синхронизируйте его, чтобы создать новую индексированную версию."
                     .into(),
             );
             self.revision.restore_confirm = None;
@@ -928,7 +1046,7 @@ impl GraphApp {
             self.activity_base(),
         ) else {
             self.revision.error =
-                Some("Restore needs the current document revision and HTTP gateway".into());
+                Some("Для восстановления нужны текущая версия документа и HTTP gateway".into());
             return;
         };
         self.revision.error = None;
@@ -979,7 +1097,9 @@ impl GraphApp {
             | ViewMode::Revisions
             | ViewMode::Wiki
             | ViewMode::Graph
-            | ViewMode::Activity => {}
+            | ViewMode::Activity
+            | ViewMode::Evaluation
+            | ViewMode::Models => {}
         }
     }
 
@@ -1060,7 +1180,7 @@ impl GraphApp {
     fn connect_http(&mut self) {
         let url = self.connect_url.trim().to_string();
         if url.is_empty() {
-            self.load_error = Some("http URL is empty".into());
+            self.load_error = Some("HTTP URL не задан".into());
             return;
         }
         self.connect_url.clone_from(&url);
@@ -1114,10 +1234,16 @@ impl GraphApp {
             self.rebuild_ui_graph();
         }
         match self.mode {
-            ViewMode::Home => self.reload_project_home(),
+            ViewMode::Home => {
+                self.reload_project_home();
+                self.reload_operations();
+                self.refresh_activity();
+            }
             ViewMode::Library => self.reload_library(),
             ViewMode::Wiki => self.ensure_wiki_loaded(),
             ViewMode::Activity => self.refresh_activity(),
+            ViewMode::Models => self.reload_operations(),
+            ViewMode::Evaluation => self.refresh_activity(),
             ViewMode::Search | ViewMode::Revisions | ViewMode::Graph => {}
         }
     }
@@ -1134,9 +1260,9 @@ impl GraphApp {
         let Some(source) = self.available_load_source() else {
             self.wiki_loaded = true;
             self.wiki_error = Some(if self.open.source.is_some() {
-                "snapshot mode has no wiki catalog; use --http or --db".into()
+                "В snapshot-режиме нет каталога вики; используйте --http или --db".into()
             } else {
-                "no data source".into()
+                "Источник данных не выбран".into()
             });
             return;
         };
@@ -1184,7 +1310,7 @@ impl GraphApp {
         }
         if self.pending_save.is_some() {
             self.wiki_error = Some(
-                "Save is in progress. Wait for its result before opening another page.".into(),
+                "Идёт сохранение. Дождитесь результата перед открытием другой страницы.".into(),
             );
             return;
         }
@@ -1193,8 +1319,7 @@ impl GraphApp {
             return;
         }
         if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error =
-                Some("unsaved edits: Save or Cancel before opening another page".into());
+            self.wiki_error = Some("Есть несохранённые правки: сохраните или отмените их".into());
             return;
         }
         if let Some(prev) = self.wiki_selected_id.clone() {
@@ -1214,11 +1339,11 @@ impl GraphApp {
         self.wiki_edit = None;
         self.wiki_save_note = None;
         let Some(source) = self.available_load_source() else {
-            self.wiki_error = Some("wiki articles require --http or --db".into());
+            self.wiki_error = Some("Для статей вики требуется --http или --db".into());
             return;
         };
         let Some(meta) = self.wiki_pages.iter().find(|p| p.id == id).cloned() else {
-            self.wiki_error = Some(format!("page id {id} not in catalog"));
+            self.wiki_error = Some(format!("Страница {id} отсутствует в каталоге"));
             return;
         };
         // Keep the current article visible until the new body arrives.
@@ -1239,11 +1364,11 @@ impl GraphApp {
         self.wiki_selected_id_b = Some(id.to_string());
         self.wiki_error_b = None;
         let Some(source) = self.available_load_source() else {
-            self.wiki_error_b = Some("wiki articles require --http or --db".into());
+            self.wiki_error_b = Some("Для статей вики требуется --http или --db".into());
             return;
         };
         let Some(meta) = self.wiki_pages.iter().find(|p| p.id == id).cloned() else {
-            self.wiki_error_b = Some(format!("page id {id} not in catalog"));
+            self.wiki_error_b = Some(format!("Страница {id} отсутствует в каталоге"));
             return;
         };
         let seq = self.next_seq();
@@ -1344,7 +1469,7 @@ impl GraphApp {
             Err(e) => {
                 let msg = match q {
                     Some(q) => format!(
-                        "unresolved link [[{q}]] - no page with that title/slug (create via write_wiki_page): {e}"
+                        "Ссылка [[{q}]] не разрешена: страницы с таким названием/slug нет (создайте через write_wiki_page): {e}"
                     ),
                     None => e,
                 };
@@ -1370,8 +1495,10 @@ impl GraphApp {
             return;
         };
         if !self.wiki_can_write() {
-            self.wiki_error =
-                Some("editing requires the HTTP gateway; direct --db mode is read-only".into());
+            self.wiki_error = Some(
+                "Для редактирования нужен HTTP gateway; режим --db доступен только для чтения"
+                    .into(),
+            );
             return;
         }
         self.wiki_save_note = None;
@@ -1382,7 +1509,7 @@ impl GraphApp {
     fn cancel_wiki_edit(&mut self) {
         if self.pending_save.is_some() {
             self.wiki_error =
-                Some("Save is in progress. Wait for its result before closing the editor.".into());
+                Some("Идёт сохранение. Дождитесь результата перед закрытием редактора.".into());
             return;
         }
         self.wiki_edit = None;
@@ -1393,7 +1520,7 @@ impl GraphApp {
     fn reload_wiki_page(&mut self) {
         if self.pending_save.is_some() {
             self.wiki_error =
-                Some("Save is in progress. Wait for its result before reloading the page.".into());
+                Some("Идёт сохранение. Дождитесь результата перед обновлением страницы.".into());
             return;
         }
         let id = self
@@ -1418,16 +1545,17 @@ impl GraphApp {
             return;
         };
         let Some(art) = self.wiki_article.as_ref() else {
-            self.wiki_error = Some("no page open to save".into());
+            self.wiki_error = Some("Нет открытой страницы для сохранения".into());
             return;
         };
         let Some(source) = self.available_load_source() else {
-            self.wiki_error = Some("wiki save requires the HTTP gateway".into());
+            self.wiki_error = Some("Для сохранения вики требуется HTTP gateway".into());
             return;
         };
         if !matches!(&source, LoadSource::Http(_)) {
-            self.wiki_error =
-                Some("direct --db mode is read-only; reconnect through the HTTP gateway".into());
+            self.wiki_error = Some(
+                "Режим --db доступен только для чтения; переподключитесь через HTTP gateway".into(),
+            );
             return;
         }
         let req = WikiPutRequest {
@@ -1463,9 +1591,9 @@ impl GraphApp {
                 self.refresh_backlinks(&body.id);
                 let rev_note = body
                     .revision
-                    .map(|r| format!(" saved r{r}"))
+                    .map(|r| format!(" · версия r{r}"))
                     .unwrap_or_default();
-                self.wiki_save_note = Some(format!("Saved “{}”{rev_note}", body.title));
+                self.wiki_save_note = Some(format!("Сохранено «{}»{rev_note}", body.title));
                 self.wiki_article = Some(body);
                 self.wiki_edit = None;
                 self.wiki_error = None;
@@ -1505,11 +1633,11 @@ impl GraphApp {
     fn wiki_go_back(&mut self) {
         if self.pending_save.is_some() {
             self.wiki_error =
-                Some("Save is in progress. Wait for its result before going back.".into());
+                Some("Идёт сохранение. Дождитесь результата перед переходом назад.".into());
             return;
         }
         if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some("unsaved edits: Save or Cancel before going back".into());
+            self.wiki_error = Some("Есть несохранённые правки: сохраните или отмените их".into());
             return;
         }
         if let Some(prev) = self.wiki_history.pop() {
@@ -1523,11 +1651,11 @@ impl GraphApp {
         let into_b = self.wiki_dual_pane && self.wiki_focus == WikiPane::B;
         if !into_b && self.pending_save.is_some() {
             self.wiki_error =
-                Some("Save is in progress. Wait for its result before following a link.".into());
+                Some("Идёт сохранение. Дождитесь результата перед переходом по ссылке.".into());
             return;
         }
         if !into_b && self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-            self.wiki_error = Some("unsaved edits: Save or Cancel before following a link".into());
+            self.wiki_error = Some("Есть несохранённые правки: сохраните или отмените их".into());
             return;
         }
         let q = link.trim();
@@ -1548,7 +1676,7 @@ impl GraphApp {
         }
         if !self.filter_wing.trim().is_empty() {
             let msg = format!(
-                "unresolved link [[{q}]] is not present in project {}",
+                "Ссылка [[{q}]] не найдена в проекте {}",
                 self.filter_wing.trim()
             );
             if into_b {
@@ -1560,7 +1688,7 @@ impl GraphApp {
         }
         // Exact wiki uri fallback (no fuzzy label pick) - fetched on the worker.
         let Some(source) = self.available_load_source() else {
-            let msg = "wiki links require --http or --db".to_string();
+            let msg = "Для wiki-ссылок требуется --http или --db".to_string();
             if into_b {
                 self.wiki_error_b = Some(msg);
             } else {
@@ -1600,6 +1728,12 @@ impl GraphApp {
     }
 
     fn open_selected_graph_node_in_wiki(&mut self) {
+        if self.available_load_source().is_none() {
+            self.content_error = Some(
+                "В snapshot-режиме доступна только топология; откройте HTTP или DB источник".into(),
+            );
+            return;
+        }
         let Some(sel) = self.selected.clone() else {
             return;
         };
@@ -1618,8 +1752,9 @@ impl GraphApp {
             (node.document_id.clone(), target)
         };
         let Some(target) = target else {
-            self.content_error =
-                Some("Selected node is not a wiki page; use Preview or Library instead".into());
+            self.content_error = Some(
+                "Выбранный узел не является wiki-страницей; используйте превью или корпус".into(),
+            );
             return;
         };
         self.mode = ViewMode::Wiki;
@@ -1634,13 +1769,13 @@ impl GraphApp {
                             self.ensure_wiki_loaded();
                         } else {
                             self.wiki_error = Some(format!(
-                                "cannot resolve {uri} inside project {} until it appears in the project wiki catalog",
+                                "Нельзя открыть {uri} в проекте {}, пока страница не появится в его wiki-каталоге",
                                 self.filter_wing.trim()
                             ));
                         }
                     } else {
                         self.wiki_error = Some(format!(
-                            "wiki page {uri} is not present in project {}",
+                            "Wiki-страницы {uri} нет в проекте {}",
                             self.filter_wing.trim()
                         ));
                     }
@@ -1660,7 +1795,7 @@ impl GraphApp {
             return;
         }
         let Some(full) = self.full_view.as_ref() else {
-            self.seed_error = Some("no graph loaded".into());
+            self.seed_error = Some("Граф не загружен".into());
             return;
         };
         match resolve_seed(full, seed) {
@@ -1683,20 +1818,20 @@ impl GraphApp {
     fn load_content_for_selected(&mut self) {
         self.content_error = None;
         let Some(sel) = self.selected.clone() else {
-            self.content_error = Some("nothing selected".into());
+            self.content_error = Some("Ничего не выбрано".into());
             return;
         };
         let Some(g) = self.ui_graph.as_ref() else {
-            self.content_error = Some("no graph view".into());
+            self.content_error = Some("Представление графа недоступно".into());
             return;
         };
         let Some(node) = g.nodes.iter().find(|n| n.id == sel) else {
-            self.content_error = Some("selection not in view".into());
+            self.content_error = Some("Выбранного узла нет в текущем представлении".into());
             return;
         };
         if node.document_id.is_none() && node.uri.is_none() {
             self.content_error = Some(format!(
-                "node “{}” has no document ({} / unresolved stub?)",
+                "У узла «{}» нет документа ({} / unresolved stub?)",
                 node.label, node.kind
             ));
             return;
@@ -1708,8 +1843,9 @@ impl GraphApp {
         );
 
         let Some(source) = self.available_load_source() else {
-            self.content_error =
-                Some("snapshot mode has no document bodies; use --http or --db".into());
+            self.content_error = Some(
+                "В snapshot-режиме нет содержимого документов; используйте --http или --db".into(),
+            );
             return;
         };
 
@@ -1820,7 +1956,9 @@ impl GraphApp {
         };
 
         if current.nodes.len() >= max_n {
-            self.expand_note = Some(format!("Expand blocked: already at max_nodes ({max_n})"));
+            self.expand_note = Some(format!(
+                "Раскрытие недоступно: уже достигнут max_nodes ({max_n})"
+            ));
             return;
         }
 
@@ -1834,7 +1972,7 @@ impl GraphApp {
         };
         let full = self.full_view.clone();
         if http_base.is_none() && db_path.is_none() && full.is_none() {
-            self.expand_note = Some("Expand requires a loaded graph".into());
+            self.expand_note = Some("Для раскрытия нужен загруженный граф".into());
             return;
         }
 
@@ -1881,7 +2019,7 @@ impl GraphApp {
                     return Some((
                         EmptyKind::OverCap,
                         Some(format!(
-                            "server result reached the export limit ({} nodes); focus an item to load its neighborhood",
+                            "Ответ сервера достиг лимита экспорта ({} узлов); выберите фокус, чтобы загрузить его окружение",
                             self.raw_node_count
                         )),
                     ));
@@ -1916,7 +2054,7 @@ impl GraphApp {
         }
         if self.local_truncated {
             return Some(format!(
-                "Local neighborhood reached max_nodes ({}); reachable nodes were omitted",
+                "Локальное окружение достигло max_nodes ({}); часть достижимых узлов скрыта",
                 self.max_nodes
             ));
         }
@@ -1925,7 +2063,7 @@ impl GraphApp {
         }
         if self.raw_truncated {
             return Some(format!(
-                "Showing local view; raw snapshot had {} nodes (hard cap {})",
+                "Показан локальный вид; исходный снимок содержал {} узлов (жёсткий лимит {})",
                 self.raw_node_count, UI_HARD_MAX_NODES
             ));
         }
@@ -2024,7 +2162,7 @@ impl GraphApp {
                                     self.select_library_document(&id);
                                 } else {
                                     self.library_error = Some(format!(
-                                        "document {id} was not returned by the catalog filter"
+                                        "Документ {id} не найден текущим фильтром каталога"
                                     ));
                                 }
                             }
@@ -2089,9 +2227,13 @@ impl GraphApp {
                     match result {
                         Ok(snapshot) => {
                             self.operations_snapshot = Some(snapshot);
+                            self.operations_snapshot_stale = false;
                             self.operations_error = None;
                         }
-                        Err(error) => self.operations_error = Some(error),
+                        Err(error) => {
+                            self.operations_snapshot_stale = true;
+                            self.operations_error = Some(error);
+                        }
                     }
                 }
                 WorkerEvt::JobsLoaded { seq, result } => {
@@ -2274,9 +2416,8 @@ impl GraphApp {
                                 if self.wiki_pages.iter().any(|page| page.id == id) {
                                     self.open_wiki_page_id(&id);
                                 } else {
-                                    self.wiki_error = Some(format!(
-                                        "document {id} is not present in the project wiki catalog"
-                                    ));
+                                    self.wiki_error =
+                                        Some(format!("Документа {id} нет в wiki-каталоге проекта"));
                                 }
                             } else {
                                 self.auto_open_initial_page();
@@ -2371,11 +2512,11 @@ impl GraphApp {
                     let max_n = self.max_nodes as usize;
                     if after == before {
                         self.expand_note = Some(format!(
-                            "No new neighbors for “{selected}” within max_nodes ({max_n})"
+                            "Для «{selected}» нет новых соседей в пределах max_nodes ({max_n})"
                         ));
                     } else if after >= max_n {
                         self.expand_note = Some(format!(
-                            "Expand filled view to max_nodes ({max_n}); some neighbors may be omitted"
+                            "Раскрытие заполнило вид до max_nodes ({max_n}); часть соседей может быть скрыта"
                         ));
                     }
                     if after > before {
@@ -2411,11 +2552,12 @@ impl GraphApp {
     /// Global hotkeys. Plain keys are ignored while a text field has focus;
     /// Ctrl+S (save) works even while the content editor is focused.
     fn handle_hotkeys(&mut self, ctx: &egui::Context) {
-        let (esc, save, find, back) = ctx.input(|i| {
+        let (esc, save, find, global_search, back) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Escape),
                 i.modifiers.command && i.key_pressed(egui::Key::S),
                 i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.modifiers.command && i.key_pressed(egui::Key::K),
                 i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft),
             )
         });
@@ -2428,18 +2570,25 @@ impl GraphApp {
             self.save_wiki_edit();
             return;
         }
+        if global_search && self.activity_base().is_some() {
+            self.activate_shell_route(ShellRoute::Search);
+            ctx.memory_mut(|memory| {
+                memory.request_focus(egui::Id::new("native_search_query"));
+            });
+            return;
+        }
+        if esc && self.mode == ViewMode::Wiki && self.wiki_edit.is_some() {
+            self.cancel_wiki_edit();
+            return;
+        }
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        if esc {
-            if self.mode == ViewMode::Wiki && self.wiki_edit.is_some() {
-                self.cancel_wiki_edit();
-            } else if self.mode == ViewMode::Graph && self.selected.is_some() {
-                self.selected = None;
-                self.content = None;
-                self.content_error = None;
-                self.pending_content = None;
-            }
+        if esc && self.mode == ViewMode::Graph && self.selected.is_some() {
+            self.selected = None;
+            self.content = None;
+            self.content_error = None;
+            self.pending_content = None;
         }
         if find && self.mode == ViewMode::Wiki {
             ctx.memory_mut(|m| m.request_focus(wiki_filter_id()));
@@ -2490,32 +2639,28 @@ impl GraphApp {
                 ui.set_max_width(440.0);
                 match risk {
                     CloseRisk::UnsavedWikiEdits => {
-                        ui.heading("Unsaved Wiki edits");
-                        ui.label(
-                            "Closing now will discard the title or content changes in the editor.",
-                        );
+                        ui.heading("Несохранённые правки вики");
+                        ui.label("При закрытии изменения названия и текста будут потеряны.");
                     }
                     CloseRisk::WikiSaveInFlight => {
-                        ui.heading("Wiki save is still in progress");
-                        ui.label(
-                            "Keep the app open until the gateway reports the result. It will close automatically after a successful save.",
-                        );
+                        ui.heading("Сохранение вики ещё выполняется");
+                        ui.label("Оставьте приложение открытым до ответа gateway. После успешного сохранения оно закроется автоматически.");
                     }
                 }
                 ui.add_space(12.0);
                 let mut choice = Choice::None;
                 ui.horizontal(|ui| {
                     let keep_label = match risk {
-                        CloseRisk::UnsavedWikiEdits => "Keep editing",
-                        CloseRisk::WikiSaveInFlight => "Keep app open",
+                        CloseRisk::UnsavedWikiEdits => "Продолжить редактирование",
+                        CloseRisk::WikiSaveInFlight => "Оставить открытым",
                     };
                     if ui.button(keep_label).clicked() {
                         choice = Choice::KeepOpen;
                     }
                     if ui
                         .button(match risk {
-                            CloseRisk::UnsavedWikiEdits => "Discard and close",
-                            CloseRisk::WikiSaveInFlight => "Close anyway",
+                            CloseRisk::UnsavedWikiEdits => "Закрыть без сохранения",
+                            CloseRisk::WikiSaveInFlight => "Всё равно закрыть",
                         })
                         .clicked()
                     {
@@ -2565,158 +2710,84 @@ impl eframe::App for GraphApp {
         let project_options = self.project_catalog.clone();
         let project_catalog_error = self.project_catalog_error.clone();
 
-        egui::Panel::top("toolbar").show(root_ui, |ui| {
-            // Stable first tier: product navigation and project scope. Wrapping
-            // keeps every workspace reachable on narrow native windows.
-            ui.horizontal_wrapped(|ui| {
-                ui.strong(egui::RichText::new("Knowledge Base").size(18.0));
-                ui.separator();
-                // Product workspaces first; focused tools follow.
-                if ui
-                    .selectable_label(self.mode == ViewMode::Home, "Home")
-                    .on_hover_text("Project inventory and health")
-                    .clicked()
-                {
-                    self.mode = ViewMode::Home;
-                    self.ensure_project_home_loaded();
-                }
-                if ui
-                    .selectable_label(self.mode == ViewMode::Library, "Library")
-                    .on_hover_text("All indexed documents")
-                    .clicked()
-                {
-                    self.mode = ViewMode::Library;
-                    self.ensure_library_loaded();
-                }
-                if ui
-                    .selectable_label(self.mode == ViewMode::Search, "Search")
-                    .on_hover_text("Hybrid, lexical and semantic retrieval")
-                    .clicked()
-                {
-                    self.mode = ViewMode::Search;
-                    self.search_request.wing = nonempty(&self.filter_wing);
-                }
-                if ui
-                    .add_enabled(
-                        self.revision.document_id.is_some(),
-                        egui::Button::new("History").selected(self.mode == ViewMode::Revisions),
-                    )
-                    .on_hover_text("Revision timeline for the document opened from Library")
-                    .clicked()
-                {
-                    self.mode = ViewMode::Revisions;
-                    if self.revision.items.is_empty() {
-                        self.reload_revisions();
-                    }
-                }
-                if ui
-                    .selectable_label(self.mode == ViewMode::Wiki, "Wiki")
-                    .on_hover_text("Linked articles and notes")
-                    .clicked()
-                {
-                    self.mode = ViewMode::Wiki;
-                    self.ensure_wiki_loaded();
-                }
-                if ui
-                    .selectable_label(self.mode == ViewMode::Graph, "Connections")
-                    .on_hover_text("Local object graph")
-                    .clicked()
-                {
-                    self.mode = ViewMode::Graph;
-                }
-                if ui
-                    .selectable_label(self.mode == ViewMode::Activity, "Operations")
-                    .on_hover_text("Live gateway activity and service health")
-                    .clicked()
-                {
-                    self.mode = ViewMode::Activity;
-                    match self.operations_tab {
-                        OperationsTab::Activity => self.refresh_activity(),
-                        OperationsTab::Jobs => self.reload_jobs(),
-                        OperationsTab::Maintenance => self.reload_operations(),
-                    }
-                }
-                ui.separator();
+        let http_available = self.activity_base().is_some();
+        let wiki_available = self.available_load_source().is_some();
+        let rail_output = draw_rail(root_ui, self.shell_route(), http_available, wiki_available);
+        if let Some(route) = rail_output.navigate {
+            self.activate_shell_route(route);
+        }
 
-                ui.weak("Project");
-                let project_switch_enabled = !self
-                    .wiki_edit
-                    .as_ref()
-                    .is_some_and(|edit| edit.dirty)
-                    && !self.noncancellable_mutation_in_flight();
-                let project_selector = ui.add_enabled_ui(project_switch_enabled, |ui| {
-                        egui::ComboBox::from_id_salt("global_project")
-                            .selected_text(if self.filter_wing.is_empty() {
-                                "All projects"
-                            } else {
-                                &self.filter_wing
-                            })
-                            .width(150.0)
-                            .show_ui(ui, |ui| {
-                                crate::ui::closing_selectable_value(
-                                    ui,
-                                    &mut self.filter_wing,
-                                    String::new(),
-                                    "All projects",
-                                );
-                                for project in &project_options {
-                                    crate::ui::closing_selectable_value(
-                                        ui,
-                                        &mut self.filter_wing,
-                                        project.clone(),
-                                        project,
-                                    );
-                                }
-                            });
-                    });
-                if !project_switch_enabled {
-                    project_selector.response.on_disabled_hover_text(
-                        "Finish or cancel edits, then wait for the active write to complete",
-                    );
-                }
-                if self.pending_project_catalog.is_some() {
-                    ui.spinner();
-                    ui.weak("projects…");
-                } else if let Some(error) = project_catalog_error.as_deref() {
-                    ui.colored_label(egui::Color32::from_rgb(220, 150, 65), "project list unavailable")
-                        .on_hover_text(error);
-                    if ui.small_button("Retry").clicked() {
-                        self.reload_project_catalog();
-                    }
-                }
-                if let Some(status) = self.mutation_status_label() {
-                    ui.spinner();
-                    ui.weak(status);
-                }
-            });
-            ui.add_space(2.0);
+        let project_switch_enabled = !self.wiki_edit.as_ref().is_some_and(|edit| edit.dirty)
+            && !self.noncancellable_mutation_in_flight();
+        let connected = http_available;
+        let read_only_source = self.shell_read_only_source();
+        let (healthy, health_summary) = self.shell_health();
+        let route = self.shell_route();
+        let mutation_label = self.mutation_status_label();
+        let topbar_output = draw_topbar(
+            root_ui,
+            TopbarState {
+                route,
+                project: &mut self.filter_wing,
+                projects: &project_options,
+                project_enabled: project_switch_enabled,
+                project_loading: self.pending_project_catalog.is_some(),
+                project_error: project_catalog_error.as_deref(),
+                search_enabled: connected,
+                connected,
+                read_only_source,
+                healthy,
+                health_summary: &health_summary,
+                mutation_label,
+            },
+        );
+        if topbar_output.retry_projects {
+            self.reload_project_catalog();
+        }
+        if topbar_output.open_search {
+            self.activate_shell_route(ShellRoute::Search);
+            if self.mode == ViewMode::Search {
+                ctx.memory_mut(|memory| {
+                    memory.request_focus(egui::Id::new("native_search_query"));
+                });
+            }
+        }
 
-            // Contextual controls get their own responsive tier instead of
-            // competing with the workspace tabs for one clipped row.
+        // Only workspaces with real contextual controls receive a second tier.
+        // Summary-only rows on Home/Search/Library duplicate page content and
+        // waste vertical space, especially on compact native windows.
+        if matches!(
+            self.mode,
+            ViewMode::Activity | ViewMode::Wiki | ViewMode::Graph
+        ) {
+            egui::Panel::top("workspace_toolbar")
+                .resizable(false)
+                .frame(theme::toolbar_frame())
+                .show(root_ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 match self.mode {
                     ViewMode::Home => {
                         if self.pending_project_home.is_some() {
                             ui.spinner();
-                            ui.weak("inventory…");
+                            ui.weak("инвентаризация…");
                         } else if let Some(home) = &self.project_home {
-                            ui.weak(format!("{} documents", home.documents));
+                            ui.weak(format!("{} документов", home.documents));
                         }
                     }
                     ViewMode::Library => {
                         if self.pending_library.is_some() {
                             ui.spinner();
-                            ui.weak("catalog…");
+                            ui.weak("каталог…");
                         } else if let Some(page) = &self.library_page {
-                            ui.weak(format!("{} documents", page.total));
+                            ui.weak(format!("{} документов", page.total));
                         }
                     }
                     ViewMode::Search => {
                         if self.pending_search.is_some() {
                             ui.spinner();
-                            ui.weak("searching…");
+                            ui.weak("поиск…");
                         } else if let Some(results) = &self.search_results {
-                            ui.weak(format!("{} results", results.items.len()));
+                            ui.weak(format!("{} результатов", results.items.len()));
                         }
                     }
                     ViewMode::Revisions => {
@@ -2726,16 +2797,16 @@ impl eframe::App for GraphApp {
                             || self.pending_revision_restore.is_some()
                         {
                             ui.spinner();
-                            ui.weak("history…");
+                            ui.weak("история…");
                         } else if let Some(head) = self.revision.head {
-                            ui.weak(format!("head r{head}"));
+                            ui.weak(format!("текущая r{head}"));
                         }
                     }
                     ViewMode::Activity => {
                         if ui
                             .selectable_label(
                                 self.operations_tab == OperationsTab::Activity,
-                                "Activity",
+                                "Активность",
                             )
                             .clicked()
                         {
@@ -2743,7 +2814,7 @@ impl eframe::App for GraphApp {
                             self.refresh_activity();
                         }
                         if ui
-                            .selectable_label(self.operations_tab == OperationsTab::Jobs, "Jobs")
+                            .selectable_label(self.operations_tab == OperationsTab::Jobs, "Задачи")
                             .clicked()
                         {
                             self.operations_tab = OperationsTab::Jobs;
@@ -2752,7 +2823,7 @@ impl eframe::App for GraphApp {
                         if ui
                             .selectable_label(
                                 self.operations_tab == OperationsTab::Maintenance,
-                                "Health & backup",
+                                "Диагностика и бэкап",
                             )
                             .clicked()
                         {
@@ -2763,24 +2834,26 @@ impl eframe::App for GraphApp {
                         }
                         ui.separator();
                         if self.operations_tab == OperationsTab::Activity {
-                            if ui.button("Refresh").clicked() {
+                            if ui.button("Обновить").clicked() {
                                 self.refresh_activity();
                             }
-                            ui.checkbox(&mut self.activity_auto_refresh, "Live");
+                            ui.checkbox(&mut self.activity_auto_refresh, "Онлайн");
                         } else if self.operations_tab == OperationsTab::Jobs {
                             if self.pending_jobs.is_some()
                                 || self.pending_operation_action.is_some()
                             {
                                 ui.spinner();
                             }
-                            ui.weak(format!("{} retained", self.operations_jobs.len()));
+                            ui.weak(format!("{} сохранено", self.operations_jobs.len()));
                         } else {
                             if self.pending_operations.is_some()
                                 || self.pending_operation_action.is_some()
                             {
                                 ui.spinner();
                             }
-                            if let Some(snapshot) = &self.operations_snapshot {
+                            if self.operations_snapshot_stale {
+                                ui.colored_label(theme::WARN, "устарело");
+                            } else if let Some(snapshot) = &self.operations_snapshot {
                                 ui.colored_label(
                                     if snapshot.doctor.ok {
                                         egui::Color32::from_rgb(90, 190, 125)
@@ -2788,9 +2861,9 @@ impl eframe::App for GraphApp {
                                         egui::Color32::from_rgb(220, 105, 90)
                                     },
                                     if snapshot.doctor.ok {
-                                        "healthy"
+                                        "в норме"
                                     } else {
-                                        "attention"
+                                        "требует внимания"
                                     },
                                 );
                             }
@@ -2805,22 +2878,22 @@ impl eframe::App for GraphApp {
                             || !self.activity_filter.is_empty();
                         ui.menu_button(
                             if filters_active {
-                                "Filters ●"
+                                "Фильтры ●"
                             } else {
-                                "Filters"
+                                "Фильтры"
                             },
                             |ui| {
                                 ui.set_min_width(260.0);
-                                ui.label("Event type");
+                                ui.label("Тип события");
                                 egui::ComboBox::from_id_salt("activity_kind_filter")
                                     .selected_text(match self.activity_kind_filter.as_str() {
                                         "http" => "HTTP",
                                         "mcp_tool" => "MCP tool",
-                                        _ => "All types",
+                                        _ => "Все типы",
                                     })
                                     .show_ui(ui, |ui| {
                                         for (value, label) in [
-                                            ("all", "All types"),
+                                            ("all", "Все типы"),
                                             ("http", "HTTP"),
                                             ("mcp_tool", "MCP tool"),
                                         ] {
@@ -2832,18 +2905,18 @@ impl eframe::App for GraphApp {
                                             );
                                         }
                                     });
-                                ui.label("Result");
+                                ui.label("Результат");
                                 egui::ComboBox::from_id_salt("activity_status_filter")
                                     .selected_text(match self.activity_status_filter.as_str() {
-                                        "success" => "Success",
-                                        "error" => "Errors",
-                                        _ => "All results",
+                                        "success" => "Успех",
+                                        "error" => "Ошибки",
+                                        _ => "Все результаты",
                                     })
                                     .show_ui(ui, |ui| {
                                         for (value, label) in [
-                                            ("all", "All results"),
-                                            ("success", "Success"),
-                                            ("error", "Errors"),
+                                            ("all", "Все результаты"),
+                                            ("success", "Успех"),
+                                            ("error", "Ошибки"),
                                         ] {
                                             crate::ui::closing_selectable_value(
                                                 ui,
@@ -2853,14 +2926,14 @@ impl eframe::App for GraphApp {
                                             );
                                         }
                                     });
-                                ui.label("Client");
+                                ui.label("Клиент");
                                 ui.text_edit_singleline(&mut self.activity_client_filter);
-                                ui.label("Action or route");
+                                ui.label("Действие или маршрут");
                                 ui.text_edit_singleline(&mut self.activity_action_filter);
-                                ui.label("Any field");
+                                ui.label("Любое поле");
                                 ui.text_edit_singleline(&mut self.activity_filter);
                                 if ui
-                                    .add_enabled(filters_active, egui::Button::new("Clear filters"))
+                                    .add_enabled(filters_active, egui::Button::new("Сбросить фильтры"))
                                     .clicked()
                                 {
                                     self.activity_kind_filter = "all".into();
@@ -2875,30 +2948,57 @@ impl eframe::App for GraphApp {
                             ui.spinner();
                         }
                     }
+                    ViewMode::Evaluation => {
+                        ui.label(egui::RichText::new("EVAL").monospace().color(theme::L1));
+                        ui.weak("живая telemetry · benchmark-значения не угадываются");
+                        if self.pending_activity.is_some() {
+                            ui.spinner();
+                        } else if ui.button("Обновить telemetry").clicked() {
+                            self.refresh_activity();
+                        }
+                    }
+                    ViewMode::Models => {
+                        ui.label(
+                            egui::RichText::new("PIPELINE")
+                                .monospace()
+                                .color(theme::L3),
+                        );
+                        if self.pending_operations.is_some() {
+                            ui.spinner();
+                        } else if let Some(snapshot) = &self.operations_snapshot {
+                            ui.weak(format!(
+                                "{} · схема v{} · {} чанков",
+                                snapshot.status.backend,
+                                snapshot.status.schema_version,
+                                snapshot.status.chunk_count
+                            ));
+                        }
+                    }
                     ViewMode::Wiki => {
                         if ui
-                            .selectable_label(self.wiki_sidebar_visible, "☰ Pages")
-                            .on_hover_text("Show or hide the page catalog")
+                            .selectable_label(self.wiki_sidebar_visible, "☰ Страницы")
+                            .on_hover_text("Показать или скрыть каталог страниц")
                             .clicked()
                         {
                             self.wiki_sidebar_visible = !self.wiki_sidebar_visible;
                         }
                         if ui
-                            .add_enabled(!self.wiki_history.is_empty(), egui::Button::new("← Back"))
-                            .on_hover_text("Back in page history (Alt+←)")
+                            .add_enabled(!self.wiki_history.is_empty(), egui::Button::new("← Назад"))
+                            .on_hover_text("Назад по истории страниц (Alt+←)")
                             .clicked()
                         {
                             self.wiki_go_back();
                         }
-                        if ui.button("Reload wiki").clicked() {
+                        if ui.button("Обновить вики").clicked() {
                             if self.pending_save.is_some() {
                                 self.wiki_error = Some(
-                                    "Save is in progress. Wait for its result before reloading the wiki."
+                                    "Идёт сохранение. Дождитесь результата перед обновлением вики."
                                         .into(),
                                 );
                             } else if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-                                self.wiki_error =
-                                    Some("unsaved edits: Save or Cancel before reload".into());
+                                self.wiki_error = Some(
+                                    "Есть несохранённые правки: сохраните или отмените их".into(),
+                                );
                             } else {
                                 self.wiki_edit = None;
                                 self.wiki_loaded = false;
@@ -2907,16 +3007,16 @@ impl eframe::App for GraphApp {
                         }
                         if self.pending_catalog.is_some() {
                             ui.spinner();
-                            ui.weak("catalog…");
+                            ui.weak("каталог…");
                         }
                         if self.pending_page_a.is_some() || self.pending_page_b.is_some() {
                             ui.spinner();
-                            ui.weak("page…");
+                            ui.weak("страница…");
                         }
                         if ui
-                            .selectable_label(self.wiki_dual_pane, "Dual pane")
+                            .selectable_label(self.wiki_dual_pane, "Две панели")
                             .on_hover_text(
-                                "Two articles: catalog left, pane A center, pane B right",
+                                "Две статьи: каталог слева, панель A по центру, B справа",
                             )
                             .clicked()
                         {
@@ -2931,8 +3031,8 @@ impl eframe::App for GraphApp {
                         }
                         if !self.wiki_dual_pane
                             && ui
-                                .selectable_label(self.wiki_info_visible, "Info")
-                                .on_hover_text("Show page metadata and backlinks")
+                                .selectable_label(self.wiki_info_visible, "Инфо")
+                                .on_hover_text("Показать метаданные страницы и обратные ссылки")
                                 .clicked()
                         {
                             self.wiki_info_visible = !self.wiki_info_visible;
@@ -2940,14 +3040,14 @@ impl eframe::App for GraphApp {
                         if self.wiki_dual_pane {
                             if ui
                                 .selectable_label(self.wiki_focus == WikiPane::A, "A")
-                                .on_hover_text("Focus pane A (center); Edit/Save apply here")
+                                .on_hover_text("Фокус панели A; редактирование и сохранение работают здесь")
                                 .clicked()
                             {
                                 self.wiki_focus = WikiPane::A;
                             }
                             if ui
                                 .selectable_label(self.wiki_focus == WikiPane::B, "B")
-                                .on_hover_text("Focus pane B (right); sidebar opens here")
+                                .on_hover_text("Фокус панели B; каталог открывает страницы здесь")
                                 .clicked()
                             {
                                 self.wiki_focus = WikiPane::B;
@@ -2958,9 +3058,9 @@ impl eframe::App for GraphApp {
                             if ui
                                 .add_enabled(
                                     self.wiki_article.is_some() && self.wiki_can_write(),
-                                    egui::Button::new("Edit"),
+                                    egui::Button::new("Редактировать"),
                                 )
-                                .on_hover_text("Edit pane A (Save via the HTTP gateway)")
+                                .on_hover_text("Редактировать панель A; сохранение идёт через HTTP gateway")
                                 .clicked()
                             {
                                 self.wiki_focus = WikiPane::A;
@@ -2971,7 +3071,7 @@ impl eframe::App for GraphApp {
                             if ui
                                 .add_enabled(
                                     self.wiki_can_write() && !saving,
-                                    egui::Button::new("Save"),
+                                    egui::Button::new("Сохранить"),
                                 )
                                 .on_hover_text("Ctrl+S")
                                 .clicked()
@@ -2980,12 +3080,12 @@ impl eframe::App for GraphApp {
                             }
                             if saving {
                                 ui.spinner();
-                                ui.weak("saving…");
+                                ui.weak("сохранение…");
                             }
                             if ui
-                                .add_enabled(can_cancel_edit(saving), egui::Button::new("Cancel edit"))
+                                .add_enabled(can_cancel_edit(saving), egui::Button::new("Отменить правки"))
                                 .on_hover_text(if saving {
-                                    "Wait for the save result"
+                                    "Дождитесь результата сохранения"
                                 } else {
                                     "Esc"
                                 })
@@ -2997,7 +3097,7 @@ impl eframe::App for GraphApp {
                         if ui
                             .add_enabled(
                                 self.wiki_selected_id.is_some() && !editing,
-                                egui::Button::new("Show in graph"),
+                                egui::Button::new("Показать в графе"),
                             )
                             .clicked()
                         {
@@ -3011,11 +3111,12 @@ impl eframe::App for GraphApp {
                         }
                     }
                     ViewMode::Graph => {
-                        ui.weak("Focus");
+                        let content_available = self.available_load_source().is_some();
+                        ui.weak("Фокус");
                         let seed_resp = ui.add(
                             egui::TextEdit::singleline(&mut self.seed_input)
                                 .desired_width(180.0)
-                                .hint_text("Search an item…"),
+                                .hint_text("Найти узел…"),
                         );
                         // Seed picker: suggestions over full_view (label / id /
                         // document_id substring, case-insensitive, first 10).
@@ -3071,13 +3172,13 @@ impl eframe::App for GraphApp {
                             self.seed_input = id;
                             self.submit_graph_focus();
                         }
-                        if ui.button("Show").clicked() {
+                        if ui.button("Показать").clicked() {
                             self.submit_graph_focus();
                         }
-                        ui.menu_button("View options", |ui| {
+                        ui.menu_button("Вид", |ui| {
                             ui.set_min_width(220.0);
                             ui.horizontal(|ui| {
-                                ui.label("Connection depth");
+                                ui.label("Глубина связей");
                                 let mut d = self.depth as i32;
                                 if ui.add(egui::DragValue::new(&mut d).range(1..=3)).changed() {
                                     self.depth = d as u32;
@@ -3088,19 +3189,19 @@ impl eframe::App for GraphApp {
                                     }
                                 }
                             });
-                            ui.checkbox(&mut self.show_tags, "Show tags");
-                            ui.checkbox(&mut self.show_stubs, "Show unresolved items");
+                            ui.checkbox(&mut self.show_tags, "Показывать теги");
+                            ui.checkbox(&mut self.show_stubs, "Показывать unresolved-узлы");
                             ui.separator();
-                            ui.label("Room");
+                            ui.label("Комната");
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.filter_room)
                                     .desired_width(f32::INFINITY)
-                                    .hint_text("All rooms"),
+                                    .hint_text("Все комнаты"),
                             );
                             if ui
                                 .add_enabled(
                                     !self.filter_room.is_empty(),
-                                    egui::Button::new("Clear room filter"),
+                                    egui::Button::new("Сбросить фильтр комнаты"),
                                 )
                                 .clicked()
                             {
@@ -3108,9 +3209,9 @@ impl eframe::App for GraphApp {
                             }
                         });
                         if ui
-                            .button("Reset view")
+                            .button("Сбросить вид")
                             .on_hover_text(
-                                "Rebuild the local view from the seed (drops Expand merges)",
+                                "Перестроить локальный вид от фокуса и убрать добавленные раскрытия",
                             )
                             .clicked()
                         {
@@ -3124,7 +3225,7 @@ impl eframe::App for GraphApp {
                         if ui
                             .add_enabled(
                                 self.selected.is_some() && !expanding,
-                                egui::Button::new("Expand"),
+                                egui::Button::new("Раскрыть"),
                             )
                             .clicked()
                         {
@@ -3133,23 +3234,33 @@ impl eframe::App for GraphApp {
                         if expanding {
                             ui.spinner();
                         }
-                        if ui
+                        let open_page = ui
                             .add_enabled(
-                                self.selected_graph_wiki_target().is_some(),
-                                egui::Button::new("Open page"),
+                                content_available
+                                    && self.selected_graph_wiki_target().is_some(),
+                                egui::Button::new("Открыть страницу"),
                             )
-                            .on_hover_text("Open the selected wiki page")
-                            .clicked()
-                        {
+                            .on_hover_text(if content_available {
+                                "Открыть выбранную wiki-страницу"
+                            } else {
+                                "Snapshot содержит только топологию; содержимое требует HTTP или DB"
+                            });
+                        if open_page.clicked() {
                             self.open_selected_graph_node_in_wiki();
                         }
-                        if ui
+                        let preview = ui
                             .add_enabled(
-                                self.selected.is_some() && self.pending_content.is_none(),
-                                egui::Button::new("Preview"),
+                                content_available
+                                    && self.selected.is_some()
+                                    && self.pending_content.is_none(),
+                                egui::Button::new("Превью"),
                             )
-                            .clicked()
-                        {
+                            .on_hover_text(if content_available {
+                                "Загрузить содержимое выбранного документа"
+                            } else {
+                                "Snapshot содержит только топологию; содержимое требует HTTP или DB"
+                            });
+                        if preview.clicked() {
                             self.load_content_for_selected();
                         }
                         if self.pending_content.is_some() {
@@ -3157,8 +3268,9 @@ impl eframe::App for GraphApp {
                         }
                     }
                 }
+                });
             });
-        });
+        }
 
         let mutation_in_flight = self.noncancellable_mutation_in_flight();
         let project_changed = reconcile_project_change(
@@ -3198,50 +3310,52 @@ impl eframe::App for GraphApp {
             }
         }
 
-        egui::Panel::bottom("status").show(root_ui, |ui| {
-            match self.mode {
+        egui::Panel::bottom("status")
+            .resizable(false)
+            .frame(theme::toolbar_frame())
+            .show(root_ui, |ui| match self.mode {
                 ViewMode::Home => {
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong("Project Home");
+                        ui.strong("Пульт проекта");
                         ui.separator();
                         if let Some(project) = nonempty(&self.filter_wing) {
                             ui.label(project);
                         } else {
                             ui.colored_label(
                                 egui::Color32::from_rgb(220, 150, 65),
-                                "select a project",
+                                "выберите проект",
                             );
                         }
                         if self.pending_project_home.is_some() {
                             ui.separator();
                             ui.spinner();
-                            ui.weak("Updating…");
+                            ui.weak("Обновление…");
                         }
                     });
                 }
                 ViewMode::Library => {
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong("Unified Library");
+                        ui.strong("Корпус");
                         if let Some(page) = &self.library_page {
                             ui.separator();
-                            ui.label(format!("{} total", page.total));
-                            ui.label(format!("{} on page", page.items.len()));
+                            ui.label(format!("{} всего", page.total));
+                            ui.label(format!("{} на странице", page.items.len()));
                         }
                         if self.pending_library.is_some() || self.pending_library_document.is_some()
                         {
                             ui.separator();
                             ui.spinner();
-                            ui.weak("Updating…");
+                            ui.weak("Обновление…");
                         }
                     });
                 }
                 ViewMode::Search => {
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong("Search");
+                        ui.strong("Поиск");
                         ui.separator();
                         ui.label(match self.search_request.mode.as_str() {
-                            "lex" => "lexical",
-                            "vec" => "semantic",
+                            "lex" => "лексический",
+                            "vec" => "семантический",
                             _ => "hybrid",
                         });
                         if let Some(project) = self.search_request.wing.as_deref() {
@@ -3251,20 +3365,20 @@ impl eframe::App for GraphApp {
                         if self.pending_search.is_some() {
                             ui.separator();
                             ui.spinner();
-                            ui.weak("Searching…");
+                            ui.weak("Поиск…");
                         }
                     });
                 }
                 ViewMode::Revisions => {
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong("Revision history");
+                        ui.strong("История версий");
                         if let Some(head) = self.revision.head {
                             ui.separator();
-                            ui.label(format!("head r{head}"));
+                            ui.label(format!("текущая r{head}"));
                         }
                         if let Some(selected) = self.revision.selected {
                             ui.separator();
-                            ui.label(format!("comparing r{selected}"));
+                            ui.label(format!("сравнение с r{selected}"));
                         }
                         if self.pending_revisions.is_some()
                             || self.pending_revision_snapshot.is_some()
@@ -3273,81 +3387,117 @@ impl eframe::App for GraphApp {
                         {
                             ui.separator();
                             ui.spinner();
-                            ui.weak("Updating…");
+                            ui.weak("Обновление…");
                         }
                     });
                 }
                 ViewMode::Activity => {
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong("Operations");
+                        ui.strong("Операции");
                         ui.separator();
                         match self.operations_tab {
                             OperationsTab::Activity => {
-                                ui.label(format!("{} retained events", self.activity.len()));
-                                ui.weak("bodies and secret headers are not recorded");
+                                ui.label(format!("{} событий сохранено", self.activity.len()));
+                                ui.weak("тела запросов и секретные заголовки не записываются");
                             }
                             OperationsTab::Jobs => {
-                                ui.label(format!("{} retained jobs", self.operations_jobs.len()));
-                                ui.weak("single writer lane");
+                                ui.label(format!("{} задач сохранено", self.operations_jobs.len()));
+                                ui.weak("единая очередь записи");
                             }
                             OperationsTab::Maintenance => {
                                 let healthy = self
                                     .operations_snapshot
                                     .as_ref()
-                                    .is_some_and(|snapshot| snapshot.doctor.ok);
+                                    .is_some_and(|snapshot| snapshot.doctor.ok)
+                                    && !self.operations_snapshot_stale;
                                 ui.colored_label(
                                     if healthy {
                                         egui::Color32::from_rgb(90, 190, 125)
                                     } else {
                                         egui::Color32::from_rgb(220, 150, 65)
                                     },
-                                    if healthy {
-                                        "healthy"
+                                    if self.operations_snapshot_stale {
+                                        "состояние устарело"
+                                    } else if healthy {
+                                        "в норме"
                                     } else {
-                                        "check diagnostics"
+                                        "проверьте диагностику"
                                     },
                                 );
                             }
                         }
                     });
                 }
+                ViewMode::Evaluation => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong("Оценка");
+                        ui.separator();
+                        ui.label(format!("{} событий telemetry", self.activity.len()));
+                        ui.weak("отсутствующие benchmark-метрики показаны как —");
+                    });
+                }
+                ViewMode::Models => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong("Runtime и индекс");
+                        if let Some(snapshot) = &self.operations_snapshot {
+                            ui.separator();
+                            ui.label(format!(
+                                "backend={} schema={} search={}",
+                                snapshot.status.backend,
+                                snapshot.status.schema_version,
+                                if snapshot.status.ready_for_search {
+                                    "готов"
+                                } else {
+                                    "внимание"
+                                }
+                            ));
+                        }
+                    });
+                }
                 ViewMode::Wiki => {
                     ui.horizontal_wrapped(|ui| {
-                        let connected = self.source.is_some();
-                        ui.colored_label(
-                            if connected {
-                                egui::Color32::from_rgb(90, 190, 125)
-                            } else {
-                                egui::Color32::from_rgb(220, 105, 90)
-                            },
-                            if connected {
-                                "● Connected"
-                            } else {
-                                "● Offline"
-                            },
-                        )
-                        .on_hover_text(
+                        let (source_color, source_status) = if self.activity_base().is_some() {
+                            (theme::OK, "● Gateway")
+                        } else {
+                            match self.source.as_ref() {
+                                Some(GraphSourceKind::LiveStore { .. }) => {
+                                    (theme::ACCENT, "● DB · только чтение")
+                                }
+                                Some(
+                                    GraphSourceKind::SnapshotFile { .. }
+                                    | GraphSourceKind::VaultGraphJson { .. },
+                                ) => (theme::FAINT, "● Snapshot · только чтение"),
+                                Some(GraphSourceKind::HttpService { .. }) => {
+                                    (theme::WARN, "● Gateway · неизвестно")
+                                }
+                                None => (theme::DANGER, "● Офлайн"),
+                            }
+                        };
+                        ui.colored_label(source_color, source_status).on_hover_text(
                             self.source
                                 .as_ref()
                                 .map(|source| source.label())
-                                .unwrap_or("No data source"),
+                                .unwrap_or("Источник данных не выбран"),
                         );
                         ui.separator();
-                        ui.label(format!("{} pages", self.wiki_pages.len()));
+                        ui.label(format!("{} страниц", self.wiki_pages.len()));
                         if self.any_pending() {
                             ui.separator();
                             ui.spinner();
-                            ui.weak("Updating…");
+                            ui.weak("Обновление…");
                         }
                         if self.wiki_dual_pane {
                             ui.separator();
-                            ui.label("Split view");
+                            ui.label("Две панели");
                         }
                         if self.wiki_edit.is_some() {
                             ui.separator();
-                            ui.strong("Editing");
+                            ui.strong("Редактирование");
                             if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-                                ui.colored_label(egui::Color32::from_rgb(220, 160, 60), "unsaved");
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(220, 160, 60),
+                                    "не сохранено",
+                                );
                             }
                         }
                         if let Some(note) = &self.wiki_save_note {
@@ -3380,40 +3530,7 @@ impl eframe::App for GraphApp {
                         self.any_pending(),
                     );
                 }
-            }
-            if let Some(health) = &self.ops_health {
-                ui.horizontal_wrapped(|ui| {
-                    ui.strong("ops");
-                    let healthy = health.fts_ready
-                        && health.relational_integrity_ok
-                        && !health.wal_too_large
-                        && health.documents_without_chunks == 0;
-                    ui.colored_label(
-                        if healthy {
-                            egui::Color32::from_rgb(100, 180, 120)
-                        } else {
-                            egui::Color32::from_rgb(220, 120, 80)
-                        },
-                        if healthy { "healthy" } else { "attention" },
-                    );
-                    ui.label(format!(
-                        "backend={} schema={} docs={} chunks={}",
-                        health.backend, health.schema_version, health.documents, health.chunks
-                    ));
-                    ui.label(format!(
-                        "wal={}/{} MiB",
-                        health.wal_bytes / 1_048_576,
-                        health.wal_warn_bytes / 1_048_576
-                    ));
-                    if health.documents_without_chunks > 0 {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 120, 80),
-                            format!("missing_chunks={}", health.documents_without_chunks),
-                        );
-                    }
-                });
-            }
-        });
+            });
 
         match self.mode {
             ViewMode::Home => {
@@ -3423,7 +3540,7 @@ impl eframe::App for GraphApp {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
-                                ui.label("Connecting to the knowledge base…");
+                                ui.label("Подключение к базе знаний…");
                             });
                         } else {
                             match draw_no_source(
@@ -3443,15 +3560,32 @@ impl eframe::App for GraphApp {
                         ui,
                         nonempty(&self.filter_wing).as_deref(),
                         self.project_home.as_ref(),
+                        self.operations_snapshot.as_ref(),
+                        &self.activity,
                         self.project_home_error.as_deref(),
-                        self.pending_project_home.is_some(),
+                        self.operations_error.as_deref(),
+                        self.operations_snapshot_stale,
+                        self.pending_project_home.is_some()
+                            || self.pending_operations.is_some()
+                            || self.pending_activity.is_some(),
+                        self.activity_base().is_some(),
+                        self.available_load_source().is_some(),
                     );
                     match action {
                         HomeAction::None => {}
-                        HomeAction::Refresh => self.reload_project_home(),
+                        HomeAction::Refresh => {
+                            self.reload_project_home();
+                            self.reload_operations();
+                            self.refresh_activity();
+                        }
                         HomeAction::OpenLibrary => {
-                            self.mode = ViewMode::Library;
-                            self.ensure_library_loaded();
+                            self.activate_shell_route(ShellRoute::Corpus);
+                        }
+                        HomeAction::OpenSearch => {
+                            self.activate_shell_route(ShellRoute::Search);
+                            ctx.memory_mut(|memory| {
+                                memory.request_focus(egui::Id::new("native_search_query"));
+                            });
                         }
                         HomeAction::OpenGraph => {
                             self.mode = ViewMode::Graph;
@@ -3461,6 +3595,12 @@ impl eframe::App for GraphApp {
                                 self.dispatch_graph_load();
                             }
                         }
+                        HomeAction::OpenWiki => {
+                            self.activate_shell_route(ShellRoute::Wiki);
+                        }
+                        HomeAction::OpenAgents => {
+                            self.activate_shell_route(ShellRoute::Agents);
+                        }
                     }
                 });
             }
@@ -3468,9 +3608,10 @@ impl eframe::App for GraphApp {
                 if let Some(item) = self.selected_library_item() {
                     let mut detail_action = LibraryDetailAction::None;
                     egui::Panel::right("unified_library_detail")
-                        .default_size(390.0)
-                        .size_range(300.0..=720.0)
+                        .default_size(480.0)
+                        .size_range(360.0..=760.0)
                         .resizable(true)
+                        .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             detail_action = draw_library_detail(
                                 ui,
@@ -3515,7 +3656,7 @@ impl eframe::App for GraphApp {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
-                                ui.label("Connecting to the knowledge base…");
+                                ui.label("Подключение к базе знаний…");
                             });
                         } else {
                             match draw_no_source(
@@ -3571,7 +3712,7 @@ impl eframe::App for GraphApp {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
-                                ui.label("Connecting to the knowledge base…");
+                                ui.label("Подключение к базе знаний…");
                             });
                         } else {
                             match draw_no_source(
@@ -3682,10 +3823,10 @@ impl eframe::App for GraphApp {
             ViewMode::Activity => match self.operations_tab {
                 OperationsTab::Activity => {
                     egui::CentralPanel::default().show(root_ui, |ui| {
-                    ui.heading("RAG activity");
-                    ui.label("Newest events first. Clients use stable anonymous identifiers; MCP events show the operation name without arguments or result content.");
+                    ui.heading("Операции · Журнал");
+                    ui.label("Сначала новые события. Клиенты используют стабильные анонимные ID; тела, секретные заголовки и результаты здесь не записываются.");
                     if let Some(error) = &self.activity_error {
-                        ui.colored_label(egui::Color32::from_rgb(220, 105, 90), error);
+                        ui.colored_label(theme::DANGER, error);
                     }
                     ui.separator();
                     let filter = self.activity_filter.trim().to_lowercase();
@@ -3696,13 +3837,13 @@ impl eframe::App for GraphApp {
                             .striped(true)
                             .min_col_width(70.0)
                             .show(ui, |ui| {
-                                ui.strong("Local time");
-                                ui.strong("Kind");
-                                ui.strong("Client");
-                                ui.strong("Action");
-                                ui.strong("Status");
-                                ui.strong("Duration");
-                                ui.strong("Request ID");
+                                ui.strong("Локальное время");
+                                ui.strong("Тип");
+                                ui.strong("Клиент");
+                                ui.strong("Действие");
+                                ui.strong("Статус");
+                                ui.strong("Длительность");
+                                ui.strong("ID запроса");
                                 ui.end_row();
                                 for event in self.activity.iter().rev() {
                                     if self.activity_kind_filter != "all"
@@ -3737,13 +3878,24 @@ impl eframe::App for GraphApp {
                                     ui.monospace(local_time);
                                     ui.label(&event.kind);
                                     ui.monospace(event.client.as_deref().unwrap_or("—"));
-                                    ui.label(&event.action).on_hover_text(format!("event #{}", event.seq));
+                                    ui.label(&event.action)
+                                        .on_hover_text(format!("событие #{}", event.seq));
                                     let status = event.status.map(|value| value.to_string()).unwrap_or_else(|| "—".into());
+                                    let status_color = match event.status {
+                                        Some(value) if value >= 400 => theme::DANGER,
+                                        Some(_) => theme::OK,
+                                        None => theme::FAINT,
+                                    };
                                     ui.colored_label(
-                                        if event.status.is_some_and(|value| value >= 400) { egui::Color32::from_rgb(220, 105, 90) } else { egui::Color32::from_rgb(100, 180, 120) },
+                                        status_color,
                                         status,
                                     );
-                                    ui.monospace(event.elapsed_ms.map(|ms| format!("{ms:.1} ms")).unwrap_or_else(|| "—".into()));
+                                    ui.monospace(
+                                        event
+                                            .elapsed_ms
+                                            .map(|ms| format!("{ms:.1} мс"))
+                                            .unwrap_or_else(|| "—".into()),
+                                    );
                                     ui.monospace(event.request_id.as_deref().unwrap_or("—"));
                                     ui.end_row();
                                 }
@@ -3774,6 +3926,7 @@ impl eframe::App for GraphApp {
                             &mut self.backup_form,
                             self.operations_last_result.as_ref(),
                             self.operations_error.as_deref(),
+                            self.operations_snapshot_stale,
                             self.pending_operations.is_some()
                                 || self.pending_operation_action.is_some(),
                         );
@@ -3781,6 +3934,49 @@ impl eframe::App for GraphApp {
                     self.dispatch_operations_action(action);
                 }
             },
+            ViewMode::Evaluation => {
+                egui::CentralPanel::default().show(root_ui, |ui| {
+                    let action = draw_evaluation_workspace(
+                        ui,
+                        self.search_results.as_ref(),
+                        &self.activity,
+                        self.activity_error.as_deref(),
+                        self.pending_activity.is_some(),
+                    );
+                    match action {
+                        EvaluationAction::None => {}
+                        EvaluationAction::OpenSearch => {
+                            self.activate_shell_route(ShellRoute::Search);
+                            ctx.memory_mut(|memory| {
+                                memory.request_focus(egui::Id::new("native_search_query"));
+                            });
+                        }
+                        EvaluationAction::RefreshTelemetry => self.refresh_activity(),
+                    }
+                });
+            }
+            ViewMode::Models => {
+                egui::CentralPanel::default().show(root_ui, |ui| {
+                    let action = draw_models_workspace(
+                        ui,
+                        self.operations_snapshot.as_ref(),
+                        self.operations_error.as_deref(),
+                        self.pending_operations.is_some(),
+                        self.operations_snapshot_stale,
+                    );
+                    match action {
+                        ModelsAction::None => {}
+                        ModelsAction::Refresh => self.reload_operations(),
+                        ModelsAction::OpenMaintenance => {
+                            self.mode = ViewMode::Activity;
+                            self.operations_tab = OperationsTab::Maintenance;
+                            if self.operations_snapshot.is_none() {
+                                self.reload_operations();
+                            }
+                        }
+                    }
+                });
+            }
             ViewMode::Wiki => {
                 // Left: catalog (polished dual-pane nav column).
                 if self.wiki_sidebar_visible {
@@ -3789,7 +3985,7 @@ impl eframe::App for GraphApp {
                         .size_range(190.0..=420.0)
                         .resizable(true)
                         .show_separator_line(false)
-                        .frame(egui::Frame::side_top_panel(root_ui.style()).inner_margin(12.0))
+                        .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             let sel = if self.wiki_dual_pane && self.wiki_focus == WikiPane::B {
                                 self.wiki_selected_id_b.as_deref()
@@ -3815,12 +4011,13 @@ impl eframe::App for GraphApp {
                         .size_range(280.0..=900.0)
                         .resizable(true)
                         .show_separator_line(true)
+                        .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             ui.horizontal(|ui| {
                                 let focused = self.wiki_focus == WikiPane::B;
                                 if ui
-                                    .selectable_label(focused, "Pane B")
-                                    .on_hover_text("Secondary article (read-only)")
+                                    .selectable_label(focused, "Панель B")
+                                    .on_hover_text("Вторая статья, только чтение")
                                     .clicked()
                                 {
                                     self.wiki_focus = WikiPane::B;
@@ -3833,8 +4030,8 @@ impl eframe::App for GraphApp {
                                     |ui| {
                                         if self.wiki_selected_id_b.is_some()
                                             && ui
-                                                .small_button("Clear")
-                                                .on_hover_text("Clear secondary page")
+                                                .small_button("Очистить")
+                                                .on_hover_text("Закрыть вторую страницу")
                                                 .clicked()
                                         {
                                             self.clear_wiki_pane_b();
@@ -3878,7 +4075,7 @@ impl eframe::App for GraphApp {
                         .size_range(220.0..=380.0)
                         .resizable(true)
                         .show_separator_line(false)
-                        .frame(egui::Frame::side_top_panel(root_ui.style()).inner_margin(14.0))
+                        .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             let action = draw_wiki_info_panel(
                                 ui,
@@ -3909,7 +4106,7 @@ impl eframe::App for GraphApp {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
-                                ui.label("Loading…");
+                                ui.label("Загрузка…");
                             });
                         } else {
                             match draw_no_source(
@@ -3929,8 +4126,8 @@ impl eframe::App for GraphApp {
                         ui.horizontal(|ui| {
                             let focused = self.wiki_focus == WikiPane::A;
                             if ui
-                                .selectable_label(focused, "Pane A")
-                                .on_hover_text("Primary article (edit applies here)")
+                                .selectable_label(focused, "Панель A")
+                                .on_hover_text("Основная статья; редактирование работает здесь")
                                 .clicked()
                             {
                                 self.wiki_focus = WikiPane::A;
@@ -3942,16 +4139,16 @@ impl eframe::App for GraphApp {
                         if self.pending_backlinks.is_some() {
                             ui.horizontal(|ui| {
                                 ui.spinner();
-                                ui.weak("Refreshing backlinks…");
+                                ui.weak("Обновление обратных ссылок…");
                             });
                         }
                         if let Some(error) = self.wiki_backlinks_error.clone() {
                             ui.horizontal_wrapped(|ui| {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(215, 100, 85),
-                                    format!("Backlinks unavailable: {error}"),
+                                    format!("Обратные ссылки недоступны: {error}"),
                                 );
-                                if ui.button("Retry").clicked() {
+                                if ui.button("Повторить").clicked() {
                                     if let Some(id) = self.wiki_selected_id.clone() {
                                         self.refresh_backlinks(&id);
                                     }
@@ -4019,8 +4216,10 @@ impl eframe::App for GraphApp {
             ViewMode::Graph => {
                 if self.selected.is_some() {
                     let detail_w = if self.content.is_some() { 420.0 } else { 320.0 };
+                    let content_available = self.available_load_source().is_some();
                     egui::Panel::right("detail")
                         .default_size(detail_w)
+                        .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             if let (Some(sel), Some(g)) =
                                 (self.selected.as_deref(), self.ui_graph.as_ref())
@@ -4032,6 +4231,7 @@ impl eframe::App for GraphApp {
                                     self.content.as_ref(),
                                     self.content_error.as_deref(),
                                     self.pending_content.is_some(),
+                                    content_available,
                                 );
                                 match action {
                                     DetailAction::ReadContent => self.load_content_for_selected(),
@@ -4050,7 +4250,7 @@ impl eframe::App for GraphApp {
                         ui.vertical_centered(|ui| {
                             ui.add_space(ui.available_height() * 0.2);
                             ui.spinner();
-                            ui.label("Loading graph…");
+                            ui.label("Загрузка графа…");
                         });
                         return;
                     }
@@ -4112,19 +4312,19 @@ impl eframe::App for GraphApp {
         if self.confirm_reset {
             let mut do_reset = false;
             let mut stay = true;
-            egui::Window::new("Reset to seed")
+            egui::Window::new("Сбросить к фокусу")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(&ctx, |ui| {
-                    ui.label("Drop nodes merged by Expand neighbors and rebuild from the seed?");
+                    ui.label("Убрать узлы, добавленные раскрытием соседей, и перестроить граф от фокуса?");
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Reset").clicked() {
+                        if ui.button("Сбросить").clicked() {
                             do_reset = true;
                             stay = false;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button("Отмена").clicked() {
                             stay = false;
                         }
                     });
