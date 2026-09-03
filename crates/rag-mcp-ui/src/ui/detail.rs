@@ -12,7 +12,7 @@ use crate::ui::document::draw_document_reader;
 use crate::ui::theme;
 
 /// User action from the detail panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DetailAction {
     #[default]
     None,
@@ -20,6 +20,8 @@ pub enum DetailAction {
     ReadContent,
     /// Hide the content pane.
     CloseContent,
+    /// Inspect a directly connected node without leaving the graph.
+    SelectNode(String),
 }
 
 /// Content-loading state kept together so the reader contract stays explicit.
@@ -51,6 +53,11 @@ pub fn draw_detail(
     ui.separator();
 
     draw_node_fields(ui, node);
+
+    if node.kind == "stub" || !node.resolved {
+        ui.add_space(6.0);
+        draw_stub_diagnostic(ui, graph, node);
+    }
 
     ui.add_space(6.0);
     theme::inset().show(ui, |ui| {
@@ -135,12 +142,40 @@ pub fn draw_detail(
     }
 
     ui.separator();
-    draw_incident_edges(ui, graph, selected_id);
+    if let Some(next_id) = draw_incident_edges(ui, graph, selected_id) {
+        action = DetailAction::SelectNode(next_id);
+    }
 
     ui.separator();
     draw_copy_actions(ui, node);
 
     action
+}
+
+fn draw_stub_diagnostic(ui: &mut Ui, graph: &UiGraph, node: &UiNode) {
+    let incoming = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.target_id == node.id)
+        .count();
+    theme::inset().show(ui, |ui| {
+        ui.colored_label(theme::WARN, "Неразрешённая ссылка");
+        if incoming == 0 {
+            ui.label("В текущем представлении нет документа, который ссылается на эту заглушку.");
+        } else {
+            ui.label(format!(
+                "На ожидаемый объект ссылаются источники: {incoming}. Сам объект в базе не найден."
+            ));
+        }
+        ui.add_space(4.0);
+        ui.label(format!(
+            "Создайте документ с названием или wiki-slug «{}» либо исправьте ссылки в источниках.",
+            node.label
+        ));
+        if ui.button("Копировать ожидаемое название").clicked() {
+            ui.ctx().copy_text(node.label.clone());
+        }
+    });
 }
 
 fn lens_reason(lens: GraphLens, node: &UiNode) -> &'static str {
@@ -197,7 +232,8 @@ fn draw_node_fields(ui: &mut Ui, node: &UiNode) {
         });
 }
 
-fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
+fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) -> Option<String> {
+    let mut selected_neighbor = None;
     let mut incident: Vec<&UiEdge> = graph
         .edges
         .iter()
@@ -232,7 +268,7 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
     });
     if incident.is_empty() {
         ui.weak("В текущем представлении связей нет.");
-        return;
+        return None;
     }
 
     egui::ScrollArea::vertical()
@@ -257,7 +293,9 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
                 ui.group(|ui| {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong(dir);
-                        ui.label(format!("-> {other_label}"));
+                        if ui.link(format!("-> {other_label}")).clicked() {
+                            selected_neighbor = Some(other_id.to_owned());
+                        }
                         ui.weak(format!("[{}]", e.rel_type));
                         ui.monospace(format!("w={:.2}", e.weight));
                         if e.multi_count > 1 {
@@ -283,6 +321,7 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
                 });
             }
         });
+    selected_neighbor
 }
 
 fn draw_copy_actions(ui: &mut Ui, node: &UiNode) {

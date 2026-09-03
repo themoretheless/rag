@@ -42,7 +42,14 @@ pub(crate) fn rebuild_document_graph_locked(
         params![node_id],
     )?;
 
-    let links = extract_links(&doc.content);
+    // Obsidian markup is meaningful in prose, but `[[ ... ]]` is also ordinary
+    // syntax in shell and generated source files. Parsing every source file
+    // creates thousands of fake stubs such as `[[ -f "$path" ]]`.
+    let links = if document_supports_knowledge_markup(doc) {
+        extract_links(&doc.content)
+    } else {
+        Vec::new()
+    };
     let mut edges: Vec<GraphEdge> = Vec::with_capacity(links.len() + 2);
 
     for link in &links {
@@ -62,6 +69,26 @@ pub(crate) fn rebuild_document_graph_locked(
     let edge_count = edges.len();
     insert_graph_edges(conn, &edges)?;
     Ok((node_id, edge_count))
+}
+
+fn document_supports_knowledge_markup(doc: &Document) -> bool {
+    if matches!(doc.layer.as_str(), "wiki" | "diary") {
+        return true;
+    }
+    let Some(source_file) = doc.source_file.as_deref() else {
+        // API-authored documents have no filesystem extension and historically
+        // support wikilinks/tags; preserve that public behavior.
+        return true;
+    };
+    let extension = Path::new(source_file)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "md" | "mdx" | "markdown" | "txt" | "rst" | "adoc" | "org"
+    )
 }
 
 /// Attach filesystem-backed documents to stable project and directory nodes.
@@ -539,6 +566,45 @@ mod tests {
         let (_, rebuilt_count) = rebuild_document_graph(&store, &source).unwrap();
         assert_eq!(rebuilt_count, 2);
         assert_eq!(store.list_graph_edges().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn source_code_brackets_do_not_create_fake_wikilink_stubs() {
+        let store = open_temp();
+        let mut source = doc(
+            "shell",
+            "check.sh",
+            "file:///work/check.sh",
+            "if [[ ! -f \"$path\" ]]; then exit 1; fi",
+        );
+        source.wing = Some("project".into());
+        source.source_file = Some("/work/check.sh".into());
+        store.upsert_document(&source).unwrap();
+
+        let (_, edge_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(edge_count, 2, "only project and directory edges remain");
+        assert!(store
+            .find_nodes_by_label("! -f \"$path\"")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn markdown_source_files_still_create_wikilinks() {
+        let store = open_temp();
+        let mut source = doc(
+            "readme",
+            "README.md",
+            "file:///work/README.md",
+            "See [[Architecture]]",
+        );
+        source.wing = Some("project".into());
+        source.source_file = Some("/work/README.md".into());
+        store.upsert_document(&source).unwrap();
+
+        let (_, edge_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(edge_count, 3);
+        assert_eq!(store.find_nodes_by_label("Architecture").unwrap().len(), 1);
     }
 
     #[test]

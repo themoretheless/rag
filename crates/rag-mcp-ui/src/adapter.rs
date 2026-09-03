@@ -149,6 +149,24 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .iter()
         .flat_map(|edge| [edge.source_id.as_str(), edge.target_id.as_str()])
         .collect();
+    let quality_problem_ids: HashSet<&str> = view
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == "stub" || !node.resolved || !all_edge_ids.contains(node.id.as_str())
+        })
+        .map(|node| node.id.as_str())
+        .collect();
+    let quality_context_ids: HashSet<&str> = view
+        .edges
+        .iter()
+        .filter(|edge| {
+            quality_problem_ids.contains(edge.source_id.as_str())
+                || quality_problem_ids.contains(edge.target_id.as_str())
+        })
+        .flat_map(|edge| [edge.source_id.as_str(), edge.target_id.as_str()])
+        .chain(quality_problem_ids.iter().copied())
+        .collect();
     let kind_visible: Vec<&GraphNode> = view
         .nodes
         .iter()
@@ -157,7 +175,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
             "stub" => opts.show_stubs,
             _ => true,
         })
-        .filter(|node| node_visible_for_lens(node, opts.lens, &lens_edge_ids, &all_edge_ids))
+        .filter(|node| node_visible_for_lens(node, opts.lens, &lens_edge_ids, &quality_context_ids))
         .collect();
 
     // Project/room metadata belongs to placed documents. Companion graph nodes
@@ -319,7 +337,7 @@ fn node_visible_for_lens(
     node: &GraphNode,
     lens: GraphLens,
     lens_edge_ids: &HashSet<&str>,
-    all_edge_ids: &HashSet<&str>,
+    quality_context_ids: &HashSet<&str>,
 ) -> bool {
     match lens {
         GraphLens::Overview | GraphLens::Neighborhood => true,
@@ -329,9 +347,7 @@ fn node_visible_for_lens(
                 || matches!(node.kind.as_str(), "concept" | "tag" | "stub")
                 || node.metadata_json.contains("\"layer\":\"wiki\"")
         }
-        GraphLens::Quality => {
-            node.kind == "stub" || !node.resolved || !all_edge_ids.contains(node.id.as_str())
-        }
+        GraphLens::Quality => quality_context_ids.contains(node.id.as_str()),
     }
 }
 
@@ -742,10 +758,15 @@ mod tests {
             nodes: vec![
                 node("linked-a", "document", "A"),
                 node("linked-b", "document", "B"),
+                node("source", "document", "Source"),
+                node("stub", "stub", "Missing"),
                 node("isolated", "document", "Isolated"),
                 unresolved,
             ],
-            edges: vec![edge("linked", "linked-a", "linked-b", "related", 1.0)],
+            edges: vec![
+                edge("linked", "linked-a", "linked-b", "related", 1.0),
+                edge("missing", "source", "stub", "wikilink", 1.0),
+            ],
         };
         let quality = adapt(
             &view,
@@ -756,8 +777,12 @@ mod tests {
             },
         );
         let ids: HashSet<&str> = quality.nodes.iter().map(|node| node.id.as_str()).collect();
-        assert_eq!(ids, HashSet::from(["isolated", "unresolved"]));
-        assert!(quality.edges.is_empty());
+        assert_eq!(
+            ids,
+            HashSet::from(["isolated", "unresolved", "source", "stub"])
+        );
+        assert_eq!(quality.edges.len(), 1);
+        assert_eq!(quality.edges[0].id, "missing");
     }
 
     #[test]

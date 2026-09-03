@@ -3203,7 +3203,7 @@ impl eframe::App for GraphApp {
                                 }
                             });
                             ui.checkbox(&mut self.show_tags, "Показывать теги");
-                            ui.checkbox(&mut self.show_stubs, "Показывать unresolved-узлы");
+                            ui.checkbox(&mut self.show_stubs, "Показывать заглушки");
                             ui.separator();
                             ui.label("Комната");
                             ui.add(
@@ -4252,6 +4252,11 @@ impl eframe::App for GraphApp {
                                 match action {
                                     DetailAction::ReadContent => self.load_content_for_selected(),
                                     DetailAction::CloseContent => {
+                                        self.content = None;
+                                        self.content_error = None;
+                                    }
+                                    DetailAction::SelectNode(id) => {
+                                        self.selected = Some(id);
                                         self.content = None;
                                         self.content_error = None;
                                     }

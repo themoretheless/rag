@@ -639,6 +639,27 @@ impl Store {
         Ok(())
     }
 
+    /// Remove unresolved stubs that no edge references after a complete graph rebuild.
+    ///
+    /// Stub nodes are derived placeholders, so an unreferenced stub carries no
+    /// recoverable user information. Call this only after a successful full pass.
+    pub fn prune_orphan_stubs(&self) -> Result<usize> {
+        let conn = self.lock()?;
+        let deleted = conn.execute(
+            r#"
+            DELETE FROM graph_nodes AS node
+            WHERE node.kind = 'stub'
+              AND NOT node.resolved
+              AND NOT EXISTS (
+                SELECT 1 FROM graph_edges AS edge
+                WHERE edge.source_id = node.id OR edge.target_id = node.id
+              )
+            "#,
+            [],
+        )?;
+        Ok(deleted)
+    }
+
     // --- Tunnels (`rel_type = tunnel`) ---
 
     /// Create an explicit tunnel edge between two existing nodes.
@@ -1800,6 +1821,25 @@ mod tests {
         assert!(store.find_node_by_document_id("d1").unwrap().is_none());
         // Stub remains
         assert!(store.find_node_by_id("n2").unwrap().is_some());
+    }
+
+    #[test]
+    fn prune_orphan_stubs_keeps_referenced_placeholders() {
+        let store = open_temp();
+        store
+            .upsert_graph_node(&node("doc", "document", "Source", Some("d1")))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("used", "stub", "Expected", None))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("orphan", "stub", "Obsolete", None))
+            .unwrap();
+        store.link_nodes("doc", "used", "wikilink", 1.0).unwrap();
+
+        assert_eq!(store.prune_orphan_stubs().unwrap(), 1);
+        assert!(store.find_node_by_id("used").unwrap().is_some());
+        assert!(store.find_node_by_id("orphan").unwrap().is_none());
     }
 
     #[test]
