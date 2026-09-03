@@ -387,6 +387,8 @@ pub struct WikiWriteCommand {
     pub slug: String,
     pub title: String,
     pub content: String,
+    pub wing: Option<String>,
+    pub room: Option<String>,
     pub kind: String,
     pub category: Option<String>,
     pub summary: Option<String>,
@@ -449,6 +451,8 @@ pub async fn write_wiki_page_with_opts(
             slug: slug.to_string(),
             title: title.to_string(),
             content: content.to_string(),
+            wing: None,
+            room: None,
             kind: kind.to_string(),
             category: category.map(str::to_string),
             summary: summary.map(str::to_string),
@@ -470,6 +474,8 @@ pub async fn write_wiki_page_command(
         slug,
         title,
         content,
+        wing,
+        room,
         kind,
         category,
         summary,
@@ -553,6 +559,12 @@ pub async fn write_wiki_page_command(
     doc.uri = uri.clone();
     doc.title = title.clone();
     doc.content = content.clone();
+    if let Some(wing) = wing.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        doc.wing = Some(wing.to_string());
+    }
+    if let Some(room) = room.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        doc.room = Some(room.to_string());
+    }
     doc.metadata_json = metadata_json;
     doc.created_at = created_at;
     doc.updated_at = now;

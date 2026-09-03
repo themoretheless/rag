@@ -161,6 +161,10 @@ struct WikiPutBody {
     title: String,
     content: String,
     #[serde(default)]
+    wing: Option<String>,
+    #[serde(default)]
+    room: Option<String>,
+    #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
     category: Option<String>,
@@ -247,6 +251,8 @@ async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) ->
                 slug: slug.to_string(),
                 title: body.title,
                 content: body.content,
+                wing: body.wing,
+                room: body.room,
                 kind: body.kind.unwrap_or_else(|| "wiki".into()),
                 category: body.category,
                 summary: body.summary,
@@ -380,6 +386,8 @@ mod tests {
                 uri: Some("wiki://project-page".into()),
                 title: "Edited title".into(),
                 content: "edited body".into(),
+                wing: None,
+                room: None,
                 kind: None,
                 category: None,
                 summary: None,
@@ -415,6 +423,40 @@ mod tests {
             .expect("updated index");
         assert_eq!(index.category.as_deref(), Some("architecture"));
         assert_eq!(index.summary.as_deref(), Some("original summary"));
+    }
+
+    #[tokio::test]
+    async fn wiki_put_places_new_page_in_requested_project() {
+        let state = test_state("wiki-put-placement");
+        let response = wiki_put(
+            State(state.clone()),
+            Json(WikiPutBody {
+                slug: Some("alpha-overview".into()),
+                id: None,
+                uri: None,
+                title: "Alpha overview".into(),
+                content: "Project navigation".into(),
+                wing: Some("alpha".into()),
+                room: Some("overview".into()),
+                kind: Some("source_summary".into()),
+                category: Some("projects".into()),
+                summary: None,
+                agent: None,
+                if_match_revision: None,
+                if_match_etag: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let document = state
+            .store
+            .find_by_uri("wiki://alpha-overview")
+            .unwrap()
+            .expect("created page");
+        assert_eq!(document.wing.as_deref(), Some("alpha"));
+        assert_eq!(document.room.as_deref(), Some("overview"));
     }
 
     #[tokio::test]

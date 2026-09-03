@@ -25,6 +25,8 @@ pub struct StatusSnapshot {
     #[serde(default)]
     pub wiki_count: u64,
     #[serde(default)]
+    pub index_entry_count: u64,
+    #[serde(default)]
     pub index_coverage: f64,
     #[serde(default)]
     pub uncompiled_raw_count: u64,

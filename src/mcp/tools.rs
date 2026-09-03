@@ -986,6 +986,12 @@ pub struct WriteWikiPageParams {
     pub slug: String,
     pub title: String,
     pub content: String,
+    /// Project placement for newly created pages; omitted updates preserve it.
+    #[serde(default)]
+    pub wing: Option<String>,
+    /// Optional project room/module placement.
+    #[serde(default)]
+    pub room: Option<String>,
     /// `wiki` | `entity` | `concept` | `source_summary`
     #[serde(default)]
     pub kind: Option<String>,

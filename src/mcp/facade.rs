@@ -2869,6 +2869,8 @@ impl RagServer {
                 slug: params.slug,
                 title: params.title,
                 content: params.content,
+                wing: params.wing,
+                room: params.room,
                 kind: params.kind.unwrap_or_else(|| "wiki".into()),
                 category: params.category,
                 summary: params.summary,

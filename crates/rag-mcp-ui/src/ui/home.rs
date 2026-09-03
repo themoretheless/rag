@@ -201,12 +201,16 @@ pub fn draw_project_home(
                 );
                 metric_card(
                     &mut columns[3],
-                    "Индекс вики",
-                    coverage
-                        .map(|value| format!("{:.1}%", value * 100.0))
-                        .unwrap_or_else(|| "—".into()),
-                    wiki.map(|value| format!("{} страниц", compact_count(value)))
-                        .unwrap_or_else(|| "покрытие неизвестно".into()),
+                    "Статьи вики",
+                    count_opt(wiki),
+                    match (wiki, coverage) {
+                        (Some(pages), Some(value)) => format!(
+                            "{} из {} статей в индексе",
+                            compact_count((pages as f64 * value) as u64),
+                            compact_count(pages)
+                        ),
+                        _ => "индексация неизвестна".into(),
+                    },
                     theme::L3,
                 );
                 metric_card(

@@ -320,7 +320,10 @@ fn health_cards(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
                     status.raw_count, status.wiki_count
                 ));
                 ui.separator();
-                ui.label(format!("индекс Wiki {:.0}%", status.index_coverage * 100.0));
+                ui.label(format!(
+                    "в индексе Wiki: {} из {} статей",
+                    status.index_entry_count, status.wiki_count
+                ));
                 ui.separator();
                 ui.label(format!("нескомпилированных RAW={}", status.uncompiled_raw_count));
                 ui.separator();
