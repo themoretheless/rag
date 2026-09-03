@@ -1,5 +1,7 @@
 //! Resolve extracted links into graph nodes/edges for a document.
 
+use std::path::Path;
+
 use duckdb::{params, Connection};
 use uuid::Uuid;
 
@@ -41,7 +43,7 @@ pub(crate) fn rebuild_document_graph_locked(
     )?;
 
     let links = extract_links(&doc.content);
-    let mut edges: Vec<GraphEdge> = Vec::with_capacity(links.len());
+    let mut edges: Vec<GraphEdge> = Vec::with_capacity(links.len() + 2);
 
     for link in &links {
         let target_id = resolve_target(conn, link)?;
@@ -55,9 +57,98 @@ pub(crate) fn rebuild_document_graph_locked(
         });
     }
 
+    append_structural_edges(conn, doc, &node_id, &mut edges)?;
+
     let edge_count = edges.len();
     insert_graph_edges(conn, &edges)?;
     Ok((node_id, edge_count))
+}
+
+/// Attach filesystem-backed documents to stable project and directory nodes.
+/// This keeps otherwise linkless source files inside a navigable hierarchy
+/// without producing an O(n²) clique between sibling files.
+fn append_structural_edges(
+    conn: &Connection,
+    doc: &Document,
+    document_node_id: &str,
+    edges: &mut Vec<GraphEdge>,
+) -> Result<()> {
+    if let Some(project) = doc.wing.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let target_id =
+            ensure_structural_node(conn, "project", project, &format!("project://{project}"))?;
+        edges.push(structural_edge(
+            document_node_id,
+            target_id,
+            "project membership",
+        ));
+    }
+
+    let Some(source_file) = doc
+        .source_file
+        .as_deref()
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(parent) = Path::new(source_file).parent() else {
+        return Ok(());
+    };
+    let directory = parent.to_string_lossy();
+    if directory.is_empty() {
+        return Ok(());
+    }
+    let label = parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(directory.as_ref());
+    let target_id = ensure_structural_node(
+        conn,
+        "directory",
+        label,
+        &format!("directory://{directory}"),
+    )?;
+    edges.push(structural_edge(
+        document_node_id,
+        target_id,
+        "directory membership",
+    ));
+    Ok(())
+}
+
+fn ensure_structural_node(
+    conn: &Connection,
+    structural_kind: &str,
+    label: &str,
+    uri: &str,
+) -> Result<String> {
+    if let Some(node) = find_node_by_uri(conn, uri)? {
+        return Ok(node.id);
+    }
+    let node = GraphNode {
+        id: Uuid::new_v4().to_string(),
+        kind: "entity".into(),
+        label: label.to_string(),
+        document_id: None,
+        uri: Some(uri.to_string()),
+        resolved: true,
+        metadata_json: serde_json::json!({"structural_kind": structural_kind}).to_string(),
+    };
+    let id = node.id.clone();
+    upsert_graph_node(conn, &node)?;
+    Ok(id)
+}
+
+fn structural_edge(source_id: &str, target_id: String, context: &str) -> GraphEdge {
+    GraphEdge {
+        id: Uuid::new_v4().to_string(),
+        source_id: source_id.to_string(),
+        target_id,
+        rel_type: "related".into(),
+        weight: 0.5,
+        context: Some(context.to_string()),
+    }
 }
 
 /// Ensure a resolved document node exists for `doc`; promote matching stubs by title/slug/uri.
@@ -409,6 +500,45 @@ mod tests {
         let (id2, edges) = rebuild_document_graph(&store, &d2).unwrap();
         assert_eq!(id1, id2);
         assert_eq!(edges, 2);
+    }
+
+    #[test]
+    fn filesystem_document_is_linked_to_project_and_directory() {
+        let store = open_temp();
+        let mut source = doc("d1", "tab.rs", "file:///work/rag/src/tab.rs", "");
+        source.wing = Some("rag".into());
+        source.source_file = Some("/work/rag/src/tab.rs".into());
+        store.upsert_document(&source).unwrap();
+
+        let (document_node_id, edge_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(edge_count, 2);
+
+        let project = store
+            .find_node_by_uri("project://rag")
+            .unwrap()
+            .expect("project node");
+        let directory = store
+            .find_node_by_uri("directory:///work/rag/src")
+            .unwrap()
+            .expect("directory node");
+        assert_eq!(project.kind, "entity");
+        assert_eq!(directory.label, "src");
+
+        let edges = store.list_graph_edges().unwrap();
+        assert!(edges.iter().any(|edge| {
+            edge.source_id == document_node_id
+                && edge.target_id == project.id
+                && edge.rel_type == "related"
+        }));
+        assert!(edges.iter().any(|edge| {
+            edge.source_id == document_node_id
+                && edge.target_id == directory.id
+                && edge.rel_type == "related"
+        }));
+
+        let (_, rebuilt_count) = rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(rebuilt_count, 2);
+        assert_eq!(store.list_graph_edges().unwrap().len(), 2);
     }
 
     #[test]
