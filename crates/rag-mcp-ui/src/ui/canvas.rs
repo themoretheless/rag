@@ -403,11 +403,18 @@ fn localized_relation(relation: &str) -> &str {
     match relation {
         "wikilink" => "вики-ссылка",
         "related" => "связано",
+        "similar" => "похоже на",
+        "contains" => "содержит",
+        "imports" => "импортирует",
+        "describes" => "описывает",
         "tunnel" => "туннель",
         "tagged" => "с тегом",
         "mentions" => "упоминает",
         "depends_on" => "зависит от",
         "derived_from" => "производное от",
+        "cites" => "получено из",
+        "supports" => "подтверждает",
+        "contradicts" => "противоречит",
         "supersedes" => "замещает",
         other => other,
     }

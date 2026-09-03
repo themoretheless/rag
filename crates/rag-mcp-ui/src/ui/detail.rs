@@ -6,7 +6,7 @@
 
 use egui::Ui;
 
-use crate::adapter::{UiEdge, UiGraph, UiNode};
+use crate::adapter::{GraphLens, UiEdge, UiGraph, UiNode};
 use crate::load::DocumentBody;
 use crate::ui::document::draw_document_reader;
 use crate::ui::theme;
@@ -22,6 +22,14 @@ pub enum DetailAction {
     CloseContent,
 }
 
+/// Content-loading state kept together so the reader contract stays explicit.
+pub struct DetailContentState<'a> {
+    pub body: Option<&'a DocumentBody>,
+    pub error: Option<&'a str>,
+    pub loading: bool,
+    pub available: bool,
+}
+
 /// Draw the right-hand detail panel for `selected_id` in the current view.
 ///
 /// `body` — loaded wiki/raw content when available; `body_error` — last load failure;
@@ -30,10 +38,8 @@ pub fn draw_detail(
     ui: &mut Ui,
     graph: &UiGraph,
     selected_id: &str,
-    body: Option<&DocumentBody>,
-    body_error: Option<&str>,
-    body_loading: bool,
-    content_available: bool,
+    lens: GraphLens,
+    content: DetailContentState<'_>,
 ) -> DetailAction {
     let mut action = DetailAction::None;
     let Some(node) = graph.nodes.iter().find(|n| n.id == selected_id) else {
@@ -46,13 +52,24 @@ pub fn draw_detail(
 
     draw_node_fields(ui, node);
 
+    ui.add_space(6.0);
+    theme::inset().show(ui, |ui| {
+        ui.strong("Почему здесь");
+        ui.weak(lens_reason(lens, node));
+    });
+
     ui.separator();
     ui.horizontal(|ui| {
-        let has_document = node.document_id.is_some() || node.uri.is_some();
-        let can_read = content_available && has_document;
+        let has_document = node.document_id.is_some()
+            || node.uri.as_deref().is_some_and(|uri| {
+                uri.starts_with("wiki://")
+                    || uri.starts_with("file://")
+                    || uri.starts_with("raw://")
+            });
+        let can_read = content.available && has_document;
         let read = ui
             .add_enabled(can_read, egui::Button::new("Читать документ"))
-            .on_hover_text(if content_available {
+            .on_hover_text(if content.available {
                 "Загрузить полный wiki/raw-текст через HTTP /v1/document или --db"
             } else {
                 "Snapshot содержит только топологию; содержимое требует HTTP или DB"
@@ -60,25 +77,25 @@ pub fn draw_detail(
         if read.clicked() {
             action = DetailAction::ReadContent;
         }
-        if body.is_some() && ui.button("Закрыть текст").clicked() {
+        if content.body.is_some() && ui.button("Закрыть текст").clicked() {
             action = DetailAction::CloseContent;
         }
-        if !content_available {
+        if !content.available {
             ui.weak("только топология");
         } else if !has_document {
             ui.weak("нет document_id/uri (stub/tag)");
         }
-        if body_loading {
+        if content.loading {
             ui.spinner();
             ui.weak("загрузка…");
         }
     });
 
-    if let Some(err) = body_error {
+    if let Some(err) = content.error {
         ui.colored_label(theme::DANGER, err);
     }
 
-    if let Some(doc) = body {
+    if let Some(doc) = content.body {
         ui.separator();
         theme::inset().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -126,6 +143,18 @@ pub fn draw_detail(
     action
 }
 
+fn lens_reason(lens: GraphLens, node: &UiNode) -> &'static str {
+    match lens {
+        GraphLens::Overview => "Входит в выбранный проект или структурную группу.",
+        GraphLens::Neighborhood if node.depth == 0 => "Это текущий фокус представления.",
+        GraphLens::Neighborhood => "Достижим по важной связи от текущего фокуса.",
+        GraphLens::Architecture => "Участвует в структуре, импорте или зависимости.",
+        GraphLens::Knowledge => "Участвует в явной или смысловой связи знаний.",
+        GraphLens::Provenance => "Участвует в цепочке источников, подтверждений или решений.",
+        GraphLens::Quality => "Требует внимания: изолирован, не разрешён или не связан.",
+    }
+}
+
 fn draw_node_fields(ui: &mut Ui, node: &UiNode) {
     egui::Grid::new("node_detail")
         .num_columns(2)
@@ -157,11 +186,13 @@ fn draw_node_fields(ui: &mut Ui, node: &UiNode) {
             ui.end_row();
 
             ui.label("глубина");
-            ui.label(node.depth.to_string());
+            ui.label(node.depth.to_string())
+                .on_hover_text("Число переходов по связям от выбранного фокусного узла");
             ui.end_row();
 
             ui.label("степень");
-            ui.label(node.degree.to_string());
+            ui.label(node.degree.to_string())
+                .on_hover_text("Число видимых связей этого узла");
             ui.end_row();
         });
 }

@@ -55,9 +55,54 @@ pub struct UiGraph {
     pub note: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraphLens {
+    #[default]
+    Overview,
+    Neighborhood,
+    Architecture,
+    Knowledge,
+    Provenance,
+    Quality,
+}
+
+impl GraphLens {
+    pub const ALL: [Self; 6] = [
+        Self::Overview,
+        Self::Neighborhood,
+        Self::Architecture,
+        Self::Knowledge,
+        Self::Provenance,
+        Self::Quality,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Обзор",
+            Self::Neighborhood => "Окружение",
+            Self::Architecture => "Архитектура",
+            Self::Knowledge => "Знания",
+            Self::Provenance => "Происхождение",
+            Self::Quality => "Качество",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Overview => "Карта проекта: каталоги, документы и основные сущности",
+            Self::Neighborhood => "Ближайшие важные связи выбранного объекта",
+            Self::Architecture => "Структура, импорты, зависимости и компоненты",
+            Self::Knowledge => "Статьи, понятия и смысловые связи",
+            Self::Provenance => "Источники, подтверждения и цепочки решений",
+            Self::Quality => "Изолированные и неразрешённые объекты",
+        }
+    }
+}
+
 /// Filter / style options for adapter.
 #[derive(Debug, Clone)]
 pub struct AdaptOptions {
+    pub lens: GraphLens,
     pub seed_id: Option<String>,
     pub show_tags: bool,
     pub show_stubs: bool,
@@ -72,6 +117,7 @@ pub struct AdaptOptions {
 impl Default for AdaptOptions {
     fn default() -> Self {
         Self {
+            lens: GraphLens::Overview,
             seed_id: None,
             show_tags: false,
             show_stubs: true,
@@ -92,6 +138,17 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let raw_nodes = view.nodes.len();
     let raw_edges = view.edges.len();
 
+    let lens_edge_ids: HashSet<&str> = view
+        .edges
+        .iter()
+        .filter(|edge| edge_visible_for_lens(edge, opts.lens))
+        .flat_map(|edge| [edge.source_id.as_str(), edge.target_id.as_str()])
+        .collect();
+    let all_edge_ids: HashSet<&str> = view
+        .edges
+        .iter()
+        .flat_map(|edge| [edge.source_id.as_str(), edge.target_id.as_str()])
+        .collect();
     let kind_visible: Vec<&GraphNode> = view
         .nodes
         .iter()
@@ -100,6 +157,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
             "stub" => opts.show_stubs,
             _ => true,
         })
+        .filter(|node| node_visible_for_lens(node, opts.lens, &lens_edge_ids, &all_edge_ids))
         .collect();
 
     // Project/room metadata belongs to placed documents. Companion graph nodes
@@ -154,6 +212,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let candidate_edges: Vec<&GraphEdge> = view
         .edges
         .iter()
+        .filter(|edge| edge_visible_for_lens(edge, opts.lens))
         .filter(|e| keep.contains(&e.source_id) && keep.contains(&e.target_id))
         .filter(|e| {
             if !opts.pkb_rels_only {
@@ -232,6 +291,47 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         raw_nodes,
         raw_edges,
         note,
+    }
+}
+
+fn edge_visible_for_lens(edge: &GraphEdge, lens: GraphLens) -> bool {
+    let context = edge.context.as_deref().unwrap_or_default();
+    match lens {
+        GraphLens::Overview | GraphLens::Neighborhood | GraphLens::Quality => true,
+        GraphLens::Architecture => {
+            matches!(
+                edge.rel_type.as_str(),
+                "contains" | "imports" | "depends_on" | "mentions"
+            ) || (edge.rel_type == "related" && context.ends_with(" membership"))
+        }
+        GraphLens::Knowledge => {
+            matches!(edge.rel_type.as_str(), "wikilink" | "tagged" | "describes")
+                || (edge.rel_type == "related" && !context.ends_with(" membership"))
+        }
+        GraphLens::Provenance => matches!(
+            edge.rel_type.as_str(),
+            "derived_from" | "cites" | "supports" | "contradicts" | "supersedes"
+        ),
+    }
+}
+
+fn node_visible_for_lens(
+    node: &GraphNode,
+    lens: GraphLens,
+    lens_edge_ids: &HashSet<&str>,
+    all_edge_ids: &HashSet<&str>,
+) -> bool {
+    match lens {
+        GraphLens::Overview | GraphLens::Neighborhood => true,
+        GraphLens::Architecture | GraphLens::Provenance => lens_edge_ids.contains(node.id.as_str()),
+        GraphLens::Knowledge => {
+            lens_edge_ids.contains(node.id.as_str())
+                || matches!(node.kind.as_str(), "concept" | "tag" | "stub")
+                || node.metadata_json.contains("\"layer\":\"wiki\"")
+        }
+        GraphLens::Quality => {
+            node.kind == "stub" || !node.resolved || !all_edge_ids.contains(node.id.as_str())
+        }
     }
 }
 
@@ -522,10 +622,14 @@ fn node_color(kind: &str, layer: Option<&str>) -> egui::Color32 {
 pub fn edge_color(rel_type: &str) -> egui::Color32 {
     match rel_type {
         "wikilink" => theme::rgba(theme::L3, 150),
-        "related" => theme::rgba(theme::L0, 115),
+        "related" | "similar" => theme::rgba(theme::L0, 115),
         "tagged" | "mentions" => theme::rgba(theme::L1, 130),
+        "contains" | "imports" | "describes" => theme::rgba(theme::L2, 145),
         "tunnel" => theme::rgba(theme::DANGER, 175),
-        "depends_on" | "derived_from" | "supersedes" => theme::rgba(theme::OK, 150),
+        "contradicts" => theme::rgba(theme::DANGER, 180),
+        "depends_on" | "derived_from" | "supersedes" | "cites" | "supports" => {
+            theme::rgba(theme::OK, 150)
+        }
         _ => theme::rgba(theme::MUTED, 120),
     }
 }
@@ -569,6 +673,91 @@ mod tests {
             weight,
             context: None,
         }
+    }
+
+    fn contextual_edge(id: &str, s: &str, t: &str, rel: &str, context: &str) -> GraphEdge {
+        GraphEdge {
+            context: Some(context.into()),
+            ..edge(id, s, t, rel, 1.0)
+        }
+    }
+
+    #[test]
+    fn graph_lenses_keep_only_their_semantic_relations() {
+        let view = GraphView {
+            nodes: vec![
+                node("a", "document", "A"),
+                node("b", "document", "B"),
+                node("c", "document", "C"),
+                node("d", "document", "D"),
+            ],
+            edges: vec![
+                contextual_edge("structure", "a", "b", "related", "project membership"),
+                edge("knowledge", "b", "c", "wikilink", 1.0),
+                edge("provenance", "c", "d", "supports", 1.0),
+            ],
+        };
+
+        let architecture = adapt(
+            &view,
+            &AdaptOptions {
+                lens: GraphLens::Architecture,
+                pkb_rels_only: false,
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(architecture.edges.len(), 1);
+        assert_eq!(architecture.edges[0].id, "structure");
+
+        let knowledge = adapt(
+            &view,
+            &AdaptOptions {
+                lens: GraphLens::Knowledge,
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(knowledge.edges.len(), 1);
+        assert_eq!(knowledge.edges[0].id, "knowledge");
+
+        let provenance = adapt(
+            &view,
+            &AdaptOptions {
+                lens: GraphLens::Provenance,
+                pkb_rels_only: false,
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(provenance.edges.len(), 1);
+        assert_eq!(provenance.edges[0].id, "provenance");
+    }
+
+    #[test]
+    fn quality_lens_collects_isolated_and_unresolved_nodes() {
+        let mut unresolved = node("unresolved", "document", "Unresolved");
+        unresolved.resolved = false;
+        let view = GraphView {
+            nodes: vec![
+                node("linked-a", "document", "A"),
+                node("linked-b", "document", "B"),
+                node("isolated", "document", "Isolated"),
+                unresolved,
+            ],
+            edges: vec![edge("linked", "linked-a", "linked-b", "related", 1.0)],
+        };
+        let quality = adapt(
+            &view,
+            &AdaptOptions {
+                lens: GraphLens::Quality,
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        let ids: HashSet<&str> = quality.nodes.iter().map(|node| node.id.as_str()).collect();
+        assert_eq!(ids, HashSet::from(["isolated", "unresolved"]));
+        assert!(quality.edges.is_empty());
     }
 
     #[test]

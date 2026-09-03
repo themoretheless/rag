@@ -24,24 +24,30 @@ pub fn overview_grid_place(graph: &UiGraph, cache: &mut PosCache) {
     if graph.nodes.is_empty() {
         return;
     }
-    let mut ids: Vec<&str> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
-    ids.sort_unstable();
+    let mut nodes: Vec<&UiNode> = graph.nodes.iter().collect();
+    nodes.sort_unstable_by(|a, b| {
+        a.wing
+            .cmp(&b.wing)
+            .then_with(|| a.room.cmp(&b.room))
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.id.cmp(&b.id))
+    });
     // Match the native canvas' usual widescreen shape so Fit uses its full
     // width instead of leaving large empty gutters around a square grid.
     const OVERVIEW_ASPECT: f64 = 16.0 / 9.0;
-    let columns = ((ids.len() as f64 * OVERVIEW_ASPECT).sqrt())
+    let columns = ((nodes.len() as f64 * OVERVIEW_ASPECT).sqrt())
         .ceil()
         .max(1.0) as usize;
-    let rows = ids.len().div_ceil(columns);
+    let rows = nodes.len().div_ceil(columns);
     // The canvas is virtual and unbounded: do not compress the corpus merely
     // to make its world bounds resemble the current viewport. A generous
     // world-space step keeps nodes separable while pan/zoom exposes the rest.
     let spacing = 48.0_f32;
     let width = columns.saturating_sub(1) as f32 * spacing;
     let height = rows.saturating_sub(1) as f32 * spacing;
-    for (index, id) in ids.into_iter().enumerate() {
+    for (index, node) in nodes.into_iter().enumerate() {
         cache.insert(
-            id.to_owned(),
+            node.id.clone(),
             Pos2::new(
                 (index % columns) as f32 * spacing - width * 0.5,
                 (index / columns) as f32 * spacing - height * 0.5,

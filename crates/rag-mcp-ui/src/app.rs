@@ -8,7 +8,7 @@
 use egui::Vec2;
 use rag_mcp::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 
-use crate::adapter::{adapt, topology_generation, AdaptOptions, UiGraph};
+use crate::adapter::{adapt, topology_generation, AdaptOptions, GraphLens, UiGraph};
 use crate::layout::{overview_grid_place, place_missing_near_neighbors, radial_place, PosCache};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ use crate::product::{LibraryItem, LibraryPage, LibraryRequest, ProjectHome};
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
 use crate::search::{SearchRequest, SearchResults};
 use crate::ui::canvas::draw_canvas;
-use crate::ui::detail::{draw_detail, DetailAction};
+use crate::ui::detail::{draw_detail, DetailAction, DetailContentState};
 use crate::ui::empty::{
     draw_empty_banner, draw_no_source, EmptyGraphStats, EmptyKind, NoSourceAction,
 };
@@ -313,6 +313,7 @@ pub struct GraphApp {
     seed_error: Option<String>,
     depth: u32,
     max_nodes: u32,
+    graph_lens: GraphLens,
 
     show_tags: bool,
     show_stubs: bool,
@@ -465,6 +466,7 @@ impl GraphApp {
             seed_error: None,
             depth,
             max_nodes,
+            graph_lens: GraphLens::Neighborhood,
             show_tags: false,
             show_stubs: true,
             prev_show_tags: false,
@@ -1145,6 +1147,7 @@ impl GraphApp {
     }
 
     fn submit_graph_focus(&mut self) {
+        self.graph_lens = GraphLens::Neighborhood;
         if self.topology_query_requires_reload() {
             self.seed_id = None;
             self.seed_error = None;
@@ -1846,11 +1849,25 @@ impl GraphApp {
         };
 
         let Some(seed) = self.seed_id.as_deref() else {
+            if self.graph_lens == GraphLens::Neighborhood {
+                self.local_view = None;
+                self.local_truncated = false;
+                self.ui_graph = None;
+                self.positions.clear();
+                self.layout_ready = false;
+                self.need_fit = true;
+                return;
+            }
+            let pkb_rels_only = !matches!(
+                self.graph_lens,
+                GraphLens::Architecture | GraphLens::Provenance
+            );
             let opts = AdaptOptions {
+                lens: self.graph_lens,
                 seed_id: None,
                 show_tags: self.show_tags,
                 show_stubs: self.show_stubs,
-                pkb_rels_only: true,
+                pkb_rels_only,
                 wing: nonempty(&self.filter_wing),
                 room: nonempty(&self.filter_room),
                 show_all_nodes: true,
@@ -1873,11 +1890,16 @@ impl GraphApp {
     /// Adapt `local`, update layout. `reset_layout` re-runs RadialLocal; expand uses false.
     fn apply_local_topology(&mut self, local: GraphView, reset_layout: bool) {
         let seed = self.seed_id.clone();
+        let pkb_rels_only = !matches!(
+            self.graph_lens,
+            GraphLens::Architecture | GraphLens::Provenance
+        );
         let opts = AdaptOptions {
+            lens: self.graph_lens,
             seed_id: seed.clone(),
             show_tags: self.show_tags,
             show_stubs: self.show_stubs,
-            pkb_rels_only: true,
+            pkb_rels_only,
             wing: nonempty(&self.filter_wing),
             room: nonempty(&self.filter_room),
             show_all_nodes: false,
@@ -1994,6 +2016,9 @@ impl GraphApp {
             }
             if self.seed_id.is_none() && self.seed_error.is_some() {
                 return Some((EmptyKind::SeedNotFound, self.seed_error.clone()));
+            }
+            if self.seed_id.is_none() && self.graph_lens == GraphLens::Neighborhood {
+                return Some((EmptyKind::MissingSeed, None));
             }
             if let Some(g) = &self.ui_graph {
                 if g.nodes.is_empty() {
@@ -3081,6 +3106,25 @@ impl eframe::App for GraphApp {
                     }
                     ViewMode::Graph => {
                         let content_available = self.available_load_source().is_some();
+                        let previous_lens = self.graph_lens;
+                        let lens_response = egui::ComboBox::from_id_salt("graph_lens")
+                            .selected_text(self.graph_lens.label())
+                            .width(130.0)
+                            .show_ui(ui, |ui| {
+                                for lens in GraphLens::ALL {
+                                    ui.selectable_value(
+                                        &mut self.graph_lens,
+                                        lens,
+                                        lens.label(),
+                                    );
+                                }
+                            });
+                        lens_response.response.on_hover_text(self.graph_lens.description());
+                        if self.graph_lens != previous_lens {
+                            self.selected = None;
+                            self.content = None;
+                            self.rebuild_ui_graph();
+                        }
                         ui.weak("Фокус");
                         let seed_resp = ui.add(
                             egui::TextEdit::singleline(&mut self.seed_input)
@@ -4197,10 +4241,13 @@ impl eframe::App for GraphApp {
                                     ui,
                                     g,
                                     sel,
-                                    self.content.as_ref(),
-                                    self.content_error.as_deref(),
-                                    self.pending_content.is_some(),
-                                    content_available,
+                                    self.graph_lens,
+                                    DetailContentState {
+                                        body: self.content.as_ref(),
+                                        error: self.content_error.as_deref(),
+                                        loading: self.pending_content.is_some(),
+                                        available: content_available,
+                                    },
                                 );
                                 match action {
                                     DetailAction::ReadContent => self.load_content_for_selected(),
