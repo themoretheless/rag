@@ -962,7 +962,7 @@ fn http_neighbors_path(
 /// [`Store::export_graph_for_ui`].
 ///
 /// PKB defaults centralized on Store: `rel_types = [wikilink, related]` and
-/// `max_nodes = 300` ([`UI_GRAPH_EXPORT_MAX_NODES`]); tag inclusion follows the
+/// `max_nodes = 1,000,000` ([`UI_GRAPH_EXPORT_MAX_NODES`]); tag inclusion follows the
 /// UI toggle.
 /// Fails clearly if the path cannot be opened (missing file, lock, corrupt DB).
 /// Direct writes are unsupported; if a writer lock blocks the read-only open,
@@ -1932,7 +1932,7 @@ mod tests {
     }
 
     #[test]
-    fn live_db_exact_seed_is_loaded_beyond_default_export_cap() {
+    fn live_db_exact_seed_loads_focused_neighbors() {
         let suffix = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("clock after epoch")
@@ -1941,7 +1941,7 @@ mod tests {
         fs::create_dir_all(&dir).expect("create temp directory");
         let db = dir.join("seed.duckdb");
         let store = Store::open(&db).expect("open temp store");
-        for index in 0..UI_GRAPH_EXPORT_MAX_NODES {
+        for index in 0..(UI_HARD_MAX_NODES as u32 + 20) {
             store
                 .upsert_graph_node(&node(
                     &format!("early-{index:03}"),
@@ -1959,13 +1959,6 @@ mod tests {
             .insert_graph_edges(&[edge("late-edge", "late-seed", "late-neighbor")])
             .expect("link late seed");
         drop(store);
-
-        let default_view = load_live_db(&db, None, 1, None, false).expect("default export");
-        assert!(!default_view
-            .view
-            .nodes
-            .iter()
-            .any(|node| node.id == "late-seed"));
 
         let focused = load_live_db(&db, Some("late-seed"), 1, None, false).expect("focused export");
         assert!(focused.view.nodes.iter().any(|node| node.id == "late-seed"));

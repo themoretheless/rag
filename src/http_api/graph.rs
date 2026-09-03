@@ -74,7 +74,10 @@ async fn neighbors(
         return api_err(AppError::config("seed query param required"));
     }
     let depth = q.depth.unwrap_or(1).clamp(1, 3);
-    let max_nodes = q.max_nodes.unwrap_or(100).clamp(1, 300);
+    let max_nodes = q
+        .max_nodes
+        .unwrap_or(100)
+        .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES);
 
     let seed = seed.to_owned();
     let include_tags = q.include_tags.unwrap_or(false);

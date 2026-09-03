@@ -117,7 +117,7 @@ impl Store {
     /// Applies PKB defaults (GRAPH_DESIGN §7.1 / EGUI_GRAPH_VIEW):
     /// - `rel_types = [wikilink, related]`
     /// - kinds: document, stub, entity (tags excluded unless `include_tags`)
-    /// - `max_nodes` defaults to [`crate::models::UI_GRAPH_EXPORT_MAX_NODES`] (300)
+    /// - `max_nodes` defaults to [`crate::models::UI_GRAPH_EXPORT_MAX_NODES`] (1,000,000)
     ///
     /// Returns pure topology (no positions). Prefer this over a bare
     /// [`Self::get_graph_view`] call when building a UI-oriented export so PKB

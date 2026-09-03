@@ -791,8 +791,12 @@ pub struct GraphFilter {
     pub max_nodes: Option<u32>,
 }
 
-/// Hard layout cap for the optional inspector / UI-oriented export (EGUI_GRAPH_VIEW §8.1).
-pub const UI_GRAPH_EXPORT_MAX_NODES: u32 = 300;
+/// Maximum number of nodes returned by a UI-oriented graph export.
+///
+/// Rendering applies its own, much smaller viewport cap; this limit only keeps
+/// the server/query boundary finite while allowing the complete current corpus
+/// to be searched for a useful local focus.
+pub const UI_GRAPH_EXPORT_MAX_NODES: u32 = 1_000_000;
 
 /// Default PKB relation types for local graph and UI export
 /// (GRAPH_DESIGN §7.1: `wikilink` + `related`; tags / tunnel / Dep opt-in).
@@ -806,7 +810,7 @@ impl GraphFilter {
     ///
     /// - `rel_types`: wikilink + related (`include_tags` adds `tagged`)
     /// - kinds: document + stub + entity (`include_tags` adds `tag`)
-    /// - `max_nodes`: `max_nodes` or [`UI_GRAPH_EXPORT_MAX_NODES`] (300)
+    /// - `max_nodes`: `max_nodes` or [`UI_GRAPH_EXPORT_MAX_NODES`] (1,000,000)
     ///
     /// Topology only; no layout positions.
     pub fn pkb_ui_export(max_nodes: Option<u32>, include_tags: bool) -> Self {
@@ -1192,7 +1196,15 @@ impl Default for KgFact {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_document_etag, parse_document_etag, Document, ProjectId, WikiPageListItem};
+    use super::{
+        format_document_etag, parse_document_etag, Document, ProjectId, WikiPageListItem,
+        UI_GRAPH_EXPORT_MAX_NODES,
+    };
+
+    #[test]
+    fn ui_graph_export_limit_is_one_million() {
+        assert_eq!(UI_GRAPH_EXPORT_MAX_NODES, 1_000_000);
+    }
 
     #[test]
     fn project_id_is_trimmed_and_rejects_ambiguous_values() {
