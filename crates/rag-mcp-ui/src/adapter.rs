@@ -153,7 +153,10 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .nodes
         .iter()
         .filter(|node| {
-            node.kind == "stub" || !node.resolved || !all_edge_ids.contains(node.id.as_str())
+            node.kind == "stub"
+                || !node.resolved
+                || !all_edge_ids.contains(node.id.as_str())
+                || (node.kind == "tag" && suspicious_tag_label(&node.label))
         })
         .map(|node| node.id.as_str())
         .collect();
@@ -171,7 +174,10 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .nodes
         .iter()
         .filter(|n| match n.kind.as_str() {
-            "tag" => opts.show_tags,
+            "tag" => {
+                opts.show_tags
+                    || (opts.lens == GraphLens::Quality && suspicious_tag_label(&n.label))
+            }
             "stub" => opts.show_stubs,
             _ => true,
         })
@@ -310,6 +316,12 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         raw_edges,
         note,
     }
+}
+
+pub(crate) fn suspicious_tag_label(label: &str) -> bool {
+    label.chars().all(|ch| ch.is_ascii_digit())
+        || !label.chars().any(char::is_alphanumeric)
+        || (matches!(label.len(), 3 | 4 | 6 | 8) && label.chars().all(|ch| ch.is_ascii_hexdigit()))
 }
 
 fn edge_visible_for_lens(edge: &GraphEdge, lens: GraphLens) -> bool {
@@ -783,6 +795,27 @@ mod tests {
         );
         assert_eq!(quality.edges.len(), 1);
         assert_eq!(quality.edges[0].id, "missing");
+    }
+
+    #[test]
+    fn quality_lens_collects_suspicious_tags_with_source_context() {
+        let view = GraphView {
+            nodes: vec![
+                node("source", "document", "Source"),
+                node("tag", "tag", "000000"),
+            ],
+            edges: vec![edge("tagged", "source", "tag", "tagged", 1.0)],
+        };
+        let quality = adapt(
+            &view,
+            &AdaptOptions {
+                lens: GraphLens::Quality,
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        let ids: HashSet<&str> = quality.nodes.iter().map(|node| node.id.as_str()).collect();
+        assert_eq!(ids, HashSet::from(["source", "tag"]));
     }
 
     #[test]

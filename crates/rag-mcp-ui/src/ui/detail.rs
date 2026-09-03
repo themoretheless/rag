@@ -6,7 +6,7 @@
 
 use egui::Ui;
 
-use crate::adapter::{GraphLens, UiEdge, UiGraph, UiNode};
+use crate::adapter::{suspicious_tag_label, GraphLens, UiEdge, UiGraph, UiNode};
 use crate::load::DocumentBody;
 use crate::ui::document::draw_document_reader;
 use crate::ui::theme;
@@ -57,6 +57,9 @@ pub fn draw_detail(
     if node.kind == "stub" || !node.resolved {
         ui.add_space(6.0);
         draw_stub_diagnostic(ui, graph, node);
+    } else if node.kind == "tag" && suspicious_tag_label(&node.label) {
+        ui.add_space(6.0);
+        draw_suspicious_tag_diagnostic(ui, graph, node);
     }
 
     ui.add_space(6.0);
@@ -150,6 +153,22 @@ pub fn draw_detail(
     draw_copy_actions(ui, node);
 
     action
+}
+
+fn draw_suspicious_tag_diagnostic(ui: &mut Ui, graph: &UiGraph, node: &UiNode) {
+    let sources = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.target_id == node.id)
+        .count();
+    theme::inset().show(ui, |ui| {
+        ui.colored_label(theme::WARN, "Подозрительный тег");
+        ui.label(format!("Найден в источниках: {sources}. Похож на число, цвет или разделитель, а не на смысловую метку."));
+        ui.label("Исправьте разметку в источнике или удалите символ # перед техническим значением.");
+        if ui.button("Копировать тег").clicked() {
+            ui.ctx().copy_text(node.label.clone());
+        }
+    });
 }
 
 fn draw_stub_diagnostic(ui: &mut Ui, graph: &UiGraph, node: &UiNode) {

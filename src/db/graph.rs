@@ -660,6 +660,23 @@ impl Store {
         Ok(deleted)
     }
 
+    /// Remove derived tag nodes that no rebuilt document references.
+    pub fn prune_orphan_tags(&self) -> Result<usize> {
+        let conn = self.lock()?;
+        let deleted = conn.execute(
+            r#"
+            DELETE FROM graph_nodes AS node
+            WHERE node.kind = 'tag'
+              AND NOT EXISTS (
+                SELECT 1 FROM graph_edges AS edge
+                WHERE edge.source_id = node.id OR edge.target_id = node.id
+              )
+            "#,
+            [],
+        )?;
+        Ok(deleted)
+    }
+
     // --- Tunnels (`rel_type = tunnel`) ---
 
     /// Create an explicit tunnel edge between two existing nodes.
@@ -1840,6 +1857,25 @@ mod tests {
         assert_eq!(store.prune_orphan_stubs().unwrap(), 1);
         assert!(store.find_node_by_id("used").unwrap().is_some());
         assert!(store.find_node_by_id("orphan").unwrap().is_none());
+    }
+
+    #[test]
+    fn prune_orphan_tags_keeps_referenced_tags() {
+        let store = open_temp();
+        store
+            .upsert_graph_node(&node("doc", "document", "Source", Some("d1")))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("used-tag", "tag", "rust", None))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("orphan-tag", "tag", "000000", None))
+            .unwrap();
+        store.link_nodes("doc", "used-tag", "tagged", 1.0).unwrap();
+
+        assert_eq!(store.prune_orphan_tags().unwrap(), 1);
+        assert!(store.find_node_by_id("used-tag").unwrap().is_some());
+        assert!(store.find_node_by_id("orphan-tag").unwrap().is_none());
     }
 
     #[test]

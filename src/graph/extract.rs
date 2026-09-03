@@ -237,6 +237,12 @@ fn parse_wikilink_inner(
         None => (inner, None),
     };
 
+    // A fragment identifies a section inside the target document, not a
+    // separate graph object. A fragment-only link stays within this document.
+    let target_raw = target_raw
+        .split_once('#')
+        .map_or(target_raw, |(base, _)| base)
+        .trim();
     if target_raw.is_empty() {
         return None;
     }
@@ -272,7 +278,7 @@ fn extract_tags(masked: &str, original: &str) -> Vec<(usize, ExtractedLink)> {
             }
 
             let label = body.trim_matches('/').to_string();
-            if !label.is_empty() {
+            if is_meaningful_tag(&label) {
                 out.push((
                     idx,
                     ExtractedLink {
@@ -290,6 +296,19 @@ fn extract_tags(masked: &str, original: &str) -> Vec<(usize, ExtractedLink)> {
     }
 
     out
+}
+
+fn is_meaningful_tag(label: &str) -> bool {
+    if label.is_empty() || label.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    if !label.chars().any(char::is_alphanumeric) {
+        return false;
+    }
+    // In prose and generated reports these are overwhelmingly CSS colours,
+    // not knowledge tags. Keeping them creates thousands of meaningless nodes.
+    matches!(label.len(), 3 | 4 | 6 | 8).then(|| label.chars().all(|ch| ch.is_ascii_hexdigit()))
+        != Some(true)
 }
 
 fn is_tag_boundary(prev: Option<char>) -> bool {
@@ -375,6 +394,13 @@ mod tests {
     }
 
     #[test]
+    fn wikilink_fragments_resolve_to_documents_not_section_stubs() {
+        let links = extract_links("[[Page#Section|read]] [[#Local section]]");
+        assert_eq!(labels_of(&links, REL_WIKILINK), vec!["Page"]);
+        assert_eq!(links[0].alias.as_deref(), Some("read"));
+    }
+
+    #[test]
     fn tags_and_nested() {
         let links = extract_links("Hello #rust and #multi/level-tag end");
         assert_eq!(
@@ -387,6 +413,12 @@ mod tests {
     fn tag_unicode_and_punctuation_body() {
         let links = extract_links("#café #tag_1 #a-b");
         assert_eq!(labels_of(&links, REL_TAGGED), vec!["café", "tag_1", "a-b"]);
+    }
+
+    #[test]
+    fn rejects_numeric_css_colour_and_punctuation_pseudo_tags() {
+        let links = extract_links("#12345 #000000 #abc #deadbeef #--- #idea #rust-2026");
+        assert_eq!(labels_of(&links, REL_TAGGED), vec!["idea", "rust-2026"]);
     }
 
     #[test]

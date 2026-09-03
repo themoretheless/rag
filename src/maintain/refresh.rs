@@ -167,6 +167,8 @@ pub struct GraphRebuildReport {
     pub dry_run: bool,
     /// Derived unresolved placeholders removed after a complete successful pass.
     pub pruned_orphan_stubs: usize,
+    /// Derived tag nodes removed after a complete successful pass.
+    pub pruned_orphan_tags: usize,
     /// Per-document result rows omitted from this bounded report payload.
     pub document_results_truncated: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -400,6 +402,11 @@ pub fn rebuild_graph_for_all_or_dirty(
     } else {
         0
     };
+    let pruned_orphan_tags = if complete_success {
+        store.prune_orphan_tags()?
+    } else {
+        0
+    };
 
     Ok(GraphRebuildReport {
         dirty_only,
@@ -410,6 +417,7 @@ pub fn rebuild_graph_for_all_or_dirty(
         skipped_cap,
         dry_run: false,
         pruned_orphan_stubs,
+        pruned_orphan_tags,
         document_results_truncated,
         documents,
     })
@@ -782,6 +790,7 @@ pub async fn maintain_refresh(
                 skipped_cap: candidate_count.saturating_sub(flags.max_docs),
                 dry_run: true,
                 pruned_orphan_stubs: 0,
+                pruned_orphan_tags: 0,
                 document_results_truncated: 0,
                 documents: Vec::new(),
             });
