@@ -9,7 +9,7 @@ use egui::Vec2;
 use rag_mcp::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 
 use crate::adapter::{adapt, topology_generation, AdaptOptions, UiGraph};
-use crate::layout::{place_missing_near_neighbors, radial_place, PosCache};
+use crate::layout::{overview_grid_place, place_missing_near_neighbors, radial_place, PosCache};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -143,10 +143,6 @@ fn mode_after_project_switch(mode: ViewMode) -> ViewMode {
     }
 }
 
-fn should_select_default_project(bootstrap_done: bool, project: &str, seed: &str) -> bool {
-    !bootstrap_done && project.trim().is_empty() && seed.trim().is_empty()
-}
-
 fn is_operations_mutation(action: &OperationsAction) -> bool {
     matches!(
         action,
@@ -263,7 +259,6 @@ pub struct GraphApp {
     project_catalog_error: Option<String>,
     /// True after the first successful source bootstrap. This distinguishes an
     /// initial default from the user's later explicit "All projects" choice.
-    project_bootstrap_done: bool,
     source: Option<GraphSourceKind>,
     load_error: Option<String>,
     raw_truncated: bool,
@@ -423,7 +418,6 @@ impl GraphApp {
             full_view: None,
             project_catalog: Vec::new(),
             project_catalog_error: None,
-            project_bootstrap_done: false,
             source: None,
             load_error: None,
             raw_truncated: false,
@@ -1182,7 +1176,6 @@ impl GraphApp {
         self.connect_url.clone_from(&url);
         self.open.source = Some(CliSource::Http(url));
         self.load_error = None;
-        self.project_bootstrap_done = false;
         self.project_catalog.clear();
         self.project_catalog_error = None;
         self.wiki_loaded = false;
@@ -1203,27 +1196,6 @@ impl GraphApp {
         }
         self.source = Some(loaded.source);
         self.full_view = Some(loaded.view);
-        let mut selected_default_project = false;
-        if should_select_default_project(
-            self.project_bootstrap_done,
-            &self.filter_wing,
-            &self.seed_input,
-        ) {
-            if let Some(project) = self.project_catalog.first() {
-                self.filter_wing = project.clone();
-                self.prev_filter_wing = project.clone();
-                self.library_request.wing = project.clone();
-                self.search_request.wing = Some(project.clone());
-                selected_default_project = true;
-            }
-        }
-        self.project_bootstrap_done = true;
-        if selected_default_project && self.topology_query_requires_reload() {
-            // The bootstrap request discovers the project catalog. Immediately
-            // replace its bounded global graph with a source-scoped export.
-            self.dispatch_graph_load();
-            return;
-        }
         if !self.seed_input.is_empty() {
             self.apply_seed_from_input();
         } else {
@@ -1874,10 +1846,22 @@ impl GraphApp {
         };
 
         let Some(seed) = self.seed_id.as_deref() else {
+            let opts = AdaptOptions {
+                seed_id: None,
+                show_tags: self.show_tags,
+                show_stubs: self.show_stubs,
+                pkb_rels_only: true,
+                wing: nonempty(&self.filter_wing),
+                room: nonempty(&self.filter_room),
+                show_all_nodes: true,
+            };
+            let overview = adapt(full, &opts);
+            overview_grid_place(&overview, &mut self.positions);
             self.local_view = None;
             self.local_truncated = false;
-            self.ui_graph = Some(UiGraph::default());
-            self.layout_ready = false;
+            self.ui_graph = Some(overview);
+            self.need_fit = true;
+            self.layout_ready = true;
             return;
         };
 
@@ -1896,6 +1880,7 @@ impl GraphApp {
             pkb_rels_only: true,
             wing: nonempty(&self.filter_wing),
             room: nonempty(&self.filter_room),
+            show_all_nodes: false,
         };
         let ui_graph = adapt(&local, &opts);
         let topo = topology_generation(&local);
@@ -2007,20 +1992,8 @@ impl GraphApp {
             if full.nodes.is_empty() {
                 return Some((EmptyKind::EmptyGraph, None));
             }
-            if self.seed_id.is_none() {
-                if self.seed_error.is_some() {
-                    return Some((EmptyKind::SeedNotFound, self.seed_error.clone()));
-                }
-                if self.raw_truncated {
-                    return Some((
-                        EmptyKind::OverCap,
-                        Some(format!(
-                            "Ответ сервера достиг лимита экспорта ({} узлов); выберите фокус, чтобы загрузить его окружение",
-                            self.raw_node_count
-                        )),
-                    ));
-                }
-                return Some((EmptyKind::MissingSeed, None));
+            if self.seed_id.is_none() && self.seed_error.is_some() {
+                return Some((EmptyKind::SeedNotFound, self.seed_error.clone()));
             }
             if let Some(g) = &self.ui_graph {
                 if g.nodes.is_empty() {
@@ -4513,14 +4486,6 @@ mod tests {
             ViewMode::Library
         );
         assert_eq!(mode_after_project_switch(ViewMode::Graph), ViewMode::Graph);
-    }
-
-    #[test]
-    fn all_projects_remains_explicit_after_bootstrap() {
-        assert!(should_select_default_project(false, "", ""));
-        assert!(!should_select_default_project(true, "", ""));
-        assert!(!should_select_default_project(false, "alpha", ""));
-        assert!(!should_select_default_project(false, "", "doc://seed"));
     }
 
     #[test]

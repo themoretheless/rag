@@ -129,6 +129,7 @@ pub fn draw_canvas(
     }
 
     let n_nodes = graph.nodes.len();
+    let overview_lod = n_nodes > 5_000 && z < 0.5;
     let show_all_labels = n_nodes <= 40 || z > 1.8;
     let pointer = canvas_pointer;
     let click_pos = if response.clicked() {
@@ -145,8 +146,12 @@ pub fn draw_canvas(
         };
         let center = to_screen(*world);
         // Size: base + k * log1p(degree), scaled mildly with zoom (EGUI_GRAPH_VIEW §7.2).
-        let radius = (8.0 + (node.degree as f32 + 1.0).ln_1p() * 3.0).clamp(6.0, 22.0)
-            * z.sqrt().clamp(0.6, 1.6);
+        let radius = if overview_lod {
+            0.45
+        } else {
+            (8.0 + (node.degree as f32 + 1.0).ln_1p() * 3.0).clamp(6.0, 22.0)
+                * z.sqrt().clamp(0.6, 1.6)
+        };
 
         // Skip fully off-screen nodes when neither pointer nor click is near.
         let expanded = rect.expand(radius + 48.0);
@@ -175,6 +180,9 @@ pub fn draw_canvas(
     let mut focused_id = None;
     let mut node_drag_delta = Vec2::ZERO;
     for sn in &screen_nodes {
+        if overview_lod {
+            continue;
+        }
         let hit_size = (sn.radius * 2.3).max(24.0);
         let hit_rect = Rect::from_center_size(sn.center, Vec2::splat(hit_size));
         if !hit_rect.intersects(rect) {
@@ -228,7 +236,22 @@ pub fn draw_canvas(
         }
     }
 
-    for sn in others.into_iter().chain(selected_draw) {
+    if overview_lod {
+        let mut mesh = egui::Mesh::default();
+        for sn in others.iter().chain(&selected_draw) {
+            mesh.add_colored_rect(
+                Rect::from_center_size(sn.center, Vec2::splat(sn.radius * 2.0)),
+                sn.node.color,
+            );
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    }
+
+    for sn in others
+        .into_iter()
+        .chain(selected_draw)
+        .filter(|_| !overview_lod)
+    {
         let node = sn.node;
         let center = sn.center;
         let radius = sn.radius;
@@ -269,7 +292,7 @@ pub fn draw_canvas(
 
         let show_label = selected_here
             || hover_id.as_deref() == Some(node.id.as_str())
-            || node.depth == 0
+            || (node.depth == 0 && n_nodes <= 5_000)
             || show_all_labels;
         if show_label {
             let font = egui::FontId::proportional(13.0);

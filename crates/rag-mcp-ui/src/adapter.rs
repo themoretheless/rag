@@ -65,6 +65,8 @@ pub struct AdaptOptions {
     pub pkb_rels_only: bool,
     pub wing: Option<String>,
     pub room: Option<String>,
+    /// Keep the complete filtered node set for the global overview.
+    pub show_all_nodes: bool,
 }
 
 impl Default for AdaptOptions {
@@ -76,6 +78,7 @@ impl Default for AdaptOptions {
             pkb_rels_only: true,
             wing: None,
             room: None,
+            show_all_nodes: false,
         }
     }
 }
@@ -140,7 +143,11 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         })
         .collect();
 
-    let (kept_nodes, truncated_nodes) = clamp_nodes(&filtered_nodes, view, opts.seed_id.as_deref());
+    let (kept_nodes, truncated_nodes) = if opts.show_all_nodes {
+        (filtered_nodes, false)
+    } else {
+        clamp_nodes(&filtered_nodes, view, opts.seed_id.as_deref())
+    };
 
     let keep: HashSet<String> = kept_nodes.iter().map(|n| n.id.clone()).collect();
 
@@ -161,7 +168,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let mut ui_edges = collapse_edges(&edge_owned);
     let pre_cap_edge_count = ui_edges.len();
     let mut truncated_edges = false;
-    if ui_edges.len() > UI_MAX_DRAW_EDGES {
+    if ui_edges.len() > UI_MAX_DRAW_EDGES && !opts.show_all_nodes {
         // Drop lowest-weight and tagged first; keep highest-weight wikilink/related.
         ui_edges.sort_by(|a, b| {
             let pa = edge_keep_priority(a);
@@ -620,6 +627,55 @@ mod tests {
         let note = g.note.expect("truncation note");
         assert!(note.contains("300"));
         assert!(note.contains("350"));
+    }
+
+    #[test]
+    fn global_overview_keeps_every_filtered_node() {
+        let nodes = (0..350)
+            .map(|index| node(&format!("n{index:04}"), "document", "Node"))
+            .collect();
+        let graph = adapt(
+            &GraphView {
+                nodes,
+                edges: vec![],
+            },
+            &AdaptOptions {
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(graph.nodes.len(), 350);
+        assert!(!graph.truncated_nodes);
+    }
+
+    #[test]
+    fn global_overview_keeps_every_filtered_edge() {
+        let nodes = (0..50)
+            .map(|index| node(&format!("n{index}"), "document", "Node"))
+            .collect();
+        let mut edges = Vec::new();
+        for source in 0..50 {
+            for target in 0..50 {
+                if source != target {
+                    edges.push(edge(
+                        &format!("e{source}-{target}"),
+                        &format!("n{source}"),
+                        &format!("n{target}"),
+                        "wikilink",
+                        1.0,
+                    ));
+                }
+            }
+        }
+        let graph = adapt(
+            &GraphView { nodes, edges },
+            &AdaptOptions {
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(graph.edges.len(), 2_450);
+        assert!(!graph.truncated_edges);
     }
 
     #[test]

@@ -24,8 +24,6 @@ pub enum EmptyKind {
     LoadError,
     /// Seed view exists but filters removed every node.
     FiltersEmpty,
-    /// Over hard layout cap without a usable seed-BFS sample.
-    OverCap,
 }
 
 /// Lightweight topology summary for empty-state chrome (not a second domain model).
@@ -98,10 +96,6 @@ pub fn draw_empty_banner(
         EmptyKind::FiltersEmpty => (
             "Фильтры скрыли все узлы",
             "Включите tags/stubs или сбросьте фильтры и перестройте граф",
-        ),
-        EmptyKind::OverCap => (
-            "Граф слишком велик для раскладки",
-            "Задайте seed для локального BFS: максимум 300 узлов / 2000 рёбер",
         ),
     };
 

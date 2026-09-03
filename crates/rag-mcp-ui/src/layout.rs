@@ -18,6 +18,30 @@ pub type PosCache = HashMap<String, Pos2>;
 /// Ring gap in screen units (pre-zoom).
 pub const RING_GAP: f32 = 140.0;
 
+/// Deterministic compact grid for a whole-graph overview.
+pub fn overview_grid_place(graph: &UiGraph, cache: &mut PosCache) {
+    cache.clear();
+    if graph.nodes.is_empty() {
+        return;
+    }
+    let mut ids: Vec<&str> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
+    ids.sort_unstable();
+    let columns = (ids.len() as f64).sqrt().ceil().max(1.0) as usize;
+    let rows = ids.len().div_ceil(columns);
+    let spacing = 18.0_f32;
+    let width = columns.saturating_sub(1) as f32 * spacing;
+    let height = rows.saturating_sub(1) as f32 * spacing;
+    for (index, id) in ids.into_iter().enumerate() {
+        cache.insert(
+            id.to_owned(),
+            Pos2::new(
+                (index % columns) as f32 * spacing - width * 0.5,
+                (index / columns) as f32 * spacing - height * 0.5,
+            ),
+        );
+    }
+}
+
 /// Deterministic radial placement from seed. Writes into `cache`, freezes after place.
 ///
 /// - Seed at center.
@@ -430,6 +454,26 @@ mod tests {
         cache.insert("stale".into(), Pos2::new(1.0, 1.0));
         radial_place(&g, Some("x"), &mut cache);
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn overview_grid_places_every_node_deterministically() {
+        let graph = UiGraph {
+            nodes: vec![node("c", 0), node("a", 0), node("b", 0)],
+            edges: vec![],
+            truncated_nodes: false,
+            truncated_edges: false,
+            raw_nodes: 3,
+            raw_edges: 0,
+            note: None,
+        };
+        let mut first = PosCache::default();
+        let mut second = PosCache::default();
+        overview_grid_place(&graph, &mut first);
+        overview_grid_place(&graph, &mut second);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), graph.nodes.len());
+        assert_ne!(first["a"], first["b"]);
     }
 
     #[test]
