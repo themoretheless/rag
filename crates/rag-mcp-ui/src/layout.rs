@@ -18,7 +18,7 @@ pub type PosCache = HashMap<String, Pos2>;
 /// Ring gap in screen units (pre-zoom).
 pub const RING_GAP: f32 = 140.0;
 
-/// Deterministic compact grid for a whole-graph overview.
+/// Deterministic grid in world coordinates for a whole-graph overview.
 pub fn overview_grid_place(graph: &UiGraph, cache: &mut PosCache) {
     cache.clear();
     if graph.nodes.is_empty() {
@@ -33,7 +33,10 @@ pub fn overview_grid_place(graph: &UiGraph, cache: &mut PosCache) {
         .ceil()
         .max(1.0) as usize;
     let rows = ids.len().div_ceil(columns);
-    let spacing = 18.0_f32;
+    // The canvas is virtual and unbounded: do not compress the corpus merely
+    // to make its world bounds resemble the current viewport. A generous
+    // world-space step keeps nodes separable while pan/zoom exposes the rest.
+    let spacing = 48.0_f32;
     let width = columns.saturating_sub(1) as f32 * spacing;
     let height = rows.saturating_sub(1) as f32 * spacing;
     for (index, id) in ids.into_iter().enumerate() {
@@ -479,6 +482,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.len(), graph.nodes.len());
         assert_ne!(first["a"], first["b"]);
+        assert_eq!((first["a"] - first["b"]).length(), 48.0);
     }
 
     #[test]

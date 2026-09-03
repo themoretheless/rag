@@ -42,20 +42,6 @@ pub fn draw_canvas(
     let (response, painter) =
         ui.allocate_painter(ui.available_size_before_wrap(), Sense::click_and_drag());
     let rect = response.rect;
-    let canvas_size = rect.size();
-    let canvas_size_id = response.id.with("last_fitted_canvas_size");
-    let canvas_size_changed = if positions.is_empty() {
-        false
-    } else {
-        ui.ctx().data_mut(|data| {
-            let previous = data.get_temp::<Vec2>(canvas_size_id);
-            let changed = real_canvas_size_change(previous, canvas_size);
-            if changed {
-                data.insert_temp(canvas_size_id, canvas_size);
-            }
-            changed
-        })
-    };
     let canvas_pointer = ui
         .input(|input| input.pointer.hover_pos())
         .filter(|pointer| rect.contains(*pointer));
@@ -63,10 +49,10 @@ pub fn draw_canvas(
     // Subtle canvas background so empty vs graph is obvious.
     painter.rect_filled(rect, 0.0, Color32::from_rgb(10, 14, 24));
 
-    if (*need_fit || canvas_size_changed) && !positions.is_empty() {
+    if *need_fit && !positions.is_empty() {
         let (offset, scale) = fit_transform(positions, rect);
         *pan = offset;
-        *zoom = scale;
+        *zoom = overview_camera_zoom(scale, graph.nodes.len());
         *need_fit = false;
     }
 
@@ -129,7 +115,7 @@ pub fn draw_canvas(
     }
 
     let n_nodes = graph.nodes.len();
-    let overview_lod = n_nodes > 5_000 && z < 0.5;
+    let overview_lod = n_nodes > 5_000 && z < 2.0;
     let show_all_labels = n_nodes <= 40 || z > 1.8;
     let pointer = canvas_pointer;
     let click_pos = if response.clicked() {
@@ -147,7 +133,7 @@ pub fn draw_canvas(
         let center = to_screen(*world);
         // Size: base + k * log1p(degree), scaled mildly with zoom (EGUI_GRAPH_VIEW §7.2).
         let radius = if overview_lod {
-            0.45
+            2.5
         } else {
             (8.0 + (node.degree as f32 + 1.0).ln_1p() * 3.0).clamp(6.0, 22.0)
                 * z.sqrt().clamp(0.6, 1.6)
@@ -337,8 +323,8 @@ pub fn draw_canvas(
             zoom_at(zoom, pan, rect.center(), 0.8);
         }
         if ui
-            .add_sized([58.0, 30.0], egui::Button::new("Вписать"))
-            .on_hover_text("Вписать граф в область")
+            .add_sized([58.0, 30.0], egui::Button::new("Обзор"))
+            .on_hover_text("Центрировать обзор графа")
             .clicked()
         {
             *need_fit = true;
@@ -394,12 +380,6 @@ fn node_accessibility_label(node: &UiNode) -> String {
     )
 }
 
-fn real_canvas_size_change(previous: Option<Vec2>, current: Vec2) -> bool {
-    previous.is_none_or(|previous| {
-        (previous.x - current.x).abs() > 0.5 || (previous.y - current.y).abs() > 0.5
-    })
-}
-
 fn localized_kind(kind: &str) -> &str {
     match kind {
         "document" => "документ",
@@ -438,6 +418,16 @@ fn zoom_at(zoom: &mut f32, pan: &mut Vec2, pivot: Pos2, factor: f32) {
     let before = (pivot.to_vec2() - *pan) / *zoom;
     *zoom = (*zoom * factor).clamp(0.05, 12.0);
     *pan = pivot.to_vec2() - before * *zoom;
+}
+
+/// Dense overviews live on a virtual canvas larger than the viewport. Keep a
+/// useful amount of context, but never squeeze every node into one rectangle.
+fn overview_camera_zoom(fit_zoom: f32, node_count: usize) -> f32 {
+    if node_count > 5_000 {
+        (fit_zoom * 8.0).clamp(0.75, 8.0)
+    } else {
+        fit_zoom
+    }
 }
 
 /// Small arrowhead just before the target node (direction of the relation).
@@ -598,14 +588,9 @@ mod tests {
     }
 
     #[test]
-    fn canvas_refits_only_after_a_real_size_change() {
-        let size = Vec2::new(800.0, 600.0);
-        assert!(real_canvas_size_change(None, size));
-        assert!(!real_canvas_size_change(Some(size), size));
-        assert!(!real_canvas_size_change(
-            Some(size),
-            Vec2::new(800.25, 599.75)
-        ));
-        assert!(real_canvas_size_change(Some(size), Vec2::new(801.0, 600.0)));
+    fn dense_overview_uses_a_virtual_canvas_camera() {
+        assert!((overview_camera_zoom(0.1, 5_001) - 0.8).abs() < f32::EPSILON);
+        assert!((overview_camera_zoom(0.01, 5_001) - 0.75).abs() < f32::EPSILON);
+        assert!((overview_camera_zoom(0.1, 5_000) - 0.1).abs() < f32::EPSILON);
     }
 }
