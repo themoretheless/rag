@@ -226,11 +226,11 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) {
                 ui.group(|ui| {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong(dir);
-                        ui.label(format!("→ {other_label}"));
+                        ui.label(format!("-> {other_label}"));
                         ui.weak(format!("[{}]", e.rel_type));
                         ui.monospace(format!("w={:.2}", e.weight));
                         if e.multi_count > 1 {
-                            ui.strong(format!("×{}", e.multi_count));
+                            ui.strong(format!("x{}", e.multi_count));
                         }
                     });
                     ui.horizontal(|ui| {

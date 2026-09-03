@@ -1,6 +1,8 @@
 //! Native application shell shared by every workspace.
 
-use egui::{Align, Button, Color32, Layout, RichText, Sense, Stroke, Vec2};
+use egui::{
+    Align, Align2, Button, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
+};
 
 use super::{closing_selectable_value, theme};
 
@@ -92,21 +94,21 @@ pub fn draw_rail(
             mark.on_hover_text("RAG Console");
             ui.add_space(8.0);
 
-            for (route, icon, label) in [
-                (ShellRoute::Console, "▦", "Пульт"),
-                (ShellRoute::Corpus, "DB", "Корпус"),
-                (ShellRoute::Search, "⌕", "Поиск"),
-                (ShellRoute::Graph, "◇", "Граф"),
-                (ShellRoute::Wiki, "W", "Вики"),
-                (ShellRoute::Agents, "A", "Журнал"),
-                (ShellRoute::Evaluation, "E", "Оценка"),
+            for (route, label) in [
+                (ShellRoute::Console, "Пульт"),
+                (ShellRoute::Corpus, "Корпус"),
+                (ShellRoute::Search, "Поиск"),
+                (ShellRoute::Graph, "Граф"),
+                (ShellRoute::Wiki, "Вики"),
+                (ShellRoute::Agents, "Журнал"),
+                (ShellRoute::Evaluation, "Оценка"),
             ] {
                 let enabled = match route {
                     ShellRoute::Wiki => wiki_available,
                     _ => http_available || !route.requires_http(),
                 };
                 let response = ui.add_enabled_ui(enabled, |ui| {
-                    rail_button(ui, route == current, icon, label, route.color())
+                    rail_button(ui, route == current, route, label, route.color())
                 });
                 if response.inner.clicked() {
                     output.navigate = Some(route);
@@ -126,7 +128,7 @@ pub fn draw_rail(
                     rail_button(
                         ui,
                         current == ShellRoute::Models,
-                        "R",
+                        ShellRoute::Models,
                         "Runtime",
                         ShellRoute::Models.color(),
                     )
@@ -147,7 +149,7 @@ pub fn draw_rail(
 fn rail_button(
     ui: &mut egui::Ui,
     selected: bool,
-    icon: &str,
+    route: ShellRoute,
     label: &str,
     color: Color32,
 ) -> egui::Response {
@@ -159,14 +161,21 @@ fn rail_button(
     };
     let response = ui.add_sized(
         [48.0, 51.0],
-        Button::new(
-            RichText::new(format!("{icon}\n{label}"))
-                .size(11.0)
-                .color(text_color),
-        )
-        .frame(false)
-        .fill(fill)
-        .sense(Sense::click()),
+        // Keep a real accessible label while all visible icon geometry is
+        // painted. This avoids tofu squares when a system font misses symbols.
+        Button::new(RichText::new(label).color(Color32::TRANSPARENT))
+            .frame(false)
+            .fill(fill)
+            .sense(Sense::click()),
+    );
+    let icon_color = if selected { color } else { text_color };
+    paint_route_icon(ui.painter(), route, response.rect, icon_color);
+    ui.painter().text(
+        Pos2::new(response.rect.center().x, response.rect.bottom() - 8.0),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(10.5),
+        text_color,
     );
     if selected {
         ui.painter().rect_filled(
@@ -179,6 +188,138 @@ fn rail_button(
         );
     }
     response.on_hover_text(label)
+}
+
+fn paint_route_icon(painter: &egui::Painter, route: ShellRoute, button: Rect, color: Color32) {
+    let center = Pos2::new(button.center().x, button.top() + 16.0);
+    let stroke = Stroke::new(1.5, color);
+    match route {
+        ShellRoute::Console => {
+            for offset in [(-5.0, -5.0), (1.0, -5.0), (-5.0, 1.0), (1.0, 1.0)] {
+                painter.rect_stroke(
+                    Rect::from_min_size(center + egui::vec2(offset.0, offset.1), Vec2::splat(4.0)),
+                    0.8,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        ShellRoute::Corpus => {
+            painter.line_segment(
+                [
+                    center + egui::vec2(-6.0, -5.0),
+                    center + egui::vec2(6.0, -5.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    center + egui::vec2(-6.0, 0.0),
+                    center + egui::vec2(6.0, 0.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    center + egui::vec2(-6.0, 5.0),
+                    center + egui::vec2(6.0, 5.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    center + egui::vec2(-6.0, -5.0),
+                    center + egui::vec2(-6.0, 5.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    center + egui::vec2(6.0, -5.0),
+                    center + egui::vec2(6.0, 5.0),
+                ],
+                stroke,
+            );
+        }
+        ShellRoute::Search => paint_search_icon(painter, center, color),
+        ShellRoute::Graph => {
+            let left = center + egui::vec2(-6.0, 4.0);
+            let top = center + egui::vec2(0.0, -5.0);
+            let right = center + egui::vec2(6.0, 4.0);
+            painter.line_segment([left, top], stroke);
+            painter.line_segment([top, right], stroke);
+            painter.line_segment([left, right], stroke);
+            for point in [left, top, right] {
+                painter.circle_filled(point, 2.2, color);
+            }
+        }
+        ShellRoute::Wiki => {
+            painter.rect_stroke(
+                Rect::from_center_size(center, egui::vec2(13.0, 12.0)),
+                1.5,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            painter.line_segment(
+                [
+                    center + egui::vec2(0.0, -6.0),
+                    center + egui::vec2(0.0, 6.0),
+                ],
+                stroke,
+            );
+        }
+        ShellRoute::Agents => {
+            for y in [-4.0, 0.0, 4.0] {
+                painter.circle_filled(center + egui::vec2(-5.0, y), 1.2, color);
+                painter.line_segment(
+                    [center + egui::vec2(-1.5, y), center + egui::vec2(6.0, y)],
+                    stroke,
+                );
+            }
+        }
+        ShellRoute::Evaluation => {
+            for (x, height) in [(-5.0, 5.0), (0.0, 9.0), (5.0, 12.0)] {
+                painter.rect_filled(
+                    Rect::from_min_max(
+                        center + egui::vec2(x - 1.5, 6.0 - height),
+                        center + egui::vec2(x + 1.5, 6.0),
+                    ),
+                    0.8,
+                    color,
+                );
+            }
+        }
+        ShellRoute::Models => {
+            painter.circle_stroke(center, 5.5, stroke);
+            painter.circle_filled(center, 1.8, color);
+            painter.line_segment(
+                [
+                    center + egui::vec2(-8.0, 0.0),
+                    center + egui::vec2(-5.5, 0.0),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [center + egui::vec2(5.5, 0.0), center + egui::vec2(8.0, 0.0)],
+                stroke,
+            );
+        }
+    }
+}
+
+fn paint_search_icon(painter: &egui::Painter, center: Pos2, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    let lens = center + egui::vec2(-1.5, -1.5);
+    painter.circle_stroke(lens, 4.5, stroke);
+    painter.line_segment(
+        [lens + egui::vec2(3.2, 3.2), lens + egui::vec2(7.0, 7.0)],
+        stroke,
+    );
+}
+
+fn status_dot(ui: &mut egui::Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(9.0), Sense::hover());
+    ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
 pub struct TopbarState<'a> {
@@ -220,7 +361,7 @@ pub fn draw_topbar(root_ui: &mut egui::Ui, state: TopbarState<'_>) -> TopbarOutp
                             ui.label(RichText::new("rag-mcp").color(theme::FAINT));
                             ui.label(RichText::new("/").color(theme::FAINT));
                         }
-                        ui.label(RichText::new("●").size(9.0).color(state.route.color()));
+                        status_dot(ui, state.route.color());
                         ui.strong(state.route.title());
                         if !compact {
                             let badge = RichText::new(state.route.layer())
@@ -246,7 +387,7 @@ pub fn draw_topbar(root_ui: &mut egui::Ui, state: TopbarState<'_>) -> TopbarOutp
                 let search = ui.add_enabled(
                     state.search_enabled,
                     Button::new(
-                        RichText::new("⌕  Поиск по знаниям…")
+                        RichText::new("    Поиск по знаниям…")
                             .size(12.0)
                             .color(theme::FAINT),
                     )
@@ -254,11 +395,16 @@ pub fn draw_topbar(root_ui: &mut egui::Ui, state: TopbarState<'_>) -> TopbarOutp
                     .stroke(Stroke::new(1.0, theme::BORDER))
                     .min_size(egui::vec2(search_width, 30.0)),
                 );
+                paint_search_icon(
+                    ui.painter(),
+                    search.rect.left_center() + egui::vec2(17.0, -1.0),
+                    theme::FAINT,
+                );
                 if state.search_enabled {
                     ui.painter().text(
                         search.rect.right_center() - egui::vec2(9.0, 0.0),
                         egui::Align2::RIGHT_CENTER,
-                        "⌘K",
+                        "Cmd K",
                         egui::FontId::monospace(10.0),
                         theme::FAINT,
                     );
@@ -281,7 +427,7 @@ pub fn draw_topbar(root_ui: &mut egui::Ui, state: TopbarState<'_>) -> TopbarOutp
                         (None, None) => theme::DANGER,
                     };
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("●").color(dot));
+                        status_dot(ui, dot);
                         if !compact {
                             ui.label(
                                 RichText::new(state.health_summary)

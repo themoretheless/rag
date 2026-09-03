@@ -197,7 +197,7 @@ pub fn draw_library_workspace(
                                 title = item.uri.as_str();
                             }
                             let title = if item.pinned {
-                                format!("◆ {title}")
+                                format!("PIN · {title}")
                             } else {
                                 title.to_string()
                             };
@@ -246,7 +246,7 @@ pub fn draw_library_workspace(
     ui.horizontal(|ui| {
         let previous = ui.add_enabled(
             has_previous_page && !loading && !filters_dirty,
-            egui::Button::new("← Назад"),
+            egui::Button::new("< Назад"),
         );
         let previous = if filters_dirty {
             previous
@@ -260,7 +260,7 @@ pub fn draw_library_workspace(
         let has_next = page.next_cursor.is_some();
         let next = ui.add_enabled(
             has_next && !loading && !filters_dirty,
-            egui::Button::new("Вперёд →"),
+            egui::Button::new("Вперёд >"),
         );
         let next = if filters_dirty {
             next.on_disabled_hover_text("Примените изменённые фильтры перед переключением страниц")
@@ -294,7 +294,7 @@ pub fn draw_library_detail(
                 .color(theme::FAINT),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Закрыть ×").clicked() {
+            if ui.small_button("Закрыть").clicked() {
                 action = LibraryDetailAction::Close;
             }
         });
@@ -320,7 +320,7 @@ pub fn draw_library_detail(
             );
         }
         if item.pinned {
-            ui.label(egui::RichText::new("◆ закреплён").color(theme::WARN));
+            ui.label(egui::RichText::new("PIN · закреплён").color(theme::WARN));
         }
     });
     ui.add_space(9.0);

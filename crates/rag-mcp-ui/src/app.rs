@@ -659,11 +659,7 @@ impl GraphApp {
                     "{} · schema v{} · fts {}",
                     snapshot.status.backend,
                     snapshot.status.schema_version,
-                    if snapshot.status.fts_ready {
-                        "✓"
-                    } else {
-                        "!"
-                    }
+                    if snapshot.status.fts_ready { "ok" } else { "!" }
                 ),
             );
         }
@@ -678,7 +674,7 @@ impl GraphApp {
                     "{} · schema v{} · fts {}",
                     health.backend,
                     health.schema_version,
-                    if health.fts_ready { "✓" } else { "!" }
+                    if health.fts_ready { "ok" } else { "!" }
                 ),
             );
         }
@@ -2878,7 +2874,7 @@ impl eframe::App for GraphApp {
                             || !self.activity_filter.is_empty();
                         ui.menu_button(
                             if filters_active {
-                                "Фильтры ●"
+                                "Фильтры (активны)"
                             } else {
                                 "Фильтры"
                             },
@@ -2976,15 +2972,15 @@ impl eframe::App for GraphApp {
                     }
                     ViewMode::Wiki => {
                         if ui
-                            .selectable_label(self.wiki_sidebar_visible, "☰ Страницы")
+                            .selectable_label(self.wiki_sidebar_visible, "Страницы")
                             .on_hover_text("Показать или скрыть каталог страниц")
                             .clicked()
                         {
                             self.wiki_sidebar_visible = !self.wiki_sidebar_visible;
                         }
                         if ui
-                            .add_enabled(!self.wiki_history.is_empty(), egui::Button::new("← Назад"))
-                            .on_hover_text("Назад по истории страниц (Alt+←)")
+                            .add_enabled(!self.wiki_history.is_empty(), egui::Button::new("< Назад"))
+                            .on_hover_text("Назад по истории страниц (Alt+Left)")
                             .clicked()
                         {
                             self.wiki_go_back();
@@ -3457,20 +3453,20 @@ impl eframe::App for GraphApp {
                 ViewMode::Wiki => {
                     ui.horizontal_wrapped(|ui| {
                         let (source_color, source_status) = if self.activity_base().is_some() {
-                            (theme::OK, "● Gateway")
+                            (theme::OK, "Gateway")
                         } else {
                             match self.source.as_ref() {
                                 Some(GraphSourceKind::LiveStore { .. }) => {
-                                    (theme::ACCENT, "● DB · только чтение")
+                                    (theme::ACCENT, "DB · только чтение")
                                 }
                                 Some(
                                     GraphSourceKind::SnapshotFile { .. }
                                     | GraphSourceKind::VaultGraphJson { .. },
-                                ) => (theme::FAINT, "● Snapshot · только чтение"),
+                                ) => (theme::FAINT, "Snapshot · только чтение"),
                                 Some(GraphSourceKind::HttpService { .. }) => {
-                                    (theme::WARN, "● Gateway · неизвестно")
+                                    (theme::WARN, "Gateway · неизвестно")
                                 }
-                                None => (theme::DANGER, "● Офлайн"),
+                                None => (theme::DANGER, "Офлайн"),
                             }
                         };
                         ui.colored_label(source_color, source_status).on_hover_text(

@@ -59,9 +59,9 @@ pub fn draw_status(
                 egui::Color32::from_rgb(220, 105, 90)
             },
             if connected {
-                "● Подключено"
+                "Подключено"
             } else {
-                "● Нет связи"
+                "Нет связи"
             },
         )
         .on_hover_text(source_detail(source));
@@ -100,7 +100,7 @@ pub fn draw_status(
                 "ожидание"
             }
         );
-        ui.weak("ⓘ").on_hover_text(details);
+        ui.weak("i").on_hover_text(details);
         if let Some(msg) = banner {
             ui.separator();
             ui.colored_label(egui::Color32::from_rgb(230, 180, 80), msg);

@@ -246,7 +246,7 @@ pub fn draw_project_home(
                         format!("{agent_count} источников в текущем журнале"),
                         theme::L4,
                         http_available,
-                        if http_available { "журнал →" } else { "нужен HTTP" },
+                        if http_available { "журнал >" } else { "нужен HTTP" },
                     ) {
                         action = HomeAction::OpenAgents;
                     }
@@ -460,7 +460,7 @@ pub fn draw_project_home(
                                 |ui| {
                                     let journal = ui.add_enabled(
                                         http_available,
-                                        egui::Button::new("весь журнал →").small(),
+                                        egui::Button::new("весь журнал >").small(),
                                     );
                                     let journal = if http_available {
                                         journal
@@ -487,7 +487,7 @@ pub fn draw_project_home(
                             ui.horizontal_wrapped(|ui| {
                                 let (mark, color) = match event.status {
                                     Some(status) if status >= 400 => ("!", theme::DANGER),
-                                    Some(_) => ("●", theme::OK),
+                                    Some(_) => ("OK", theme::OK),
                                     None => ("·", theme::FAINT),
                                 };
                                 ui.label(
@@ -648,7 +648,7 @@ fn layer_row(
 fn doctor_row(ui: &mut egui::Ui, ok: bool, label: String) {
     ui.horizontal_wrapped(|ui| {
         ui.label(
-            egui::RichText::new(if ok { "✓" } else { "!" })
+            egui::RichText::new(if ok { "OK" } else { "!" })
                 .monospace()
                 .color(if ok { theme::OK } else { theme::DANGER }),
         );

@@ -548,7 +548,7 @@ fn health_metric(ui: &mut egui::Ui, label: &str, value: &str, healthy: bool) {
 }
 
 fn status_badge(ui: &mut egui::Ui, status: &str) {
-    ui.colored_label(status_color(status), format!("● {}", status_label(status)));
+    ui.colored_label(status_color(status), status_label(status));
 }
 
 fn status_color(status: &str) -> egui::Color32 {

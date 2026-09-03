@@ -41,7 +41,7 @@ pub struct RevisionsView<'a> {
 pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> RevisionsAction {
     let mut action = RevisionsAction::None;
     ui.horizontal(|ui| {
-        if ui.button("← Библиотека").clicked() {
+        if ui.button("< Библиотека").clicked() {
             action = RevisionsAction::BackToLibrary;
         }
         ui.vertical(|ui| {

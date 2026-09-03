@@ -365,7 +365,7 @@ fn pipeline_card(ui: &mut egui::Ui, title: &str, color: egui::Color32, rows: &[(
 fn status_row(ui: &mut egui::Ui, label: &str, ok: bool, detail: impl std::fmt::Display) {
     ui.horizontal_wrapped(|ui| {
         ui.label(
-            egui::RichText::new(if ok { "✓" } else { "!" }).color(if ok {
+            egui::RichText::new(if ok { "OK" } else { "!" }).color(if ok {
                 theme::OK
             } else {
                 theme::DANGER

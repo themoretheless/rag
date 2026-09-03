@@ -335,7 +335,7 @@ pub fn draw_canvas(
                 .max()
                 .unwrap_or(1);
             let multi_note = if multi > 1 {
-                format!("\nмакс. кратность ребра ×{multi}")
+                format!("\nмакс. кратность ребра x{multi}")
             } else {
                 String::new()
             };
