@@ -256,6 +256,9 @@ fn resolve_seed(store: &Store, seed: &str) -> Result<String, AppError> {
     if let Some(n) = store.find_node_by_document_id(seed)? {
         return Ok(n.id);
     }
+    if let Some(n) = store.find_node_by_uri(seed)? {
+        return Ok(n.id);
+    }
     let by_label = store.find_nodes_by_label(seed)?;
     if let Some(n) = by_label.into_iter().next() {
         return Ok(n.id);

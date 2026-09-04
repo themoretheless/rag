@@ -12,13 +12,13 @@ use crate::db::graph::{
 };
 use crate::db::Store;
 use crate::error::Result;
-use crate::graph::extract::{extract_links, ExtractedLink};
+use crate::graph::extract::{extract_links, ExtractedLink, REL_TAGGED};
 use crate::models::{Document, GraphEdge, GraphNode};
 use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 
 /// Rebuild the object-graph slice for `doc`.
 ///
-/// 1. Upsert (or promote stub for) the document node — stable id by `document_id` / `uri` / title / slug.
+/// 1. Upsert (or promote stub for) the document node — stable id by `document_id` / `uri`.
 /// 2. Delete existing outgoing edges from that node.
 /// 3. Extract wikilinks + tags; resolve targets by label, slug, or `wiki://` uri; write edges.
 ///
@@ -45,11 +45,19 @@ pub(crate) fn rebuild_document_graph_locked(
     // Obsidian markup is meaningful in prose, but `[[ ... ]]` is also ordinary
     // syntax in shell and generated source files. Parsing every source file
     // creates thousands of fake stubs such as `[[ -f "$path" ]]`.
-    let links = if document_supports_knowledge_markup(doc) {
+    let mut links = if document_supports_knowledge_markup(doc) {
         extract_links(&doc.content)
     } else {
         Vec::new()
     };
+    for metadata_link in metadata_tag_links(&doc.metadata_json) {
+        if !links.iter().any(|link| {
+            link.rel_type == metadata_link.rel_type
+                && link.target_label.eq_ignore_ascii_case(&metadata_link.target_label)
+        }) {
+            links.push(metadata_link);
+        }
+    }
     let mut edges: Vec<GraphEdge> = Vec::with_capacity(links.len() + 2);
 
     for link in &links {
@@ -69,6 +77,23 @@ pub(crate) fn rebuild_document_graph_locked(
     let edge_count = edges.len();
     insert_graph_edges(conn, &edges)?;
     Ok((node_id, edge_count))
+}
+
+fn metadata_tag_links(metadata_json: &str) -> Vec<ExtractedLink> {
+    serde_json::from_str::<serde_json::Value>(metadata_json)
+        .ok()
+        .and_then(|metadata| metadata.get("tags").and_then(|tags| tags.as_array()).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|tag| tag.as_str().map(str::trim).map(str::to_string))
+        .filter(|tag| !tag.is_empty())
+        .map(|tag| ExtractedLink {
+            target_label: tag,
+            rel_type: REL_TAGGED.into(),
+            context: Some("document metadata tag".into()),
+            alias: None,
+        })
+        .collect()
 }
 
 fn document_supports_knowledge_markup(doc: &Document) -> bool {
@@ -229,19 +254,6 @@ fn ensure_document_node(
             upsert_graph_node(conn, &node)?;
             return Ok(node.id);
         }
-    }
-
-    // Also reuse an existing document node that already has this title.
-    if let Some(existing) = find_nodes_by_label(conn, title)?
-        .into_iter()
-        .find(|n| n.kind == "document" && n.resolved)
-    {
-        let mut node = existing;
-        node.document_id = Some(document_id.to_string());
-        node.uri = Some(uri.to_string());
-        node.label = title.to_string();
-        upsert_graph_node(conn, &node)?;
-        return Ok(node.id);
     }
 
     let node = GraphNode {
@@ -527,6 +539,28 @@ mod tests {
         let (id2, edges) = rebuild_document_graph(&store, &d2).unwrap();
         assert_eq!(id1, id2);
         assert_eq!(edges, 2);
+    }
+
+    #[test]
+    fn equal_titles_with_different_uris_keep_distinct_nodes() {
+        let store = open_temp();
+        let first = doc("d1", "README.md", "file:///project-a/README.md", "A");
+        let second = doc("d2", "README.md", "file:///project-b/README.md", "B");
+        store.upsert_document(&first).unwrap();
+        store.upsert_document(&second).unwrap();
+
+        let (first_node, _) = rebuild_document_graph(&store, &first).unwrap();
+        let (second_node, _) = rebuild_document_graph(&store, &second).unwrap();
+
+        assert_ne!(first_node, second_node);
+        assert_eq!(
+            store.find_node_by_document_id("d1").unwrap().unwrap().id,
+            first_node
+        );
+        assert_eq!(
+            store.find_node_by_document_id("d2").unwrap().unwrap().id,
+            second_node
+        );
     }
 
     #[test]

@@ -732,12 +732,15 @@ impl<'a> SourceSyncService<'a> {
             });
         }
 
-        let metadata_json = merge_metadata(
+        let mut metadata_json = merge_metadata(
             existing.and_then(|entry| entry.document_metadata_json.clone()),
             extracted.metadata,
         )
         .map_err(|error| AppError::config(error.to_string()))?;
         let (inferred_wing, inferred_room) = inferred_scope(run.root, &canonical);
+        if belongs_to_dodo_group(run.root, &canonical) {
+            metadata_json = add_metadata_tag(&metadata_json, "Dodo")?;
+        }
         let prepared = IngestService::new(self.store, self.embedder, self.config).prepare_source(
             IngestCommand {
                 text: extracted.text,
@@ -1085,10 +1088,14 @@ fn inferred_scope(root: &Path, path: &Path) -> (String, String) {
         .components()
         .filter_map(|part| part.as_os_str().to_str());
     if root_name.eq_ignore_ascii_case("sources") {
-        (
-            components.next().unwrap_or("project").to_string(),
-            components.next().unwrap_or("root").to_string(),
-        )
+        let top_level = components.next().unwrap_or("project");
+        if top_level.eq_ignore_ascii_case("dodo") {
+            return (
+                components.next().unwrap_or("Dodo").to_string(),
+                components.next().unwrap_or("root").to_string(),
+            );
+        }
+        (top_level.to_string(), components.next().unwrap_or("root").to_string())
     } else {
         let room = relative
             .parent()
@@ -1098,6 +1105,36 @@ fn inferred_scope(root: &Path, path: &Path) -> (String, String) {
             .to_string();
         (root_name.to_string(), room)
     }
+}
+
+fn belongs_to_dodo_group(root: &Path, path: &Path) -> bool {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("sources"))
+        && path
+            .strip_prefix(root)
+            .ok()
+            .and_then(|relative| relative.components().next())
+            .and_then(|part| part.as_os_str().to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("dodo"))
+}
+
+fn add_metadata_tag(metadata_json: &str, tag: &str) -> Result<String, AppError> {
+    let mut metadata: serde_json::Value = serde_json::from_str(metadata_json)
+        .map_err(|error| AppError::config(error.to_string()))?;
+    let object = metadata
+        .as_object_mut()
+        .ok_or_else(|| AppError::config("document metadata must be a JSON object"))?;
+    let tags = object
+        .entry("tags")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    let tags = tags
+        .as_array_mut()
+        .ok_or_else(|| AppError::config("document metadata tags must be an array"))?;
+    if !tags.iter().any(|value| value.as_str() == Some(tag)) {
+        tags.push(serde_json::Value::String(tag.to_string()));
+    }
+    serde_json::to_string(&metadata).map_err(|error| AppError::config(error.to_string()))
 }
 
 #[cfg(test)]
@@ -1110,6 +1147,25 @@ mod tests {
     use super::*;
     use crate::embeddings::MockEmbedder;
     use crate::error::Result;
+
+    #[test]
+    fn dodo_children_are_projects_with_nested_rooms() {
+        let root = Path::new("/workspace/Sources");
+        let path = Path::new("/workspace/Sources/Dodo/referralprogram/src/main.rs");
+        assert_eq!(
+            inferred_scope(root, path),
+            ("referralprogram".into(), "src".into())
+        );
+        assert!(belongs_to_dodo_group(root, path));
+    }
+
+    #[test]
+    fn dodo_group_tag_is_added_once() {
+        let tagged = add_metadata_tag(r#"{"tags":["backend"]}"#, "Dodo").unwrap();
+        let tagged_again = add_metadata_tag(&tagged, "Dodo").unwrap();
+        let value: serde_json::Value = serde_json::from_str(&tagged_again).unwrap();
+        assert_eq!(value["tags"], serde_json::json!(["backend", "Dodo"]));
+    }
 
     struct CountingEmbedder {
         inner: MockEmbedder,
