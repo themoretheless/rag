@@ -1011,9 +1011,13 @@ fn require_project(project: &str) -> Result<&str> {
 
 fn scoped_relation_types(include_tags: bool) -> &'static str {
     if include_tags {
-        "'wikilink', 'related', 'tagged'"
+        "'wikilink', 'related', 'tagged', 'детализирует', 'зависит от', \
+         'компенсируется', 'вызывает', 'публикует', 'обновляет', 'хранит', \
+         'проверяет', 'использует', 'изменяет схему', 'реализует'"
     } else {
-        "'wikilink', 'related'"
+        "'wikilink', 'related', 'детализирует', 'зависит от', 'компенсируется', \
+         'вызывает', 'публикует', 'обновляет', 'хранит', 'проверяет', \
+         'использует', 'изменяет схему', 'реализует'"
     }
 }
 
@@ -1482,7 +1486,7 @@ fn load_bounded_scoped_edges_locked(
     }
     let selected = values_clause(node_ids.len());
     let relation_types = scoped_relation_types(include_tags);
-    let relation_count = if include_tags { 3 } else { 2 };
+    let relation_count = if include_tags { 14 } else { 13 };
     let max_edges = node_ids
         .len()
         .saturating_mul(node_ids.len())
@@ -1526,7 +1530,7 @@ fn load_bounded_ui_edges_locked(
     }
     let selected = values_clause(node_ids.len());
     let relation_types = scoped_relation_types(include_tags);
-    let relation_count = if include_tags { 3 } else { 2 };
+    let relation_count = if include_tags { 14 } else { 13 };
     let max_edges = node_ids
         .len()
         .saturating_mul(node_ids.len())

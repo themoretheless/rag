@@ -800,7 +800,21 @@ pub const UI_GRAPH_EXPORT_MAX_NODES: u32 = 100_000;
 
 /// Default PKB relation types for local graph and UI export
 /// (GRAPH_DESIGN §7.1: `wikilink` + `related`; tags / tunnel / Dep opt-in).
-pub const PKB_REL_TYPES: &[&str] = &["wikilink", "related"];
+pub const PKB_REL_TYPES: &[&str] = &[
+    "wikilink",
+    "related",
+    "детализирует",
+    "зависит от",
+    "компенсируется",
+    "вызывает",
+    "публикует",
+    "обновляет",
+    "хранит",
+    "проверяет",
+    "использует",
+    "изменяет схему",
+    "реализует",
+];
 
 /// Default node kinds for UI export (tags off unless explicitly included).
 pub const PKB_NODE_KINDS: &[&str] = &["document", "stub", "entity"];
