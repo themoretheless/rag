@@ -1,4 +1,5 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use std::collections::HashSet;
 
 use crate::operations::OperationsSnapshot;
 
@@ -25,6 +26,7 @@ pub fn draw_sync_workspace(
             return;
         };
         let sync = snapshot.sync.as_ref();
+        let visible_nodes = observed_nodes(snapshot);
 
         ui.add_space(14.0);
         ui.columns(4, |columns| {
@@ -60,10 +62,8 @@ pub fn draw_sync_workspace(
             metric(
                 &mut columns[3],
                 "УЗЛЫ",
-                &sync
-                    .map(|s| s.nodes.len().to_string())
-                    .unwrap_or_else(|| "0".into()),
-                "зарегистрированные БД",
+                &visible_nodes.len().to_string(),
+                "клиенты и sync-узлы",
                 theme::L3,
             );
         });
@@ -156,9 +156,9 @@ fn metric(ui: &mut egui::Ui, label: &str, value: &str, hint: &str, accent: Color
 
 fn topology(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
     let sync = snapshot.sync.as_ref();
-    let nodes = sync.map(|s| s.nodes.as_slice()).unwrap_or(&[]);
+    let nodes = observed_nodes(snapshot);
     let width = ui.available_width().max(720.0);
-    let canvas_height = 350.0_f32.max(140.0 + nodes.len().max(1) as f32 * 66.0);
+    let canvas_height = 430.0_f32.max(130.0 + nodes.len().max(1) as f32 * 66.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, canvas_height + 82.0), Sense::hover());
     let painter = ui.painter_at(rect);
 
@@ -210,7 +210,7 @@ fn topology(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
 
     let primary = Rect::from_center_size(
         Pos2::new(canvas.left() + width * 0.22, canvas.center().y),
-        Vec2::new(250.0, 210.0),
+        Vec2::new(270.0, 238.0),
     );
     primary_card(&painter, primary, snapshot);
 
@@ -226,10 +226,10 @@ fn topology(ui: &mut egui::Ui, snapshot: &OperationsSnapshot) {
             node_card(
                 &painter,
                 node_rect,
-                node.last_error.is_none(),
-                &node.hostname,
-                &format!("{}  ·  {}", node.node_id, node.role),
-                &format!("push {}   pull {}", node.last_push_seq, node.pull_cursor),
+                node.online,
+                &node.label,
+                &node.detail,
+                &node.badge,
             );
         } else {
             node_card(
@@ -337,7 +337,7 @@ fn primary_card(p: &egui::Painter, rect: Rect, snapshot: &OperationsSnapshot) {
         31.0,
     );
     p.text(
-        Pos2::new(rect.center().x, rect.bottom() - 48.0),
+        Pos2::new(rect.center().x, rect.bottom() - 72.0),
         Align2::CENTER_CENTER,
         snapshot
             .status
@@ -349,25 +349,36 @@ fn primary_card(p: &egui::Painter, rect: Rect, snapshot: &OperationsSnapshot) {
         theme::TEXT,
     );
     p.text(
-        Pos2::new(rect.center().x, rect.bottom() - 26.0),
+        Pos2::new(rect.center().x, rect.bottom() - 49.0),
         Align2::CENTER_CENTER,
-        format!(
-            "schema {}   ·   {} документов",
-            snapshot.status.schema_version, snapshot.status.document_count
-        ),
+        elide_middle(&snapshot.status.db_path, 38),
+        FontId::monospace(8.5),
+        theme::FAINT,
+    );
+    p.line_segment(
+        [
+            Pos2::new(rect.left() + 18.0, rect.bottom() - 31.0),
+            Pos2::new(rect.right() - 18.0, rect.bottom() - 31.0),
+        ],
+        Stroke::new(1.0, theme::BORDER),
+    );
+    p.text(
+        Pos2::new(rect.left() + 18.0, rect.bottom() - 16.0),
+        Align2::LEFT_CENTER,
+        &snapshot.status.backend,
+        FontId::monospace(8.5),
+        theme::MUTED,
+    );
+    p.text(
+        Pos2::new(rect.right() - 18.0, rect.bottom() - 16.0),
+        Align2::RIGHT_CENTER,
+        format!("schema {}", snapshot.status.schema_version),
         FontId::monospace(8.5),
         theme::MUTED,
     );
 }
 
-fn node_card(
-    p: &egui::Painter,
-    rect: Rect,
-    online: bool,
-    name: &str,
-    identity: &str,
-    detail: &str,
-) {
+fn node_card(p: &egui::Painter, rect: Rect, online: bool, name: &str, identity: &str, badge: &str) {
     let border = if online {
         theme::rgba(theme::OK, 95)
     } else {
@@ -403,10 +414,95 @@ fn node_card(
     p.text(
         Pos2::new(rect.right() - 10.0, rect.center().y + 5.0),
         Align2::RIGHT_CENTER,
-        detail,
+        badge,
         FontId::monospace(8.0),
-        if online { theme::OK } else { theme::WARN },
+        theme::WARN,
     );
+}
+
+struct ObservedNode {
+    label: String,
+    detail: String,
+    badge: String,
+    online: bool,
+}
+
+fn observed_nodes(snapshot: &OperationsSnapshot) -> Vec<ObservedNode> {
+    let mut result = Vec::new();
+    let mut ids = HashSet::new();
+    if let Some(sync) = &snapshot.sync {
+        for node in &sync.nodes {
+            ids.insert(node.node_id.to_lowercase());
+            ids.insert(node.hostname.to_lowercase());
+            result.push(ObservedNode {
+                label: node.hostname.clone(),
+                detail: format!(
+                    "{} · push {} · pull {}",
+                    node.role, node.last_push_seq, node.pull_cursor
+                ),
+                badge: "SYNC NODE".into(),
+                online: node.last_error.is_none(),
+            });
+        }
+    }
+    for activity in snapshot.activity.iter().rev() {
+        let Some(raw) = activity
+            .client
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        if !ids.insert(raw.to_lowercase()) {
+            continue;
+        }
+        let (label, detail, badge) = if let Some(host) = raw.strip_prefix("host:") {
+            (host, "хост замечен в запросах", "LOCAL DB: НЕ ПОДТВЕРЖДЕНА")
+        } else {
+            (raw, "MCP-клиент", "CLIENT")
+        };
+        result.push(ObservedNode {
+            label: label.into(),
+            detail: detail.into(),
+            badge: badge.into(),
+            online: true,
+        });
+        if result.len() == 5 {
+            return result;
+        }
+    }
+    for agent in &snapshot.agents {
+        if !ids.insert(agent.agent.to_lowercase()) {
+            continue;
+        }
+        result.push(ObservedNode {
+            label: agent.agent.clone(),
+            detail: agent
+                .transport
+                .clone()
+                .unwrap_or_else(|| "MCP-клиент".into()),
+            badge: "CLIENT".into(),
+            online: agent.online,
+        });
+        if result.len() == 5 {
+            break;
+        }
+    }
+    result
+}
+
+fn elide_middle(value: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= max_chars {
+        return value.to_string();
+    }
+    let side = (max_chars.saturating_sub(1)) / 2;
+    format!(
+        "{}…{}",
+        chars[..side].iter().collect::<String>(),
+        chars[chars.len() - side..].iter().collect::<String>()
+    )
 }
 
 fn stages(ui: &mut egui::Ui, live: bool) {

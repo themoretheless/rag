@@ -64,6 +64,23 @@ pub struct OperationsSnapshot {
     pub status: StatusSnapshot,
     pub doctor: DoctorSnapshot,
     pub sync: Option<DatabaseSyncSnapshot>,
+    pub agents: Vec<ObservedAgent>,
+    pub activity: Vec<ObservedActivity>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObservedAgent {
+    pub agent: String,
+    #[serde(default)]
+    pub online: bool,
+    #[serde(default)]
+    pub transport: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObservedActivity {
+    #[serde(default)]
+    pub client: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +109,18 @@ pub struct DatabaseSyncSnapshot {
 #[derive(Deserialize)]
 struct DatabaseSyncEnvelope {
     sync: DatabaseSyncSnapshot,
+}
+
+#[derive(Deserialize)]
+struct AgentsEnvelope {
+    #[serde(default)]
+    items: Vec<ObservedAgent>,
+}
+
+#[derive(Deserialize)]
+struct ActivityEnvelope {
+    #[serde(default)]
+    items: Vec<ObservedActivity>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -217,10 +246,18 @@ fn fetch_operations_with_client(
     let sync = get_json::<DatabaseSyncEnvelope>(client, base, "v1/sync/status")
         .ok()
         .map(|envelope| envelope.sync);
+    let agents = get_json::<AgentsEnvelope>(client, base, "v1/agents")
+        .map(|envelope| envelope.items)
+        .unwrap_or_default();
+    let activity = get_json::<ActivityEnvelope>(client, base, "v1/activity?limit=80")
+        .map(|envelope| envelope.items)
+        .unwrap_or_default();
     Ok(OperationsSnapshot {
         status,
         doctor,
         sync,
+        agents,
+        activity,
     })
 }
 
@@ -413,6 +450,8 @@ mod tests {
         assert_eq!(requests[0].url, "http://gateway/v1/status");
         assert_eq!(requests[1].url, "http://gateway/v1/doctor");
         assert_eq!(requests[2].url, "http://gateway/v1/sync/status");
+        assert_eq!(requests[3].url, "http://gateway/v1/agents");
+        assert_eq!(requests[4].url, "http://gateway/v1/activity?limit=80");
     }
 
     #[test]
