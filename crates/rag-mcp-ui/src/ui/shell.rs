@@ -14,6 +14,7 @@ pub enum ShellRoute {
     Graph,
     Wiki,
     Agents,
+    Sync,
     Evaluation,
     Models,
 }
@@ -22,7 +23,12 @@ impl ShellRoute {
     pub const fn requires_http(self) -> bool {
         matches!(
             self,
-            Self::Corpus | Self::Search | Self::Agents | Self::Evaluation | Self::Models
+            Self::Corpus
+                | Self::Search
+                | Self::Agents
+                | Self::Sync
+                | Self::Evaluation
+                | Self::Models
         )
     }
 
@@ -34,6 +40,7 @@ impl ShellRoute {
             Self::Graph => "Граф",
             Self::Wiki => "Вики",
             Self::Agents => "Операции · Журнал",
+            Self::Sync => "Синхронизация БД",
             Self::Evaluation => "Оценка",
             Self::Models => "Runtime и индекс",
         }
@@ -47,6 +54,7 @@ impl ShellRoute {
             Self::Graph => "L2 · граф объектов",
             Self::Wiki => "L3 · знание",
             Self::Agents => "L4 · HTTP/MCP события",
+            Self::Sync => "local ↔ primary",
             Self::Evaluation => "eval · retrieval",
             Self::Models => "gateway · status/doctor",
         }
@@ -57,7 +65,7 @@ impl ShellRoute {
             Self::Console => theme::ACCENT,
             Self::Corpus => theme::L0,
             Self::Search | Self::Evaluation => theme::L1,
-            Self::Graph => theme::L2,
+            Self::Graph | Self::Sync => theme::L2,
             Self::Wiki | Self::Models => theme::L3,
             Self::Agents => theme::L4,
         }
@@ -101,6 +109,7 @@ pub fn draw_rail(
                 (ShellRoute::Graph, "Граф"),
                 (ShellRoute::Wiki, "Вики"),
                 (ShellRoute::Agents, "Журнал"),
+                (ShellRoute::Sync, "Синхр."),
                 (ShellRoute::Evaluation, "Оценка"),
             ] {
                 let enabled = match route {
@@ -276,6 +285,20 @@ fn paint_route_icon(painter: &egui::Painter, route: ShellRoute, button: Rect, co
                     stroke,
                 );
             }
+        }
+        ShellRoute::Sync => {
+            let top = center + egui::vec2(0.0, -5.0);
+            let bottom = center + egui::vec2(0.0, 5.0);
+            painter.circle_stroke(top, 5.0, stroke);
+            painter.circle_stroke(bottom, 5.0, stroke);
+            painter.line_segment(
+                [top + egui::vec2(-5.0, 0.0), bottom + egui::vec2(-5.0, 0.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [top + egui::vec2(5.0, 0.0), bottom + egui::vec2(5.0, 0.0)],
+                stroke,
+            );
         }
         ShellRoute::Evaluation => {
             for (x, height) in [(-5.0, 5.0), (0.0, 9.0), (5.0, 12.0)] {
@@ -508,6 +531,7 @@ mod tests {
             ShellRoute::Graph,
             ShellRoute::Wiki,
             ShellRoute::Agents,
+            ShellRoute::Sync,
             ShellRoute::Evaluation,
             ShellRoute::Models,
         ] {
@@ -524,6 +548,7 @@ mod tests {
         assert!(ShellRoute::Corpus.requires_http());
         assert!(ShellRoute::Search.requires_http());
         assert!(ShellRoute::Agents.requires_http());
+        assert!(ShellRoute::Sync.requires_http());
         assert!(ShellRoute::Evaluation.requires_http());
         assert!(ShellRoute::Models.requires_http());
     }

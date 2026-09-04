@@ -12,6 +12,7 @@ pub mod revisions;
 pub mod search;
 pub mod shell;
 pub mod status;
+pub mod sync;
 pub mod theme;
 pub mod wiki;
 

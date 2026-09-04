@@ -41,6 +41,7 @@ use crate::ui::revisions::{draw_revisions_workspace, RevisionsAction, RevisionsV
 use crate::ui::search::{draw_search_workspace, SearchAction};
 use crate::ui::shell::{draw_rail, draw_topbar, ShellRoute, TopbarState};
 use crate::ui::status::draw_status;
+use crate::ui::sync::draw_sync_workspace;
 use crate::ui::theme;
 use crate::ui::wiki::{
     can_cancel_edit, content_summary_line, draw_wiki_edit_view, draw_wiki_info_panel,
@@ -78,6 +79,7 @@ enum ViewMode {
     Wiki,
     Graph,
     Activity,
+    Sync,
     Evaluation,
     Models,
 }
@@ -572,6 +574,7 @@ impl GraphApp {
             ViewMode::Graph => ShellRoute::Graph,
             ViewMode::Wiki => ShellRoute::Wiki,
             ViewMode::Activity => ShellRoute::Agents,
+            ViewMode::Sync => ShellRoute::Sync,
             ViewMode::Evaluation => ShellRoute::Evaluation,
             ViewMode::Models => ShellRoute::Models,
         }
@@ -612,6 +615,10 @@ impl GraphApp {
                 self.mode = ViewMode::Activity;
                 self.operations_tab = OperationsTab::Activity;
                 self.refresh_activity();
+            }
+            ShellRoute::Sync => {
+                self.mode = ViewMode::Sync;
+                self.reload_operations();
             }
             ShellRoute::Evaluation => {
                 self.mode = ViewMode::Evaluation;
@@ -1090,6 +1097,7 @@ impl GraphApp {
             | ViewMode::Wiki
             | ViewMode::Graph
             | ViewMode::Activity
+            | ViewMode::Sync
             | ViewMode::Evaluation
             | ViewMode::Models => {}
         }
@@ -1213,6 +1221,7 @@ impl GraphApp {
             ViewMode::Library => self.reload_library(),
             ViewMode::Wiki => self.ensure_wiki_loaded(),
             ViewMode::Activity => self.refresh_activity(),
+            ViewMode::Sync => self.reload_operations(),
             ViewMode::Models => self.reload_operations(),
             ViewMode::Evaluation => self.refresh_activity(),
             ViewMode::Search | ViewMode::Revisions | ViewMode::Graph => {}
@@ -2968,6 +2977,12 @@ impl eframe::App for GraphApp {
                             ));
                         }
                     }
+                    ViewMode::Sync => {
+                        ui.label(egui::RichText::new("SYNC").monospace().color(theme::L2));
+                        if let Some(sync) = self.operations_snapshot.as_ref().and_then(|snapshot| snapshot.sync.as_ref()) {
+                            ui.weak(format!("{} · cursor {} · outbox {}", sync.role, sync.latest_primary_seq, sync.pending_outbox));
+                        } else { ui.weak("ожидание sync status"); }
+                    }
                     ViewMode::Wiki => {
                         if ui
                             .selectable_label(self.wiki_sidebar_visible, "Страницы")
@@ -3447,6 +3462,22 @@ impl eframe::App for GraphApp {
                         ui.separator();
                         ui.label(format!("{} событий telemetry", self.activity.len()));
                         ui.weak("отсутствующие benchmark-метрики показаны как —");
+                    });
+                }
+                ViewMode::Sync => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong("Синхронизация БД");
+                        if let Some(sync) = self
+                            .operations_snapshot
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.sync.as_ref())
+                        {
+                            ui.separator();
+                            ui.label(format!(
+                                "{} · primary seq {} · outbox {}",
+                                sync.role, sync.latest_primary_seq, sync.pending_outbox
+                            ));
+                        }
                     });
                 }
                 ViewMode::Models => {
@@ -3987,6 +4018,18 @@ impl eframe::App for GraphApp {
                                 self.reload_operations();
                             }
                         }
+                    }
+                });
+            }
+            ViewMode::Sync => {
+                egui::CentralPanel::default().show(root_ui, |ui| {
+                    if draw_sync_workspace(
+                        ui,
+                        self.operations_snapshot.as_ref(),
+                        self.operations_error.as_deref(),
+                        self.pending_operations.is_some(),
+                    ) {
+                        self.reload_operations();
                     }
                 });
             }

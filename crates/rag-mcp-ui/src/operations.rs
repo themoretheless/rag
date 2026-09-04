@@ -63,6 +63,35 @@ pub struct DoctorSnapshot {
 pub struct OperationsSnapshot {
     pub status: StatusSnapshot,
     pub doctor: DoctorSnapshot,
+    pub sync: Option<DatabaseSyncSnapshot>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DatabaseSyncNode {
+    pub node_id: String,
+    pub hostname: String,
+    pub role: String,
+    pub last_push_seq: i64,
+    pub pull_cursor: i64,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DatabaseSyncSnapshot {
+    pub role: String,
+    pub node_id: String,
+    #[serde(default)]
+    pub primary_url: Option<String>,
+    pub latest_primary_seq: i64,
+    pub pending_outbox: i64,
+    #[serde(default)]
+    pub nodes: Vec<DatabaseSyncNode>,
+}
+
+#[derive(Deserialize)]
+struct DatabaseSyncEnvelope {
+    sync: DatabaseSyncSnapshot,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -185,7 +214,14 @@ fn fetch_operations_with_client(
 ) -> Result<OperationsSnapshot, String> {
     let status = get_json(client, base, "v1/status")?;
     let doctor = get_json(client, base, "v1/doctor")?;
-    Ok(OperationsSnapshot { status, doctor })
+    let sync = get_json::<DatabaseSyncEnvelope>(client, base, "v1/sync/status")
+        .ok()
+        .map(|envelope| envelope.sync);
+    Ok(OperationsSnapshot {
+        status,
+        doctor,
+        sync,
+    })
 }
 
 pub fn fetch_jobs_http(base: &str) -> Result<Vec<JobSnapshot>, String> {
@@ -368,6 +404,7 @@ mod tests {
         let gateway = FakeGateway::new(vec![
             r#"{"backend":"duckdb","schema_version":9,"fts_ready":true,"document_count":4,"chunk_count":8,"node_count":5,"edge_count":6,"raw_count":3,"wiki_count":1,"index_coverage":1.0,"uncompiled_raw_count":0,"embedding_manifest_match":true,"ready_for_search":true,"ingest_roots_configured":true,"db_path":"/db"}"#.to_string(),
             r#"{"schema_version":9,"expected_schema_version":9,"schema_ok":true,"fts_ready":true,"embed_ok":true,"ready_for_search":true,"wal_bytes":10,"wal_warn_bytes":100,"wal_too_large":false,"documents_without_chunks":0,"orphan_chunks":0,"orphan_document_nodes":0,"orphan_edges":0,"unscoped_documents":0,"relational_integrity_ok":true,"repair_hint":null,"ok":true}"#.to_string(),
+            r#"{"ok":true,"sync":{"node_id":"primary","role":"primary","primary_url":null,"pending_outbox":0,"latest_primary_seq":0,"nodes":[]}}"#.to_string(),
         ]);
         let snapshot = fetch_operations_with_client(&gateway, "http://gateway/").unwrap();
         assert_eq!(snapshot.status.document_count, 4);
@@ -375,6 +412,7 @@ mod tests {
         let requests = gateway.requests.lock().unwrap();
         assert_eq!(requests[0].url, "http://gateway/v1/status");
         assert_eq!(requests[1].url, "http://gateway/v1/doctor");
+        assert_eq!(requests[2].url, "http://gateway/v1/sync/status");
     }
 
     #[test]
