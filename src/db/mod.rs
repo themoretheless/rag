@@ -25,6 +25,7 @@ pub mod search;
 mod source_dedupe;
 mod source_manifest;
 pub mod store;
+pub mod sync;
 pub mod vault;
 
 pub use catalog::{

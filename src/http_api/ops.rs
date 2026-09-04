@@ -58,6 +58,7 @@ const CAPABILITY_FEATURES: &[&str] = &[
     "runtime",
     "call_log",
     "agents",
+    "database_sync_transport",
 ];
 
 const PRODUCT_ROUTES: &[(&str, &str)] = &[
@@ -70,6 +71,11 @@ const PRODUCT_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/runtime"),
     ("GET", "/v1/calls"),
     ("GET", "/v1/agents"),
+    ("GET", "/v1/sync/status"),
+    ("POST", "/v1/sync/register"),
+    ("POST", "/v1/sync/push"),
+    ("GET", "/v1/sync/pull"),
+    ("POST", "/v1/sync/ack"),
     ("POST", "/v1/search"),
     ("POST", "/v1/pack-context"),
     ("POST", "/v1/multi-get"),
@@ -307,6 +313,7 @@ mod tests {
                 "runtime",
                 "call_log",
                 "agents",
+                "database_sync_transport",
             ]
         );
         assert_eq!(
@@ -321,6 +328,11 @@ mod tests {
                 ("GET", "/v1/runtime"),
                 ("GET", "/v1/calls"),
                 ("GET", "/v1/agents"),
+                ("GET", "/v1/sync/status"),
+                ("POST", "/v1/sync/register"),
+                ("POST", "/v1/sync/push"),
+                ("GET", "/v1/sync/pull"),
+                ("POST", "/v1/sync/ack"),
                 ("POST", "/v1/search"),
                 ("POST", "/v1/pack-context"),
                 ("POST", "/v1/multi-get"),

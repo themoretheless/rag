@@ -37,6 +37,7 @@ mod health;
 mod jobs;
 mod ops;
 mod retrieval;
+mod sync;
 mod wiki;
 
 use std::collections::BTreeSet;
@@ -188,7 +189,9 @@ pub async fn serve(
         &config,
         std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
     );
-    let api = api_router(HttpState::new(store, mcp_http, config, embedder));
+    let state = HttpState::new(store, mcp_http, config, embedder);
+    sync::spawn_worker(state.clone());
+    let api = api_router(state);
 
     let app = if let Some(mcp_svc) = mcp {
         Router::new().merge(api).nest_service("/mcp", mcp_svc)
@@ -350,6 +353,7 @@ fn api_router(state: HttpState) -> Router {
         .merge(jobs::routes())
         .merge(ops::routes())
         .merge(retrieval::routes())
+        .merge(sync::routes())
         .merge(wiki::routes())
         .merge(admin::routes())
         .with_state(state)

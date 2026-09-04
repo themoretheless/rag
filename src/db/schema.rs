@@ -5,7 +5,53 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 9;
+pub const SCHEMA_VERSION: i32 = 10;
+
+/// Durable node registry and replication journal. Payloads are intentionally
+/// opaque here: transport persists them before higher layers apply/rebuild.
+pub const CREATE_SYNC_NODES: &str = r#"
+CREATE TABLE IF NOT EXISTS sync_nodes (
+  node_id VARCHAR PRIMARY KEY,
+  hostname VARCHAR NOT NULL,
+  role VARCHAR NOT NULL DEFAULT 'replica',
+  last_seen_at TIMESTAMP NOT NULL,
+  last_push_seq BIGINT NOT NULL DEFAULT 0,
+  pull_cursor BIGINT NOT NULL DEFAULT 0,
+  last_error VARCHAR
+)
+"#;
+
+pub const CREATE_SYNC_CHANGES: &str = r#"
+CREATE TABLE IF NOT EXISTS sync_changes (
+  primary_seq BIGINT PRIMARY KEY,
+  origin_node VARCHAR NOT NULL,
+  origin_seq BIGINT NOT NULL,
+  entity_kind VARCHAR NOT NULL,
+  entity_id VARCHAR NOT NULL,
+  operation VARCHAR NOT NULL,
+  payload_json VARCHAR NOT NULL,
+  content_hash VARCHAR,
+  created_at TIMESTAMP NOT NULL,
+  UNIQUE(origin_node, origin_seq)
+)
+"#;
+
+pub const CREATE_IDX_SYNC_CHANGES_ENTITY: &str =
+    "CREATE INDEX IF NOT EXISTS idx_sync_changes_entity ON sync_changes(entity_kind, entity_id)";
+
+pub const CREATE_SYNC_OUTBOX: &str = r#"
+CREATE TABLE IF NOT EXISTS sync_outbox (
+  local_seq BIGINT PRIMARY KEY,
+  entity_kind VARCHAR NOT NULL,
+  entity_id VARCHAR NOT NULL,
+  operation VARCHAR NOT NULL,
+  payload_json VARCHAR NOT NULL,
+  content_hash VARCHAR,
+  created_at TIMESTAMP NOT NULL,
+  sent_at TIMESTAMP,
+  primary_seq BIGINT
+)
+"#;
 
 /// Create `documents` table if missing (base v1 columns).
 pub const CREATE_DOCUMENTS: &str = r#"
@@ -377,6 +423,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_IDX_COLLECTION_DEPENDENCIES_DOCUMENT,
             CREATE_DOCUMENT_REVISIONS,
             CREATE_IDX_DOCUMENT_REVISIONS_DOCUMENT,
+            CREATE_SYNC_NODES,
+            CREATE_SYNC_CHANGES,
+            CREATE_IDX_SYNC_CHANGES_ENTITY,
+            CREATE_SYNC_OUTBOX,
             CREATE_KG_FACTS,
             CREATE_IDX_KG_FACTS_SUBJECT,
             CREATE_IDX_KG_FACTS_PREDICATE,
@@ -508,7 +558,7 @@ fn record_schema_version(conn: &Connection) -> Result<()> {
         "#,
         duckdb::params![
             SCHEMA_VERSION,
-            "Filesystem source preflight manifest; schema v9"
+            "Durable multi-machine sync registry and change journal; schema v10"
         ],
     )?;
 

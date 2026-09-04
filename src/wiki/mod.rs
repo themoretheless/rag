@@ -559,10 +559,18 @@ pub async fn write_wiki_page_command(
     doc.uri = uri.clone();
     doc.title = title.clone();
     doc.content = content.clone();
-    if let Some(wing) = wing.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(wing) = wing
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         doc.wing = Some(wing.to_string());
     }
-    if let Some(room) = room.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(room) = room
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         doc.room = Some(room.to_string());
     }
     doc.metadata_json = metadata_json;
@@ -630,13 +638,40 @@ pub async fn write_wiki_page_command(
         entity_id: Some(document_id.clone()),
         entity_kind: Some(LAYER_WIKI.into()),
         payload_json: payload.to_string(),
-        agent_name: agent,
+        agent_name: agent.clone(),
     };
     let write =
         store.write_wiki_document_atomic(&doc, if_match, &chunks, &index_entry, &audit_entry)?;
     let revision = write.revision;
     let node_id = write.node_id.unwrap_or_default();
     let edge_count = write.edge_count;
+
+    // Transport-applied changes carry a sync:* agent marker and must not be
+    // journalled again, otherwise pull would create an endless echo loop.
+    if !agent
+        .as_deref()
+        .is_some_and(|value| value.starts_with("sync:"))
+    {
+        let sync_payload = serde_json::json!({
+            "slug": slug,
+            "title": title,
+            "content": content,
+            "wing": doc.wing.clone(),
+            "room": doc.room.clone(),
+            "kind": kind,
+            "category": index_entry.category.clone(),
+            "summary": index_entry.summary.clone(),
+        });
+        if let Err(error) = store.journal_local_sync_change(
+            "wiki",
+            &uri,
+            "upsert",
+            &sync_payload.to_string(),
+            doc.content_hash.as_deref(),
+        ) {
+            tracing::error!(%error, uri = %uri, "wiki write committed but sync journal append failed");
+        }
+    }
 
     Ok(WikiWriteResult {
         document_id,

@@ -5,11 +5,14 @@
   type Status = { ok?: boolean; db_path?: string; document_count?: number; chunk_count?: number; documents?: number; chunks?: number; backend?: string; schema_version?: string | number }
   type Agent = { agent: string; transport?: string; online?: boolean; calls_today?: number; last_call_at?: string; last_tool?: string }
   type Activity = { seq?: number; at?: string; client?: string; action?: string; status?: string }
+  type SyncNode = { node_id: string; hostname: string; role: string; last_seen_at: string; last_push_seq: number; pull_cursor: number; last_error?: string }
+  type SyncState = { role: string; node_id: string; primary_url?: string; latest_primary_seq: number; pending_outbox: number; nodes: SyncNode[] }
   type Node = { id: string; label: string; detail: string; online: boolean; isHost: boolean }
 
   let status = $state<Status>({})
   let agents = $state<Agent[]>([])
   let activity = $state<Activity[]>([])
+  let sync = $state<SyncState | null>(null)
   let busy = $state(false)
   let error = $state('')
   let updatedAt = $state<Date | null>(null)
@@ -20,6 +23,9 @@
   const dbPath = $derived(status.db_path || 'путь сервером не опубликован')
   const nodes = $derived.by<Node[]>(() => {
     const result = new Map<string, Node>()
+    for (const item of sync?.nodes ?? []) {
+      result.set(item.node_id, { id: item.node_id, label: item.hostname, detail: `${item.role} · push ${item.last_push_seq} · pull ${item.pull_cursor}`, online: !item.last_error, isHost: true })
+    }
     for (const item of activity) {
       const raw = item.client?.trim()
       if (!raw) continue
@@ -42,6 +48,7 @@
       ['статус БД', async () => { status = await api.get<Status>('/v1/status') }],
       ['клиенты', async () => { agents = (await api.get<{ items?: Agent[] }>('/v1/agents')).items ?? [] }],
       ['активность', async () => { activity = (await api.get<{ items?: Activity[] }>('/v1/activity?limit=80')).items ?? [] }],
+      ['sync', async () => { sync = (await api.get<{ sync: SyncState }>('/v1/sync/status')).sync }],
     ])
     error = failures.length ? `Не обновлены: ${failures.join(', ')}` : ''
     updatedAt = new Date()
@@ -66,7 +73,7 @@
     <article><span>Подтверждено БД</span><strong>{status.ok === false ? 0 : 1}</strong><small>данные от текущего gateway</small></article>
     <article><span>Документы</span><strong>{documents.toLocaleString()}</strong><small>{chunks.toLocaleString()} чанков</small></article>
     <article><span>Замечено клиентов</span><strong>{nodes.length}</strong><small>это ещё не реплики БД</small></article>
-    <article class="planned"><span>Репликация</span><strong>не включена</strong><small>схема потока уже определена</small></article>
+    <article class:ready={!!sync} class="planned"><span>Репликация</span><strong>{sync ? 'транспорт готов' : 'не включена'}</strong><small>{sync ? `${sync.role} · cursor ${sync.latest_primary_seq}` : 'схема потока уже определена'}</small></article>
   </section>
 
   <section class="topology panel">
@@ -87,21 +94,21 @@
           <article class="client-card" class:online={node.online}>
             <div class="mini-db"><i></i><i></i></div>
             <span><strong>{node.label}</strong><small>{node.detail}</small></span>
-            <b>{node.isHost ? 'LOCAL DB: НЕ ПОДТВЕРЖДЕНА' : 'CLIENT'}</b>
+            <b>{sync?.nodes.some((item) => item.node_id === node.id) ? 'SYNC NODE' : node.isHost ? 'LOCAL DB: НЕ ПОДТВЕРЖДЕНА' : 'CLIENT'}</b>
           </article>
         {:else}
           <article class="client-card placeholder"><div class="mini-db"><i></i><i></i></div><span><strong>Локальная машина</strong><small>появится после первого запроса</small></span><b>ОЖИДАНИЕ</b></article>
         {/each}
       </div>
     </div>
-    <footer class="truth"><i></i><span>Анимация показывает согласованный будущий поток. Сейчас запросы клиентов идут в главную БД напрямую; локальные реплики и outbox ещё не отчитываются серверу.</span></footer>
+    <footer class="truth"><i></i><span>{sync ? sync.role === 'primary' ? `Главная готова: primary seq ${sync.latest_primary_seq}. Подключённые реплики автоматически появятся здесь после регистрации.` : `Фоновый обмен включён: cursor ${sync.latest_primary_seq}, в outbox ${sync.pending_outbox}. Сейчас синхронизируются wiki-upsert.` : 'Анимация показывает согласованный будущий поток. Сейчас запросы клиентов идут в главную БД напрямую; локальные реплики и outbox ещё не отчитываются серверу.'}</span></footer>
   </section>
 
   <section class="stages">
-    <article class="panel active"><b>01</b><span><strong>Локальная запись</strong><small>Своя DuckDB принимает изменения без сети</small></span><em>план</em></article>
-    <article class="panel active"><b>02</b><span><strong>Outbox → primary</strong><small>Повторяемая доставка с node_id + seq</small></span><em>план</em></article>
-    <article class="panel active"><b>03</b><span><strong>Primary решает</strong><small>Канонический порядок и конфликты</small></span><em>план</em></article>
-    <article class="panel active"><b>04</b><span><strong>Pull → local</strong><small>Курсор, tombstone и локальный rebuild</small></span><em>план</em></article>
+    <article class="panel active"><b>01</b><span><strong>Локальная запись</strong><small>Своя DuckDB принимает изменения без сети</small></span><em>{sync ? 'wiki ✓' : 'план'}</em></article>
+    <article class="panel active"><b>02</b><span><strong>Outbox → primary</strong><small>Повторяемая доставка с node_id + seq</small></span><em>{sync ? 'готово' : 'план'}</em></article>
+    <article class="panel active"><b>03</b><span><strong>Primary решает</strong><small>Канонический порядок и конфликты</small></span><em>{sync ? 'готово' : 'план'}</em></article>
+    <article class="panel active"><b>04</b><span><strong>Pull → local</strong><small>Курсор и локальный rebuild</small></span><em>{sync ? 'wiki ✓' : 'план'}</em></article>
   </section>
 </div>
 
