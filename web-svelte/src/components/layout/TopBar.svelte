@@ -9,6 +9,7 @@
     graph: { title: 'Граф', layer: 'L2 · граф объектов', color: 'var(--l2)' },
     wiki: { title: 'Вики', layer: 'L3 · знание', color: 'var(--l3)' },
     agents: { title: 'Агенты · Журнал', layer: 'L4 · MCP-клиенты', color: 'var(--l4)' },
+    sync: { title: 'Синхронизация БД', layer: 'local ↔ primary', color: 'var(--l2)' },
     evaluation: { title: 'Оценка', layer: 'eval · retrieval', color: 'var(--l1)' },
     models: { title: 'Модели и пайплайн', layer: 'RAG_* env · runtime', color: 'var(--l3)' },
   }

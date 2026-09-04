@@ -11,6 +11,7 @@
   import ConsoleView from '@/views/ConsoleView.svelte'
   import CorpusView from '@/views/CorpusView.svelte'
   import AgentsView from '@/views/AgentsView.svelte'
+  import SyncView from '@/views/SyncView.svelte'
   import EvaluationView from '@/views/EvaluationView.svelte'
   import ModelsView from '@/views/ModelsView.svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
@@ -39,6 +40,8 @@
     <SearchView />
   {:else if route.name === 'agents'}
     <AgentsView />
+  {:else if route.name === 'sync'}
+    <SyncView />
   {:else if route.name === 'evaluation'}
     <EvaluationView />
   {:else}

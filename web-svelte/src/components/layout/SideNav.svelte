@@ -5,6 +5,7 @@
     { name: 'console', label: 'Пульт', icon: 'console' }, { name: 'corpus', label: 'Корпус', icon: 'corpus', layer: 'l0' },
     { name: 'search', label: 'Поиск', icon: 'search', layer: 'l1' }, { name: 'graph', label: 'Граф', icon: 'graph', layer: 'l2' },
     { name: 'wiki', label: 'Вики', icon: 'wiki', layer: 'l3' }, { name: 'agents', label: 'Агенты', icon: 'agents', layer: 'l4' },
+    { name: 'sync', label: 'Синхр.', icon: 'sync' },
     { name: 'evaluation', label: 'Оценка', icon: 'evaluation' },
   ]
   function open(name: RouteName) {
