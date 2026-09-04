@@ -94,7 +94,14 @@ impl HttpState {
 
 /// Build streamable-HTTP MCP service that shares `store` / embedder / config.
 ///
-/// Each MCP session gets a fresh [`RagServer`] clone of the same DuckDB `Store`.
+/// Each MCP request gets a fresh [`RagServer`] clone of the same DuckDB `Store`.
+///
+/// The gateway intentionally runs without server-side MCP sessions. All durable
+/// state belongs to DuckDB and every tool call is self-contained, so retaining
+/// an in-memory session only makes reconnects fragile: after a client closes a
+/// session, a delayed SSE `GET /mcp` must receive 404 by the MCP specification.
+/// Stateless Streamable HTTP avoids that stale-session loop while keeping SSE
+/// request/response framing for clients that do not support JSON responses.
 pub fn mcp_http_service(
     store: Store,
     embedder: Arc<dyn EmbeddingProvider>,
@@ -114,7 +121,7 @@ pub fn mcp_http_service(
         },
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
-            .with_stateful_mode(true)
+            .with_stateful_mode(false)
             .with_sse_keep_alive(Some(std::time::Duration::from_secs(15)))
             .with_cancellation_token(cancellation_token)
             .with_allowed_hosts(allowed_hosts),
@@ -435,10 +442,15 @@ async fn http_metadata(
         .get(axum::http::header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty() && value.len() <= 160);
+    let client_host = request
+        .headers()
+        .get("x-rag-client-host")
+        .and_then(|value| value.to_str().ok());
     // Activity is remotely readable whenever the explicitly enabled gateway is
-    // remotely bound. Keep a stable per-client discriminator without retaining
-    // or exposing raw IP addresses and user-agent strings.
-    let client = anonymous_client(peer_ip.as_deref(), user_agent);
+    // remotely bound. Prefer an explicit, tightly validated machine label and
+    // otherwise keep a stable discriminator without retaining or exposing raw
+    // IP addresses and user-agent strings.
+    let client = client_label(client_host, peer_ip.as_deref(), user_agent);
     let origin = request
         .headers()
         .get(axum::http::header::ORIGIN)
@@ -504,6 +516,30 @@ fn anonymous_client(peer_ip: Option<&str>, user_agent: Option<&str>) -> Option<S
     };
     let digest = blake3::hash(material.as_bytes()).to_hex().to_string();
     Some(format!("client-{}", &digest[..12]))
+}
+
+fn client_label(
+    client_host: Option<&str>,
+    peer_ip: Option<&str>,
+    user_agent: Option<&str>,
+) -> Option<String> {
+    client_host
+        .and_then(sanitize_client_host)
+        .map(|host| format!("host:{host}"))
+        .or_else(|| anonymous_client(peer_ip, user_agent))
+}
+
+fn sanitize_client_host(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 80
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return None;
+    }
+    Some(value.to_ascii_lowercase())
 }
 
 pub(crate) fn record_mcp_tool(action: &str, status: u16, elapsed_ms: f64) {
@@ -1122,6 +1158,23 @@ mod tests {
         );
         assert!(!client.contains("192.0.2.10"));
         assert!(!client.contains("Secret Browser"));
+        assert_eq!(
+            client_label(
+                Some(" TMTL-MacBook-Pro-M4.local "),
+                Some("192.0.2.10"),
+                Some("Secret Browser/1")
+            )
+            .as_deref(),
+            Some("host:tmtl-macbook-pro-m4.local")
+        );
+        assert_eq!(
+            client_label(
+                Some("invalid host name"),
+                Some("192.0.2.10"),
+                Some("Secret Browser/1")
+            ),
+            Some(client)
+        );
     }
 
     async fn get_json(app: &Router, uri: &str) -> (axum::http::StatusCode, serde_json::Value) {

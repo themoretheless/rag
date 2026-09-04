@@ -197,6 +197,17 @@ export RAG_LLM_ENABLED=false
 MCP endpoint: **`http://127.0.0.1:7432/mcp`**  
 (`RAG_MCP_HTTP=false` отключает MCP path, graph/wiki UI API остаётся.)
 
+Gateway использует stateless Streamable HTTP: MCP-сообщения идут через
+`POST /mcp`, ответы сохраняют SSE framing для совместимости. Серверный
+`Mcp-Session-Id` не хранится, поэтому переподключение клиента не создаёт цикл
+`GET /mcp` → `404 Session not found`. Состояние RAG хранится в DuckDB, а не в
+транспортной MCP-сессии.
+
+Для понятной атрибуции нескольких компьютеров клиент может добавлять ко всем
+HTTP/MCP-запросам `X-RAG-Client-Host: <hostname>`. Валидное имя появляется в
+Activity и process log как `host:<hostname>`; без него используется анонимный
+`client-<hash>`, а raw IP/User-Agent не сохраняются.
+
 **Терминал 2: UI (Wiki mode by default with `--http`):**
 
 ```bash

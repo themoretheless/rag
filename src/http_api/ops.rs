@@ -114,7 +114,9 @@ const PRODUCT_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/routes"),
 ];
 
-const MCP_ROUTES: &[(&str, &str)] = &[("POST", "/mcp"), ("GET", "/mcp"), ("DELETE", "/mcp")];
+// Stateless Streamable HTTP uses one POST per MCP message. There is no
+// session-scoped SSE GET or DELETE endpoint to become stale after reconnects.
+const MCP_ROUTES: &[(&str, &str)] = &[("POST", "/mcp")];
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -363,10 +365,7 @@ mod tests {
                 ("GET", "/v1/routes"),
             ]
         );
-        assert_eq!(
-            MCP_ROUTES,
-            &[("POST", "/mcp"), ("GET", "/mcp"), ("DELETE", "/mcp")]
-        );
+        assert_eq!(MCP_ROUTES, &[("POST", "/mcp")]);
     }
 
     #[tokio::test]

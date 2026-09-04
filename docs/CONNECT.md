@@ -299,7 +299,7 @@ Exclusive stdio остаётся только offline/dev вариантом: п
 
 | Path | Метод | Назначение |
 |------|-------|------------|
-| `/mcp` | GET, POST, DELETE | stateful streamable HTTP MCP clients |
+| `/mcp` | POST | stateless Streamable HTTP MCP clients; SSE response framing is retained |
 | `/health` | GET | counts, integrity, WAL and nested runtime/startup/autosync/backup state |
 | `/live`, `/ready` | GET | process liveness and store readiness |
 | `/v1/status`, `/v1/doctor` | GET | MCP-parity status and integrity reports; status carries `pid`, `uptime_seconds`, `db_file_bytes`, `wal_bytes`, and computes raw/wiki/index compilation health with one SQL aggregate rather than loading bodies/backlinks |
@@ -313,6 +313,7 @@ Exclusive stdio остаётся только offline/dev вариантом: п
 | `/v1/taxonomy`, `/v1/wings`, `/v1/rooms` | GET | wing → room tree with counts |
 | `/v1/diary`, `/v1/kg`, `/v1/kg/timeline`, `/v1/kg/stats`, `/v1/tunnels` | GET | L4 reads (`agent`, `subject`, `predicate`, `object`, `at_time`, `node_id`) |
 | `/v1/llm-status`, `/v1/embedding-manifest`, `/v1/lint-wiki` | GET | model probe, manifest vs live config, wiki lint |
+
 | `/v1/eval/history` | GET | last runs from the `--history-jsonl` file named by `RAG_EVAL_HISTORY` (never a request path) |
 | `/v1/multi-get` | POST | ordered batch document retrieval |
 | `/v1/expand-chunks`, `/v1/find-similar` | GET | retrieval helpers |
@@ -331,6 +332,12 @@ Exclusive stdio остаётся только offline/dev вариантом: п
 | `/v1/revisions/restore` | POST | restore an old revision as a new CAS-protected head revision |
 | `/v1/operations/checkpoint` | POST | checkpoint/vacuum the live store through its sole writer process |
 | `/v1/operations/backup` | POST | create an allowlisted backup; `dry_run` defaults to `true` and the live DB target is refused |
+
+`/mcp` не хранит серверную сессию: все долговечные данные уже находятся в
+DuckDB, а tool-вызовы самодостаточны. Это также не даёт старому SSE polling
+продолжать слать `GET /mcp` с удалённым `Mcp-Session-Id` и заполнять Activity
+ожидаемыми `404 Session not found`. Клиенту достаточно повторить обычный MCP
+initialize через `POST /mcp` после потери соединения.
 
 The additional console routes are read-only. The unauthenticated REST gateway
 does not expose generic ingest, delete, re-embed, vacuum, or repair mirrors;
@@ -522,11 +529,19 @@ uniqueness policy: ownership по-прежнему защищён Store CAS, в�
 `latest_seq` и `capacity=1000`. История bounded и process-local; это не
 `ops_log`.
 
-Raw IP и User-Agent не сохраняются: из них получается стабильный
+Если клиент передаёт `X-RAG-Client-Host`, Activity и HTTP-лог используют
+`host:<имя-компьютера>`. Допустимы только ASCII-буквы, цифры, `.`, `_`, `-`,
+максимум 80 байт; имя приводится к нижнему регистру. Например:
+
+```text
+X-RAG-Client-Host: tmtl-macbook-pro-m4.local
+```
+
+Без заголовка raw IP и User-Agent не сохраняются: из них получается стабильный
 `client-<hash>`. HTTP event хранит method + route path без query/body. MCP event
 хранит tool action и только безопасные lineage fields. Source paths, titles,
-content, search query, полные tool args/results и secret headers в Activity не
-попадают.
+content, search query, полные tool args/results и остальные headers в Activity
+не попадают.
 
 ### 7g. `GET /v1/backlinks?id=<document_id>&wing=<project>`
 
