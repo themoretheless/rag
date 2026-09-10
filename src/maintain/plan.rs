@@ -479,11 +479,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                     .and_then(|v| v.as_array())
                     .map(|a| !a.is_empty())
                     .unwrap_or(false);
-            let has_target = item
-                .target_id
-                .as_deref()
-                .map(non_empty_id)
-                .unwrap_or(false);
+            let has_target = item.target_id.as_deref().map(non_empty_id).unwrap_or(false);
             if !(has_group || has_target || has_pair) {
                 return Err(AppError::config(format!(
                     "maintenance action '{}' needs target_id and/or params.document_ids (or drop/source ids)",
@@ -502,11 +498,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                         .any(|x| x.as_str().map(non_empty_id).unwrap_or(false))
                 })
                 .unwrap_or(false);
-            let has_target = item
-                .target_id
-                .as_deref()
-                .map(non_empty_id)
-                .unwrap_or(false);
+            let has_target = item.target_id.as_deref().map(non_empty_id).unwrap_or(false);
             if !has_sources && !has_target {
                 return Err(AppError::config(format!(
                     "maintenance action '{}' requires params.source_ids/document_ids or target_id",
@@ -646,7 +638,11 @@ fn parse_plan_json_raw(unfenced: &str) -> Result<(Vec<RawPlanItem>, Option<Strin
 /// Parse + whitelist-filter model output into validated plan items.
 pub fn parse_and_filter_plan(
     raw: &str,
-) -> Result<(Vec<MaintenancePlanItem>, Vec<RejectedAction>, Option<String>)> {
+) -> Result<(
+    Vec<MaintenancePlanItem>,
+    Vec<RejectedAction>,
+    Option<String>,
+)> {
     let unfenced = strip_json_fences(raw.trim());
     let (items, notes) = parse_plan_json_raw(unfenced)?;
     let (accepted, rejected) = filter_raw_plan(items);
@@ -726,10 +722,7 @@ pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> Maintenanc
         let keep = g.document_ids.first().cloned();
         actions.push(MaintenancePlanItem {
             action: MaintenanceAction::MergeExactDup,
-            reason: Some(format!(
-                "{} documents share content_hash",
-                g.count
-            )),
+            reason: Some(format!("{} documents share content_hash", g.count)),
             target_id: keep,
             params: serde_json::json!({
                 "document_ids": g.document_ids,
@@ -744,11 +737,22 @@ pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> Maintenanc
             break;
         }
         actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::RefreshStaleWiki,
-            reason: Some(format!(
-                "wiki '{}' older than raw '{}'",
-                w.wiki_title, w.raw_title
-            )),
+            action: if w.link_kind == "source_missing" {
+                MaintenanceAction::Noop
+            } else {
+                MaintenanceAction::RefreshStaleWiki
+            },
+            reason: Some(match w.link_kind.as_str() {
+                "source_missing" => format!(
+                    "source '{}' for wiki '{}' is unavailable; restore or relink before refresh",
+                    w.raw_title, w.wiki_title
+                ),
+                "source_version" => format!(
+                    "source content '{}' changed since wiki '{}' was generated",
+                    w.raw_title, w.wiki_title
+                ),
+                _ => format!("wiki '{}' older than raw '{}'", w.wiki_title, w.raw_title),
+            }),
             target_id: Some(w.wiki_document_id.clone()),
             params: serde_json::json!({
                 "raw_document_id": w.raw_document_id,
@@ -891,7 +895,9 @@ pub async fn plan_with_llm(
     max_actions: usize,
 ) -> Result<MaintenancePlan> {
     let analysis_json = serde_json::to_string(report).map_err(|e| {
-        AppError::llm(format!("failed to serialize AnalysisReport for planner: {e}"))
+        AppError::llm(format!(
+            "failed to serialize AnalysisReport for planner: {e}"
+        ))
     })?;
     let analysis_json = truncate(&analysis_json, ANALYSIS_JSON_MAX_CHARS);
 
@@ -1162,7 +1168,8 @@ mod tests {
 
     #[test]
     fn parse_plan_envelope_and_array() {
-        let raw = r#"{"actions":[{"action":"reindex_fts","reason":"fts","params":{}}],"notes":"n"}"#;
+        let raw =
+            r#"{"actions":[{"action":"reindex_fts","reason":"fts","params":{}}],"notes":"n"}"#;
         let (acts, notes) = parse_plan_json(raw).unwrap();
         assert_eq!(acts.len(), 1);
         assert_eq!(acts[0]["action"], "reindex_fts");
@@ -1218,7 +1225,8 @@ mod tests {
             wiki_updated_at: Utc::now(),
             raw_document_id: "r1".into(),
             raw_title: "Raw".into(),
-            raw_updated_at: Utc::now(),
+            raw_updated_at: Some(Utc::now()),
+            link_kind: "graph_related".into(),
         }];
         report.near_duplicates = vec![NearDuplicatePair {
             document_id_a: "n1".into(),
@@ -1383,9 +1391,7 @@ mod tests {
             force_heuristic: false,
             log_ops: false,
         };
-        let plan = plan_maintenance(&report, &cfg, None, &opts)
-            .await
-            .unwrap();
+        let plan = plan_maintenance(&report, &cfg, None, &opts).await.unwrap();
         assert_eq!(plan.source, PlanSource::Heuristic);
         assert!(!plan.llm_enabled);
         assert_eq!(plan.actions[0].action, MaintenanceAction::Noop);

@@ -6,7 +6,8 @@ use crate::error::AppError;
 
 /// Parse `RAG_HTTP_BIND` like `127.0.0.1:7432`. Empty / unset → None.
 ///
-/// Non-loopback binds require `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on` (MCP is unauthenticated).
+/// Non-loopback binds require `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on`.
+/// Startup additionally validates bearer credentials via `validate_security`.
 pub fn parse_bind(raw: &str) -> Result<Option<SocketAddr>, AppError> {
     let s = raw.trim();
     if s.is_empty() {
@@ -23,7 +24,7 @@ pub fn parse_bind(raw: &str) -> Result<Option<SocketAddr>, AppError> {
         if !allow {
             return Err(AppError::config(format!(
                 "RAG_HTTP_BIND '{s}' is not loopback; set RAG_HTTP_ALLOW_REMOTE=true to expose \
-                 unauthenticated HTTP/MCP on the network (dangerous)"
+                 authenticated HTTP/MCP on the network"
             )));
         }
     }

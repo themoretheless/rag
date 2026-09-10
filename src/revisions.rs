@@ -12,7 +12,7 @@ use crate::db::Store;
 use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::models::OpsLogEntry;
+use crate::models::{OpsLogEntry, WikiIndexEntry};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RestoreRevisionCommand {
@@ -125,18 +125,14 @@ impl<'a> RevisionService<'a> {
         restored.created_at = current.created_at;
         restored.updated_at = Utc::now();
 
-        self.store.ensure_embedding_manifest(self.config)?;
-        self.store.require_embedding_manifest_match(self.config)?;
+        let _embedding_guard = self
+            .store
+            .try_embedding_write_guard(self.config, "revision restore")?;
         let chunks = DocumentIndexer::new(self.embedder.as_ref(), self.config)
             .build_chunks(&restored)
             .await?;
-        let write = self.store.write_document_atomic(
-            &restored,
-            Some(command.if_match_revision),
-            DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-        )?;
         let now = Utc::now();
-        if let Err(error) = self.store.append_ops_log(&OpsLogEntry {
+        let audit_entry = OpsLogEntry {
             id: Uuid::new_v4().to_string(),
             seq: 0,
             ts: now,
@@ -144,20 +140,83 @@ impl<'a> RevisionService<'a> {
             prefix: Some("RESTORE".into()),
             message: format!(
                 "restored document {document_id} from revision {} as revision {}",
-                command.revision, write.revision
+                command.revision,
+                command.if_match_revision + 1
             ),
             entity_id: Some(document_id.to_string()),
             entity_kind: Some(restored.layer.clone()),
             payload_json: serde_json::json!({
                 "from_revision": command.revision,
                 "previous_revision": command.if_match_revision,
-                "new_revision": write.revision,
+                "new_revision": command.if_match_revision + 1,
             })
             .to_string(),
             agent_name: None,
-        }) {
-            tracing::warn!(%error, document_id, revision = write.revision, "revision restored but audit log append failed");
-        }
+        };
+        let write = if restored.layer.eq_ignore_ascii_case("wiki") {
+            let slug = restored
+                .uri
+                .strip_prefix("wiki://")
+                .filter(|slug| !slug.is_empty())
+                .ok_or_else(|| AppError::config("wiki revision has no canonical wiki URI"))?;
+            let existing_index = self.store.get_wiki_index_by_slug(slug)?;
+            let metadata: serde_json::Value = serde_json::from_str(&restored.metadata_json)?;
+            let index = WikiIndexEntry {
+                id: existing_index
+                    .map(|entry| entry.id)
+                    .unwrap_or_else(|| format!("idx-{}", restored.id)),
+                slug: slug.into(),
+                title: restored.title.clone(),
+                kind: restored.kind.clone(),
+                category: metadata
+                    .get("category")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                summary: Some(
+                    metadata
+                        .get("summary")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            restored
+                                .content
+                                .lines()
+                                .map(str::trim)
+                                .find(|line| !line.is_empty())
+                                .unwrap_or("")
+                                .chars()
+                                .take(240)
+                                .collect()
+                        }),
+                ),
+                page_id: Some(restored.id.clone()),
+                updated_at: now,
+            };
+            let mode =
+                crate::db::sync::WikiSyncWrite::Local(crate::db::sync::SyncIdentity::from_env()?);
+            self.store
+                .write_wiki_document_atomic(
+                    &restored,
+                    Some(command.if_match_revision),
+                    &chunks,
+                    &index,
+                    &audit_entry,
+                    &mode,
+                    false,
+                )?
+                .0
+                .ok_or_else(|| AppError::db("wiki restore returned no committed document"))?
+        } else {
+            let write = self.store.write_document_atomic(
+                &restored,
+                Some(command.if_match_revision),
+                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+            )?;
+            if let Err(error) = self.store.append_ops_log(&audit_entry) {
+                tracing::warn!(%error, document_id, revision = write.revision, "revision restored but audit log append failed");
+            }
+            write
+        };
 
         Ok(RestoreRevisionResult {
             document_id: document_id.to_string(),
@@ -403,6 +462,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(restored.revision, 3);
+        let replicated = store.pull_sync_changes("observer", 0, 10).unwrap();
+        assert_eq!(replicated.len(), 3);
+        let payload = crate::db::sync::validate_wiki_change(&replicated[2].change).unwrap();
+        assert_eq!(payload.content, "first body [[Original]]");
+        assert_eq!(
+            store
+                .get_wiki_index_by_slug("revision-test")
+                .unwrap()
+                .unwrap()
+                .summary
+                .as_deref(),
+            Some("first body [[Original]]")
+        );
         assert_eq!(
             store.get_document("doc-1").unwrap().unwrap().content,
             "first body [[Original]]"
@@ -434,10 +506,17 @@ mod tests {
                 revision: 2,
                 if_match_revision: 3,
             })
-            .await
-            .expect("committed restore must not fail when audit logging is unavailable");
-        assert_eq!(restored_without_audit.revision, 4);
-        assert_eq!(store.get_document("doc-1").unwrap().unwrap().revision, 4);
+            .await;
+        assert!(
+            restored_without_audit.is_err(),
+            "wiki restore requires its audit/journal transaction to commit"
+        );
+        assert_eq!(store.get_document("doc-1").unwrap().unwrap().revision, 3);
+        assert_eq!(
+            store.get_document("doc-1").unwrap().unwrap().content,
+            "first body [[Original]]"
+        );
+        assert_eq!(store.pull_sync_changes("observer", 0, 10).unwrap().len(), 3);
 
         assert!(store.delete_document("doc-1").unwrap());
         assert!(store.list_document_revisions("doc-1").unwrap().is_empty());

@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 10;
+pub const SCHEMA_VERSION: i32 = 14;
 
 /// Durable node registry and replication journal. Payloads are intentionally
 /// opaque here: transport persists them before higher layers apply/rebuild.
@@ -392,6 +392,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // Additive section metadata; old rows read as an empty object.
     add_column_best_effort(conn, "chunks", "metadata_json", "VARCHAR DEFAULT '{}'")?;
 
+    // NULL identifies pre-v11 edges whose author was never persisted. New writes
+    // explicitly distinguish extracted edges from durable user-authored links.
+    add_column_best_effort(conn, "graph_edges", "edge_origin", "VARCHAR")?;
+
     // Indexes that depend on document columns (after columns exist).
     conn.execute_batch(
         &[
@@ -416,6 +420,11 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_IDX_SOURCE_MANIFEST_DOCUMENT,
             CREATE_SCHEMA_VERSION,
             CREATE_META,
+            "CREATE TABLE IF NOT EXISTS search_feedback (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS knowledge_views (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS wiki_proposals (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS eval_runs (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS background_jobs (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
             CREATE_COLLECTIONS,
             CREATE_COLLECTION_ENTRIES,
             CREATE_COLLECTION_DEPENDENCIES,

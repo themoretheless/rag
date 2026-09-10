@@ -1,4 +1,6 @@
 <script lang="ts">
+  import KnowledgeViews from './KnowledgeViews.svelte'
+  import KnowledgeReview from './KnowledgeReview.svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
   import { ui } from '@/lib/state/ui.svelte'
   import { route, goWiki, goGraph } from '@/lib/router.svelte'
@@ -95,6 +97,8 @@
 </script>
 
 <div class="home">
+  <KnowledgeViews />
+  <KnowledgeReview />
   {#if offline}
     <div class="state">
       <div class="state-icon" aria-hidden="true">⛔</div>
@@ -168,7 +172,7 @@
     {/if}
 
     <section class="section">
-      <h2>{ui.t('allPages')}</h2>
+      <h2>{ui.t('allPages')} · {wiki.pages.length}{wiki.catalogTotal !== null ? ` / ${wiki.catalogTotal}` : ''}</h2>
       {#each groups as g (g.category ?? '_')}
         <div class="group">
           {#if g.category}
@@ -191,11 +195,18 @@
           </div>
         </div>
       {/each}
+      {#if wiki.loadMoreError}<p class="err-text" role="alert">{wiki.loadMoreError}</p>{/if}
+      {#if wiki.catalogHasMore}
+        <button type="button" class="ghost-btn load-more" disabled={wiki.loadingMore} onclick={() => void wiki.loadMore()}>
+          {wiki.loadingMore ? (ui.locale === 'ru' ? 'Загрузка…' : 'Loading…') : (ui.locale === 'ru' ? 'Загрузить ещё' : 'Load more')}
+        </button>
+      {/if}
     </section>
   {/if}
 </div>
 
 <style>
+  .load-more{margin-top:16px}.load-more:disabled{opacity:.5;cursor:default}
   .home {
     max-width: 900px;
     margin: 0 auto;

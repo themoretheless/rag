@@ -673,7 +673,8 @@ the headless `rag-mcp` package has zero egui/eframe dependencies and plain
 `cargo build` stays lean.
 
 Live `--http` mode provides project Home, server-filtered Unified Library,
-lex/vec/hybrid Search, Wiki reading/editing, project-scoped Connections,
+lex/vec/hybrid Search, Wiki reading/editing with rendered fenced `mermaid` diagrams,
+project-scoped Connections,
 Activity, background jobs, health/backup operations and document History with
 bounded diff and CAS restore. Wiki writes and revision restores use CAS through
 the gateway. HTTP transport errors are reduced to safe timeout/connect/generic

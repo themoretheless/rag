@@ -89,6 +89,51 @@ export RAG_LLM_ENABLED=false
 
 ## Policy
 
+### Concurrent edits and source freshness
+
+`compile_source` and applying `consolidate` capture the wiki catalog's revisions
+before calling the LLM. Generated updates use those revisions, including when
+`RAG_WIKI_REQUIRE_IF_MATCH=true`; generated new pages require an absent URI in the
+write transaction. An edit or new page created while the LLM is running produces
+a conflict instead of being overwritten. Each generated page commits separately;
+a conflict on a later page does not undo earlier successful pages in the compile.
+
+Generated pages also persist typed `source_versions` metadata alongside their
+body, chunks, catalog and journal in one transaction:
+
+```json
+{"source_versions":[{"document_id":"source-id","uri":"raw://source","content_hash":"blake3-of-full-source-body"}]}
+```
+
+The hash identifies the complete source snapshot read from the database, before
+the prompt truncates long input. It does not imply the LLM received every byte.
+Freshness checks compare the current source body to that snapshot. A source edit
+during generation therefore makes the resulting page stale even when the page's
+timestamp is newer. Timestamp or metadata changes with identical source content
+do not make a versioned parent stale. A valid complete `source_versions` array
+defines the entire parent set: old graph links, citations and source metadata
+outside it do not affect freshness after recompiling from fewer sources. An
+empty array explicitly records no parents. Metadata travels with wiki replication.
+
+`find_stale_wiki` / `refresh_stale_wiki` report changed source content with
+`link_kind=source_version`. An unavailable parent remains visible with
+`link_kind=source_missing`, its recorded ID/URI and `raw_updated_at: null`;
+automatic refresh skips it and asks for source restoration or relinking in its
+notes. Lookup uses document ID, then URI when IDs differ between replicas.
+Pages without a valid complete snapshot keep the legacy timestamp comparison
+using graph links, source metadata arrays, citations and body markers. If any
+snapshot entry is malformed, the whole page uses that fallback. Existing pages
+gain hashes when compiled or consolidated again; no backfill invents source
+versions for older output.
+
+Diagnostic compatibility: `raw_updated_at` remains an RFC3339 string for present
+sources and is now nullable for unavailable sources. `analyze_corpus.stale_wiki`
+also includes `link_kind`, preserving the reason instead of treating every
+finding as a timestamp comparison. Maintenance plans list restoration/relinking
+as a no-op requiring attention when a source is unavailable.
+
+### Content and embedding rules
+
 - **raw** content is not updated in place (re-ingest same uri replaces)  
 - **wiki** is agent/LLM mutable  
 - Graph extract stays deterministic (`[[wikilink]]`, `#tag`)  

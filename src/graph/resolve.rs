@@ -8,7 +8,8 @@ use uuid::Uuid;
 use crate::db::graph::{
     find_node_by_document_id_locked as find_node_by_document_id,
     find_node_by_uri_locked as find_node_by_uri, find_nodes_by_label_locked as find_nodes_by_label,
-    insert_graph_edges_locked as insert_graph_edges, upsert_graph_node_locked as upsert_graph_node,
+    insert_derived_graph_edges_locked as insert_graph_edges,
+    upsert_graph_node_locked as upsert_graph_node,
 };
 use crate::db::Store;
 use crate::error::Result;
@@ -19,13 +20,16 @@ use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 /// Rebuild the object-graph slice for `doc`.
 ///
 /// 1. Upsert (or promote stub for) the document node — stable id by `document_id` / `uri`.
-/// 2. Delete existing outgoing edges from that node.
+/// 2. Replace extracted outgoing edges, preserving explicit user/dependency links.
 /// 3. Extract wikilinks + tags; resolve targets by label, slug, or `wiki://` uri; write edges.
 ///
 /// Returns `(node_id, edge_count)` for the document node and edges written this pass.
 pub fn rebuild_document_graph(store: &Store, doc: &Document) -> Result<(String, usize)> {
-    let conn = store.lock()?;
-    rebuild_document_graph_locked(&conn, doc)
+    let mut conn = store.lock()?;
+    let tx = conn.transaction()?;
+    let result = rebuild_document_graph_locked(&tx, doc)?;
+    tx.commit()?;
+    Ok(result)
 }
 
 /// Transaction-aware graph rebuild used by atomic document writes.
@@ -38,7 +42,7 @@ pub(crate) fn rebuild_document_graph_locked(
 ) -> Result<(String, usize)> {
     let node_id = ensure_document_node(conn, &doc.id, &doc.title, &doc.uri)?;
     conn.execute(
-        "DELETE FROM graph_edges WHERE source_id = ?",
+        "DELETE FROM graph_edges WHERE source_id = ? AND edge_origin = 'derived'",
         params![node_id],
     )?;
 
@@ -53,7 +57,9 @@ pub(crate) fn rebuild_document_graph_locked(
     for metadata_link in metadata_tag_links(&doc.metadata_json) {
         if !links.iter().any(|link| {
             link.rel_type == metadata_link.rel_type
-                && link.target_label.eq_ignore_ascii_case(&metadata_link.target_label)
+                && link
+                    .target_label
+                    .eq_ignore_ascii_case(&metadata_link.target_label)
         }) {
             links.push(metadata_link);
         }
@@ -74,6 +80,29 @@ pub(crate) fn rebuild_document_graph_locked(
 
     append_structural_edges(conn, doc, &node_id, &mut edges)?;
 
+    // Pre-v11 rows have no reliable provenance. Relation names and contexts
+    // can be user-authored too, so never infer permission to delete them.
+    // Avoid accumulating a duplicate when a legacy edge is still extracted.
+    let mut legacy_query = conn.prepare(
+        "SELECT target_id, rel_type, context FROM graph_edges WHERE source_id = ? AND edge_origin IS NULL",
+    )?;
+    let legacy = legacy_query
+        .query_map(params![&node_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
+    edges.retain(|edge| {
+        !legacy.contains(&(
+            edge.target_id.clone(),
+            edge.rel_type.clone(),
+            edge.context.clone(),
+        ))
+    });
+
     let edge_count = edges.len();
     insert_graph_edges(conn, &edges)?;
     Ok((node_id, edge_count))
@@ -82,7 +111,12 @@ pub(crate) fn rebuild_document_graph_locked(
 fn metadata_tag_links(metadata_json: &str) -> Vec<ExtractedLink> {
     serde_json::from_str::<serde_json::Value>(metadata_json)
         .ok()
-        .and_then(|metadata| metadata.get("tags").and_then(|tags| tags.as_array()).cloned())
+        .and_then(|metadata| {
+            metadata
+                .get("tags")
+                .and_then(|tags| tags.as_array())
+                .cloned()
+        })
         .unwrap_or_default()
         .into_iter()
         .filter_map(|tag| tag.as_str().map(str::trim).map(str::to_string))
@@ -525,6 +559,80 @@ mod tests {
 
         let tags = store.find_nodes_by_label("inbox").unwrap();
         assert_eq!(tags[0].kind, "tag");
+    }
+
+    #[test]
+    fn rebuild_preserves_explicit_edges_even_when_their_type_is_extractable() {
+        let store = open_temp();
+        let mut source = doc("source", "Source", "doc://source", "[[Old target]] #oldtag");
+        let target = doc("target", "Target", "doc://target", "Target body");
+        store.upsert_document(&source).unwrap();
+        store.upsert_document(&target).unwrap();
+        let (source_node, _) = rebuild_document_graph(&store, &source).unwrap();
+        let (target_node, _) = rebuild_document_graph(&store, &target).unwrap();
+        let manual = ["related", "tunnel", "wikilink", "tagged"].map(|relation| {
+            store
+                .link_nodes(&source_node, &target_node, relation, 1.0)
+                .unwrap()
+                .id
+        });
+        source.content = "[[New target]]".into();
+        store.upsert_document(&source).unwrap();
+        for _ in 0..2 {
+            rebuild_document_graph(&store, &source).unwrap();
+        }
+        let conn = store.lock().unwrap();
+        for id in manual {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM graph_edges WHERE id = ? AND edge_origin = 'manual'",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1);
+        }
+        let derived: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM graph_edges WHERE source_id = ? AND edge_origin = 'derived'",
+                params![source_node],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            derived, 1,
+            "rebuild replaces rather than duplicates extracted edges"
+        );
+    }
+
+    #[test]
+    fn legacy_rebuild_preserves_unknown_provenance_without_duplicate_extraction() {
+        let store = open_temp();
+        let mut source = doc("source", "Source", "doc://source", "[[Old target]]");
+        store.upsert_document(&source).unwrap();
+        let (node, _) = rebuild_document_graph(&store, &source).unwrap();
+        let target = store.find_nodes_by_label("Old target").unwrap().remove(0);
+        let explicit = store.link_nodes(&node, &target.id, "related", 1.0).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .execute("UPDATE graph_edges SET edge_origin = NULL", [])
+            .unwrap();
+        rebuild_document_graph(&store, &source).unwrap();
+        rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(store.list_graph_edges().unwrap().len(), 2);
+        source.content = "No extracted links".into();
+        rebuild_document_graph(&store, &source).unwrap();
+        let conn = store.lock().unwrap();
+        let ids = conn
+            .prepare("SELECT id FROM graph_edges WHERE source_id = ?")
+            .unwrap()
+            .query_map(params![node], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&explicit.id));
     }
 
     #[test]

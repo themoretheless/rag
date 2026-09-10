@@ -14,6 +14,7 @@
 //! | [`llm`] | Optional local chat client (Ollama / OpenAI-compat) |
 //! | [`maintain`] | Corpus analyze / plan whitelist / organize / refresh (ops_log) |
 
+pub mod access;
 pub mod chunking;
 pub mod config;
 pub mod db;
@@ -22,6 +23,7 @@ pub mod diary;
 pub mod document_indexer;
 pub mod embeddings;
 pub mod error;
+pub mod eval;
 pub mod file_ingest;
 pub mod graph;
 pub mod http_api;
@@ -34,6 +36,7 @@ pub mod models;
 pub mod ops;
 pub mod retrieval;
 pub mod revisions;
+pub mod review;
 pub mod search_pack;
 pub mod source_scan;
 pub mod source_sync;

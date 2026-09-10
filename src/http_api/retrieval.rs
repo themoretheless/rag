@@ -247,8 +247,8 @@ async fn revision_diff(
 }
 
 /// Full `SearchParams` mirror (same names as the MCP `search` tool).
-#[derive(Deserialize)]
-struct SearchBody {
+#[derive(serde::Serialize, Deserialize)]
+pub(super) struct SearchBody {
     query: String,
     #[serde(default)]
     mode: Option<String>,
@@ -291,7 +291,7 @@ struct SearchBody {
     timeout_ms: Option<u64>,
 }
 
-async fn search_http(
+pub(super) async fn search_http(
     State(state): State<HttpState>,
     Json(body): Json<SearchBody>,
 ) -> impl IntoResponse {
@@ -383,11 +383,12 @@ fn search_error_kind(error: &AppError) -> &'static str {
     }
 }
 
-/// `pack_context` mirror: pack ranked hits under a token budget with optional expansion.
+/// `pack_context` mirror: full citation-block budget, including headers and expansion.
 #[derive(Deserialize)]
 struct PackContextBody {
     hits: Vec<PackHitParams>,
     #[serde(default)]
+    /// Estimated prompt-block tokens; 0 returns an empty pack.
     max_tokens: Option<usize>,
     #[serde(default)]
     context_expansion: Option<String>,
@@ -611,6 +612,50 @@ fn clean(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn pack_context_http_enforces_complete_context_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::config::Config {
+            db_path: root.path().join("pack-http.duckdb"),
+            embedding_dims: 2,
+            ..crate::config::Config::for_tests()
+        };
+        let store = std::sync::Arc::new(crate::Store::open(&config.db_path).unwrap());
+        let state = HttpState::new(
+            store,
+            false,
+            config,
+            std::sync::Arc::new(crate::embeddings::MockEmbedder::new(2)),
+        );
+        for budget in [0, 1, 32] {
+            let input: PackContextBody = serde_json::from_value(json!({
+                "max_tokens": budget,
+                "hits": [{"chunk_id":"c", "document_id":"d", "document_title":"Doc", "document_uri":"doc://d", "chunk_index":0, "score":0.9, "content":"expanded body ".repeat(2_000), "snippet":"hidden source ".repeat(2_000)}],
+            })).unwrap();
+            let response = pack_context_http(State(state.clone()), Json(input))
+                .await
+                .into_response();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap();
+            let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(result["total_tokens"].as_u64().unwrap() <= budget);
+            assert_eq!(
+                crate::search_pack::estimate_tokens(result["context_text"].as_str().unwrap()),
+                result["total_tokens"].as_u64().unwrap() as usize
+            );
+            assert!(!String::from_utf8(bytes.to_vec())
+                .unwrap()
+                .contains("hidden source"));
+            if budget < 32 {
+                assert!(result["hits"].as_array().unwrap().is_empty());
+            } else {
+                assert_eq!(result["hits"].as_array().unwrap().len(), 1);
+            }
+        }
+    }
 
     #[test]
     fn source_download_activity_does_not_expose_resource_identifiers() {

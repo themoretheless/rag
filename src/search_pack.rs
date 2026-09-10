@@ -28,7 +28,7 @@ pub struct PackedContext {
     pub hits: Vec<SearchHit>,
     /// Estimated tokens of [`Self::context_text`] (includes citation headers).
     pub total_tokens: usize,
-    /// Budget passed to [`pack_hits`] (applied to hit **content**).
+    /// Budget passed to [`pack_hits`] (full formatted prompt block).
     pub max_tokens: usize,
     /// How many input hits were left out entirely.
     pub omitted_count: usize,
@@ -36,64 +36,50 @@ pub struct PackedContext {
     pub context_text: String,
 }
 
-/// Pack ranked `hits` under a **content** token budget using ~4 chars/token.
+/// Pack ranked `hits` under a complete prompt-block budget (~4 chars/token).
 ///
-/// Walks hits in the given order (caller should pass score-descending results).
-/// Each hit costs `estimate_tokens(content)`. When the next full hit would
-/// exceed the remaining budget, its content is truncated to fit if any budget
-/// remains; otherwise packing stops. `max_tokens == 0` yields an empty pack.
+/// Citation headers, separators, and expanded source text all consume the same
+/// budget. Rank order is preserved; the last retained body may be truncated.
+/// If even the first citation and one content character cannot fit, no hit is
+/// returned. `max_tokens == 0` also returns an empty pack.
 ///
-/// Citation headers are included in [`PackedContext::context_text`] and
-/// [`PackedContext::total_tokens`] but do not consume the content budget so
-/// search `max_context_tokens` stays predictable.
+/// Packed hits have a single body: `content`. Redundant `context` and `snippet`
+/// fields are cleared so expansion cannot hide unbudgeted source text there.
+/// This bounds the prompt block, not JSON syntax or ranking/provenance metadata.
+/// The character heuristic is not a guarantee about any particular tokenizer.
 pub fn pack_hits(hits: &[SearchHit], max_tokens: usize) -> PackedContext {
-    if max_tokens == 0 || hits.is_empty() {
-        return PackedContext {
-            hits: Vec::new(),
-            total_tokens: 0,
-            max_tokens,
-            omitted_count: hits.len(),
-            context_text: String::new(),
-        };
+    let max_chars = max_tokens.saturating_mul(CHARS_PER_TOKEN);
+    let mut packed = Vec::new();
+    let mut used_chars = 0usize;
+    for hit in hits {
+        let header = format_citation_header(packed.len() + 1, hit);
+        let separator = if packed.is_empty() { 0 } else { 2 };
+        let overhead = header.chars().count().saturating_add(1 + separator);
+        let remaining = max_chars.saturating_sub(used_chars);
+        if overhead > remaining || (!hit.content.is_empty() && overhead == remaining) {
+            break;
+        }
+        let body_limit = remaining - overhead;
+        let content = truncate_to_chars(&hit.content, body_limit);
+        let truncated = content != hit.content;
+        used_chars += overhead + content.chars().count();
+        let mut retained = hit.clone();
+        retained.content = content;
+        retained.context = None;
+        retained.snippet = None;
+        packed.push(retained);
+        if truncated {
+            break;
+        }
     }
-
-    let mut packed: Vec<SearchHit> = Vec::new();
-    let mut used = 0usize;
-
-    for (i, hit) in hits.iter().enumerate() {
-        let cost = estimate_tokens(&hit.content);
-
-        if used + cost <= max_tokens {
-            used += cost;
-            packed.push(hit.clone());
-            continue;
-        }
-
-        // Not enough room for the full hit. Only truncate when this is the first
-        // hit (must return something useful); otherwise stop and omit the rest.
-        if !packed.is_empty() {
-            return finish_pack(packed, hits.len() - i, max_tokens);
-        }
-
-        let remaining = max_tokens; // used == 0
-        let truncated_body = truncate_to_tokens(&hit.content, remaining);
-        if truncated_body.is_empty() {
-            return finish_pack(packed, hits.len() - i, max_tokens);
-        }
-
-        let mut truncated = hit.clone();
-        truncated.snippet = Some(truncated_body.clone());
-        truncated.content = truncated_body;
-        packed.push(truncated);
-        return finish_pack(packed, hits.len() - i - 1, max_tokens);
-    }
-
-    finish_pack(packed, 0, max_tokens)
+    let omitted = hits.len() - packed.len();
+    finish_pack(packed, omitted, max_tokens)
 }
 
 fn finish_pack(packed: Vec<SearchHit>, omitted_count: usize, max_tokens: usize) -> PackedContext {
     let context_text = format_context_block(&packed);
     let total_tokens = estimate_tokens(&context_text);
+    debug_assert!(total_tokens <= max_tokens);
     PackedContext {
         hits: packed,
         total_tokens,
@@ -133,43 +119,16 @@ fn format_citation_header(index: usize, hit: &SearchHit) -> String {
     )
 }
 
-/// Truncate `text` so `estimate_tokens` of the result is `<= max_tokens`.
-///
-/// Appends an ellipsis (`…`) when truncated and budget allows.
-fn truncate_to_tokens(text: &str, max_tokens: usize) -> String {
-    if max_tokens == 0 || text.is_empty() {
-        return String::new();
-    }
-    if estimate_tokens(text) <= max_tokens {
-        return text.to_string();
-    }
-
-    let max_chars = max_tokens.saturating_mul(CHARS_PER_TOKEN);
+/// Unicode-safe truncation; the ellipsis itself consumes one character.
+fn truncate_to_chars(text: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }
-
-    let ellipsis = '…';
-    let take = if max_chars > 1 {
-        max_chars - 1
-    } else {
-        max_chars
-    };
-
-    let mut out: String = text.chars().take(take).collect();
-    if take < text.chars().count() {
-        if max_chars > 1 {
-            out.push(ellipsis);
-        }
-        while estimate_tokens(&out) > max_tokens && !out.is_empty() {
-            out.pop();
-        }
-        if !out.ends_with(ellipsis)
-            && !out.is_empty()
-            && estimate_tokens(&(out.clone() + "…")) <= max_tokens
-        {
-            out.push(ellipsis);
-        }
+    let mut chars = text.chars();
+    let mut out: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        out.pop();
+        out.push('…');
     }
     out
 }
@@ -230,8 +189,8 @@ mod tests {
     }
 
     #[test]
-    fn pack_content_budget_like_search() {
-        // 40 chars → 10 tokens each; budget 15 fits only the first.
+    fn pack_complete_budget_like_search() {
+        // Citation overhead plus body consumes the same budget.
         let hits = vec![
             SearchHit {
                 chunk_id: "1".into(),
@@ -252,7 +211,7 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let packed = pack_hits(&hits, 15);
+        let packed = pack_hits(&hits, 20);
         assert_eq!(packed.hits.len(), 1);
         assert_eq!(packed.hits[0].chunk_id, "1");
         assert_eq!(packed.omitted_count, 2);
@@ -260,11 +219,7 @@ mod tests {
 
     #[test]
     fn pack_preserves_rank_order() {
-        let hits = vec![
-            hit("first", 1.0),
-            hit("second", 0.5),
-            hit("third", 0.1),
-        ];
+        let hits = vec![hit("first", 1.0), hit("second", 0.5), hit("third", 0.1)];
         let packed = pack_hits(&hits, 10_000);
         assert_eq!(packed.hits[0].content, "first");
         assert_eq!(packed.hits[1].content, "second");
@@ -274,7 +229,7 @@ mod tests {
     #[test]
     fn truncate_respects_budget() {
         let text = "abcdefghijklmnopqrstuvwxyz";
-        let t = truncate_to_tokens(text, 2);
+        let t = truncate_to_chars(text, 8);
         assert!(estimate_tokens(&t) <= 2);
         assert!(!t.is_empty());
     }
@@ -283,9 +238,9 @@ mod tests {
     fn truncates_oversized_first_hit() {
         let long = "x".repeat(100); // 25 tokens
         let hits = vec![hit(&long, 0.99)];
-        let packed = pack_hits(&hits, 5);
+        let packed = pack_hits(&hits, 20);
         assert_eq!(packed.hits.len(), 1);
-        assert!(estimate_tokens(&packed.hits[0].content) <= 5);
+        assert!(packed.total_tokens <= 20);
         assert!(packed.hits[0].content.chars().count() < 100);
     }
 
@@ -295,5 +250,54 @@ mod tests {
         let packed = pack_hits(&hits, 500);
         assert_eq!(packed.total_tokens, estimate_tokens(&packed.context_text));
         assert!(!packed.context_text.is_empty());
+    }
+
+    #[test]
+    fn tiny_budget_does_not_return_unbudgeted_citations() {
+        let hits = vec![hit("source text", 0.7)];
+        for budget in [0, 1, 2, 5] {
+            let packed = pack_hits(&hits, budget);
+            assert!(packed.hits.is_empty());
+            assert_eq!(packed.total_tokens, 0);
+            assert_eq!(packed.omitted_count, 1);
+        }
+    }
+
+    #[test]
+    fn complete_budget_includes_unicode_headers_separators_and_last_body() {
+        let mut source = hit(&"Русский текст 🦀 ".repeat(60), 0.8);
+        source.document_title = "Заголовок 🧪".into();
+        source.document_uri = "wiki://тест".into();
+        let hits = vec![hit("first short excerpt", 1.0), source];
+        for budget in 0..200 {
+            let packed = pack_hits(&hits, budget);
+            assert!(packed.total_tokens <= budget, "budget={budget}");
+            assert_eq!(packed.total_tokens, estimate_tokens(&packed.context_text));
+            assert_eq!(packed.context_text, format_context_block(&packed.hits));
+            assert_eq!(packed.omitted_count + packed.hits.len(), hits.len());
+        }
+    }
+
+    #[test]
+    fn packed_expansion_has_no_hidden_full_context_or_snippet() {
+        let full = "private source paragraph ".repeat(2_000);
+        let mut source = hit(&full, 0.8);
+        source.snippet = Some(full.clone());
+        source.context = Some(vec![crate::models::SearchContextChunk {
+            chunk_id: "expanded".into(),
+            chunk_index: 1,
+            content: full,
+            heading_path: None,
+            section: None,
+        }]);
+        let packed = pack_hits(&[source], 32);
+        assert_eq!(packed.hits.len(), 1);
+        assert!(packed.total_tokens <= 32);
+        assert!(packed.hits[0].context.is_none());
+        assert!(packed.hits[0].snippet.is_none());
+        assert!(packed.hits[0].content.chars().count() < 128);
+        let wire = serde_json::to_string(&packed.hits).unwrap();
+        assert!(!wire.contains("expanded"));
+        assert!(!wire.contains("\"context\""));
     }
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SearchAssessment from '@/components/SearchAssessment.svelte'
   import { api } from '@/api/client'
   import type { PackContextResponse, SearchHit, SearchResponse } from '@/api/types'
   import { goWiki, navigate, route } from '@/lib/router.svelte'
@@ -252,7 +253,7 @@
     creatingWiki = true
     error = ''
     try {
-      const created = await api.putWiki({
+      const created = await api.createWiki({
         slug,
         title,
         content,
@@ -291,7 +292,7 @@
     <input bind:value={query} aria-label="Поисковый запрос" placeholder="Спросите корпус — здесь видны ранги, причины и стоимость…" />
     <kbd>↵</kbd>
     <button class="run" type="submit" disabled={busy || !query.trim()}>{busy ? 'Ищу…' : 'Выполнить search'}</button>
-    <button class="save" type="button" disabled title="HTTP API для записи eval-набора пока нет; сохранение доступно только через CLI">Сохранить как eval-запрос</button>
+
   </form>
 
   <div class="filters">
@@ -310,6 +311,10 @@
   </div>
 
   {#if error}<div class="error-banner">{error}</div>{/if}
+
+  {#if resultSnapshot}
+    <SearchAssessment disabled={busy || resultsDirty} hits={hits} search={{ query:resultSnapshot.query, mode:resultSnapshot.mode, top_k:resultSnapshot.topK, wing:resultSnapshot.wing || undefined, room:resultSnapshot.room || undefined, layer:resultSnapshot.layer || undefined, document_id:resultSnapshot.documentId || undefined, min_score:resultSnapshot.minScore, rrf_k:resultSnapshot.rrfK, max_chunks_per_document:resultSnapshot.maxPerDocument, context_expansion:resultSnapshot.neighborChunks>0?'neighbors':undefined, neighbor_chunks:resultSnapshot.neighborChunks, max_context_tokens:resultSnapshot.maxTokens, recency_half_life_days:resultSnapshot.recencyDays, timeout_ms:resultSnapshot.timeoutMs }} />
+  {/if}
 
   <div class="workspace">
     <section class="results panel">
@@ -431,7 +436,7 @@
             <button
               class="primary"
               disabled={creatingWiki || packedDirty}
-              title={packedDirty ? 'Сначала повторите search и заново соберите контекст' : 'Создаст настоящую wiki-страницу через PUT /v1/wiki и откроет её'}
+              title={packedDirty ? 'Сначала повторите search и заново соберите контекст' : 'Создаст новую wiki-страницу и откроет её'}
               onclick={createWikiDraft}
             >{creatingWiki ? 'Создаю…' : 'Создать wiki-черновик'}</button>
           </div>
@@ -502,8 +507,7 @@
     color: var(--text-faint);
   }
 
-  .query-bar button.run,
-  .query-bar button.save {
+  .query-bar button.run {
     height: 34px;
     padding: 0 12px;
     border-radius: 8px;
@@ -518,11 +522,6 @@
     font-weight: 700;
   }
 
-  .save {
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-muted);
-  }
 
   button:disabled {
     cursor: not-allowed;
@@ -1079,8 +1078,5 @@
       min-height: 480px;
     }
 
-    .query-bar .save {
-      display: none;
-    }
   }
 </style>

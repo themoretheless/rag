@@ -1596,6 +1596,21 @@ pub(crate) fn insert_graph_edges_locked(
     conn: &duckdb::Connection,
     edges: &[GraphEdge],
 ) -> Result<()> {
+    insert_graph_edges_with_origin_locked(conn, edges, "manual")
+}
+
+pub(crate) fn insert_derived_graph_edges_locked(
+    conn: &duckdb::Connection,
+    edges: &[GraphEdge],
+) -> Result<()> {
+    insert_graph_edges_with_origin_locked(conn, edges, "derived")
+}
+
+fn insert_graph_edges_with_origin_locked(
+    conn: &duckdb::Connection,
+    edges: &[GraphEdge],
+    origin: &str,
+) -> Result<()> {
     if edges.is_empty() {
         return Ok(());
     }
@@ -1603,9 +1618,9 @@ pub(crate) fn insert_graph_edges_locked(
     let mut stmt = conn.prepare(
         r#"
         INSERT INTO graph_edges
-          (id, source_id, target_id, rel_type, weight, context, created_at)
+          (id, source_id, target_id, rel_type, weight, context, created_at, edge_origin)
         VALUES
-          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
+          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
         "#,
     )?;
     for edge in edges {
@@ -1617,6 +1632,7 @@ pub(crate) fn insert_graph_edges_locked(
             edge.weight,
             edge.context,
             now.as_str(),
+            origin,
         ])?;
     }
     Ok(())

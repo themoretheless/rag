@@ -1,6 +1,6 @@
 import { untrack } from 'svelte'
 import { api } from '@/api/client'
-import type { BacklinkItem, DocumentBody, WikiListParams, WikiPageMeta } from '@/api/types'
+import type { BacklinkItem, DocumentBody, WikiListParams, WikiPageMeta, WikiPutResult } from '@/api/types'
 import { ui } from './ui.svelte'
 
 /** Recently opened wiki page (MRU, client-only). */
@@ -32,6 +32,7 @@ const FAVORITES_KEY = 'rag-wiki-favorites'
 const SERVER_Q_MIN = 2
 /** Debounce for filter-driven catalog reloads (ms). */
 const FILTER_DEBOUNCE_MS = 250
+const CATALOG_PAGE_SIZE = 50
 /** sessionStorage key: map of wiki page id → article scrollTop */
 const SCROLL_STORAGE_KEY = 'rag-wiki-scroll'
 
@@ -156,7 +157,7 @@ function facetsEqual(a: CatalogFacet, b: CatalogFacet): boolean {
 }
 
 /** Wiki catalog + open page + edit/save (CAS) + favorites/recent + scroll. */
-class WikiStore {
+export class WikiStore {
   pages = $state<WikiPageMeta[]>([])
   filter = $state('')
   /** Active filter chip: all | wiki (kind) | category from catalog. */
@@ -180,6 +181,10 @@ class WikiStore {
   favorites = $state<FavoritePage[]>(loadFavorites())
   /** Last server `q` used for `pages` (null = unfiltered catalog). */
   catalogQ = $state<string | null>(null)
+  catalogTotal = $state<number | null>(null)
+  catalogHasMore = $state(false)
+  loadingMore = $state(false)
+  loadMoreError = $state<string | null>(null)
   /**
    * When set, openPage for this id enters edit mode (create flow).
    * Kept until cancel/save or navigation to another page so concurrent
@@ -187,9 +192,13 @@ class WikiStore {
    */
   pendingEditId = $state<string | null>(null)
   creating = $state(false)
+  saving = $state(false)
 
   private catalogSeq = 0
   private pageSeq = 0
+  private catalogParams: WikiListParams = {}
+  private catalogNextOffset = 0
+  private drafts = new Map<string, { title: string; content: string }>()
 
   filtered = $derived.by(() => {
     let list = this.pages
@@ -386,17 +395,26 @@ class WikiStore {
    */
   async loadCatalog(params?: WikiListParams) {
     const trimmed = this.filter.trim()
-    const merged: WikiListParams = { ...this.facetParams(), ...params }
+    const merged: WikiListParams = { limit: CATALOG_PAGE_SIZE, offset: 0, ...this.facetParams(), ...params }
     if (merged.q === undefined && trimmed.length >= SERVER_Q_MIN) {
       merged.q = trimmed
     }
     const seq = ++this.catalogSeq
     this.catalogLoading = true
     this.catalogError = null
+    this.catalogHasMore = false
+    this.loadingMore = false
+    this.loadMoreError = null
     try {
       const res = await api.wikiList(merged)
       if (seq !== this.catalogSeq) return
       this.pages = res.pages ?? []
+      this.catalogParams = merged
+      this.catalogNextOffset = (res.offset ?? merged.offset ?? 0) + this.pages.length
+      this.catalogTotal = res.total ?? null
+      this.catalogHasMore = this.catalogTotal !== null
+        ? this.catalogNextOffset < this.catalogTotal
+        : this.pages.length >= (res.limit ?? merged.limit ?? CATALOG_PAGE_SIZE)
       this.catalogQ = merged.q?.trim() ? merged.q.trim() : null
       // Rebuild chip categories from full unscoped catalog; otherwise union so
       // kind/category shelves do not wipe other category chips.
@@ -412,7 +430,49 @@ class WikiStore {
     }
   }
 
+  async loadMore() {
+    if (!this.catalogHasMore || this.catalogLoading || this.loadingMore) return
+    const seq = this.catalogSeq
+    const offset = this.catalogNextOffset
+    this.loadingMore = true
+    this.loadMoreError = null
+    try {
+      const res = await api.wikiList({ ...this.catalogParams, offset })
+      if (seq !== this.catalogSeq) return
+      const batch = res.pages ?? []
+      const known = new Set(this.pages.map((page) => page.id))
+      const additions = batch.filter((page) => {
+        if (known.has(page.id)) return false
+        known.add(page.id)
+        return true
+      })
+      if ((res.offset !== undefined && res.offset !== offset) || additions.length !== batch.length || (!batch.length && (res.total ?? this.catalogTotal ?? 0) > offset)) {
+        throw new Error('Каталог изменился или сервер повторил страницу. Обновите список.')
+      }
+      this.pages = [...this.pages, ...additions]
+      this.catalogNextOffset = offset + batch.length
+      this.catalogTotal = res.total ?? this.catalogTotal
+      this.catalogHasMore = this.catalogTotal !== null
+        ? this.catalogNextOffset < this.catalogTotal
+        : batch.length >= (res.limit ?? this.catalogParams.limit ?? CATALOG_PAGE_SIZE)
+      this.mergeCategoryChips(batch, false)
+      this.syncRecentFromCatalog()
+      this.syncFavoritesFromCatalog()
+    } catch (cause) {
+      if (seq === this.catalogSeq) this.loadMoreError = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      if (seq === this.catalogSeq) this.loadingMore = false
+    }
+  }
+
+  private rememberDraft() {
+    if (this.current && this.editing && this.dirty) {
+      this.drafts.set(this.current.id, { title: this.draftTitle, content: this.draftContent })
+    }
+  }
+
   async openPage(id: string, pushHistory = true) {
+    this.rememberDraft()
     const seq = ++this.pageSeq
     const previousId = this.current?.id ?? null
     this.pageLoading = true
@@ -421,14 +481,16 @@ class WikiStore {
       const doc = await api.document({ id })
       if (seq !== this.pageSeq) return
       if (pushHistory && previousId && previousId !== id) this.history.push(previousId)
+      this.rememberDraft()
       this.current = doc
-      this.draftTitle = doc.title
-      this.draftContent = doc.content
-      this.dirty = false
+      const draft = this.drafts.get(id)
+      this.draftTitle = draft?.title ?? doc.title
+      this.draftContent = draft?.content ?? doc.content
+      this.dirty = Boolean(draft && (draft.title !== doc.title || draft.content !== doc.content))
       if (this.pendingEditId && this.pendingEditId !== id) {
         this.pendingEditId = null
       }
-      this.editing = this.pendingEditId === id
+      this.editing = Boolean(draft) || this.pendingEditId === id
       const slug = doc.uri.replace(/^wiki:\/\//, '') || doc.id
       this.touchRecent({ id: doc.id, title: doc.title, slug })
       try {
@@ -455,6 +517,7 @@ class WikiStore {
 
   /** Leave the open page (route to /wiki root shows the home dashboard). */
   closePage() {
+    this.rememberDraft()
     ++this.pageSeq
     this.pageLoading = false
     this.current = null
@@ -466,7 +529,7 @@ class WikiStore {
   }
 
   startEdit() {
-    if (!this.current) return
+    if (!this.current || this.saving || this.editing) return
     this.draftTitle = this.current.title
     this.draftContent = this.current.content
     this.editing = true
@@ -474,22 +537,24 @@ class WikiStore {
   }
 
   cancelEdit() {
+    if (this.saving) return
     this.editing = false
     this.dirty = false
     this.pendingEditId = null
     if (this.current) {
+      this.drafts.delete(this.current.id)
       this.draftTitle = this.current.title
       this.draftContent = this.current.content
     }
   }
 
   /**
-   * Prompt for a title (unless given), PUT /v1/wiki to create, refresh catalog.
+   * Prompt for a title (unless given), POST /v1/wiki to create, refresh catalog.
    * Returns the new document id; caller should route to /wiki/:id so openPage
    * enters the editor via pendingEditId.
    */
   async createPage(title?: string): Promise<string | null> {
-    if (this.creating) return null
+    if (this.creating || this.saving) return null
     let t = title?.trim() ?? ''
     if (!t) {
       const raw = window.prompt(ui.t('createPrompt'))
@@ -503,7 +568,7 @@ class WikiStore {
     const slug = this.uniqueSlug(slugifyTitle(t))
     this.creating = true
     try {
-      const res = await api.putWiki({
+      const res = await api.createWiki({
         slug,
         title: t,
         content: `# ${t}\n\n`,
@@ -523,6 +588,12 @@ class WikiStore {
       ui.toast(ui.t('pageCreated'), 'ok')
       return id
     } catch (e) {
+      if (this.isCasConflict(e)) {
+        ui.toast(ui.locale === 'ru'
+          ? 'Страница с таким адресом уже существует. Выберите другое название.'
+          : 'A page with this address already exists. Choose another title.', 'error')
+        return null
+      }
       const msg = e instanceof Error ? e.message : String(e)
       ui.toast(msg, 'error')
       throw e
@@ -537,19 +608,42 @@ class WikiStore {
     return /\bHTTP 409\b/.test(msg) || /\bconflict\b/i.test(msg)
   }
 
-  /** After a 409: toast, re-fetch remote, offer keep-draft re-save vs reload. */
-  private async handleCasConflict(id: string, slug: string) {
+  private isCurrentPage(id: string, seq: number): boolean {
+    return this.pageSeq === seq && this.current?.id === id
+  }
+
+  private async writeSnapshot(cur: DocumentBody, title: string, content: string) {
+    return api.putWiki({
+      slug: cur.uri.replace(/^wiki:\/\//, '') || cur.id,
+      id: cur.id,
+      uri: cur.uri,
+      title,
+      content,
+      if_match_revision: cur.revision ?? undefined,
+      if_match_etag: cur.etag ?? undefined,
+    })
+  }
+
+  /** Advance only the saved baseline; newer keystrokes remain an editable draft. */
+  private applySaved(cur: DocumentBody, seq: number, title: string, content: string, res: WikiPutResult) {
+    const cached = this.drafts.get(cur.id)
+    if (cached?.title === title && cached.content === content) this.drafts.delete(cur.id)
+    if (!this.isCurrentPage(cur.id, seq)) return
+    this.current = { ...cur, title, content, revision: res.revision, etag: res.etag }
+    this.pendingEditId = null
+    this.dirty = this.draftTitle !== title || this.draftContent !== content
+    this.editing = this.dirty
+    if (this.dirty) this.rememberDraft()
+    else this.drafts.delete(cur.id)
+    this.touchRecent({ id: cur.id, title, slug: res.slug })
+  }
+
+  /** A conflict dialog belongs only to the page where this save started. */
+  private async handleCasConflict(cur: DocumentBody, seq: number) {
+    if (!this.isCurrentPage(cur.id, seq)) return
     ui.toast(ui.t('saveConflictToast'), 'error')
-
-    let remote: DocumentBody
-    try {
-      remote = await api.document({ id })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      ui.toast(ui.t('saveConflictReloadFail', { msg }), 'error')
-      throw e
-    }
-
+    const remote = await api.document({ id: cur.id })
+    if (!this.isCurrentPage(cur.id, seq)) return
     const keepDraft = window.confirm(
       [
         ui.t('saveConflictTitle'),
@@ -561,84 +655,63 @@ class WikiStore {
         `Cancel - ${ui.t('saveConflictDiscard')}`,
       ].join('\n'),
     )
-
+    if (!this.isCurrentPage(cur.id, seq)) return
+    this.current = remote
     if (!keepDraft) {
+      this.drafts.delete(cur.id)
       this.pendingEditId = null
-      this.current = remote
       this.draftTitle = remote.title
       this.draftContent = remote.content
       this.dirty = false
       this.editing = false
       try {
-        const bl = await api.backlinks(id)
-        this.backlinks = bl.backlinks ?? []
+        const bl = await api.backlinks(cur.id)
+        if (this.isCurrentPage(cur.id, seq)) this.backlinks = bl.backlinks ?? []
       } catch {
-        this.backlinks = []
+        if (this.isCurrentPage(cur.id, seq)) this.backlinks = []
       }
       ui.toast(ui.t('saveConflictReloaded'), 'info')
       return
     }
 
-    // Adopt remote CAS tokens; keep local draft title/content for overwrite re-save.
-    this.current = remote
+    // Snapshot the latest draft after the user explicitly chose to re-save.
+    const title = this.draftTitle
+    const content = this.draftContent
     this.editing = true
     this.dirty = true
-
     try {
-      const res = await api.putWiki({
-        slug: remote.uri.replace(/^wiki:\/\//, '') || slug || remote.id,
-        id: remote.id,
-        uri: remote.uri,
-        title: this.draftTitle,
-        content: this.draftContent,
-        if_match_revision: remote.revision ?? undefined,
-        if_match_etag: remote.etag ?? undefined,
-      })
-      this.pendingEditId = null
-      await this.openPage(res.document_id || remote.id, false)
+      const res = await this.writeSnapshot(remote, title, content)
+      this.applySaved(remote, seq, title, content, res)
       await this.loadCatalog()
-      this.editing = false
-      this.dirty = false
       ui.toast(ui.t('saveConflictSavedOver'), 'ok')
-    } catch (e) {
-      if (this.isCasConflict(e)) {
-        ui.toast(ui.t('saveConflictStillFailing'), 'error')
-      } else {
-        const msg = e instanceof Error ? e.message : String(e)
-        ui.toast(msg, 'error')
-      }
-      throw e
+    } catch (cause) {
+      if (this.isCasConflict(cause)) ui.toast(ui.t('saveConflictStillFailing'), 'error')
+      throw cause
     }
   }
 
   async save() {
     const cur = this.current
-    if (!cur) return
-    const slug = cur.uri.replace(/^wiki:\/\//, '') || cur.id
+    if (!cur || this.saving || !this.editing || !this.dirty) return
+    const seq = this.pageSeq
+    const title = this.draftTitle
+    const content = this.draftContent
+    this.saving = true
     try {
-      const res = await api.putWiki({
-        slug,
-        id: cur.id,
-        uri: cur.uri,
-        title: this.draftTitle,
-        content: this.draftContent,
-        if_match_revision: cur.revision ?? undefined,
-        if_match_etag: cur.etag ?? undefined,
-      })
-      this.pendingEditId = null
-      await this.openPage(res.document_id || cur.id, false)
-      await this.loadCatalog()
-      this.editing = false
-      this.dirty = false
-      ui.toast(ui.t('saved'), 'ok')
-    } catch (e) {
-      if (this.isCasConflict(e)) {
-        await this.handleCasConflict(cur.id, slug)
-        return
+      try {
+        const res = await this.writeSnapshot(cur, title, content)
+        this.applySaved(cur, seq, title, content, res)
+        await this.loadCatalog()
+        ui.toast(ui.t('saved'), 'ok')
+      } catch (cause) {
+        if (!this.isCasConflict(cause)) throw cause
+        await this.handleCasConflict(cur, seq)
       }
-      const msg = e instanceof Error ? e.message : String(e)
-      ui.toast(msg, 'error')
-      throw e
+    } catch (cause) {
+      ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
+      throw cause
+    } finally {
+      this.saving = false
     }
   }
 

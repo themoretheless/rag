@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
   import { ui } from '@/lib/state/ui.svelte'
   import { route } from '@/lib/router.svelte'
@@ -40,12 +41,12 @@
     if (route.name !== 'wiki') return
     const id = route.pageId
     if (id) {
-      if (id === openedId && wiki.current?.id === id) return
+      if (id === openedId && untrack(() => wiki.current?.id) === id) return
       openedId = id
-      void wiki.openPage(id)
+      untrack(() => void wiki.openPage(id))
     } else {
       openedId = null
-      wiki.closePage()
+      untrack(() => wiki.closePage())
     }
   })
 </script>

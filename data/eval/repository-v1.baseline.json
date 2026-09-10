@@ -1,0 +1,1020 @@
+{
+  "measured_on": "2026-09-05",
+  "scope": "Canonical document lookup; curated repository questions; lexical only; not production corpus or semantic quality.",
+  "sha256": {
+    "data/eval/repository-v1.json": "4a20b57ce9e004e6177692b6c5538fcbe9096f0413745c7ac3ca42d7ad7cc91e",
+    "docs/ARCHITECTURE_VISION.md": "4a0ded8116bf6e3a6519ab35090ca06e726c64da39d7a43404780e128539476f",
+    "docs/AUTHENTICATION.md": "828e901449c76a7dd8649ab7a3cc16d3563c106071e483b0f0150ddd8feda3d2",
+    "docs/TOKEN_BUDGET.md": "2c8bbb1194be284b20045a1ff960b890afd30b0aaee092ccdbfb826cc7327cde",
+    "docs/KNOWLEDGE_REVIEW.md": "2bbef503dbd38ba7afa5655ef6648c3a64ddec4a4c63b10e1835b0686e93bc8d",
+    "docs/DATABASE_SYNC.md": "2f1527bbc58abd16a763a356ba975484704c9be7f51765f3e9480dcee21a42e0",
+    "docs/LOCAL_LLM_WIKI.md": "cec409b42c49674f20e227946b613db58dd446493a6a3e0985c25963ef73387d",
+    "docs/ROADMAP.md": "b12bc78ec3fd223a947df1d4eb8959e566f26ce65a25a63572bd58b3c8de1a7a",
+    "docs/CONNECT.md": "88fe155ff0944005f6a25af45bf3b1898c516a4d8fe8ec59615eb962b66606b5",
+    "src/review.rs": "db1b874c032714150d2e689cea200dcf6b4e8a9da2d38445bff17fd7219c3a7a",
+    "src/graph/extract.rs": "3e4d5890766a1566f96eca7c5b8efd59d511be00d7597709df05ee503341ba8b",
+    "src/http_api/auth.rs": "1ebf332eb2e912d5db9bb2e70c459266e76cf34d762c79135f3b9f483a4106d9",
+    "src/revisions.rs": "e1d69b24ee9e7a6e858690eadd85b97ca4cf19a5e3e1bccfdd74598d4151da14",
+    "src/source_scan.rs": "badea28b2b4daf6758e8e9fd4e5fbd041cb6faf289e7c703d7781bbe0a5820d3",
+    "src/file_ingest.rs": "7e54349d276a4cc48dfb13e46f6972ee4eba04804b6e46450a4155f1fa40ca13",
+    "README.md": "759e3f9ede708f2027bdbaf243cf0a5829fbba5541643f6e07e1e41da748a848",
+    "SPEC.md": "1be44970ea00c41d776826b76b6ed8266e9b203900cee03e5d4d2a6eeb989a0d"
+  },
+  "report": {
+    "dataset_version": 1,
+    "dataset_name": "rag-mcp repository regression v1 — curated RU EN code",
+    "top_k": 5,
+    "corpus": {
+      "documents": 16,
+      "chunks": 399,
+      "ingest_ms": 1345.129958
+    },
+    "sampling": {
+      "queries": 24,
+      "warmup": 1,
+      "repeat": 3,
+      "samples_per_mode": 72
+    },
+    "resources": {},
+    "modes": [
+      {
+        "mode": "lex",
+        "recall_at_k": 0.9166666666666666,
+        "mrr": 0.7402777777777777,
+        "ndcg_at_k": 0.7829786739697951,
+        "mean_search_ms": 142.25701209722226,
+        "p95_search_ms": 163.479,
+        "search_throughput_qps": 7.029530462207186,
+        "queries": [
+          {
+            "id": "read-role-ru",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00018066666666666665,
+            "search_ms": 121.55744433333332,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "AUTHENTICATION.md",
+                "relevance": 3,
+                "score": 8.111744
+              },
+              {
+                "rank": 2,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.1597443
+              },
+              {
+                "rank": 3,
+                "document_title": "AUTHENTICATION.md",
+                "relevance": 0,
+                "score": 4.121369
+              },
+              {
+                "rank": 4,
+                "document_title": "AUTHENTICATION.md",
+                "relevance": 0,
+                "score": 3.7310002
+              },
+              {
+                "rank": 5,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 3.707588
+              }
+            ]
+          },
+          {
+            "id": "remote-auth-en",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 0.2,
+            "ndcg_at_k": 0.38685280723454163,
+            "embedding_ms": 0.00015266666666666667,
+            "search_ms": 139.4385553333333,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "DATABASE_SYNC.md",
+                "relevance": 0,
+                "score": 8.046384
+              },
+              {
+                "rank": 2,
+                "document_title": "auth.rs",
+                "relevance": 0,
+                "score": 6.922781
+              },
+              {
+                "rank": 3,
+                "document_title": "auth.rs",
+                "relevance": 0,
+                "score": 5.4168205
+              },
+              {
+                "rank": 4,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.3611774
+              },
+              {
+                "rank": 5,
+                "document_title": "AUTHENTICATION.md",
+                "relevance": 3,
+                "score": 4.2100663
+              }
+            ]
+          },
+          {
+            "id": "auth-code",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00016700000000000002,
+            "search_ms": 138.66597199999998,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "auth.rs",
+                "relevance": 3,
+                "score": 12.295195
+              },
+              {
+                "rank": 2,
+                "document_title": "auth.rs",
+                "relevance": 0,
+                "score": 7.224728
+              },
+              {
+                "rank": 3,
+                "document_title": "auth.rs",
+                "relevance": 0,
+                "score": 6.075068
+              },
+              {
+                "rank": 4,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 5.927773
+              },
+              {
+                "rank": 5,
+                "document_title": "auth.rs",
+                "relevance": 0,
+                "score": 5.806568
+              }
+            ]
+          },
+          {
+            "id": "agent-synthesis",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00013933333333333335,
+            "search_ms": 145.5622776666667,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 3,
+                "score": 8.010677
+              },
+              {
+                "rank": 2,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 6.2127104
+              },
+              {
+                "rank": 3,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 5.5835214
+              },
+              {
+                "rank": 4,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 5.3697777
+              },
+              {
+                "rank": 5,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 4.8558497
+              }
+            ]
+          },
+          {
+            "id": "index-first",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.000139,
+            "search_ms": 150.52790266666662,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 3,
+                "score": 2.2833922
+              },
+              {
+                "rank": 2,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 2.2798967
+              },
+              {
+                "rank": 3,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 2.1849031
+              },
+              {
+                "rank": 4,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 2.1512294
+              },
+              {
+                "rank": 5,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 2.0000648
+              }
+            ]
+          },
+          {
+            "id": "review-conflict-ru",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.000125,
+            "search_ms": 127.14795800000002,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "KNOWLEDGE_REVIEW.md",
+                "relevance": 3,
+                "score": 8.007627
+              },
+              {
+                "rank": 2,
+                "document_title": "KNOWLEDGE_REVIEW.md",
+                "relevance": 0,
+                "score": 3.602493
+              },
+              {
+                "rank": 3,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 3.5984452
+              },
+              {
+                "rank": 4,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 3.3828917
+              },
+              {
+                "rank": 5,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 3.160677
+              }
+            ]
+          },
+          {
+            "id": "review-atomic-code",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 9.766666666666665e-05,
+            "search_ms": 144.0153333333333,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "review.rs",
+                "relevance": 3,
+                "score": 8.419666
+              },
+              {
+                "rank": 2,
+                "document_title": "review.rs",
+                "relevance": 0,
+                "score": 8.324843
+              },
+              {
+                "rank": 3,
+                "document_title": "review.rs",
+                "relevance": 0,
+                "score": 7.094052
+              },
+              {
+                "rank": 4,
+                "document_title": "review.rs",
+                "relevance": 0,
+                "score": 6.718086
+              },
+              {
+                "rank": 5,
+                "document_title": "review.rs",
+                "relevance": 0,
+                "score": 5.757192
+              }
+            ]
+          },
+          {
+            "id": "review-recovery-ru",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00016666666666666666,
+            "search_ms": 142.48320833333332,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "KNOWLEDGE_REVIEW.md",
+                "relevance": 3,
+                "score": 5.2746844
+              },
+              {
+                "rank": 2,
+                "document_title": "KNOWLEDGE_REVIEW.md",
+                "relevance": 0,
+                "score": 5.048584
+              },
+              {
+                "rank": 3,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.460383
+              },
+              {
+                "rank": 4,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.432747
+              },
+              {
+                "rank": 5,
+                "document_title": "KNOWLEDGE_REVIEW.md",
+                "relevance": 0,
+                "score": 4.3624444
+              }
+            ]
+          },
+          {
+            "id": "wikilink-code",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00011099999999999999,
+            "search_ms": 138.13068099999998,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "extract.rs",
+                "relevance": 3,
+                "score": 11.8139305
+              },
+              {
+                "rank": 2,
+                "document_title": "extract.rs",
+                "relevance": 0,
+                "score": 8.539893
+              },
+              {
+                "rank": 3,
+                "document_title": "SPEC.md",
+                "relevance": 0,
+                "score": 8.474612
+              },
+              {
+                "rank": 4,
+                "document_title": "extract.rs",
+                "relevance": 0,
+                "score": 8.035781
+              },
+              {
+                "rank": 5,
+                "document_title": "extract.rs",
+                "relevance": 0,
+                "score": 7.9916334
+              }
+            ]
+          },
+          {
+            "id": "tag-code",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00022266666666666667,
+            "search_ms": 143.73827766666668,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "extract.rs",
+                "relevance": 3,
+                "score": 6.156133
+              },
+              {
+                "rank": 2,
+                "document_title": "extract.rs",
+                "relevance": 0,
+                "score": 5.4474835
+              },
+              {
+                "rank": 3,
+                "document_title": "extract.rs",
+                "relevance": 0,
+                "score": 3.360359
+              },
+              {
+                "rank": 4,
+                "document_title": "extract.rs",
+                "relevance": 0,
+                "score": 3.225074
+              },
+              {
+                "rank": 5,
+                "document_title": "extract.rs",
+                "relevance": 0,
+                "score": 3.0770638
+              }
+            ]
+          },
+          {
+            "id": "context-budget",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.000125,
+            "search_ms": 142.218375,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 3,
+                "score": 10.45275
+              },
+              {
+                "rank": 2,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 0,
+                "score": 7.813376
+              },
+              {
+                "rank": 3,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 0,
+                "score": 6.423717
+              },
+              {
+                "rank": 4,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 5.9844475
+              },
+              {
+                "rank": 5,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 4.2417183
+              }
+            ]
+          },
+          {
+            "id": "zero-budget",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.000139,
+            "search_ms": 139.72926400000003,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 3,
+                "score": 8.125905
+              },
+              {
+                "rank": 2,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 0,
+                "score": 7.510903
+              },
+              {
+                "rank": 3,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 0,
+                "score": 6.7204623
+              },
+              {
+                "rank": 4,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 5.463137
+              },
+              {
+                "rank": 5,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 5.1717086
+              }
+            ]
+          },
+          {
+            "id": "context-duplicate",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00020866666666666665,
+            "search_ms": 137.25190266666667,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 3,
+                "score": 11.049279
+              },
+              {
+                "rank": 2,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 0,
+                "score": 7.497544
+              },
+              {
+                "rank": 3,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 0,
+                "score": 6.765939
+              },
+              {
+                "rank": 4,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 6.5192423
+              },
+              {
+                "rank": 5,
+                "document_title": "TOKEN_BUDGET.md",
+                "relevance": 0,
+                "score": 4.6017017
+              }
+            ]
+          },
+          {
+            "id": "sync-offline-ru",
+            "recall_at_k": 0.0,
+            "reciprocal_rank": 0.0,
+            "ndcg_at_k": 0.0,
+            "embedding_ms": 0.000139,
+            "search_ms": 150.74661133333333,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.089469
+              },
+              {
+                "rank": 2,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 2.6132905
+              },
+              {
+                "rank": 3,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 2.20268
+              },
+              {
+                "rank": 4,
+                "document_title": "AUTHENTICATION.md",
+                "relevance": 0,
+                "score": 2.1546109
+              },
+              {
+                "rank": 5,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 1.7943568
+              }
+            ]
+          },
+          {
+            "id": "sync-replay",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.00022199999999999998,
+            "search_ms": 145.57981933333335,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "DATABASE_SYNC.md",
+                "relevance": 3,
+                "score": 6.2251134
+              },
+              {
+                "rank": 2,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.2908635
+              },
+              {
+                "rank": 3,
+                "document_title": "DATABASE_SYNC.md",
+                "relevance": 0,
+                "score": 4.179164
+              },
+              {
+                "rank": 4,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 3.2628374
+              },
+              {
+                "rank": 5,
+                "document_title": "SPEC.md",
+                "relevance": 0,
+                "score": 3.097523
+              }
+            ]
+          },
+          {
+            "id": "mcp-connect",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 0.2,
+            "ndcg_at_k": 0.38685280723454163,
+            "embedding_ms": 0.00012533333333333334,
+            "search_ms": 150.87398633333333,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 5.0514936
+              },
+              {
+                "rank": 2,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 4.992689
+              },
+              {
+                "rank": 3,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 4.5688825
+              },
+              {
+                "rank": 4,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 4.445675
+              },
+              {
+                "rank": 5,
+                "document_title": "CONNECT.md",
+                "relevance": 3,
+                "score": 4.3614135
+              }
+            ]
+          },
+          {
+            "id": "llm-wiki",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 0.3333333333333333,
+            "ndcg_at_k": 0.5,
+            "embedding_ms": 0.00015266666666666667,
+            "search_ms": 150.58770833333332,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 4.1615973
+              },
+              {
+                "rank": 2,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 3.9335546
+              },
+              {
+                "rank": 3,
+                "document_title": "LOCAL_LLM_WIKI.md",
+                "relevance": 3,
+                "score": 3.8896153
+              },
+              {
+                "rank": 4,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 3.8051798
+              },
+              {
+                "rank": 5,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 3.681889
+              }
+            ]
+          },
+          {
+            "id": "ann-gate",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 0.3333333333333333,
+            "ndcg_at_k": 0.5,
+            "embedding_ms": 0.00016666666666666666,
+            "search_ms": 149.34095833333333,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 4.620107
+              },
+              {
+                "rank": 2,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 4.5474787
+              },
+              {
+                "rank": 3,
+                "document_title": "ROADMAP.md",
+                "relevance": 3,
+                "score": 3.6622207
+              },
+              {
+                "rank": 4,
+                "document_title": "ARCHITECTURE_VISION.md",
+                "relevance": 0,
+                "score": 3.527225
+              },
+              {
+                "rank": 5,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 3.4406872
+              }
+            ]
+          },
+          {
+            "id": "markdown-authority",
+            "recall_at_k": 0.0,
+            "reciprocal_rank": 0.0,
+            "ndcg_at_k": 0.0,
+            "embedding_ms": 0.000139,
+            "search_ms": 146.912486,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "SPEC.md",
+                "relevance": 0,
+                "score": 5.8562202
+              },
+              {
+                "rank": 2,
+                "document_title": "SPEC.md",
+                "relevance": 0,
+                "score": 5.456854
+              },
+              {
+                "rank": 3,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 4.136686
+              },
+              {
+                "rank": 4,
+                "document_title": "ROADMAP.md",
+                "relevance": 0,
+                "score": 4.0108824
+              },
+              {
+                "rank": 5,
+                "document_title": "ROADMAP.md",
+                "relevance": 0,
+                "score": 4.008341
+              }
+            ]
+          },
+          {
+            "id": "restore-code",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.0002083333333333333,
+            "search_ms": 142.53213833333334,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "revisions.rs",
+                "relevance": 3,
+                "score": 7.35975
+              },
+              {
+                "rank": 2,
+                "document_title": "revisions.rs",
+                "relevance": 0,
+                "score": 7.1515846
+              },
+              {
+                "rank": 3,
+                "document_title": "revisions.rs",
+                "relevance": 0,
+                "score": 5.401968
+              },
+              {
+                "rank": 4,
+                "document_title": "revisions.rs",
+                "relevance": 0,
+                "score": 5.2378783
+              },
+              {
+                "rank": 5,
+                "document_title": "revisions.rs",
+                "relevance": 0,
+                "score": 5.2151732
+              }
+            ]
+          },
+          {
+            "id": "dotnet-bin",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 0.000153,
+            "search_ms": 142.663,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "source_scan.rs",
+                "relevance": 3,
+                "score": 9.743278
+              },
+              {
+                "rank": 2,
+                "document_title": "source_scan.rs",
+                "relevance": 0,
+                "score": 8.925625
+              },
+              {
+                "rank": 3,
+                "document_title": "source_scan.rs",
+                "relevance": 0,
+                "score": 6.075636
+              },
+              {
+                "rank": 4,
+                "document_title": "source_scan.rs",
+                "relevance": 0,
+                "score": 4.772977
+              },
+              {
+                "rank": 5,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 3.40469
+              }
+            ]
+          },
+          {
+            "id": "pdf-extract",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 0.5,
+            "ndcg_at_k": 0.6309297535714575,
+            "embedding_ms": 0.00019466666666666666,
+            "search_ms": 143.75241666666668,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "README.md",
+                "relevance": 0,
+                "score": 6.7233973
+              },
+              {
+                "rank": 2,
+                "document_title": "file_ingest.rs",
+                "relevance": 3,
+                "score": 5.074561
+              },
+              {
+                "rank": 3,
+                "document_title": "file_ingest.rs",
+                "relevance": 0,
+                "score": 4.504805
+              },
+              {
+                "rank": 4,
+                "document_title": "file_ingest.rs",
+                "relevance": 0,
+                "score": 4.315526
+              },
+              {
+                "rank": 5,
+                "document_title": "SPEC.md",
+                "relevance": 0,
+                "score": 3.5669196
+              }
+            ]
+          },
+          {
+            "id": "clipper-roadmap-ru",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 1.0,
+            "ndcg_at_k": 1.0,
+            "embedding_ms": 8.333333333333333e-05,
+            "search_ms": 141.24352766666667,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "KNOWLEDGE_REVIEW.md",
+                "relevance": 3,
+                "score": 11.008742
+              },
+              {
+                "rank": 2,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.591315
+              },
+              {
+                "rank": 3,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 4.055208
+              },
+              {
+                "rank": 4,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 3.931265
+              },
+              {
+                "rank": 5,
+                "document_title": "CONNECT.md",
+                "relevance": 0,
+                "score": 3.8373632
+              }
+            ]
+          },
+          {
+            "id": "snapshot-before-generation",
+            "recall_at_k": 1.0,
+            "reciprocal_rank": 0.2,
+            "ndcg_at_k": 0.38685280723454163,
+            "embedding_ms": 0.00018066666666666665,
+            "search_ms": 139.46848599999998,
+            "results": [
+              {
+                "rank": 1,
+                "document_title": "auth.rs",
+                "relevance": 0,
+                "score": 4.9888687
+              },
+              {
+                "rank": 2,
+                "document_title": "review.rs",
+                "relevance": 0,
+                "score": 4.727929
+              },
+              {
+                "rank": 3,
+                "document_title": "review.rs",
+                "relevance": 0,
+                "score": 4.632205
+              },
+              {
+                "rank": 4,
+                "document_title": "review.rs",
+                "relevance": 0,
+                "score": 4.369861
+              },
+              {
+                "rank": 5,
+                "document_title": "KNOWLEDGE_REVIEW.md",
+                "relevance": 3,
+                "score": 4.3008065
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "scale_recommendation": {
+      "path": "full_scan",
+      "reason": "399 chunks observed (chunk count is not an ANN trigger); vector/hybrid latency not measured; RSS unavailable; vector/hybrid throughput not measured; no measured ANN threshold failed",
+      "chunk_threshold": 50000,
+      "p95_search_ms_threshold": 300.0,
+      "failed_thresholds": []
+    }
+  }
+}

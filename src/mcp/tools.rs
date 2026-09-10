@@ -343,7 +343,7 @@ pub struct SearchParams {
     /// Optional exponential freshness boost in days. Disabled when omitted.
     #[serde(default)]
     pub recency_half_life_days: Option<f64>,
-    /// Token budget when packing hit content (approx chars/4; default `RAG_MAX_CONTEXT_TOKENS`).
+    /// Complete citation-block budget including headers and expansion (~chars/4; 0 returns no hits).
     #[serde(default)]
     pub max_context_tokens: Option<u32>,
     /// Cap retained chunks per document under diversity (default `RAG_MAX_CHUNKS_PER_DOC`).
@@ -440,7 +440,8 @@ impl From<PackHitParams> for crate::models::SearchHit {
 pub struct PackContextParams {
     /// Ranked search hits to pack (highest score first).
     pub hits: Vec<PackHitParams>,
-    /// Token budget (~4 chars/token). Defaults to `RAG_MAX_CONTEXT_TOKENS`.
+    /// Complete citation-block budget including headers and expansion (~chars/4; 0 yields empty).
+    /// Defaults to `RAG_MAX_CONTEXT_TOKENS`; actual tokenizer counts may differ.
     #[serde(default)]
     pub max_tokens: Option<u32>,
     /// Optional source context: `neighbors` or `parent_section`.
@@ -1053,7 +1054,7 @@ pub struct SearchWikiParams {
     /// Result diversity: `mmr` | `collapse_by_document`.
     #[serde(default)]
     pub diversity: Option<String>,
-    /// Token budget when packing hit content (approx chars/4; default `RAG_MAX_CONTEXT_TOKENS`).
+    /// Complete citation-block budget including headers and expansion (~chars/4; 0 returns no hits).
     #[serde(default)]
     pub max_context_tokens: Option<u32>,
     /// Cap retained chunks per document under diversity (default `RAG_MAX_CHUNKS_PER_DOC`).

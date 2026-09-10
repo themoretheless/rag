@@ -169,6 +169,26 @@ fn ensure_fts_for_finalization(store: &Store, stemmer: &str) -> Result<(), AppEr
 }
 
 impl RagServer {
+    fn request_role(
+        &self,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<crate::access::AccessRole, McpError> {
+        if self.transport != "http-mcp" {
+            return Ok(crate::access::AccessRole::Admin);
+        }
+        context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.extensions.get::<crate::access::AccessRole>())
+            .copied()
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    "authenticated HTTP request required",
+                    Some(serde_json::json!({"code":"AUTH_REQUIRED"})),
+                )
+            })
+    }
+
     pub(crate) fn tool_count(&self) -> usize {
         self.tool_router.map.len()
     }
@@ -1953,7 +1973,7 @@ impl RagServer {
 
     #[tool(
         name = "pack_context",
-        description = "Pack ranked search hits under a token budget (~4 chars/token), optionally expanding neighbors or the parent Markdown section."
+        description = "Pack ranked search hits under a complete citation-block budget (~4 chars/token), including headers and optional neighbors/parent-section expansion. total_tokens never exceeds max_tokens; 0 returns an empty block. Packed content is canonical; duplicate snippet/context text is omitted."
     )]
     async fn pack_context(
         &self,
@@ -2679,10 +2699,10 @@ impl RagServer {
             tokio::spawn(async move {
                 // This owned task intentionally survives a dropped MCP request:
                 // mutations and their terminal FTS refresh keep one lane lease.
-                let _mutation_guard = mutation_guard;
+                let scoped_store = server.store.with_corpus_mutation_guard(mutation_guard)?;
                 let llm = server.llm.as_ref();
                 maintain::apply_maintenance_plan(
-                    &server.store,
+                    &scoped_store,
                     &server.embedder,
                     &server.config,
                     llm,
@@ -2782,8 +2802,8 @@ impl RagServer {
             tokio::spawn(async move {
                 // See apply_maintenance_plan: cancellation detaches this owned
                 // workflow instead of releasing its corpus lease mid-refresh.
-                let _mutation_guard = mutation_guard;
-                maintain::maintain_refresh(&server.store, &server.embedder, &server.config, flags)
+                let scoped_store = server.store.with_corpus_mutation_guard(mutation_guard)?;
+                maintain::maintain_refresh(&scoped_store, &server.embedder, &server.config, flags)
                     .await
             })
             .await
@@ -3559,14 +3579,16 @@ impl ServerHandler for RagServer {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        let role = self.request_role(&context)?;
         let surface = self.config.tool_surface;
         let tools = self
             .tool_router
             .list_all()
             .into_iter()
             .filter(|t| surface::tool_allowed(surface, t.name.as_ref()))
+            .filter(|t| role.allows_tool(t.name.as_ref()))
             .collect();
         Ok(ListToolsResult {
             tools,
@@ -3581,6 +3603,7 @@ impl ServerHandler for RagServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let name = request.name.to_string();
+        let role = self.request_role(&context)?;
         let agent = context
             .peer
             .peer_info()
@@ -3595,6 +3618,12 @@ impl ServerHandler for RagServer {
                 "unknown tool",
             );
             return Err(McpError::invalid_params("unknown tool", None));
+        }
+        if !role.allows_tool(&name) {
+            return Err(McpError::invalid_params(
+                "credential does not permit this tool",
+                Some(serde_json::json!({"code":"FORBIDDEN"})),
+            ));
         }
         if !surface::tool_allowed(self.config.tool_surface, &name) {
             // `name` is known to the fixed tool router at this point, so keeping
@@ -4084,6 +4113,17 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
+    fn every_registered_tool_has_an_explicit_access_policy() {
+        for tool in RagServer::all_tools_router().list_all() {
+            assert!(
+                crate::access::required_tool_role(tool.name.as_ref()).is_some(),
+                "missing access policy for {}",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
     fn maintenance_max_docs_never_exceeds_configured_boundary() {
         assert_eq!(clamp_maintenance_max_docs(50, None), 50);
         assert_eq!(clamp_maintenance_max_docs(50, Some(0)), 1);
@@ -4161,6 +4201,35 @@ mod tests {
             tool_surface: crate::mcp::ToolSurface::Full,
             http_bind: None,
             wiki_require_if_match: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn pack_context_mcp_enforces_complete_context_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("pack-mcp.duckdb");
+        let config = test_config(path.clone(), Vec::new(), 2);
+        let store = Store::open(&path).unwrap();
+        let server = RagServer::new(store, Arc::new(MockEmbedder::new(2)), config);
+        for budget in [0, 1, 32] {
+            let params: PackContextParams = serde_json::from_value(serde_json::json!({
+                "max_tokens": budget,
+                "hits": [{"chunk_id":"c", "document_id":"d", "document_title":"Doc", "document_uri":"doc://d", "chunk_index":0, "score":0.9, "content":"expanded body ".repeat(2_000), "snippet":"hidden source ".repeat(2_000)}],
+            })).unwrap();
+            let result = server.pack_context(Parameters(params)).await.unwrap();
+            let text = &result.content[0].as_text().unwrap().text;
+            let result: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert!(result["total_tokens"].as_u64().unwrap() <= budget);
+            assert_eq!(
+                crate::search_pack::estimate_tokens(result["context_text"].as_str().unwrap()),
+                result["total_tokens"].as_u64().unwrap() as usize
+            );
+            assert!(!text.contains("hidden source"));
+            if budget < 32 {
+                assert!(result["hits"].as_array().unwrap().is_empty());
+            } else {
+                assert_eq!(result["hits"].as_array().unwrap().len(), 1);
+            }
         }
     }
 

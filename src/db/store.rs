@@ -62,9 +62,18 @@ pub struct Store {
     conn: Arc<Mutex<Connection>>,
     path: PathBuf,
     corpus_mutation_lane: Arc<tokio::sync::RwLock<()>>,
+    // Present only on an explicitly scoped clone used by a bulk workflow.
+    // Clones keep the lease alive if nested work outlives its transport request.
+    corpus_mutation_guard: Option<Arc<CorpusMutationGuard>>,
 }
 
 pub(crate) type CorpusMutationGuard = tokio::sync::OwnedRwLockWriteGuard<()>;
+
+/// Keeps the embedding identity stable from preflight through document commit.
+pub(crate) struct EmbeddingWriteGuard {
+    _shared: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+    _exclusive: Option<Arc<CorpusMutationGuard>>,
+}
 
 /// Persisted safety outcome for a failed derived-index finalization.
 pub(crate) struct FtsFinalizationFailure {
@@ -142,6 +151,7 @@ impl Store {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
+            corpus_mutation_guard: None,
         })
     }
 
@@ -201,6 +211,7 @@ impl Store {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
+            corpus_mutation_guard: None,
         })
     }
 
@@ -252,6 +263,61 @@ impl Store {
     /// alive prevents a new mutation from starting until the guarded search ends.
     pub(crate) fn try_corpus_idle_guard(&self) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
         self.corpus_mutation_lane.clone().try_read_owned().ok()
+    }
+
+    /// Pass an existing exclusive lease to nested application services explicitly.
+    /// Only clones of this returned store may reuse the lease; ordinary clones of
+    /// the original store still see a busy corpus. A guard for another store is
+    /// never accepted, even when the databases happen to use the same path.
+    pub(crate) fn with_corpus_mutation_guard(&self, guard: CorpusMutationGuard) -> Result<Self> {
+        if !Arc::ptr_eq(
+            CorpusMutationGuard::rwlock(&guard),
+            &self.corpus_mutation_lane,
+        ) {
+            return Err(AppError::config(
+                "corpus mutation guard belongs to another store",
+            ));
+        }
+        let mut scoped = self.clone();
+        scoped.corpus_mutation_guard = Some(Arc::new(guard));
+        Ok(scoped)
+    }
+
+    /// Enter a bulk mutation, or reuse the explicitly inherited exclusive lease.
+    pub(crate) fn try_corpus_mutation_scope(&self, operation: &str) -> Result<Self> {
+        if self.corpus_mutation_guard.is_some() {
+            return Ok(self.clone());
+        }
+        self.with_corpus_mutation_guard(self.try_corpus_mutation_guard(operation)?)
+    }
+
+    /// Validate an embedding write while holding the corpus identity stable.
+    /// New/empty stores may initialize their manifest; existing vectors without
+    /// a manifest and incomplete/mismatched migrations remain fail-closed.
+    pub(crate) fn try_embedding_write_guard(
+        &self,
+        config: &Config,
+        operation: &str,
+    ) -> Result<EmbeddingWriteGuard> {
+        let guard = if let Some(exclusive) = &self.corpus_mutation_guard {
+            EmbeddingWriteGuard {
+                _shared: None,
+                _exclusive: Some(exclusive.clone()),
+            }
+        } else {
+            let shared = self.try_corpus_idle_guard().ok_or_else(|| {
+                AppError::busy(format!(
+                    "an exclusive corpus mutation is active; retry {operation} after it completes"
+                ))
+            })?;
+            EmbeddingWriteGuard {
+                _shared: Some(shared),
+                _exclusive: None,
+            }
+        };
+        self.ensure_embedding_manifest(config)?;
+        self.require_embedding_manifest_match(config)?;
+        Ok(guard)
     }
 
     /// Leave lexical state explicitly stale after a failed eager finalization.
@@ -368,7 +434,7 @@ impl Store {
         if_match_revision: Option<i64>,
         derived: DocumentDerivedWrite<'_>,
     ) -> Result<AtomicDocumentWriteResult> {
-        self.write_document_atomic_with_manifest(doc, if_match_revision, derived, None)
+        self.write_document_atomic_with_manifest(doc, if_match_revision, derived, None, None)
     }
 
     /// Persist a synchronized source document and its manifest ownership in the
@@ -400,6 +466,7 @@ impl Store {
             if_match_revision,
             DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
             Some(manifest),
+            None,
         )
     }
 
@@ -409,6 +476,7 @@ impl Store {
         if_match_revision: Option<i64>,
         derived: DocumentDerivedWrite<'_>,
         manifest: Option<crate::db::SourceManifestWrite<'_>>,
+        sync_identity: Option<&super::sync::SyncIdentity>,
     ) -> Result<AtomicDocumentWriteResult> {
         let prepared_embeddings = match &derived {
             DocumentDerivedWrite::ReplaceChunksAndGraph(chunks) => {
@@ -430,6 +498,11 @@ impl Store {
 
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
+        let previous = if canonical_wiki_slug(&doc.uri).is_some() {
+            get_document_locked(&tx, &doc.id)?
+        } else {
+            None
+        };
         let result = write_document_locked(
             &tx,
             doc,
@@ -438,12 +511,13 @@ impl Store {
             prepared_embeddings.as_deref(),
             manifest,
         )?;
+        journal_generic_wiki_change_locked(&tx, previous.as_ref(), doc, sync_identity)?;
         tx.commit()?;
         Ok(result)
     }
 
     /// Persist a wiki document and its chunks, graph, catalog row, and audit
-    /// event under one transaction.
+    /// event, replication journal and applied cursor under one transaction.
     pub(crate) fn write_wiki_document_atomic(
         &self,
         doc: &Document,
@@ -451,7 +525,9 @@ impl Store {
         chunks: &[Chunk],
         index_entry: &WikiIndexEntry,
         audit_entry: &OpsLogEntry,
-    ) -> Result<AtomicDocumentWriteResult> {
+        sync: &super::sync::WikiSyncWrite<'_>,
+        create_only: bool,
+    ) -> Result<(Option<AtomicDocumentWriteResult>, i64)> {
         if index_entry.page_id.as_deref() != Some(doc.id.as_str()) {
             return Err(AppError::config(format!(
                 "wiki index page id {:?} does not match document {}",
@@ -479,8 +555,59 @@ impl Store {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let local_event = super::sync::SyncChangeInput {
+            origin_seq: 1,
+            entity_kind: "wiki".into(),
+            entity_id: doc.uri.clone(),
+            operation: "upsert".into(),
+            payload_json: serde_json::to_string(&super::sync::WikiSyncPayload {
+                slug: index_entry.slug.clone(),
+                title: doc.title.clone(),
+                content: doc.content.clone(),
+                wing: doc.wing.clone(),
+                room: doc.room.clone(),
+                kind: Some(doc.kind.clone()),
+                category: index_entry.category.clone(),
+                summary: index_entry.summary.clone(),
+                metadata_json: Some(doc.metadata_json.clone()),
+            })?,
+            content_hash: doc.content_hash.clone(),
+            created_at: doc
+                .updated_at
+                .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+        };
+        super::sync::validate_wiki_change(&local_event)?;
+        let incoming = match sync {
+            super::sync::WikiSyncWrite::Local(_) => None,
+            super::sync::WikiSyncWrite::Push { change, .. } => Some(*change),
+            super::sync::WikiSyncWrite::Pull { event, .. } => Some(&event.change),
+        };
+        if incoming.is_some_and(|event| event.entity_id != doc.uri) {
+            return Err(AppError::config(
+                "sync event does not belong to prepared wiki document",
+            ));
+        }
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
+        if create_only {
+            let existing: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM documents WHERE uri = ? OR id = ?",
+                params![&doc.uri, &doc.id],
+                |row| row.get(0),
+            )?;
+            if existing != 0 {
+                return Err(AppError::conflict("wiki page already exists"));
+            }
+        }
+        if let Some(sequence) = super::sync::sync_duplicate_locked(&tx, sync)? {
+            return Ok((None, sequence));
+        }
+        if super::sync::defer_pulled_document_locked(&tx, sync, &doc.uri)? {
+            let sequence = super::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
+            tx.commit()?;
+            return Ok((None, sequence));
+        }
+        crate::review::accept_locked(&tx, doc, audit_entry)?;
         let result = write_document_locked(
             &tx,
             doc,
@@ -497,8 +624,13 @@ impl Store {
             ));
         }
         append_ops_log_locked(&tx, audit_entry)?;
+        let sequence = super::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
+        #[cfg(test)]
+        if audit_entry.op == "__test_fail_wiki_after_sync_journal__" {
+            return Err(AppError::db("injected wiki failure after sync journal"));
+        }
         tx.commit()?;
-        Ok(result)
+        Ok((Some(result), sequence))
     }
 
     /// Historical document snapshots, newest revision first.
@@ -1586,12 +1718,38 @@ impl Store {
         id: &str,
         update: &DocumentMetaUpdate,
     ) -> Result<Option<DocumentMetaApplyResult>> {
+        self.update_document_meta_with_identity(id, update, None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_document_meta_for_sync_test(
+        &self,
+        id: &str,
+        update: &DocumentMetaUpdate,
+        identity: &super::sync::SyncIdentity,
+    ) -> Result<Option<DocumentMetaApplyResult>> {
+        self.update_document_meta_with_identity(id, update, Some(identity))
+    }
+
+    fn update_document_meta_with_identity(
+        &self,
+        id: &str,
+        update: &DocumentMetaUpdate,
+        identity: Option<&super::sync::SyncIdentity>,
+    ) -> Result<Option<DocumentMetaApplyResult>> {
         let Some(mut applied) = self.prepare_document_meta_update(id, update)? else {
             return Ok(None);
         };
         let expected_revision = applied.document.revision;
-        applied.document.revision =
-            self.upsert_document_cas(&applied.document, Some(expected_revision))?;
+        applied.document.revision = self
+            .write_document_atomic_with_manifest(
+                &applied.document,
+                Some(expected_revision),
+                DocumentDerivedWrite::Preserve,
+                None,
+                identity,
+            )?
+            .revision;
         Ok(Some(applied))
     }
 
@@ -1890,12 +2048,12 @@ impl Store {
         }
         conn.execute_batch(
             "BEGIN TRANSACTION;
+             DELETE FROM graph_nodes WHERE document_id IS NOT NULL AND NOT EXISTS
+               (SELECT 1 FROM documents d WHERE d.id = graph_nodes.document_id);
              DELETE FROM graph_edges WHERE NOT EXISTS
                (SELECT 1 FROM graph_nodes n WHERE n.id = graph_edges.source_id)
                OR NOT EXISTS
                (SELECT 1 FROM graph_nodes n WHERE n.id = graph_edges.target_id);
-             DELETE FROM graph_nodes WHERE document_id IS NOT NULL AND NOT EXISTS
-               (SELECT 1 FROM documents d WHERE d.id = graph_nodes.document_id);
              DELETE FROM chunks WHERE NOT EXISTS
                (SELECT 1 FROM documents d WHERE d.id = chunks.document_id);
              COMMIT;",
@@ -2812,6 +2970,119 @@ impl Store {
             .map(|(score, entry)| crate::models::IndexQueryMatch { entry, score })
             .collect())
     }
+}
+
+fn canonical_wiki_slug(uri: &str) -> Option<&str> {
+    let slug = uri.strip_prefix("wiki://")?;
+    (!slug.is_empty() && crate::util::slugify(slug, crate::util::SlugPolicy::WikiPage) == slug)
+        .then_some(slug)
+}
+
+/// Generic writes must publish the same wiki snapshot as the dedicated writer.
+/// Lifecycle and other local-only columns deliberately do not trigger an event.
+/// The dedicated wiki writer calls `write_document_locked` directly and appends
+/// its own typed local/incoming event, so it never passes through this helper.
+fn journal_generic_wiki_change_locked(
+    conn: &Connection,
+    previous: Option<&Document>,
+    doc: &Document,
+    identity: Option<&super::sync::SyncIdentity>,
+) -> Result<()> {
+    if !doc.layer.eq_ignore_ascii_case("wiki") {
+        return Ok(());
+    }
+    let Some(slug) = canonical_wiki_slug(&doc.uri) else {
+        return Ok(());
+    };
+    if previous.is_some_and(|old| {
+        old.uri == doc.uri
+            && old.title == doc.title
+            && old.content == doc.content
+            && old.wing == doc.wing
+            && old.room == doc.room
+            && old.kind == doc.kind
+            && old.metadata_json == doc.metadata_json
+    }) {
+        return Ok(());
+    }
+
+    let existing_index = {
+        let mut statement = conn.prepare(
+            "SELECT id, COALESCE(slug, label, id), COALESCE(title, label, id), \
+             COALESCE(kind, 'wiki'), category, summary, COALESCE(page_id, document_id), \
+             CAST(updated_at AS VARCHAR) FROM wiki_index WHERE slug = ? LIMIT 1",
+        )?;
+        let mut rows = statement.query(params![slug])?;
+        rows.next()?.map(row_to_wiki_index).transpose()?
+    };
+    let (summary, category) = meta_summary_category(&doc.metadata_json);
+    let (old_summary, old_category) = previous
+        .map(|old| meta_summary_category(&old.metadata_json))
+        .unwrap_or_default();
+    let category = if category != old_category {
+        category
+    } else {
+        existing_index
+            .as_ref()
+            .and_then(|entry| entry.category.clone())
+            .or(category)
+    };
+    let summary = if summary != old_summary {
+        summary
+    } else {
+        existing_index
+            .as_ref()
+            .and_then(|entry| entry.summary.clone())
+            .or(summary)
+    }
+    .unwrap_or_else(|| first_line_summary(&doc.content, 240));
+    let event = super::sync::SyncChangeInput {
+        origin_seq: 1,
+        entity_kind: "wiki".into(),
+        entity_id: doc.uri.clone(),
+        operation: "upsert".into(),
+        payload_json: serde_json::to_string(&super::sync::WikiSyncPayload {
+            slug: slug.into(),
+            title: doc.title.clone(),
+            content: doc.content.clone(),
+            wing: doc.wing.clone(),
+            room: doc.room.clone(),
+            kind: Some(doc.kind.clone()),
+            category: category.clone(),
+            summary: Some(summary.clone()),
+            metadata_json: Some(doc.metadata_json.clone()),
+        })?,
+        content_hash: Some(content_hash(&doc.content)),
+        created_at: doc
+            .updated_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+    };
+    super::sync::validate_wiki_change(&event)?;
+    let environment_identity;
+    let identity = match identity {
+        Some(identity) => identity,
+        None => {
+            environment_identity = super::sync::SyncIdentity::from_env()?;
+            &environment_identity
+        }
+    };
+    upsert_wiki_index_entry_locked(
+        conn,
+        &WikiIndexEntry {
+            id: existing_index
+                .map(|entry| entry.id)
+                .unwrap_or_else(|| format!("idx-{}", doc.id)),
+            slug: slug.into(),
+            title: doc.title.clone(),
+            kind: doc.kind.clone(),
+            category,
+            summary: Some(summary),
+            page_id: Some(doc.id.clone()),
+            updated_at: doc.updated_at,
+        },
+    )?;
+    super::sync::local_change_locked(conn, identity, &event)?;
+    Ok(())
 }
 
 fn write_document_locked(
@@ -3823,6 +4094,23 @@ mod tests {
             updated_at: now,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn prune_orphans_removes_edges_exposed_by_node_deletion_in_one_pass() {
+        let store = open_temp();
+        {
+            let conn = store.lock().unwrap();
+            conn.execute("INSERT INTO graph_nodes (id, uri, label, kind, document_id, resolved, created_at, updated_at) VALUES ('lost', 'doc://lost', 'Lost', 'document', 'missing', true, current_timestamp, current_timestamp), ('kept', 'tag://kept', 'Kept', 'tag', NULL, true, current_timestamp, current_timestamp)", []).unwrap();
+            conn.execute("INSERT INTO graph_edges (id, source_id, target_id, rel_type, weight, created_at) VALUES ('edge', 'lost', 'kept', 'related', 1.0, current_timestamp)", []).unwrap();
+        }
+        let before = store.integrity_counts().unwrap();
+        assert_eq!((before.2, before.3), (1, 0));
+        assert_eq!(store.prune_orphans(true).unwrap(), (0, 1, 0));
+        store.prune_orphans(false).unwrap();
+        let after = store.integrity_counts().unwrap();
+        assert_eq!((after.1, after.2, after.3), (0, 0, 0));
+        assert_eq!(store.prune_orphans(false).unwrap(), (0, 0, 0));
     }
 
     #[test]

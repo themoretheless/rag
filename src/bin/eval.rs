@@ -3,6 +3,10 @@
 use anyhow::{bail, Context, Result};
 use rag_mcp::db::search::{search, SearchQuery};
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
+use rag_mcp::eval::{
+    apply_settings_profile, compare_query_metrics, dataset_content_hash, load_checkpoint,
+    save_checkpoint, Checkpoint, QueryErrorLabel, QuerySideMetrics, SearchSettingsProfile,
+};
 use rag_mcp::models::{SearchHit, SearchMode};
 use rag_mcp::wiki;
 use rag_mcp::{Config, Store};
@@ -47,6 +51,7 @@ struct Label {
 struct Report {
     dataset_version: u32,
     dataset_name: String,
+    dataset_content_hash: String,
     top_k: usize,
     corpus: CorpusDiagnostics,
     sampling: SamplingDiagnostics,
@@ -152,6 +157,11 @@ struct Args {
     warmup: usize,
     repeat: usize,
     synthetic_chunks: Option<usize>,
+    settings_a: Option<PathBuf>,
+    settings_b: Option<PathBuf>,
+    compare_out: Option<PathBuf>,
+    checkpoint: Option<PathBuf>,
+    error_labels: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -190,6 +200,11 @@ where
     let mut warmup = 0;
     let mut repeat = 1;
     let mut synthetic_chunks = None;
+    let mut settings_a = None;
+    let mut settings_b = None;
+    let mut compare_out = None;
+    let mut checkpoint = None;
+    let mut error_labels = None;
     let mut it = args.into_iter().map(Into::into);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -248,6 +263,25 @@ where
                         .parse()?,
                 )
             }
+            "--settings-a" => {
+                settings_a = Some(PathBuf::from(it.next().context("--settings-a needs path")?))
+            }
+            "--settings-b" => {
+                settings_b = Some(PathBuf::from(it.next().context("--settings-b needs path")?))
+            }
+            "--compare-out" => {
+                compare_out = Some(PathBuf::from(
+                    it.next().context("--compare-out needs path")?,
+                ))
+            }
+            "--checkpoint" => {
+                checkpoint = Some(PathBuf::from(it.next().context("--checkpoint needs path")?))
+            }
+            "--error-labels" => {
+                error_labels = Some(PathBuf::from(
+                    it.next().context("--error-labels needs path")?,
+                ))
+            }
             "-h" | "--help" => {
                 eprintln!(
                     "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N]\n\
@@ -256,7 +290,11 @@ where
                      \t[--min-throughput-qps N] [--feedback-jsonl FILE]\n\
                      \t[--history-jsonl FILE] [--warmup N] [--repeat N]\n\
                      \t[--synthetic-chunks N]\n\
-                     Uses a throwaway database. --golden remains a --dataset alias."
+                     \t[--settings-a FILE.json --settings-b FILE.json]\n\
+                     \t[--compare-out FILE.json] [--checkpoint FILE.json]\n\
+                     \t[--error-labels FILE.jsonl]\n\
+                     Uses a throwaway database. --golden remains a --dataset alias.\n\
+                     A/B compare: both --settings-a and --settings-b; resume via --checkpoint."
                 );
                 std::process::exit(0);
             }
@@ -287,6 +325,16 @@ where
     if min_throughput_qps.is_some_and(|v| !v.is_finite() || v <= 0.0) {
         bail!("--min-throughput-qps must be greater than zero");
     }
+    let compare = settings_a.is_some() || settings_b.is_some();
+    if compare && (settings_a.is_none() || settings_b.is_none()) {
+        bail!("A/B compare requires both --settings-a and --settings-b");
+    }
+    if checkpoint.is_some() && !compare {
+        bail!("--checkpoint requires --settings-a and --settings-b");
+    }
+    if error_labels.is_some() && !compare {
+        bail!("--error-labels requires --settings-a and --settings-b");
+    }
     Ok(Args {
         dataset: dataset.unwrap_or_else(|| root.join(DEFAULT_DATASET)),
         root,
@@ -303,14 +351,51 @@ where
         warmup,
         repeat,
         synthetic_chunks,
+        settings_a,
+        settings_b,
+        compare_out,
+        checkpoint,
+        error_labels,
     })
 }
 
 async fn run(args: Args) -> Result<()> {
     let dataset = load_dataset(&args.dataset)?;
+    let dataset_hash = dataset_content_hash(&args.dataset).map_err(|e| anyhow::anyhow!(e))?;
     let db_path = std::env::temp_dir().join(format!("rag-eval-{}.duckdb", std::process::id()));
     let _ = std::fs::remove_file(&db_path);
-    let result = evaluate(&args, dataset, &db_path).await;
+    if args.settings_a.is_some() {
+        let result = evaluate_compare(&args, dataset, &dataset_hash, &db_path).await;
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
+        let report = result?;
+        if let Some(path) = &args.compare_out {
+            std::fs::write(path, serde_json::to_string_pretty(&report)?)
+                .with_context(|| format!("write compare report {}", path.display()))?;
+        }
+        if args.json || args.compare_out.is_none() {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            eprintln!(
+                "compare {} vs {}: {} regressions, {} improvements (hash {})",
+                report.side_a_name,
+                report.side_b_name,
+                report.regressions.len(),
+                report.improvements.len(),
+                report.dataset_content_hash
+            );
+        }
+        if !report.regressions.is_empty()
+            && (args.min_recall_at_k.is_some() || args.min_mrr.is_some())
+        {
+            bail!(
+                "A/B compare found {} metric regressions; see compare report",
+                report.regressions.len()
+            );
+        }
+        return Ok(());
+    }
+    let result = evaluate(&args, dataset, &dataset_hash, &db_path).await;
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
     let report = result?;
@@ -466,7 +551,7 @@ fn synthetic_content(document_index: usize, len: usize) -> String {
     content
 }
 
-async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Report> {
+async fn evaluate(args: &Args, dataset: Dataset, dataset_hash: &str, db_path: &Path) -> Result<Report> {
     let mut config = Config::from_env()?;
     config.db_path = db_path.to_path_buf();
     let store = Store::open(&config.db_path)?;
@@ -573,6 +658,7 @@ async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Repor
     Ok(Report {
         dataset_version: dataset.version,
         dataset_name: dataset.name,
+        dataset_content_hash: dataset_hash.to_string(),
         top_k: args.top_k,
         corpus: CorpusDiagnostics {
             documents,
@@ -598,6 +684,197 @@ async fn evaluate(args: &Args, dataset: Dataset, db_path: &Path) -> Result<Repor
     })
 }
 
+async fn evaluate_compare(
+    args: &Args,
+    dataset: Dataset,
+    dataset_hash: &str,
+    db_path: &Path,
+) -> Result<rag_mcp::eval::CompareReport> {
+    let settings_a = SearchSettingsProfile::load(
+        args.settings_a
+            .as_ref()
+            .context("missing --settings-a")?,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+    let settings_b = SearchSettingsProfile::load(
+        args.settings_b
+            .as_ref()
+            .context("missing --settings-b")?,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+    let side_a_name = settings_a.display_name("A");
+    let side_b_name = settings_b.display_name("B");
+    let labels_by_id: HashMap<String, _> = if let Some(path) = &args.error_labels {
+        QueryErrorLabel::load_jsonl(path)
+            .map_err(|e| anyhow::anyhow!(e))?
+            .into_iter()
+            .map(|item| (item.query_id, item.label))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    let mut checkpoint = if let Some(path) = &args.checkpoint {
+        match load_checkpoint(path).map_err(|e| anyhow::anyhow!(e))? {
+            Some(existing)
+                if existing.compatible_with(dataset_hash, &side_a_name, &side_b_name) =>
+            {
+                existing
+            }
+            Some(_) => bail!(
+                "checkpoint {} does not match dataset/settings; delete it or pass a new path",
+                path.display()
+            ),
+            None => Checkpoint {
+                dataset_content_hash: dataset_hash.to_string(),
+                settings_a_name: side_a_name.clone(),
+                settings_b_name: side_b_name.clone(),
+                ..Default::default()
+            },
+        }
+    } else {
+        Checkpoint {
+            dataset_content_hash: dataset_hash.to_string(),
+            settings_a_name: side_a_name.clone(),
+            settings_b_name: side_b_name.clone(),
+            ..Default::default()
+        }
+    };
+
+    let mut config = Config::from_env()?;
+    config.db_path = db_path.to_path_buf();
+    let store = Store::open(&config.db_path)?;
+    store.ensure_embedding_manifest(&config)?;
+    let embedder: Arc<dyn EmbeddingProvider> = build_provider(&config)?;
+    for relative in &dataset.corpus {
+        let path = args.root.join(relative);
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let title = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("non-UTF-8 corpus filename")?
+            .to_string();
+        wiki::ingest_raw(
+            &store,
+            &embedder,
+            &config,
+            text,
+            Some(title),
+            Some(format!("eval://{relative}")),
+            None,
+            None,
+            Some(path.display().to_string()),
+        )
+        .await
+        .with_context(|| format!("ingest {relative}"))?;
+    }
+
+    for query in &dataset.queries {
+        if checkpoint.completed_query_ids.contains(&query.id) {
+            continue;
+        }
+        let a = eval_query_with_settings(
+            &store,
+            &embedder,
+            &config,
+            query,
+            &settings_a,
+            args.top_k,
+        )
+        .await?;
+        let b = eval_query_with_settings(
+            &store,
+            &embedder,
+            &config,
+            query,
+            &settings_b,
+            args.top_k,
+        )
+        .await?;
+        checkpoint.record(
+            query.id.clone(),
+            QuerySideMetrics {
+                recall_at_k: a.recall_at_k,
+                reciprocal_rank: a.reciprocal_rank,
+                ndcg_at_k: a.ndcg_at_k,
+            },
+            QuerySideMetrics {
+                recall_at_k: b.recall_at_k,
+                reciprocal_rank: b.reciprocal_rank,
+                ndcg_at_k: b.ndcg_at_k,
+            },
+            labels_by_id.get(&query.id).cloned(),
+        );
+        if let Some(path) = &args.checkpoint {
+            save_checkpoint(path, &checkpoint).map_err(|e| anyhow::anyhow!(e))?;
+        }
+    }
+
+    let pairs = checkpoint
+        .pairs
+        .into_iter()
+        .map(|pair| {
+            let label = pair
+                .error_label
+                .or_else(|| labels_by_id.get(&pair.query_id).cloned());
+            (pair.query_id, pair.side_a, pair.side_b, label)
+        })
+        .collect();
+    Ok(compare_query_metrics(
+        dataset_hash.to_string(),
+        settings_a,
+        settings_b,
+        pairs,
+        1e-9,
+    ))
+}
+
+async fn eval_query_with_settings(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    query: &LabeledQuery,
+    profile: &SearchSettingsProfile,
+    default_top_k: usize,
+) -> Result<QueryReport> {
+    let mode = profile
+        .mode
+        .as_deref()
+        .map(SearchMode::parse)
+        .transpose()
+        .map_err(anyhow::Error::msg)?
+        .unwrap_or(SearchMode::Lex);
+    let top_k = profile.top_k.unwrap_or(default_top_k);
+    let embedding_started = Instant::now();
+    let query_embedding = if mode.needs_embedding() {
+        Some(
+            embedder
+                .embed(std::slice::from_ref(&query.query))
+                .await?
+                .remove(0),
+        )
+    } else {
+        None
+    };
+    let embedding_ms = ms(embedding_started);
+    let search_started = Instant::now();
+    let search_query = apply_settings_profile(
+        SearchQuery {
+            mode,
+            top_k,
+            query_text: Some(query.query.clone()),
+            query_embedding,
+            fts_stemmer: config.fts_stemmer.clone(),
+            ..SearchQuery::default()
+        },
+        profile,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+    let hits = search(store, &search_query)?;
+    Ok(score(query, hits, embedding_ms, ms(search_started), top_k))
+}
+
 fn load_dataset(path: &Path) -> Result<Dataset> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read dataset {}", path.display()))?;
@@ -612,7 +889,16 @@ fn load_dataset(path: &Path) -> Result<Dataset> {
     if data.corpus.is_empty() || data.queries.is_empty() {
         bail!("dataset corpus and queries must not be empty");
     }
+    let titles: HashSet<_> = data.corpus.iter().filter_map(|path| Path::new(path).file_name().and_then(|name| name.to_str())).collect();
+    if titles.len() != data.corpus.len() {
+        bail!("corpus filenames must be unique: evaluation labels identify documents by filename");
+    }
+    let mut query_ids = HashSet::new();
     for q in &data.queries {
+        if !query_ids.insert(q.id.as_str()) { bail!("duplicate query id '{}'", q.id); }
+        if q.relevant.iter().any(|label| !titles.contains(label.document_title.as_str())) {
+            bail!("query '{}' references a document outside the corpus", q.id);
+        }
         if q.id.trim().is_empty() || q.query.trim().is_empty() || q.relevant.is_empty() {
             bail!("each query needs a non-empty id, query, and relevant labels");
         }
@@ -934,9 +1220,10 @@ fn recommend(
 
 fn print_report(r: &Report) {
     println!(
-        "dataset={} version={} top_k={} corpus={} docs/{} chunks ingest={:.2}ms",
+        "dataset={} version={} hash={} top_k={} corpus={} docs/{} chunks ingest={:.2}ms",
         r.dataset_name,
         r.dataset_version,
+        r.dataset_content_hash,
         r.top_k,
         r.corpus.documents,
         r.corpus.chunks,
@@ -997,6 +1284,17 @@ fn print_report(r: &Report) {
 mod tests {
     use super::*;
     use rag_mcp::chunking::{from_config, Chunker};
+
+    #[test]
+    fn dataset_labels_must_reference_unique_corpus_filenames() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dataset.json");
+        for (corpus, title) in [(vec!["a.md"], "missing.md"), (vec!["x/a.md", "y/a.md"], "a.md")] {
+            std::fs::write(&path, serde_json::json!({"version":1,"name":"invalid","corpus":corpus,
+                "queries":[{"id":"q","query":"question","relevant":[{"document_title":title,"relevance":3}]}]}).to_string()).unwrap();
+            assert!(load_dataset(&path).is_err());
+        }
+    }
 
     #[test]
     fn parse_args_keeps_sampling_defaults_backward_compatible() {

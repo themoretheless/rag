@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "name": "rag-mcp repository regression v1 — curated RU EN code",
+  "corpus": [
+    "docs/ARCHITECTURE_VISION.md",
+    "docs/AUTHENTICATION.md",
+    "docs/TOKEN_BUDGET.md",
+    "docs/KNOWLEDGE_REVIEW.md",
+    "docs/DATABASE_SYNC.md",
+    "docs/LOCAL_LLM_WIKI.md",
+    "docs/ROADMAP.md",
+    "docs/CONNECT.md",
+    "src/review.rs",
+    "src/graph/extract.rs",
+    "src/http_api/auth.rs",
+    "src/revisions.rs",
+    "src/source_scan.rs",
+    "src/file_ingest.rs",
+    "README.md",
+    "SPEC.md"
+  ],
+  "queries": [
+    {
+      "id": "read-role-ru",
+      "query": "Какой токен даёт только чтение без редактирования?",
+      "relevant": [
+        {
+          "document_title": "AUTHENTICATION.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "remote-auth-en",
+      "query": "Why does a non-loopback HTTP listener refuse to start without credentials?",
+      "relevant": [
+        {
+          "document_title": "AUTHENTICATION.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "auth-code",
+      "query": "required_http_role wiki-proposals POST AccessRole Write",
+      "relevant": [
+        {
+          "document_title": "auth.rs",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "agent-synthesis",
+      "query": "Who owns wiki synthesis: client agent or server LLM?",
+      "relevant": [
+        {
+          "document_title": "ARCHITECTURE_VISION.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "index-first",
+      "query": "What is the index-first retrieval workflow?",
+      "relevant": [
+        {
+          "document_title": "ARCHITECTURE_VISION.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "review-conflict-ru",
+      "query": "Что происходит при принятии предложения, если источник успел измениться?",
+      "relevant": [
+        {
+          "document_title": "KNOWLEDGE_REVIEW.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "review-atomic-code",
+      "query": "accept_locked proposal source content_hash transaction rollback",
+      "relevant": [
+        {
+          "document_title": "review.rs",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "review-recovery-ru",
+      "query": "Сохраняются ли предложения после перезапуска и как восстановить черновик?",
+      "relevant": [
+        {
+          "document_title": "KNOWLEDGE_REVIEW.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "wikilink-code",
+      "query": "extract_links ignores inline code and fenced blocks wikilinks",
+      "relevant": [
+        {
+          "document_title": "extract.rs",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "tag-code",
+      "query": "How are Unicode hashtags and nested tags parsed?",
+      "relevant": [
+        {
+          "document_title": "extract.rs",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "context-budget",
+      "query": "Does the token budget include citation headers and separators?",
+      "relevant": [
+        {
+          "document_title": "TOKEN_BUDGET.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "zero-budget",
+      "query": "What does a zero max_context_tokens budget return?",
+      "relevant": [
+        {
+          "document_title": "TOKEN_BUDGET.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "context-duplicate",
+      "query": "Can expanded source text survive outside the packed context budget?",
+      "relevant": [
+        {
+          "document_title": "TOKEN_BUDGET.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "sync-offline-ru",
+      "query": "Как реплика передаёт накопленные офлайн изменения wiki?",
+      "relevant": [
+        {
+          "document_title": "DATABASE_SYNC.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "sync-replay",
+      "query": "How do origin_node and origin_seq make sync retries idempotent?",
+      "relevant": [
+        {
+          "document_title": "DATABASE_SYNC.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "mcp-connect",
+      "query": "How do I connect an MCP client to the HTTP gateway?",
+      "relevant": [
+        {
+          "document_title": "CONNECT.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "llm-wiki",
+      "query": "How do I configure local LLM wiki compilation?",
+      "relevant": [
+        {
+          "document_title": "LOCAL_LLM_WIKI.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "ann-gate",
+      "query": "When should exact vector search be replaced with ANN?",
+      "relevant": [
+        {
+          "document_title": "ROADMAP.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "markdown-authority",
+      "query": "Why should DuckDB and a Markdown vault not both be live sources of truth?",
+      "relevant": [
+        {
+          "document_title": "ARCHITECTURE_VISION.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "restore-code",
+      "query": "RevisionService restore if_match revision Conflict",
+      "relevant": [
+        {
+          "document_title": "revisions.rs",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "dotnet-bin",
+      "query": "Why are .NET bin directories excluded but Rust src/bin preserved?",
+      "relevant": [
+        {
+          "document_title": "source_scan.rs",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "pdf-extract",
+      "query": "Which external program extracts text from PDF and what happens if it is missing?",
+      "relevant": [
+        {
+          "document_title": "file_ingest.rs",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "clipper-roadmap-ru",
+      "query": "Есть ли в текущем редакторе шаблоны инструкции, решения и исследования?",
+      "relevant": [
+        {
+          "document_title": "KNOWLEDGE_REVIEW.md",
+          "relevance": 3
+        }
+      ]
+    },
+    {
+      "id": "snapshot-before-generation",
+      "query": "When must an agent create the review snapshot relative to generating the proposed text?",
+      "relevant": [
+        {
+          "document_title": "KNOWLEDGE_REVIEW.md",
+          "relevance": 3
+        }
+      ]
+    }
+  ]
+}

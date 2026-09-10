@@ -9,6 +9,68 @@
   import WikiHome from './WikiHome.svelte'
 
   let articleEl: HTMLElement | null = $state(null)
+  let mermaidRenderGeneration = 0
+  let mermaidPromise: Promise<(typeof import('mermaid'))['default']> | null = null
+
+  function loadMermaid() {
+    mermaidPromise ??= import('mermaid').then((module) => module.default)
+    return mermaidPromise
+  }
+
+  async function renderMermaidDiagrams() {
+    const generation = ++mermaidRenderGeneration
+    await tick()
+    const root = articleEl
+    if (!root || generation !== mermaidRenderGeneration) return
+
+    const diagrams = Array.from(
+      root.querySelectorAll<HTMLElement>('[data-mermaid-source]'),
+    )
+    if (diagrams.length === 0) return
+
+    const mermaid = await loadMermaid()
+    if (generation !== mermaidRenderGeneration) return
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: document.documentElement.dataset.theme === 'light' ? 'neutral' : 'dark',
+      suppressErrorRendering: true,
+      flowchart: { useMaxWidth: true },
+    })
+    for (let index = 0; index < diagrams.length; index++) {
+      if (generation !== mermaidRenderGeneration) return
+      const diagram = diagrams[index]!
+      const source = diagram.textContent ?? ''
+      if (!source.trim()) continue
+
+      diagram.setAttribute('aria-busy', 'true')
+      try {
+        const id = `rag-mermaid-${generation}-${index}`
+        const { svg, bindFunctions } = await mermaid.render(id, source, diagram)
+        if (generation !== mermaidRenderGeneration) return
+        diagram.innerHTML = svg
+        diagram.setAttribute('role', 'img')
+        diagram.setAttribute('aria-label', 'Mermaid diagram')
+        diagram.removeAttribute('data-mermaid-source')
+        bindFunctions?.(diagram)
+      } catch (error) {
+        if (generation !== mermaidRenderGeneration) return
+        const message = document.createElement('div')
+        message.className = 'mermaid-error'
+        message.textContent =
+          error instanceof Error ? `Mermaid: ${error.message}` : 'Mermaid: invalid diagram'
+        const fallback = document.createElement('pre')
+        const code = document.createElement('code')
+        code.className = 'language-mermaid'
+        code.textContent = source
+        fallback.append(code)
+        diagram.replaceChildren(message, fallback)
+        diagram.removeAttribute('data-mermaid-source')
+      } finally {
+        diagram.removeAttribute('aria-busy')
+      }
+    }
+  }
 
   /** Page id whose scroll we last restored / are tracking (skip save during restore). */
   let trackedPageId: string | null = null
@@ -25,9 +87,19 @@
     return { titles, slugs }
   })
 
+  // The marker intentionally makes {@html} replace rendered SVGs when the theme changes,
+  // restoring their escaped Mermaid sources for a fresh light/dark render.
   const html = $derived(
-    wiki.current ? renderWikiHtml(wiki.current.content, known.titles, known.slugs) : '',
+    wiki.current
+      ? `${renderWikiHtml(wiki.current.content, known.titles, known.slugs)}<!--mermaid-theme:${ui.theme}-->`
+      : '',
   )
+
+  $effect(() => {
+    const renderedHtml = html
+    if (!renderedHtml) return
+    void renderMermaidDiagrams()
+  })
 
   /** Catalog slug preferred (same key as SideNav), then wiki:// uri tail, then id. */
   const pageSlug = $derived.by(() => {
@@ -257,6 +329,32 @@
   .prose :global(pre code) {
     background: none;
     padding: 0;
+  }
+  .prose :global(.mermaid-diagram) {
+    margin: 1.2em 0;
+    padding: 16px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-elevated);
+  }
+  .prose :global(.mermaid-diagram svg) {
+    display: block;
+    width: 100%;
+    min-width: 720px;
+    height: auto;
+    margin: 0 auto;
+  }
+  .prose :global(.mermaid-error) {
+    margin-bottom: 8px;
+    color: var(--danger, #b42318);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  @media (max-width: 720px) {
+    .prose :global(.mermaid-diagram) {
+      padding: 10px;
+    }
   }
   .prose :global(blockquote) {
     margin: 0.8em 0;

@@ -1,0 +1,58 @@
+name: Project checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      RAG_EMBEDDING_PROVIDER: mock
+      RAG_EMBEDDING_DIMS: '32'
+      RAG_LLM_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup update stable --profile minimal
+      - name: Test server, transports, CLI and native client
+        run: cargo +stable test --workspace --locked
+      - name: Run example retrieval regression
+        run: cargo +stable run --locked --bin eval -- --modes lex --min-recall-at-k 0.5 --min-mrr 0.5 --json > eval-example.json
+      - name: Report repository retrieval baseline
+        run: cargo +stable run --locked --bin eval -- --dataset data/eval/repository-v1.json --modes lex --warmup 1 --repeat 3 --json > eval-repository.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: example-retrieval-report
+          path: |
+            eval-example.json
+            eval-repository.json
+          if-no-files-found: ignore
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web-svelte
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-svelte/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build

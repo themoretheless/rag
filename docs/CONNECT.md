@@ -12,6 +12,12 @@
 Клиенты: Claude Desktop (через `mcp-remote`), Claude Code (`type: http` или stdio), Zed, ChatGPT connector.  
 Один writer на `rag.duckdb`: не открывай DB дважды.
 
+HTTP-примеры без Authorization ниже подходят для loopback gateway без токенов.
+Если задан любой `RAG_HTTP_READ_TOKEN`, `RAG_HTTP_WRITE_TOKEN` или
+`RAG_HTTP_ADMIN_TOKEN`, каждый HTTP/MCP-клиент должен отправлять Bearer, включая
+локальных клиентов и health probes. Перед обновлением remote gateway настрой
+credentials сервиса и клиентов по [инструкции миграции](AUTHENTICATION.md).
+
 ---
 
 ## 0. Что нужно заранее
@@ -339,10 +345,12 @@ DuckDB, а tool-вызовы самодостаточны. Это также н�
 ожидаемыми `404 Session not found`. Клиенту достаточно повторить обычный MCP
 initialize через `POST /mcp` после потери соединения.
 
-The additional console routes are read-only. The unauthenticated REST gateway
-does not expose generic ingest, delete, re-embed, vacuum, or repair mirrors;
-writes stay behind the existing CAS wiki/revision endpoints, serialized sync
-jobs, allowlisted backup/checkpoint operations, or the configured MCP surface.
+The additional console views require Read when authentication is enabled.
+HTTP and mounted MCP share Bearer authentication; wiki/revision writes require
+Write, and sync jobs, replication, checkpoint and backup require Admin. REST
+does not expose generic ingest, delete, re-embed or repair mirrors. MCP tool
+permissions are checked in addition to the configured tool surface. Full roles
+and exceptions are documented in [AUTHENTICATION.md](AUTHENTICATION.md).
 
 UI: `rag-mcp-ui --http http://127.0.0.1:7432` (Home opens first in HTTP mode).
 The client treats `/v1/projects` as the authoritative catalog and retries it
@@ -350,25 +358,33 @@ independently from `/v1/graph`: catalog failure retains the last successful
 list/selection, while graph failure is confined to Connections and does not
 block Home, Library, Search, History, Wiki or Operations. Direct UI `--db` is
 strictly read-only; Wiki writes use the one-writer HTTP gateway.
+Native UI получает токен через `RAG_HTTP_TOKEN`; web UI — через «Доступ»
+(`sessionStorage` текущей вкладки, отдельно для API base). MCP-клиенту нужен
+Authorization header, настроенный через его приватное хранилище/окружение.
+Не добавляй реальные токены в примеры JSON или URL.
 Код: `src/http_api/`. Полный runbook: `docs/PROD_RUN.md`.
 
 ### 7a. Bind guard (`parse_bind`)
 
-- `RAG_HTTP_BIND=127.0.0.1:7432` (или любой loopback) - ок.
+- `RAG_HTTP_BIND=127.0.0.1:7432` (или любой loopback) допускает работу без
+  токенов. Если задан хотя бы один токен, Bearer обязателен и здесь.
 - Пустой / unset - HTTP не слушает.
-- **Non-loopback** (например `0.0.0.0:7432`) **отклонён**, пока не выставлен
-  `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on`.
-MCP/HTTP **без auth** - remote bind опасен.
+- **Non-loopback** (например `0.0.0.0:7432`) требует одновременно
+  `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on` и корректный токен хотя бы одной роли.
+  Без credentials запуск отклоняется до открытия Store.
 
-Mounted `/mcp` additionally checks the HTTP `Host` authority against an rmcp
-allowlist. Loopback names/addresses are always allowed and a concrete bind IP
-is added automatically. With `0.0.0.0` or `[::]`, list every remote MCP
-hostname or IP explicitly as comma-separated `RAG_HTTP_ALLOWED_HOSTS`, for
-example:
+REST и mounted `/mcp` дополнительно проверяют HTTP `Host` по allowlist.
+Loopback names/addresses are always allowed and a concrete bind IP is added
+automatically. With `0.0.0.0` or `[::]`, list every remote gateway hostname or
+IP explicitly as comma-separated `RAG_HTTP_ALLOWED_HOSTS`, for example:
 
 ```bash
 RAG_HTTP_ALLOWED_HOSTS=192.168.50.205,tmtl-macbook-pro-m4.local
 ```
+
+Host allowlist не заменяет аутентификацию. Сам gateway не включает TLS;
+для remote-передачи credentials используй HTTPS proxy или защищённый туннель.
+Настройка, роли и ротация: [AUTHENTICATION.md](AUTHENTICATION.md).
 
 ### 7b. Общий лимит HTTP body
 
@@ -389,7 +405,7 @@ Gateway ограничивает тело каждого запроса к `/v1/
 Ограничение относится к request body; response body этим 1 MiB лимитом не
 ограничивается.
 
-### 7c. Catalog pagination и `GET` / `PUT /v1/wiki`
+### 7c. Catalog pagination и `GET` / `POST` / `PUT /v1/wiki`
 
 Cursor непрозрачен для клиента: первый запрос идёт без `cursor`, затем клиент
 передаёт полученный `page.next_cursor` без разбора.
@@ -407,7 +423,14 @@ Cursor непрозрачен для клиента: первый запрос �
 - GET: `Store::list_wiki_page_metas_filtered` (`layer=wiki`, без `content`).
 - GET row: `id`, `uri`, `slug`, `title`, `kind`, `summary`, `category`,
   `revision`, `etag`, `updated_at`.
-- PUT body: `slug` (or `uri=wiki://…`), `title`, `content`; optional `if_match_revision` / `if_match_etag` → **409** on CAS mismatch. UI may also send `id` (ignored as write key).
+- POST body: `slug` (or `uri=wiki://…`), `title`, `content`; optional placement/kind/category/summary. Создаёт только отсутствующую страницу: занятый URI возвращает **409**, даже если страница архивирована. `id` и `if_match` при создании не принимаются.
+- PUT body: `slug` (or `uri=wiki://…`), `title`, `content`; optional `if_match_revision` / `if_match_etag` → **409** on CAS mismatch. Переданный `id` должен принадлежать тому же canonical URI; при обновлении сохраняются неуказанные metadata, placement и lifecycle state.
+
+Web загружает страницы каталога по 50 через «Загрузить ещё». Native добирает
+каталог пакетами по 200 до 10000 страниц с общим deadline 60 секунд; если
+полный каталог получить не удалось, показывает ошибку и сохраняет последний
+успешный результат. Cursor кодирует offset: при конкурентных изменениях
+каталога обновите список с первой страницы, snapshot isolation не обещается.
 
 ### 7d. Background source-sync jobs
 
@@ -642,7 +665,8 @@ import — по file metadata/bounded read до DB mutation. Для больше
 
 ## 9. Первый smoke (в любом клиенте)
 
-После connect попроси агента:
+После connect попроси агента выполнить этот сценарий с Admin token (в нём
+есть `rebuild_index`) или через доверенный exclusive stdio:
 
 1. `status` - база жива, counts  
 2. `ingest_text` - короткий текст, title `"Smoke"`  
@@ -681,8 +705,10 @@ RAG_TOOLS=full
 | `STORE_BUSY` / HTTP 503 на `lex` или `hybrid` | exclusive corpus mutation держит lane; уважать `Retry-After: 1` и повторить после её завершения (для source sync — после terminal job) |
 | vec/ingest identity mismatch | не использовать single-document reembed как migration; запустить `maintain_refresh` с `reembed_all=true` и `max_docs` не меньше текущего числа документов, добиться zero skipped/failed и только затем повторить search/write |
 | Desktop + Code одновременно | один writer: **gateway** + remote clients, не два stdio |
-| `RAG_HTTP_BIND` non-loopback fail | set `RAG_HTTP_ALLOW_REMOTE=true` (опасно) или bind `127.0.0.1` |
-| Remote `/mcp` rejects `Host` | add the exact hostname/IP to comma-separated `RAG_HTTP_ALLOWED_HOSTS`; wildcard bind alone does not allow it |
+| `RAG_HTTP_BIND` non-loopback fail | set `RAG_HTTP_ALLOW_REMOTE=true` и корректный `RAG_HTTP_*_TOKEN` до restart, либо используй loopback; [миграция](AUTHENTICATION.md) |
+| HTTP `401` | настрой действующий Bearer у клиента; native: `RAG_HTTP_TOKEN`, web: «Доступ», MCP: Authorization header |
+| HTTP `403` / MCP `FORBIDDEN` | токен не разрешает операцию; проверь требуемую роль и `RAG_TOOLS` |
+| Remote HTTP/MCP rejects `Host` | add the exact hostname/IP to comma-separated `RAG_HTTP_ALLOWED_HOSTS`; wildcard bind alone does not allow it |
 | wiki conflict / clobber | pass `if_match_revision` from `get_wiki_page`; re-fetch on conflict |
 | successful empty `/v1/backlinks` | verify document `id` and `wing`; otherwise the scoped document has no wikilink edges yet. Transport/DB failures appear separately with Retry |
 
@@ -697,7 +723,7 @@ RAG_TOOLS=full
 - [ ] Клиент: HTTP url / mcp-remote **или** absolute `command` + `RAG_DB_PATH`  
 - [ ] `RAG_TOOLS=spine` (или full осознанно)  
 - [ ] Restart клиента  
-- [ ] `status` / list tools виден (33 spine)
+- [ ] `status` / list tools виден; перечень ограничен ролью токена и `RAG_TOOLS`
 - [ ] smoke ingest + search/wiki  
 - [ ] multi-agent: wiki writes с `if_match_revision`  
 
@@ -709,6 +735,7 @@ RAG_TOOLS=full
 |-----|------|
 | `docs/SPINE_TOOLS.md` | список spine + cascade |
 | `docs/PROD_RUN.md` | gateway, UI, prod day |
+| `docs/AUTHENTICATION.md` | Bearer, роли, клиенты и миграция remote gateway |
 | `docs/EGUI_USAGE.md` | rag-mcp-ui modes (`--http` / `--db` / snapshot) |
 | `docs/LLM_PROVIDERS.md` | ollama/claude/… |
 | `docs/ARCHITECTURE_VISION.md` | зачем spine / index-first |

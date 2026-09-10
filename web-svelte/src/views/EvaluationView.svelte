@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RealQuestionEvaluation from '@/components/RealQuestionEvaluation.svelte'
   import { onMount } from 'svelte'
   import { api } from '@/api/client'
   import { ui } from '@/lib/state/ui.svelte'
@@ -96,6 +97,7 @@
 </script>
 
 <div class="eval-page screen">
+  <RealQuestionEvaluation />
   <div class="screen-head">
     <div><h1>Оценка извлечения</h1><p>{latest ? `${latest.dataset_name} v${latest.dataset_version} · ${latest.sampling?.queries ?? '—'} запросов · временная БД` : 'Recall, MRR, nDCG и задержка на воспроизводимом датасете'}</p></div>
     <div class="head-actions"><span class:ready={configured === true}>{configured === null ? 'history неизвестна' : configured ? 'history подключена' : 'history не настроена'}</span><button class="secondary" onclick={load}>Обновить</button><button class="primary" onclick={copyCommand} title="Копирует команду для ручного запуска в терминале">Скопировать CLI</button></div>

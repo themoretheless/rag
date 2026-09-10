@@ -5,7 +5,7 @@
 //! | Path | Role |
 //! |------|------|
 //! | `/health`, `/v1/graph`, `/v1/neighbors`, `/v1/find`, `/v1/document` | Graph + document UI |
-//! | `GET /v1/wiki`, `PUT /v1/wiki`, `GET /v1/backlinks` | Wiki catalog, write (CAS), backlinks |
+//! | `GET /v1/wiki`, `POST /v1/wiki`, `PUT /v1/wiki`, `GET /v1/backlinks` | Wiki catalog, create-only, write (CAS), backlinks |
 //! | `POST /v1/search`, `POST /v1/pack-context` | Retrieval lab: full `SearchParams`, packing |
 //! | `/v1/status`, `/v1/doctor`, `/v1/runtime`, `/v1/calls`, `/v1/agents` | Console health + call log |
 //! | `/v1/ops-log`, `/v1/taxonomy`, `/v1/diary`, `/v1/kg*`, `/v1/tunnels`, `/v1/llm-status` | Read-only console views |
@@ -17,6 +17,7 @@
 //!
 //! `PUT /v1/wiki` accepts optional `if_match_revision` / `if_match_etag` (same semantics as MCP
 //! `write_wiki_page`). Stale CAS returns **409 Conflict**.
+//! `POST /v1/wiki` only creates; an occupied canonical URI returns **409**.
 //!
 //! # Submodules
 //!
@@ -30,6 +31,7 @@
 
 mod activity;
 mod admin;
+mod auth;
 mod bind;
 mod error;
 mod graph;
@@ -39,6 +41,9 @@ mod ops;
 mod retrieval;
 mod sync;
 mod wiki;
+mod review;
+mod feedback;
+mod knowledge;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -58,6 +63,11 @@ use crate::mcp::RagServer;
 use crate::models::GraphView;
 
 pub use bind::parse_bind;
+
+/// Validate security before opening the store or starting background writers.
+pub fn validate_security(bind: SocketAddr) -> Result<(), crate::AppError> {
+    auth::HttpAuth::from_env()?.validate_bind(bind)
+}
 
 /// Shared state for graph/wiki HTTP handlers (clone of MCP store).
 #[derive(Clone)]
@@ -83,12 +93,16 @@ impl HttpState {
         config: Config,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Self {
+        let jobs = jobs::JobRegistry::restore_from_store(store.clone()).unwrap_or_else(|error| {
+            tracing::warn!(%error, "failed to restore background jobs; starting empty registry");
+            jobs::JobRegistry::with_store(store.clone())
+        });
         Self {
             store,
             mcp_http,
             config,
             embedder,
-            jobs: jobs::JobRegistry::default(),
+            jobs,
         }
     }
 }
@@ -176,6 +190,14 @@ pub async fn serve(
     store: Arc<Store>,
     mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
 ) -> Result<(), std::io::Error> {
+    let auth = auth::HttpAuth::from_env()
+        .and_then(|auth| {
+            auth.validate_bind(bind)?;
+            Ok(auth)
+        })
+        .map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
+        })?;
     let mcp_http = mcp.is_some();
     let config = Config::from_env().map_err(|e| {
         std::io::Error::new(
@@ -198,7 +220,7 @@ pub async fn serve(
     } else {
         api
     };
-    let app = gateway_layers(app, allowed_hosts);
+    let app = authenticated_gateway_layers(app, allowed_hosts, auth);
 
     tracing::info!(%bind, mcp_http, mcp_path = if mcp_http { "/mcp" } else { "(disabled)" },
         "rag-mcp HTTP gateway listening (graph UI + optional streamable MCP)");
@@ -211,13 +233,26 @@ pub async fn serve(
     Ok(())
 }
 
-fn gateway_layers(app: Router, allowed_hosts: Vec<String>) -> Router {
+fn authenticated_gateway_layers(
+    app: Router,
+    allowed_hosts: Vec<String>,
+    auth: auth::HttpAuth,
+) -> Router {
     app.layer(axum::middleware::from_fn(enforce_body_limit))
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            auth::enforce_auth,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             HttpHostAllowlist::new(allowed_hosts),
             enforce_host_allowlist,
         ))
         .layer(axum::middleware::from_fn(http_metadata))
+}
+
+#[cfg(test)]
+fn gateway_layers(app: Router, allowed_hosts: Vec<String>) -> Router {
+    authenticated_gateway_layers(app, allowed_hosts, auth::HttpAuth::local_for_tests())
 }
 
 #[derive(Clone)]
@@ -355,6 +390,9 @@ fn api_router(state: HttpState) -> Router {
         .merge(retrieval::routes())
         .merge(sync::routes())
         .merge(wiki::routes())
+        .merge(review::routes())
+        .merge(feedback::routes())
+        .merge(knowledge::routes())
         .merge(admin::routes())
         .with_state(state)
         .layer(axum::extract::DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))

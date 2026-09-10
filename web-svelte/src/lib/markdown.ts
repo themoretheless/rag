@@ -236,19 +236,34 @@ export function renderWikiHtml(
   const out: string[] = []
   let inCode = false
   let codeBuf: string[] = []
+  let codeLanguage = ''
   let i = 0
   const usedIds = new Map<string, number>()
 
   while (i < lines.length) {
     const line = lines[i] ?? ''
 
-    if (line.trimStart().startsWith('```')) {
+    const fence = line.trimStart().match(/^```\s*([A-Za-z0-9_+-]*)\s*$/)
+    if (fence) {
       if (inCode) {
-        out.push(`<pre><code>${escapeHtml(codeBuf.join('\n'))}</code></pre>`)
+        const source = escapeHtml(codeBuf.join('\n'))
+        if (codeLanguage === 'mermaid') {
+          // Mermaid is rendered after Svelte mounts the escaped article HTML. Keeping the
+          // source as text content makes the intermediate DOM safe and gives the renderer a
+          // useful fallback when a diagram has invalid syntax.
+          out.push(`<div class="mermaid-diagram" data-mermaid-source>${source}</div>`)
+        } else {
+          const languageClass = codeLanguage
+            ? ` class="language-${escapeHtml(codeLanguage)}"`
+            : ''
+          out.push(`<pre><code${languageClass}>${source}</code></pre>`)
+        }
         codeBuf = []
+        codeLanguage = ''
         inCode = false
       } else {
         inCode = true
+        codeLanguage = (fence[1] ?? '').toLowerCase()
       }
       i++
       continue
@@ -334,7 +349,11 @@ export function renderWikiHtml(
     i++
   }
   if (inCode && codeBuf.length) {
-    out.push(`<pre><code>${escapeHtml(codeBuf.join('\n'))}</code></pre>`)
+    const source = escapeHtml(codeBuf.join('\n'))
+    const languageClass = codeLanguage
+      ? ` class="language-${escapeHtml(codeLanguage)}"`
+      : ''
+    out.push(`<pre><code${languageClass}>${source}</code></pre>`)
   }
 
   // wrap consecutive li

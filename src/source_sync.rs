@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
@@ -54,7 +54,7 @@ impl SourceSyncCommand {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceSyncError {
     pub path: String,
     pub error: String,
@@ -65,10 +65,10 @@ pub struct SourceSyncError {
 /// This is additive to the existing per-path `errors` list so older clients
 /// still classify the run as completed-with-errors, while newer clients can
 /// distinguish a derived-index failure from a failed or rolled-back sync.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceSyncFinalizationError {
-    pub code: &'static str,
-    pub stage: &'static str,
+    pub code: String,
+    pub stage: String,
     pub durable_mutation_committed: bool,
     pub retryable: bool,
     pub fallback_dirty_marked: bool,
@@ -79,7 +79,7 @@ pub struct SourceSyncFinalizationError {
     pub error: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceSyncReport {
     pub added: Vec<String>,
     pub updated: Vec<String>,
@@ -91,7 +91,7 @@ pub struct SourceSyncReport {
     pub counters: SourceSyncCounters,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceSyncCounters {
     pub preflight: u64,
     pub extracted: u64,
@@ -110,7 +110,7 @@ impl SourceSyncReport {
 }
 
 /// Observable phases for a cooperative source synchronization run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceSyncPhase {
     Scanning,
@@ -122,7 +122,7 @@ pub enum SourceSyncPhase {
 }
 
 /// Progress snapshot emitted while a source tree is synchronized.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceSyncProgress {
     pub phase: SourceSyncPhase,
     pub total_files: usize,
@@ -955,8 +955,8 @@ fn source_sync_fts_finalization_failure(
         &error.to_string(),
     );
     SourceSyncFinalizationError {
-        code: FTS_FINALIZATION_ERROR_CODE,
-        stage: "refresh_fts",
+        code: FTS_FINALIZATION_ERROR_CODE.into(),
+        stage: "refresh_fts".into(),
         durable_mutation_committed,
         retryable: true,
         fallback_dirty_marked: recorded.dirty_marker_written,

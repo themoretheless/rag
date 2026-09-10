@@ -5,7 +5,7 @@
 //! only re-ingest replace (e.g. [`ingest_raw`]) may overwrite raw content.
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -33,6 +33,44 @@ pub const SCHEMA_URI: &str = "schema://agents";
 
 /// Default title when creating or updating the schema document.
 pub const SCHEMA_TITLE: &str = "Wiki schema";
+
+/// Exact source snapshot used for a generated page. The hash covers the full
+/// source body read from the store, before the LLM prompt applies its size cap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WikiSourceVersion {
+    document_id: String,
+    uri: String,
+    content_hash: String,
+}
+
+impl WikiSourceVersion {
+    fn from_document(document: &Document) -> Self {
+        Self {
+            document_id: document.id.clone(),
+            uri: document.uri.clone(),
+            content_hash: content_hash(&document.content),
+        }
+    }
+}
+
+/// A complete snapshot replaces legacy dependency discovery. Reject the whole
+/// array when any entry is malformed, so partial provenance cannot hide a parent.
+fn wiki_source_versions(wiki: &Document) -> Option<Vec<WikiSourceVersion>> {
+    let metadata: serde_json::Value = serde_json::from_str(&wiki.metadata_json).ok()?;
+    let versions: Vec<WikiSourceVersion> =
+        serde_json::from_value(metadata.get("source_versions")?.clone()).ok()?;
+    versions
+        .iter()
+        .all(|version| {
+            (!version.document_id.trim().is_empty() || !version.uri.trim().is_empty())
+                && version.content_hash.len() == 64
+                && version
+                    .content_hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .then_some(versions)
+}
 
 /// Default schema text when none stored.
 pub const DEFAULT_SCHEMA: &str = r#"# Wiki schema (schema://agents)
@@ -375,6 +413,8 @@ pub struct WriteWikiOpts {
     pub message: Option<String>,
     /// Extra keys merged into document `metadata_json`.
     pub extra_metadata: Option<serde_json::Value>,
+    /// Replace the metadata snapshot before overlays (internal replication/restore).
+    pub metadata_json_override: Option<String>,
     /// Extra keys merged into ops_log `payload_json`.
     pub extra_payload: Option<serde_json::Value>,
     /// Optimistic concurrency: must match existing document revision when set.
@@ -470,6 +510,55 @@ pub async fn write_wiki_page_command(
     config: &Config,
     command: WikiWriteCommand,
 ) -> Result<WikiWriteResult> {
+    let identity = crate::db::sync::SyncIdentity::from_env()?;
+    let (write, _) = write_wiki_page_synced_command(
+        store,
+        embedder,
+        config,
+        command,
+        crate::db::sync::WikiSyncWrite::Local(identity),
+        false,
+    )
+    .await?;
+    write.ok_or_else(|| AppError::db("local wiki write returned no committed document"))
+}
+
+/// Create a wiki page only if its URI is absent, including archived documents.
+/// The final absence check shares the document/chunks/catalog/journal transaction.
+pub(crate) async fn create_wiki_page_command(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    command: WikiWriteCommand,
+) -> Result<WikiWriteResult> {
+    let identity = crate::db::sync::SyncIdentity::from_env()?;
+    let (write, _) = write_wiki_page_synced_command(
+        store,
+        embedder,
+        config,
+        command,
+        crate::db::sync::WikiSyncWrite::Local(identity),
+        true,
+    )
+    .await?;
+    write.ok_or_else(|| AppError::db("wiki create returned no committed document"))
+}
+
+/// Internal replication entrypoint. Only this typed mode can suppress re-journalling;
+/// an agent name or any other user-supplied wiki option cannot impersonate sync.
+pub(crate) async fn write_wiki_page_synced_command(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    command: WikiWriteCommand,
+    sync: crate::db::sync::WikiSyncWrite<'_>,
+    create_only: bool,
+) -> Result<(Option<WikiWriteResult>, i64)> {
+    let incoming = !matches!(sync, crate::db::sync::WikiSyncWrite::Local(_));
+    // Every transport and nested wiki workflow shares this boundary. Keep the
+    // lease through embedding and commit so reembed_all cannot change identity
+    // after a successful preflight but before these vectors are persisted.
+    let _embedding_guard = store.try_embedding_write_guard(config, "wiki write")?;
     let WikiWriteCommand {
         slug,
         title,
@@ -498,9 +587,12 @@ pub async fn write_wiki_page_command(
     // Never delete chunks before CAS succeeds: a stale if_match (or a concurrent
     // loser) must leave the previous body+chunks intact for retrieval.
     let existing = store.find_by_uri(&uri)?;
+    if create_only && existing.is_some() {
+        return Err(AppError::conflict("wiki page already exists"));
+    }
     let (document_id, created_at) = if let Some(existing) = existing.as_ref() {
         // Multi-LLM CAS: when RAG_WIKI_REQUIRE_IF_MATCH=true, updates must pass if_match.
-        if config.wiki_require_if_match && if_match.is_none() {
+        if config.wiki_require_if_match && if_match.is_none() && !incoming {
             return Err(AppError::config(format!(
                 "if_match_revision (or if_match_etag) is required to update wiki page '{uri}' \
                  when RAG_WIKI_REQUIRE_IF_MATCH=true; call get_wiki_page and pass revision"
@@ -539,15 +631,28 @@ pub async fn write_wiki_page_command(
     // merged into the existing object so unrelated application keys survive.
     let metadata_overlay_requested =
         category.is_some() || summary.is_some() || opts.extra_metadata.is_some();
-    let metadata_json = merge_wiki_metadata(
-        existing
-            .as_ref()
-            .map(|document| document.metadata_json.as_str()),
-        category.as_deref(),
-        summary.as_deref(),
-        opts.extra_metadata,
-        metadata_overlay_requested,
-    )?;
+    if let Some(metadata) = &opts.metadata_json_override {
+        let value: serde_json::Value = serde_json::from_str(metadata)
+            .map_err(|error| AppError::config(format!("invalid wiki metadata JSON: {error}")))?;
+        if !value.is_object() {
+            return Err(AppError::config("wiki metadata must be a JSON object"));
+        }
+    }
+    let metadata_json = if incoming && opts.metadata_json_override.is_some() {
+        opts.metadata_json_override.clone().unwrap()
+    } else {
+        merge_wiki_metadata(
+            opts.metadata_json_override.as_deref().or_else(|| {
+                existing
+                    .as_ref()
+                    .map(|document| document.metadata_json.as_str())
+            }),
+            category.as_deref(),
+            summary.as_deref(),
+            opts.extra_metadata,
+            metadata_overlay_requested,
+        )?
+    };
     let existing_index = if existing.is_some() {
         store.get_wiki_index_by_slug(&slug)?
     } else {
@@ -573,7 +678,26 @@ pub async fn write_wiki_page_command(
     {
         doc.room = Some(room.to_string());
     }
-    doc.metadata_json = metadata_json;
+    if incoming {
+        doc.wing = wing.clone();
+        doc.room = room.clone();
+    }
+    doc.metadata_json = if incoming && opts.metadata_json_override.is_none() {
+        let mut metadata: serde_json::Value = serde_json::from_str(&metadata_json)?;
+        if let Some(object) = metadata.as_object_mut() {
+            object.remove("category");
+            object.remove("summary");
+            if let Some(category) = &category {
+                object.insert("category".into(), category.clone().into());
+            }
+            if let Some(summary) = &summary {
+                object.insert("summary".into(), summary.clone().into());
+            }
+        }
+        serde_json::to_string(&metadata)?
+    } else {
+        metadata_json
+    };
     doc.created_at = created_at;
     doc.updated_at = now;
     doc.layer = LAYER_WIKI.into();
@@ -582,10 +706,22 @@ pub async fn write_wiki_page_command(
     let chunks = DocumentIndexer::new(embedder.as_ref(), config)
         .build_plain_chunks(&doc)
         .await?;
+    for chunk in &chunks {
+        if chunk.embedding.len() != config.embedding_dims {
+            return Err(AppError::embeddings(format!(
+                "wiki embedder returned dims={}, expected {} from corpus configuration",
+                chunk.embedding.len(),
+                config.embedding_dims
+            )));
+        }
+    }
     let chunk_count = chunks.len();
 
     let metadata = serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok();
     let category = category.or_else(|| {
+        if incoming {
+            return None;
+        }
         existing_index
             .as_ref()
             .and_then(|entry| entry.category.clone())
@@ -593,6 +729,9 @@ pub async fn write_wiki_page_command(
     });
     let summary = summary
         .or_else(|| {
+            if incoming {
+                return None;
+            }
             existing_index
                 .as_ref()
                 .and_then(|entry| entry.summary.clone())
@@ -640,50 +779,36 @@ pub async fn write_wiki_page_command(
         payload_json: payload.to_string(),
         agent_name: agent.clone(),
     };
-    let write =
-        store.write_wiki_document_atomic(&doc, if_match, &chunks, &index_entry, &audit_entry)?;
+    let (write, sequence) = store.write_wiki_document_atomic(
+        &doc,
+        if_match,
+        &chunks,
+        &index_entry,
+        &audit_entry,
+        &sync,
+        create_only,
+    )?;
+    let Some(write) = write else {
+        return Ok((None, sequence));
+    };
     let revision = write.revision;
     let node_id = write.node_id.unwrap_or_default();
     let edge_count = write.edge_count;
 
-    // Transport-applied changes carry a sync:* agent marker and must not be
-    // journalled again, otherwise pull would create an endless echo loop.
-    if !agent
-        .as_deref()
-        .is_some_and(|value| value.starts_with("sync:"))
-    {
-        let sync_payload = serde_json::json!({
-            "slug": slug,
-            "title": title,
-            "content": content,
-            "wing": doc.wing.clone(),
-            "room": doc.room.clone(),
-            "kind": kind,
-            "category": index_entry.category.clone(),
-            "summary": index_entry.summary.clone(),
-        });
-        if let Err(error) = store.journal_local_sync_change(
-            "wiki",
-            &uri,
-            "upsert",
-            &sync_payload.to_string(),
-            doc.content_hash.as_deref(),
-        ) {
-            tracing::error!(%error, uri = %uri, "wiki write committed but sync journal append failed");
-        }
-    }
-
-    Ok(WikiWriteResult {
-        document_id,
-        uri,
-        slug,
-        chunk_count,
-        node_id,
-        edge_count,
-        index_id,
-        revision,
-        etag: crate::models::format_document_etag(revision),
-    })
+    Ok((
+        Some(WikiWriteResult {
+            document_id,
+            uri,
+            slug,
+            chunk_count,
+            node_id,
+            edge_count,
+            index_id,
+            revision,
+            etag: crate::models::format_document_etag(revision),
+        }),
+        sequence,
+    ))
 }
 
 fn merge_wiki_metadata(
@@ -1001,6 +1126,13 @@ pub async fn compile_source(
         tracing::warn!(layer = %source.layer, "compile_source: source is not layer=raw");
     }
     let schema = schema_text(store)?;
+    // Output slugs are chosen by the model, so capture the lean catalog before
+    // generation rather than reading the chosen page's revision after the LLM.
+    let revisions = if dry_run {
+        HashMap::new()
+    } else {
+        wiki_revision_snapshot(store)?
+    };
     let proposed = llm
         .compile_wiki(&schema, &source.title, &source.uri, &source.content)
         .await?;
@@ -1018,34 +1150,44 @@ pub async fn compile_source(
 
     let mut page_ids = Vec::new();
     for page in &proposed.pages {
-        let wr = write_wiki_page_with_opts(
+        let expected_revision = revisions
+            .get(&format!("wiki://{}", slugify(&page.slug)))
+            .copied();
+        let wr = write_generated_wiki_page(
             store,
             embedder,
             config,
-            &page.slug,
-            &page.title,
-            &page.content,
-            &page.kind,
-            page.category.as_deref(),
-            page.summary.as_deref(),
-            agent,
-            WriteWikiOpts {
-                op: Some("compile_source".into()),
-                prefix: Some("COMPILE".into()),
-                message: Some(format!(
-                    "compiled page wiki://{} from {}",
-                    page.slug, source.uri
-                )),
-                extra_metadata: Some(serde_json::json!({
-                    "source_id": source.id,
-                    "source_uri": source.uri,
-                })),
-                extra_payload: Some(serde_json::json!({
-                    "source_id": source.id,
-                    "source_uri": source.uri,
-                })),
-                if_match_revision: None,
+            WikiWriteCommand {
+                slug: page.slug.clone(),
+                title: page.title.clone(),
+                content: page.content.clone(),
+                wing: None,
+                room: None,
+                kind: page.kind.clone(),
+                category: page.category.clone(),
+                summary: page.summary.clone(),
+                agent: agent.map(str::to_string),
+                options: WriteWikiOpts {
+                    op: Some("compile_source".into()),
+                    metadata_json_override: None,
+                    prefix: Some("COMPILE".into()),
+                    message: Some(format!(
+                        "compiled page wiki://{} from {}",
+                        page.slug, source.uri
+                    )),
+                    extra_metadata: Some(serde_json::json!({
+                        "source_id": source.id,
+                        "source_uri": source.uri,
+                        "source_versions": [WikiSourceVersion::from_document(&source)],
+                    })),
+                    extra_payload: Some(serde_json::json!({
+                        "source_id": source.id,
+                        "source_uri": source.uri,
+                    })),
+                    if_match_revision: None,
+                },
             },
+            expected_revision,
         )
         .await?;
         page_ids.push(wr.document_id);
@@ -1084,6 +1226,33 @@ pub async fn compile_source(
         dry_run: false,
         proposed: None,
     })
+}
+
+/// A model may choose any existing slug; only lightweight revision metadata is
+/// needed to detect edits made while generation is in flight.
+fn wiki_revision_snapshot(store: &Store) -> Result<HashMap<String, i64>> {
+    Ok(store
+        .list_wiki_page_metas()?
+        .into_iter()
+        .map(|page| (page.uri, page.revision))
+        .collect())
+}
+
+/// Generated writes always preserve the state observed before generation, even
+/// when callers have not enabled mandatory CAS for ordinary manual edits.
+async fn write_generated_wiki_page(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    mut command: WikiWriteCommand,
+    expected_revision: Option<i64>,
+) -> Result<WikiWriteResult> {
+    command.options.if_match_revision = expected_revision;
+    if expected_revision.is_some() {
+        write_wiki_page_command(store, embedder, config, command).await
+    } else {
+        create_wiki_page_command(store, embedder, config, command).await
+    }
 }
 
 /// Optional overrides when consolidating (title/slug/kind/category).
@@ -1156,6 +1325,11 @@ pub async fn consolidate(
         .iter()
         .map(|d| (d.title.clone(), d.uri.clone(), d.content.clone()))
         .collect();
+    let revisions = if apply {
+        wiki_revision_snapshot(store)?
+    } else {
+        HashMap::new()
+    };
     let mut proposed = llm.consolidate_wiki(&schema, &sources).await?;
 
     // Caller overrides (whitelist fields only).
@@ -1238,8 +1412,19 @@ pub async fn consolidate(
         });
     }
 
-    let written =
-        apply_consolidate_proposal(store, embedder, config, &proposed, &resolved, agent).await?;
+    let expected_revision = revisions
+        .get(&format!("wiki://{}", slugify(&proposed.slug)))
+        .copied();
+    let written = apply_consolidate_proposal_at_revision(
+        store,
+        embedder,
+        config,
+        &proposed,
+        &resolved,
+        agent,
+        expected_revision,
+    )
+    .await?;
 
     let _ = store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
@@ -1294,49 +1479,84 @@ pub async fn apply_consolidate_proposal(
     sources: &[Document],
     agent: Option<&str>,
 ) -> Result<WikiWriteResult> {
+    let expected_revision = store
+        .find_by_uri(&format!("wiki://{}", slugify(&proposal.slug)))?
+        .map(|page| page.revision);
+    apply_consolidate_proposal_at_revision(
+        store,
+        embedder,
+        config,
+        proposal,
+        sources,
+        agent,
+        expected_revision,
+    )
+    .await
+}
+
+async fn apply_consolidate_proposal_at_revision(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    proposal: &ConsolidateProposal,
+    sources: &[Document],
+    agent: Option<&str>,
+    expected_revision: Option<i64>,
+) -> Result<WikiWriteResult> {
     let source_ids: Vec<String> = sources.iter().map(|d| d.id.clone()).collect();
     let source_uris: Vec<String> = sources.iter().map(|d| d.uri.clone()).collect();
     let source_titles: Vec<String> = sources.iter().map(|d| d.title.clone()).collect();
+    let source_versions: Vec<WikiSourceVersion> = sources
+        .iter()
+        .map(WikiSourceVersion::from_document)
+        .collect();
 
     let summary = proposal
         .summary
         .clone()
         .unwrap_or_else(|| first_line(&proposal.content, 240));
 
-    let wr = write_wiki_page_with_opts(
+    let wr = write_generated_wiki_page(
         store,
         embedder,
         config,
-        &proposal.slug,
-        &proposal.title,
-        &proposal.content,
-        &proposal.kind,
-        proposal.category.as_deref(),
-        Some(&summary),
-        agent,
-        WriteWikiOpts {
-            op: Some("consolidate_write".into()),
-            prefix: Some("MAINT".into()),
-            message: Some(format!(
-                "consolidated wiki://{} from {} source(s)",
-                proposal.slug,
-                sources.len()
-            )),
-            extra_metadata: Some(serde_json::json!({
-                "consolidated_from": &source_ids,
-                "source_ids": &source_ids,
-                "source_uris": &source_uris,
-                "source_titles": &source_titles,
-                "suggested_links": &proposal.suggested_links,
-                "filed_as": "consolidate",
-            })),
-            extra_payload: Some(serde_json::json!({
-                "source_ids": &source_ids,
-                "source_count": sources.len(),
-                "suggested_links": &proposal.suggested_links,
-            })),
-            if_match_revision: None,
+        WikiWriteCommand {
+            slug: proposal.slug.clone(),
+            title: proposal.title.clone(),
+            content: proposal.content.clone(),
+            wing: None,
+            room: None,
+            kind: proposal.kind.clone(),
+            category: proposal.category.clone(),
+            summary: Some(summary),
+            agent: agent.map(str::to_string),
+            options: WriteWikiOpts {
+                op: Some("consolidate_write".into()),
+                metadata_json_override: None,
+                prefix: Some("MAINT".into()),
+                message: Some(format!(
+                    "consolidated wiki://{} from {} source(s)",
+                    proposal.slug,
+                    sources.len()
+                )),
+                extra_metadata: Some(serde_json::json!({
+                    "consolidated_from": &source_ids,
+                    "source_ids": &source_ids,
+                    "source_uris": &source_uris,
+                    "source_titles": &source_titles,
+                    "source_versions": &source_versions,
+                    "suggested_links": &proposal.suggested_links,
+                    "filed_as": "consolidate",
+                })),
+                extra_payload: Some(serde_json::json!({
+                    "source_ids": &source_ids,
+                    "source_count": sources.len(),
+                    "suggested_links": &proposal.suggested_links,
+                })),
+                if_match_revision: None,
+            },
         },
+        expected_revision,
     )
     .await?;
 
@@ -1352,7 +1572,8 @@ pub async fn apply_consolidate_proposal(
     Ok(wr)
 }
 
-/// One wiki page older than a linked raw source (stale compiled layer).
+/// One wiki page whose recorded source changed, disappeared, or is newer than
+/// the page when only legacy timestamp provenance is available.
 #[derive(Debug, Clone, Serialize)]
 pub struct StaleWikiItem {
     pub wiki_id: String,
@@ -1363,8 +1584,10 @@ pub struct StaleWikiItem {
     pub raw_id: String,
     pub raw_uri: String,
     pub raw_title: String,
-    pub raw_updated_at: String,
-    /// `graph_related` | `metadata` | `citation` | `content_source`
+    /// None for a deleted/unavailable source; its recorded URI remains present.
+    pub raw_updated_at: Option<String>,
+    /// `source_version` | `source_missing` | `graph_related` | `metadata` |
+    /// `citation` | `content_source`. Version evidence overrides timestamps.
     pub link_kind: String,
 }
 
@@ -1404,11 +1627,16 @@ pub struct RefreshStaleWikiResult {
     pub notes: Option<String>,
 }
 
-/// Find wiki pages whose `updated_at` is older than a linked raw parent.
+/// Find wiki pages whose sources changed or disappeared.
 ///
-/// Links are discovered from:
+/// A valid complete `source_versions` array defines the authoritative parent
+/// set and uses body hashes instead of timestamps. This catches edits during
+/// generation and ignores obsolete links to sources no longer used by the page.
+///
+/// Without a valid snapshot, legacy links are discovered from:
 /// 1. graph `related` edges between raw and wiki document nodes (`compile_source`)
-/// 2. wiki metadata `source_id` / `source_uri`
+/// 2. wiki metadata `source_id` / `source_uri`, or arrays `source_ids` /
+///    `source_uris` / `consolidated_from`
 /// 3. wiki metadata `citations[].document_id` / `citations[].uri`
 /// 4. body lines `source: <uri-or-id>`
 pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
@@ -1457,19 +1685,53 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
             if !is_wiki_layer(&wiki.layer) {
                 continue;
             }
-            if wiki.updated_at < raw.updated_at {
+            if wiki.updated_at < raw.updated_at && wiki_source_versions(&wiki).is_none() {
                 insert_stale_pair(&mut pairs, &wiki, raw, "graph_related");
             }
         }
     }
 
-    // 2–4) Metadata + content markers on wiki pages.
+    // Snapshot parents are authoritative, including an explicitly empty set.
+    // Legacy metadata/content references may survive a later compilation and
+    // must not add parents outside that snapshot.
     let wiki_docs = store.list_documents_by_layer(LAYER_WIKI)?;
     for wiki in &wiki_docs {
-        let linked = linked_raws_for_wiki(store, wiki, &raw_by_id, &raw_by_uri)?;
-        for (raw, link_kind) in linked {
-            if wiki.updated_at < raw.updated_at {
-                insert_stale_pair(&mut pairs, wiki, &raw, link_kind);
+        if let Some(versions) = wiki_source_versions(wiki) {
+            for version in versions {
+                let source = store.get_document(&version.document_id)?;
+                let source = match source {
+                    Some(source) => Some(source),
+                    None if !version.uri.is_empty() => store.find_by_uri(&version.uri)?,
+                    None => None,
+                };
+                if let Some(source) = source {
+                    if content_hash(&source.content) != version.content_hash {
+                        insert_stale_pair(&mut pairs, wiki, &source, "source_version");
+                    }
+                } else {
+                    pairs.insert(
+                        (wiki.id.clone(), version.document_id.clone()),
+                        StaleWikiItem {
+                            wiki_id: wiki.id.clone(),
+                            wiki_uri: wiki.uri.clone(),
+                            wiki_title: wiki.title.clone(),
+                            wiki_kind: wiki.kind.clone(),
+                            wiki_updated_at: wiki.updated_at.to_rfc3339(),
+                            raw_id: version.document_id,
+                            raw_uri: version.uri.clone(),
+                            raw_title: version.uri,
+                            raw_updated_at: None,
+                            link_kind: "source_missing".into(),
+                        },
+                    );
+                }
+            }
+        } else {
+            // 2–4) Metadata + content markers for legacy pages.
+            for (raw, link_kind) in linked_raws_for_wiki(store, wiki, &raw_by_id, &raw_by_uri)? {
+                if wiki.updated_at < raw.updated_at {
+                    insert_stale_pair(&mut pairs, wiki, &raw, link_kind);
+                }
             }
         }
     }
@@ -1482,6 +1744,35 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
             .then_with(|| a.raw_uri.cmp(&b.raw_uri))
     });
     Ok(out)
+}
+
+/// Resolve the entire recorded parent set for a review snapshot.
+pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(String, String)>> {
+    if let Some(versions) = wiki_source_versions(page) {
+        let mut refs = Vec::new();
+        for v in versions {
+            let source = store.get_document(&v.document_id)?.or(store.find_by_uri(&v.uri)?);
+            refs.push(source.map(|d| (d.id, d.uri)).unwrap_or((v.document_id, v.uri)));
+        }
+        refs.sort(); refs.dedup(); return Ok(refs);
+    }
+    let raws = store.list_documents_by_layer(LAYER_RAW)?;
+    let ids = raws.iter().map(|d| (d.id.clone(), d.clone())).collect();
+    let uris = raws.iter().map(|d| (d.uri.clone(), d.clone())).collect();
+    let mut result: Vec<(String, String)> = linked_raws_for_wiki(store, page, &ids, &uris)?
+        .into_iter().map(|(d, _)| (d.id.clone(), d.uri.clone())).collect();
+    if let Some(node) = store.find_node_by_document_id(&page.id)? {
+        let view = store.neighbors(&node.id, 1, 10000)?;
+        if view.nodes.len() >= 10000 { return Err(AppError::config("review dependency set exceeds graph limit")); }
+        for edge in &view.edges {
+            if edge.rel_type != "related" { continue; }
+            let other = if edge.source_id == node.id { &edge.target_id } else { &edge.source_id };
+            if let Some(id) = view.nodes.iter().find(|n| &n.id == other).and_then(|n| n.document_id.as_ref()) {
+                if let Some(source) = store.get_document(id)? { result.push((source.id, source.uri)); }
+            }
+        }
+    }
+    result.sort(); result.dedup(); Ok(result)
 }
 
 /// List stale wiki↔raw pairs; optionally recompile unique raw parents via LLM.
@@ -1516,7 +1807,7 @@ pub async fn refresh_stale_wiki(
     let mut errors = Vec::new();
     let mut applied = false;
 
-    let notes = if dry_run {
+    let mut notes = if dry_run {
         Some(if stale.is_empty() {
             "no stale wiki pages".into()
         } else {
@@ -1527,7 +1818,7 @@ pub async fn refresh_stale_wiki(
             )
         })
     } else if let Some(client) = llm {
-        applied = true;
+        applied = !raw_sources.is_empty();
         for target in &raw_sources {
             match compile_source(
                 store,
@@ -1565,6 +1856,18 @@ pub async fn refresh_stale_wiki(
             total_raws
         ))
     };
+
+    let missing_sources = stale
+        .iter()
+        .filter(|item| item.link_kind == "source_missing")
+        .count();
+    if missing_sources > 0 {
+        let note = format!("{missing_sources} source reference(s) are unavailable; restore or relink them before recompiling. Missing sources are excluded from automatic recompile.");
+        notes = Some(match notes {
+            Some(existing) => format!("{existing}. {note}"),
+            None => note,
+        });
+    }
 
     let _ = store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
@@ -1637,7 +1940,7 @@ fn insert_stale_pair(
             raw_id: raw.id.clone(),
             raw_uri: raw.uri.clone(),
             raw_title: raw.title.clone(),
-            raw_updated_at: raw.updated_at.to_rfc3339(),
+            raw_updated_at: Some(raw.updated_at.to_rfc3339()),
             link_kind: link_kind.to_string(),
         },
     );
@@ -1647,6 +1950,9 @@ fn group_raw_targets(stale: &[StaleWikiItem]) -> Vec<RawRefreshTarget> {
     let mut map: std::collections::BTreeMap<String, RawRefreshTarget> =
         std::collections::BTreeMap::new();
     for s in stale {
+        if s.link_kind == "source_missing" {
+            continue;
+        }
         let entry = map
             .entry(s.raw_id.clone())
             .or_insert_with(|| RawRefreshTarget {
@@ -1689,6 +1995,17 @@ fn linked_raws_for_wiki(
             try_push_raw(
                 store, suri, "metadata", raw_by_id, raw_by_uri, &mut seen, &mut out,
             )?;
+        }
+        // Consolidation persists every parent in arrays. These references must
+        // remain sufficient even when graph relations are absent or rebuilt.
+        for field in ["source_ids", "source_uris", "consolidated_from"] {
+            if let Some(references) = meta.get(field).and_then(|value| value.as_array()) {
+                for reference in references.iter().filter_map(|value| value.as_str()) {
+                    try_push_raw(
+                        store, reference, "metadata", raw_by_id, raw_by_uri, &mut seen, &mut out,
+                    )?;
+                }
+            }
         }
         if let Some(arr) = meta.get("citations").and_then(|v| v.as_array()) {
             for c in arr {
@@ -1875,6 +2192,7 @@ pub async fn file_answer(
         agent,
         WriteWikiOpts {
             op: Some("file_answer".into()),
+            metadata_json_override: None,
             prefix: Some("FILE".into()),
             message: Some(format!("filed answer wiki://{slug}")),
             extra_metadata: Some(serde_json::json!({
@@ -2218,7 +2536,88 @@ fn _touch_compile_page(_: &crate::llm::CompilePage) {}
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
+
+    struct CountingEmbedder {
+        calls: Arc<AtomicUsize>,
+        dims: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for CountingEmbedder {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(texts.iter().map(|_| vec![0.5; self.dims]).collect())
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
+
+    struct GatedEmbedder {
+        started: Arc<tokio::sync::Semaphore>,
+        release: Arc<tokio::sync::Semaphore>,
+        dims: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for GatedEmbedder {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.started.add_permits(1);
+            self.release.acquire().await.unwrap().forget();
+            Ok(texts.iter().map(|_| vec![0.5; self.dims]).collect())
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
+
+    fn test_wiki_command(slug: &str) -> WikiWriteCommand {
+        WikiWriteCommand {
+            slug: slug.into(),
+            title: slug.into(),
+            content: "A test wiki page with [[Related]] #knowledge".into(),
+            wing: None,
+            room: None,
+            kind: LAYER_WIKI.into(),
+            category: None,
+            summary: None,
+            agent: None,
+            options: WriteWikiOpts::default(),
+        }
+    }
+
+    async fn mock_wiki_llm(
+        started: Arc<tokio::sync::Semaphore>,
+        release: Arc<tokio::sync::Semaphore>,
+    ) -> (ChatClient, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let llm = ChatClient::new(
+            format!("http://{}/v1", listener.local_addr().unwrap()),
+            "test",
+            "test",
+        )
+        .unwrap();
+        let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move || {
+            let started = started.clone();
+            let release = release.clone();
+            async move {
+                started.add_permits(1);
+                release.acquire().await.unwrap().forget();
+                // Both compile and consolidate parse their own fields from this
+                // deterministic response, letting the same race cover both paths.
+                let page = serde_json::json!({"slug":"generated-target","title":"Generated","kind":"concept","content":"generated source synthesis"});
+                let mut content = page.clone();
+                content["pages"] = serde_json::json!([page]);
+                axum::Json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":content.to_string()}}]}))
+            }
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (llm, server)
+    }
 
     struct FailingEmbedder {
         dims: usize,
@@ -2395,6 +2794,827 @@ mod tests {
                 page_id: entry.page_id,
                 updated_at: entry.updated_at,
             })
+    }
+
+    #[tokio::test]
+    async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
+        let store = open_store();
+        let config = sample_config(16);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(16));
+        let created =
+            write_wiki_page_command(&store, &embedder, &config, test_wiki_command("existing"))
+                .await
+                .unwrap();
+        let before_doc = get_wiki_page(&store, "existing").unwrap();
+        let before_chunks = chunk_state(&store, &created.document_id);
+        let before_edges = outgoing_edge_state(&store, &created.node_id);
+        let before_index = wiki_index_state(&store, "existing");
+        let before_ops = store.list_ops_log(100).unwrap().len();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let incompatible: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
+            calls: calls.clone(),
+            dims: 8,
+        });
+        for changed in [
+            Config {
+                embedding_model: "another-model".into(),
+                ..config.clone()
+            },
+            Config {
+                embedding_dims: 8,
+                ..config.clone()
+            },
+            Config {
+                embedding_base_url: "https://another-endpoint.test/v1".into(),
+                ..config.clone()
+            },
+        ] {
+            let error = write_wiki_page_command(
+                &store,
+                &incompatible,
+                &changed,
+                test_wiki_command("new-page"),
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("embedding manifest mismatch"),
+                "{error}"
+            );
+            let error = update_wiki_page_cas(
+                &store,
+                &incompatible,
+                &changed,
+                "existing",
+                None,
+                "changed content",
+                None,
+                None,
+                None,
+                None,
+                Some(created.revision),
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("embedding manifest mismatch"),
+                "{error}"
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(store.find_by_uri("wiki://new-page").unwrap().is_none());
+        let after_doc = get_wiki_page(&store, "existing").unwrap();
+        assert_eq!(after_doc.content, before_doc.content);
+        assert_eq!(after_doc.revision, before_doc.revision);
+        assert_eq!(chunk_state(&store, &created.document_id), before_chunks);
+        assert_eq!(outgoing_edge_state(&store, &created.node_id), before_edges);
+        assert_eq!(wiki_index_state(&store, "existing"), before_index);
+        assert_eq!(store.list_ops_log(100).unwrap().len(), before_ops);
+        store.require_embedding_manifest_match(&config).unwrap();
+
+        store
+            .set_embedding_manifest(&crate::db::store::embedding_migration_manifest(&config))
+            .unwrap();
+        let error = write_wiki_page_command(
+            &store,
+            &incompatible,
+            &config,
+            test_wiki_command("migration-page"),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("incomplete corpus migration"),
+            "{error}"
+        );
+        store
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM embedding_manifest", [])
+            .unwrap();
+        let error = write_wiki_page_command(
+            &store,
+            &incompatible,
+            &config,
+            test_wiki_command("legacy-page"),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("missing for a non-empty corpus"),
+            "{error}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(store.get_embedding_manifest().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn wiki_write_rejects_wrong_provider_dimensions_without_document_commit() {
+        let store = open_store();
+        let config = sample_config(16);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
+            calls: calls.clone(),
+            dims: 8,
+        });
+        let error =
+            write_wiki_page_command(&store, &embedder, &config, test_wiki_command("wrong-dims"))
+                .await
+                .unwrap_err();
+        assert!(
+            error.to_string().contains("returned dims=8, expected 16"),
+            "{error}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(store.count_documents().unwrap(), 0);
+        assert!(store.list_ops_log(10).unwrap().is_empty());
+        store.require_embedding_manifest_match(&config).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wiki_write_excludes_reembed_all_through_embedding_and_commit() {
+        let store = open_store();
+        let config = sample_config(16);
+        let started = Arc::new(tokio::sync::Semaphore::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let gated: Arc<dyn EmbeddingProvider> = Arc::new(GatedEmbedder {
+            started: started.clone(),
+            release: release.clone(),
+            dims: 16,
+        });
+        let writing_store = store.clone();
+        let writing_config = config.clone();
+        let write = tokio::spawn(async move {
+            write_wiki_page_command(
+                &writing_store,
+                &gated,
+                &writing_config,
+                test_wiki_command("guarded"),
+            )
+            .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), started.acquire())
+            .await
+            .unwrap()
+            .unwrap()
+            .forget();
+        let migrated = Config {
+            embedding_dims: 8,
+            embedding_model: "new-model".into(),
+            ..config.clone()
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let replacement: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
+            calls: calls.clone(),
+            dims: 8,
+        });
+        let error = crate::maintain::reembed_all(&store, &replacement, &migrated, usize::MAX)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AppError::Busy(_)), "{error}");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        release.add_permits(1);
+        let written = tokio::time::timeout(std::time::Duration::from_secs(2), write)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(chunk_state(&store, &written.document_id)
+            .iter()
+            .all(|chunk| chunk.embedding.len() == 16));
+        let report = crate::maintain::reembed_all(&store, &replacement, &migrated, usize::MAX)
+            .await
+            .unwrap();
+        assert!(report.errors.is_empty());
+        store.require_embedding_manifest_match(&migrated).unwrap();
+        assert!(chunk_state(&store, &written.document_id)
+            .iter()
+            .all(|chunk| chunk.embedding.len() == 8));
+        let error = write_wiki_page_command(
+            &store,
+            &replacement,
+            &config,
+            test_wiki_command("old-model"),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("embedding manifest mismatch"));
+        write_wiki_page_command(
+            &store,
+            &replacement,
+            &migrated,
+            test_wiki_command("new-model"),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn maintenance_wiki_writes_reuse_only_the_explicit_corpus_lease() {
+        use crate::maintain::{ApplyPlanOptions, MaintenanceAction, MaintenancePlanItem};
+
+        let store = open_store();
+        let config = sample_config(16);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(16));
+        let scoped = store.try_corpus_mutation_scope("test plan").unwrap();
+        let blocked = write_wiki_page_command(
+            &store,
+            &embedder,
+            &config,
+            test_wiki_command("outside-plan"),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(blocked, AppError::Busy(_)));
+        assert!(store.get_embedding_manifest().unwrap().is_none());
+        let actions = [MaintenanceAction::Consolidate, MaintenanceAction::FileAnswer]
+            .into_iter().enumerate().map(|(index, action)| MaintenancePlanItem {
+                action,
+                reason: Some("test nested wiki workflow".into()),
+                target_id: Some("source".into()),
+                params: serde_json::json!({"title":format!("Page {index}"),"slug":format!("page-{index}"),"content":"nested wiki body"}),
+            }).collect();
+        let report = crate::maintain::apply_maintenance_plan(
+            &scoped,
+            &embedder,
+            &config,
+            None,
+            actions,
+            &ApplyPlanOptions {
+                dry_run: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.applied.len(), 2);
+        assert_eq!(store.count_documents().unwrap(), 2);
+        let retained = scoped.clone();
+        drop(scoped);
+        assert!(store.try_corpus_mutation_guard("still leased").is_err());
+        drop(retained);
+        assert!(store.try_corpus_mutation_guard("finished").is_ok());
+
+        let other_store = open_store();
+        let foreign_guard = other_store.try_corpus_mutation_guard("foreign").unwrap();
+        assert!(store.with_corpus_mutation_guard(foreign_guard).is_err());
+    }
+
+    #[tokio::test]
+    async fn maintenance_compile_and_stale_refresh_reuse_the_exclusive_lease() {
+        use crate::maintain::{ApplyPlanOptions, MaintenanceAction, MaintenancePlanItem};
+
+        let store = open_store();
+        let config = Config {
+            llm_enabled: true,
+            wiki_require_if_match: true,
+            ..sample_config(16)
+        };
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(16));
+        let raw = ingest_raw(
+            &store,
+            &embedder,
+            &config,
+            "Source content".into(),
+            Some("Source".into()),
+            Some("raw://compiled-source".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let llm = ChatClient::new(
+            format!("http://{}/v1", listener.local_addr().unwrap()),
+            "test",
+            "test",
+        )
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let chat_calls = calls.clone();
+        let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move || {
+            let chat_calls = chat_calls.clone();
+            async move {
+                chat_calls.fetch_add(1, Ordering::SeqCst);
+                axum::Json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":serde_json::json!({
+                    "pages":[{"slug":"compiled-page","title":"Compiled","kind":"source_summary","content":"Compiled source content"}]
+                }).to_string()}}]}))
+            }
+        }));
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let scoped = store
+            .try_corpus_mutation_scope("compile and refresh")
+            .unwrap();
+        for action in [
+            MaintenanceAction::CompileSource,
+            MaintenanceAction::RefreshStaleWiki,
+        ] {
+            let report = crate::maintain::apply_maintenance_plan(
+                &scoped,
+                &embedder,
+                &config,
+                Some(&llm),
+                vec![MaintenancePlanItem {
+                    action,
+                    reason: None,
+                    target_id: Some(raw.document_id.clone()),
+                    params: serde_json::json!({}),
+                }],
+                &ApplyPlanOptions {
+                    dry_run: false,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            assert!(report.errors.is_empty(), "{:?}", report.errors);
+            assert_eq!(report.applied.len(), 1);
+            let page = get_wiki_page(&store, "compiled-page").unwrap();
+            let mut source = store.get_document(&raw.document_id).unwrap().unwrap();
+            source.updated_at = page.updated_at + chrono::Duration::seconds(1);
+            source.content.push_str(" updated source");
+            source.content_hash = Some(content_hash(&source.content));
+            store.upsert_document(&source).unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(get_wiki_page(&store, "compiled-page").unwrap().revision, 2);
+        mock.abort();
+    }
+
+    #[tokio::test]
+    async fn consolidate_creates_and_updates_with_required_if_match() {
+        let store = open_store();
+        let config = Config {
+            wiki_require_if_match: true,
+            ..sample_config(16)
+        };
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(16));
+        let raw = ingest_raw(
+            &store,
+            &embedder,
+            &config,
+            "Raw source".into(),
+            Some("Source".into()),
+            Some("raw://source".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (llm, mock) = mock_wiki_llm(
+            Arc::new(tokio::sync::Semaphore::new(0)),
+            Arc::new(tokio::sync::Semaphore::new(2)),
+        )
+        .await;
+        for revision in 1..=2 {
+            let result = consolidate(
+                &store,
+                &embedder,
+                &config,
+                &llm,
+                std::slice::from_ref(&raw.document_id),
+                true,
+                ConsolidateOpts::default(),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.written.unwrap().revision, revision);
+        }
+        mock.abort();
+        let proposal = ConsolidateProposal {
+            slug: "generated-target".into(),
+            title: "Direct proposal".into(),
+            kind: "concept".into(),
+            content: "Directly applied synthesis".into(),
+            category: None,
+            summary: None,
+            suggested_links: vec![],
+            notes: None,
+        };
+        let source = store.get_document(&raw.document_id).unwrap().unwrap();
+        let result =
+            apply_consolidate_proposal(&store, &embedder, &config, &proposal, &[source], None)
+                .await
+                .unwrap();
+        assert_eq!(result.revision, 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generated_wiki_rejects_concurrent_edits_and_creates_during_llm_generation() {
+        for consolidate_mode in [false, true] {
+            for page_already_exists in [false, true] {
+                let store = open_store();
+                let config = Config {
+                    wiki_require_if_match: true,
+                    ..sample_config(16)
+                };
+                let embedder: Arc<dyn EmbeddingProvider> =
+                    Arc::new(crate::embeddings::MockEmbedder::new(16));
+                let raw = ingest_raw(
+                    &store,
+                    &embedder,
+                    &config,
+                    "Raw source".into(),
+                    Some("Source".into()),
+                    Some("raw://source".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                let initial_revision = if page_already_exists {
+                    Some(
+                        write_wiki_page_command(
+                            &store,
+                            &embedder,
+                            &config,
+                            test_wiki_command("generated-target"),
+                        )
+                        .await
+                        .unwrap()
+                        .revision,
+                    )
+                } else {
+                    None
+                };
+                let started = Arc::new(tokio::sync::Semaphore::new(0));
+                let release = Arc::new(tokio::sync::Semaphore::new(0));
+                let (llm, mock) = mock_wiki_llm(started.clone(), release.clone()).await;
+                let work_store = store.clone();
+                let work_embedder = embedder.clone();
+                let work_config = config.clone();
+                let work = tokio::spawn(async move {
+                    if consolidate_mode {
+                        consolidate(
+                            &work_store,
+                            &work_embedder,
+                            &work_config,
+                            &llm,
+                            &[raw.document_id],
+                            true,
+                            ConsolidateOpts::default(),
+                            None,
+                        )
+                        .await
+                        .map(|_| ())
+                    } else {
+                        compile_source(
+                            &work_store,
+                            &work_embedder,
+                            &work_config,
+                            &llm,
+                            &raw.document_id,
+                            false,
+                            None,
+                        )
+                        .await
+                        .map(|_| ())
+                    }
+                });
+                tokio::time::timeout(std::time::Duration::from_secs(2), started.acquire())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .forget();
+                let mut edit = test_wiki_command("generated-target");
+                edit.content = "Concurrent editor content must survive".into();
+                edit.options.if_match_revision = initial_revision;
+                let concurrent = write_wiki_page_command(&store, &embedder, &config, edit)
+                    .await
+                    .unwrap();
+                let before_chunks = chunk_state(&store, &concurrent.document_id);
+                let before_ops = store.list_ops_log(100).unwrap().len();
+                release.add_permits(1);
+                let error = tokio::time::timeout(std::time::Duration::from_secs(2), work)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap_err();
+                assert!(
+                    matches!(error, AppError::Conflict(_)),
+                    "consolidate={consolidate_mode} existed={page_already_exists}: {error}"
+                );
+                let kept = get_wiki_page(&store, "generated-target").unwrap();
+                assert_eq!(kept.content, "Concurrent editor content must survive");
+                assert_eq!(kept.revision, concurrent.revision);
+                assert_eq!(chunk_state(&store, &concurrent.document_id), before_chunks);
+                assert_eq!(store.list_ops_log(100).unwrap().len(), before_ops);
+                mock.abort();
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generated_wiki_is_stale_when_source_changes_during_llm_generation() {
+        for consolidate_mode in [false, true] {
+            let store = open_store();
+            let config = sample_config(16);
+            let embedder: Arc<dyn EmbeddingProvider> =
+                Arc::new(crate::embeddings::MockEmbedder::new(16));
+            // Longer than the compile prompt's source cap: provenance identifies
+            // the complete captured source, not merely its truncated prompt text.
+            let original = "Original source body. ".repeat(1_200);
+            let raw = ingest_raw(
+                &store,
+                &embedder,
+                &config,
+                original.clone(),
+                Some("Source".into()),
+                Some("raw://source".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let started = Arc::new(tokio::sync::Semaphore::new(0));
+            let release = Arc::new(tokio::sync::Semaphore::new(0));
+            let (llm, mock) = mock_wiki_llm(started.clone(), release.clone()).await;
+            let work_store = store.clone();
+            let work_embedder = embedder.clone();
+            let work_config = config.clone();
+            let source_id = raw.document_id.clone();
+            let work = tokio::spawn(async move {
+                if consolidate_mode {
+                    consolidate(
+                        &work_store,
+                        &work_embedder,
+                        &work_config,
+                        &llm,
+                        &[source_id],
+                        true,
+                        ConsolidateOpts::default(),
+                        None,
+                    )
+                    .await
+                    .map(|_| ())
+                } else {
+                    compile_source(
+                        &work_store,
+                        &work_embedder,
+                        &work_config,
+                        &llm,
+                        &source_id,
+                        false,
+                        None,
+                    )
+                    .await
+                    .map(|_| ())
+                }
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(2), started.acquire())
+                .await
+                .unwrap()
+                .unwrap()
+                .forget();
+            ingest_raw(
+                &store,
+                &embedder,
+                &config,
+                "Changed source while LLM was running".into(),
+                Some("Source".into()),
+                Some("raw://source".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            release.add_permits(1);
+            tokio::time::timeout(std::time::Duration::from_secs(2), work)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let page = get_wiki_page(&store, "generated-target").unwrap();
+            let source = store.get_document(&raw.document_id).unwrap().unwrap();
+            assert!(page.updated_at > source.updated_at);
+            let metadata: serde_json::Value = serde_json::from_str(&page.metadata_json).unwrap();
+            let versions: Vec<WikiSourceVersion> =
+                serde_json::from_value(metadata["source_versions"].clone()).unwrap();
+            assert_eq!(versions.len(), 1);
+            assert_eq!(versions[0].document_id, raw.document_id);
+            assert_eq!(versions[0].uri, "raw://source");
+            assert_eq!(versions[0].content_hash, content_hash(&original));
+            assert_ne!(versions[0].content_hash, content_hash(&source.content));
+            let stale = find_stale_wiki(&store).unwrap();
+            assert_eq!(stale.len(), 1);
+            assert_eq!(stale[0].wiki_id, page.id);
+            assert_eq!(stale[0].link_kind, "source_version");
+            mock.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn source_versions_exclude_old_parents_after_regeneration() {
+        for consolidate_mode in [false, true] {
+            let store = open_store();
+            let config = sample_config(16);
+            let embedder: Arc<dyn EmbeddingProvider> =
+                Arc::new(crate::embeddings::MockEmbedder::new(16));
+            let mut sources = Vec::new();
+            for name in ["a", "b"] {
+                let raw = ingest_raw(
+                    &store,
+                    &embedder,
+                    &config,
+                    format!("Source {name}"),
+                    Some(name.into()),
+                    Some(format!("raw://{name}")),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                sources.push(store.get_document(&raw.document_id).unwrap().unwrap());
+            }
+            let proposal = ConsolidateProposal {
+                slug: "generated-target".into(),
+                title: "Generated".into(),
+                content: "Initial synthesis from both sources".into(),
+                kind: "concept".into(),
+                category: None,
+                summary: None,
+                suggested_links: vec![],
+                notes: None,
+            };
+            apply_consolidate_proposal(&store, &embedder, &config, &proposal, &sources, None)
+                .await
+                .unwrap();
+            let (llm, mock) = mock_wiki_llm(
+                Arc::new(tokio::sync::Semaphore::new(0)),
+                Arc::new(tokio::sync::Semaphore::new(1)),
+            )
+            .await;
+            if consolidate_mode {
+                consolidate(
+                    &store,
+                    &embedder,
+                    &config,
+                    &llm,
+                    &[sources[0].id.clone()],
+                    true,
+                    ConsolidateOpts::default(),
+                    None,
+                )
+                .await
+                .unwrap();
+            } else {
+                compile_source(
+                    &store,
+                    &embedder,
+                    &config,
+                    &llm,
+                    &sources[0].id,
+                    false,
+                    None,
+                )
+                .await
+                .unwrap();
+            }
+            mock.abort();
+            let mut page = get_wiki_page(&store, "generated-target").unwrap();
+            let versions = wiki_source_versions(&page).unwrap();
+            assert_eq!(versions.len(), 1);
+            assert_eq!(versions[0].document_id, sources[0].id);
+
+            ingest_raw(
+                &store,
+                &embedder,
+                &config,
+                "Changed excluded source".into(),
+                Some("b".into()),
+                Some("raw://b".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let b = store.find_by_uri("raw://b").unwrap().unwrap();
+            assert!(b.updated_at > page.updated_at);
+            let b_node = store.find_node_by_document_id(&b.id).unwrap().unwrap();
+            let page_node = store.find_node_by_document_id(&page.id).unwrap().unwrap();
+            assert!(
+                store
+                    .neighbors(&b_node.id, 1, 500)
+                    .unwrap()
+                    .edges
+                    .iter()
+                    .any(|edge| edge.rel_type == "related" && edge.target_id == page_node.id),
+                "manual provenance link must survive the source graph rebuild"
+            );
+            assert!(find_stale_wiki(&store).unwrap().is_empty(),
+                "excluded source must not make regenerated wiki stale; consolidate={consolidate_mode}");
+
+            ingest_raw(
+                &store,
+                &embedder,
+                &config,
+                "Changed retained source".into(),
+                Some("a".into()),
+                Some("raw://a".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let stale = find_stale_wiki(&store).unwrap();
+            assert_eq!(stale.len(), 1);
+            assert_eq!(stale[0].raw_id, sources[0].id);
+            assert_eq!(stale[0].link_kind, "source_version");
+
+            // A partial/malformed array must not suppress legacy parents. An
+            // explicitly empty valid snapshot, however, records no dependencies.
+            let mut metadata: serde_json::Value =
+                serde_json::from_str(&page.metadata_json).unwrap();
+            metadata["source_versions"] = serde_json::json!([versions[0], {"broken":true}]);
+            page.metadata_json = metadata.to_string();
+            store.upsert_document(&page).unwrap();
+            assert_eq!(find_stale_wiki(&store).unwrap().len(), 2);
+            metadata["source_versions"] = serde_json::json!([]);
+            page.metadata_json = metadata.to_string();
+            store.upsert_document(&page).unwrap();
+            assert!(find_stale_wiki(&store).unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn source_versions_ignore_metadata_changes_and_report_deleted_parents() {
+        let store = open_store();
+        let config = sample_config(16);
+        let embedder: Arc<dyn EmbeddingProvider> =
+            Arc::new(crate::embeddings::MockEmbedder::new(16));
+        let raw = ingest_raw(
+            &store,
+            &embedder,
+            &config,
+            "Original source".into(),
+            Some("Source".into()),
+            Some("raw://source".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let source = store.get_document(&raw.document_id).unwrap().unwrap();
+        let proposal = ConsolidateProposal {
+            slug: "summary".into(),
+            title: "Summary".into(),
+            content: "Source synthesis".into(),
+            kind: "concept".into(),
+            category: None,
+            summary: None,
+            suggested_links: vec![],
+            notes: None,
+        };
+        let written =
+            apply_consolidate_proposal(&store, &embedder, &config, &proposal, &[source], None)
+                .await
+                .unwrap();
+        let mut source = store.get_document(&raw.document_id).unwrap().unwrap();
+        source.updated_at = Utc::now() + chrono::Duration::seconds(1);
+        source.pinned = true;
+        source.title = "New source title with the same content".into();
+        store.upsert_document(&source).unwrap();
+        assert!(find_stale_wiki(&store).unwrap().is_empty());
+        // Replicas can use different local source IDs; the recorded URI is a
+        // fallback identity while the body hash remains the freshness evidence.
+        let mut page = get_wiki_page(&store, "summary").unwrap();
+        let mut metadata: serde_json::Value = serde_json::from_str(&page.metadata_json).unwrap();
+        metadata["source_versions"][0]["document_id"] = serde_json::json!("remote-source-id");
+        page.metadata_json = metadata.to_string();
+        store.upsert_document(&page).unwrap();
+        assert!(find_stale_wiki(&store).unwrap().is_empty());
+        store.delete_document(&raw.document_id).unwrap();
+        let stale = find_stale_wiki(&store).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].wiki_id, written.document_id);
+        assert_eq!(stale[0].raw_id, "remote-source-id");
+        assert_eq!(stale[0].raw_uri, "raw://source");
+        assert_eq!(stale[0].link_kind, "source_missing");
+        assert!(stale[0].raw_updated_at.is_none());
+        let refresh = refresh_stale_wiki(&store, &embedder, &config, None, true, None, None)
+            .await
+            .unwrap();
+        assert_eq!(refresh.stale_count, 1);
+        assert!(refresh.raw_sources.is_empty());
+        assert!(refresh
+            .notes
+            .unwrap()
+            .contains("1 source reference(s) are unavailable"));
     }
 
     #[tokio::test]
@@ -3140,6 +4360,9 @@ mod tests {
             WriteWikiOpts {
                 op: Some(crate::db::store::TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP.into()),
                 if_match_revision: Some(written.revision),
+                extra_metadata: Some(serde_json::json!({"source_versions":[{
+                    "document_id":"new-source", "uri":"raw://new-source", "content_hash":"new-source-hash"
+                }]})),
                 ..Default::default()
             },
         )
@@ -3232,6 +4455,7 @@ mod tests {
                     "source_uri": "raw://alpha",
                 })),
                 extra_payload: None,
+                metadata_json_override: None,
                 if_match_revision: None,
             },
         )
@@ -3402,6 +4626,74 @@ mod tests {
             ops.iter().any(|e| e.op == "consolidate_write"),
             "ops_log should record consolidate_write"
         );
+
+        // Stored parent arrays are sufficient when graph relations are lost.
+        for src_id in [&a.document_id, &b.document_id] {
+            let node = store.find_node_by_document_id(src_id).unwrap().unwrap();
+            store.delete_edges_from(&node.id).unwrap();
+            let mut raw = store.get_document(src_id).unwrap().unwrap();
+            raw.updated_at = Utc::now() + chrono::Duration::seconds(1);
+            raw.content.push_str(" updated body");
+            raw.content_hash = Some(content_hash(&raw.content));
+            store.upsert_document(&raw).unwrap();
+        }
+        let stale = find_stale_wiki(&store).unwrap();
+        assert_eq!(stale.len(), 2);
+        assert!(stale
+            .iter()
+            .all(|item| item.wiki_id == wr.document_id && item.link_kind == "source_version"));
+        let parents = stale
+            .iter()
+            .map(|item| item.raw_id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            parents,
+            HashSet::from([a.document_id.as_str(), b.document_id.as_str()])
+        );
+    }
+
+    #[test]
+    fn stale_wiki_resolves_each_parent_array_without_graph_edges() {
+        let store = open_store();
+        let now = Utc::now();
+        let raw = Document {
+            id: "raw-parent".into(),
+            uri: "raw://parent".into(),
+            title: "Parent".into(),
+            content: "raw content".into(),
+            layer: LAYER_RAW.into(),
+            updated_at: now,
+            ..Document::default()
+        };
+        store.upsert_document(&raw).unwrap();
+        for (index, (field, reference)) in [
+            ("source_ids", raw.id.as_str()),
+            ("source_uris", raw.uri.as_str()),
+            ("consolidated_from", raw.id.as_str()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            store
+                .upsert_document(&Document {
+                    id: format!("wiki-{index}"),
+                    uri: format!("wiki://array-{index}"),
+                    title: field.into(),
+                    content: "synthesis without source markers".into(),
+                    layer: LAYER_WIKI.into(),
+                    updated_at: now - chrono::Duration::seconds(1),
+                    metadata_json:
+                        serde_json::json!({field:[reference,reference,"missing",null,42]})
+                            .to_string(),
+                    ..Document::default()
+                })
+                .unwrap();
+        }
+        let stale = find_stale_wiki(&store).unwrap();
+        assert_eq!(stale.len(), 3);
+        assert!(stale
+            .iter()
+            .all(|item| item.raw_id == raw.id && item.link_kind == "metadata"));
     }
 
     #[tokio::test]

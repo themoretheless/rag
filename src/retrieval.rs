@@ -55,6 +55,8 @@ pub async fn execute_search(
     config: &Config,
     command: SearchCommand,
 ) -> Result<Vec<SearchHit>, AppError> {
+    let started = std::time::Instant::now();
+    let budget = std::time::Duration::from_millis(command.timeout_ms.unwrap_or(5_000).max(1));
     let mode = resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
     // Acquire before the potentially slow async embedding request. The read
     // guard both fast-fails an already-running source sync and prevents a new
@@ -65,8 +67,26 @@ pub async fn execute_search(
         store.ensure_embedding_manifest(config)?;
         store.require_embedding_manifest_match(config)?;
     }
-    let query = prepare_search_with_mode(embedder, command, mode).await?;
-    search_with_corpus_guard(store, &query, &corpus_guard)
+    let mut query = tokio::time::timeout(budget, prepare_search_with_mode(embedder, command, mode))
+        .await
+        .map_err(|_| AppError::config("search timeout budget exceeded during embedding"))??;
+    let remaining = budget
+        .checked_sub(started.elapsed())
+        .filter(|v| !v.is_zero())
+        .ok_or_else(|| AppError::config("search timeout budget exceeded before retrieval"))?;
+    query.timeout_ms = Some(remaining.as_millis().max(1).min(u64::MAX as u128) as u64);
+    let mut hits = search_with_corpus_guard(store, &query, &corpus_guard)?;
+    if started.elapsed() > budget {
+        return Err(AppError::config(
+            "search timeout budget exceeded after retrieval",
+        ));
+    }
+    for hit in &mut hits {
+        if let Some(explanation) = &mut hit.explanation {
+            explanation.total_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        }
+    }
+    Ok(hits)
 }
 
 pub async fn prepare_search(
@@ -616,5 +636,39 @@ mod tests {
         assert!(matches!(error, AppError::Busy(_)));
         assert_eq!(embedder.calls.load(Ordering::Relaxed), 0);
         drop(sync_guard);
+    }
+
+    #[tokio::test]
+    async fn search_timeout_cancels_embedding_and_releases_the_corpus_lane() {
+        struct NeverReturns;
+        #[async_trait]
+        impl EmbeddingProvider for NeverReturns {
+            async fn embed(&self, _: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+                std::future::pending().await
+            }
+            fn dimensions(&self) -> usize {
+                8
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("deadline.duckdb")).unwrap();
+        let config = Config {
+            embedding_dims: 8,
+            ..Config::for_tests()
+        };
+        let mut request = command("needle");
+        request.mode = Some("vec".into());
+        request.timeout_ms = Some(20);
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            execute_search(&store, &NeverReturns, &config, request),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("timeout budget exceeded during embedding"));
+        assert!(store.corpus_mutation_lane().try_write_owned().is_ok());
     }
 }

@@ -35,6 +35,8 @@ pub const DEFAULT_SNIPPET_CHARS: usize = 200;
 /// Extra candidates pulled from each list before fusion / collapse.
 const CANDIDATE_MULTIPLIER: usize = 5;
 const CANDIDATE_FLOOR: usize = 50;
+/// Hard per-source bound for adaptive diversity refill.
+const MAX_DIVERSITY_CANDIDATES: usize = 4096;
 pub const MAX_TOP_K: usize = 100;
 pub const MAX_QUERY_CHARS: usize = 4096;
 
@@ -107,7 +109,7 @@ pub struct SearchQuery {
     pub max_chunks_per_document: Option<usize>,
     /// Optional freshness boost half-life. `None` keeps ranking unchanged.
     pub recency_half_life_days: Option<f64>,
-    /// Optional token budget for packing hit content (~4 chars/token). Applied after rank/diversity.
+    /// Complete citation-block budget (~4 chars/token), including expanded text and headers.
     pub max_context_tokens: Option<usize>,
     /// Opt-in source context expansion; absent preserves the ranked chunk body.
     pub context_expansion: Option<ContextExpansion>,
@@ -249,29 +251,57 @@ pub(crate) fn search_with_corpus_guard(
     // the next commit. The guard fast-fails before this function and preserves
     // normal read-your-writes once the writer releases.
     let started = Instant::now();
-    let pool = candidate_pool_size(query.top_k);
+    let mut pool = candidate_pool_size(query.top_k);
     let filters = scope_filters(query);
 
     // Exhaustive dispatch only: new SearchMode variants must add a run_* arm here
     // (and update SearchMode::as_str / parse / needs_*). Do not use `_`.
     let mut timings = StageTimings::default();
-    let hits = match query.mode {
-        SearchMode::Vec => {
-            let mut hits = run_vec(store, query, pool, &filters)?;
-            timings.vec_ms = Some(elapsed_ms(started));
-            stamp_ranks(&mut hits, false);
-            hits
+    let mut refill_rounds = 0;
+    let mut reached_refill_cap = false;
+    let hits = loop {
+        enforce_timeout(started, query.timeout_ms, "candidate refill")?;
+        let round_started = Instant::now();
+        let mut round_timings = StageTimings::default();
+        let hits = match query.mode {
+            SearchMode::Vec => {
+                let mut hits = run_vec(store, query, pool, &filters)?;
+                round_timings.vec_ms = Some(elapsed_ms(round_started));
+                stamp_ranks(&mut hits, false);
+                hits
+            }
+            SearchMode::Lex => {
+                let mut hits = run_lex(store, query, pool, &filters)?;
+                round_timings.lex_ms = Some(elapsed_ms(round_started));
+                stamp_ranks(&mut hits, true);
+                hits
+            }
+            SearchMode::Hybrid => {
+                match run_hybrid(store, query, pool, &filters, &mut round_timings)? {
+                    HybridOutcome::Fused(h) => h,
+                    HybridOutcome::VecOnly(h) => h,
+                }
+            }
+        };
+        if let Some(ms) = round_timings.vec_ms {
+            *timings.vec_ms.get_or_insert(0.0) += ms;
         }
-        SearchMode::Lex => {
-            let mut hits = run_lex(store, query, pool, &filters)?;
-            timings.lex_ms = Some(elapsed_ms(started));
-            stamp_ranks(&mut hits, true);
-            hits
+        if let Some(ms) = round_timings.lex_ms {
+            *timings.lex_ms.get_or_insert(0.0) += ms;
         }
-        SearchMode::Hybrid => match run_hybrid(store, query, pool, &filters, &mut timings)? {
-            HybridOutcome::Fused(h) => h,
-            HybridOutcome::VecOnly(h) => h,
-        },
+        enforce_timeout(started, query.timeout_ms, "candidate retrieval")?;
+        // The hybrid union is at least as large as either component list; a
+        // union smaller than `pool` therefore means both sources are exhausted.
+        let short = diversity_capacity(&hits, query).is_some_and(|count| count < query.top_k);
+        if !short || hits.len() < pool || query.document_id.is_some() {
+            break hits;
+        }
+        if pool >= MAX_DIVERSITY_CANDIDATES {
+            reached_refill_cap = true;
+            break hits;
+        }
+        pool = (pool * 2).min(MAX_DIVERSITY_CANDIDATES);
+        refill_rounds += 1;
     };
 
     enforce_timeout(started, query.timeout_ms, "retrieval")?;
@@ -286,6 +316,16 @@ pub(crate) fn search_with_corpus_guard(
         let explanation = hit
             .explanation
             .get_or_insert_with(SearchExplanation::default);
+        if refill_rounds > 0 {
+            explanation
+                .reasons
+                .push("diversity_candidate_refill".into());
+        }
+        if reached_refill_cap {
+            explanation
+                .reasons
+                .push("diversity_candidate_cap_reached".into());
+        }
         explanation.retrieval_ms = retrieval_ms;
         explanation.postprocess_ms = postprocess_ms;
         explanation.total_ms = total_ms;
@@ -510,7 +550,9 @@ fn finalize_hits(
             } else {
                 max_per_doc.max(1)
             };
-            hits = mmr_select(hits, cap, candidate_pool_size(query.top_k));
+            // Only the returned prefix matters; refill can make the pool much
+            // larger, so avoid selecting a discarded MMR suffix.
+            hits = mmr_select(hits, cap, query.top_k);
         }
         None => {
             if let Some(max_per) = query.max_chunks_per_document {
@@ -531,10 +573,8 @@ fn finalize_hits(
     )?;
 
     if let Some(budget) = query.max_context_tokens {
-        if budget > 0 {
-            let packed = crate::search_pack::pack_hits(&hits, budget);
-            hits = packed.hits;
-        }
+        let packed = crate::search_pack::pack_hits(&hits, budget);
+        hits = packed.hits;
     }
 
     Ok(hits)
@@ -772,6 +812,34 @@ fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<
     } else {
         inter / union
     }
+}
+
+/// Number of unique candidates that survive a document cap, before prompt packing.
+/// This cheap check deliberately avoids running boosts/MMR/expansion repeatedly.
+fn diversity_capacity(hits: &[SearchHit], query: &SearchQuery) -> Option<usize> {
+    let cap = match query.diversity {
+        Some(DiversityMode::Mmr) => query
+            .max_chunks_per_document
+            .filter(|cap| *cap != usize::MAX)
+            .unwrap_or(3)
+            .max(1),
+        Some(DiversityMode::CollapseByDocument) => match query.max_chunks_per_document {
+            None | Some(usize::MAX) => 1,
+            Some(0) => return None,
+            Some(cap) => cap,
+        },
+        None => query.max_chunks_per_document.filter(|cap| *cap > 0)?,
+    };
+    let mut ids = HashSet::new();
+    let mut per_doc = HashMap::new();
+    for hit in hits {
+        if query.min_score.is_some_and(|min| hit.score < min) || !ids.insert(&hit.chunk_id) {
+            continue;
+        }
+        let count = per_doc.entry(&hit.document_id).or_insert(0usize);
+        *count = (*count + 1).min(cap);
+    }
+    Some(per_doc.values().sum())
 }
 
 fn candidate_pool_size(top_k: usize) -> usize {
@@ -2451,5 +2519,193 @@ mod tests {
             );
         }
         assert!(hits[0].score > 3.0);
+    }
+
+    #[test]
+    fn search_context_budget_includes_expansion_and_zero_returns_no_hits() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("context-budget.duckdb")).unwrap();
+        let doc = Document {
+            id: "budget-doc".into(),
+            uri: "wiki://budget".into(),
+            title: "Budget document".into(),
+            content: "expanded context".into(),
+            ..Default::default()
+        };
+        store.upsert_document(&doc).unwrap();
+        let chunks: Vec<Chunk> = (0..3)
+            .map(|i| Chunk {
+                id: format!("budget-chunk-{i}"),
+                document_id: doc.id.clone(),
+                chunk_index: i,
+                content: "Русский expanded context 🦀 ".repeat(1_000),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: 100,
+                metadata_json: r#"{"heading_path":["Budget"]}"#.into(),
+            })
+            .collect();
+        store.insert_chunks(&chunks).unwrap();
+        for budget in [0, 1, 32] {
+            let query = SearchQuery {
+                top_k: 1,
+                query_embedding: Some(vec![1.0, 0.0]),
+                mode: SearchMode::Vec,
+                max_context_tokens: Some(budget),
+                context_expansion: Some(ContextExpansion::ParentSection),
+                ..Default::default()
+            };
+            let hits = search(&store, &query).unwrap();
+            let block = crate::search_pack::format_context_block(&hits);
+            assert!(crate::search_pack::estimate_tokens(&block) <= budget);
+            if budget < 32 {
+                assert!(hits.is_empty());
+            } else {
+                assert_eq!(hits.len(), 1);
+                assert!(hits[0].context.is_none());
+                assert!(hits[0].snippet.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn diversity_refill_recovers_second_document_in_every_mode_without_scope_leaks() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("diversity-refill.duckdb")).unwrap();
+        for (id, wing, count) in [
+            ("dominant", "project", 60),
+            ("second", "project", 1),
+            ("foreign", "other", 80),
+        ] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("doc://{id}"),
+                    title: id.into(),
+                    wing: Some(wing.into()),
+                    content: "needle".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            let chunks: Vec<Chunk> = (0..count)
+                .map(|index| Chunk {
+                    id: format!("{id}-{index}"),
+                    document_id: id.into(),
+                    chunk_index: index,
+                    content: if id == "second" {
+                        "needle distant unrelated body".into()
+                    } else {
+                        "needle needle needle needle".into()
+                    },
+                    embedding: if id == "second" {
+                        vec![0.8, 0.6]
+                    } else {
+                        vec![1.0, 0.0]
+                    },
+                    char_start: 0,
+                    char_end: 26,
+                    metadata_json: "{}".into(),
+                })
+                .collect();
+            store.insert_chunks(&chunks).unwrap();
+        }
+        for mode in [SearchMode::Vec, SearchMode::Lex, SearchMode::Hybrid] {
+            let query = SearchQuery {
+                mode,
+                top_k: 2,
+                query_text: Some("needle".into()),
+                query_embedding: Some(vec![1.0, 0.0]),
+                wing: Some("project".into()),
+                max_chunks_per_document: Some(1),
+                timeout_ms: Some(10_000),
+                ..Default::default()
+            };
+            let hits = search(&store, &query).unwrap();
+            assert_eq!(hits.len(), 2, "mode={mode:?}");
+            let ids: HashSet<_> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
+            assert_eq!(ids, HashSet::from(["dominant", "second"]), "mode={mode:?}");
+            assert!(
+                hits.iter().all(|hit| hit
+                    .explanation
+                    .as_ref()
+                    .unwrap()
+                    .reasons
+                    .contains(&"diversity_candidate_refill".into())),
+                "mode={mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn diversity_refill_capacity_ignores_duplicate_chunks_and_min_score_rejections() {
+        let hits = vec![
+            sample_hit("a", "one", 1.0),
+            sample_hit("a", "one", 1.0),
+            sample_hit("b", "one", 0.9),
+            sample_hit("c", "two", 0.1),
+        ];
+        let query = SearchQuery {
+            max_chunks_per_document: Some(1),
+            min_score: Some(0.5),
+            ..Default::default()
+        };
+        assert_eq!(diversity_capacity(&hits, &query), Some(1));
+        assert_eq!(diversity_capacity(&hits, &SearchQuery::default()), None);
+    }
+
+    #[test]
+    fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("diversity-cap.duckdb")).unwrap();
+        store
+            .upsert_document(&Document {
+                id: "dominant".into(),
+                uri: "doc://dominant".into(),
+                title: "Dominant".into(),
+                content: "needle".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let chunks: Vec<Chunk> = (0..MAX_DIVERSITY_CANDIDATES + 1)
+            .map(|i| Chunk {
+                id: format!("cap-{i}"),
+                document_id: "dominant".into(),
+                chunk_index: i as i32,
+                content: "needle".into(),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: 6,
+                metadata_json: "{}".into(),
+            })
+            .collect();
+        store.insert_chunks(&chunks).unwrap();
+        let query = SearchQuery {
+            top_k: 2,
+            query_embedding: Some(vec![1.0, 0.0]),
+            max_chunks_per_document: Some(1),
+            timeout_ms: Some(10_000),
+            ..Default::default()
+        };
+        let hits = search(&store, &query).unwrap();
+        assert_eq!(hits.len(), 1);
+        let explanation = hits[0].explanation.as_ref().unwrap();
+        assert!(explanation
+            .reasons
+            .contains(&"diversity_candidate_cap_reached".into()));
+        assert!(explanation.vec_ms.unwrap() > 0.0);
+        let scoped = search(
+            &store,
+            &SearchQuery {
+                document_id: Some("dominant".into()),
+                ..query
+            },
+        )
+        .unwrap();
+        assert!(!scoped[0]
+            .explanation
+            .as_ref()
+            .unwrap()
+            .reasons
+            .contains(&"diversity_candidate_refill".into()));
     }
 }

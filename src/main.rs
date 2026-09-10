@@ -20,6 +20,11 @@ async fn main() -> anyhow::Result<()> {
     rag_mcp::ops::set_startup_phase("loading_config");
 
     let config = Config::from_env().context("failed to load config from environment")?;
+    if let Some(bind) = config.http_bind.as_deref() {
+        if let Some(address) = http_api::parse_bind(bind)? {
+            http_api::validate_security(address).context("HTTP security configuration")?;
+        }
+    }
     rag_mcp::ops::configure_runtime(config.tool_surface.as_str(), config.http_bind.clone());
     rag_mcp::ops::set_startup_phase("validating_paths");
     rag_mcp::ops::validate_runtime_paths(&config.db_path, &config.ingest_roots)

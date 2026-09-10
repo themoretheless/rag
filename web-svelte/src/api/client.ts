@@ -5,29 +5,64 @@ import type {
   HealthResponse,
   WikiListParams,
   WikiListResponse,
+  WikiCreateBody,
   WikiPutBody,
   WikiPutResult,
 } from './types'
 
 const base = () => (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
+const tokenKey = () => `rag-gateway-token:${base() || 'same-origin'}`
+
+function gatewayToken(): string {
+  try { return sessionStorage.getItem(tokenKey()) ?? '' }
+  catch { return '' }
+}
+
+export const hasGatewayToken = () => Boolean(gatewayToken())
+
+/** Keep credentials in this tab's session, never in URLs or persistent storage. */
+export function setGatewayToken(value: string): void {
+  const token = value.trim()
+  if (token && !/^[A-Za-z0-9._~+/-]+=*$/.test(token)) {
+    throw new Error('Токен должен содержать только допустимые символы Bearer token.')
+  }
+  try {
+    if (token) sessionStorage.setItem(tokenKey(), token)
+    else sessionStorage.removeItem(tokenKey())
+  } catch {
+    throw new Error('Браузер запретил хранение токена в сессии этой вкладки.')
+  }
+}
 
 /** Resolve a gateway path for browser links as well as fetch requests. */
 export const apiUrl = (path: string) => `${base()}${path}`
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestResponse(path: string, init?: RequestInit): Promise<Response> {
+  if (!path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u0020\u007f]/.test(path)) {
+    throw new Error('Gateway requests require an absolute API path.')
+  }
   const url = apiUrl(path)
+  const headers = new Headers(init?.headers)
+  headers.set('Accept', 'application/json')
+  if (init?.body) headers.set('Content-Type', 'application/json')
+  const token = gatewayToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
   const res = await fetch(url, {
     ...init,
-    headers: {
-      Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
+    headers,
+    redirect: 'error',
   })
   if (!res.ok) {
+    if (res.status === 401) throw new Error('HTTP 401: Укажите действующий токен в разделе «Доступ».')
+    if (res.status === 403) throw new Error('HTTP 403: У токена нет прав для этого действия.')
     const text = await res.text().catch(() => '')
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 400) || res.statusText}`)
   }
+  return res
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await requestResponse(path, init)
   return res.json() as Promise<T>
 }
 
@@ -59,8 +94,26 @@ export function wikiListQuery(params?: WikiListParams): string {
   return q.toString()
 }
 
+export interface ReviewEvidence {
+  wiki_id: string; wiki_uri: string; wiki_title: string; raw_id: string; raw_uri: string; raw_title: string; raw_updated_at: string | null; link_kind: string
+}
+
+export interface WikiProposal {
+  id: string; base: DocumentBody; sources: { document_id: string; uri: string; content_hash: string | null; content: string | null }[];
+  content: string; revision: number; status: 'pending' | 'accepted' | 'rejected'
+}
+
 export const api = {
+  proposals: () => request<{ items: WikiProposal[] }>('/v1/wiki-proposals'),
+  changeProposal: (body: { action: 'create'; document_id: string } | { action: 'save'; id: string; revision: number; content: string } | { action: 'accept' | 'reject'; id: string; revision: number }) => request<WikiProposal>('/v1/wiki-proposals', { method: 'POST', body: JSON.stringify(body) }),
+  wikiReview: () => request<{ items: ReviewEvidence[] }>('/v1/wiki-review'),
   health: () => request<HealthResponse>('/health'),
+
+  /** Ordinary browser links cannot attach Bearer credentials. */
+  sourceFile: async (documentId: string) => {
+    const res = await requestResponse(`/v1/source-file?document_id=${encodeURIComponent(documentId)}`)
+    return res.blob()
+  },
 
   /**
    * `GET /v1/wiki?q=&limit=&offset=&kind=&category=&wing=&room=`
@@ -79,7 +132,11 @@ export const api = {
     return request<DocumentBody>(`/v1/document?${q}`)
   },
 
-  /** Create or update a wiki page (slug-keyed upsert). Omit if_match_* for create. */
+  /** Create a page only if its wiki URI is unoccupied. */
+  createWiki: (body: WikiCreateBody) =>
+    request<WikiPutResult>('/v1/wiki', { method: 'POST', body: JSON.stringify(body) }),
+
+  /** Update a wiki page using its current revision / ETag. */
   putWiki: (body: WikiPutBody) =>
     request<WikiPutResult>('/v1/wiki', {
       method: 'PUT',
@@ -113,6 +170,7 @@ export const api = {
     request<unknown>(`/v1/find?q=${encodeURIComponent(q)}`),
 
   get: <T = Record<string, unknown>>(path: string) => request<T>(path),
+  put: <T = Record<string, unknown>>(path: string, body: unknown) => request<T>(path, { method:'PUT', body:JSON.stringify(body) }),
   post: <T = Record<string, unknown>>(path: string, body: unknown = {}) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
 }

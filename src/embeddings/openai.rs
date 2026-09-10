@@ -39,6 +39,8 @@ impl OpenAiEmbedder {
             return Err(AppError::embeddings("embedding base_url must not be empty"));
         }
         let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|e| AppError::embeddings(format!("failed to build HTTP client: {e}")))?;
 
@@ -100,10 +102,9 @@ impl OpenAiEmbedder {
             )));
         }
 
-        let parsed: EmbeddingsResponse = response
-            .json()
-            .await
-            .map_err(|e| AppError::embeddings(format!("failed to parse embeddings response: {e}")))?;
+        let parsed: EmbeddingsResponse = response.json().await.map_err(|e| {
+            AppError::embeddings(format!("failed to parse embeddings response: {e}"))
+        })?;
 
         if parsed.data.len() != texts.len() {
             return Err(AppError::embeddings(format!(

@@ -3,17 +3,8 @@
   import { ui } from '@/lib/state/ui.svelte'
   import { goWiki } from '@/lib/router.svelte'
 
-  function open(id: string, label: string) {
-    const byId = wiki.pages.find((p) => p.id === id)
-    if (byId) {
-      goWiki(byId.id)
-      return
-    }
-    const byLabel = wiki.pages.find(
-      (p) => p.title === label || p.title.toLowerCase() === label.toLowerCase(),
-    )
-    if (byLabel) goWiki(byLabel.id)
-  }
+  function open(id: string) { goWiki(id) }
+
 </script>
 
 {#if wiki.current}
@@ -24,7 +15,8 @@
       <ul>
         {#each wiki.backlinks as b (b.id + b.label)}
           <li>
-            <button type="button" onclick={() => open(b.id, b.label)}>{b.label}</button>
+            <button type="button" onclick={() => open(b.id)}>{b.label}</button>
+            {#each b.contexts ?? [] as context}<p class="context">{context}</p>{/each}
           </li>
         {/each}
       </ul>
@@ -46,6 +38,7 @@
 {/if}
 
 <style>
+  .context { font-size:12px; line-height:1.5; color:var(--text-muted); overflow-wrap:anywhere; margin:4px 8px 12px; }
   .right {
     width: var(--right-w);
     flex-shrink: 0;

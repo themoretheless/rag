@@ -196,15 +196,15 @@
         {wiki.isFavorite(wiki.current.id) ? '★' : '☆'}
       </button>
       <button type="button" class="ghost" onclick={showInGraph}>{ui.t('showInGraph')}</button>
-      <button type="button" class="primary" onclick={() => wiki.startEdit()}>
+      <button type="button" class="primary" disabled={wiki.saving} onclick={() => wiki.startEdit()}>
         {ui.t('edit')} <kbd>e</kbd>
       </button>
     {:else if wiki.editing}
-      <button type="button" class="ghost" onclick={() => wiki.cancelEdit()}>
+      <button type="button" class="ghost" disabled={wiki.saving} onclick={() => wiki.cancelEdit()}>
         {ui.t('cancel')} <kbd>esc</kbd>
       </button>
-      <button type="button" class="primary" disabled={!wiki.dirty} onclick={onSave}>
-        {ui.t('save')}
+      <button type="button" class="primary" disabled={!wiki.dirty || wiki.saving} onclick={onSave}>
+        {wiki.saving ? (ui.locale === 'ru' ? 'Сохранение…' : 'Saving…') : ui.t('save')}
       </button>
     {/if}
   </div>

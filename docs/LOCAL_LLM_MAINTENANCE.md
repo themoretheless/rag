@@ -127,7 +127,7 @@ Deterministic SQL/graph (no LLM required):
 | orphans | graph nodes degree 0; wiki pages never linked |
 | stubs aging | unresolved stubs older than N days |
 | near-dups | same content_hash; optional embedding cosine > θ |
-| stale wiki | wiki page `updated_at` < linked raw `updated_at` |
+| stale wiki | recorded source hash changed or source is missing; older pages without source versions fall back to `wiki.updated_at < raw.updated_at` |
 | embed mismatch | manifest vs config |
 | FTS health | doctor |
 | size | db file bytes, avg chunk len |

@@ -18,7 +18,6 @@ pub const SKIP_DIRECTORY_NAMES: &[&str] = &[
     ".cache",
     "target",
     "node_modules",
-    "bin",
     "obj",
     "dist",
     "build",
@@ -118,7 +117,10 @@ pub fn is_explicitly_excluded_source_path(root: &Path, source: &Path) -> bool {
             return false;
         };
         directory.push(name);
-        if is_skipped_directory_name(name) || has_regular_pyvenv_sentinel(&directory) {
+        if is_skipped_directory_name(name)
+            || is_dotnet_binary_directory(&directory)
+            || has_regular_pyvenv_sentinel(&directory)
+        {
             return true;
         }
     }
@@ -159,7 +161,9 @@ pub fn collect_source_files_while(
             let file_type = entry.file_type()?;
             let path = entry.path();
             if file_type.is_dir() {
-                if !path.file_name().is_some_and(is_skipped_directory_name) {
+                if !path.file_name().is_some_and(is_skipped_directory_name)
+                    && !is_dotnet_binary_directory(&path)
+                {
                     pending.push(path);
                 }
             } else if file_type.is_file() {
@@ -180,6 +184,31 @@ fn is_skipped_directory_name(name: &OsStr) -> bool {
         .any(|skipped| name == OsStr::new(skipped))
 }
 
+/// `bin` is source code in Rust and script repositories; only treat it as .NET
+/// build output when its parent actually contains a project file.
+fn is_dotnet_binary_directory(path: &Path) -> bool {
+    if path.file_name() != Some(OsStr::new("bin")) {
+        return false;
+    }
+    path.parent()
+        .and_then(|parent| std::fs::read_dir(parent).ok())
+        .is_some_and(|entries| {
+            entries.filter_map(std::result::Result::ok).any(|entry| {
+                entry.file_type().is_ok_and(|kind| kind.is_file())
+                    && entry
+                        .path()
+                        .extension()
+                        .and_then(OsStr::to_str)
+                        .is_some_and(|ext| {
+                            matches!(
+                                ext.to_ascii_lowercase().as_str(),
+                                "csproj" | "fsproj" | "vbproj"
+                            )
+                        })
+            })
+        })
+}
+
 fn has_regular_pyvenv_sentinel(directory: &Path) -> bool {
     std::fs::symlink_metadata(directory.join("pyvenv.cfg"))
         .map(|metadata| metadata.file_type().is_file())
@@ -196,7 +225,6 @@ mod tests {
         std::fs::write(root.path().join("keep.rs"), "fn main() {}").unwrap();
         std::fs::write(root.path().join("skip.lock"), "lock").unwrap();
         for directory in [
-            "bin",
             "obj",
             ".yarn",
             ".turbo",
@@ -211,6 +239,23 @@ mod tests {
 
         let files = collect_source_files(root.path(), &SourceScanPolicy::default()).unwrap();
         assert_eq!(files, vec![root.path().join("keep.rs")]);
+    }
+
+    #[test]
+    fn bin_sources_are_kept_while_dotnet_build_output_is_excluded() {
+        let root = tempfile::tempdir().unwrap();
+        let rust = root.path().join("rust/src/bin/tool.rs");
+        let dotnet = root.path().join("dotnet/bin/generated.cs");
+        for path in [&rust, &dotnet] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "source").unwrap();
+        }
+        std::fs::write(root.path().join("dotnet/app.csproj"), "<Project/>").unwrap();
+        let files = collect_source_files(root.path(), &SourceScanPolicy::default()).unwrap();
+        assert!(files.contains(&rust));
+        assert!(!files.contains(&dotnet));
+        assert!(!is_explicitly_excluded_source_path(root.path(), &rust));
+        assert!(is_explicitly_excluded_source_path(root.path(), &dotnet));
     }
 
     #[test]

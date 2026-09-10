@@ -1,0 +1,5 @@
+{
+  "name": "lex-default",
+  "mode": "lex",
+  "top_k": 5
+}

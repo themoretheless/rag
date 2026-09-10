@@ -11,6 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
+use duckdb::params;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -63,7 +64,7 @@ impl SyncJobRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
     Queued,
@@ -83,7 +84,7 @@ impl JobStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceSyncJobReport {
     pub added_count: usize,
     pub updated_count: usize,
@@ -111,10 +112,10 @@ impl From<SourceSyncReport> for SourceSyncJobReport {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobSnapshot {
     pub id: String,
-    pub kind: &'static str,
+    pub kind: String,
     pub status: JobStatus,
     pub request: SyncJobRequest,
     pub progress: Option<SourceSyncProgress>,
@@ -136,9 +137,11 @@ struct JobRegistryInner {
     jobs: Mutex<HashMap<String, JobEntry>>,
     writer_lane: tokio::sync::Mutex<()>,
     next_sequence: AtomicU64,
+    store: Option<Arc<Store>>,
 }
 
-/// Process-local job state. All write-side jobs share one FIFO-ish mutex lane.
+/// Process-local job state with optional DuckDB snapshots. All write-side jobs
+/// share one FIFO-ish mutex lane.
 #[derive(Clone)]
 pub struct JobRegistry {
     inner: Arc<JobRegistryInner>,
@@ -146,17 +149,87 @@ pub struct JobRegistry {
 
 impl Default for JobRegistry {
     fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl JobRegistry {
+    pub fn new(store: Option<Arc<Store>>) -> Self {
         Self {
             inner: Arc::new(JobRegistryInner {
                 jobs: Mutex::new(HashMap::new()),
                 writer_lane: tokio::sync::Mutex::new(()),
                 next_sequence: AtomicU64::new(1),
+                store,
             }),
         }
     }
-}
 
-impl JobRegistry {
+    pub fn with_store(store: Arc<Store>) -> Self {
+        Self::new(Some(store))
+    }
+
+    /// Load durable job history and mark any in-flight rows as failed.
+    pub fn restore_from_store(store: Arc<Store>) -> Result<Self, AppError> {
+        let registry = Self::with_store(store.clone());
+        let conn = store.lock()?;
+        let mut stmt = conn.prepare("SELECT id, payload FROM background_jobs")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<duckdb::Result<Vec<_>>>()?;
+        let mut snapshots = Vec::with_capacity(rows.len());
+        for (id, payload) in rows {
+            let mut snapshot: JobSnapshot = serde_json::from_str(&payload)?;
+            if !snapshot.status.is_terminal() {
+                snapshot.status = JobStatus::Failed;
+                snapshot.error = Some("interrupted by process restart".into());
+                snapshot.finished_at = Some(Utc::now());
+                conn.execute(
+                    "INSERT OR REPLACE INTO background_jobs VALUES (?, ?)",
+                    params![id, serde_json::to_string(&snapshot)?],
+                )?;
+            }
+            snapshots.push(snapshot);
+        }
+        drop(conn);
+        {
+            let mut jobs = registry.jobs();
+            for snapshot in snapshots {
+                let sequence = registry.inner.next_sequence.fetch_add(1, Ordering::Relaxed);
+                jobs.insert(
+                    snapshot.id.clone(),
+                    JobEntry {
+                        sequence,
+                        snapshot,
+                        cancellation: CancellationToken::new(),
+                    },
+                );
+            }
+        }
+        Ok(registry)
+    }
+
+    fn persist(&self, snapshot: &JobSnapshot) -> Result<(), AppError> {
+        let Some(store) = &self.inner.store else {
+            return Ok(());
+        };
+        let conn = store.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO background_jobs VALUES (?, ?)",
+            params![&snapshot.id, serde_json::to_string(snapshot)?],
+        )?;
+        Ok(())
+    }
+
+    fn delete_persisted(&self, id: &str) -> Result<(), AppError> {
+        let Some(store) = &self.inner.store else {
+            return Ok(());
+        };
+        let conn = store.lock()?;
+        conn.execute("DELETE FROM background_jobs WHERE id=?", [id])?;
+        Ok(())
+    }
+
     pub fn start_source_sync(
         &self,
         request: SyncJobRequest,
@@ -171,7 +244,7 @@ impl JobRegistry {
         let cancellation = CancellationToken::new();
         let snapshot = JobSnapshot {
             id: id.clone(),
-            kind: "source_sync",
+            kind: "source_sync".into(),
             status: JobStatus::Queued,
             request: request.clone(),
             progress: None,
@@ -183,23 +256,32 @@ impl JobRegistry {
             finished_at: None,
         };
         let sequence = self.inner.next_sequence.fetch_add(1, Ordering::Relaxed);
-        {
+        let (removed, accepted) = {
             let mut jobs = self.jobs();
-            prune_jobs_to(&mut jobs, MAX_RETAINED_JOBS.saturating_sub(1));
+            let removed = prune_jobs_to(&mut jobs, MAX_RETAINED_JOBS.saturating_sub(1));
             if jobs.len() >= MAX_RETAINED_JOBS {
-                return Err(AppError::busy(format!(
-                    "background job capacity reached ({MAX_RETAINED_JOBS} active jobs)"
-                )));
+                (removed, false)
+            } else {
+                jobs.insert(
+                    id.clone(),
+                    JobEntry {
+                        sequence,
+                        snapshot: snapshot.clone(),
+                        cancellation: cancellation.clone(),
+                    },
+                );
+                (removed, true)
             }
-            jobs.insert(
-                id.clone(),
-                JobEntry {
-                    sequence,
-                    snapshot: snapshot.clone(),
-                    cancellation: cancellation.clone(),
-                },
-            );
+        };
+        for removed_id in removed {
+            self.delete_persisted(&removed_id)?;
         }
+        if !accepted {
+            return Err(AppError::busy(format!(
+                "background job capacity reached ({MAX_RETAINED_JOBS} active jobs)"
+            )));
+        }
+        self.persist(&snapshot)?;
 
         let registry = self.clone();
         tokio::spawn(async move {
@@ -281,6 +363,7 @@ impl JobRegistry {
         if should_cancel {
             cancellation.cancel();
         }
+        self.persist(&snapshot)?;
         Ok(snapshot)
     }
 
@@ -291,22 +374,32 @@ impl JobRegistry {
     /// be resurrected from `cancelled` by a worker that was waiting for the
     /// writer lane.
     fn mark_running_if_queued(&self, id: &str) -> bool {
-        let mut jobs = self.jobs();
-        let Some(entry) = jobs.get_mut(id) else {
-            return false;
+        let snapshot = {
+            let mut jobs = self.jobs();
+            let Some(entry) = jobs.get_mut(id) else {
+                return false;
+            };
+            if entry.snapshot.status != JobStatus::Queued {
+                return false;
+            }
+            entry.snapshot.status = JobStatus::Running;
+            entry.snapshot.started_at = Some(Utc::now());
+            entry.snapshot.clone()
         };
-        if entry.snapshot.status != JobStatus::Queued {
-            return false;
-        }
-        entry.snapshot.status = JobStatus::Running;
-        entry.snapshot.started_at = Some(Utc::now());
+        let _ = self.persist(&snapshot);
         true
     }
 
     fn update(&self, id: &str, update: impl FnOnce(&mut JobSnapshot)) {
-        if let Some(entry) = self.jobs().get_mut(id) {
+        let snapshot = {
+            let mut jobs = self.jobs();
+            let Some(entry) = jobs.get_mut(id) else {
+                return;
+            };
             update(&mut entry.snapshot);
-        }
+            entry.snapshot.clone()
+        };
+        let _ = self.persist(&snapshot);
     }
 
     fn finish_cancelled(&self, id: &str, report: SourceSyncReport) {
@@ -320,17 +413,27 @@ impl JobRegistry {
         report: Option<SourceSyncReport>,
         error: Option<String>,
     ) {
-        let mut jobs = self.jobs();
-        if let Some(entry) = jobs.get_mut(id) {
-            if entry.snapshot.status.is_terminal() {
+        let (snapshot, removed) = {
+            let mut jobs = self.jobs();
+            let snapshot = if let Some(entry) = jobs.get_mut(id) {
+                if entry.snapshot.status.is_terminal() {
+                    return;
+                }
+                entry.snapshot.status = status;
+                entry.snapshot.report = report.map(SourceSyncJobReport::from);
+                entry.snapshot.error = error;
+                entry.snapshot.finished_at = Some(Utc::now());
+                entry.snapshot.clone()
+            } else {
                 return;
-            }
-            entry.snapshot.status = status;
-            entry.snapshot.report = report.map(SourceSyncJobReport::from);
-            entry.snapshot.error = error;
-            entry.snapshot.finished_at = Some(Utc::now());
+            };
+            let removed = prune_jobs(&mut jobs);
+            (snapshot, removed)
+        };
+        let _ = self.persist(&snapshot);
+        for removed_id in removed {
+            let _ = self.delete_persisted(&removed_id);
         }
-        prune_jobs(&mut jobs);
     }
 
     fn jobs(&self) -> MutexGuard<'_, HashMap<String, JobEntry>> {
@@ -348,11 +451,12 @@ fn mark_cancelled(snapshot: &mut JobSnapshot, report: SourceSyncReport) {
     snapshot.finished_at = Some(Utc::now());
 }
 
-fn prune_jobs(jobs: &mut HashMap<String, JobEntry>) {
-    prune_jobs_to(jobs, MAX_RETAINED_JOBS);
+fn prune_jobs(jobs: &mut HashMap<String, JobEntry>) -> Vec<String> {
+    prune_jobs_to(jobs, MAX_RETAINED_JOBS)
 }
 
-fn prune_jobs_to(jobs: &mut HashMap<String, JobEntry>, maximum: usize) {
+fn prune_jobs_to(jobs: &mut HashMap<String, JobEntry>, maximum: usize) -> Vec<String> {
+    let mut removed = Vec::new();
     while jobs.len() > maximum {
         let oldest_terminal = jobs
             .iter()
@@ -363,7 +467,9 @@ fn prune_jobs_to(jobs: &mut HashMap<String, JobEntry>, maximum: usize) {
             break;
         };
         jobs.remove(&id);
+        removed.push(id);
     }
+    removed
 }
 
 async fn start_sync(
@@ -461,7 +567,7 @@ mod tests {
             sequence,
             snapshot: JobSnapshot {
                 id,
-                kind: "source_sync",
+                kind: "source_sync".into(),
                 status,
                 request: SyncJobRequest {
                     path: "/tmp/project".into(),
@@ -811,12 +917,77 @@ mod tests {
             );
         }
 
-        prune_jobs(&mut jobs);
+        let removed = prune_jobs(&mut jobs);
 
         assert_eq!(jobs.len(), MAX_RETAINED_JOBS);
         assert!(!jobs.contains_key("job-0"));
         assert!(!jobs.contains_key("job-1"));
         assert!(jobs.contains_key("job-2"));
+        assert_eq!(removed, vec!["job-0".to_string(), "job-1".to_string()]);
+    }
+
+    #[test]
+    fn restore_marks_running_jobs_interrupted_and_persists() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config {
+            db_path: root.path().join("restore.duckdb"),
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        let snapshot = JobSnapshot {
+            id: "job-running".into(),
+            kind: "source_sync".into(),
+            status: JobStatus::Running,
+            request: SyncJobRequest {
+                path: "/tmp/project".into(),
+                remove_deleted: false,
+                wing: None,
+                room: None,
+                max_file_bytes: None,
+            },
+            progress: None,
+            report: None,
+            error: None,
+            cancel_requested: false,
+            created_at: Utc::now(),
+            started_at: Some(Utc::now()),
+            finished_at: None,
+        };
+        {
+            let conn = store.lock().unwrap();
+            conn.execute(
+                "INSERT INTO background_jobs VALUES (?, ?)",
+                params!["job-running", serde_json::to_string(&snapshot).unwrap()],
+            )
+            .unwrap();
+        }
+
+        let registry = JobRegistry::restore_from_store(store.clone()).unwrap();
+        let restored = registry.get("job-running").unwrap();
+        assert_eq!(restored.status, JobStatus::Failed);
+        assert_eq!(
+            restored.error.as_deref(),
+            Some("interrupted by process restart")
+        );
+        assert!(restored.finished_at.is_some());
+
+        let payload: String = store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT payload FROM background_jobs WHERE id=?",
+                ["job-running"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let stored: JobSnapshot = serde_json::from_str(&payload).unwrap();
+        assert_eq!(stored.status, JobStatus::Failed);
+        assert_eq!(
+            stored.error.as_deref(),
+            Some("interrupted by process restart")
+        );
+        assert!(stored.finished_at.is_some());
     }
 
     #[tokio::test]

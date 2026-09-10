@@ -188,7 +188,11 @@ pub struct StaleWikiPage {
     pub wiki_updated_at: DateTime<Utc>,
     pub raw_document_id: String,
     pub raw_title: String,
-    pub raw_updated_at: DateTime<Utc>,
+    /// Null when a recorded source has been deleted or is unavailable.
+    pub raw_updated_at: Option<DateTime<Utc>>,
+    /// Source hash, missing-source, or legacy timestamp evidence.
+    #[serde(default)]
+    pub link_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,10 +344,20 @@ pub fn analyze_corpus(
         issues.push(AnalysisIssue {
             code: "stale_wiki".into(),
             severity: "warn".into(),
-            message: format!(
-                "wiki '{}' older than linked raw '{}'",
-                w.wiki_title, w.raw_title
-            ),
+            message: match w.link_kind.as_str() {
+                "source_missing" => format!(
+                    "wiki '{}' has an unavailable source '{}'; restore or relink the source",
+                    w.wiki_title, w.raw_title
+                ),
+                "source_version" => format!(
+                    "wiki '{}' was generated from different source content in '{}'",
+                    w.wiki_title, w.raw_title
+                ),
+                _ => format!(
+                    "wiki '{}' older than linked raw '{}'",
+                    w.wiki_title, w.raw_title
+                ),
+            },
             entity_id: Some(w.wiki_document_id.clone()),
         });
     }
@@ -727,7 +741,7 @@ fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiPage>> {
     let mut out = Vec::with_capacity(items.len().min(REPORT_LIST_CAP));
     for item in items.into_iter().take(REPORT_LIST_CAP) {
         let wiki_updated_at = parse_ts(&item.wiki_updated_at).unwrap_or_else(Utc::now);
-        let raw_updated_at = parse_ts(&item.raw_updated_at).unwrap_or_else(Utc::now);
+        let raw_updated_at = item.raw_updated_at.as_deref().and_then(parse_ts);
         out.push(StaleWikiPage {
             wiki_document_id: item.wiki_id,
             wiki_title: item.wiki_title,
@@ -735,6 +749,7 @@ fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiPage>> {
             raw_document_id: item.raw_id,
             raw_title: item.raw_title,
             raw_updated_at,
+            link_kind: item.link_kind,
         });
     }
     Ok(out)
@@ -1031,6 +1046,49 @@ mod tests {
         assert_eq!(report.stale_wiki.len(), 1);
         assert_eq!(report.stale_wiki[0].wiki_document_id, "wiki1");
         assert!(report.issues.iter().any(|i| i.code == "stale_wiki"));
+    }
+
+    #[test]
+    fn missing_source_diagnostics_keep_null_timestamp_and_require_restoration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-source.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path);
+        let mut wiki = doc(
+            "wiki1",
+            "wiki://summary",
+            "Summary",
+            "Source synthesis",
+            "wiki",
+        );
+        wiki.metadata_json = serde_json::json!({"source_versions":[{
+            "document_id":"deleted-source", "uri":"raw://deleted", "content_hash":crate::util::content_hash("original source body")
+        }]})
+        .to_string();
+        store.upsert_document(&wiki).unwrap();
+        let mut options = AnalyzeOptions::from_config(&config);
+        options.log_ops = false;
+        let report = analyze_corpus(&store, &config, &options).unwrap();
+        assert_eq!(report.stale_wiki.len(), 1);
+        assert!(report.stale_wiki[0].raw_updated_at.is_none());
+        let value = serde_json::to_value(&report.stale_wiki[0]).unwrap();
+        assert!(value["raw_updated_at"].is_null());
+        assert_eq!(value["link_kind"], "source_missing");
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.message.contains("unavailable source")));
+        let plan = crate::maintain::heuristic_plan(&report, 50);
+        assert!(!plan
+            .actions
+            .iter()
+            .any(|action| action.action == crate::maintain::MaintenanceAction::RefreshStaleWiki));
+        assert!(plan.actions.iter().any(|action| action.action
+            == crate::maintain::MaintenanceAction::Noop
+            && action
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("restore or relink"))));
     }
 
     #[test]

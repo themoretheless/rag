@@ -154,15 +154,19 @@ impl<'a> IngestService<'a> {
                 AppError::config(error.to_string())
             }
         })?;
-        let metadata_json =
-            merge_metadata(command.metadata_json, extracted.metadata).map_err(|error| {
-                AppError::config(format!("metadata_json is not valid JSON: {error}"))
-            })?;
         let canonical = path.canonicalize().ok();
         let default_uri = canonical
             .as_ref()
             .map(|p| format!("file://{}", p.display()))
             .unwrap_or_else(|| format!("file://{}", command.path));
+        let uri = command.uri.unwrap_or(default_uri);
+        let base_metadata = match command.metadata_json {
+            Some(metadata) => Some(metadata),
+            None => self.store.find_by_uri(&uri)?.map(|doc| doc.metadata_json),
+        };
+        let metadata_json = merge_metadata(base_metadata, extracted.metadata).map_err(|error| {
+            AppError::config(format!("metadata_json is not valid JSON: {error}"))
+        })?;
         let default_title = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -173,7 +177,7 @@ impl<'a> IngestService<'a> {
         self.ingest(IngestCommand {
             text: extracted.text,
             title: command.title.or(default_title),
-            uri: command.uri.or(Some(default_uri)),
+            uri: Some(uri),
             metadata_json: Some(metadata_json),
             wing: command.wing,
             room: command.room,
@@ -304,12 +308,14 @@ impl<'a> IngestService<'a> {
         manifest: Option<SourceManifestStamp>,
     ) -> Result<IngestPreparation, AppError> {
         self.ensure_vector_compatibility()?;
+        let preserve_metadata = command.metadata_json.is_none();
         let command = NormalizedIngest::try_from(command)?;
         let new_hash = content_hash(&command.text);
         let now = Utc::now();
 
+        let existing = self.store.find_by_uri(&command.uri)?;
         let (document_id, created_at, operation, expected_revision) = if let Some(existing) =
-            self.store.find_by_uri(&command.uri)?
+            existing.as_ref()
         {
             if command.immutable {
                 let existing_hash = existing
@@ -325,7 +331,7 @@ impl<'a> IngestService<'a> {
                         .map(|node| node.id)
                         .unwrap_or_default();
                     return Ok(IngestPreparation::Complete(IngestResult {
-                        document_id: existing.id,
+                        document_id: existing.id.clone(),
                         chunk_count,
                         node_id,
                         edge_count: 0,
@@ -341,7 +347,7 @@ impl<'a> IngestService<'a> {
                     )));
             }
             (
-                existing.id,
+                existing.id.clone(),
                 existing.created_at,
                 "updated",
                 Some(existing.revision),
@@ -355,16 +361,29 @@ impl<'a> IngestService<'a> {
             uri: command.uri,
             title: command.title,
             content: command.text,
-            metadata_json: command.metadata_json,
+            metadata_json: if preserve_metadata {
+                existing
+                    .as_ref()
+                    .map(|doc| doc.metadata_json.clone())
+                    .unwrap_or(command.metadata_json)
+            } else {
+                command.metadata_json
+            },
             created_at,
             updated_at: now,
-            wing: command.wing,
-            room: command.room,
-            source_file: command.source_file,
+            wing: command
+                .wing
+                .or_else(|| existing.as_ref().and_then(|doc| doc.wing.clone())),
+            room: command
+                .room
+                .or_else(|| existing.as_ref().and_then(|doc| doc.room.clone())),
+            source_file: command
+                .source_file
+                .or_else(|| existing.as_ref().and_then(|doc| doc.source_file.clone())),
             layer: command.layer,
             kind: command.kind,
             content_hash: Some(new_hash.clone()),
-            ..Default::default()
+            ..existing.unwrap_or_default()
         };
         let chunks = self.indexer.prepare_chunks(&document);
         Ok(IngestPreparation::Pending(PreparedIngest {
@@ -674,6 +693,28 @@ mod tests {
             .find_node_by_document_id(&document.id)
             .expect("graph lookup")
             .is_some());
+        let mut retained = document.clone();
+        retained.metadata_json = r#"{"custom":"keep"}"#.into();
+        retained.status = "archived".into();
+        retained.pinned = true;
+        store.upsert_document(&retained).unwrap();
+        std::fs::write(&source, "# Source\n\nChanged body.").unwrap();
+        IngestService::new(&store, &embedder, &config)
+            .ingest_file(IngestFileCommand {
+                path: source.display().to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let updated = store.get_document(&document.id).unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&updated.metadata_json).unwrap()["custom"],
+            "keep"
+        );
+        assert_eq!(updated.status, "archived");
+        assert!(updated.pinned);
+        assert_eq!(updated.wing, retained.wing);
+        assert_eq!(updated.room, retained.room);
     }
 
     #[tokio::test]
@@ -714,6 +755,37 @@ mod tests {
             .nodes
             .is_empty());
         assert!(store.list_graph_edges().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reingest_preserves_organization_and_omitted_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = test_config(temp.path().join("preserve.duckdb"));
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        let service = IngestService::new(&store, &embedder, &config);
+        let inserted = service.ingest(command("Original source")).await.unwrap();
+        let mut doc = store.get_document(&inserted.document_id).unwrap().unwrap();
+        doc.status = "archived".into();
+        doc.pinned = true;
+        doc.boost = 4.0;
+        doc.wing = Some("project".into());
+        doc.room = Some("sources".into());
+        doc.metadata_json = "{\"custom\":true}".into();
+        store.upsert_document(&doc).unwrap();
+        let mut update = command("Changed source");
+        update.metadata_json = None;
+        update.wing = None;
+        update.room = None;
+        service.ingest(update).await.unwrap();
+        let updated = store.get_document(&inserted.document_id).unwrap().unwrap();
+        assert_eq!(updated.status, "archived");
+        assert!(updated.pinned);
+        assert_eq!(updated.boost, 4.0);
+        assert_eq!(updated.wing, doc.wing);
+        assert_eq!(updated.room, doc.room);
+        assert_eq!(updated.metadata_json, doc.metadata_json);
+        assert_eq!(updated.content, "Changed source");
     }
 
     #[tokio::test]

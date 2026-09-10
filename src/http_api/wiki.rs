@@ -18,11 +18,21 @@ use crate::wiki::{self, WriteWikiOpts};
 use super::error::{api_err, api_ok};
 use super::HttpState;
 
-/// Wiki routes: `GET|PUT /v1/wiki`, `GET /v1/backlinks`.
+/// Wiki routes: `GET|POST|PUT /v1/wiki`, `GET /v1/backlinks`.
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
-        .route("/v1/wiki", get(wiki_list).put(wiki_put))
+        .route("/v1/wiki", get(wiki_list).post(wiki_post).put(wiki_put))
         .route("/v1/backlinks", get(wiki_backlinks))
+        .route("/v1/wiki-review", get(wiki_review))
+}
+
+/// Read-only freshness queue. Never invoke an LLM or acknowledge stale evidence.
+async fn wiki_review(State(st): State<HttpState>) -> Response {
+    let store = st.store.clone();
+    match super::run_blocking("wiki review", move || wiki::find_stale_wiki(&store)).await {
+        Ok(items) => api_ok(json!({"items": items})),
+        Err(error) => api_err(error),
+    }
 }
 
 /// Query for `GET /v1/wiki` — optional text filter, pagination, placement/kind.
@@ -184,6 +194,18 @@ struct WikiPutBody {
 ///
 /// Optional `if_match_revision` / `if_match_etag` enforce CAS; mismatch → **409**.
 async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) -> impl IntoResponse {
+    wiki_write(st, body, false).await
+}
+
+/// Create a new wiki page, failing atomically if its canonical URI is occupied.
+async fn wiki_post(
+    State(st): State<HttpState>,
+    Json(body): Json<WikiPutBody>,
+) -> impl IntoResponse {
+    wiki_write(st, body, true).await
+}
+
+async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Response {
     if body.content.len() > super::MAX_HTTP_BODY_BYTES {
         return api_err(AppError::config("wiki content exceeds HTTP body limit"));
     }
@@ -210,6 +232,11 @@ async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) ->
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty());
+    if create_only && (requested_id.is_some() || if_match.is_some()) {
+        return api_err(AppError::config(
+            "creating a wiki page does not accept id or if_match",
+        ));
+    }
     let existing = match requested_id {
         Some(id) => match wiki::get_wiki_page(&st.store, id) {
             Ok(document) if document.uri == canonical_uri => Some(document),
@@ -227,6 +254,9 @@ async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) ->
         },
     };
 
+    if create_only && existing.is_some() {
+        return api_err(AppError::conflict("wiki page URI is already in use"));
+    }
     let result = if let Some(existing) = existing {
         wiki::update_wiki_page_cas(
             &st.store,
@@ -243,27 +273,26 @@ async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) ->
         )
         .await
     } else {
-        wiki::write_wiki_page_command(
-            &st.store,
-            &st.embedder,
-            &st.config,
-            wiki::WikiWriteCommand {
-                slug: slug.to_string(),
-                title: body.title,
-                content: body.content,
-                wing: body.wing,
-                room: body.room,
-                kind: body.kind.unwrap_or_else(|| "wiki".into()),
-                category: body.category,
-                summary: body.summary,
-                agent: body.agent,
-                options: WriteWikiOpts {
-                    if_match_revision: if_match,
-                    ..Default::default()
-                },
+        let command = wiki::WikiWriteCommand {
+            slug: slug.to_string(),
+            title: body.title,
+            content: body.content,
+            wing: body.wing,
+            room: body.room,
+            kind: body.kind.unwrap_or_else(|| "wiki".into()),
+            category: body.category,
+            summary: body.summary,
+            agent: body.agent,
+            options: WriteWikiOpts {
+                if_match_revision: if_match,
+                ..Default::default()
             },
-        )
-        .await
+        };
+        if create_only {
+            wiki::create_wiki_page_command(&st.store, &st.embedder, &st.config, command).await
+        } else {
+            wiki::write_wiki_page_command(&st.store, &st.embedder, &st.config, command).await
+        }
     };
     match result {
         Ok(res) => api_ok(json!({
@@ -303,10 +332,19 @@ async fn wiki_backlinks(
     };
     match rows {
         Ok(rows) => {
-            let links: Vec<_> = rows
-                .into_iter()
-                .map(|(label, key)| json!({ "label": label, "id": key }))
-                .collect();
+            let view = match st.store.find_node_by_document_id(id)
+                .and_then(|node| node.map(|node| st.store.backlinks(&node.id)).transpose()) {
+                Ok(view) => view,
+                Err(error) => return api_err(error),
+            };
+            let links: Vec<_> = rows.into_iter().map(|(label, key)| {
+                let contexts: Vec<_> = view.as_ref().map(|view| view.edges.iter()
+                    .filter(|edge| edge.rel_type == "wikilink")
+                    .filter(|edge| view.nodes.iter().any(|node| node.id == edge.source_id
+                        && node.document_id.as_deref().unwrap_or(&node.id) == key))
+                    .filter_map(|edge| edge.context.as_deref()).take(3).collect()).unwrap_or_default();
+                json!({ "label": label, "id": key, "contexts": contexts })
+            }).collect();
             api_ok(json!({ "ok": true, "count": links.len(), "backlinks": links }))
         }
         Err(e) => api_err(e),
@@ -325,6 +363,7 @@ mod tests {
     use std::sync::Arc;
 
     use axum::body::to_bytes;
+    use tower::ServiceExt;
 
     use super::*;
     use crate::config::Config;
@@ -340,6 +379,129 @@ mod tests {
         };
         let store = Arc::new(crate::db::Store::open(&config.db_path).unwrap());
         HttpState::new(store, false, config, Arc::new(MockEmbedder::new(16)))
+    }
+
+    #[tokio::test]
+    async fn review_queue_reports_missing_source_without_mutating_page() {
+        let state = test_state("review-missing");
+        let doc = Document {
+            id: "review-page".into(), uri: "wiki://review-page".into(),
+            title: "Review me".into(), content: "Keep original".into(),
+            layer: "wiki".into(), kind: "wiki".into(),
+            metadata_json: json!({"source_versions": [{"document_id":"gone", "uri":"raw://gone", "content_hash":"a".repeat(64)}]}).to_string(),
+            ..Document::default()
+        };
+        state.store.upsert_document(&doc).unwrap();
+        let before = state.store.get_document(&doc.id).unwrap().unwrap();
+        let response = wiki_review(State(state.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["items"][0]["link_kind"], "source_missing");
+        assert_eq!(value["items"][0]["wiki_id"], doc.id);
+        let after = state.store.get_document(&doc.id).unwrap().unwrap();
+        assert_eq!(before.revision, after.revision);
+        assert_eq!(before.metadata_json, after.metadata_json);
+        assert_eq!(before.content, after.content);
+    }
+
+    #[tokio::test]
+    async fn review_queue_empty_corpus_is_success() {
+        let state = test_state("review-empty");
+        let response = wiki_review(State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["items"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn wiki_http_routes_reject_mismatched_embedding_identity_on_create_and_update() {
+        let mut state = test_state("wiki-http-manifest-mismatch");
+        let created = wiki::write_wiki_page(
+            &state.store,
+            &state.embedder,
+            &state.config,
+            "original",
+            "Original",
+            "original body",
+            "wiki",
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let original_manifest =
+            serde_json::to_value(state.store.get_embedding_manifest().unwrap()).unwrap();
+        let original_chunks = serde_json::to_value(
+            state
+                .store
+                .list_chunks_for_document(&created.document_id)
+                .unwrap(),
+        )
+        .unwrap();
+        state.config.embedding_dims = 8;
+        state.config.embedding_model = "changed-model".into();
+        state.embedder = Arc::new(MockEmbedder::new(8));
+        let router = super::super::api_router(state.clone());
+        for payload in [
+            json!({"slug":"new-page","title":"New","content":"new body"}),
+            json!({"slug":"original","title":"Replacement","content":"replacement body","if_match_revision":created.revision}),
+            json!({"id":created.document_id,"uri":"wiki://original","title":"Replacement","content":"replacement body","if_match_revision":created.revision}),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method("PUT")
+                        .uri("/v1/wiki")
+                        .header(axum::http::header::CONTENT_TYPE, "application/json")
+                        .body(axum::body::Body::from(payload.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(
+                response.headers()[axum::http::header::CONTENT_TYPE],
+                "application/json"
+            );
+            let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["code"], "EMBEDDINGS_ERROR");
+            assert!(body["error"]
+                .as_str()
+                .unwrap()
+                .contains("embedding manifest mismatch"));
+        }
+        assert!(state
+            .store
+            .find_by_uri("wiki://new-page")
+            .unwrap()
+            .is_none());
+        let original = state
+            .store
+            .get_document(&created.document_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(original.content, "original body");
+        assert_eq!(original.revision, created.revision);
+        assert_eq!(
+            serde_json::to_value(state.store.get_embedding_manifest().unwrap()).unwrap(),
+            original_manifest
+        );
+        assert_eq!(
+            serde_json::to_value(
+                state
+                    .store
+                    .list_chunks_for_document(&created.document_id)
+                    .unwrap()
+            )
+            .unwrap(),
+            original_chunks
+        );
     }
 
     #[tokio::test]
@@ -457,6 +619,38 @@ mod tests {
             .expect("created page");
         assert_eq!(document.wing.as_deref(), Some("alpha"));
         assert_eq!(document.room.as_deref(), Some("overview"));
+    }
+
+    #[tokio::test]
+    async fn wiki_post_never_overwrites_an_existing_archived_page() {
+        let state = test_state("wiki-post-create-only");
+        let app = routes().with_state(state.clone());
+        let request = || {
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/wiki")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"slug":"occupied","title":"Original","content":"keep"}"#,
+                ))
+                .unwrap()
+        };
+        assert_eq!(
+            app.clone().oneshot(request()).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let mut doc = state.store.find_by_uri("wiki://occupied").unwrap().unwrap();
+        doc.status = "archived".into();
+        state.store.upsert_document(&doc).unwrap();
+        let before = state.store.get_document(&doc.id).unwrap().unwrap();
+        assert_eq!(
+            app.oneshot(request()).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+        let after = state.store.get_document(&doc.id).unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.status, "archived");
     }
 
     #[tokio::test]

@@ -55,6 +55,7 @@ export interface WikiListResponse {
 }
 
 export interface DocumentBody {
+  source_versions?: { document_id?: string; uri?: string }[]
   id: string
   uri: string
   title: string
@@ -83,6 +84,9 @@ export interface WikiPutBody {
   if_match_etag?: string
 }
 
+/** Create-only writes cannot select an existing document identity or revision. */
+export type WikiCreateBody = Omit<WikiPutBody, 'id' | 'uri' | 'if_match_revision' | 'if_match_etag'>
+
 export interface WikiPutResult {
   ok: boolean
   document_id: string
@@ -96,6 +100,7 @@ export interface WikiPutResult {
 }
 
 export interface BacklinkItem {
+  contexts?: string[]
   id: string
   label: string
 }

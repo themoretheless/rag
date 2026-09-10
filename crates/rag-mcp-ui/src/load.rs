@@ -479,6 +479,9 @@ struct WikiListResponse {
     #[serde(default)]
     #[allow(dead_code)]
     count: usize,
+    total: Option<usize>,
+    limit: Option<usize>,
+    offset: Option<usize>,
 }
 
 /// Backlink row from `GET /v1/backlinks?id=`.
@@ -575,15 +578,64 @@ fn fetch_wiki_list_http_with_client(
     base: &str,
     project: Option<&str>,
 ) -> Result<Vec<WikiPageMeta>, String> {
+    const PAGE_SIZE: usize = 200;
+    const MAX_PAGES: usize = 10_000;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let path = wiki_catalog_path(project);
-    let url = http_join(base, &path);
-    let response = get(client, url.clone())?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Wiki catalog"));
+    let separator = if path.contains('?') { '&' } else { '?' };
+    let mut pages = Vec::new();
+    let mut ids = std::collections::HashSet::new();
+    let mut offset = 0;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "Wiki catalog exceeded the one-minute loading limit; select a narrower project"
+                    .into(),
+            );
+        }
+        let url = http_join(
+            base,
+            &format!("{path}{separator}limit={PAGE_SIZE}&offset={offset}"),
+        );
+        let response = get(client, url)?;
+        if !response.is_success() {
+            return Err(format_http_error(&response, "Wiki catalog"));
+        }
+        let body: WikiListResponse = serde_json::from_str(&response.body)
+            .map_err(|error| format_json_parse_error("Wiki catalog", &error))?;
+        if body.offset.is_some_and(|value| value != offset) {
+            return Err(
+                "Wiki catalog pagination returned an unexpected offset; reload the catalog".into(),
+            );
+        }
+        if body.total.is_some_and(|total| total > MAX_PAGES)
+            || pages.len() + body.pages.len() > MAX_PAGES
+        {
+            return Err(format!(
+                "Wiki catalog exceeds {MAX_PAGES} pages; select a narrower project"
+            ));
+        }
+        let count = body.pages.len();
+        for page in body.pages {
+            if !ids.insert(page.id.clone()) {
+                return Err(
+                    "Wiki catalog changed or repeated a page while loading; reload the catalog"
+                        .into(),
+                );
+            }
+            pages.push(page);
+        }
+        offset += count;
+        let more = body
+            .total
+            .map_or_else(|| count >= body.limit.unwrap_or(50), |total| offset < total);
+        if !more {
+            break;
+        }
+        if count == 0 || offset >= MAX_PAGES {
+            return Err("Wiki catalog pagination stopped before all pages were loaded".into());
+        }
     }
-    let body: WikiListResponse = serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error("Wiki catalog", &error))?;
-    let mut pages = body.pages;
     sort_wiki_pages(&mut pages);
     Ok(pages)
 }
@@ -1701,8 +1753,97 @@ mod tests {
         assert_eq!(requests[0].method, Method::Get);
         assert_eq!(
             requests[0].url,
-            "http://gateway/v1/wiki?wing=Project%20A%2FB"
+            "http://gateway/v1/wiki?wing=Project%20A%2FB&limit=200&offset=0"
         );
+    }
+
+    struct PagedWikiGateway {
+        responses: Mutex<VecDeque<Response>>,
+        requests: Mutex<Vec<Request>>,
+    }
+
+    impl PagedWikiGateway {
+        fn new(bodies: Vec<serde_json::Value>) -> Self {
+            Self {
+                responses: Mutex::new(
+                    bodies
+                        .into_iter()
+                        .map(|body| Response {
+                            status: 200,
+                            body: body.to_string(),
+                        })
+                        .collect(),
+                ),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl GatewayClient for PagedWikiGateway {
+        fn execute(&self, request: Request) -> Result<Response, String> {
+            self.requests.lock().unwrap().push(request);
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or_else(|| "Unexpected extra page request".into())
+        }
+    }
+
+    fn wiki_batch(offset: usize, count: usize, total: usize) -> serde_json::Value {
+        serde_json::json!({
+            "pages": (offset..offset + count).map(|i| serde_json::json!({
+                "id": i.to_string(), "slug": format!("page-{i}"), "uri": format!("wiki://page-{i}"), "title": format!("Page {i:04}"),
+            })).collect::<Vec<_>>(),
+            "count": count, "total": total, "limit": 200, "offset": offset,
+        })
+    }
+
+    #[test]
+    fn wiki_catalog_fetches_every_page_beyond_the_default_fifty() {
+        let gateway =
+            PagedWikiGateway::new(vec![wiki_batch(0, 200, 225), wiki_batch(200, 25, 225)]);
+        let pages =
+            fetch_wiki_list_http_with_client(&gateway, "http://gateway", Some("Alpha")).unwrap();
+        assert_eq!(pages.len(), 225);
+        assert_eq!(pages.last().unwrap().id, "224");
+        let requests = gateway.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1].url,
+            "http://gateway/v1/wiki?wing=Alpha&limit=200&offset=200"
+        );
+    }
+
+    #[test]
+    fn wiki_catalog_legacy_metadata_still_fetches_after_fifty() {
+        let first = wiki_batch(0, 50, 52);
+        let second = wiki_batch(50, 2, 52);
+        let gateway = PagedWikiGateway::new(vec![
+            serde_json::json!({"pages": first["pages"]}),
+            serde_json::json!({"pages": second["pages"]}),
+        ]);
+        let pages = fetch_wiki_list_http_with_client(&gateway, "http://gateway", None).unwrap();
+        assert_eq!(pages.len(), 52);
+        assert!(gateway.requests.lock().unwrap()[1]
+            .url
+            .ends_with("offset=50"));
+    }
+
+    #[test]
+    fn wiki_catalog_rejects_empty_or_repeated_pages_instead_of_silently_truncating() {
+        for second in [wiki_batch(50, 0, 60), wiki_batch(0, 50, 60)] {
+            let gateway = PagedWikiGateway::new(vec![wiki_batch(0, 50, 60), second]);
+            assert!(fetch_wiki_list_http_with_client(&gateway, "http://gateway", None).is_err());
+        }
+    }
+
+    #[test]
+    fn wiki_catalog_fails_explicitly_above_the_memory_cap() {
+        let gateway = PagedWikiGateway::new(vec![wiki_batch(0, 200, 10_001)]);
+        let error = fetch_wiki_list_http_with_client(&gateway, "http://gateway", None).unwrap_err();
+        assert!(error.contains("10000"));
+        assert_eq!(gateway.requests.lock().unwrap().len(), 1);
     }
 
     #[test]

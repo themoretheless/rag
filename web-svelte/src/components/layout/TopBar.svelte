@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ui } from '@/lib/state/ui.svelte'
-  import { route } from '@/lib/router.svelte'
+  import { go, route } from '@/lib/router.svelte'
 
   const labels: Record<string, { title: string; layer: string; color: string }> = {
     console: { title: 'Пульт', layer: 'L0–L4 · обзор', color: 'var(--accent)' },
@@ -38,6 +38,7 @@
   <div class="crumb"><span>rag-mcp</span><i>/</i><strong>{current.title}</strong><b>{current.layer}</b></div>
   <button class="command" onclick={() => ui.openCommand()}><span>Страница, документ, узел или команда…</span><kbd>⌘K</kbd></button>
   <div class="right">
+    <button class="access" onclick={() => go('models')} title="Настроить токен подключения">Доступ</button>
     <span class:bad={!!ui.healthError || ui.health?.ok === false} class:ok={healthReady} class="health"><i></i>{healthLabel}</span>
     {#if onlineAgents.length}
       <div class="avatars" aria-label={`${onlineAgents.length} MCP-клиентов онлайн`}>
@@ -51,5 +52,6 @@
 </header>
 
 <style>
+  .access{min-height:26px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text-muted);font-size:11px;padding:0 7px;cursor:pointer}.access:hover{border-color:var(--border-strong);color:var(--text)}
   .top{height:48px;flex:0 0 48px;display:grid;grid-template-columns:minmax(260px,1fr) minmax(280px,460px) minmax(330px,1fr);align-items:center;padding:0 16px;border-bottom:1px solid var(--border);background:var(--bg);gap:16px}.crumb{display:flex;align-items:center;gap:9px;white-space:nowrap;min-width:0}.crumb span,.crumb i{color:var(--text-faint);font-style:normal}.crumb strong{font-size:13px;overflow:hidden;text-overflow:ellipsis}.crumb b{font:500 10px var(--mono);background:color-mix(in srgb,var(--route-color) 12%,transparent);color:var(--route-color);padding:3px 7px;border-radius:5px}.command{height:30px;display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text-faint);padding:0 10px;cursor:pointer;font-size:12px}.command:hover{border-color:var(--border-strong);color:var(--text-muted)}.right{display:flex;align-items:center;justify-content:flex-end;gap:9px}.health{display:flex;align-items:center;gap:6px;font:500 10.5px var(--mono);color:var(--text-muted);white-space:nowrap}.health i{width:7px;height:7px;border-radius:50%;background:var(--warn)}.health.ok i{background:var(--ok);box-shadow:0 0 7px var(--ok)}.health.bad i{background:var(--danger)}.avatars{display:flex}.avatars span{position:relative;width:22px;height:22px;margin-left:-5px;border:2px solid var(--bg);border-radius:50%;display:grid;place-items:center;background:var(--surface-2);color:var(--text-muted);font:600 9px var(--mono)}.avatars span:first-child{margin-left:0}.avatars span.online::after{content:'';position:absolute;right:-1px;bottom:-1px;width:6px;height:6px;border:1px solid var(--bg);border-radius:50%;background:var(--ok)}.avatars span.more{color:var(--l4);font-size:8px}.avatars span.more::after{display:none}.locale{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}.locale button,.theme{height:24px;border:0;background:transparent;color:var(--text-faint);font:600 9.5px var(--mono);cursor:pointer}.locale button{padding:0 6px}.locale button.active{background:color-mix(in srgb,var(--route-color) 13%,transparent);color:var(--route-color)}.theme{width:25px;border:1px solid var(--border);border-radius:6px}@media(max-width:1080px){.top{grid-template-columns:1fr auto}.command{display:none}.avatars{display:none}}@media(max-width:760px){.top{grid-template-columns:1fr auto}.crumb b,.health{display:none}}
 </style>

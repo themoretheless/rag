@@ -510,6 +510,8 @@ pub async fn reembed_all(
     config: &Config,
     max_docs: usize,
 ) -> Result<ReembedAllReport> {
+    let scoped_store = store.try_corpus_mutation_scope("reembed_all")?;
+    let store = &scoped_store;
     let max_docs = max_docs.max(1);
     let documents_considered = store.count_documents()?;
     let skipped_cap = documents_considered.saturating_sub(max_docs);
@@ -1278,8 +1280,8 @@ mod tests {
         assert_eq!(graph.documents.len(), REPORT_DOCUMENT_CAP);
         assert_eq!(graph.document_results_truncated, 6);
 
-        let _mutation_guard = store
-            .try_corpus_mutation_guard("paged reembed test")
+        let store = store
+            .try_corpus_mutation_scope("paged reembed test")
             .unwrap();
         let reembed = reembed_all(&store, &embedder, &config, usize::MAX)
             .await

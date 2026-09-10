@@ -183,8 +183,40 @@ pub struct ReqwestGatewayClient {
 
 impl ReqwestGatewayClient {
     pub fn new(timeout: Duration) -> Result<Self, String> {
+        let token = match std::env::var("RAG_HTTP_TOKEN") {
+            Ok(token) => Some(token),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err("RAG_HTTP_TOKEN must contain a valid Bearer token".to_string());
+            }
+        };
+        Self::with_token(timeout, token.as_deref())
+    }
+
+    fn with_token(timeout: Duration, token: Option<&str>) -> Result<Self, String> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(token) = token.map(str::trim).filter(|token| !token.is_empty()) {
+            let base = token.trim_end_matches('=');
+            if base.is_empty()
+                || !base.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric()
+                        || matches!(byte, b'.' | b'_' | b'~' | b'+' | b'/' | b'-')
+                })
+            {
+                return Err("RAG_HTTP_TOKEN must contain a valid Bearer token".to_string());
+            }
+            let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| "RAG_HTTP_TOKEN must contain a valid Bearer token".to_string())?;
+            // reqwest diagnostics must never reveal credentials.
+            value.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
         reqwest::blocking::Client::builder()
             .timeout(timeout)
+            .default_headers(headers)
+            // API routes do not redirect. Never forward credentials to a
+            // redirect target, even when it shares the gateway's host.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map(|client| Self { client })
             .map_err(|_| "Could not initialize the RAG gateway connection".to_string())
@@ -227,6 +259,101 @@ fn format_reqwest_transport_error(error: reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capture_request(token: Option<&str>, status: u16) -> (String, Response) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(std::time::Instant::now() < deadline, "request timed out");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("could not accept test request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).unwrap();
+                assert!(count > 0, "request closed before headers");
+                request.extend_from_slice(&buffer[..count]);
+            }
+            write!(stream, "HTTP/1.1 {status} Test\r\nLocation: http://{address}/redirected\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}")
+                .unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let client = ReqwestGatewayClient::with_token(Duration::from_secs(5), token).unwrap();
+        let response = client
+            .execute(Request {
+                method: Method::Get,
+                url: format!("http://{address}/health"),
+                body: None,
+                headers: Vec::new(),
+            })
+            .unwrap();
+        (server.join().unwrap(), response)
+    }
+
+    #[test]
+    fn bearer_token_is_sent_only_in_the_authorization_header() {
+        let (request, response) = capture_request(Some("test-access-token"), 200);
+        assert_eq!(response.status, 200);
+        assert!(request.starts_with("GET /health HTTP/1.1\r\n"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-access-token\r\n"));
+        assert_eq!(request.matches("test-access-token").count(), 1);
+    }
+
+    #[test]
+    fn absent_token_keeps_unauthenticated_loopback_compatible() {
+        let (request, response) = capture_request(None, 200);
+        assert_eq!(response.status, 200);
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+    }
+
+    #[test]
+    fn authenticated_requests_do_not_follow_redirects() {
+        let (_, response) = capture_request(Some("test-access-token"), 307);
+        assert_eq!(response.status, 307);
+    }
+
+    #[test]
+    fn token_is_redacted_from_diagnostics_and_configuration_errors() {
+        let client =
+            ReqwestGatewayClient::with_token(Duration::from_secs(1), Some("test-access-token"))
+                .unwrap();
+        assert!(!format!("{:?}", client.client).contains("test-access-token"));
+        let error = ReqwestGatewayClient::with_token(
+            Duration::from_secs(1),
+            Some("private-token\r\nInjected: value"),
+        )
+        .err()
+        .unwrap();
+        assert!(!error.contains("private-token"));
+        assert!(error.contains("RAG_HTTP_TOKEN"));
+    }
+
+    #[test]
+    fn bearer_token_grammar_accepts_padding_and_rejects_invalid_values() {
+        assert!(ReqwestGatewayClient::with_token(
+            Duration::from_secs(1),
+            Some(" abc.DEF_012~+/-== ")
+        )
+        .is_ok());
+        for token in ["with space", "a=b", "=", "é", "private#token"] {
+            assert!(ReqwestGatewayClient::with_token(Duration::from_secs(1), Some(token)).is_err());
+        }
+    }
 
     #[test]
     fn json_error_is_human_readable_without_raw_envelope() {

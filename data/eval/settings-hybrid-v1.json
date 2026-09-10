@@ -1,0 +1,5 @@
+{
+  "name": "hybrid-default",
+  "mode": "hybrid",
+  "top_k": 5
+}

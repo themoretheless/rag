@@ -188,6 +188,9 @@ async fn document(
             "wing": doc.wing,
             "room": doc.room,
             "source_file": doc.source_file,
+            "source_versions": serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok()
+                .and_then(|metadata| metadata.get("source_versions").cloned())
+                .filter(serde_json::Value::is_array).unwrap_or_else(|| json!([])),
             "updated_at": doc.updated_at.to_rfc3339(),
             "revision": doc.revision,
             "etag": doc.etag(),

@@ -108,9 +108,9 @@ impl MarkdownVaultStorage {
                     path.display()
                 )));
             }
-            let relative = canonical.strip_prefix(&self.root).map_err(|_| {
-                AppError::forbidden("markdown index path escapes vault root")
-            })?;
+            let relative = canonical
+                .strip_prefix(&self.root)
+                .map_err(|_| AppError::forbidden("markdown index path escapes vault root"))?;
             let relative_path = relative.to_str().ok_or_else(|| {
                 AppError::config(format!(
                     "markdown index path '{}' is not valid UTF-8",
@@ -124,10 +124,7 @@ impl MarkdownVaultStorage {
                     document.id
                 )));
             }
-            entries.push(VaultIndexEntry::from_document(
-                relative_path,
-                &document,
-            ));
+            entries.push(VaultIndexEntry::from_document(relative_path, &document));
         }
 
         let destination = self.write_sidecar(&entries)?;
@@ -158,10 +155,8 @@ impl MarkdownVaultStorage {
         let sidecar_directory = self.root.join(SIDECAR_DIRECTORY);
         fs::create_dir_all(&sidecar_directory)?;
         let destination = self.sidecar_path();
-        let temporary = sidecar_directory.join(format!(
-            ".{SIDECAR_FILE}.{}.tmp",
-            uuid::Uuid::new_v4()
-        ));
+        let temporary =
+            sidecar_directory.join(format!(".{SIDECAR_FILE}.{}.tmp", uuid::Uuid::new_v4()));
         let write_result = (|| -> Result<(), AppError> {
             let file = fs::File::create(&temporary)?;
             let mut writer = BufWriter::new(file);
@@ -201,8 +196,7 @@ impl MarkdownVaultStorage {
                     if entry.file_name() != OsStr::new(".rag") {
                         pending.push(entry.path());
                     }
-                } else if file_type.is_file()
-                    && entry.path().extension() == Some(OsStr::new("md"))
+                } else if file_type.is_file() && entry.path().extension() == Some(OsStr::new("md"))
                 {
                     files.push(entry.path());
                 }
@@ -214,14 +208,20 @@ impl MarkdownVaultStorage {
 
     fn read_document(path: &Path) -> Result<Document, AppError> {
         let text = fs::read_to_string(path)?;
-        let rest = text.strip_prefix("---\n").ok_or_else(|| {
-            AppError::db(format!("'{}' has no YAML frontmatter", path.display()))
-        })?;
+        let rest = text
+            .strip_prefix("---\n")
+            .ok_or_else(|| AppError::db(format!("'{}' has no YAML frontmatter", path.display())))?;
         let (frontmatter, content) = rest.split_once("\n---\n").ok_or_else(|| {
-            AppError::db(format!("'{}' has unterminated YAML frontmatter", path.display()))
+            AppError::db(format!(
+                "'{}' has unterminated YAML frontmatter",
+                path.display()
+            ))
         })?;
         let frontmatter: Frontmatter = serde_json::from_str(frontmatter).map_err(|error| {
-            AppError::db(format!("invalid frontmatter in '{}': {error}", path.display()))
+            AppError::db(format!(
+                "invalid frontmatter in '{}': {error}",
+                path.display()
+            ))
         })?;
         Ok(Document {
             id: frontmatter.id,
@@ -320,7 +320,16 @@ impl Storage for MarkdownVaultStorage {
         fs::create_dir_all(parent)?;
         let parent = fs::canonicalize(parent)?;
         if !parent.starts_with(&self.root) {
-            return Err(AppError::forbidden("markdown document path escapes vault root"));
+            return Err(AppError::forbidden(
+                "markdown document path escapes vault root",
+            ));
+        }
+        // Older vaults and hand-edited files may already occupy the encoded
+        // path. Never replace a different document, even during path migration.
+        if destination.try_exists()? && Self::read_document(&destination)?.id != document.id {
+            return Err(AppError::conflict(
+                "markdown destination belongs to a different document",
+            ));
         }
 
         let frontmatter = Frontmatter {
@@ -343,9 +352,33 @@ impl Storage for MarkdownVaultStorage {
         };
         let serialized = serde_json::to_string_pretty(&frontmatter)?;
         let body = format!("---\n{serialized}\n---\n{}", document.content);
-        let temporary = parent.join(format!(".{}.{}.tmp", encode_component(&document.id), uuid::Uuid::new_v4()));
-        fs::write(&temporary, body)?;
-        fs::rename(&temporary, &destination)?;
+        let temporary = parent.join(format!(
+            ".{}.{}.tmp",
+            encode_component(&document.id),
+            uuid::Uuid::new_v4()
+        ));
+        let write_result = (|| -> Result<(), AppError> {
+            fs::write(&temporary, body)?;
+            if previous_path.as_ref() == Some(&destination) {
+                fs::rename(&temporary, &destination)?;
+            } else {
+                // Publishing a new path must not clobber a concurrently
+                // created file or a legacy document with the same filename.
+                fs::hard_link(&temporary, &destination).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        AppError::conflict("markdown destination already exists")
+                    } else {
+                        error.into()
+                    }
+                })?;
+                fs::remove_file(&temporary)?;
+            }
+            Ok(())
+        })();
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        write_result?;
 
         if let Some(old_path) = previous_path {
             if old_path != destination {
@@ -378,15 +411,97 @@ impl Storage for MarkdownVaultStorage {
 fn encode_component(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.') {
+        // Uppercase and dots are escaped too, so filenames remain injective
+        // on case-insensitive filesystems and never become '.' or '..'.
+        if byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(*byte, b'-' | b'_') {
             encoded.push(char::from(*byte));
         } else {
             encoded.push_str(&format!("%{byte:02X}"));
         }
     }
-    if encoded.is_empty() || encoded == "." || encoded == ".." {
-        format!("_{encoded}")
+    if encoded.is_empty() {
+        "%".into()
     } else {
         encoded
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoded_ids_do_not_collide_or_fold_case() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = MarkdownVaultStorage::open(temp.path()).unwrap();
+        let ids = [
+            ".",
+            "_.",
+            "..",
+            "_..",
+            "A",
+            "a",
+            "%41",
+            "",
+            "_",
+            "Текст",
+            "текст",
+        ];
+        let encoded: std::collections::HashSet<_> = ids
+            .iter()
+            .map(|id| encode_component(id).to_ascii_lowercase())
+            .collect();
+        assert_eq!(encoded.len(), ids.len());
+        for id in ids.iter().filter(|id| !id.is_empty()) {
+            vault
+                .upsert_document(&Document {
+                    id: (*id).into(),
+                    content: (*id).into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        for id in ids.iter().filter(|id| !id.is_empty()) {
+            assert_eq!(vault.get_document(id).unwrap().unwrap().content, *id);
+        }
+        assert_eq!(vault.list_documents().unwrap().len(), ids.len() - 1);
+    }
+
+    #[test]
+    fn update_migrates_legacy_path_and_rejects_another_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = MarkdownVaultStorage::open(temp.path()).unwrap();
+        let mut doc = Document {
+            id: ".".into(),
+            content: "old".into(),
+            ..Default::default()
+        };
+        vault.upsert_document(&doc).unwrap();
+        let destination = vault.document_path(&doc);
+        let legacy = destination.parent().unwrap().join("_.md");
+        fs::rename(&destination, &legacy).unwrap();
+        doc.content = "updated".into();
+        vault.upsert_document(&doc).unwrap();
+        assert!(!legacy.exists());
+        assert_eq!(vault.get_document(".").unwrap().unwrap().content, "updated");
+
+        let other = Document {
+            id: "other".into(),
+            content: "keep".into(),
+            ..Default::default()
+        };
+        vault.upsert_document(&other).unwrap();
+        fs::rename(vault.document_path(&other), &legacy).unwrap();
+        // Simulate a legacy or manually named file occupying a new canonical path.
+        fs::remove_file(&destination).unwrap();
+        fs::rename(&legacy, &destination).unwrap();
+        assert!(matches!(
+            vault.upsert_document(&doc),
+            Err(AppError::Conflict(_))
+        ));
+        assert_eq!(
+            vault.get_document("other").unwrap().unwrap().content,
+            "keep"
+        );
     }
 }

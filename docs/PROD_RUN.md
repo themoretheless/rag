@@ -13,6 +13,13 @@ The launchd service `local.rag-mcp` owns the canonical DB. All normal clients
 use `http://127.0.0.1:7432`; they do not start another binary or choose another
 database path.
 
+Before upgrading an existing remote listener, configure gateway credentials and
+client Bearer headers using [AUTHENTICATION.md](AUTHENTICATION.md). The updated
+binary refuses non-loopback startup without a token, even if
+`RAG_HTTP_ALLOW_REMOTE=true` was already set. This runbook does not change the
+configuration of a running service. Header-free examples below apply only to a
+loopback gateway with no configured tokens.
+
 ---
 
 ## 1. One-time build
@@ -164,16 +171,31 @@ still enforced by Store CAS rather than a new unique index.
 | `RAG_HTTP_BIND` | e.g. `127.0.0.1:7432` or `[::1]:7432`. Empty / unset → no HTTP. |
 | `RAG_HTTP_ONLY` | `true` → gateway only (no stdio). Requires `RAG_HTTP_BIND`. Process blocks on HTTP until exit. Without it, HTTP is spawned in the background and stdio MCP still runs. |
 | `RAG_MCP_HTTP` | default on when bind is set; `false` disables `/mcp` (graph/wiki HTTP stays). |
-| `RAG_HTTP_ALLOW_REMOTE` | required for non-loopback binds (`1`/`true`/`yes`/`on`). MCP/HTTP are **unauthenticated**. |
-| `RAG_HTTP_ALLOWED_HOSTS` | comma-separated extra Host names/IPs accepted by mounted `/mcp`; required for remote authorities when binding `0.0.0.0` or `[::]` |
+| `RAG_HTTP_ALLOW_REMOTE` | required for non-loopback binds (`1`/`true`/`yes`/`on`), together with at least one valid role token |
+| `RAG_HTTP_READ_TOKEN` | random Bearer credential for reads/search/diagnostics |
+| `RAG_HTTP_WRITE_TOKEN` | separate credential for reads and content edits |
+| `RAG_HTTP_ADMIN_TOKEN` | separate credential for all allowed operations, including maintenance/recovery/replication |
+| `RAG_HTTP_ALLOWED_HOSTS` | comma-separated extra Host names/IPs accepted by REST and mounted `/mcp`; required for remote authorities when binding `0.0.0.0` or `[::]` |
 
-`parse_bind` rejects non-loopback addresses unless `RAG_HTTP_ALLOW_REMOTE` is
-set. The mounted MCP transport separately allows loopback authorities and a
-concrete bind IP; wildcard binds do not infer remote hosts. For a LAN rollout,
-set the exact authorities, for example
-`RAG_HTTP_ALLOWED_HOSTS=192.168.50.205,tmtl-macbook-pro-m4.local`. Prefer
-`127.0.0.1` on a single machine; do not expose `0.0.0.0` without a reverse
-proxy and auth you trust.
+With any role token configured, every HTTP/MCP request needs Bearer, including
+loopback and health probes. Without tokens, only loopback can start. Token
+validation and remote admission happen before Store startup; token values must
+be distinct, random, 32–4096 Bearer characters. Unset an unused variable rather
+than setting it to an empty value. Tokens belong in private service environment
+or a secret manager, not source files, committed examples, logs or URLs.
+
+The Host guard independently allows loopback authorities and a concrete bind
+IP; wildcard binds do not infer remote hosts. For a LAN rollout, set the exact
+authorities, for example
+`RAG_HTTP_ALLOWED_HOSTS=192.168.50.205,tmtl-macbook-pro-m4.local`. The gateway has
+no built-in TLS; use HTTPS through a reverse proxy or a protected tunnel for
+remote credentials. Prefer loopback on a single machine.
+
+Native UI reads `RAG_HTTP_TOKEN`; web UI stores the token entered under «Доступ»
+in the current tab's session storage per API base. MCP clients need an
+Authorization header on each request. Replicas use `RAG_PRIMARY_TOKEN` with the
+primary's Admin credential. Role details, migration and rotation are in
+[AUTHENTICATION.md](AUTHENTICATION.md).
 
 ### 3b. Рекомендуется (shared server)
 
@@ -303,6 +325,11 @@ project placement, lifecycle/pin/boost state, source ownership and unrelated
 metadata. Omitting CAS retains last-write-wins compatibility behavior only when
 `RAG_WIKI_REQUIRE_IF_MATCH=false` (the default); when true, updates must supply
 the revision/etag.
+
+For a new page use `POST /v1/wiki`: an occupied URI returns 409 rather than
+updating an existing page. Web creation and search-to-wiki drafts use this
+create-only operation. See [review changes and rollout](REVIEW_FIXES_2026-09-05.md)
+for schema 11 graph provenance, source version hashes, and remaining rollout steps.
 
 ---
 

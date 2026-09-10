@@ -31,11 +31,7 @@ pub struct OllamaEmbedder {
 impl OllamaEmbedder {
     /// Build an embedder. `base_url` may be `http://127.0.0.1:11434` or `.../v1`
     /// (the `/v1` suffix is stripped so native routes stay under the host root).
-    pub fn new(
-        base_url: impl Into<String>,
-        model: impl Into<String>,
-        dims: usize,
-    ) -> Result<Self> {
+    pub fn new(base_url: impl Into<String>, model: impl Into<String>, dims: usize) -> Result<Self> {
         if dims == 0 {
             return Err(AppError::embeddings(
                 "embedding dimensions must be greater than zero",
@@ -43,17 +39,14 @@ impl OllamaEmbedder {
         }
         let root = normalize_ollama_root(&base_url.into());
         if root.is_empty() {
-            return Err(AppError::embeddings(
-                "embedding base_url must not be empty",
-            ));
+            return Err(AppError::embeddings("embedding base_url must not be empty"));
         }
         let model = model.into();
         if model.trim().is_empty() {
-            return Err(AppError::embeddings(
-                "embedding model must not be empty",
-            ));
+            return Err(AppError::embeddings("embedding model must not be empty"));
         }
         let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .map_err(|e| AppError::embeddings(format!("failed to build HTTP client: {e}")))?;
@@ -308,9 +301,7 @@ mod tests {
             // First request: /api/embed -> 404
             {
                 let (mut stream, _) = listener.accept().expect("accept embed");
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .ok();
+                stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
                 let mut buf = [0u8; 8192];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]);
@@ -329,9 +320,7 @@ mod tests {
             // Second request: /api/embeddings -> 200
             {
                 let (mut stream, _) = listener.accept().expect("accept embeddings");
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .ok();
+                stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
                 let mut buf = [0u8; 8192];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]);
@@ -369,9 +358,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .ok();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
             let mut buf = [0u8; 8192];
             let n = stream.read(&mut buf).unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]);

@@ -35,6 +35,9 @@ sample; warm-up samples are excluded.
 The format is one JSON object. `version` is required and currently must be `1`.
 Unknown fields are rejected so accidental schema drift is visible.
 
+The report also includes `dataset_content_hash` (blake/content hash of the
+dataset file bytes) so A/B runs can pin an immutable question-set identity.
+
 ```json
 {
   "version": 1,
@@ -50,6 +53,28 @@ Unknown fields are rejected so accidental schema drift is visible.
   }]
 }
 ```
+
+### A/B settings compare and resume
+
+Compare two search-parameter profiles on one ingested corpus:
+
+```bash
+RAG_EMBEDDING_PROVIDER=mock cargo run --bin eval -- \
+  --dataset data/eval/example-v1.json \
+  --settings-a data/eval/settings-lex-v1.json \
+  --settings-b data/eval/settings-hybrid-v1.json \
+  --compare-out /tmp/compare.json \
+  --checkpoint /tmp/eval-ckpt.json \
+  --json
+```
+
+`--checkpoint` writes after each query so a killed process can resume the same
+dataset hash and settings names. Optional `--error-labels FILE.jsonl` attaches
+human labels (`wrong_top_hit`, `missing_relevant`, …) to regression rows.
+
+Gateway (schema 14): `GET /v1/eval/runs`, `POST /v1/eval/runs/compare`, and
+feedback runs persist into `eval_runs`. Background jobs persist to
+`background_jobs` and in-flight work is marked failed on process restart.
 
 - Corpus paths are relative to `--root` (the current directory by default).
 - `document_title` is the corpus filename and matches returned titles exactly.
