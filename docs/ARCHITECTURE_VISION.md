@@ -233,9 +233,10 @@ than a fictional all-backend façade.
    lowest-common-denominator product façade.
 3. Keep DuckDB-specific search, graph, wiki and transaction behavior in focused
    `db/*` modules until a second full backend forces another seam.
-4. **Markdown vault** is the only justified second SoT. Export plus opt-in
-   document CRUD, sidecar rebuild and watcher are shipped; full application
-   status still requires search/graph/recovery conformance.
+4. **Markdown vault** is the only justified second SoT. DuckDB and a Markdown
+   vault must not both be live sources of truth in one process: export plus
+   opt-in document CRUD, sidecar rebuild and watcher are shipped; full
+   application status still requires search/graph/recovery conformance.
 5. SQLite / Memory remain possible engineering ports. Postgres+pgvector is a
    shared-deploy response, not peer README identity.
 6. External ANN (`VectorStore` half under Composite) starts only after the
@@ -645,17 +646,22 @@ Product- and architecture-level. Graph/UI micro-decisions stay in [`GRAPH_EGUI_D
 | V-R17 | In-process auto-file every search hit without L4 intent | Spurious compounding |
 | V-R18 | Storage multi-backend matrix as near-term identity (NOTES softening) | Trait is domain boundary; DuckDB remains hero |
 
+### Decided this cycle (former open)
+
+| ID | Decision | Why |
+|----|----------|-----|
+| V-O3 | **No `wake_up` on spine.** Session bootstrap is `get_schema` + `read_log` + `status`. | Spine test already refuses `wake_up`; diary stays behind `RAG_TOOLS=full`. |
+| V-O4 | **No `graph_expand_search` on spine.** Clients expand via `get_neighbors` / `get_backlinks`. | Avoid a second search identity; expand helper remains full-only. |
+| V-O7 | **Freeze `SPEC.md` as v1 substrate history.** Identity and current tools live in README + this vision. | A third competing SPEC would confuse implementers. |
+| V-O9 | **Ship only actionable north-star fields on `status`:** `index_coverage`, `uncompiled_raw_count`, `wiki_count`, `index_entry_count`. | Agents can already act (compile / `file_answer`); do not add vanity counters. |
+
 ### Open
 
 | ID | Question | Lean |
 |----|----------|------|
-| V-O3 | Whether one `wake_up`-like bootstrap stays in spine | Lean: single optional bootstrap or pure schema+log; not a diary suite |
-| V-O4 | `graph_expand_search` in spine vs neighbors-only + client expand | Lean: keep one expand helper if clients rely on it; not a second search identity |
 | V-O5 | How far `Storage` should expand beyond the shipped document slice | Only when a second backend has a shared capability-conformance test |
 | V-O6 | Full live Markdown application backend vs document/export use | Require lexical search, wikilink graph, recovery and honest refusal conformance |
-| V-O7 | SPEC.md freeze-as-history vs rewrite to current spine | Lean: freeze v1 substrate; README + this vision for identity; no third competing SPEC unless implementers demand |
 | V-O8 | blake3 stable ids vs UUID migrate gate | Follow GRAPH_DESIGN; do not block spine cut |
-| V-O9 | Remaining north-star metrics beyond shipped layer health/index coverage | Add only when a client can act on the metric |
 | V-O10 | Native visual-regression coverage | Add deterministic workspace screenshots after a real escaped layout regression or second desktop target |
 
 ---

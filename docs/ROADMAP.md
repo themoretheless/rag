@@ -42,8 +42,16 @@ same tree:
    gateway.
 
 **Final release evidence:** pending terminal full-source sync, final installed
-gateway rollout and verified final backup. Fill this only with evidence from the
+gateway rollout (live process is still schema 10 / pid 2293, not this tree's
+schema 15) and verified final backup. Fill this only with evidence from the
 same final tree; do not infer closure from an earlier candidate build.
+
+**2026-09-11 package evidence (this tree, not a live upgrade):**
+`cargo test --workspace --locked` passed; `cargo clippy --workspace --locked -- -D warnings`
+passed after collapsing the auth OPTIONS guard and allowing the wiki atomic-write
+arity. Live gateway `GET /ready` returned `store_ok=true`; `GET /v1/jobs` returned
+an empty list. `STORE_BUSY`, cancel/restore, backup-without-second-writer, and
+native visual QA were not re-run against an upgraded writer.
 
 ## Evidence-gated future work
 

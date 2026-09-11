@@ -56,6 +56,8 @@ RFC3339 with microsecond precision.
 
 Every node receives the same stream **including its own events**. Conflicting
 offline edits resolve in the primary's commit order, not by client wall clocks.
+Реплика передаёт накопленные офлайн изменения wiki через outbox и канонический
+stream primary, а не по локальным часам клиента.
 A replica commits each applied event and its local cursor together; retries do
 not repeat page revisions. If a newer local edit still has an unsent outbox
 event, an older pulled event is journalled and advances the cursor while leaving

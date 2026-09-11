@@ -207,21 +207,20 @@ pub(super) async fn enforce_auth(
     next: Next,
 ) -> Response {
     // Browser preflight carries no credential and never reaches a data handler.
-    if request.method() == Method::OPTIONS {
-        if request
+    if request.method() == Method::OPTIONS
+        && request
             .headers()
             .get(header::ORIGIN)
             .and_then(|v| v.to_str().ok())
             .is_some_and(super::loopback_origin)
-        {
-            let mut response = StatusCode::NO_CONTENT.into_response();
-            response.headers_mut().insert(
-                header::ACCESS_CONTROL_ALLOW_METHODS,
-                "GET, HEAD, POST, PUT, DELETE, OPTIONS".parse().unwrap(),
-            );
-            response.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "Authorization, Content-Type, If-Match, X-Request-Id, X-Rag-Client-Host, MCP-Protocol-Version, MCP-Session-Id".parse().unwrap());
-            return response;
-        }
+    {
+        let mut response = StatusCode::NO_CONTENT.into_response();
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            "GET, HEAD, POST, PUT, DELETE, OPTIONS".parse().unwrap(),
+        );
+        response.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "Authorization, Content-Type, If-Match, X-Request-Id, X-Rag-Client-Host, MCP-Protocol-Version, MCP-Session-Id".parse().unwrap());
+        return response;
     }
     let Some(role) = auth.authenticate(request.headers()) else {
         return denied(

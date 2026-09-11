@@ -527,6 +527,7 @@ impl Store {
 
     /// Persist a wiki document and its chunks, graph, catalog row, and audit
     /// event, replication journal and applied cursor under one transaction.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_wiki_document_atomic(
         &self,
         doc: &Document,
