@@ -383,6 +383,26 @@ async fn run_one(st: HttpState, id: String) -> Result<Value> {
         return Ok(result);
     }
     let (recall, mrr) = score_hits(&item, &hits);
+    let cited_ids: Vec<String> = hits
+        .iter()
+        .map(|h| {
+            h.get("document_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    let expected_ids: Vec<String> = item
+        .expected
+        .iter()
+        .map(|e| e.document_id.clone())
+        .collect();
+    let citation_judge = crate::eval::judge_citations(&crate::eval::CitationJudgeInput {
+        answer_text: None,
+        cited_document_ids: cited_ids,
+        expected_document_ids: expected_ids,
+    });
     let result = json!({
         "id": id,
         "status": "evaluated",
@@ -390,11 +410,12 @@ async fn run_one(st: HttpState, id: String) -> Result<Value> {
         "mode": search_result["mode"],
         "recall": recall,
         "mrr": mrr,
+        "citation_judge": citation_judge,
         "empty_result_for_no_answer": item.no_answer.then_some(hits.is_empty()),
         "result_count": hits.len(),
         "timings": search_result["timings"],
         "embedding_manifest": st.store.get_embedding_manifest()?,
-        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer correctness"
+        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer correctness; citation_judge is deterministic expected-doc coverage over hit document ids"
     });
     persist_feedback_run(&st.store, &id, &item.search, &result)?;
     Ok(result)

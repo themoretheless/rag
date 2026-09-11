@@ -37,6 +37,7 @@ mod error;
 mod graph;
 mod health;
 mod jobs;
+mod labels;
 mod ops;
 mod retrieval;
 mod sync;
@@ -44,6 +45,7 @@ mod wiki;
 mod review;
 mod feedback;
 mod knowledge;
+mod traces;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -392,6 +394,8 @@ fn api_router(state: HttpState) -> Router {
         .merge(wiki::routes())
         .merge(review::routes())
         .merge(feedback::routes())
+        .merge(labels::routes())
+        .merge(traces::routes())
         .merge(knowledge::routes())
         .merge(admin::routes())
         .with_state(state)

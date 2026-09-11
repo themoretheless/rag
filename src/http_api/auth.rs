@@ -162,6 +162,8 @@ fn required_http_role(method: &Method, path: &str) -> AccessRole {
                 | "/v1/eval/history"
                 | "/v1/eval/feedback"
                 | "/v1/eval/runs"
+                | "/v1/eval/labels"
+                | "/v1/eval/traces"
                 | "/v1/knowledge"
                 | "/v1/knowledge/views"
                 | "/v1/sync/status"
@@ -169,13 +171,31 @@ fn required_http_role(method: &Method, path: &str) -> AccessRole {
         ) || path
             .strip_prefix("/v1/jobs/")
             .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+            || path
+                .strip_prefix("/v1/eval/labels/")
+                .is_some_and(|id| !id.is_empty() && id != "claim")
+            || path
+                .strip_prefix("/v1/eval/traces/")
+                .is_some_and(|id| !id.is_empty())
         {
             return AccessRole::Read;
         }
     }
     match (method.as_str(), path) {
         ("POST", "/v1/search" | "/v1/pack-context" | "/v1/multi-get") => AccessRole::Read,
-        ("PUT" | "POST", "/v1/wiki") | ("POST", "/v1/revisions/restore" | "/v1/wiki-proposals" | "/v1/eval/feedback" | "/v1/eval/feedback/run" | "/v1/eval/runs/compare") => AccessRole::Write,
+        ("PUT" | "POST", "/v1/wiki")
+        | (
+            "POST",
+            "/v1/revisions/restore"
+                | "/v1/wiki-proposals"
+                | "/v1/eval/feedback"
+                | "/v1/eval/feedback/run"
+                | "/v1/eval/runs/compare"
+                | "/v1/eval/labels"
+                | "/v1/eval/labels/claim"
+                | "/v1/eval/traces",
+        ) => AccessRole::Write,
+        ("PUT", path) if path.starts_with("/v1/eval/labels/") => AccessRole::Write,
         ("PUT", "/v1/knowledge") | ("POST", "/v1/knowledge/views") => AccessRole::Write,
         _ => AccessRole::Admin,
     }
@@ -280,17 +300,31 @@ mod tests {
 
     #[test]
     fn knowledge_and_feedback_roles_are_explicit() {
-        for path in ["/v1/eval/feedback", "/v1/eval/runs", "/v1/knowledge", "/v1/knowledge/views"] {
+        for path in [
+            "/v1/eval/feedback",
+            "/v1/eval/runs",
+            "/v1/eval/labels",
+            "/v1/eval/traces",
+            "/v1/knowledge",
+            "/v1/knowledge/views",
+        ] {
             assert_eq!(required_http_role(&Method::GET, path), AccessRole::Read);
         }
         for path in [
             "/v1/eval/feedback",
             "/v1/eval/feedback/run",
             "/v1/eval/runs/compare",
+            "/v1/eval/labels",
+            "/v1/eval/labels/claim",
+            "/v1/eval/traces",
             "/v1/knowledge/views",
         ] {
             assert_eq!(required_http_role(&Method::POST, path), AccessRole::Write);
         }
+        assert_eq!(
+            required_http_role(&Method::PUT, "/v1/eval/labels/abc"),
+            AccessRole::Write
+        );
         assert_eq!(required_http_role(&Method::PUT, "/v1/knowledge"), AccessRole::Write);
     }
 

@@ -16,6 +16,9 @@ use super::{
 use crate::db::search::{attach_context, ContextExpansion};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
+use crate::eval::{
+    source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder,
+};
 use crate::mcp::tools::PackHitParams;
 use crate::models::SearchHit;
 use crate::retrieval::{self, SearchCommand, SimilarDocumentsQuery};
@@ -289,6 +292,12 @@ pub(super) struct SearchBody {
     rrf_k: Option<f32>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    /// When true, response includes a local retrieval `trace` with spans and source versions.
+    #[serde(default)]
+    include_trace: bool,
+    /// When true with `include_trace`, also persist the trace into `eval_traces`.
+    #[serde(default)]
+    persist_trace: bool,
 }
 
 pub(super) async fn search_http(
@@ -296,6 +305,8 @@ pub(super) async fn search_http(
     Json(body): Json<SearchBody>,
 ) -> impl IntoResponse {
     let audit_args = search_audit_args(&body);
+    let include_trace = body.include_trace;
+    let persist_trace = body.persist_trace;
     let call = telemetry::begin("http", "http", "search", Some(&audit_args));
     let command = SearchCommand {
         query: body.query,
@@ -334,6 +345,7 @@ pub(super) async fn search_http(
             }
         };
     let mode = resolved_mode.as_str();
+    let search_span = include_trace.then(|| SpanBuilder::start("search").attr("mode", mode));
     match retrieval::execute_search(
         &state.store,
         state.embedder.as_ref(),
@@ -345,13 +357,30 @@ pub(super) async fn search_http(
         Ok(hits) => {
             call.finish(true, None, Some(format!("{} hits", hits.len())));
             let timings = hits.first().and_then(|hit| hit.explanation.clone());
-            api_ok(json!({
+            let mut response = json!({
                 "ok": true,
                 "mode": mode,
                 "count": hits.len(),
                 "timings": timings,
                 "items": hits,
-            }))
+            });
+            if let Some(builder) = search_span {
+                let versions = source_versions_for_hits(&state.store, &hits);
+                let span = builder
+                    .attr("hit_count", hits.len() as u64)
+                    .attr("source_versions", source_versions_json(&versions))
+                    .finish();
+                let mut trace = RetrievalTrace::new("search");
+                trace.push(span);
+                if persist_trace {
+                    let _ = persist_retrieval_trace(&state.store, &trace);
+                }
+                response
+                    .as_object_mut()
+                    .expect("object")
+                    .insert("trace".into(), json!(trace));
+            }
+            api_ok(response)
         }
         Err(error) => {
             call.finish(false, Some(search_error_kind(&error).into()), None);
@@ -394,12 +423,22 @@ struct PackContextBody {
     context_expansion: Option<String>,
     #[serde(default)]
     neighbor_chunks: Option<usize>,
+    #[serde(default)]
+    include_trace: bool,
+    #[serde(default)]
+    persist_trace: bool,
+    /// Optional prior search trace to extend (search → pack path).
+    #[serde(default)]
+    prior_trace: Option<RetrievalTrace>,
 }
 
 async fn pack_context_http(
     State(state): State<HttpState>,
     Json(body): Json<PackContextBody>,
 ) -> impl IntoResponse {
+    let include_trace = body.include_trace || body.prior_trace.is_some();
+    let persist_trace = body.persist_trace;
+    let prior_trace = body.prior_trace;
     let expansion = match clean(body.context_expansion)
         .as_deref()
         .map(ContextExpansion::parse)
@@ -411,6 +450,7 @@ async fn pack_context_http(
     let hits: Vec<SearchHit> = body.hits.into_iter().map(SearchHit::from).collect();
     let store = state.store.clone();
     let neighbor_chunks = body.neighbor_chunks.unwrap_or(1);
+    let pack_span = include_trace.then(|| SpanBuilder::start("pack_context"));
     let hits = match super::run_blocking("pack-context expansion", move || {
         let mut hits = hits;
         attach_context(&store, &mut hits, expansion, neighbor_chunks)?;
@@ -425,14 +465,71 @@ async fn pack_context_http(
         &hits,
         body.max_tokens.unwrap_or(state.config.max_context_tokens),
     );
-    api_ok(json!({
+    let mut response = json!({
         "ok": true,
         "total_tokens": packed.total_tokens,
         "max_tokens": packed.max_tokens,
         "omitted_count": packed.omitted_count,
         "context_text": packed.context_text,
         "hits": packed.hits,
-    }))
+    });
+    if let Some(builder) = pack_span {
+        let versions = source_versions_for_hits(&state.store, &hits);
+        let span = builder
+            .attr("total_tokens", packed.total_tokens as u64)
+            .attr("omitted_count", packed.omitted_count as u64)
+            .attr("source_versions", source_versions_json(&versions))
+            .finish();
+        let mut trace = prior_trace.unwrap_or_else(|| RetrievalTrace::new("search_pack"));
+        if trace.path.as_deref() == Some("search") {
+            trace.path = Some("search_pack".into());
+        }
+        trace.push(span);
+        if persist_trace {
+            let _ = persist_retrieval_trace(&state.store, &trace);
+        }
+        response
+            .as_object_mut()
+            .expect("object")
+            .insert("trace".into(), json!(trace));
+    }
+    api_ok(response)
+}
+
+fn source_versions_for_hits(
+    store: &crate::db::Store,
+    hits: &[SearchHit],
+) -> Vec<SourceVersion> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for hit in hits {
+        if !seen.insert(hit.document_id.clone()) {
+            continue;
+        }
+        let content_hash = store
+            .get_document(&hit.document_id)
+            .ok()
+            .flatten()
+            .and_then(|doc| doc.content_hash);
+        out.push(SourceVersion {
+            document_id: hit.document_id.clone(),
+            uri: Some(hit.document_uri.clone()),
+            content_hash,
+        });
+    }
+    out
+}
+
+fn persist_retrieval_trace(
+    store: &crate::db::Store,
+    trace: &RetrievalTrace,
+) -> Result<(), AppError> {
+    let conn = store.lock()?;
+    conn.execute(
+        "INSERT OR REPLACE INTO eval_traces VALUES (?,?)",
+        duckdb::params![trace.id, serde_json::to_string(trace)?],
+    )?;
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -687,6 +784,8 @@ mod tests {
             neighbor_chunks: None,
             rrf_k: Some(30.0),
             timeout_ms: Some(1_000),
+            include_trace: false,
+            persist_trace: false,
         };
         let serialized = search_audit_args(&body).to_string();
         assert_eq!(serialized, r#"{"mode":"hybrid","top_k":7}"#);

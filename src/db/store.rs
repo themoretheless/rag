@@ -121,6 +121,15 @@ pub(crate) struct LayerHealthCounts {
     pub uncompiled_raw_count: u64,
 }
 
+/// Lean uncompiled-raw sample row for lint / bounded compile guidance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncompiledRawSample {
+    pub document_id: String,
+    pub uri: String,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+}
+
 /// Lean first-chunk vector sample for bounded maintenance comparisons.
 ///
 /// Keeping this shape in the data plane prevents maintenance code from loading
@@ -1982,6 +1991,55 @@ impl Store {
             indexed_pages: count(counts.3),
             uncompiled_raw_count: count(counts.4),
         })
+    }
+
+    /// Bounded sample of uncompiled raw docs for lint / compile-batch guidance.
+    ///
+    /// Does not attempt to compile the corpus; agents should filter by wing/room
+    /// and close debt via index-first / `file_answer` / compile helpers.
+    pub fn list_uncompiled_raw_sample(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<UncompiledRawSample>> {
+        let limit = limit.clamp(1, 200) as i64;
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT raw.id, raw.uri, raw.wing, raw.room
+            FROM documents raw
+            WHERE raw.layer = 'raw'
+              AND (
+                (SELECT COUNT(*) FROM documents wiki WHERE wiki.layer = 'wiki') = 0
+                OR NOT EXISTS (
+                  SELECT 1
+                  FROM graph_edges edge
+                  JOIN graph_nodes source ON source.id = edge.source_id
+                  WHERE edge.target_id = (
+                    SELECT target.id
+                    FROM graph_nodes target
+                    WHERE target.document_id = raw.id
+                    LIMIT 1
+                  )
+                    AND source.id <> edge.target_id
+                    AND source.resolved
+                    AND starts_with(source.uri, 'wiki://')
+                )
+              )
+            ORDER BY raw.wing ASC NULLS LAST, raw.room ASC NULLS LAST, raw.uri ASC
+            LIMIT ?
+            "#,
+        )?;
+        let rows = stmt
+            .query_map([limit], |row| {
+                Ok(UncompiledRawSample {
+                    document_id: row.get(0)?,
+                    uri: row.get(1)?,
+                    wing: row.get(2)?,
+                    room: row.get(3)?,
+                })
+            })?
+            .collect::<duckdb::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// Filesystem size of the main DuckDB file, when readable.

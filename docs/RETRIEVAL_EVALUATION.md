@@ -72,14 +72,30 @@ RAG_EMBEDDING_PROVIDER=mock cargo run --bin eval -- \
 dataset hash and settings names. Optional `--error-labels FILE.jsonl` attaches
 human labels (`wrong_top_hit`, `missing_relevant`, …) to regression rows.
 
-Gateway (schema 14): `GET /v1/eval/runs`, `POST /v1/eval/runs/compare`, and
+Gateway (schema 15): `GET /v1/eval/runs`, `POST /v1/eval/runs/compare`,
+`GET|POST /v1/eval/labels` (lease+CAS queue), `GET|POST /v1/eval/traces`, and
 feedback runs persist into `eval_runs`. Background jobs persist to
-`background_jobs` and in-flight work is marked failed on process restart.
+`background_jobs`. Interrupted `source_sync` jobs are marked `Failed` with
+`requeue_safe=true`; `POST /v1/jobs/{id}/requeue` starts a **new** sync that
+skips unchanged committed files. This is committed-prefix aware, not mid-batch
+embed resume.
+
+Search/pack accept `include_trace` / `persist_trace` for local span trees with
+source document versions/hashes (no remote Opik stack). Feedback runs attach a
+deterministic `citation_judge` (citation presence / expected-doc coverage).
 
 - Corpus paths are relative to `--root` (the current directory by default).
 - `document_title` is the corpus filename and matches returned titles exactly.
 - `relevance` is a positive integer grade. Omit non-relevant documents.
 - Query IDs should remain stable for per-query comparisons.
+
+### Job resume limits (honest)
+
+| Safe | Unsafe / not claimed |
+|------|----------------------|
+| Requeue after interrupt/cancel/fail | Resuming an in-flight embedding batch |
+| Skip unchanged files via source manifest | Inventing progress beyond last committed batch |
+| Re-POST `/v1/jobs/sync` with same path | Multi-writer sync against the same DuckDB |
 
 The small [`example-v1.json`](../data/eval/example-v1.json) is input data, not
 generated benchmark output.

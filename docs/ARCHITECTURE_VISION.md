@@ -620,6 +620,7 @@ Product- and architecture-level. Graph/UI micro-decisions stay in [`GRAPH_EGUI_D
 | V-D24 | **External ANN / VSS** only after measured full-scan pain | §4.2, §11 |
 | V-D25 | **North-star metrics** (index coverage, uncompiled debt, index-first wins, filed answers, zero forbidden leaks) gate new work | §0, §14 |
 | V-D26 | **This vision binds product intent** over FEATURES/ROADMAP/NOTES where they conflict | §15, §18 |
+| V-D27 | **Parked kg/diary retained behind `RAG_TOOLS=full` for one more cycle**; delete later if unused. Organize chrome stays parked. | §7, §5.4, former V-O11 |
 
 ### Rejected
 
@@ -656,7 +657,6 @@ Product- and architecture-level. Graph/UI micro-decisions stay in [`GRAPH_EGUI_D
 | V-O8 | blake3 stable ids vs UUID migrate gate | Follow GRAPH_DESIGN; do not block spine cut |
 | V-O9 | Remaining north-star metrics beyond shipped layer health/index coverage | Add only when a client can act on the metric |
 | V-O10 | Native visual-regression coverage | Add deterministic workspace screenshots after a real escaped layout regression or second desktop target |
-| V-O11 | Whether parked kg/diary code is deleted or `#[cfg]`/flag retained | Prefer flag retain one cycle, then delete if unused |
 
 ---
 

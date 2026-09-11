@@ -37,7 +37,15 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/jobs/sync", post(start_sync))
         .route("/v1/jobs", get(list_jobs))
         .route("/v1/jobs/{id}", get(get_job).delete(cancel_job))
+        .route("/v1/jobs/{id}/requeue", post(requeue_job))
 }
+
+/// Honest resume limits for source_sync after process interrupt.
+///
+/// Requeue is safe because sync skips unchanged committed files (committed-prefix
+/// awareness via source manifests). It does **not** resume an in-flight embedding
+/// batch; any uncommitted batch from the interrupted run was never written.
+pub const SOURCE_SYNC_REQUEUE_LIMITS: &str = "requeue_safe: source_sync skips unchanged committed files; does not resume mid-batch embeds or delete-phase mid-flight";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SyncJobRequest {
@@ -122,6 +130,17 @@ pub struct JobSnapshot {
     pub report: Option<SourceSyncJobReport>,
     pub error: Option<String>,
     pub cancel_requested: bool,
+    /// True when a new sync with the same request is safe after interrupt/failure.
+    /// Source sync is committed-prefix aware (unchanged files skip); mid-batch
+    /// embeds are not resumed.
+    #[serde(default)]
+    pub requeue_safe: bool,
+    /// Human-readable resume limits when `requeue_safe` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_limits: Option<String>,
+    /// Job id this snapshot was requeued from, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requeued_from: Option<String>,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -170,6 +189,10 @@ impl JobRegistry {
     }
 
     /// Load durable job history and mark any in-flight rows as failed.
+    ///
+    /// Interrupted `source_sync` jobs are marked `requeue_safe` so operators can
+    /// `POST /v1/jobs/{id}/requeue` without inventing mid-batch resume. Requeue
+    /// starts a fresh sync that skips already-committed unchanged files.
     pub fn restore_from_store(store: Arc<Store>) -> Result<Self, AppError> {
         let registry = Self::with_store(store.clone());
         let conn = store.lock()?;
@@ -181,9 +204,7 @@ impl JobRegistry {
         for (id, payload) in rows {
             let mut snapshot: JobSnapshot = serde_json::from_str(&payload)?;
             if !snapshot.status.is_terminal() {
-                snapshot.status = JobStatus::Failed;
-                snapshot.error = Some("interrupted by process restart".into());
-                snapshot.finished_at = Some(Utc::now());
+                mark_interrupted(&mut snapshot);
                 conn.execute(
                     "INSERT OR REPLACE INTO background_jobs VALUES (?, ?)",
                     params![id, serde_json::to_string(&snapshot)?],
@@ -230,12 +251,56 @@ impl JobRegistry {
         Ok(())
     }
 
+    /// Requeue a terminal `source_sync` job that is marked `requeue_safe`.
+    ///
+    /// Creates a **new** queued job with the same request. Does not resurrect the
+    /// old id or invent mid-batch resume state.
+    pub fn requeue_source_sync(
+        &self,
+        id: &str,
+        store: Arc<Store>,
+        embedder: Arc<dyn EmbeddingProvider>,
+        config: Config,
+    ) -> Result<JobSnapshot, AppError> {
+        let prior = self
+            .get(id)
+            .ok_or_else(|| AppError::not_found(format!("job not found: {id}")))?;
+        if !prior.status.is_terminal() {
+            return Err(AppError::conflict(
+                "job is still active; cancel or wait before requeue",
+            ));
+        }
+        if prior.kind != "source_sync" || !prior.requeue_safe {
+            return Err(AppError::config(
+                "job is not requeue_safe; only interrupted/failed source_sync jobs with committed-prefix awareness may be requeued",
+            ));
+        }
+        self.start_source_sync_from(
+            prior.request.clone(),
+            store,
+            embedder,
+            config,
+            Some(prior.id),
+        )
+    }
+
     pub fn start_source_sync(
         &self,
         request: SyncJobRequest,
         store: Arc<Store>,
         embedder: Arc<dyn EmbeddingProvider>,
         config: Config,
+    ) -> Result<JobSnapshot, AppError> {
+        self.start_source_sync_from(request, store, embedder, config, None)
+    }
+
+    fn start_source_sync_from(
+        &self,
+        request: SyncJobRequest,
+        store: Arc<Store>,
+        embedder: Arc<dyn EmbeddingProvider>,
+        config: Config,
+        requeued_from: Option<String>,
     ) -> Result<JobSnapshot, AppError> {
         if request.max_file_bytes == Some(0) {
             return Err(AppError::config("max_file_bytes must be greater than zero"));
@@ -251,6 +316,9 @@ impl JobRegistry {
             report: None,
             error: None,
             cancel_requested: false,
+            requeue_safe: false,
+            resume_limits: None,
+            requeued_from,
             created_at: Utc::now(),
             started_at: None,
             finished_at: None,
@@ -306,14 +374,14 @@ impl JobRegistry {
                     } else {
                         JobStatus::CompletedWithErrors
                     };
-                    registry.finish(&id, status, Some(report), None);
+                    registry.finish(&id, status, Some(report), None, Some(false));
                 }
                 Ok(SourceSyncOutcome::Cancelled(report)) => registry.finish_cancelled(&id, report),
                 Err(_error) if cancellation.is_cancelled() => {
                     registry.finish_cancelled(&id, SourceSyncReport::default());
                 }
                 Err(error) => {
-                    registry.finish(&id, JobStatus::Failed, None, Some(error.to_string()));
+                    registry.finish_failed_requeueable(&id, error.to_string());
                 }
             }
         });
@@ -403,7 +471,18 @@ impl JobRegistry {
     }
 
     fn finish_cancelled(&self, id: &str, report: SourceSyncReport) {
-        self.finish(id, JobStatus::Cancelled, Some(report), None);
+        // Cancelled runs may already have committed a prefix; requeue is safe.
+        self.finish(
+            id,
+            JobStatus::Cancelled,
+            Some(report),
+            None,
+            Some(true),
+        );
+    }
+
+    fn finish_failed_requeueable(&self, id: &str, error: String) {
+        self.finish(id, JobStatus::Failed, None, Some(error), Some(true));
     }
 
     fn finish(
@@ -412,6 +491,7 @@ impl JobRegistry {
         status: JobStatus,
         report: Option<SourceSyncReport>,
         error: Option<String>,
+        requeue_safe: Option<bool>,
     ) {
         let (snapshot, removed) = {
             let mut jobs = self.jobs();
@@ -423,6 +503,10 @@ impl JobRegistry {
                 entry.snapshot.report = report.map(SourceSyncJobReport::from);
                 entry.snapshot.error = error;
                 entry.snapshot.finished_at = Some(Utc::now());
+                if let Some(safe) = requeue_safe {
+                    entry.snapshot.requeue_safe = safe;
+                    entry.snapshot.resume_limits = safe.then(|| SOURCE_SYNC_REQUEUE_LIMITS.into());
+                }
                 entry.snapshot.clone()
             } else {
                 return;
@@ -444,11 +528,25 @@ impl JobRegistry {
     }
 }
 
+fn mark_interrupted(snapshot: &mut JobSnapshot) {
+    snapshot.status = JobStatus::Failed;
+    snapshot.error = Some("interrupted by process restart".into());
+    snapshot.finished_at = Some(Utc::now());
+    if snapshot.kind == "source_sync" {
+        snapshot.requeue_safe = true;
+        snapshot.resume_limits = Some(SOURCE_SYNC_REQUEUE_LIMITS.into());
+    }
+}
+
 fn mark_cancelled(snapshot: &mut JobSnapshot, report: SourceSyncReport) {
     snapshot.status = JobStatus::Cancelled;
     snapshot.report = Some(report.into());
     snapshot.error = None;
     snapshot.finished_at = Some(Utc::now());
+    if snapshot.kind == "source_sync" {
+        snapshot.requeue_safe = true;
+        snapshot.resume_limits = Some(SOURCE_SYNC_REQUEUE_LIMITS.into());
+    }
 }
 
 fn prune_jobs(jobs: &mut HashMap<String, JobEntry>) -> Vec<String> {
@@ -520,6 +618,26 @@ async fn cancel_job(State(state): State<HttpState>, Path(id): Path<String>) -> R
     }
 }
 
+async fn requeue_job(State(state): State<HttpState>, Path(id): Path<String>) -> Response {
+    match state.jobs.requeue_source_sync(
+        &id,
+        state.store.clone(),
+        state.embedder.clone(),
+        state.config.clone(),
+    ) {
+        Ok(snapshot) => (
+            StatusCode::ACCEPTED,
+            Json(json!({
+                "ok": true,
+                "job": snapshot,
+                "resume_limits": SOURCE_SYNC_REQUEUE_LIMITS,
+            })),
+        )
+            .into_response(),
+        Err(error) => api_err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,6 +698,9 @@ mod tests {
                 report: None,
                 error: None,
                 cancel_requested: false,
+                requeue_safe: false,
+                resume_limits: None,
+                requeued_from: None,
                 created_at: Utc::now(),
                 started_at: None,
                 finished_at: status.is_terminal().then(Utc::now),
@@ -950,6 +1071,9 @@ mod tests {
             report: None,
             error: None,
             cancel_requested: false,
+            requeue_safe: false,
+            resume_limits: None,
+            requeued_from: None,
             created_at: Utc::now(),
             started_at: Some(Utc::now()),
             finished_at: None,
@@ -971,6 +1095,11 @@ mod tests {
             Some("interrupted by process restart")
         );
         assert!(restored.finished_at.is_some());
+        assert!(restored.requeue_safe);
+        assert!(restored
+            .resume_limits
+            .as_deref()
+            .is_some_and(|s| s.contains("committed")));
 
         let payload: String = store
             .lock()
@@ -988,6 +1117,100 @@ mod tests {
             Some("interrupted by process restart")
         );
         assert!(stored.finished_at.is_some());
+        assert!(stored.requeue_safe);
+    }
+
+    #[tokio::test]
+    async fn requeue_creates_new_job_from_interrupted() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "# requeue").unwrap();
+        let state = state(root.path());
+        let interrupted = JobSnapshot {
+            id: "job-old".into(),
+            kind: "source_sync".into(),
+            status: JobStatus::Failed,
+            request: SyncJobRequest {
+                path: root.path().display().to_string(),
+                remove_deleted: false,
+                wing: Some("jobs-test".into()),
+                room: None,
+                max_file_bytes: None,
+            },
+            progress: Some(crate::source_sync::SourceSyncProgress {
+                phase: crate::source_sync::SourceSyncPhase::Syncing,
+                total_files: 10,
+                processed_files: 3,
+                current_path: None,
+                added: 2,
+                updated: 0,
+                skipped: 1,
+                deleted: 0,
+                errors: 0,
+                counters: crate::source_sync::SourceSyncCounters::default(),
+            }),
+            report: None,
+            error: Some("interrupted by process restart".into()),
+            cancel_requested: false,
+            requeue_safe: true,
+            resume_limits: Some(SOURCE_SYNC_REQUEUE_LIMITS.into()),
+            requeued_from: None,
+            created_at: Utc::now(),
+            started_at: Some(Utc::now()),
+            finished_at: Some(Utc::now()),
+        };
+        {
+            let mut jobs = state.jobs.jobs();
+            jobs.insert(
+                interrupted.id.clone(),
+                JobEntry {
+                    sequence: 1,
+                    snapshot: interrupted.clone(),
+                    cancellation: CancellationToken::new(),
+                },
+            );
+        }
+
+        let app = routes().with_state(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/jobs/job-old/requeue")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_ne!(body["job"]["id"], "job-old");
+        assert_eq!(body["job"]["status"], "queued");
+        assert_eq!(body["job"]["requeued_from"], "job-old");
+        assert!(body["resume_limits"].as_str().unwrap().contains("committed"));
+
+        let finished = wait_for_terminal(&state.jobs, body["job"]["id"].as_str().unwrap()).await;
+        assert_eq!(finished.status, JobStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn requeue_refuses_active_job() {
+        let root = tempfile::tempdir().unwrap();
+        let state = state(root.path());
+        {
+            let mut jobs = state.jobs.jobs();
+            jobs.insert("job-1".into(), entry(1, JobStatus::Running));
+        }
+        let err = state
+            .jobs
+            .requeue_source_sync(
+                "job-1",
+                state.store.clone(),
+                state.embedder.clone(),
+                state.config.clone(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)));
     }
 
     #[tokio::test]

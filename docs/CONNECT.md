@@ -677,6 +677,18 @@ import — по file metadata/bounded read до DB mutation. Для больше
 
 Index-first: сначала catalog/wiki, потом raw `search`.
 
+### Closing uncompiled raw debt (bounded)
+
+Do **not** attempt to compile tens of thousands of raw docs in one pass.
+Prefer:
+
+1. `status` / `doctor` / `lint_wiki` — `uncompiled_raw_count` plus a bounded
+   wing/room sample on the `raw_uncompiled` lint issue.
+2. Scope with `list_sources` / `list_documents` (`wing`, `room`, `limit`).
+3. Compile or summarize a small batch, then `file_answer` / `write_wiki_page`
+   with CAS; `rebuild_index` when the catalog should reflect new pages.
+4. Repeat by shelf until debt is acceptably low for the active project.
+
 **`ingest_file`:** path must be under `RAG_INGEST_ROOTS`. Optional placement: **`wing`**, **`room`** (project shelf). Same absolute path re-ingest = upsert.  
 `ingest_text` **не** принимает wing/room (asymmetry). Wiki compile: `ingest_file` **не** обновляет wiki pages; после meaningful doc changes - `get_wiki_page` + `update_wiki_page` / `write_wiki_page` с CAS.
 

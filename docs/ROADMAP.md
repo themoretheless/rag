@@ -56,6 +56,8 @@ only when their entry condition is observed.
 | Full Markdown application backend | A real workflow requires Markdown as the active source of truth rather than export/document CRUD | Shared conformance covers document lifecycle, lexical search, wikilink graph, crash recovery and capability refusals; no silent DuckDB fallback |
 | Native visual regression harness | A workspace-level layout regression escapes unit tests or a second supported desktop target is added | Deterministic screenshots for Home, Library, Search, Wiki, Connections and Operations at minimum and compact window sizes |
 
+**2026-09-10 skip note:** ANN/VSS, full Markdown backend, and screenshot harness remain skipped — no new representative hybrid p95 > 300 ms measurement and no ROADMAP entry-condition observations this cycle.
+
 A recorded local exact-search run at 100,111 chunks observed 133.98 ms hybrid
 p95, below the 300 ms scale gate. Adding ANN before repeated representative
 release runs fail that gate is not roadmap work.

@@ -4,16 +4,22 @@
 mod apply;
 mod checkpoint;
 mod compare;
+mod judges;
 mod labels;
 mod metrics;
 mod settings;
+mod trace;
 
 pub use apply::apply_settings_profile;
 pub use checkpoint::{load_checkpoint, save_checkpoint, Checkpoint};
 pub use compare::{compare_query_metrics, CompareReport, QuerySideMetrics, RegressionEntry};
+pub use judges::{judge_citations, CitationJudgeInput, CitationJudgeResult};
 pub use labels::{ErrorLabel, QueryErrorLabel};
 pub use metrics::{macro_average, score_ranked_titles, RankedTitle, ScoredQuery};
 pub use settings::SearchSettingsProfile;
+pub use trace::{
+    source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder, TraceSpan,
+};
 
 use crate::util::content_hash;
 use std::path::Path;

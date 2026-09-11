@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 14;
+pub const SCHEMA_VERSION: i32 = 15;
 
 /// Durable node registry and replication journal. Payloads are intentionally
 /// opaque here: transport persists them before higher layers apply/rebuild.
@@ -425,6 +425,8 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             "CREATE TABLE IF NOT EXISTS wiki_proposals (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
             "CREATE TABLE IF NOT EXISTS eval_runs (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
             "CREATE TABLE IF NOT EXISTS background_jobs (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS eval_label_queue (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS eval_traces (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
             CREATE_COLLECTIONS,
             CREATE_COLLECTION_ENTRIES,
             CREATE_COLLECTION_DEPENDENCIES,

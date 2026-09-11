@@ -230,6 +230,12 @@ pub struct LinkHealthCounts {
     pub self_links: usize,
     pub duplicate_link_groups: usize,
     pub duplicate_link_occurrences: usize,
+    /// Raw documents without a related wiki parent (compile debt).
+    #[serde(default)]
+    pub uncompiled_raw_count: usize,
+    /// Sample size included in `raw_uncompiled` / `uncompiled_raw_sample` issues.
+    #[serde(default)]
+    pub uncompiled_raw_sample_count: usize,
 }
 
 /// Lint report.
@@ -2439,19 +2445,50 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
         });
     }
 
-    // Raw without any related wiki (soft)
-    let raws = store.list_documents_by_layer("raw")?;
-    if !raws.is_empty() && wiki_docs.is_empty() {
+    // Raw without related wiki (compile debt). Prefer status/doctor counts for
+    // the full number; lint emits a bounded sample so agents can close debt via
+    // index-first / file_answer / compile batches scoped by wing/room.
+    const UNCOMPILED_SAMPLE_LIMIT: usize = 25;
+    let layer_health = store.layer_health_counts()?;
+    health.uncompiled_raw_count = layer_health.uncompiled_raw_count as usize;
+    if health.uncompiled_raw_count > 0 {
+        let sample = store.list_uncompiled_raw_sample(UNCOMPILED_SAMPLE_LIMIT)?;
+        health.uncompiled_raw_sample_count = sample.len();
+        let mut by_shelf: BTreeMap<(String, String), usize> = BTreeMap::new();
+        for row in &sample {
+            let wing = row.wing.clone().unwrap_or_else(|| "_".into());
+            let room = row.room.clone().unwrap_or_else(|| "_".into());
+            *by_shelf.entry((wing, room)).or_default() += 1;
+        }
+        let shelves: Vec<String> = by_shelf
+            .into_iter()
+            .map(|((w, r), n)| format!("{w}/{r}:{n}"))
+            .collect();
         issues.push(LintIssue {
             code: "raw_uncompiled".into(),
             severity: "info".into(),
             message: format!(
-                "{} raw sources present but no wiki pages; run compile_source",
-                raws.len()
+                "{} uncompiled raw source(s); sample {} (wing/room counts: {}). Close via bounded compile / file_answer, not a full corpus pass.",
+                health.uncompiled_raw_count,
+                sample.len(),
+                if shelves.is_empty() {
+                    "n/a".into()
+                } else {
+                    shelves.join(", ")
+                }
             ),
-            entity_id: None,
-            expected_label: None,
-            referenced_by: vec![],
+            entity_id: sample.first().map(|r| r.document_id.clone()),
+            referenced_by: sample
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{} ({} / {})",
+                        r.uri,
+                        r.wing.as_deref().unwrap_or("_"),
+                        r.room.as_deref().unwrap_or("_")
+                    )
+                })
+                .collect(),
             ..Default::default()
         });
     }
