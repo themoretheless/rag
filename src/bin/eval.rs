@@ -5,7 +5,8 @@ use rag_mcp::db::search::{search, SearchQuery};
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
 use rag_mcp::eval::{
     apply_settings_profile, compare_query_metrics, dataset_content_hash, load_checkpoint,
-    save_checkpoint, Checkpoint, QueryErrorLabel, QuerySideMetrics, SearchSettingsProfile,
+    load_export_bundle, replay_bundle, save_checkpoint, Checkpoint, QueryErrorLabel,
+    QuerySideMetrics, SearchSettingsProfile,
 };
 use rag_mcp::models::{SearchHit, SearchMode};
 use rag_mcp::wiki;
@@ -162,6 +163,7 @@ struct Args {
     compare_out: Option<PathBuf>,
     checkpoint: Option<PathBuf>,
     error_labels: Option<PathBuf>,
+    replay: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -205,6 +207,7 @@ where
     let mut compare_out = None;
     let mut checkpoint = None;
     let mut error_labels = None;
+    let mut replay = None;
     let mut it = args.into_iter().map(Into::into);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -282,6 +285,9 @@ where
                     it.next().context("--error-labels needs path")?,
                 ))
             }
+            "--replay" => {
+                replay = Some(PathBuf::from(it.next().context("--replay needs path")?))
+            }
             "-h" | "--help" => {
                 eprintln!(
                     "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N]\n\
@@ -292,9 +298,10 @@ where
                      \t[--synthetic-chunks N]\n\
                      \t[--settings-a FILE.json --settings-b FILE.json]\n\
                      \t[--compare-out FILE.json] [--checkpoint FILE.json]\n\
-                     \t[--error-labels FILE.jsonl]\n\
+                     \t[--error-labels FILE.jsonl] [--replay FILE.json]\n\
                      Uses a throwaway database. --golden remains a --dataset alias.\n\
-                     A/B compare: both --settings-a and --settings-b; resume via --checkpoint."
+                     A/B compare: both --settings-a and --settings-b; resume via --checkpoint.\n\
+                     --replay recomputes heuristic judges from an export bundle (no live search)."
                 );
                 std::process::exit(0);
             }
@@ -335,6 +342,9 @@ where
     if error_labels.is_some() && !compare {
         bail!("--error-labels requires --settings-a and --settings-b");
     }
+    if replay.is_some() && compare {
+        bail!("--replay cannot be combined with A/B compare");
+    }
     Ok(Args {
         dataset: dataset.unwrap_or_else(|| root.join(DEFAULT_DATASET)),
         root,
@@ -356,10 +366,17 @@ where
         compare_out,
         checkpoint,
         error_labels,
+        replay,
     })
 }
 
 async fn run(args: Args) -> Result<()> {
+    if let Some(path) = &args.replay {
+        let bundle = load_export_bundle(path).map_err(|e| anyhow::anyhow!(e))?;
+        let report = replay_bundle(&bundle).map_err(|e| anyhow::anyhow!(e))?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     let dataset = load_dataset(&args.dataset)?;
     let dataset_hash = dataset_content_hash(&args.dataset).map_err(|e| anyhow::anyhow!(e))?;
     let db_path = std::env::temp_dir().join(format!("rag-eval-{}.duckdb", std::process::id()));
@@ -1307,6 +1324,7 @@ mod tests {
         assert_eq!(args.min_throughput_qps, None);
         assert_eq!(args.top_k, 5);
         assert_eq!(args.modes.len(), 3);
+        assert_eq!(args.replay, None);
     }
 
     #[test]

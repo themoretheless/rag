@@ -152,6 +152,10 @@ async fn create(State(st): State<HttpState>, Json(body): Json<Capture>) -> Respo
 #[derive(Deserialize)]
 struct Run {
     id: String,
+    #[serde(default)]
+    answer_text: Option<String>,
+    #[serde(default)]
+    use_llm: bool,
 }
 fn stale(store: &Store, item: &Feedback) -> Result<bool> {
     for e in &item.expected {
@@ -164,7 +168,7 @@ fn stale(store: &Store, item: &Feedback) -> Result<bool> {
     }
     Ok(false)
 }
-fn persist_eval_run(store: &Store, payload: &Value) -> Result<()> {
+pub(super) fn persist_eval_run(store: &Store, payload: &Value) -> Result<()> {
     let id = payload
         .get("id")
         .and_then(|v| v.as_str())
@@ -345,13 +349,18 @@ async fn compare_runs(st: HttpState, body: CompareBody) -> Result<Value> {
     Ok(report)
 }
 async fn run(State(st): State<HttpState>, Json(body): Json<Run>) -> Response {
-    let result = run_one(st, body.id).await;
+    let result = run_one(st, body.id, body.answer_text, body.use_llm).await;
     match result {
         Ok(result) => api_ok(result),
         Err(e) => api_err(e),
     }
 }
-async fn run_one(st: HttpState, id: String) -> Result<Value> {
+async fn run_one(
+    st: HttpState,
+    id: String,
+    answer_text: Option<String>,
+    use_llm: bool,
+) -> Result<Value> {
     let item: Feedback = {
         let conn = st.store.lock()?;
         let payload: Option<String> = conn
@@ -398,24 +407,40 @@ async fn run_one(st: HttpState, id: String) -> Result<Value> {
         .iter()
         .map(|e| e.document_id.clone())
         .collect();
-    let citation_judge = crate::eval::judge_citations(&crate::eval::CitationJudgeInput {
-        answer_text: None,
-        cited_document_ids: cited_ids,
-        expected_document_ids: expected_ids,
-    });
+    let question = item.search["query"].as_str().unwrap_or("").to_string();
+    let judge_input = crate::eval::AnswerJudgeInput {
+        question: question.clone(),
+        answer_text: answer_text.clone().unwrap_or_default(),
+        cited_document_ids: cited_ids.clone(),
+        expected_document_ids: expected_ids.clone(),
+        gold_answer: None,
+        context_text: None,
+    };
+    let mut answer_judge = crate::eval::judge_answer_heuristic(&judge_input);
+    if use_llm {
+        if let Some(enriched) = super::eval_ops::maybe_llm_judge(&st, judge_input, None).await? {
+            answer_judge = enriched;
+        }
+    }
+    let citation_judge = answer_judge.citation.clone();
     let result = json!({
         "id": id,
         "status": "evaluated",
         "run_at": chrono::Utc::now().to_rfc3339(),
+        "question": question,
+        "answer_text": answer_text,
+        "cited_document_ids": cited_ids,
+        "expected_document_ids": expected_ids,
         "mode": search_result["mode"],
         "recall": recall,
         "mrr": mrr,
         "citation_judge": citation_judge,
+        "answer_judge": answer_judge,
         "empty_result_for_no_answer": item.no_answer.then_some(hits.is_empty()),
         "result_count": hits.len(),
         "timings": search_result["timings"],
         "embedding_manifest": st.store.get_embedding_manifest()?,
-        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer correctness; citation_judge is deterministic expected-doc coverage over hit document ids"
+        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer correctness; citation_judge is deterministic expected-doc coverage; answer_judge is heuristic unless use_llm and RAG_LLM_ENABLED"
     });
     persist_feedback_run(&st.store, &id, &item.search, &result)?;
     Ok(result)
@@ -489,13 +514,13 @@ mod tests {
         let a = capture(&st.store, input(id.clone(), vec![doc.clone()], false)).unwrap();
         let b = capture(&st.store, input(id.clone(), vec![doc.clone()], false)).unwrap();
         assert_eq!(a.saved_at, b.saved_at);
-        let report = run_one(st.clone(), id.clone()).await.unwrap();
+        let report = run_one(st.clone(), id.clone(), None, false).await.unwrap();
         assert_eq!(report["recall"], 1.0);
         assert_eq!(report["mrr"], 1.0);
         let mut source = st.store.get_document(&doc).unwrap().unwrap();
         source.content = "changed".into();
         st.store.upsert_document(&source).unwrap();
-        assert_eq!(run_one(st, id).await.unwrap()["status"], "source_changed");
+        assert_eq!(run_one(st, id, None, false).await.unwrap()["status"], "source_changed");
     }
     #[tokio::test]
     async fn negative_questions_are_not_counted_as_positive_recall() {
@@ -515,7 +540,7 @@ mod tests {
             input(uuid::Uuid::new_v4().to_string(), vec![], true),
         )
         .unwrap();
-        let report = run_one(st, item.id).await.unwrap();
+        let report = run_one(st, item.id, None, false).await.unwrap();
         assert!(report["recall"].is_null());
         assert_eq!(report["empty_result_for_no_answer"], false);
     }
@@ -547,7 +572,7 @@ mod tests {
         let (st, doc) = fixture().await;
         let id = uuid::Uuid::new_v4().to_string();
         capture(&st.store, input(id.clone(), vec![doc], false)).unwrap();
-        let report = run_one(st.clone(), id.clone()).await.unwrap();
+        let report = run_one(st.clone(), id.clone(), None, false).await.unwrap();
         assert_eq!(report["status"], "evaluated");
         let conn = st.store.lock().unwrap();
         let count: i64 = conn

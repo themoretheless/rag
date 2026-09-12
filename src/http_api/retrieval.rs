@@ -250,9 +250,9 @@ async fn revision_diff(
 }
 
 /// Full `SearchParams` mirror (same names as the MCP `search` tool).
-#[derive(serde::Serialize, Deserialize)]
+#[derive(Clone, serde::Serialize, Deserialize)]
 pub(super) struct SearchBody {
-    query: String,
+    pub(super) query: String,
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]

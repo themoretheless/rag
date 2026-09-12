@@ -164,6 +164,8 @@ fn required_http_role(method: &Method, path: &str) -> AccessRole {
                 | "/v1/eval/runs"
                 | "/v1/eval/labels"
                 | "/v1/eval/traces"
+                | "/v1/eval/prompts"
+                | "/v1/eval/export"
                 | "/v1/knowledge"
                 | "/v1/knowledge/views"
                 | "/v1/sync/status"
@@ -176,6 +178,9 @@ fn required_http_role(method: &Method, path: &str) -> AccessRole {
                 .is_some_and(|id| !id.is_empty() && id != "claim")
             || path
                 .strip_prefix("/v1/eval/traces/")
+                .is_some_and(|id| !id.is_empty())
+            || path
+                .strip_prefix("/v1/eval/prompts/")
                 .is_some_and(|id| !id.is_empty())
         {
             return AccessRole::Read;
@@ -193,7 +198,11 @@ fn required_http_role(method: &Method, path: &str) -> AccessRole {
                 | "/v1/eval/runs/compare"
                 | "/v1/eval/labels"
                 | "/v1/eval/labels/claim"
-                | "/v1/eval/traces",
+                | "/v1/eval/traces"
+                | "/v1/eval/judge"
+                | "/v1/eval/online"
+                | "/v1/eval/replay"
+                | "/v1/eval/prompts",
         ) => AccessRole::Write,
         ("PUT", path) if path.starts_with("/v1/eval/labels/") => AccessRole::Write,
         ("PUT", "/v1/knowledge") | ("POST", "/v1/knowledge/views") => AccessRole::Write,
@@ -304,6 +313,8 @@ mod tests {
             "/v1/eval/runs",
             "/v1/eval/labels",
             "/v1/eval/traces",
+            "/v1/eval/prompts",
+            "/v1/eval/export",
             "/v1/knowledge",
             "/v1/knowledge/views",
         ] {
@@ -316,6 +327,10 @@ mod tests {
             "/v1/eval/labels",
             "/v1/eval/labels/claim",
             "/v1/eval/traces",
+            "/v1/eval/judge",
+            "/v1/eval/online",
+            "/v1/eval/replay",
+            "/v1/eval/prompts",
             "/v1/knowledge/views",
         ] {
             assert_eq!(required_http_role(&Method::POST, path), AccessRole::Write);

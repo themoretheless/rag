@@ -46,6 +46,7 @@ mod review;
 mod feedback;
 mod knowledge;
 mod traces;
+mod eval_ops;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -396,6 +397,7 @@ fn api_router(state: HttpState) -> Router {
         .merge(feedback::routes())
         .merge(labels::routes())
         .merge(traces::routes())
+        .merge(eval_ops::routes())
         .merge(knowledge::routes())
         .merge(admin::routes())
         .with_state(state)

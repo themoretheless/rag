@@ -1,6 +1,7 @@
-//! Deterministic answer / citation checks on top of retrieval metrics.
+//! Deterministic citation checks on top of retrieval metrics.
 //!
-//! LLM judges are intentionally out of scope here; these helpers only look at
+//! Answer-level scoring lives in [`super::answer_judge`]: heuristic always,
+//! optional local LLM behind a versioned prompt. This module only looks at
 //! cited document ids / answer text markers against expected sources.
 
 use serde::{Deserialize, Serialize};

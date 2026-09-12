@@ -2,7 +2,7 @@
 
 **Status:** product architecture core and evidence gates; binding for design and refactor priority.
 
-**Updated:** 2026-09-02
+**Updated:** 2026-09-11
 
 **Does not replace:** [`SPEC.md`](../SPEC.md) (v1 wire contract), [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) (layer mechanics and diagrams).
 
@@ -652,17 +652,16 @@ Product- and architecture-level. Graph/UI micro-decisions stay in [`GRAPH_EGUI_D
 |----|----------|-----|
 | V-O3 | **No `wake_up` on spine.** Session bootstrap is `get_schema` + `read_log` + `status`. | Spine test already refuses `wake_up`; diary stays behind `RAG_TOOLS=full`. |
 | V-O4 | **No `graph_expand_search` on spine.** Clients expand via `get_neighbors` / `get_backlinks`. | Avoid a second search identity; expand helper remains full-only. |
+| V-O5 | **Do not expand `Storage` past the shipped document slice.** DuckDB remains the application façade. | Extend the trait only when a second backend has shared capability-conformance tests. SQLite/Postgres/memory stay named refusals. |
+| V-O6 | **Markdown is not a live application SoT.** Vault = export + opt-in document CRUD + sidecar. | Dual-live DuckDB+vault stays rejected (V-R11). Full Markdown app backend stays ROADMAP evidence-gated. |
 | V-O7 | **Freeze `SPEC.md` as v1 substrate history.** Identity and current tools live in README + this vision. | A third competing SPEC would confuse implementers. |
+| V-O8 | **Keep UUID document/node ids on the live corpus.** blake3 stays a content-hash, not an identity migrate. | GRAPH_DESIGN’s deterministic node-id gate needs a merge/remap first; enabling it now would split stubs/edges. Do not block the spine. |
 | V-O9 | **Ship only actionable north-star fields on `status`:** `index_coverage`, `uncompiled_raw_count`, `wiki_count`, `index_entry_count`. | Agents can already act (compile / `file_answer`); do not add vanity counters. |
+| V-O10 | **No screenshot harness this cycle.** Native visual QA stays human + HTTP probes. | Add deterministic workspace screenshots only after a real escaped layout regression or a second supported desktop target (ROADMAP entry). |
 
 ### Open
 
-| ID | Question | Lean |
-|----|----------|------|
-| V-O5 | How far `Storage` should expand beyond the shipped document slice | Only when a second backend has a shared capability-conformance test |
-| V-O6 | Full live Markdown application backend vs document/export use | Require lexical search, wikilink graph, recovery and honest refusal conformance |
-| V-O8 | blake3 stable ids vs UUID migrate gate | Follow GRAPH_DESIGN; do not block spine cut |
-| V-O10 | Native visual-regression coverage | Add deterministic workspace screenshots after a real escaped layout regression or second desktop target |
+None this cycle. Evidence-gated expansions (ANN/VSS, full Markdown app backend, screenshot suite, SQLite/Postgres) stay in §17 and [`ROADMAP.md`](ROADMAP.md); they are not open product-identity questions.
 
 ---
 

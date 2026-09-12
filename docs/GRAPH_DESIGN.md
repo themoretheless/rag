@@ -283,6 +283,8 @@ pub fn derived_edge_id(source: &str, target: &str, rel: &str, occ: i32) -> Strin
 **Greenfield:** use deterministic ids from day of flag/schema_version gate.  
 **Existing DBs:** **must** run merge/remap before enabling: merge stubs/tags by `label_key`/`uri`, remap edge endpoints, drop duplicates. Without migration, blake3 creates **duplicate stubs and split edge sets** (critic FATAL). Random UUID continues until migrate completes.
 
+**2026-09-11 (V-O8):** the live corpus keeps UUID document/node ids. blake3 is the content-hash (`content_hash`, dataset/prompt identity), not a scheduled id migrate. Do not flip `stable_node_id` on an existing DuckDB without the merge pass.
+
 Stub/tag insert: `INSERT ... ON CONFLICT(id) DO UPDATE` / ignore; unique constraint recommended on `(kind, label_key)` for stub+tag only (not documents: multi-doc same title allowed).
 
 ### 5.2 `ensure_document_node` order (no steal)

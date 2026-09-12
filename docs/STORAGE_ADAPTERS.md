@@ -68,6 +68,10 @@ The contract is synchronous because both shipped implementations are local.
 Capability metadata is explicit. Extend the interface only alongside a second
 consumer and shared conformance tests; do not predeclare a full backend API.
 
+**2026-09-11 (V-O5 / V-O6):** `Storage` stays this document slice. DuckDB is the
+application backend. The Markdown vault is export / opt-in CRUD, not a second
+live SoT. Full Markdown application status remains ROADMAP evidence-gated.
+
 ---
 
 ## 4. Backend matrix

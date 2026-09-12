@@ -72,17 +72,29 @@ RAG_EMBEDDING_PROVIDER=mock cargo run --bin eval -- \
 dataset hash and settings names. Optional `--error-labels FILE.jsonl` attaches
 human labels (`wrong_top_hit`, `missing_relevant`, …) to regression rows.
 
-Gateway (schema 15): `GET /v1/eval/runs`, `POST /v1/eval/runs/compare`,
-`GET|POST /v1/eval/labels` (lease+CAS queue), `GET|POST /v1/eval/traces`, and
-feedback runs persist into `eval_runs`. Background jobs persist to
-`background_jobs`. Interrupted `source_sync` jobs are marked `Failed` with
-`requeue_safe=true`; `POST /v1/jobs/{id}/requeue` starts a **new** sync that
-skips unchanged committed files. This is committed-prefix aware, not mid-batch
-embed resume.
+Gateway (schema 16): `GET /v1/eval/runs`, `POST /v1/eval/runs/compare`,
+`GET|POST /v1/eval/labels` (lease+CAS queue), `GET|POST /v1/eval/traces`,
+`GET|POST /v1/eval/prompts`, `POST /v1/eval/judge`, `POST /v1/eval/online`,
+`GET /v1/eval/export`, `POST /v1/eval/replay`. Feedback runs persist into
+`eval_runs`. Background jobs persist to `background_jobs`. Interrupted
+`source_sync` jobs are marked `Failed` with `requeue_safe=true`;
+`POST /v1/jobs/{id}/requeue` starts a **new** sync that skips unchanged
+committed files. This is committed-prefix aware, not mid-batch embed resume.
 
 Search/pack accept `include_trace` / `persist_trace` for local span trees with
 source document versions/hashes (no remote Opik stack). Feedback runs attach a
-deterministic `citation_judge` (citation presence / expected-doc coverage).
+deterministic `citation_judge` plus an `answer_judge` (heuristic always;
+optional local LLM when `use_llm=true` and `RAG_LLM_ENABLED`). Prompt bodies
+are content-addressed (`eval_prompts`); the built-in `answer_judge@v1` is
+seeded on first prompt list. `POST /v1/eval/online` is an **explicit** sample
+(search + optional answer) — it does not log every query. `GET /v1/eval/export`
+writes a versioned bundle; `POST /v1/eval/replay` and `eval --replay FILE.json`
+recompute heuristic judges from stored payloads without live search or a
+second DuckDB writer.
+
+```bash
+cargo run --bin eval -- --replay /tmp/eval-export.json
+```
 
 - Corpus paths are relative to `--root` (the current directory by default).
 - `document_title` is the corpus filename and matches returned titles exactly.
@@ -96,6 +108,7 @@ deterministic `citation_judge` (citation presence / expected-doc coverage).
 | Requeue after interrupt/cancel/fail | Resuming an in-flight embedding batch |
 | Skip unchanged files via source manifest | Inventing progress beyond last committed batch |
 | Re-POST `/v1/jobs/sync` with same path | Multi-writer sync against the same DuckDB |
+| Offline judge replay of an export bundle | Mid-batch embed resume (consciously skipped) |
 
 The small [`example-v1.json`](../data/eval/example-v1.json) is input data, not
 generated benchmark output.

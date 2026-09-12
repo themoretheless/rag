@@ -41,17 +41,22 @@ same tree:
    and all Operations tabs at default and compact window sizes against the live
    gateway.
 
-**Final release evidence:** pending terminal full-source sync, final installed
-gateway rollout (live process is still schema 10 / pid 2293, not this tree's
-schema 15) and verified final backup. Fill this only with evidence from the
-same final tree; do not infer closure from an earlier candidate build.
+**Final release evidence (2026-09-11, live writer pid 54285, schema 15):**
 
-**2026-09-11 package evidence (this tree, not a live upgrade):**
-`cargo test --workspace --locked` passed; `cargo clippy --workspace --locked -- -D warnings`
-passed after collapsing the auth OPTIONS guard and allowing the wiki atomic-write
-arity. Live gateway `GET /ready` returned `store_ok=true`; `GET /v1/jobs` returned
-an empty list. `STORE_BUSY`, cancel/restore, backup-without-second-writer, and
-native visual QA were not re-run against an upgraded writer.
+| Check | Result |
+|-------|--------|
+| Installed gateway | `~/.local/bin/rag-mcp` from this tree; bind `127.0.0.1:7432`; `/ready` `store_ok=true` |
+| Project search | `POST /v1/search` hybrid `wing=rag` → 200, 5 hits |
+| Project graph | `GET /v1/graph?wing=rag` → 200, bounded nodes |
+| `STORE_BUSY` | During exclusive source-sync, lex search returned HTTP 503 + `code=STORE_BUSY` (handler also sets `Retry-After: 1`) |
+| Sync succeeded | Job on `.rag/live-gate-ok` → `succeeded` (1 added) |
+| Sync `completed_with_errors` | Oversized file `max_file_bytes=32` → 1 error, no silent ingest |
+| Cancel | Docs sync DELETE while queued → terminal `cancelled` |
+| Restore raw | `POST /v1/revisions/restore` on raw `DATABASE_SYNC.md` → 403 source-controlled |
+| Backup | Live DB path refused; dry-run then apply via same writer to `.rag/live-gate-20260911.duckdb` (`success`, sha256 `6eb80aa66b5ea27ea3b8afc9d5a6f7b90e35da80e52ce5bff0d4db398a67a444`) |
+| Native visual QA | HTTP surfaces for Home, Library, Search, History, Wiki, Connections and Operations returned 200 against the live gateway. Two-size (default/compact) layout still needs a person in `rag-mcp-ui` |
+
+Package tests/Clippy from earlier the same day remain green. Do not infer closure of the compact-window visual pass from HTTP-only probes.
 
 ## Evidence-gated future work
 
@@ -64,7 +69,10 @@ only when their entry condition is observed.
 | Full Markdown application backend | A real workflow requires Markdown as the active source of truth rather than export/document CRUD | Shared conformance covers document lifecycle, lexical search, wikilink graph, crash recovery and capability refusals; no silent DuckDB fallback |
 | Native visual regression harness | A workspace-level layout regression escapes unit tests or a second supported desktop target is added | Deterministic screenshots for Home, Library, Search, Wiki, Connections and Operations at minimum and compact window sizes |
 
-**2026-09-10 skip note:** ANN/VSS, full Markdown backend, and screenshot harness remain skipped — no new representative hybrid p95 > 300 ms measurement and no ROADMAP entry-condition observations this cycle.
+**2026-09-11 vision close:** V-O5 (Storage seam stays document slice), V-O6
+(Markdown is not live SoT), V-O8 (UUID ids; blake3 is content-hash only), and
+V-O10 (no screenshot harness) are decided in [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md).
+They do not become scheduled work until the entry conditions in the table above are observed.
 
 A recorded local exact-search run at 100,111 chunks observed 133.98 ms hybrid
 p95, below the 300 ms scale gate. Adding ANN before repeated representative
