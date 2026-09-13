@@ -16,4 +16,10 @@
 # Local runtime state: pending ingest queue, wiki-refresh log and lock.
 .rag/
 
+# Local verified DB snapshots and sidecars (multi‑GB; keep off git).
+/backups/
+
+# Legacy web build tree (vendored node_modules + dist only; no package source).
+/web/
+
 .DS_Store
