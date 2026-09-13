@@ -1,12 +1,21 @@
 # SOLID / DRY audit
 
-**Updated:** 2026-09-02
+**Updated:** 2026-09-13
 
 This audit records responsibility boundaries that are present in the current
 tree. File size alone is not a refactor reason; behavior-preserving seams and
 tests are the acceptance criteria.
 
 ## Completed responsibility boundaries
+
+### Shared `(id, payload)` JSON tables
+
+`http_api::payload_kv` owns allowlisted upsert/get/list/page SQL for
+`eval_runs`, `eval_traces`, `eval_prompts`, `eval_label_queue`,
+`search_feedback`, and `background_jobs`. Domain types and CAS/lease policy stay
+in `feedback`, `traces`, `eval_ops`, `labels`, and `jobs`; those modules no
+longer paste `INSERT OR REPLACE` / `SELECT payload` for the shared shape.
+Connection-scoped helpers keep RMW (claim/update/restore) under one Store lock.
 
 ### Document preparation and atomic persistence
 

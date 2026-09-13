@@ -11,7 +11,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use duckdb::params;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -195,24 +194,28 @@ impl JobRegistry {
     /// starts a fresh sync that skips already-committed unchanged files.
     pub fn restore_from_store(store: Arc<Store>) -> Result<Self, AppError> {
         let registry = Self::with_store(store.clone());
-        let conn = store.lock()?;
-        let mut stmt = conn.prepare("SELECT id, payload FROM background_jobs")?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .collect::<duckdb::Result<Vec<_>>>()?;
-        let mut snapshots = Vec::with_capacity(rows.len());
-        for (id, payload) in rows {
-            let mut snapshot: JobSnapshot = serde_json::from_str(&payload)?;
-            if !snapshot.status.is_terminal() {
-                mark_interrupted(&mut snapshot);
-                conn.execute(
-                    "INSERT OR REPLACE INTO background_jobs VALUES (?, ?)",
-                    params![id, serde_json::to_string(&snapshot)?],
-                )?;
+        let snapshots = {
+            let conn = store.lock()?;
+            let pairs = super::payload_kv::list_payload_pairs_conn(
+                &conn,
+                super::payload_kv::PayloadTable::BackgroundJobs,
+            )?;
+            let mut out = Vec::with_capacity(pairs.len());
+            for (id, payload) in pairs {
+                let mut snapshot: JobSnapshot = serde_json::from_str(&payload)?;
+                if !snapshot.status.is_terminal() {
+                    mark_interrupted(&mut snapshot);
+                    super::payload_kv::upsert_payload_conn(
+                        &conn,
+                        super::payload_kv::PayloadTable::BackgroundJobs,
+                        &id,
+                        &snapshot,
+                    )?;
+                }
+                out.push(snapshot);
             }
-            snapshots.push(snapshot);
-        }
-        drop(conn);
+            out
+        };
         {
             let mut jobs = registry.jobs();
             for snapshot in snapshots {
@@ -234,10 +237,11 @@ impl JobRegistry {
         let Some(store) = &self.inner.store else {
             return Ok(());
         };
-        let conn = store.lock()?;
-        conn.execute(
-            "INSERT OR REPLACE INTO background_jobs VALUES (?, ?)",
-            params![&snapshot.id, serde_json::to_string(snapshot)?],
+        super::payload_kv::upsert_payload(
+            store,
+            super::payload_kv::PayloadTable::BackgroundJobs,
+            &snapshot.id,
+            snapshot,
         )?;
         Ok(())
     }
@@ -644,6 +648,7 @@ mod tests {
     use crate::embeddings::MockEmbedder;
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
+    use duckdb::params;
     use tower::ServiceExt;
 
     fn state(root: &std::path::Path) -> HttpState {

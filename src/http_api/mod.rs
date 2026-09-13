@@ -47,6 +47,7 @@ mod feedback;
 mod knowledge;
 mod traces;
 mod eval_ops;
+mod payload_kv;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;

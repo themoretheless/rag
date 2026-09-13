@@ -174,12 +174,7 @@ pub(super) fn persist_eval_run(store: &Store, payload: &Value) -> Result<()> {
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let conn = store.lock()?;
-    conn.execute(
-        "INSERT OR REPLACE INTO eval_runs VALUES (?,?)",
-        params![id, serde_json::to_string(payload)?],
-    )?;
-    Ok(())
+    super::payload_kv::upsert_payload(store, super::payload_kv::PayloadTable::EvalRuns, &id, payload)
 }
 fn score_hits(item: &Feedback, hits: &[Value]) -> (Option<f64>, Option<f64>) {
     if item.no_answer {
@@ -231,32 +226,12 @@ async fn search_with_body(st: HttpState, body: SearchBody) -> Result<(Value, Vec
 }
 async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
     let result = super::run_blocking("list eval runs", move || {
-        let conn = st.store.lock()?;
-        let total: i64 = conn.query_row("SELECT COUNT(*) FROM eval_runs", [], |r| r.get(0))?;
-        let mut stmt = conn.prepare("SELECT id, payload FROM eval_runs")?;
-        let mut items = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .map(|r| {
-                let (id, payload) = r?;
-                Ok::<_, AppError>((id, serde_json::from_str::<Value>(&payload)?))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        items.sort_by(|(id_a, a), (id_b, b)| {
-            let ca = a.get("created_at").and_then(|v| v.as_str());
-            let cb = b.get("created_at").and_then(|v| v.as_str());
-            match (ca, cb) {
-                (Some(a), Some(b)) => b.cmp(a).then_with(|| id_b.cmp(id_a)),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => id_b.cmp(id_a),
-            }
-        });
-        let page: Vec<Value> = items
-            .into_iter()
-            .skip(q.offset as usize)
-            .take(50)
-            .map(|(_, v)| v)
-            .collect();
+        let (total, page) = super::payload_kv::list_payload_page(
+            &st.store,
+            super::payload_kv::PayloadTable::EvalRuns,
+            q.offset,
+            50,
+        )?;
         Ok(json!({"items":page,"total":total,"offset":q.offset}))
     })
     .await;

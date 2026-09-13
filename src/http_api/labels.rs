@@ -10,7 +10,6 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Duration, Utc};
-use duckdb::{params, OptionalExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -121,15 +120,13 @@ async fn list(State(st): State<HttpState>, Query(q): Query<ListQuery>) -> Respon
             .as_deref()
             .map(parse_status)
             .transpose()?;
-        let conn = st.store.lock()?;
-        let mut stmt = conn.prepare("SELECT id, payload FROM eval_label_queue")?;
-        let mut items = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .map(|r| {
-                let (_id, payload) = r?;
-                Ok::<_, AppError>(serde_json::from_str::<LabelQueueItem>(&payload)?)
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut items = super::payload_kv::list_payload_pairs(
+            &st.store,
+            super::payload_kv::PayloadTable::EvalLabelQueue,
+        )?
+        .into_iter()
+        .map(|(_id, payload)| Ok::<_, AppError>(serde_json::from_str::<LabelQueueItem>(&payload)?))
+        .collect::<Result<Vec<_>>>()?;
         if let Some(want) = status_filter {
             items.retain(|item| item.status == want);
         }
@@ -167,10 +164,11 @@ async fn create(State(st): State<HttpState>, Json(body): Json<CreateBody>) -> Re
             created_at: now,
             updated_at: now,
         };
-        let conn = st.store.lock()?;
-        conn.execute(
-            "INSERT INTO eval_label_queue VALUES (?,?)",
-            params![item.id, serde_json::to_string(&item)?],
+        super::payload_kv::upsert_payload(
+            &st.store,
+            super::payload_kv::PayloadTable::EvalLabelQueue,
+            &item.id,
+            &item,
         )?;
         Ok(item)
     })
@@ -201,14 +199,13 @@ async fn claim(State(st): State<HttpState>, Json(body): Json<ClaimBody>) -> Resp
             .clamp(1, MAX_LEASE_SECS);
         let now = Utc::now();
         let conn = st.store.lock()?;
-        let mut stmt = conn.prepare("SELECT id, payload FROM eval_label_queue")?;
-        let mut candidates = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .map(|r| {
-                let (id, payload) = r?;
-                Ok::<_, AppError>((id, serde_json::from_str::<LabelQueueItem>(&payload)?))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut candidates = super::payload_kv::list_payload_pairs_conn(
+            &conn,
+            super::payload_kv::PayloadTable::EvalLabelQueue,
+        )?
+        .into_iter()
+        .map(|(id, payload)| Ok::<_, AppError>((id, serde_json::from_str::<LabelQueueItem>(&payload)?)))
+        .collect::<Result<Vec<_>>>()?;
         candidates.sort_by(|(_, a), (_, b)| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
         let Some((id, mut item)) = candidates.into_iter().find(|(_, item)| {
             item.status == LabelStatus::Open
@@ -222,9 +219,11 @@ async fn claim(State(st): State<HttpState>, Json(body): Json<ClaimBody>) -> Resp
         item.lease_until = Some(now + Duration::seconds(lease_secs));
         item.revision = item.revision.saturating_add(1);
         item.updated_at = now;
-        conn.execute(
-            "INSERT OR REPLACE INTO eval_label_queue VALUES (?,?)",
-            params![id, serde_json::to_string(&item)?],
+        super::payload_kv::upsert_payload_conn(
+            &conn,
+            super::payload_kv::PayloadTable::EvalLabelQueue,
+            &id,
+            &item,
         )?;
         Ok(json!({"ok": true, "item": item, "claimed": true}))
     })
@@ -242,13 +241,11 @@ async fn update(
 ) -> Response {
     let result = super::run_blocking("update eval label", move || {
         let conn = st.store.lock()?;
-        let payload: Option<String> = conn
-            .query_row(
-                "SELECT payload FROM eval_label_queue WHERE id=?",
-                [&id],
-                |r| r.get(0),
-            )
-            .optional()?;
+        let payload = super::payload_kv::get_payload_raw_conn(
+            &conn,
+            super::payload_kv::PayloadTable::EvalLabelQueue,
+            &id,
+        )?;
         let Some(payload) = payload else {
             return Err(AppError::not_found(format!("label not found: {id}")));
         };
@@ -290,9 +287,11 @@ async fn update(
         }
         item.revision = item.revision.saturating_add(1);
         item.updated_at = Utc::now();
-        conn.execute(
-            "INSERT OR REPLACE INTO eval_label_queue VALUES (?,?)",
-            params![id, serde_json::to_string(&item)?],
+        super::payload_kv::upsert_payload_conn(
+            &conn,
+            super::payload_kv::PayloadTable::EvalLabelQueue,
+            &id,
+            &item,
         )?;
         Ok(item)
     })
@@ -304,14 +303,11 @@ async fn update(
 }
 
 fn load_item(store: &crate::db::Store, id: &str) -> Result<LabelQueueItem> {
-    let conn = store.lock()?;
-    let payload: Option<String> = conn
-        .query_row(
-            "SELECT payload FROM eval_label_queue WHERE id=?",
-            [id],
-            |r| r.get(0),
-        )
-        .optional()?;
+    let payload = super::payload_kv::get_payload_raw(
+        store,
+        super::payload_kv::PayloadTable::EvalLabelQueue,
+        id,
+    )?;
     let Some(payload) = payload else {
         return Err(AppError::not_found(format!("label not found: {id}")));
     };

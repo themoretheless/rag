@@ -524,10 +524,11 @@ fn persist_retrieval_trace(
     store: &crate::db::Store,
     trace: &RetrievalTrace,
 ) -> Result<(), AppError> {
-    let conn = store.lock()?;
-    conn.execute(
-        "INSERT OR REPLACE INTO eval_traces VALUES (?,?)",
-        duckdb::params![trace.id, serde_json::to_string(trace)?],
+    super::payload_kv::upsert_payload(
+        store,
+        super::payload_kv::PayloadTable::EvalTraces,
+        &trace.id,
+        trace,
     )?;
     Ok(())
 }

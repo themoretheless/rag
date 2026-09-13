@@ -6,7 +6,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use duckdb::{params, OptionalExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -112,20 +111,14 @@ struct ReplayBody {
 async fn list_prompts(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
     let result = super::run_blocking("list eval prompts", move || {
         seed_builtin_prompt(&st.store)?;
-        let conn = st.store.lock()?;
-        let total: i64 = conn.query_row("SELECT COUNT(*) FROM eval_prompts", [], |r| r.get(0))?;
-        let mut stmt = conn.prepare("SELECT id, payload FROM eval_prompts")?;
-        let mut items = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .map(|r| {
-                let (id, payload) = r?;
-                let mut value = serde_json::from_str::<Value>(&payload)?;
-                if let Some(obj) = value.as_object_mut() {
-                    obj.entry("id").or_insert(json!(id));
-                }
-                Ok::<_, AppError>(value)
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let total = super::payload_kv::count_payloads(
+            &st.store,
+            super::payload_kv::PayloadTable::EvalPrompts,
+        )?;
+        let mut items = super::payload_kv::list_payload_values(
+            &st.store,
+            super::payload_kv::PayloadTable::EvalPrompts,
+        )?;
         items.sort_by(|a, b| {
             let na = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let nb = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -135,11 +128,7 @@ async fn list_prompts(State(st): State<HttpState>, Query(q): Query<Page>) -> Res
                 va.cmp(vb)
             })
         });
-        let page: Vec<Value> = items
-            .into_iter()
-            .skip(q.offset as usize)
-            .take(PAGE_SIZE as usize)
-            .collect();
+        let page = super::payload_kv::page_values(items, q.offset, PAGE_SIZE as usize);
         Ok(json!({"ok": true, "items": page, "total": total, "offset": q.offset}))
     })
     .await;
@@ -367,22 +356,17 @@ fn seed_builtin_prompt(store: &Store) -> Result<()> {
 }
 
 fn upsert_prompt(store: &Store, prompt: &PromptVersion) -> Result<()> {
-    let conn = store.lock()?;
-    conn.execute(
-        "INSERT OR REPLACE INTO eval_prompts VALUES (?,?)",
-        params![prompt.id, serde_json::to_string(prompt)?],
-    )?;
-    Ok(())
+    super::payload_kv::upsert_payload(
+        store,
+        super::payload_kv::PayloadTable::EvalPrompts,
+        &prompt.id,
+        prompt,
+    )
 }
 
 fn load_prompt(store: &Store, id: &str) -> Result<Option<PromptVersion>> {
-    let conn = store.lock()?;
-    let payload: Option<String> = conn
-        .query_row("SELECT payload FROM eval_prompts WHERE id=?", [id], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    match payload {
+    match super::payload_kv::get_payload_raw(store, super::payload_kv::PayloadTable::EvalPrompts, id)?
+    {
         Some(raw) => Ok(Some(serde_json::from_str(&raw)?)),
         None => {
             let builtin = builtin_answer_judge();
@@ -396,30 +380,17 @@ fn load_prompt(store: &Store, id: &str) -> Result<Option<PromptVersion>> {
 }
 
 fn list_table_payloads(store: &Store, table: &str, limit: usize) -> Result<Vec<Value>> {
-    let conn = store.lock()?;
-    let sql = format!("SELECT id, payload FROM {table}");
-    let mut stmt = conn.prepare(&sql)?;
-    let mut items = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-        .map(|r| {
-            let (id, payload) = r?;
-            let mut value = serde_json::from_str::<Value>(&payload)?;
-            if let Some(obj) = value.as_object_mut() {
-                obj.entry("id").or_insert(json!(id));
-            }
-            Ok::<_, AppError>(value)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    items.sort_by(|a, b| {
-        let ca = a.get("created_at").and_then(|v| v.as_str());
-        let cb = b.get("created_at").and_then(|v| v.as_str());
-        match (ca, cb) {
-            (Some(a), Some(b)) => b.cmp(a),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
+    let table = match table {
+        "eval_prompts" => super::payload_kv::PayloadTable::EvalPrompts,
+        "eval_runs" => super::payload_kv::PayloadTable::EvalRuns,
+        "eval_traces" => super::payload_kv::PayloadTable::EvalTraces,
+        "search_feedback" => super::payload_kv::PayloadTable::SearchFeedback,
+        other => {
+            return Err(AppError::config(format!("unsupported export table: {other}")))
         }
-    });
+    };
+    let mut items = super::payload_kv::list_payload_values(store, table)?;
+    super::payload_kv::sort_by_created_at_desc(&mut items);
     items.truncate(limit);
     Ok(items)
 }
