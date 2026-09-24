@@ -1,6 +1,6 @@
 //! Graph node/edge CRUD, filtered export, undirected BFS neighbors, and backlinks.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use duckdb::{params, params_from_iter};
@@ -9,7 +9,13 @@ use uuid::Uuid;
 use super::store::Store;
 use crate::error::{AppError, Result};
 use crate::graph::REL_TUNNEL;
-use crate::models::{GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView};
+use crate::models::{
+    EdgeOrigin, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, NodeKind, RelType,
+};
+
+/// GRAPH_DESIGN §9 hard cap for a local-graph walk. Hop-by-hop frontier queries
+/// make depth affordable, so this bounds pathological requests rather than cost.
+const MAX_LOCAL_GRAPH_DEPTH: u32 = 5;
 
 impl Store {
     /// Insert or replace a graph node by primary key `id`.
@@ -26,7 +32,7 @@ impl Store {
         insert_graph_edges_locked(&conn, edges)
     }
 
-    /// Delete all edges with the given source node (re-ingest rebuild).
+    /// Remove a node's edges on purpose; document delete uses demote instead (§6.3).
     pub fn delete_edges_from(&self, source_id: &str) -> Result<()> {
         let conn = self.lock()?;
         conn.execute(
@@ -36,14 +42,14 @@ impl Store {
         Ok(())
     }
 
-    /// Delete edges incident to `node_id` (as source or target).
-    pub fn delete_edges_incident(&self, node_id: &str) -> Result<()> {
+    /// Delete only the edges body-text extraction owns for `source_id`.
+    ///
+    /// This is the single authoritative rebuild predicate of `GRAPH_DESIGN.md`
+    /// §1.6: extraction-owned relation names are cleaned even when a row carries
+    /// a mis-tagged owner, while `explicit` / `system` owners survive re-ingest.
+    pub fn delete_derived_edges_from(&self, source_id: &str) -> Result<()> {
         let conn = self.lock()?;
-        conn.execute(
-            "DELETE FROM graph_edges WHERE source_id = ? OR target_id = ?",
-            params![node_id, node_id],
-        )?;
-        Ok(())
+        delete_derived_edges_from_locked(&conn, source_id)
     }
 
     /// Delete a graph node by id (does not cascade edges).
@@ -59,7 +65,8 @@ impl Store {
         find_node_by_document_id_locked(&conn, doc_id)
     }
 
-    /// Find nodes whose label equals `label` (case-sensitive).
+    /// Find nodes whose [`label_key`](crate::graph::normalize::label_key) equals the
+    /// normalized form of `label` (case-, width- and whitespace-insensitive).
     pub fn find_nodes_by_label(&self, label: &str) -> Result<Vec<GraphNode>> {
         let conn = self.lock()?;
         find_nodes_by_label_locked(&conn, label)
@@ -185,37 +192,9 @@ impl Store {
             return Ok(GraphView::default());
         };
 
-        let mut visited = vec![seed_node.id.clone()];
-        let mut seen = HashSet::from([seed_node.id.clone()]);
-        let mut frontier = vec![seed_node.id];
-        for _ in 0..depth {
-            let remaining = max_nodes - visited.len();
-            if remaining == 0 {
-                break;
-            }
-            let candidate_limit = remaining + seen.len();
-            let candidates = discover_scoped_neighbors_locked(
-                &conn,
-                project,
-                &frontier,
-                candidate_limit,
-                include_tags,
-            )?;
-            let mut next_frontier = Vec::new();
-            for candidate in candidates {
-                if seen.insert(candidate.clone()) {
-                    next_frontier.push(candidate);
-                    if next_frontier.len() == remaining {
-                        break;
-                    }
-                }
-            }
-            if next_frontier.is_empty() {
-                break;
-            }
-            visited.extend(next_frontier.iter().cloned());
-            frontier = next_frontier;
-        }
+        let visited = expand_frontier(&seed_node.id, depth, max_nodes, |frontier, limit| {
+            discover_scoped_neighbors_locked(&conn, project, frontier, limit, include_tags)
+        })?;
 
         let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
         enrich_document_placements_locked(&conn, &mut nodes)?;
@@ -247,32 +226,9 @@ impl Store {
             return Ok(GraphView::default());
         };
 
-        let mut visited = vec![seed_node.id.clone()];
-        let mut seen = HashSet::from([seed_node.id.clone()]);
-        let mut frontier = vec![seed_node.id];
-        for _ in 0..depth {
-            let remaining = max_nodes - visited.len();
-            if remaining == 0 {
-                break;
-            }
-            let candidate_limit = remaining + seen.len();
-            let candidates =
-                discover_ui_neighbors_locked(&conn, &frontier, candidate_limit, include_tags)?;
-            let mut next_frontier = Vec::new();
-            for candidate in candidates {
-                if seen.insert(candidate.clone()) {
-                    next_frontier.push(candidate);
-                    if next_frontier.len() == remaining {
-                        break;
-                    }
-                }
-            }
-            if next_frontier.is_empty() {
-                break;
-            }
-            visited.extend(next_frontier.iter().cloned());
-            frontier = next_frontier;
-        }
+        let visited = expand_frontier(&seed_node.id, depth, max_nodes, |frontier, limit| {
+            discover_ui_neighbors_locked(&conn, frontier, limit, include_tags)
+        })?;
 
         let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
         enrich_document_placements_locked(&conn, &mut nodes)?;
@@ -426,74 +382,26 @@ impl Store {
     /// Edges are followed in both directions. Returns visited nodes and edges whose
     /// both endpoints are visited. Missing seed yields an empty view. `max_nodes == 0`
     /// is treated as 100.
+    ///
+    /// Unlike the UI projections, this raw local graph follows every relation type
+    /// and keeps tag nodes, which is what wiki backlink walking and `get_neighbors`
+    /// callers expect. Each hop is one indexed frontier query (§7.2); `depth` is
+    /// clamped to the §9 hard cap because the walk is budget-bound, not time-bound.
     pub fn neighbors(&self, node_id: &str, depth: u32, max_nodes: u32) -> Result<GraphView> {
         let max_nodes = if max_nodes == 0 { 100 } else { max_nodes };
+        let depth = depth.clamp(1, MAX_LOCAL_GRAPH_DEPTH);
 
-        if self.find_node_by_id(node_id)?.is_none() {
+        let conn = self.lock()?;
+        if load_node_locked(&conn, node_id)?.is_none() {
             return Ok(GraphView::default());
         }
 
-        let conn = self.lock()?;
-        let mut adj: HashMap<String, Vec<(String, GraphEdge)>> = HashMap::new();
-        let mut all_edges: Vec<GraphEdge> = Vec::new();
-        {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, source_id, target_id, rel_type, weight, context
-                FROM graph_edges
-                "#,
-            )?;
-            let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
-                let e = row_to_edge(row)?;
-                adj.entry(e.source_id.clone())
-                    .or_default()
-                    .push((e.target_id.clone(), e.clone()));
-                adj.entry(e.target_id.clone())
-                    .or_default()
-                    .push((e.source_id.clone(), e.clone()));
-                all_edges.push(e);
-            }
-        }
+        let visited = expand_frontier(node_id, depth, max_nodes as usize, |frontier, limit| {
+            discover_frontier_neighbors_locked(&conn, frontier, limit, None)
+        })?;
 
-        let mut visited: HashSet<String> = HashSet::new();
-        let mut q: VecDeque<(String, u32)> = VecDeque::new();
-        visited.insert(node_id.to_string());
-        q.push_back((node_id.to_string(), 0));
-
-        while let Some((cur, d)) = q.pop_front() {
-            if d >= depth {
-                continue;
-            }
-            if let Some(neis) = adj.get(&cur) {
-                for (next, _) in neis {
-                    if visited.len() as u32 >= max_nodes {
-                        break;
-                    }
-                    if visited.insert(next.clone()) {
-                        q.push_back((next.clone(), d + 1));
-                    }
-                }
-            }
-            if visited.len() as u32 >= max_nodes {
-                break;
-            }
-        }
-
-        let mut nodes = Vec::new();
-        for id in &visited {
-            if let Some(n) = load_node_locked(&conn, id)? {
-                nodes.push(n);
-            }
-        }
-        nodes.sort_by(|a, b| a.id.cmp(&b.id));
-
-        let mut edges: Vec<GraphEdge> = all_edges
-            .into_iter()
-            .filter(|e| visited.contains(&e.source_id) && visited.contains(&e.target_id))
-            .collect();
-        edges.sort_by(|a, b| a.id.cmp(&b.id));
-
+        let nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        let edges = load_edges_among_locked(&conn, &visited, None)?;
         Ok(GraphView { nodes, edges })
     }
 
@@ -626,17 +534,6 @@ impl Store {
             nodes_by_kind,
             edges_by_rel_type,
         })
-    }
-
-    /// Remove graph data for a document: incident edges and the document node.
-    ///
-    /// Tags and stubs are left in place (may become orphans until next lint).
-    pub fn delete_graph_for_document(&self, document_id: &str) -> Result<()> {
-        if let Some(node) = self.find_node_by_document_id(document_id)? {
-            self.delete_edges_incident(&node.id)?;
-            self.delete_graph_node(&node.id)?;
-        }
-        Ok(())
     }
 
     /// Remove unresolved stubs that no edge references after a complete graph rebuild.
@@ -818,78 +715,25 @@ impl Store {
     /// both endpoints in the visited set.
     pub fn follow_tunnels(&self, node_id: &str, depth: u32, max_nodes: u32) -> Result<GraphView> {
         let max_nodes = if max_nodes == 0 { 100 } else { max_nodes };
+        let depth = depth.clamp(1, MAX_LOCAL_GRAPH_DEPTH);
         let node_id = node_id.trim();
         if node_id.is_empty() {
             return Err(AppError::config(
                 "follow_tunnels requires non-empty node_id",
             ));
         }
-        if self.find_node_by_id(node_id)?.is_none() {
+
+        let conn = self.lock()?;
+        if load_node_locked(&conn, node_id)?.is_none() {
             return Ok(GraphView::default());
         }
 
-        let conn = self.lock()?;
-        let mut adj: HashMap<String, Vec<(String, GraphEdge)>> = HashMap::new();
-        let mut all_tunnels: Vec<GraphEdge> = Vec::new();
-        {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, source_id, target_id, rel_type, weight, context
-                FROM graph_edges
-                WHERE rel_type = ?
-                "#,
-            )?;
-            let mut rows = stmt.query(params![REL_TUNNEL])?;
-            while let Some(row) = rows.next()? {
-                let e = row_to_edge(row)?;
-                adj.entry(e.source_id.clone())
-                    .or_default()
-                    .push((e.target_id.clone(), e.clone()));
-                adj.entry(e.target_id.clone())
-                    .or_default()
-                    .push((e.source_id.clone(), e.clone()));
-                all_tunnels.push(e);
-            }
-        }
+        let visited = expand_frontier(node_id, depth, max_nodes as usize, |frontier, limit| {
+            discover_frontier_neighbors_locked(&conn, frontier, limit, Some(REL_TUNNEL))
+        })?;
 
-        let mut visited: HashSet<String> = HashSet::new();
-        let mut q: VecDeque<(String, u32)> = VecDeque::new();
-        visited.insert(node_id.to_string());
-        q.push_back((node_id.to_string(), 0));
-
-        while let Some((cur, d)) = q.pop_front() {
-            if d >= depth {
-                continue;
-            }
-            if let Some(neis) = adj.get(&cur) {
-                for (next, _) in neis {
-                    if visited.len() as u32 >= max_nodes {
-                        break;
-                    }
-                    if visited.insert(next.clone()) {
-                        q.push_back((next.clone(), d + 1));
-                    }
-                }
-            }
-            if visited.len() as u32 >= max_nodes {
-                break;
-            }
-        }
-
-        let mut nodes = Vec::new();
-        for id in &visited {
-            if let Some(n) = load_node_locked(&conn, id)? {
-                nodes.push(n);
-            }
-        }
-        nodes.sort_by(|a, b| a.id.cmp(&b.id));
-
-        let mut edges: Vec<GraphEdge> = all_tunnels
-            .into_iter()
-            .filter(|e| visited.contains(&e.source_id) && visited.contains(&e.target_id))
-            .collect();
-        edges.sort_by(|a, b| a.id.cmp(&b.id));
-
+        let nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        let edges = load_edges_among_locked(&conn, &visited, Some(REL_TUNNEL))?;
         Ok(GraphView { nodes, edges })
     }
 
@@ -1304,6 +1148,137 @@ fn find_scoped_node_locked(
     }
 }
 
+/// §7.2 local-graph BFS: `discover` is called once per hop with only the current
+/// frontier, so no variant ever materialises the whole edge table.
+///
+/// `candidate_limit` is widened by `seen` so already-visited ids that the query
+/// returns first cannot starve the budget; the caller-side `seen` filter then
+/// takes the rest. `max_nodes` must already be non-zero.
+fn expand_frontier(
+    seed_id: &str,
+    depth: u32,
+    max_nodes: usize,
+    mut discover: impl FnMut(&[String], usize) -> Result<Vec<String>>,
+) -> Result<Vec<String>> {
+    let mut visited = vec![seed_id.to_string()];
+    let mut seen = HashSet::from([seed_id.to_string()]);
+    let mut frontier = vec![seed_id.to_string()];
+    for _ in 0..depth {
+        let remaining = max_nodes - visited.len();
+        if remaining == 0 {
+            break;
+        }
+        let candidates = discover(&frontier, remaining + seen.len())?;
+        let mut next_frontier = Vec::new();
+        for candidate in candidates {
+            if seen.insert(candidate.clone()) {
+                next_frontier.push(candidate);
+                if next_frontier.len() == remaining {
+                    break;
+                }
+            }
+        }
+        if next_frontier.is_empty() {
+            break;
+        }
+        visited.extend(next_frontier.iter().cloned());
+        frontier = next_frontier;
+    }
+    Ok(visited)
+}
+
+/// One undirected hop over `frontier` (§7.2), reporting only ids that still have
+/// a node row. `rel_type = Some` restricts the hop to a single projection such as
+/// tunnels; `None` follows every relation and node kind, which is the raw
+/// [`Store::neighbors`] contract (tag hubs included).
+fn discover_frontier_neighbors_locked(
+    conn: &duckdb::Connection,
+    frontier: &[String],
+    limit: usize,
+    rel_type: Option<&str>,
+) -> Result<Vec<String>> {
+    if frontier.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let frontier_values = (0..frontier.len())
+        .map(|ordinal| format!("(?, {ordinal})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rel_filter = if rel_type.is_some() {
+        "AND incident.rel_type = ?"
+    } else {
+        ""
+    };
+    let sql = format!(
+        r#"
+        WITH frontier(id, ordinal) AS (VALUES {frontier_values}),
+        incident AS (
+          SELECT frontier.ordinal AS frontier_ordinal, e.id AS edge_id,
+                 e.target_id AS neighbor_id, e.rel_type
+          FROM frontier JOIN graph_edges e ON e.source_id = frontier.id
+          UNION ALL
+          SELECT frontier.ordinal AS frontier_ordinal, e.id AS edge_id,
+                 e.source_id AS neighbor_id, e.rel_type
+          FROM frontier JOIN graph_edges e ON e.target_id = frontier.id
+        )
+        SELECT incident.neighbor_id
+        FROM incident
+        WHERE EXISTS (SELECT 1 FROM graph_nodes n WHERE n.id = incident.neighbor_id)
+          {rel_filter}
+        GROUP BY incident.neighbor_id
+        ORDER BY MIN(incident.frontier_ordinal), MIN(incident.edge_id), incident.neighbor_id
+        LIMIT {limit}
+        "#
+    );
+    let mut binds = frontier.to_vec();
+    binds.extend(rel_type.iter().map(|r| (*r).to_string()));
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
+    let mut neighbors = Vec::with_capacity(limit.min(1024));
+    while let Some(row) = rows.next()? {
+        neighbors.push(row.get(0)?);
+    }
+    Ok(neighbors)
+}
+
+/// Edges with both endpoints inside `node_ids` — the edge set the pre-§7.2
+/// in-memory BFS reported, with no relation cap.
+fn load_edges_among_locked(
+    conn: &duckdb::Connection,
+    node_ids: &[String],
+    rel_type: Option<&str>,
+) -> Result<Vec<GraphEdge>> {
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let selected = values_clause(node_ids.len());
+    let rel_filter = if rel_type.is_some() {
+        "WHERE e.rel_type = ?"
+    } else {
+        ""
+    };
+    let sql = format!(
+        r#"
+        WITH selected(id) AS (VALUES {selected})
+        SELECT e.id, e.source_id, e.target_id, e.rel_type, e.weight, e.context
+        FROM graph_edges e
+        JOIN selected source_selected ON source_selected.id = e.source_id
+        JOIN selected target_selected ON target_selected.id = e.target_id
+        {rel_filter}
+        ORDER BY e.id
+        "#
+    );
+    let mut binds = node_ids.to_vec();
+    binds.extend(rel_type.iter().map(|r| (*r).to_string()));
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
+    let mut edges = Vec::new();
+    while let Some(row) = rows.next()? {
+        edges.push(row_to_edge(row)?);
+    }
+    Ok(edges)
+}
+
 fn discover_scoped_neighbors_locked(
     conn: &duckdb::Connection,
     project: &str,
@@ -1564,12 +1539,15 @@ pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNo
     } else {
         node.metadata_json.as_str()
     };
+    // §1.1: unknown kinds are rejected where the row is written, not silently
+    // stored for a projection filter to miss later.
+    NodeKind::parse(&node.kind)?;
     conn.execute(
         r#"
         INSERT OR REPLACE INTO graph_nodes
-          (id, kind, label, document_id, uri, resolved, metadata_json, created_at, updated_at)
+          (id, kind, label, label_key, document_id, uri, resolved, metadata_json, created_at, updated_at)
         VALUES
-          (?, ?, ?, ?, ?, ?, ?,
+          (?, ?, ?, ?, ?, ?, ?, ?,
            COALESCE(
              (SELECT created_at FROM graph_nodes WHERE id = ?),
              CAST(? AS TIMESTAMP)
@@ -1580,6 +1558,7 @@ pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNo
             node.id,
             node.kind,
             node.label,
+            crate::graph::normalize::label_key(&node.label),
             node.document_id,
             node.uri,
             node.resolved,
@@ -1592,33 +1571,84 @@ pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNo
     Ok(())
 }
 
+/// Transaction-aware form of [`Store::delete_derived_edges_from`], used by the
+/// document write path that already holds a `duckdb::Transaction`.
+///
+/// Deviation from the literal `GRAPH_DESIGN.md` §1.6 predicate, which reads
+/// `origin = 'extract' OR rel_type IN ('wikilink','tagged','mentions')`. Applied
+/// verbatim that OR also deletes user-created `link_nodes(..., 'wikilink')`
+/// edges, i.e. the provenance column stops protecting anything an agent wrote
+/// through the explicit API. Scoping the relation-name branch to rows whose
+/// owner was never recorded keeps the documented intent (extraction-owned noise
+/// is always reclaimed, even when a row is mis-tagged) without destroying
+/// explicit edges. §1.6 is updated to match.
+pub(crate) fn delete_derived_edges_from_locked(
+    conn: &duckdb::Connection,
+    source_id: &str,
+) -> Result<()> {
+    conn.execute(
+        r#"
+        DELETE FROM graph_edges
+        WHERE source_id = ?
+          AND (
+            origin = 'extract'
+            OR (origin IS NULL AND rel_type IN ('wikilink', 'tagged', 'mentions'))
+          )
+        "#,
+        params![source_id],
+    )?;
+    Ok(())
+}
+
+/// §6.3 / §14: deleting a document **demotes** its graph node instead of wiping it.
+///
+/// Inbound edges from other notes stay, so backlinks keep telling the truth about
+/// what referenced the deleted note (Obsidian keeps it as an unresolved target).
+/// Only the node's extraction-owned outbound edges are reclaimed, through the same
+/// §1.6 predicate the incremental rebuild uses. `uri` is deliberately kept: it is
+/// the key [`crate::graph::resolve`] re-binds a re-ingested file to the same node id.
+pub(crate) fn demote_graph_for_document_locked(
+    conn: &duckdb::Connection,
+    document_id: &str,
+) -> Result<u64> {
+    const NODE_IDS_FOR_DOCUMENT: &str = "SELECT id FROM graph_nodes WHERE document_id = ?";
+    let node_ids = {
+        let mut stmt = conn.prepare(NODE_IDS_FOR_DOCUMENT)?;
+        let mut rows = stmt.query(params![document_id])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            ids.push(row.get::<_, String>(0)?);
+        }
+        ids
+    };
+    for node_id in &node_ids {
+        delete_derived_edges_from_locked(conn, node_id)?;
+    }
+    conn.execute(
+        r#"
+        UPDATE graph_nodes
+        SET kind = 'stub', resolved = false, document_id = NULL,
+            updated_at = CAST(? AS TIMESTAMP)
+        WHERE document_id = ?
+        "#,
+        params![format_ts_now().as_str(), document_id],
+    )?;
+    Ok(node_ids.len() as u64)
+}
+
 pub(crate) fn insert_graph_edges_locked(
     conn: &duckdb::Connection,
     edges: &[GraphEdge],
 ) -> Result<()> {
-    insert_graph_edges_with_origin_locked(conn, edges, "manual")
-}
-
-pub(crate) fn insert_derived_graph_edges_locked(
-    conn: &duckdb::Connection,
-    edges: &[GraphEdge],
-) -> Result<()> {
-    insert_graph_edges_with_origin_locked(conn, edges, "derived")
-}
-
-fn insert_graph_edges_with_origin_locked(
-    conn: &duckdb::Connection,
-    edges: &[GraphEdge],
-    origin: &str,
-) -> Result<()> {
     if edges.is_empty() {
         return Ok(());
     }
+    validate_edge_vocabulary(edges.iter(), EdgeOrigin::EXPLICIT)?;
     let now = format_ts_now();
     let mut stmt = conn.prepare(
         r#"
         INSERT INTO graph_edges
-          (id, source_id, target_id, rel_type, weight, context, created_at, edge_origin)
+          (id, source_id, target_id, rel_type, weight, context, created_at, origin)
         VALUES
           (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
         "#,
@@ -1632,8 +1662,76 @@ fn insert_graph_edges_with_origin_locked(
             edge.weight,
             edge.context,
             now.as_str(),
-            origin,
+            EdgeOrigin::EXPLICIT,
         ])?;
+    }
+    Ok(())
+}
+
+/// Where one extracted edge came from (§4.1, §6.1 step 5): the document span,
+/// the alias and heading the author wrote, which occurrence of the same target
+/// this is, and the chunk holding it. Only `origin = 'extract'` rows carry it —
+/// a hand-made `link_nodes` edge has no span in any document.
+pub(crate) struct DerivedEdge {
+    pub edge: GraphEdge,
+    pub alias: Option<String>,
+    pub heading: Option<String>,
+    /// Unicode scalar span of the markup, `None` for a system edge with no source
+    /// span (project/directory membership).
+    pub char_start: Option<i64>,
+    pub char_end: Option<i64>,
+    pub occurrence: i64,
+    pub chunk_id: Option<String>,
+}
+
+pub(crate) fn insert_derived_graph_edges_locked(
+    conn: &duckdb::Connection,
+    edges: &[DerivedEdge],
+) -> Result<()> {
+    if edges.is_empty() {
+        return Ok(());
+    }
+    validate_edge_vocabulary(edges.iter().map(|row| &row.edge), EdgeOrigin::EXTRACT)?;
+    let now = format_ts_now();
+    let mut stmt = conn.prepare(
+        r#"
+        INSERT INTO graph_edges
+          (id, source_id, target_id, rel_type, weight, context, created_at, origin,
+           alias, heading, chunk_id, char_start, char_end, occurrence)
+        VALUES
+          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )?;
+    for row in edges {
+        stmt.execute(params![
+            row.edge.id,
+            row.edge.source_id,
+            row.edge.target_id,
+            row.edge.rel_type,
+            row.edge.weight,
+            row.edge.context,
+            now.as_str(),
+            EdgeOrigin::EXTRACT,
+            row.alias,
+            row.heading,
+            row.chunk_id,
+            row.char_start,
+            row.char_end,
+            row.occurrence,
+        ])?;
+    }
+    Ok(())
+}
+
+/// §1.1: the store boundary is where the vocabulary is enforced, so no row can
+/// reach the §1.6 rebuild predicate with a rel_type or owner nothing maps back to.
+fn validate_edge_vocabulary<'a>(
+    edges: impl Iterator<Item = &'a GraphEdge>,
+    origin: &str,
+) -> Result<()> {
+    EdgeOrigin::parse(origin)?;
+    for edge in edges {
+        RelType::parse(&edge.rel_type)?;
     }
     Ok(())
 }
@@ -1687,15 +1785,16 @@ pub(crate) fn find_nodes_by_label_locked(
     conn: &duckdb::Connection,
     label: &str,
 ) -> Result<Vec<GraphNode>> {
+    let key = crate::graph::normalize::label_key(label);
     let mut stmt = conn.prepare(
         r#"
         SELECT id, kind, label, document_id, uri, resolved, metadata_json
         FROM graph_nodes
-        WHERE label = ?
+        WHERE label_key = ?
         ORDER BY resolved DESC, kind ASC, id ASC
         "#,
     )?;
-    let mut rows = stmt.query(params![label])?;
+    let mut rows = stmt.query(params![key])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         out.push(row_to_node(row)?);
@@ -1854,10 +1953,190 @@ mod tests {
         assert!(bl_after.edges.is_empty());
 
         store.link_nodes("n1", "n2", "related", 1.0).unwrap();
-        store.delete_graph_for_document("d1").unwrap();
+
+        // §6.3: deleting the document demotes its node; the explicit edge survives
+        // and n2 keeps a backlink to what used to be a note.
+        assert!(store.delete_document("d1").unwrap());
         assert!(store.find_node_by_document_id("d1").unwrap().is_none());
-        // Stub remains
+        let demoted = store.find_node_by_id("n1").unwrap().expect("stub remains");
+        assert_eq!(demoted.kind, "stub");
+        assert!(!demoted.resolved);
+        assert_eq!(demoted.document_id, None);
+        assert_eq!(demoted.uri.as_deref(), None);
         assert!(store.find_node_by_id("n2").unwrap().is_some());
+        let bl_after_delete = store.backlinks("n2").unwrap();
+        assert_eq!(bl_after_delete.edges.len(), 1);
+        assert_eq!(bl_after_delete.edges[0].rel_type, "related");
+    }
+
+    /// §6.3: extraction noise is reclaimed on delete, user-authored inbound links
+    /// from surviving notes are not.
+    #[test]
+    fn delete_document_keeps_inbound_and_drops_outbound_extract_edges() {
+        let store = open_temp();
+        let now = Utc::now();
+        for (id, uri, title) in [("d1", "doc://a", "A"), ("d2", "doc://b", "B")] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: uri.into(),
+                    title: title.into(),
+                    content: "x".into(),
+                    metadata_json: "{}".into(),
+                    created_at: now,
+                    updated_at: now,
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        store
+            .upsert_graph_node(&node("n1", "document", "A", Some("d1")))
+            .unwrap();
+        store
+            .upsert_graph_node(&node("n2", "document", "B", Some("d2")))
+            .unwrap();
+        // A -> B: one edge body extraction owns, one the user created.
+        {
+            let conn = store.lock().unwrap();
+            let extracted = DerivedEdge {
+                edge: edge("e-out-extract", "n1", "n2", "wikilink"),
+                alias: None,
+                heading: None,
+                char_start: Some(0),
+                char_end: Some(10),
+                occurrence: 0,
+                chunk_id: None,
+            };
+            insert_derived_graph_edges_locked(&conn, &[extracted]).unwrap();
+        }
+        let out_explicit = store.link_nodes("n1", "n2", "tunnel", 1.0).unwrap().id;
+        // B -> A: inbound to the doomed node.
+        let in_explicit = store.link_nodes("n2", "n1", "related", 1.0).unwrap().id;
+
+        assert!(store.delete_document("d1").unwrap());
+
+        let mut kept: Vec<String> = store
+            .list_graph_edges()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        kept.sort();
+        let mut expected = vec![in_explicit, out_explicit];
+        expected.sort();
+        assert_eq!(kept, expected);
+        let stub = store.find_node_by_id("n1").unwrap().expect("demoted");
+        assert_eq!(stub.kind, "stub");
+        assert!(!stub.resolved);
+        assert_eq!(stub.document_id, None);
+        // The demoted stub stays reachable from B, so the backlink keeps its meaning.
+        let bl = store.backlinks("n1").unwrap();
+        assert_eq!(bl.edges.len(), 1);
+        assert_eq!(bl.edges[0].source_id, "n2");
+    }
+
+    fn ids<T, F: Fn(&T) -> &str>(rows: &[T], key: F) -> Vec<String> {
+        let mut out: Vec<String> = rows.iter().map(|r| key(r).to_string()).collect();
+        out.sort();
+        out
+    }
+
+    /// §7.2: the walk is per-hop frontier SQL, so the budget has to be applied
+    /// while discovering. Tags stay reachable here because `neighbors` is the raw
+    /// local graph, not the UI's PKB projection.
+    #[test]
+    fn neighbors_bounds_multihop_walks_and_repeats_identically() {
+        let store = open_temp();
+        for (id, kind, label) in [
+            ("c1", "document", "C1"),
+            ("c2", "document", "C2"),
+            ("c3", "tag", "inbox"),
+        ] {
+            store
+                .upsert_graph_node(&node(id, kind, label, None))
+                .unwrap();
+        }
+        store
+            .insert_graph_edges(&[
+                edge("e1", "c1", "c2", "wikilink"),
+                edge("e2", "c2", "c3", "tagged"),
+            ])
+            .unwrap();
+
+        let one_hop = store.neighbors("c1", 1, 100).unwrap();
+        assert_eq!(ids(&one_hop.nodes, |n| n.id.as_str()), ["c1", "c2"]);
+        assert_eq!(one_hop.edges.len(), 1);
+
+        let two_hop = store.neighbors("c1", 2, 100).unwrap();
+        assert_eq!(
+            ids(&two_hop.nodes, |n| n.id.as_str()),
+            ["c1", "c2", "c3"],
+            "hop two reaches the tag hub"
+        );
+        assert_eq!(ids(&two_hop.edges, |e| e.id.as_str()), ["e1", "e2"]);
+
+        let capped = store.neighbors("c1", 2, 2).unwrap();
+        assert_eq!(capped.nodes.len(), 2, "max_nodes bounds the walk");
+        assert_eq!(
+            capped.edges.len(),
+            1,
+            "an edge to an unbudgeted node is not reported"
+        );
+
+        let again = store.neighbors("c1", 2, 100).unwrap();
+        assert_eq!(
+            ids(&again.nodes, |n| n.id.as_str()),
+            ids(&two_hop.nodes, |n| n.id.as_str()),
+            "the frontier order is stable across calls"
+        );
+    }
+
+    #[test]
+    fn neighbors_clamps_depth_to_the_local_graph_cap() {
+        let store = open_temp();
+        let chain: Vec<String> = (0..10).map(|i| format!("n{i}")).collect();
+        for id in &chain {
+            store
+                .upsert_graph_node(&node(id, "document", id, None))
+                .unwrap();
+        }
+        let links: Vec<GraphEdge> = chain
+            .windows(2)
+            .map(|pair| {
+                let id = format!("e-{}-{}", pair[0], pair[1]);
+                edge(&id, &pair[0], &pair[1], "wikilink")
+            })
+            .collect();
+        store.insert_graph_edges(&links).unwrap();
+
+        let view = store.neighbors("n0", u32::MAX, 100).unwrap();
+        assert_eq!(
+            view.nodes.len(),
+            MAX_LOCAL_GRAPH_DEPTH as usize + 1,
+            "depth beyond the §9 cap is not walked"
+        );
+    }
+
+    /// An edge whose endpoint has no node row cannot carry the walk onward; the
+    /// old adjacency-map BFS happily traversed through such ghosts.
+    #[test]
+    fn neighbors_does_not_route_through_missing_nodes() {
+        let store = open_temp();
+        for id in ["here", "beyond"] {
+            store
+                .upsert_graph_node(&node(id, "document", id, None))
+                .unwrap();
+        }
+        store
+            .insert_graph_edges(&[
+                edge("e1", "here", "ghost", "wikilink"),
+                edge("e2", "ghost", "beyond", "wikilink"),
+            ])
+            .unwrap();
+
+        let view = store.neighbors("here", 3, 100).unwrap();
+        assert_eq!(ids(&view.nodes, |n| n.id.as_str()), ["here"]);
+        assert!(view.edges.is_empty());
     }
 
     #[test]

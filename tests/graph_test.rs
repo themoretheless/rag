@@ -246,3 +246,64 @@ async fn ingest_stub_promote_backlinks_neighbors() {
         "no unresolved stubs remain for this scenario"
     );
 }
+
+/// GRAPH_DESIGN §3: one `label_key` drives matching, so case, width and
+/// whitespace variants must not fork a second node for the same page.
+#[tokio::test]
+async fn label_key_binds_case_and_width_link_variants() {
+    let (_dir, store) = open_temp_store();
+    let embedder = MockEmbedder::new(DIMS);
+
+    let (_, target_node, _) = ingest_with_graph(
+        &store,
+        &embedder,
+        "Target body without links.",
+        "Rag-Mcp Overview",
+        "wiki://rag-mcp-overview",
+    )
+    .await;
+
+    // Same concept, different casing, collapsed spaces and fullwidth Latin.
+    let (_, _, edges) = ingest_with_graph(
+        &store,
+        &embedder,
+        "See [[  rag-mcp   ｏｖｅｒｖｉｅｗ ]] for context.",
+        "Linker",
+        "doc://linker",
+    )
+    .await;
+    assert_eq!(edges, 1);
+
+    let stats = store.graph_stats().expect("graph_stats");
+    assert_eq!(
+        stats.nodes_by_kind.get("stub").copied().unwrap_or(0),
+        0,
+        "a normalized variant of an existing title must not create a stub"
+    );
+
+    let by_key = store
+        .find_nodes_by_label("RAG-MCP   OVERVIEW")
+        .expect("find_nodes_by_label");
+    assert!(
+        by_key.iter().any(|n| n.id == target_node),
+        "label lookup must be normalization-key based"
+    );
+}
+
+/// §5.4: tag nodes are keyed by `tag://{{label_key}}`, so one tag concept
+/// stays one hub regardless of how each document spelled it.
+#[tokio::test]
+async fn tag_nodes_collapse_per_label_key() {
+    let (_dir, store) = open_temp_store();
+    let embedder = MockEmbedder::new(DIMS);
+
+    ingest_with_graph(&store, &embedder, "First #Idea note.", "T1", "doc://t1").await;
+    let (_, _, edges) =
+        ingest_with_graph(&store, &embedder, "Second #idea note.", "T2", "doc://t2").await;
+    assert_eq!(edges, 1, "T2 emits only its tagged edge");
+
+    let hubs = store.find_nodes_by_label("idea").expect("find tag hub");
+    let tag_hubs: Vec<_> = hubs.iter().filter(|n| n.kind == "tag").collect();
+    assert_eq!(tag_hubs.len(), 1, "one hub per tag concept: {tag_hubs:?}");
+    assert_eq!(tag_hubs[0].uri.as_deref(), Some("tag://idea"));
+}

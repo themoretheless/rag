@@ -782,6 +782,175 @@ pub struct GraphStats {
     pub edges_by_rel_type: BTreeMap<String, u64>,
 }
 
+/// Node kinds — see `GRAPH_DESIGN.md` §1.1.
+///
+/// Store columns stay `VARCHAR` for adapter portability, so the wire form is a
+/// string and these enums are the validation/parse boundary (§1.1: reject
+/// unknown at the MCP/store boundary).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeKind {
+    /// Backed by a live `documents` row.
+    Document,
+    /// Classification hub; never a wikilink target.
+    Tag,
+    /// Unresolved wikilink target.
+    Stub,
+    /// Reserved for compiled entity pages.
+    Entity,
+}
+
+impl NodeKind {
+    /// Accepted wire strings.
+    pub const WIRE: &'static [&'static str] = &["document", "tag", "stub", "entity"];
+
+    /// Wire string for this kind.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Tag => "tag",
+            Self::Stub => "stub",
+            Self::Entity => "entity",
+        }
+    }
+
+    /// True when `raw` is a known wire string.
+    pub fn is_wire(raw: &str) -> bool {
+        Self::WIRE.contains(&raw)
+    }
+
+    /// Parse a wire string, rejecting unknown kinds.
+    pub fn parse(raw: &str) -> crate::error::Result<Self> {
+        match raw {
+            "document" => Ok(Self::Document),
+            "tag" => Ok(Self::Tag),
+            "stub" => Ok(Self::Stub),
+            "entity" => Ok(Self::Entity),
+            other => Err(crate::error::AppError::config(format!(
+                "invalid node kind '{other}': expected one of {}",
+                Self::WIRE.join(", ")
+            ))),
+        }
+    }
+}
+
+/// Edge relation types — see `GRAPH_DESIGN.md` §1.1/§2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelType {
+    /// Intentional `[[page]]` reference.
+    Wikilink,
+    /// Document classified under a tag.
+    Tagged,
+    /// Weak unlinked mention (opt-in extract).
+    Mentions,
+    /// Soft explicit association.
+    Related,
+    /// Cross-wing bridge.
+    Tunnel,
+    /// Source requires target (dependency projection).
+    DependsOn,
+    /// Wiki page derived from a raw source.
+    DerivedFrom,
+    /// Source replaces target.
+    Supersedes,
+}
+
+impl RelType {
+    /// Accepted wire strings. `embeds` is reserved and not an edge yet.
+    pub const WIRE: &'static [&'static str] = &[
+        "wikilink",
+        "tagged",
+        "mentions",
+        "related",
+        "tunnel",
+        "depends_on",
+        "derived_from",
+        "supersedes",
+    ];
+
+    /// Wire string for this relation.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Wikilink => "wikilink",
+            Self::Tagged => "tagged",
+            Self::Mentions => "mentions",
+            Self::Related => "related",
+            Self::Tunnel => "tunnel",
+            Self::DependsOn => "depends_on",
+            Self::DerivedFrom => "derived_from",
+            Self::Supersedes => "supersedes",
+        }
+    }
+
+    /// True when `raw` is a known wire string.
+    pub fn is_wire(raw: &str) -> bool {
+        Self::WIRE.contains(&raw)
+    }
+
+    /// Parse a wire string, rejecting unknown relations.
+    pub fn parse(raw: &str) -> crate::error::Result<Self> {
+        match raw {
+            "wikilink" => Ok(Self::Wikilink),
+            "tagged" => Ok(Self::Tagged),
+            "mentions" => Ok(Self::Mentions),
+            "related" => Ok(Self::Related),
+            "tunnel" => Ok(Self::Tunnel),
+            "depends_on" => Ok(Self::DependsOn),
+            "derived_from" => Ok(Self::DerivedFrom),
+            "supersedes" => Ok(Self::Supersedes),
+            other => Err(crate::error::AppError::config(format!(
+                "invalid rel_type '{other}': expected one of {}",
+                Self::WIRE.join(", ")
+            ))),
+        }
+    }
+
+    /// Relations that body-text extraction owns (§1.6).
+    pub fn is_extract_owned(raw: &str) -> bool {
+        matches!(raw, "wikilink" | "tagged" | "mentions")
+    }
+}
+
+/// Who owns an edge for rebuild/delete policy — `GRAPH_DESIGN.md` §1.1/§1.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeOrigin {
+    /// Produced by `rebuild_document_graph`.
+    Extract,
+    /// `link_nodes`, tunnel CRUD, or an agent.
+    Explicit,
+    /// Written by a server workflow such as compile.
+    System,
+}
+
+impl EdgeOrigin {
+    /// Wire string used by `extract` writes.
+    pub const EXTRACT: &'static str = "extract";
+    /// Wire string used by `explicit` writes.
+    pub const EXPLICIT: &'static str = "explicit";
+    /// Wire string used by `system` writes.
+    pub const SYSTEM: &'static str = "system";
+
+    /// Accepted wire strings.
+    pub const WIRE: &'static [&'static str] = &["extract", "explicit", "system"];
+
+    /// True when `raw` is a known wire string.
+    pub fn is_wire(raw: &str) -> bool {
+        Self::WIRE.contains(&raw)
+    }
+
+    /// Parse a wire string, rejecting unknown owners.
+    pub fn parse(raw: &str) -> crate::error::Result<Self> {
+        match raw {
+            Self::EXTRACT => Ok(Self::Extract),
+            Self::EXPLICIT => Ok(Self::Explicit),
+            Self::SYSTEM => Ok(Self::System),
+            other => Err(crate::error::AppError::config(format!(
+                "invalid edge origin '{other}': expected one of {}",
+                Self::WIRE.join(", ")
+            ))),
+        }
+    }
+}
+
 /// Optional filters for full/partial graph export.
 #[derive(Debug, Clone, Default)]
 pub struct GraphFilter {

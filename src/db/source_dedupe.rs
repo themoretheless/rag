@@ -941,11 +941,17 @@ fn promote_node_to_survivor(conn: &Connection, node_id: &str, survivor: &Documen
     conn.execute(
         r#"
         UPDATE graph_nodes
-        SET kind = 'document', label = ?, document_id = ?, uri = ?,
+        SET kind = 'document', label = ?, label_key = ?, document_id = ?, uri = ?,
             resolved = true, updated_at = now()
         WHERE id = ?
         "#,
-        params![survivor.title, survivor.id, survivor.uri, node_id],
+        params![
+            survivor.title,
+            crate::graph::normalize::label_key(&survivor.title),
+            survivor.id,
+            survivor.uri,
+            node_id
+        ],
     )?;
     Ok(())
 }
@@ -1328,6 +1334,18 @@ mod tests {
         assert_eq!(document_id, "canonical");
         assert_eq!(uri, "file:///vault/promote.md");
         assert_eq!(metadata, r#"{"preserved":true}"#);
+        // §3: the promoted label and its match key must move together.
+        let (label, label_key): (String, Option<String>) = conn
+            .query_row(
+                "SELECT label, label_key FROM graph_nodes WHERE id = 'legacy-node'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            label_key.as_deref(),
+            Some(crate::graph::normalize::label_key(&label).as_str())
+        );
         let preserved_edge: i64 = conn
             .query_row(
                 "SELECT COUNT(*)::BIGINT FROM graph_edges WHERE id = 'incoming' AND target_id = 'legacy-node'",

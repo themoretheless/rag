@@ -122,6 +122,7 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_AUTO_SYNC_INTERVAL_SECS` | `3600` | Background sync interval; the first pass runs at startup |
 | `RAG_MAX_CONTEXT_TOKENS` | `4096` | Default token budget when packing search hits (~4 chars/token) |
 | `RAG_MAX_CHUNKS_PER_DOC` | `3` | Max chunks retained per document under diversity collapse |
+| `RAG_MAX_LINKS_PER_DOC` | `2000` | Max wikilinks/tags extracted from one document before truncation |
 | `RAG_FTS_STEMMER` | `porter` | DuckDB FTS stemmer; use `none` for CJK/code |
 | `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (currently 33 compile-first tools, count-bounded by test) or `full` (all tools). See vision §5. |
 | `RAG_LLM_PROVIDER` | `ollama` | Chat preset: `ollama` \| `openai` \| `codex` \| `claude` \| `kimi` \| `deepseek` \| `custom` — see [`docs/LLM_PROVIDERS.md`](docs/LLM_PROVIDERS.md) |

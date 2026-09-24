@@ -152,6 +152,22 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges(rel_type);
 
 Backfill: `label_key = label_key(label)` in migrate Rust path. DuckDB lacks hard FKs; doctor/lint for dangling edges.
 
+> **2026-09-24 implementation notes.**
+> `graph_edges.origin` is added **nullable** and backfilled in
+> `schema::backfill_graph_edge_origins`, not with `DEFAULT 'extract'`: a column
+> default would retroactively claim every pre-existing user edge as derived and
+> hand it to the rebuild delete predicate. Mapping is `edge_origin='derived' →
+> extract`, `'manual' → explicit`, and for rows predating both columns the
+> extraction-owned relation names → `extract` while everything else → `explicit`.
+> `edge_origin` is left in place as the immutable pre-migration record; `origin`
+> is authoritative. `label_key` cannot be derived in SQL at all (DuckDB has no
+> NFKC), so it is backfilled row-by-row in Rust behind a missing-key count guard.
+> Both `GraphNode.label_key` and `GraphEdge.origin` are kept at the store
+> boundary rather than widened onto the wire structs: `label_key` is derived from
+> `label` on write and `origin` is set by the insert helper that owns the write
+> policy, so no caller can lie about either, and the 20-odd construction sites in
+> `src/` plus `crates/rag-mcp-ui` stay untouched.
+
 ### 1.6 Edge identity partition (FATAL fix)
 
 | Class | rel_types | Multi-edge? | Upsert key |
@@ -170,11 +186,24 @@ DELETE FROM graph_edges
 WHERE source_id = ?
   AND (
     origin = 'extract'
-    OR rel_type IN ('wikilink', 'tagged', 'mentions')
+    OR (origin IS NULL AND rel_type IN ('wikilink', 'tagged', 'mentions'))
   );
 ```
 
-Prefer implementing as `Store::delete_derived_edges_from(source_id)` with that exact predicate. Explicit `related`/`tunnel`/`depends_on` with `origin=explicit` survive re-ingest. If a row is mis-tagged (extract origin on related), the OR still cleans extract-owned noise; agents must set origin=explicit on link_nodes.
+Implemented as `Store::delete_derived_edges_from(source_id)` /
+`delete_derived_edges_from_locked`. Explicit `related`/`tunnel`/`depends_on` with
+`origin=explicit` survive re-ingest, and extract-owned relation names are still
+reclaimed when a row carries a mis-tagged or missing owner.
+
+> **2026-09-24 amendment.** The originally written `origin='extract' OR
+> rel_type IN ('wikilink','tagged','mentions')` was scoped to
+> `origin IS NULL` rows. Applied unconditionally, the relation-name branch also
+> deleted user-created `link_nodes(..., 'wikilink')` / `'tagged'` edges, which is
+> what the `rebuild_preserves_explicit_edges_even_when_their_type_is_extractable`
+> regression test had already locked down. The narrowed form keeps the documented
+> intent (always reclaim extraction-owned noise, even from a mis-tagged row)
+> without letting the OR clause override the owner column.
+
 
 ---
 
@@ -263,6 +292,25 @@ Pure functions, backend-agnostic. Same code path for DuckDB ingest and Markdown 
 ### 4.5 `chunk_id_for_span(chunks, start, end)`
 
 Return id of chunk where `chunk.char_start <= start && end <= chunk.char_end` (or covering max-overlap if straddling: prefer chunk containing `start`). Null if no chunks. Refresh on re-ingest after chunk rewrite. If extract_hash skip keeps edges but chunks rechunked, null `chunk_id` or mark dirty (§6).
+
+> **2026-09-24 implementation notes.**
+> `extract_links` / `extract_links_with` return spans as **Unicode scalar** offsets
+> (`char_start`/`char_end`), resolved in one linear pass over the document, because
+> `chunks.char_start` is scalar-based too. Byte offsets would misattribute every
+> link in a non-ASCII document.
+>
+> `alias`, `heading`, `chunk_id`, `char_start`, `char_end`, `occurrence` live on
+> **`graph_edges` columns** and are written only for `origin = 'extract'` rows.
+> They are deliberately absent from the wire [`GraphEdge`] struct: it has ~27
+> construction sites across the crate and the UI, and §7.3's occurrence-aware
+> backlink API (P1) is what should surface them. Explicit `link_nodes` edges keep
+> all six NULL — a hand-made edge has no span in any document.
+>
+> Two extraction rules from §4.2/§4.3 that changed stored shape: `tagged` links
+> collapse to **one edge per `target_key` per document** (mentions no longer
+> multiply tag hubs), and repeated wikilinks keep an `occurrence` index in
+> document order. Extraction stops at `RAG_MAX_LINKS_PER_DOC` (default 2000) with a
+> warning rather than an ingest failure.
 
 ---
 
@@ -357,7 +405,13 @@ Include chunker params in extract dirty reasons if offsets would shift.
 - **Never** prune between delete_derived and reinsert.  
 - Prefer lint/doctor (`find_orphans`) over eager deletes.  
 - Document delete: **demote** document node to stub (keep id, clear document_id, resolved=false, kind=stub) OR refuse when inbound explicit `depends_on`/`tunnel` exist and policy=`refuse`. Remove only that node's **outbound extract** edges; **retain inbound** edges from other notes (Obsidian: deleted note stays as unresolved target).  
-- **Rejected:** `delete_edges_incident` wipe of inbound depends_on/tunnel/wikilink on delete_document (current path destroys honesty of backlinks).
+- **Rejected:** `delete_edges_incident` wipe of inbound depends_on/tunnel/wikilink on delete_document (current path destroys honesty of backlinks).  
+  **Implemented 2026-09-24:** `delete_document` now runs `demote_graph_for_document_locked` — the node becomes an
+  unresolved `stub` with `document_id` cleared, only its extraction-owned **outbound** edges go (the same §1.6
+  predicate the rebuild uses), and every inbound edge from surviving notes stays. `uri` is kept on purpose, so
+  re-ingesting the same file re-binds the same node id and the retained backlinks point at real content again.
+  `Store::delete_edges_incident` and `Store::delete_graph_for_document` were removed: with the demote path they
+  had no caller left, and both existed only to perform the rejected wipe.
 
 ### 6.4 Explicit API
 
@@ -418,6 +472,24 @@ BFS:
 ```
 
 Use `idx_graph_edges_source` / `idx_graph_edges_target`. Same pattern for depends_on closure (directed).
+
+> **2026-09-24 implementation notes.** `db/graph.rs::expand_frontier` is the one
+> BFS loop; `neighbors`, `follow_tunnels` and both UI projections pass it a
+> per-hop discovery query, so no path materialises `graph_edges` any more. Two
+> rules that loop encodes:
+> * A hop only reports ids that still have a `graph_nodes` row. The old
+>   adjacency-map walk could pass through a ghost endpoint (edge to a deleted
+>   node id, then out of it); that traversal was an artifact of building the
+>   adjacency list from edges, not a decision, and it made dangling ids consume
+>   the node budget.
+> * `depth` is clamped to the §9 cap of 5. The walk is budget-bound, so the
+>   clamp exists to bound `get_neighbors` arguments from the MCP surface.
+>
+> `Store::neighbors` deliberately keeps the *raw* contract (every relation type,
+> tag hubs reachable) because wiki backlink walking and `get_neighbors` callers
+> depend on it. The PKB default filters of §7.1 live in
+> `export_pkb_neighbors_for_ui` / `export_project_neighbors_for_ui`, which is what
+> the HTTP `/v1/neighbors` route and the UI call.
 
 ### 7.3 Backlinks API (occurrence-aware)
 
@@ -631,7 +703,7 @@ Domain pure; store adapter-agnostic signatures for Markdown vault.
 | **P0a** | label_key column + normalize; fix resolve order (no tag, no steal); delete_derived_edges_from; promote id stability tests |
 | **P0b** | char offsets on ExtractedLink/edges; multi-wikilink occurrence; GraphEdge provenance fields; neighbors frontier SQL |
 | **P0c** | graph_expand_search; tunnel allowed on link_nodes; PKB default filters on get_neighbors/get_graph |
-| **P1** | unlink_nodes; resolve_stub; tunnel CRUD; node_aliases + rename retention; link_health; demote-on-delete; blake3 + migration; depends_on tools; backlinks occurrence API |
+| **P1** | unlink_nodes; resolve_stub; tunnel CRUD; node_aliases + rename retention; link_health; blake3 + migration; depends_on tools; backlinks occurrence API |
 | **P1 vault** | live parse + extract-only rebuild + path resolve + explicit merge |
 | **P2** | mentions extract; embeds rel; confusable detection (optional); VSS irrelevant to graph |
 
@@ -639,16 +711,21 @@ Domain pure; store adapter-agnostic signatures for Markdown vault.
 
 ## 17. Current code debt (map to this design)
 
-| Location | Bug vs design |
-|----------|----------------|
-| `resolve.rs` `delete_edges_from` | Wipes explicit edges → `delete_derived_edges_from` |
-| `resolve_wikilink_target` prefers any resolved | Can bind tags → exclude kind=tag |
-| `ensure_document_node` title document reuse | Steal → remove block |
-| `find_nodes_by_label` case-sensitive | Permanent stubs → label_key |
-| `extract.rs` byte positions for context only | Add char_start/char_end; convert at boundary |
-| `db/graph.rs` neighbors loads all edges | Frontier SQL |
-| Random UUID stubs/tags | Deterministic after migrate |
-| No origin / multi-edge / aliases | Schema + API extensions above |
+Status is as of 2026-09-24. "Closed" rows stay listed so a later reader can tell
+which §1–§6 clauses once had no code behind them.
+
+| Location | Bug vs design | Status |
+|----------|----------------|--------|
+| `resolve.rs` `delete_edges_from` | Wipes explicit edges → `delete_derived_edges_from` | Closed (P0a-2): scoped predicate + `origin` column, `extract`-owned rel_types only |
+| `resolve_wikilink_target` prefers any resolved | Can bind tags → exclude kind=tag | Closed (P0a-3): the label tier binds a *unique* resolved document, else an unresolved stub; tags/entities are never wikilink targets |
+| `ensure_document_node` title document reuse | Steal → remove block | Closed (P0a-3): uri reuse refuses a node owned by another document, and promotion skips `tag`/`entity` kinds |
+| `find_nodes_by_label` case-sensitive | Permanent stubs → label_key | Closed (P0a-1): `graph/normalize.rs`, `label_key` column + migrate backfill, query keyed on `label_key` |
+| `extract.rs` byte positions for context only | Add char_start/char_end; convert at boundary | Closed (P0b-1): `Hit` byte spans are resolved to unicode scalars once per document and stored on extract-origin edges |
+| `db/graph.rs` neighbors loads all edges | Frontier SQL | Closed (P0b-2): `expand_frontier` + one indexed hop query per depth level for `neighbors`, `follow_tunnels` and both UI projections; §9 depth cap 5 enforced |
+| Random UUID stubs/tags | Deterministic after migrate | Deferred by decision (V-O8): no blake3 id flip without the merge pass |
+| No origin / multi-edge / aliases | Schema + API extensions above | Closed for storage (P0a-2 origin, P0b-1 `alias`/`heading`/`chunk_id`/`char_start`/`char_end`/`occurrence`); occurrence-aware read APIs (`list_backlinks` → `BacklinkHit`, `aggregate_view`) remain P1 |
+| `delete_document` wiped every incident edge | §6.3 demote-to-stub, keep inbound | Closed: `demote_graph_for_document_locked` clears `document_id`, sets `kind='stub'`/`resolved=false`, reclaims only outbound extract edges; inbound and explicit outbound stay. Applies to MCP delete, maintenance compaction and recovery replace alike, so a replaced note is an unresolved target rather than lost links |
+| `label` written without `label_key` | Single §3 key must not go stale | Closed: title refresh (`refresh_document_graph_label_locked`) and dedupe promotion both rewrite `label_key`, so a renamed note keeps resolving by label |
 
 ---
 

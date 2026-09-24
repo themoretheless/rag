@@ -3324,15 +3324,9 @@ pub(super) fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Res
         return Ok(false);
     }
     super::fts::mark_fts_dirty(conn)?;
-    conn.execute(
-        r#"
-        DELETE FROM graph_edges
-        WHERE source_id IN (SELECT id FROM graph_nodes WHERE document_id = ?)
-           OR target_id IN (SELECT id FROM graph_nodes WHERE document_id = ?)
-        "#,
-        params![id, id],
-    )?;
-    conn.execute("DELETE FROM graph_nodes WHERE document_id = ?", params![id])?;
+    // GRAPH_DESIGN.md §6.3: never wipe incident edges here. The node is demoted to
+    // an unresolved stub and edges from other notes survive.
+    super::graph::demote_graph_for_document_locked(conn, id)?;
     conn.execute("DELETE FROM chunks WHERE document_id = ?", params![id])?;
     conn.execute(
         "DELETE FROM wiki_index WHERE document_id = ? OR page_id = ?",
@@ -3643,8 +3637,13 @@ fn refresh_document_graph_label_locked(
     };
     if let Some(ref node_id) = node_id {
         conn.execute(
-            "UPDATE graph_nodes SET label = ?, updated_at = CAST(? AS TIMESTAMP) WHERE id = ?",
-            params![doc.title, format_ts(Utc::now()), node_id],
+            "UPDATE graph_nodes SET label = ?, label_key = ?, updated_at = CAST(? AS TIMESTAMP) WHERE id = ?",
+            params![
+                doc.title,
+                crate::graph::normalize::label_key(&doc.title),
+                format_ts(Utc::now()),
+                node_id
+            ],
         )?;
     }
     Ok(node_id)
@@ -4131,6 +4130,7 @@ fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::GraphNode;
     use chrono::Utc;
 
     fn open_temp() -> Store {
@@ -4334,6 +4334,40 @@ mod tests {
         assert!(store.list_chunks_for_document("d1").unwrap().is_empty());
         assert!(store.list_document_revisions("d1").unwrap().is_empty());
         assert!(!store.delete_document("d1").unwrap());
+    }
+
+    /// §3: `label_key` is the single match key, so a title change must move it with
+    /// `label`. Otherwise a renamed note stops answering `find_node_by_label`.
+    #[test]
+    fn graph_label_refresh_keeps_label_key_in_sync() {
+        let store = open_temp();
+        let mut doc = sample_doc("d1", "file://rename.md");
+        doc.title = "Old Name".into();
+        store.upsert_document(&doc).unwrap();
+        store
+            .upsert_graph_node(&GraphNode {
+                id: "n1".into(),
+                kind: "document".into(),
+                label: "Old Name".into(),
+                document_id: Some("d1".into()),
+                uri: Some("file://rename.md".into()),
+                resolved: true,
+                metadata_json: "{}".into(),
+            })
+            .unwrap();
+
+        doc.title = "  Renamed   TITLE ".into();
+        let key = crate::graph::normalize::label_key(&doc.title);
+        {
+            let conn = store.lock().unwrap();
+            refresh_document_graph_label_locked(&conn, &doc).unwrap();
+        }
+
+        let node = store.find_node_by_id("n1").unwrap().expect("node");
+        assert_eq!(node.label, "  Renamed   TITLE ");
+        let by_label = store.find_nodes_by_label(&key).unwrap();
+        assert_eq!(by_label.len(), 1);
+        assert_eq!(by_label[0].id, "n1");
     }
 
     #[test]

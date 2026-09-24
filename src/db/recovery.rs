@@ -2783,7 +2783,18 @@ mod tests {
         assert_eq!(report.conflicts, 1);
         assert_eq!(report.chunks_inserted, 2);
         assert!(store.get_document("old-document").unwrap().is_none());
-        assert!(store.find_node_by_id("old-node").unwrap().is_none());
+        // §6.3: the replaced document's node is demoted, not deleted. It keeps the
+        // uri, so the next rebuild binds it to `replacement-document` and any note
+        // that linked the old one keeps a real backlink instead of a silently
+        // dropped edge.
+        let demoted = store
+            .find_node_by_id("old-node")
+            .unwrap()
+            .expect("demoted stub");
+        assert_eq!(demoted.kind, "stub");
+        assert!(!demoted.resolved);
+        assert_eq!(demoted.document_id, None);
+        assert_eq!(demoted.uri.as_deref(), Some("recovery://replace"));
         assert!(store
             .list_document_revisions("old-document")
             .unwrap()

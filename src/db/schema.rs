@@ -120,9 +120,21 @@ pub const CREATE_IDX_GRAPH_EDGES_SOURCE: &str =
 pub const CREATE_IDX_GRAPH_EDGES_TARGET: &str =
     "CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id)";
 
+/// Index graph edges by owner (§1.5): the rebuild delete predicate filters on it.
+pub const CREATE_IDX_GRAPH_EDGES_ORIGIN: &str =
+    "CREATE INDEX IF NOT EXISTS idx_graph_edges_origin ON graph_edges(origin)";
+
+/// Index graph edges by relation type (§1.5).
+pub const CREATE_IDX_GRAPH_EDGES_REL: &str =
+    "CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges(rel_type)";
+
 /// Index graph nodes by label.
 pub const CREATE_IDX_GRAPH_NODES_LABEL: &str =
     "CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label)";
+
+/// Index graph nodes by the single normalization key (§3).
+pub const CREATE_IDX_GRAPH_NODES_LABEL_KEY: &str =
+    "CREATE INDEX IF NOT EXISTS idx_graph_nodes_label_key ON graph_nodes(label_key)";
 
 /// Index graph nodes by document id.
 pub const CREATE_IDX_GRAPH_NODES_DOCUMENT_ID: &str =
@@ -396,6 +408,30 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // explicitly distinguish extracted edges from durable user-authored links.
     add_column_best_effort(conn, "graph_edges", "edge_origin", "VARCHAR")?;
 
+    // GRAPH_DESIGN §3/§1.5: one normalization key per node, used for case- and
+    // width-insensitive matching. Derivation lives in `graph::normalize` because
+    // DuckDB has no NFKC; existing rows are backfilled in
+    // [`backfill_graph_node_label_keys`].
+    add_column_best_effort(conn, "graph_nodes", "label_key", "VARCHAR")?;
+    conn.execute_batch(CREATE_IDX_GRAPH_NODES_LABEL_KEY)?;
+
+    // GRAPH_DESIGN §1.6: `origin` decides which edges a rebuild may delete.
+    // Added nullable and backfilled in [`backfill_graph_edge_origins`]: the
+    // literal §1.5 `DEFAULT 'extract'` would retroactively claim every
+    // pre-existing user-authored edge as derived and let rebuild delete it.
+    add_column_best_effort(conn, "graph_edges", "origin", "VARCHAR")?;
+    conn.execute_batch(&[CREATE_IDX_GRAPH_EDGES_ORIGIN, CREATE_IDX_GRAPH_EDGES_REL].join(";\n"))?;
+
+    // GRAPH_DESIGN §4.1/§6.1: where an extracted edge came from. These are only
+    // ever written for `origin = 'extract'` rows; explicit edges keep them NULL,
+    // because a hand-made `link_nodes` edge has no span in any document.
+    add_column_best_effort(conn, "graph_edges", "alias", "VARCHAR")?;
+    add_column_best_effort(conn, "graph_edges", "heading", "VARCHAR")?;
+    add_column_best_effort(conn, "graph_edges", "chunk_id", "VARCHAR")?;
+    add_column_best_effort(conn, "graph_edges", "char_start", "BIGINT")?;
+    add_column_best_effort(conn, "graph_edges", "char_end", "BIGINT")?;
+    add_column_best_effort(conn, "graph_edges", "occurrence", "BIGINT")?;
+
     // Indexes that depend on document columns (after columns exist).
     conn.execute_batch(
         &[
@@ -491,8 +527,94 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         .join(";\n"),
     )?;
 
+    backfill_graph_node_label_keys(conn)?;
+    backfill_graph_edge_origins(conn)?;
+
     record_schema_version(conn)?;
     Ok(())
+}
+
+/// Derive `graph_nodes.label_key` for rows written before the column existed.
+///
+/// The loop is guarded by a missing-key count so an upgraded database pays it
+/// once and every later open costs one aggregate. Rows keep `label` untouched:
+/// `label_key` is the match key, `label` stays the display form (§1.2).
+pub fn backfill_graph_node_label_keys(conn: &Connection) -> Result<u64> {
+    const COUNT_MISSING: &str = "SELECT COUNT(*) FROM graph_nodes WHERE label_key IS NULL";
+    const PENDING: &str =
+        "SELECT id, label FROM graph_nodes WHERE label_key IS NULL ORDER BY id ASC";
+
+    let missing: i64 = conn.query_row(COUNT_MISSING, [], |row| row.get(0))?;
+    if missing == 0 {
+        return Ok(0);
+    }
+
+    let pending: Vec<(String, String)> = {
+        let mut stmt = conn.prepare(PENDING)?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<duckdb::Result<Vec<_>>>()?
+    };
+
+    let mut updated = 0u64;
+    {
+        let mut stmt = conn.prepare("UPDATE graph_nodes SET label_key = ? WHERE id = ?")?;
+        for (id, label) in &pending {
+            let key = crate::graph::normalize::label_key(label);
+            if key.is_empty() {
+                continue;
+            }
+            updated += stmt.execute(duckdb::params![key, id])? as u64;
+        }
+    }
+    Ok(updated)
+}
+
+/// Map the pre-§1.6 `edge_origin` vocabulary onto the authoritative `origin`.
+///
+/// `derived` → `extract`, `manual` → `explicit`. Rows predating both columns
+/// have no recorded author, so only the ones whose relation is extraction-owned
+/// (`wikilink` / `tagged` / `mentions`, §1.6) are claimed as `extract`; every
+/// other unknown row falls back to `explicit`, which is the side that rebuild
+/// never deletes. Set-based rather than row-looped because the live corpus has
+/// hundreds of thousands of edges.
+pub fn backfill_graph_edge_origins(conn: &Connection) -> Result<u64> {
+    let missing: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM graph_edges WHERE origin IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    if missing == 0 {
+        return Ok(0);
+    }
+
+    let extract_owned = "'wikilink', 'tagged', 'mentions'";
+    let mut done = 0u64;
+    done += conn.execute(
+        &format!(
+            "UPDATE graph_edges SET origin = 'extract' \
+             WHERE origin IS NULL \
+               AND (edge_origin = 'derived' \
+                    OR (edge_origin IS NULL AND rel_type IN ({extract_owned})))"
+        ),
+        [],
+    )? as u64;
+    done += conn.execute(
+        &format!(
+            "UPDATE graph_edges SET origin = 'explicit' \
+             WHERE origin IS NULL \
+               AND (edge_origin = 'manual' \
+                    OR (edge_origin IS NULL AND rel_type NOT IN ({extract_owned})))"
+        ),
+        [],
+    )? as u64;
+    // Any vocabulary we have never seen stays on the non-deleted side.
+    done += conn.execute(
+        "UPDATE graph_edges SET origin = 'explicit' WHERE origin IS NULL",
+        [],
+    )? as u64;
+    Ok(done)
 }
 
 /// Best-effort `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.

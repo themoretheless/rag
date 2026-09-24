@@ -578,7 +578,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(report["kind"], "feedback_compare");
-        assert!(report["regressions"].as_array().unwrap().len() >= 1);
+        assert!(!report["regressions"].as_array().unwrap().is_empty());
         assert!(report["regressions"]
             .as_array()
             .unwrap()
