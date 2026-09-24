@@ -988,6 +988,31 @@ pub const PKB_REL_TYPES: &[&str] = &[
 /// Default node kinds for UI export (tags off unless explicitly included).
 pub const PKB_NODE_KINDS: &[&str] = &["document", "stub", "entity"];
 
+/// The PKB literary relation set (§7.1), shared by every PKB-defaulted read path.
+///
+/// `include_tags` adds the `tagged` edge, the only way tag hubs stay reachable.
+/// This is the single source of that choice: the UI projections, the MCP
+/// `get_neighbors` walk and `get_graph` all default through here.
+pub fn pkb_rel_types(include_tags: bool) -> Vec<String> {
+    let mut rel_types: Vec<String> = PKB_REL_TYPES.iter().map(|rel| (*rel).to_string()).collect();
+    if include_tags {
+        rel_types.push("tagged".into());
+    }
+    rel_types
+}
+
+/// PKB node kinds (§7.1): tags are opt-in everywhere.
+pub fn pkb_node_kinds(include_tags: bool) -> Vec<String> {
+    let mut kinds: Vec<String> = PKB_NODE_KINDS
+        .iter()
+        .map(|kind| (*kind).to_string())
+        .collect();
+    if include_tags {
+        kinds.push("tag".into());
+    }
+    kinds
+}
+
 impl GraphFilter {
     /// PKB defaults for exclusive `--db` inspector and Mode C snapshot dumps.
     ///
@@ -997,15 +1022,9 @@ impl GraphFilter {
     ///
     /// Topology only; no layout positions.
     pub fn pkb_ui_export(max_nodes: Option<u32>, include_tags: bool) -> Self {
-        let mut kinds: Vec<String> = PKB_NODE_KINDS.iter().map(|s| (*s).to_string()).collect();
-        let mut rel_types: Vec<String> = PKB_REL_TYPES.iter().map(|s| (*s).to_string()).collect();
-        if include_tags {
-            kinds.push("tag".into());
-            rel_types.push("tagged".into());
-        }
         Self {
-            kinds: Some(kinds),
-            rel_types: Some(rel_types),
+            kinds: Some(pkb_node_kinds(include_tags)),
+            rel_types: Some(pkb_rel_types(include_tags)),
             seed_ids: None,
             max_nodes: Some(max_nodes.unwrap_or(UI_GRAPH_EXPORT_MAX_NODES)),
         }

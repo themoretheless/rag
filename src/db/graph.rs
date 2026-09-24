@@ -384,10 +384,26 @@ impl Store {
     /// is treated as 100.
     ///
     /// Unlike the UI projections, this raw local graph follows every relation type
-    /// and keeps tag nodes, which is what wiki backlink walking and `get_neighbors`
-    /// callers expect. Each hop is one indexed frontier query (§7.2); `depth` is
-    /// clamped to the §9 hard cap because the walk is budget-bound, not time-bound.
+    /// and keeps tag nodes, which is what wiki backlink walking and internal graph
+    /// maintenance expect; MCP `get_neighbors` narrows it with [`Self::neighbors_filtered`].
+    /// Each hop is one indexed frontier query (§7.2); `depth` is clamped to the §9
+    /// hard cap because the walk is budget-bound, not time-bound.
     pub fn neighbors(&self, node_id: &str, depth: u32, max_nodes: u32) -> Result<GraphView> {
+        self.neighbors_filtered(node_id, depth, max_nodes, None)
+    }
+
+    /// The same bounded walk restricted to a relation set (§7.1).
+    ///
+    /// This is what backs MCP `get_neighbors`, whose default is the PKB literary
+    /// set rather than every relation. `None` (or an empty set) means the raw local
+    /// graph of [`Self::neighbors`].
+    pub fn neighbors_filtered(
+        &self,
+        node_id: &str,
+        depth: u32,
+        max_nodes: u32,
+        rel_types: Option<&[String]>,
+    ) -> Result<GraphView> {
         let max_nodes = if max_nodes == 0 { 100 } else { max_nodes };
         let depth = depth.clamp(1, MAX_LOCAL_GRAPH_DEPTH);
 
@@ -396,12 +412,19 @@ impl Store {
             return Ok(GraphView::default());
         }
 
+        let selected: Vec<&str> = rel_types
+            .unwrap_or_default()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let rel_filter = (!selected.is_empty()).then_some(selected.as_slice());
+
         let visited = expand_frontier(node_id, depth, max_nodes as usize, |frontier, limit| {
-            discover_frontier_neighbors_locked(&conn, frontier, limit, None)
+            discover_frontier_neighbors_locked(&conn, frontier, limit, rel_filter)
         })?;
 
         let nodes = load_nodes_by_ids_locked(&conn, &visited)?;
-        let edges = load_edges_among_locked(&conn, &visited, None)?;
+        let edges = load_edges_among_locked(&conn, &visited, rel_filter)?;
         Ok(GraphView { nodes, edges })
     }
 
@@ -729,11 +752,11 @@ impl Store {
         }
 
         let visited = expand_frontier(node_id, depth, max_nodes as usize, |frontier, limit| {
-            discover_frontier_neighbors_locked(&conn, frontier, limit, Some(REL_TUNNEL))
+            discover_frontier_neighbors_locked(&conn, frontier, limit, Some(&[REL_TUNNEL]))
         })?;
 
         let nodes = load_nodes_by_ids_locked(&conn, &visited)?;
-        let edges = load_edges_among_locked(&conn, &visited, Some(REL_TUNNEL))?;
+        let edges = load_edges_among_locked(&conn, &visited, Some(&[REL_TUNNEL]))?;
         Ok(GraphView { nodes, edges })
     }
 
@@ -883,6 +906,10 @@ fn ui_node_kinds(include_tags: bool) -> &'static str {
 
 fn values_clause(len: usize) -> String {
     (0..len).map(|_| "(?)").collect::<Vec<_>>().join(", ")
+}
+
+fn placeholder_list(len: usize) -> String {
+    vec!["?"; len].join(", ")
 }
 
 /// Make project-scoped graph exports self-describing for UI-side room/layer filters.
@@ -1195,7 +1222,7 @@ fn discover_frontier_neighbors_locked(
     conn: &duckdb::Connection,
     frontier: &[String],
     limit: usize,
-    rel_type: Option<&str>,
+    rel_types: Option<&[&str]>,
 ) -> Result<Vec<String>> {
     if frontier.is_empty() || limit == 0 {
         return Ok(Vec::new());
@@ -1204,10 +1231,12 @@ fn discover_frontier_neighbors_locked(
         .map(|ordinal| format!("(?, {ordinal})"))
         .collect::<Vec<_>>()
         .join(", ");
-    let rel_filter = if rel_type.is_some() {
-        "AND incident.rel_type = ?"
-    } else {
-        ""
+    let rel_filter = match rel_types {
+        Some(rel_types) if !rel_types.is_empty() => format!(
+            "AND incident.rel_type IN ({})",
+            placeholder_list(rel_types.len())
+        ),
+        _ => String::new(),
     };
     let sql = format!(
         r#"
@@ -1231,7 +1260,9 @@ fn discover_frontier_neighbors_locked(
         "#
     );
     let mut binds = frontier.to_vec();
-    binds.extend(rel_type.iter().map(|r| (*r).to_string()));
+    if let Some(rel_types) = rel_types {
+        binds.extend(rel_types.iter().map(|rel| (*rel).to_string()));
+    }
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(binds.iter()))?;
     let mut neighbors = Vec::with_capacity(limit.min(1024));
@@ -1246,16 +1277,20 @@ fn discover_frontier_neighbors_locked(
 fn load_edges_among_locked(
     conn: &duckdb::Connection,
     node_ids: &[String],
-    rel_type: Option<&str>,
+    rel_types: Option<&[&str]>,
 ) -> Result<Vec<GraphEdge>> {
     if node_ids.is_empty() {
         return Ok(Vec::new());
     }
     let selected = values_clause(node_ids.len());
-    let rel_filter = if rel_type.is_some() {
-        "WHERE e.rel_type = ?"
-    } else {
-        ""
+    let rel_filter = match rel_types {
+        Some(rel_types) if !rel_types.is_empty() => {
+            format!(
+                "WHERE e.rel_type IN ({})",
+                placeholder_list(rel_types.len())
+            )
+        }
+        _ => String::new(),
     };
     let sql = format!(
         r#"
@@ -1269,7 +1304,9 @@ fn load_edges_among_locked(
         "#
     );
     let mut binds = node_ids.to_vec();
-    binds.extend(rel_type.iter().map(|r| (*r).to_string()));
+    if let Some(rel_types) = rel_types {
+        binds.extend(rel_types.iter().map(|rel| (*rel).to_string()));
+    }
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(binds.iter()))?;
     let mut edges = Vec::new();
@@ -2089,6 +2126,50 @@ mod tests {
             ids(&two_hop.nodes, |n| n.id.as_str()),
             "the frontier order is stable across calls"
         );
+    }
+
+    /// §7.1: the walk can be narrowed to a named relation set, which is how MCP
+    /// `get_neighbors` applies its PKB default. The raw contract stays untouched.
+    #[test]
+    fn neighbors_filtered_walks_only_the_named_relations() {
+        let store = open_temp();
+        for (id, kind, label) in [
+            ("a", "document", "A"),
+            ("b", "document", "B"),
+            ("t", "tag", "inbox"),
+        ] {
+            store
+                .upsert_graph_node(&node(id, kind, label, None))
+                .unwrap();
+        }
+        store.link_nodes("a", "b", "wikilink", 1.0).unwrap();
+        store.link_nodes("a", "t", "tagged", 1.0).unwrap();
+        store.link_nodes("b", "t", "tunnel", 1.0).unwrap();
+
+        let literary = vec!["wikilink".to_string(), "related".to_string()];
+        let pkb = store
+            .neighbors_filtered("a", 3, 100, Some(&literary))
+            .unwrap();
+        assert_eq!(ids(&pkb.nodes, |n| n.id.as_str()), vec!["a", "b"]);
+        assert!(pkb
+            .edges
+            .iter()
+            .all(|edge| edge.rel_type == "wikilink" || edge.rel_type == "related"));
+
+        let with_tags = vec![
+            "wikilink".to_string(),
+            "related".to_string(),
+            "tagged".to_string(),
+        ];
+        let tagged = store
+            .neighbors_filtered("a", 3, 100, Some(&with_tags))
+            .unwrap();
+        assert_eq!(ids(&tagged.nodes, |n| n.id.as_str()), vec!["a", "b", "t"]);
+
+        // Raw walk: the tunnel is followed, so the tag hub is reached through b.
+        let raw = store.neighbors("a", 3, 100).unwrap();
+        assert_eq!(ids(&raw.nodes, |n| n.id.as_str()), vec!["a", "b", "t"]);
+        assert!(raw.edges.iter().any(|edge| edge.rel_type == "tunnel"));
     }
 
     #[test]

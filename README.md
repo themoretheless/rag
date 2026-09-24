@@ -495,8 +495,8 @@ schema, relational integrity, and embedding contract before restore.
 
 | Tool | Params | Behavior |
 |------|--------|----------|
-| `get_graph` | `kinds?`, `rel_types?`, `seed_ids?`, `max_nodes?` | Filtered graph export `{nodes, edges}` |
-| `get_neighbors` | `node_id`, `depth?`, `max_nodes?` | Local BFS (undirected traversal) |
+| `get_graph` | `kinds?`, `rel_types?`, `seed_ids?`, `max_nodes?`, `include_tags?` | Filtered graph export `{nodes, edges}`; PKB defaults (wikilink/related, tags off) unless `kinds`/`rel_types` given |
+| `get_neighbors` | `node_id`, `depth?`, `max_nodes?`, `rel_types?`, `include_tags?` | Local BFS (undirected); default relations are the PKB literary set — `include_tags` or explicit `rel_types` for tagged/tunnel/mentions |
 | `get_backlinks` | `node_id` \| `document_id` \| `label` | Incoming edges + source nodes |
 | `link_nodes` | `source_id`, `target_id`, `rel_type?`, `weight?` | Explicit edge (`related` default; `tunnel` allowed) |
 | `create_tunnel` | `source_id`, `target_id`, `weight?`, `context?`/`label?` | Tunnel edge between two nodes (upsert by pair) |

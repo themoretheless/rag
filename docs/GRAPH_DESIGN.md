@@ -458,6 +458,13 @@ pub struct NeighborsOpts {
 - `get_graph`: same PKB literary set unless client asks for Dep projection.  
 - Cap export: 500 nodes / 100 neighbors default.
 
+> **2026-09-24 implementation notes.** Both MCP tools now default to the literary
+> set (`pkb_rel_types`), with `include_tags` as the tag opt-in and an explicit
+> `rel_types` list as the escape hatch for `tunnel` / `mentions` / `depends_on`.
+> Passing `rel_types` wins outright — including `["tagged"]` alone — and an empty
+> list is treated as "not supplied" rather than "no relations". `get_graph` also
+> infers tag edges when a caller names `tag` among `kinds`.
+
 ### 7.2 Scale: frontier SQL (FATAL fix)
 
 **Rejected:** load all `graph_edges` into memory for BFS (O(|E|) under Mutex; fails at 100k+).
@@ -486,10 +493,15 @@ Use `idx_graph_edges_source` / `idx_graph_edges_target`. Same pattern for depend
 >   clamp exists to bound `get_neighbors` arguments from the MCP surface.
 >
 > `Store::neighbors` deliberately keeps the *raw* contract (every relation type,
-> tag hubs reachable) because wiki backlink walking and `get_neighbors` callers
-> depend on it. The PKB default filters of §7.1 live in
-> `export_pkb_neighbors_for_ui` / `export_project_neighbors_for_ui`, which is what
-> the HTTP `/v1/neighbors` route and the UI call.
+> tag hubs reachable) because wiki backlink walking and graph maintenance depend
+> on it. The §7.1 PKB defaults are applied at the read boundaries instead:
+> `Store::neighbors_filtered` for MCP `get_neighbors`, a defaulted `GraphFilter`
+> for MCP `get_graph`, and `export_pkb_neighbors_for_ui` /
+> `export_project_neighbors_for_ui` for the HTTP `/v1/neighbors` route and the UI.
+> All of them take the literary set from the single
+> `pkb_rel_types(include_tags)` / `pkb_node_kinds(include_tags)` pair, so a client
+> that wants tunnels, mentions or tags asks for it explicitly instead of each
+> surface deciding for itself.
 
 ### 7.3 Backlinks API (occurrence-aware)
 
@@ -702,7 +714,7 @@ Domain pure; store adapter-agnostic signatures for Markdown vault.
 |-------|------|
 | **P0a** | label_key column + normalize; fix resolve order (no tag, no steal); delete_derived_edges_from; promote id stability tests |
 | **P0b** | char offsets on ExtractedLink/edges; multi-wikilink occurrence; GraphEdge provenance fields; neighbors frontier SQL |
-| **P0c** | graph_expand_search; tunnel allowed on link_nodes; PKB default filters on get_neighbors/get_graph |
+| **P0c** | `graph_expand_search` only — held by the V-O4 decision; `link_nodes` tunnel support and the PKB default filters on `get_neighbors` / `get_graph` shipped 2026-09-24 |
 | **P1** | unlink_nodes; resolve_stub; tunnel CRUD; node_aliases + rename retention; link_health; blake3 + migration; depends_on tools; backlinks occurrence API |
 | **P1 vault** | live parse + extract-only rebuild + path resolve + explicit merge |
 | **P2** | mentions extract; embeds rel; confusable detection (optional); VSS irrelevant to graph |
@@ -726,6 +738,7 @@ which §1–§6 clauses once had no code behind them.
 | No origin / multi-edge / aliases | Schema + API extensions above | Closed for storage (P0a-2 origin, P0b-1 `alias`/`heading`/`chunk_id`/`char_start`/`char_end`/`occurrence`); occurrence-aware read APIs (`list_backlinks` → `BacklinkHit`, `aggregate_view`) remain P1 |
 | `delete_document` wiped every incident edge | §6.3 demote-to-stub, keep inbound | Closed: `demote_graph_for_document_locked` clears `document_id`, sets `kind='stub'`/`resolved=false`, reclaims only outbound extract edges; inbound and explicit outbound stay. Applies to MCP delete, maintenance compaction and recovery replace alike, so a replaced note is an unresolved target rather than lost links |
 | `label` written without `label_key` | Single §3 key must not go stale | Closed: title refresh (`refresh_document_graph_label_locked`) and dedupe promotion both rewrite `label_key`, so a renamed note keeps resolving by label |
+| MCP graph reads had no §7.1 defaults | `get_neighbors` / `get_graph` must default to the literary set | Closed: `Store::neighbors_filtered` plus a defaulted `GraphFilter` in the tool layer, both fed by `pkb_rel_types` / `pkb_node_kinds`; `include_tags` and an explicit `rel_types` are the opt-outs. `Store::neighbors` stays raw for internal walking |
 
 ---
 

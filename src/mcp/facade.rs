@@ -69,6 +69,7 @@ use crate::maintain::{
     self, ApplyPlanOptions, CompressOptions, MaintainRefreshFlags, MaintenancePlanItem,
 };
 use crate::memory_lifecycle;
+use crate::models::{pkb_node_kinds, pkb_rel_types};
 #[cfg(test)]
 use crate::models::{Chunk, DoctorReport, StatusReport};
 use crate::models::{
@@ -1388,17 +1389,24 @@ impl RagServer {
 
     #[tool(
         name = "get_graph",
-        description = "Export object graph topology {nodes, edges} with optional kind/rel/seed filters."
+        description = "Export object graph topology {nodes, edges}. Defaults are the PKB set (§7.1): document/stub/entity kinds and the literary relations; pass include_tags=true for tag hubs, or kinds/rel_types/seed_ids to filter explicitly."
     )]
     async fn get_graph(
         &self,
         Parameters(params): Parameters<GetGraphParams>,
     ) -> Result<CallToolResult, McpError> {
+        let include_tags = params.include_tags.unwrap_or(false);
+        let kinds = params.kinds.or_else(|| Some(pkb_node_kinds(include_tags)));
+        // Naming tag nodes as a kind means the caller wants the edges that reach them.
+        let wants_tags = include_tags
+            || kinds
+                .as_deref()
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind == "tag"));
         let filter = GraphFilter {
-            kinds: params.kinds,
-            rel_types: params.rel_types,
-            seed_ids: params.seed_ids,
             max_nodes: params.max_nodes,
+            rel_types: params.rel_types.or_else(|| Some(pkb_rel_types(wants_tags))),
+            seed_ids: params.seed_ids,
+            kinds,
         };
         let view = self.store.get_graph_view(filter).map_err(Self::map_err)?;
         Self::json_result(&view)
@@ -1502,7 +1510,7 @@ impl RagServer {
 
     #[tool(
         name = "get_neighbors",
-        description = "Local undirected BFS subgraph around a node (Obsidian local graph)."
+        description = "Local undirected BFS subgraph around a node (Obsidian local graph). Default edges are the PKB literary set (wikilink, related); pass include_tags=true to also walk tag hubs, or rel_types to name the relations you want (tunnel, mentions, derived_from, depends_on are opt-in there)."
     )]
     async fn get_neighbors(
         &self,
@@ -1510,9 +1518,13 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let depth = params.depth.unwrap_or(1);
         let max_nodes = params.max_nodes.unwrap_or(100);
+        let rel_types = match params.rel_types.as_deref() {
+            Some(requested) if !requested.is_empty() => requested.to_vec(),
+            _ => pkb_rel_types(params.include_tags.unwrap_or(false)),
+        };
         let view = self
             .store
-            .neighbors(&params.node_id, depth, max_nodes)
+            .neighbors_filtered(&params.node_id, depth, max_nodes, Some(&rel_types))
             .map_err(Self::map_err)?;
         Self::json_result(&view)
     }

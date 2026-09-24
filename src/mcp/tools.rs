@@ -694,6 +694,10 @@ pub struct GetGraphParams {
     /// Max nodes to return (default 500).
     #[serde(default)]
     pub max_nodes: Option<u32>,
+    /// Add tag nodes and `tagged` edges to the PKB defaults of §7.1 (tags are off
+    /// unless asked for). Ignored when `kinds` / `rel_types` are supplied.
+    #[serde(default)]
+    pub include_tags: Option<bool>,
 }
 
 /// Parameters for `export_graph_snapshot` (write GraphView JSON for rag-mcp-ui while MCP holds the DB).
@@ -716,12 +720,21 @@ pub struct ExportGraphSnapshotParams {
 pub struct GetNeighborsParams {
     /// Seed graph node id.
     pub node_id: String,
-    /// BFS hop depth (default 1).
+    /// BFS hop depth (default 1, hard cap 5).
     #[serde(default)]
     pub depth: Option<u32>,
     /// Max nodes in the local subgraph (default 100).
     #[serde(default)]
     pub max_nodes: Option<u32>,
+    /// Edge relation types to follow. Default is the PKB literary set
+    /// (`wikilink`, `related`, …); pass a list to opt into `tunnel`,
+    /// `mentions`, `derived_from` and the rest explicitly.
+    #[serde(default)]
+    pub rel_types: Option<Vec<String>>,
+    /// Add tag hubs to the default walk (`tagged` edges). Ignored when
+    /// `rel_types` is given. Default false.
+    #[serde(default)]
+    pub include_tags: Option<bool>,
 }
 
 /// Parameters for `get_backlinks`.
