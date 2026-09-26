@@ -1336,7 +1336,7 @@ impl RagServer {
 
     #[tool(
         name = "status",
-        description = "Index health: backend=duckdb, docs/chunks/nodes/edges, wings summary, ready_for_search, fts_ready, embed_dims, db path."
+        description = "Index health: backend=duckdb, docs/chunks/nodes/edges, wings summary, ready_for_search, fts_ready, embed_dims, db path, db/WAL sizes, and the automatic snapshot footprint (count, bytes, retention, free disk) when configured."
     )]
     async fn status(&self) -> Result<CallToolResult, McpError> {
         let body = DiagnosticsService::new(&self.store, &self.config)

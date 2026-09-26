@@ -667,6 +667,10 @@ pub struct StatusReport {
     /// WAL warning threshold (`RAG_WAL_WARN_BYTES`).
     #[serde(default)]
     pub wal_warn_bytes: u64,
+    /// Automatic snapshot footprint when `RAG_AUTO_BACKUP_DIR` is configured:
+    /// retention, the bytes it holds on disk, and the volume's free space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_backup: Option<crate::ops::AutoBackupInventory>,
 }
 
 /// Local chat LLM + embedding config snapshot for the `llm_status` MCP tool.

@@ -7,7 +7,7 @@ use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::Store;
 
@@ -185,12 +185,18 @@ fn auto_backup_dir() -> Option<PathBuf> {
         .filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-/// Spawn the optional automatic backup loop. Disabled unless
-/// `RAG_AUTO_BACKUP_DIR` is configured.
-pub fn spawn_auto_backup(store: Store) {
-    let Some(dir) = auto_backup_dir() else {
-        return;
-    };
+/// Snapshot-loop settings, read together so the running loop and the reported
+/// inventory cannot disagree about what `keep` is.
+#[derive(Debug, Clone)]
+struct AutoBackupSettings {
+    dir: PathBuf,
+    interval: Duration,
+    keep: usize,
+    min_free_bytes: u64,
+}
+
+fn auto_backup_settings() -> Option<AutoBackupSettings> {
+    let dir = auto_backup_dir()?;
     let interval_secs = std::env::var("RAG_AUTO_BACKUP_INTERVAL_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -201,7 +207,100 @@ pub fn spawn_auto_backup(store: Store) {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(7)
         .max(1);
-    let interval = Duration::from_secs(interval_secs);
+    let min_free_bytes = std::env::var("RAG_AUTO_BACKUP_MIN_FREE_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(2 * 1024 * 1024 * 1024);
+    Some(AutoBackupSettings {
+        dir,
+        interval: Duration::from_secs(interval_secs),
+        keep,
+        min_free_bytes,
+    })
+}
+
+/// Free bytes usable by an unprivileged process on the volume holding `path`.
+/// `None` means the platform cannot answer, which callers treat as unknown
+/// rather than as "no room".
+#[cfg(unix)]
+pub fn free_space_bytes(path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    // `f_frsize` is the fragment size; some platforms leave it zero and only
+    // populate the "optimal transfer" `f_bsize`.
+    let block_size = if stat.f_frsize > 0 {
+        stat.f_frsize
+    } else {
+        stat.f_bsize
+    } as u64;
+    Some(stat.f_bavail as u64 * block_size)
+}
+
+#[cfg(not(unix))]
+pub fn free_space_bytes(_path: &Path) -> Option<u64> {
+    None
+}
+
+/// Automatic snapshot footprint: what retention currently holds and what it
+/// costs. `status` reports it so the disk budget is readable without a shell.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoBackupInventory {
+    pub dir: String,
+    pub interval_secs: u64,
+    pub keep: usize,
+    /// Headroom the guard requires on top of the snapshot itself.
+    pub min_free_bytes: u64,
+    pub snapshots: usize,
+    pub total_bytes: u64,
+    pub newest_at: Option<DateTime<Utc>>,
+    pub free_bytes: Option<u64>,
+}
+
+pub fn auto_backup_inventory() -> Option<AutoBackupInventory> {
+    let settings = auto_backup_settings()?;
+    Some(inventory_at(&settings))
+}
+
+fn inventory_at(settings: &AutoBackupSettings) -> AutoBackupInventory {
+    let snapshots = list_backups(&settings.dir).unwrap_or_default();
+    // Sidecars are billed too: retention prunes them with their snapshot.
+    let total_bytes = snapshots.iter().fold(0u64, |acc, (path, _)| {
+        let mut group = vec![path.clone()];
+        group.push(PathBuf::from(format!("{}.sha256", path.display())));
+        group.push(PathBuf::from(format!("{}.metadata.json", path.display())));
+        group.into_iter().fold(acc, |acc, file| {
+            acc.saturating_add(fs::metadata(file).map(|meta| meta.len()).unwrap_or(0))
+        })
+    });
+    AutoBackupInventory {
+        dir: settings.dir.display().to_string(),
+        interval_secs: settings.interval.as_secs(),
+        keep: settings.keep,
+        min_free_bytes: settings.min_free_bytes,
+        snapshots: snapshots.len(),
+        total_bytes,
+        newest_at: snapshots.first().map(|(_, m)| DateTime::<Utc>::from(*m)),
+        free_bytes: free_space_bytes(&settings.dir),
+    }
+}
+
+/// Spawn the optional automatic backup loop. Disabled unless
+/// `RAG_AUTO_BACKUP_DIR` is configured.
+pub fn spawn_auto_backup(store: Store) {
+    let Some(settings) = auto_backup_settings() else {
+        return;
+    };
+    let dir = settings.dir.clone();
+    let interval = settings.interval;
+    let keep = settings.keep;
+    let min_free_bytes = settings.min_free_bytes;
     {
         let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
         state.auto_backup_enabled = true;
@@ -216,7 +315,7 @@ pub fn spawn_auto_backup(store: Store) {
             let store = store.clone();
             let dir = dir.clone();
             let result = tokio::task::spawn_blocking(move || {
-                run_auto_backup_if_due(&store, &dir, interval, keep)
+                run_auto_backup_if_due(&store, &dir, interval, keep, min_free_bytes)
             })
             .await;
             match result {
@@ -239,11 +338,16 @@ pub fn spawn_auto_backup(store: Store) {
 
 /// Create a backup only when the newest retained snapshot is older than
 /// `interval`. Returns the newly created path, or `None` when not due.
+///
+/// Refuses to write when the volume would not hold the snapshot and keep
+/// `min_free_bytes` afterwards: an unattended loop that fills the disk takes
+/// the store down with it.
 pub fn run_auto_backup_if_due(
     store: &Store,
     dir: &Path,
     interval: Duration,
     keep: usize,
+    min_free_bytes: u64,
 ) -> Result<Option<PathBuf>> {
     fs::create_dir_all(dir)?;
     let mut existing = list_backups(dir)?;
@@ -254,6 +358,23 @@ pub fn run_auto_backup_if_due(
             < interval
         {
             return Ok(None);
+        }
+    }
+
+    // A CHECKPOINT snapshot is about the live file, which still carries its free
+    // pages, so this estimate is deliberately larger than the copy it produces.
+    let needed_bytes = store
+        .db_file_size_bytes()
+        .unwrap_or_default()
+        .saturating_add(min_free_bytes);
+    if let Some(free) = free_space_bytes(dir) {
+        if free < needed_bytes {
+            return Err(AppError::config(format!(
+                "refusing automatic backup to '{}': volume has {free} free bytes, needs \
+                 {needed_bytes} for a snapshot plus {min_free_bytes} headroom; raise \
+                 RAG_AUTO_BACKUP_MIN_FREE_BYTES or lower RAG_AUTO_BACKUP_KEEP (now {keep})",
+                dir.display()
+            )));
         }
     }
 
@@ -333,17 +454,92 @@ mod tests {
         let backups = root.path().join("backups");
         let store = Store::open(&db).unwrap();
 
-        let first = run_auto_backup_if_due(&store, &backups, Duration::from_secs(60), 2)
+        let first = run_auto_backup_if_due(&store, &backups, Duration::from_secs(60), 2, 0)
             .unwrap()
             .expect("first backup");
         assert!(first.is_file());
         assert!(
-            run_auto_backup_if_due(&store, &backups, Duration::from_secs(60), 2)
+            run_auto_backup_if_due(&store, &backups, Duration::from_secs(60), 2, 0)
                 .unwrap()
                 .is_none()
         );
         let completed = latest_auto_backup_at(&backups).unwrap().expect("latest backup time");
         assert!(completed <= Utc::now());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn auto_backup_refuses_when_the_volume_cannot_hold_it() {
+        let root = tempfile::tempdir().unwrap();
+        let db = root.path().join("live.duckdb");
+        let backups = root.path().join("backups");
+        let store = Store::open(&db).unwrap();
+
+        // Larger than any real volume: the simulated almost-full-disk case.
+        let error =
+            run_auto_backup_if_due(&store, &backups, Duration::from_secs(60), 7, u64::MAX / 2)
+                .unwrap_err();
+        assert!(
+            error.to_string().contains("refusing automatic backup"),
+            "{error}"
+        );
+        assert!(
+            list_backups(&backups).unwrap().is_empty(),
+            "a refused snapshot must not leave a file behind"
+        );
+    }
+
+    #[test]
+    fn auto_backup_inventory_counts_snapshots_that_retention_would_keep() {
+        let root = tempfile::tempdir().unwrap();
+        let backups = root.path().join("backups");
+        fs::create_dir_all(&backups).unwrap();
+        fs::write(
+            backups.join(format!("{BACKUP_PREFIX}old{BACKUP_SUFFIX}")),
+            b"12345",
+        )
+        .unwrap();
+        fs::write(
+            backups.join(format!("{BACKUP_PREFIX}new{BACKUP_SUFFIX}")),
+            b"1234567890",
+        )
+        .unwrap();
+        fs::write(
+            backups.join(format!("{BACKUP_PREFIX}new{BACKUP_SUFFIX}.sha256")),
+            b"abc",
+        )
+        .unwrap();
+        // Retention-unrelated noise must not be billed to the snapshot budget.
+        fs::write(
+            backups.join("handmade-copy.duckdb"),
+            b"00000000000000000000",
+        )
+        .unwrap();
+
+        let settings = AutoBackupSettings {
+            dir: backups.clone(),
+            interval: Duration::from_secs(86_400),
+            keep: 7,
+            min_free_bytes: 2 * 1024 * 1024 * 1024,
+        };
+        let inventory = inventory_at(&settings);
+        assert_eq!(inventory.snapshots, 2);
+        assert_eq!(inventory.total_bytes, 18);
+        assert_eq!(inventory.keep, 7);
+        assert_eq!(inventory.interval_secs, 86_400);
+        assert!(inventory.newest_at.is_some(), "newest snapshot timestamp");
+        assert!(inventory.free_bytes.is_some(), "volume headroom");
+        assert_eq!(inventory.dir, backups.display().to_string());
+
+        // An empty configured directory still reports its settings.
+        let empty = root.path().join("nothing-yet");
+        let blank = inventory_at(&AutoBackupSettings {
+            dir: empty,
+            ..settings
+        });
+        assert_eq!(blank.snapshots, 0);
+        assert_eq!(blank.total_bytes, 0);
+        assert!(blank.newest_at.is_none());
     }
 
     #[test]

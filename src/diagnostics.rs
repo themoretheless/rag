@@ -269,6 +269,7 @@ impl<'a> DiagnosticsService<'a> {
             db_file_bytes: self.store.db_file_size_bytes(),
             wal_bytes: self.store.wal_file_size_bytes(),
             wal_warn_bytes: crate::ops::wal_warn_bytes(),
+            auto_backup: crate::ops::auto_backup_inventory(),
         })
     }
 
@@ -427,6 +428,39 @@ mod tests {
         let legacy_doctor = service.doctor().expect("legacy doctor");
         assert!(!legacy_doctor.embed_ok);
         assert!(!legacy_doctor.ready_for_search);
+    }
+
+    #[test]
+    fn status_reports_the_configured_snapshot_footprint() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory
+            .path()
+            .join("diagnostics-snapshot-footprint.duckdb");
+        let store = Store::open(&path).expect("open store");
+        let config = Config {
+            db_path: path,
+            embedding_dims: 8,
+            ..Config::for_tests()
+        };
+        let service = DiagnosticsService::new(&store, &config);
+
+        // Unconfigured retention is not reported as an empty budget.
+        let unconfigured = serde_json::to_value(service.status().expect("status")).unwrap();
+        assert!(unconfigured.get("auto_backup").is_none(), "{unconfigured}");
+
+        let backups = directory.path().join("backups");
+        std::fs::create_dir_all(&backups).expect("backup dir");
+        std::fs::write(backups.join("rag-auto-a.duckdb"), b"12345").expect("snapshot");
+        std::fs::write(backups.join("notes.txt"), b"0000000000").expect("non-snapshot");
+        std::env::set_var("RAG_AUTO_BACKUP_DIR", &backups);
+        let configured = serde_json::to_value(service.status().expect("footprint status"));
+        std::env::remove_var("RAG_AUTO_BACKUP_DIR");
+        let configured = configured.expect("serialize footprint");
+
+        // Only snapshot groups (`rag-auto-*.duckdb` and their sidecars) are billed.
+        assert_eq!(configured["auto_backup"]["snapshots"], 1);
+        assert_eq!(configured["auto_backup"]["total_bytes"], 5);
+        assert!(configured["auto_backup"]["free_bytes"].as_u64().is_some());
     }
 
     #[test]

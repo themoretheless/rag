@@ -645,6 +645,7 @@ mod tests {
             db_file_bytes: None,
             wal_bytes: 0,
             wal_warn_bytes: 0,
+            auto_backup: None,
             db_path: store.path().display().to_string(),
         };
         let report = wake_up(&store, status.clone(), Some("alice"), 5, 20).expect("wake");

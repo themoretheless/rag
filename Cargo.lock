@@ -3477,6 +3477,7 @@ dependencies = [
  "blake3",
  "chrono",
  "duckdb",
+ "libc",
  "notify",
  "reqwest",
  "ring",

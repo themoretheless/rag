@@ -536,6 +536,7 @@ async fn diary_write_read_and_wake_up() {
         db_file_bytes: None,
         wal_bytes: 0,
         wal_warn_bytes: 0,
+        auto_backup: None,
         db_path: store.path().display().to_string(),
     };
 
@@ -575,6 +576,7 @@ async fn diary_write_read_and_wake_up() {
             db_file_bytes: None,
             wal_bytes: 0,
             wal_warn_bytes: 0,
+            auto_backup: None,
             db_path: store.path().display().to_string(),
         },
         Some("Claude"),

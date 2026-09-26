@@ -119,6 +119,7 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_AUTO_BACKUP_DIR` | (empty/off) | Directory for periodic checkpointed snapshots |
 | `RAG_AUTO_BACKUP_INTERVAL_SECS` | `86400` | Minimum age before the next automatic snapshot |
 | `RAG_AUTO_BACKUP_KEEP` | `7` | Number of automatic snapshots retained |
+| `RAG_AUTO_BACKUP_MIN_FREE_BYTES` | `2147483648` | Headroom that must stay free on the snapshot volume after a write; below it the automatic run refuses and `GET /v1/runtime` reports the reason |
 | `RAG_AUTO_SYNC_ROOTS` | (empty/off) | `;`-separated allowlisted directories for incremental background sync |
 | `RAG_AUTO_SYNC_INTERVAL_SECS` | `3600` | Background sync interval; the first pass runs at startup |
 | `RAG_MAX_CONTEXT_TOKENS` | `4096` | Default token budget when packing search hits (~4 chars/token) |
