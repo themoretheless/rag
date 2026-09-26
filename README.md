@@ -97,7 +97,8 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_DB_PATH` | `./rag.duckdb` | DuckDB file path |
 | `RAG_HTTP_BIND` | (empty/off) | Loopback gateway bind such as `127.0.0.1:7432`; streamable MCP is `/mcp` and product routes are `/v1/*` |
 | `RAG_HTTP_ONLY` | `false` | Run the HTTP gateway without stdio; requires `RAG_HTTP_BIND` |
-| `RAG_HTTP_ALLOW_REMOTE` | `false` | Required for non-loopback bind; the gateway has no built-in authentication |
+| `RAG_HTTP_ALLOW_REMOTE` | `false` | Required, together with at least one role token, for a non-loopback bind; startup is refused without them |
+| `RAG_HTTP_{READ,WRITE,ADMIN}_TOKEN` | (unset) | Bearer credentials per role. With none configured only a loopback bind starts, and every local caller is admin — see [AUTHENTICATION.md](docs/AUTHENTICATION.md) |
 | `RAG_HTTP_ALLOWED_HOSTS` | loopback names/addresses; concrete bind IP | Comma-separated extra Host names/IPs accepted by mounted `/mcp`; wildcard binds require every remote MCP authority explicitly |
 | `RAG_EMBEDDING_PROVIDER` | `mock` | `mock` \| `openai` \| `openai_compat` \| `ollama` |
 | `RAG_EMBEDDING_BASE_URL` | OpenAI `https://api.openai.com/v1`; Ollama `http://127.0.0.1:11434` | API root (native Ollama or OpenAI-compatible `/v1`) |

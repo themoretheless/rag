@@ -18,16 +18,30 @@ pub(crate) struct HttpAuth {
     credentials: Vec<(AccessRole, hmac::Tag)>,
 }
 
+/// Non-secret description of how this listener authenticates.
+///
+/// The effective posture used to be knowable only by reading the service
+/// environment, so an operator could not tell token-required from
+/// loopback-trusted without shell-diving the launchd plist. `Default` is
+/// loopback-trusted: no token was read, so none may be claimed.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct AuthPosture {
+    /// False in loopback-trusted mode, where every local caller is admin.
+    pub tokens_required: bool,
+    pub roles_configured: Vec<&'static str>,
+}
+
 impl HttpAuth {
     #[cfg(test)]
     pub(super) fn local_for_tests() -> Self {
         Self::from_tokens(None, None, None).unwrap()
     }
     pub(crate) fn from_env() -> Result<Self, AppError> {
-        let read = token_env("RAG_HTTP_READ_TOKEN")?;
-        let write = token_env("RAG_HTTP_WRITE_TOKEN")?;
-        let admin = token_env("RAG_HTTP_ADMIN_TOKEN")?;
-        Self::from_tokens(read.as_deref(), write.as_deref(), admin.as_deref())
+        Self::from_tokens(
+            token_env(AccessRole::Read.env_name())?.as_deref(),
+            token_env(AccessRole::Write.env_name())?.as_deref(),
+            token_env(AccessRole::Admin.env_name())?.as_deref(),
+        )
     }
 
     fn from_tokens(
@@ -37,11 +51,12 @@ impl HttpAuth {
     ) -> Result<Self, AppError> {
         let key = hmac::Key::new(hmac::HMAC_SHA256, b"rag-mcp HTTP credential fingerprint v1");
         let mut credentials: Vec<(AccessRole, hmac::Tag)> = Vec::new();
-        for (role, name, token) in [
-            (AccessRole::Read, "RAG_HTTP_READ_TOKEN", read),
-            (AccessRole::Write, "RAG_HTTP_WRITE_TOKEN", write),
-            (AccessRole::Admin, "RAG_HTTP_ADMIN_TOKEN", admin),
+        for (role, token) in [
+            (AccessRole::Read, read),
+            (AccessRole::Write, write),
+            (AccessRole::Admin, admin),
         ] {
+            let name = role.env_name();
             if let Some(token) = token {
                 let unpadded = token.trim_end_matches('=');
                 if !(32..=4096).contains(&token.len())
@@ -74,6 +89,17 @@ impl HttpAuth {
             return Err(AppError::config("non-loopback HTTP/MCP requires RAG_HTTP_READ_TOKEN, RAG_HTTP_WRITE_TOKEN or RAG_HTTP_ADMIN_TOKEN; configure credentials before remote startup"));
         }
         Ok(())
+    }
+
+    pub(crate) fn posture(&self) -> AuthPosture {
+        AuthPosture {
+            tokens_required: !self.credentials.is_empty(),
+            roles_configured: self
+                .credentials
+                .iter()
+                .map(|(role, _)| role.env_name())
+                .collect(),
+        }
     }
 
     fn authenticate(&self, headers: &axum::http::HeaderMap) -> Option<AccessRole> {
@@ -297,6 +323,26 @@ mod tests {
             .is_ok());
         assert!(HttpAuth::from_tokens(Some(READ), Some(READ), None).is_err());
         assert!(HttpAuth::from_tokens(None, None, Some("secret")).is_err());
+    }
+
+    #[test]
+    fn posture_names_roles_without_revealing_credentials() {
+        let trusted = HttpAuth::from_tokens(None, None, None).unwrap().posture();
+        assert!(!trusted.tokens_required);
+        assert!(trusted.roles_configured.is_empty());
+
+        let posture = HttpAuth::from_tokens(Some(READ), None, Some(ADMIN))
+            .unwrap()
+            .posture();
+        assert!(posture.tokens_required);
+        assert_eq!(
+            posture.roles_configured,
+            vec!["RAG_HTTP_READ_TOKEN", "RAG_HTTP_ADMIN_TOKEN"]
+        );
+        let rendered = serde_json::to_string(&posture).unwrap();
+        for secret in [READ, ADMIN] {
+            assert!(!rendered.contains(secret), "{rendered}");
+        }
     }
 
     #[test]

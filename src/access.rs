@@ -14,6 +14,17 @@ pub enum AccessRole {
 }
 
 impl AccessRole {
+    /// Gateway environment variable that grants this role. Single owner of the
+    /// role-to-variable mapping; the config reader and the reported auth
+    /// posture both derive from it.
+    pub const fn env_name(self) -> &'static str {
+        match self {
+            Self::Read => "RAG_HTTP_READ_TOKEN",
+            Self::Write => "RAG_HTTP_WRITE_TOKEN",
+            Self::Admin => "RAG_HTTP_ADMIN_TOKEN",
+        }
+    }
+
     /// Unknown tools are forbidden even to an administrator.
     pub fn allows_tool(self, name: &str) -> bool {
         required_tool_role(name).is_some_and(|required| self >= required)

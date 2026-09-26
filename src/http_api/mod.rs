@@ -85,6 +85,10 @@ pub struct HttpState {
     pub embedder: Arc<dyn EmbeddingProvider>,
     /// Process-local background job registry and single writer lane.
     pub(super) jobs: jobs::JobRegistry,
+    /// Non-secret listener auth posture, reported by `/v1/capabilities`. Only
+    /// [`serve`] can know it; state built without it stays in the default
+    /// loopback-trusted description rather than claiming tokens it never read.
+    auth: auth::AuthPosture,
 }
 
 impl HttpState {
@@ -107,7 +111,14 @@ impl HttpState {
             config,
             embedder,
             jobs,
+            auth: auth::AuthPosture::default(),
         }
+    }
+
+    /// Attach the posture parsed from the listener's configured tokens.
+    pub(crate) fn with_auth_posture(mut self, auth: auth::AuthPosture) -> Self {
+        self.auth = auth;
+        self
     }
 }
 
@@ -215,7 +226,15 @@ pub async fn serve(
         &config,
         std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
     );
-    let state = HttpState::new(store, mcp_http, config, embedder);
+    let posture = auth.posture();
+    if !posture.tokens_required {
+        tracing::warn!(
+            %bind,
+            "no RAG_HTTP_*_TOKEN configured: every local process that can reach this \
+             listener is admin; set a role token before exposing the gateway beyond loopback"
+        );
+    }
+    let state = HttpState::new(store, mcp_http, config, embedder).with_auth_posture(posture);
     sync::spawn_worker(state.clone());
     let api = api_router(state);
 
@@ -689,6 +708,7 @@ mod tests {
                 config,
                 embedder,
                 jobs: jobs::JobRegistry::default(),
+                auth: crate::http_api::auth::AuthPosture::default(),
             }),
             allowed_hosts,
         )
@@ -934,6 +954,7 @@ mod tests {
             config,
             embedder,
             jobs: jobs::JobRegistry::default(),
+            auth: crate::http_api::auth::AuthPosture::default(),
         });
         let response = gateway_layers(
             Router::new().merge(api).nest_service("/mcp", mcp),
@@ -1040,6 +1061,7 @@ mod tests {
                 config,
                 embedder,
                 jobs: jobs::JobRegistry::default(),
+                auth: crate::http_api::auth::AuthPosture::default(),
             }),
             allowed_hosts,
         );

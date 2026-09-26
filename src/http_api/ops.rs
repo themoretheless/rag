@@ -263,7 +263,8 @@ async fn capabilities(State(st): State<HttpState>) -> impl IntoResponse {
         "api_version":"v1", "mcp_http":st.mcp_http, "tool_surface":st.config.tool_surface.as_str(),
         "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { server(&st).tool_count() },
         "features":CAPABILITY_FEATURES,
-        "deprecated_tools":[]
+        "deprecated_tools":[],
+        "auth":st.auth
     }))
 }
 async fn route_inventory(State(st): State<HttpState>) -> impl IntoResponse {
@@ -476,6 +477,25 @@ mod tests {
         assert_eq!(capabilities["features"], json!(CAPABILITY_FEATURES));
         assert_eq!(capabilities["tool_count"], spine_tool_names().len());
         assert_eq!(capabilities["deprecated_tools"], json!([]));
+        assert_eq!(
+            capabilities["auth"],
+            json!({"tokens_required":false,"roles_configured":[]})
+        );
+
+        let tokenized_state = state(true).with_auth_posture(crate::http_api::auth::AuthPosture {
+            tokens_required: true,
+            roles_configured: vec!["RAG_HTTP_READ_TOKEN"],
+        });
+        let tokenized = json_body(
+            super::capabilities(State(tokenized_state))
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(
+            tokenized["auth"],
+            json!({"tokens_required":true,"roles_configured":["RAG_HTTP_READ_TOKEN"]})
+        );
     }
 }
 
