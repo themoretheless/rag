@@ -2446,31 +2446,35 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     }
 
     // Raw without related wiki (compile debt). Prefer status/doctor counts for
-    // the full number; lint emits a bounded sample so agents can close debt via
-    // index-first / file_answer / compile batches scoped by wing/room.
+    // the full number; lint ranks the (wing, room) shelves by true debt so a bounded
+    // sample cannot pass itself off as the queue, and names the filter that pages one.
     const UNCOMPILED_SAMPLE_LIMIT: usize = 25;
+    const UNCOMPILED_SHELF_LIMIT: usize = 8;
     let layer_health = store.layer_health_counts()?;
     health.uncompiled_raw_count = layer_health.uncompiled_raw_count as usize;
     if health.uncompiled_raw_count > 0 {
         let sample = store.list_uncompiled_raw_sample(UNCOMPILED_SAMPLE_LIMIT)?;
         health.uncompiled_raw_sample_count = sample.len();
-        let mut by_shelf: BTreeMap<(String, String), usize> = BTreeMap::new();
-        for row in &sample {
-            let wing = row.wing.clone().unwrap_or_else(|| "_".into());
-            let room = row.room.clone().unwrap_or_else(|| "_".into());
-            *by_shelf.entry((wing, room)).or_default() += 1;
-        }
-        let shelves: Vec<String> = by_shelf
-            .into_iter()
-            .map(|((w, r), n)| format!("{w}/{r}:{n}"))
+        let queue = store.uncompiled_raw_shelves(UNCOMPILED_SHELF_LIMIT)?;
+        let shelves: Vec<String> = queue
+            .shelves
+            .iter()
+            .map(|shelf| {
+                format!(
+                    "{}/{}={}",
+                    shelf.wing.as_deref().unwrap_or("_"),
+                    shelf.room.as_deref().unwrap_or("_"),
+                    shelf.docs
+                )
+            })
             .collect();
         issues.push(LintIssue {
             code: "raw_uncompiled".into(),
             severity: "info".into(),
             message: format!(
-                "{} uncompiled raw source(s); sample {} (wing/room counts: {}). Close via bounded compile / file_answer, not a full corpus pass.",
+                "{} uncompiled raw source(s) in {} wing/room shelf(ves); biggest first: {}. Page a shelf with list_documents(layer=raw, wing, room, compiled=false) and close it via bounded compile / file_answer, not a full corpus pass.",
                 health.uncompiled_raw_count,
-                sample.len(),
+                queue.total_shelves,
                 if shelves.is_empty() {
                     "n/a".into()
                 } else {

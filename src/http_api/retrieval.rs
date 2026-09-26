@@ -638,6 +638,10 @@ struct DocumentsQuery {
     layer: Option<String>,
     #[serde(default)]
     kind: Option<String>,
+    /// `true` keeps only documents a resolved wiki page links to, `false` only the
+    /// compile debt.
+    #[serde(default)]
+    compiled: Option<bool>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -665,6 +669,7 @@ async fn documents(
         source_file: None,
         layer: clean(query.layer),
         kind: clean(query.kind),
+        compiled: query.compiled,
         status: clean(query.status),
         include_archived: query.include_archived,
         limit,

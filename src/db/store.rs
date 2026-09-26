@@ -130,6 +130,46 @@ pub struct UncompiledRawSample {
     pub room: Option<String>,
 }
 
+/// One `(wing, room)` shelf of uncompiled raw docs, for compile-queue ordering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncompiledRawShelf {
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub docs: u64,
+}
+
+/// The ranked compile debt: the requested top shelves plus how many shelves exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UncompiledShelfQueue {
+    pub shelves: Vec<UncompiledRawShelf>,
+    pub total_shelves: u64,
+}
+
+/// The compile link of a raw document: an inbound edge from a resolved `wiki://` node to
+/// the graph node of that document.
+///
+/// This is the one definition of "compiled" in the data plane. The health metric, the
+/// lint sample and the catalog `compiled` filter all interpolate it, so a compile batch
+/// cannot be paged by a rule that the `uncompiled_raw_count` metric disagrees with.
+pub(crate) fn compiled_link_exists(alias: &str) -> String {
+    format!(
+        r#"EXISTS (
+          SELECT 1
+          FROM graph_edges edge
+          JOIN graph_nodes source ON source.id = edge.source_id
+          WHERE edge.target_id = (
+            SELECT target.id
+            FROM graph_nodes target
+            WHERE target.document_id = {alias}.id
+            LIMIT 1
+          )
+            AND source.id <> edge.target_id
+            AND source.resolved
+            AND starts_with(source.uri, 'wiki://')
+        )"#
+    )
+}
+
 /// Lean first-chunk vector sample for bounded maintenance comparisons.
 ///
 /// Keeping this shape in the data plane prevents maintenance code from loading
@@ -1927,8 +1967,10 @@ impl Store {
     /// Count raw/wiki compilation health in SQL without materializing document bodies.
     pub(crate) fn layer_health_counts(&self) -> Result<LayerHealthCounts> {
         let conn = self.lock()?;
+        let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
         let counts = conn.query_row(
-            r#"
+            &format!(
+                r#"
             WITH layer_counts AS (
               SELECT
                 COALESCE(SUM(CASE WHEN layer = 'raw' THEN 1 ELSE 0 END), 0)::BIGINT AS raw_count,
@@ -1955,24 +1997,12 @@ impl Store {
                   SELECT COUNT(*)::BIGINT
                   FROM documents raw
                   WHERE raw.layer = 'raw'
-                    AND NOT EXISTS (
-                      SELECT 1
-                      FROM graph_edges edge
-                      JOIN graph_nodes source ON source.id = edge.source_id
-                      WHERE edge.target_id = (
-                        SELECT target.id
-                        FROM graph_nodes target
-                        WHERE target.document_id = raw.id
-                        LIMIT 1
-                      )
-                        AND source.id <> edge.target_id
-                        AND source.resolved
-                        AND starts_with(source.uri, 'wiki://')
-                    )
+                    AND {uncompiled}
                 )
               END AS uncompiled_raw_count
             FROM layer_counts
-            "#,
+            "#
+            ),
             [],
             |row| {
                 Ok((
@@ -1994,42 +2024,27 @@ impl Store {
         })
     }
 
-    /// Bounded sample of uncompiled raw docs for lint / compile-batch guidance.
+    /// Bounded sample of uncompiled raw docs for lint guidance.
     ///
-    /// Does not attempt to compile the corpus; agents should filter by wing/room
-    /// and close debt via index-first / `file_answer` / compile helpers.
-    pub fn list_uncompiled_raw_sample(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<UncompiledRawSample>> {
+    /// A sample only: paging a whole shelf is the catalog's job
+    /// ([`Store::list_document_catalog`] with `layer=raw` and `compiled=false`).
+    pub fn list_uncompiled_raw_sample(&self, limit: usize) -> Result<Vec<UncompiledRawSample>> {
         let limit = limit.clamp(1, 200) as i64;
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
+        let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
+        let mut stmt = conn.prepare(&format!(
             r#"
             SELECT raw.id, raw.uri, raw.wing, raw.room
             FROM documents raw
             WHERE raw.layer = 'raw'
               AND (
                 (SELECT COUNT(*) FROM documents wiki WHERE wiki.layer = 'wiki') = 0
-                OR NOT EXISTS (
-                  SELECT 1
-                  FROM graph_edges edge
-                  JOIN graph_nodes source ON source.id = edge.source_id
-                  WHERE edge.target_id = (
-                    SELECT target.id
-                    FROM graph_nodes target
-                    WHERE target.document_id = raw.id
-                    LIMIT 1
-                  )
-                    AND source.id <> edge.target_id
-                    AND source.resolved
-                    AND starts_with(source.uri, 'wiki://')
-                )
+                OR {uncompiled}
               )
             ORDER BY raw.wing ASC NULLS LAST, raw.room ASC NULLS LAST, raw.uri ASC
             LIMIT ?
-            "#,
-        )?;
+            "#
+        ))?;
         let rows = stmt
             .query_map([limit], |row| {
                 Ok(UncompiledRawSample {
@@ -2041,6 +2056,55 @@ impl Store {
             })?
             .collect::<duckdb::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// The uncompiled debt grouped by `(wing, room)` shelf, biggest first, plus how many
+    /// shelves the debt spans.
+    ///
+    /// This is the compile queue: a 25-row sample ordered by wing always describes the
+    /// same first shelves, which on the live corpus is 25 of 82 925 docs in one of 503
+    /// shelves. Counting in SQL ranks every shelf instead.
+    pub(crate) fn uncompiled_raw_shelves(&self, limit: usize) -> Result<UncompiledShelfQueue> {
+        let limit = limit.clamp(1, 200) as i64;
+        let conn = self.lock()?;
+        let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
+        // One predicate text for both the ranking and the queue width, so the two
+        // numbers in the answer can't describe different corpora.
+        let debt = format!(
+            r#"FROM documents raw
+            WHERE raw.layer = 'raw'
+              AND (
+                (SELECT COUNT(*) FROM documents wiki WHERE wiki.layer = 'wiki') = 0
+                OR {uncompiled}
+              )"#
+        );
+        let total_shelves: i64 = conn.query_row(
+            &format!("SELECT COUNT(*)::BIGINT FROM (SELECT 1 {debt} GROUP BY raw.wing, raw.room)"),
+            [],
+            |row| row.get(0),
+        )?;
+        let mut stmt = conn.prepare(&format!(
+            r#"
+            SELECT raw.wing, raw.room, COUNT(*)::BIGINT AS docs
+            {debt}
+            GROUP BY raw.wing, raw.room
+            ORDER BY docs DESC, raw.wing ASC NULLS LAST, raw.room ASC NULLS LAST
+            LIMIT ?
+            "#
+        ))?;
+        let shelves = stmt
+            .query_map([limit], |row| {
+                Ok(UncompiledRawShelf {
+                    wing: row.get(0)?,
+                    room: row.get(1)?,
+                    docs: row.get::<_, i64>(2)?.max(0) as u64,
+                })
+            })?
+            .collect::<duckdb::Result<Vec<_>>>()?;
+        Ok(UncompiledShelfQueue {
+            total_shelves: total_shelves.max(0) as u64,
+            shelves,
+        })
     }
 
     /// Filesystem size of the main DuckDB file, when readable.

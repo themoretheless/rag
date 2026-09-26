@@ -475,6 +475,10 @@ pub struct ListDocumentsParams {
     /// Filter: only documents with this kind.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Filter on the compile link: `true` keeps documents a resolved wiki page links to,
+    /// `false` keeps the compile debt - raw sources no wiki page cites yet.
+    #[serde(default)]
+    pub compiled: Option<bool>,
     /// Max rows to return.
     #[serde(default)]
     pub limit: Option<u32>,

@@ -448,7 +448,7 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 
 | Tool | Params | Behavior |
 |------|--------|----------|
-| `list_documents` | `wing?`, `room?`, `source_file?`, `layer?`, `kind?`, `include_archived?`, `limit?` | Inventory without full body (default skips archived) |
+| `list_documents` | `wing?`, `room?`, `source_file?`, `layer?`, `kind?`, `compiled?`, `include_archived?`, `limit?` | Inventory without full body (default skips archived); `compiled: false` pages the raw compile debt of one shelf |
 | `get_document` | `document_id`, `include_chunks?` | Metadata + optional chunk texts (no embeddings) |
 | `update_document_meta` | `document_id`, `wing?`, `room?`, `title?`, `metadata_json?`, `pinned?`, `boost?`, `status?`, `layer?`, `kind?`, `source_file?`, `content?` | Meta update without re-embed unless `content` changes; refused for immutable raw body |
 | `delete_document` | `document_id` | Delete document + chunks + graph cleanup |
@@ -556,7 +556,7 @@ not synthesize or rewrite content.
 | `list_recent_ops` | `limit?` | Newest ops_log rows |
 | `file_answer` | `title`, `body`, `slug?`, `citations?`, `agent?` | Persist cited answer as wiki page |
 | `compile_source` | `source_id_or_uri`, `dry_run?`, `agent?` | Local LLM compiles a raw source into wiki pages |
-| `lint_wiki` | (none) | Structured wiki/link health: index gaps, broken/duplicate/self wikilinks, unresolved stubs, orphan pages/documents, uncompiled raw, aggregate counts |
+| `lint_wiki` | (none) | Structured wiki/link health: index gaps, broken/duplicate/self wikilinks, unresolved stubs, orphan pages/documents, uncompiled raw ranked by `(wing, room)` shelf, aggregate counts |
 | `refresh_stale_wiki` | `dry_run?` (default true), `max_docs?`, `agent?` | List (or recompile) wiki older than linked raw |
 
 ### Maintenance (see [Local LLM + maintenance](#local-llm--maintenance))

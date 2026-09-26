@@ -1114,7 +1114,7 @@ impl RagServer {
 
     #[tool(
         name = "list_documents",
-        description = "List stored documents without loading full content. Filters: wing?, room?, source_file?, include_archived?, layer?, kind?; limit defaults 50 (hard cap 200), offset defaults 0. Default excludes archived/tombstone."
+        description = "List stored documents without loading full content. Filters: wing?, room?, source_file?, include_archived?, layer?, kind?, compiled? (false = raw compile debt, true = sources a wiki page links to); limit defaults 50 (hard cap 200), offset defaults 0. Default excludes archived/tombstone."
     )]
     async fn list_documents(
         &self,
@@ -1128,6 +1128,7 @@ impl RagServer {
             include_archived: params.include_archived.unwrap_or(false),
             layer: nonempty(params.layer),
             kind: nonempty(params.kind),
+            compiled: params.compiled,
             limit: params
                 .limit
                 .map(|value| value as usize)

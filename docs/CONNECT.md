@@ -682,12 +682,14 @@ Index-first: сначала catalog/wiki, потом raw `search`.
 Do **not** attempt to compile tens of thousands of raw docs in one pass.
 Prefer:
 
-1. `status` / `doctor` / `lint_wiki` — `uncompiled_raw_count` plus a bounded
-   wing/room sample on the `raw_uncompiled` lint issue.
-2. Scope with `list_sources` / `list_documents` (`wing`, `room`, `limit`).
+1. `lint_wiki` — the `raw_uncompiled` issue names the debt, how many
+   `(wing, room)` shelves it spans, and the biggest shelves first; `status` /
+   `doctor` carry the total `uncompiled_raw_count`.
+2. Page one shelf at a time with `list_documents` (`layer=raw`, `wing`, `room`,
+   `compiled=false`, `limit`, `offset`); `total` is the whole shelf, not the page.
 3. Compile or summarize a small batch, then `file_answer` / `write_wiki_page`
    with CAS; `rebuild_index` when the catalog should reflect new pages.
-4. Repeat by shelf until debt is acceptably low for the active project.
+4. Repeat by shelf, biggest first, until debt is acceptably low for the active project.
 
 **`ingest_file`:** path must be under `RAG_INGEST_ROOTS`. Optional placement: **`wing`**, **`room`** (project shelf). Same absolute path re-ingest = upsert.  
 `ingest_text` **не** принимает wing/room (asymmetry). Wiki compile: `ingest_file` **не** обновляет wiki pages; после meaningful doc changes - `get_wiki_page` + `update_wiki_page` / `write_wiki_page` с CAS.

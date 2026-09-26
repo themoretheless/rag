@@ -47,7 +47,9 @@ compatibility differences.
 `DiagnosticsService::status` is the single HTTP/MCP status owner. Store supplies
 raw/wiki/index coverage and uncompiled-raw debt as one SQL aggregate, preserving
 the existing health semantics without materializing document bodies or issuing
-one backlinks query per raw document.
+one backlinks query per raw document. The compile link itself is one function,
+`db::store::compiled_link_exists`, interpolated by the health metric, the lint
+sample, the lint shelf ranking and the catalog `compiled` filter.
 
 ### Incremental source synchronization
 

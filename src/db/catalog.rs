@@ -4,7 +4,10 @@ use chrono::{DateTime, Utc};
 use duckdb::types::ToSql;
 use serde::{Deserialize, Serialize};
 
-use super::{source_manifest::SourceRootSummary, store::Store};
+use super::{
+    source_manifest::SourceRootSummary,
+    store::{compiled_link_exists, Store},
+};
 use crate::error::{AppError, Result};
 use crate::models::DrawerListItem;
 use crate::util::parse_db_timestamp;
@@ -21,6 +24,9 @@ pub struct DocumentCatalogFilter {
     pub layer: Option<String>,
     pub kind: Option<String>,
     pub status: Option<String>,
+    /// `Some(true)` keeps only documents a resolved wiki page links to, `Some(false)`
+    /// only those without that compile link - i.e. the raw-side compile queue.
+    pub compiled: Option<bool>,
     pub include_archived: bool,
     pub limit: usize,
     pub offset: usize,
@@ -215,6 +221,14 @@ fn catalog_where(filter: &DocumentCatalogFilter, alias: &str) -> (String, Vec<St
             binds.push(value.to_string());
         }
     }
+    if let Some(compiled) = filter.compiled {
+        let link = compiled_link_exists(alias);
+        clauses.push(if compiled {
+            link
+        } else {
+            format!("NOT {link}")
+        });
+    }
     if filter.status.as_deref().and_then(clean).is_none() && !filter.include_archived {
         clauses.push(format!(
             "COALESCE({alias}.status, 'active') NOT IN ('archived', 'tombstone')"
@@ -255,7 +269,127 @@ fn count(value: i64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Chunk, Document};
+    use crate::models::{Chunk, Document, GraphEdge, GraphNode};
+
+    /// The compile queue: the catalog's `compiled` filter must agree with the
+    /// `uncompiled_raw_count` metric, page one shelf past the page cap, and rank shelves
+    /// by real debt instead of a fixed sample.
+    #[test]
+    fn catalog_compiled_filter_pages_the_compile_debt() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("compile-queue.duckdb")).unwrap();
+        for (id, room) in [("raw-a", "src"), ("raw-b", "src"), ("raw-c", "tests")] {
+            store
+                .upsert_document(&Document {
+                    id: id.into(),
+                    uri: format!("file:///dodo/{id}.cs"),
+                    title: id.into(),
+                    content: "body".into(),
+                    wing: Some("dodo".into()),
+                    room: Some(room.into()),
+                    layer: "raw".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        store
+            .upsert_document(&Document {
+                id: "page".into(),
+                uri: "wiki://dodo".into(),
+                title: "Dodo".into(),
+                content: "compiled page".into(),
+                layer: "wiki".into(),
+                kind: "wiki".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        for (id, document_id, uri) in [
+            ("node-page", "page", "wiki://dodo"),
+            ("node-raw-a", "raw-a", "file:///dodo/raw-a.cs"),
+        ] {
+            store
+                .upsert_graph_node(&GraphNode {
+                    id: id.into(),
+                    kind: "document".into(),
+                    label: document_id.into(),
+                    document_id: Some(document_id.into()),
+                    uri: Some(uri.into()),
+                    resolved: true,
+                    metadata_json: "{}".into(),
+                })
+                .unwrap();
+        }
+        store
+            .insert_graph_edges(&[GraphEdge {
+                id: "edge-page-raw-a".into(),
+                source_id: "node-page".into(),
+                target_id: "node-raw-a".into(),
+                rel_type: "related".into(),
+                weight: 1.0,
+                context: None,
+            }])
+            .unwrap();
+
+        let page = |room: Option<&str>, offset: usize| {
+            store
+                .list_document_catalog(&DocumentCatalogFilter {
+                    layer: Some("raw".into()),
+                    room: room.map(str::to_string),
+                    compiled: Some(false),
+                    limit: 1,
+                    offset,
+                    ..Default::default()
+                })
+                .unwrap()
+        };
+        let debt = page(None, 0);
+        assert_eq!(debt.total, 2);
+        assert_eq!(debt.items.len(), 1);
+        assert_eq!(
+            store.layer_health_counts().unwrap().uncompiled_raw_count,
+            debt.total
+        );
+        // The second page names the other doc, so a 17 000-doc shelf is walkable.
+        assert_ne!(page(None, 1).items[0].id, debt.items[0].id);
+        assert_eq!(page(Some("tests"), 0).total, 1);
+        assert_eq!(page(Some("missing-room"), 0).total, 0);
+
+        let compiled = store
+            .list_document_catalog(&DocumentCatalogFilter {
+                layer: Some("raw".into()),
+                compiled: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            compiled
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["raw-a"]
+        );
+
+        let queue = store.uncompiled_raw_shelves(8).unwrap();
+        assert_eq!(queue.total_shelves, 2);
+        assert_eq!(
+            queue
+                .shelves
+                .iter()
+                .map(|shelf| {
+                    (
+                        shelf.wing.clone().unwrap_or_default(),
+                        shelf.room.clone().unwrap_or_default(),
+                        shelf.docs,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                ("dodo".into(), "src".into(), 1),
+                ("dodo".into(), "tests".into(), 1)
+            ]
+        );
+    }
 
     #[test]
     fn catalog_is_lean_filtered_and_paginated_and_home_is_scoped() {
