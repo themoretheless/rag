@@ -10,7 +10,8 @@ use super::store::Store;
 use crate::error::{AppError, Result};
 use crate::graph::REL_TUNNEL;
 use crate::models::{
-    EdgeOrigin, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, NodeKind, RelType,
+    EdgeCutRow, EdgeOrigin, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, NodeKind,
+    RelType,
 };
 
 /// GRAPH_DESIGN §9 hard cap for a local-graph walk. Hop-by-hop frontier queries
@@ -552,11 +553,37 @@ impl Store {
             }
         }
 
+        let mut edges_by_cut = Vec::new();
+        {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT 
+                  COALESCE(rel_type, '(none)'),
+                  COALESCE(origin, '(none)'),
+                  COALESCE(context, ''),
+                  COUNT(*) AS n
+                FROM graph_edges
+                GROUP BY 1, 2, 3
+                ORDER BY 1, 2, 3
+                "#,
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                edges_by_cut.push(EdgeCutRow {
+                    rel_type: row.get(0)?,
+                    origin: row.get(1)?,
+                    context: row.get(2)?,
+                    count: row.get::<_, i64>(3)? as u64,
+                });
+            }
+        }
+
         Ok(GraphStats {
             total_nodes: total_nodes as u64,
             total_edges: total_edges as u64,
             nodes_by_kind,
             edges_by_rel_type,
+            edges_by_cut,
         })
     }
 
@@ -2828,7 +2855,9 @@ mod tests {
 
         store.link_nodes("n1", "n2", "wikilink", 1.0).unwrap();
         store.link_nodes("n1", "t1", "tagged", 1.0).unwrap();
-        let tunnel = store.link_nodes("n1", "n2", "tunnel", 0.75).unwrap();
+        let tunnel = store
+            .create_tunnel("n1", "n2", 0.75, Some("bridge a-b"))
+            .unwrap();
         assert_eq!(tunnel.rel_type, "tunnel");
         assert!((tunnel.weight - 0.75).abs() < 1e-9);
 
@@ -2842,6 +2871,35 @@ mod tests {
         assert_eq!(s.edges_by_rel_type.get("tagged"), Some(&1));
         assert_eq!(s.edges_by_rel_type.get("tunnel"), Some(&1));
 
+        // The cut separates the tunnel's context from the context-less links, so
+        // a hand-authored edge is distinguishable from a membership one.
+        assert_eq!(
+            s.edges_by_cut,
+            vec![
+                EdgeCutRow {
+                    rel_type: "tagged".into(),
+                    origin: "explicit".into(),
+                    context: String::new(),
+                    count: 1,
+                },
+                EdgeCutRow {
+                    rel_type: "tunnel".into(),
+                    origin: "explicit".into(),
+                    context: "bridge a-b".into(),
+                    count: 1,
+                },
+                EdgeCutRow {
+                    rel_type: "wikilink".into(),
+                    origin: "explicit".into(),
+                    context: String::new(),
+                    count: 1,
+                },
+            ]
+        );
+        // `graph_stats` is a JSON tool result: the cut must serialize as an array.
+        let rendered = serde_json::to_value(&s).expect("graph_stats serializes");
+        assert_eq!(rendered["edges_by_cut"][1]["context"], "bridge a-b");
+
         // Empty graph
         let empty = open_temp();
         let es = empty.graph_stats().expect("empty stats");
@@ -2849,6 +2907,7 @@ mod tests {
         assert_eq!(es.total_edges, 0);
         assert!(es.nodes_by_kind.is_empty());
         assert!(es.edges_by_rel_type.is_empty());
+        assert!(es.edges_by_cut.is_empty());
     }
 
     #[test]

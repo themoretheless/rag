@@ -780,6 +780,22 @@ pub struct GraphStats {
     pub nodes_by_kind: BTreeMap<String, u64>,
     /// Counts keyed by edge `rel_type` (`wikilink`, `tagged`, `related`, `tunnel`, …).
     pub edges_by_rel_type: BTreeMap<String, u64>,
+    /// The same edges cut by `(rel_type, origin, context)`, in SQL group order.
+    /// This is the input to "clean or not": it separates rebuild-owned membership
+    /// and tag edges from hand-authored semantic relations.
+    pub edges_by_cut: Vec<EdgeCutRow>,
+}
+
+/// One `(rel_type, origin, context)` bucket of [`GraphStats::edges_by_cut`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EdgeCutRow {
+    pub rel_type: String,
+    /// Edge `origin`, or `(none)` when the column is NULL — i.e. written before
+    /// GRAPH_DESIGN §1.6 and not yet covered by the origin backfill.
+    pub origin: String,
+    /// Edge context, or an empty string when NULL.
+    pub context: String,
+    pub count: u64,
 }
 
 /// Node kinds — see `GRAPH_DESIGN.md` §1.1.

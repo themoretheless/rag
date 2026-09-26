@@ -56,8 +56,8 @@ pub use memory_lifecycle::{
 };
 pub use models::{
     Chunk, DiaryEntry, DoctorReport, Document, DocumentFilter, DocumentMetaApplyResult,
-    DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult, DuplicateMatch, EmbeddingManifest,
-    GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, IndexQueryMatch, IndexQueryPage,
+    DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult, DuplicateMatch, EdgeCutRow,
+    EmbeddingManifest, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, IndexQueryMatch, IndexQueryPage,
     IndexQueryResult, IngestResult, KgFact, KgStats, LlmStatusReport, OpsLogEntry, PlacementUpdate,
     RoomCount, SearchHit, SearchMode, Stats, StatusReport, Taxonomy, TaxonomyNode, TaxonomyRoom,
     TaxonomyWing, VacuumStoreReport, WakeUpReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,

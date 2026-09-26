@@ -1701,7 +1701,7 @@ impl RagServer {
 
     #[tool(
         name = "graph_stats",
-        description = "Object graph aggregates: total nodes/edges, node counts by kind, edge counts by rel_type (includes tunnel)."
+        description = "Object graph aggregates: total nodes/edges, node counts by kind, edge counts by rel_type (includes tunnel), and edge counts cut by (rel_type, origin, context) so hand-authored relations stay separate from rebuild-owned membership and tag edges."
     )]
     async fn graph_stats(&self) -> Result<CallToolResult, McpError> {
         let body = self.store.graph_stats().map_err(Self::map_err)?;

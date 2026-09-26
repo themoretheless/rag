@@ -506,7 +506,7 @@ schema, relational integrity, and embedding contract before restore.
 | `follow_tunnels` | `node_id`, `depth?`, `max_nodes?` | Multi-hop BFS on tunnel edges only |
 | `find_tunnels` | `node_id?`, `other_node_id?`, `wing?`, `limit?` | Filter tunnels by endpoints / wing |
 | `find_node` | `label?`, `document_id?`, `node_id?` | Resolve node metadata |
-| `graph_stats` | (none) | Totals + counts by kind / rel_type |
+| `graph_stats` | (none) | Totals + counts by kind / rel_type, and edges cut by (rel_type, origin, context) |
 
 **Note text conventions:** `[[Target]]` / `[[Target|alias]]` become wikilink edges; `#tag` / `#multi/level` become tag nodes. Images `![[...]]` are not edges. Unresolved wikilink targets become `kind=stub` until a matching document title/uri is ingested. Edge types include `wikilink`, `tagged`, `related`, `mentions`, `tunnel`.
 
