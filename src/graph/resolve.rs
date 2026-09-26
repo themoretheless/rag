@@ -192,7 +192,7 @@ fn append_structural_edges(
         edges.push(structural_edge(
             document_node_id,
             target_id,
-            "project membership",
+            crate::models::CONTEXT_PROJECT_MEMBERSHIP,
         ));
     }
 
@@ -225,7 +225,7 @@ fn append_structural_edges(
     edges.push(structural_edge(
         document_node_id,
         target_id,
-        "directory membership",
+        crate::models::CONTEXT_DIRECTORY_MEMBERSHIP,
     ));
     Ok(())
 }
@@ -881,6 +881,79 @@ mod tests {
         let remaining = store.list_graph_edges().unwrap();
         assert_eq!(remaining.len(), 2);
         assert!(remaining.iter().any(|edge| edge.id == explicit.id));
+    }
+
+    /// The pipeline emits its project/directory membership edges as `related`,
+    /// which §1.6 otherwise treats as an explicit relation. Classifying them by
+    /// name alone would stamp them `explicit`, hide them from the delete
+    /// predicate, and stack a fresh pair on every re-ingest.
+    #[test]
+    fn legacy_membership_edges_are_attributed_by_their_structural_context() {
+        let store = open_temp();
+        let mut source = doc("d-legacy", "Legacy", "file:///notes/legacy.md", "Body");
+        source.wing = Some("notes".into());
+        source.source_file = Some("/notes/legacy.md".into());
+        store.upsert_document(&source).unwrap();
+        let (node, _) = rebuild_document_graph(&store, &source).unwrap();
+        let project = store
+            .find_node_by_uri("project://notes")
+            .unwrap()
+            .expect("project node");
+        // The control row: same endpoints and rel_type as the project membership
+        // edge, but `link_nodes` cannot write a context, so it stays explicit.
+        let hand_made = store
+            .link_nodes(&node, &project.id, "related", 1.0)
+            .unwrap();
+
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE graph_edges SET origin = NULL, edge_origin = NULL",
+                [],
+            )
+            .unwrap();
+        let attributed = {
+            let conn = store.lock().unwrap();
+            crate::db::schema::backfill_graph_edge_origins(&conn).unwrap()
+        };
+        assert_eq!(attributed, 3, "two membership edges plus the hand-made one");
+
+        let owners = || {
+            let conn = store.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FILTER (WHERE origin = 'extract'), \
+                 COUNT(*) FILTER (WHERE origin = 'explicit') FROM graph_edges",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            owners(),
+            (2, 1),
+            "only the context-free hand-made edge stays explicit"
+        );
+
+        rebuild_document_graph(&store, &source).unwrap();
+        assert_eq!(
+            owners(),
+            (2, 1),
+            "the rebuild re-creates the membership edges in place instead of duplicating them"
+        );
+        let survives = {
+            let conn = store.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM graph_edges WHERE id = ? AND origin = 'explicit'",
+                params![hand_made.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            survives, 1,
+            "a hand-made `related` edge outlives the rebuild"
+        );
     }
 
     #[test]

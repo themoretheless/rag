@@ -24,7 +24,7 @@ Where this doc and [`GRAPH_DESIGN.md`](GRAPH_DESIGN.md) disagree on **domain** t
 | Layout (MVP) | **One algorithm:** deterministic **RadialLocal** on neighbor views; freeze after place |
 | Connections interaction | **Read-only graph canvas:** pan/zoom, select, expand neighbors, open document. Wiki editing is a separate HTTP-only workspace |
 | Server payload | Topology-only `GraphView` (nodes + edges). **Never** server positions or canvas fields ([GRAPH_DESIGN §0](GRAPH_DESIGN.md)) |
-| Domain filters | Mirror server **PKB defaults** when loading live: `rel_types=[wikilink, related]`, tags off unless user toggles ([GRAPH_DESIGN §7.1](GRAPH_DESIGN.md)) |
+| Domain filters | Mirror server **PKB defaults** when loading live by calling `pkb_default_rel_types()` (GRAPH_DESIGN §7.1: wikilink, related + the §1.1 wiki semantic set), tags off unless user toggles ([GRAPH_DESIGN §7.1](GRAPH_DESIGN.md)) |
 | Critical path | The headless gateway does not depend on GUI code. The current integrated product gate separately requires native visual QA |
 
 The original MVP deliberately avoided four layout modes, graph-write menus and
@@ -419,7 +419,11 @@ Mirror server: local default max 100; global never cold-start at 500 unfiltered.
 MVP chrome filters (aligned with server **PKB** defaults, GRAPH_DESIGN §7.1):
 
 - Kind toggles: documents **on**, stubs **on**, tags **off** by default (tag hubs hairball; opt-in)
-- Rel types default: `wikilink` + `related` on; `tagged` / `tunnel` / Dep types **off** until user enables
+- Rel types default: the server's §7.1 set — `wikilink` + `related` + the hand-authored
+  wiki semantic relations ([GRAPH_DESIGN §1.1](GRAPH_DESIGN.md))
+  — on; `tagged` / `tunnel` / Dep types **off** until user enables. `adapt()` reads the
+  list from `load::pkb_default_rel_types()`, so a relation the gateway returned is never
+  hidden by a second, hand-copied list here
 - When loading **live** Store: pass the same defaults into `NeighborsOpts` / `GraphFilter` (do not fetch full soup then hide only in paint, if avoidable)
 - Snapshot load: filter client-side after parse if file is already a full dump
 - Project (`wing`) selection and room filtering are implemented; layer remains
@@ -710,7 +714,7 @@ Borrow from Obsidian / package dep UIs, not from IDE node editors:
 | Topology-only wire; no server layout | yes |
 | Separate process / no dual DuckDB writer | yes (UI) |
 | Multi-wikilink stored; UI collapses for draw | yes |
-| PKB default rels = wikilink+related; tags off | yes (UI chrome + live Neighbors defaults) |
+| PKB default rels = §7.1 set (wikilink, related, wiki semantic); tags off | yes (UI chrome reads `pkb_default_rel_types()`) |
 | Dep projection separate from local graph | yes |
 | Hierarchical only on depends_on family | yes (post-MVP) |
 | EdgeOrigin wire: extract \| explicit \| system | yes (UI uses string; no `Extracted` rename) |

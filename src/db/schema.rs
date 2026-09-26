@@ -575,45 +575,71 @@ pub fn backfill_graph_node_label_keys(conn: &Connection) -> Result<u64> {
 ///
 /// `derived` → `extract`, `manual` → `explicit`. Rows predating both columns
 /// have no recorded author, so only the ones whose relation is extraction-owned
-/// (`wikilink` / `tagged` / `mentions`, §1.6) are claimed as `extract`; every
-/// other unknown row falls back to `explicit`, which is the side that rebuild
-/// never deletes. Set-based rather than row-looped because the live corpus has
-/// hundreds of thousands of edges.
+/// (`wikilink` / `tagged` / `mentions`, §1.6) plus the pipeline's structural
+/// membership edges are claimed as `extract`; every other unknown row falls back
+/// to `explicit`, which is the side that rebuild never deletes. Set-based rather
+/// than row-looped because the live corpus has hundreds of thousands of edges.
+///
+/// Membership edges need their own branch: `related` is an explicit relation
+/// (§1.6), yet `graph::resolve::append_structural_edges` emits thousands of them
+/// per corpus with a structural `context`. Classified by name alone they would be
+/// stamped `explicit` and escape every later rebuild, duplicating placement edges
+/// on each re-ingest.
 pub fn backfill_graph_edge_origins(conn: &Connection) -> Result<u64> {
+    let extract_owned =
+        crate::db::graph::sql_string_list(crate::models::EXTRACT_OWNED_REL_TYPES.iter().copied());
+    let structural_contexts =
+        crate::db::graph::sql_string_list(crate::models::STRUCTURAL_EDGE_CONTEXTS.iter().copied());
+    let membership = format!("rel_type = 'related' AND context IN ({structural_contexts})");
+    let mut done = 0u64;
+
     let missing: i64 = conn.query_row(
         "SELECT COUNT(*) FROM graph_edges WHERE origin IS NULL",
         [],
         |row| row.get(0),
     )?;
-    if missing == 0 {
-        return Ok(0);
+    if missing > 0 {
+        done += conn.execute(
+            &format!(
+                "UPDATE graph_edges SET origin = 'extract' \
+                 WHERE origin IS NULL \
+                   AND (edge_origin = 'derived' \
+                        OR (edge_origin IS NULL AND rel_type IN ({extract_owned})) \
+                        OR ({membership}))"
+            ),
+            [],
+        )? as u64;
+        done += conn.execute(
+            &format!(
+                "UPDATE graph_edges SET origin = 'explicit' \
+                 WHERE origin IS NULL \
+                   AND (edge_origin = 'manual' \
+                        OR (edge_origin IS NULL AND rel_type NOT IN ({extract_owned}))) \
+                   AND NOT ({membership})"
+            ),
+            [],
+        )? as u64;
+        // Any vocabulary we have never seen stays on the non-deleted side.
+        done += conn.execute(
+            "UPDATE graph_edges SET origin = 'explicit' WHERE origin IS NULL",
+            [],
+        )? as u64;
     }
 
-    let extract_owned = "'wikilink', 'tagged', 'mentions'";
-    let mut done = 0u64;
-    done += conn.execute(
-        &format!(
-            "UPDATE graph_edges SET origin = 'extract' \
-             WHERE origin IS NULL \
-               AND (edge_origin = 'derived' \
-                    OR (edge_origin IS NULL AND rel_type IN ({extract_owned})))"
-        ),
+    // Repair for databases that already ran the rel_type-only version of this
+    // backfill: those membership rows are `explicit` and therefore invisible to
+    // §1.6's delete predicate. Guarded so a healthy store pays one count.
+    let mislabeled: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM graph_edges WHERE origin = 'explicit' AND {membership}"),
         [],
-    )? as u64;
-    done += conn.execute(
-        &format!(
-            "UPDATE graph_edges SET origin = 'explicit' \
-             WHERE origin IS NULL \
-               AND (edge_origin = 'manual' \
-                    OR (edge_origin IS NULL AND rel_type NOT IN ({extract_owned})))"
-        ),
-        [],
-    )? as u64;
-    // Any vocabulary we have never seen stays on the non-deleted side.
-    done += conn.execute(
-        "UPDATE graph_edges SET origin = 'explicit' WHERE origin IS NULL",
-        [],
-    )? as u64;
+        |row| row.get(0),
+    )?;
+    if mislabeled > 0 {
+        done += conn.execute(
+            &format!("UPDATE graph_edges SET origin = 'extract' WHERE origin = 'explicit' AND {membership}"),
+            [],
+        )? as u64;
+    }
     Ok(done)
 }
 
@@ -864,6 +890,46 @@ mod tests {
             )
             .expect("count");
         assert_eq!(n, 1);
+    }
+
+    /// A database that already ran the rel_type-only version of the origin
+    /// backfill keeps its pipeline membership rows as `explicit`, so the
+    /// `origin IS NULL` pass never revisits them. §1.6's delete predicate only
+    /// reaches them once the contextual repair pass re-stamps them.
+    #[test]
+    fn origin_backfill_repairs_explicit_membership_rows_from_an_older_migration() {
+        let conn = open_mem();
+        migrate(&conn).expect("migrate");
+        conn.execute(
+            "INSERT INTO graph_edges (id, source_id, target_id, rel_type, weight, context, created_at, origin) VALUES \
+             ('edge-membership', 'doc-node', 'project-node', 'related', 0.5, 'project membership', CURRENT_TIMESTAMP, 'explicit'), \
+             ('edge-hand-made', 'doc-node', 'stub-node', 'related', 1.0, NULL, CURRENT_TIMESTAMP, 'explicit'), \
+             ('edge-untouched', 'doc-node', 'tag-node', 'wikilink', 1.0, NULL, CURRENT_TIMESTAMP, 'extract')",
+            [],
+        )
+        .expect("insert already-stamped edges");
+
+        let repaired = backfill_graph_edge_origins(&conn).expect("repair pass");
+        assert_eq!(
+            repaired, 1,
+            "only the mislabeled membership row changes owner"
+        );
+        assert_eq!(origin_of(&conn, "edge-membership"), "extract");
+        assert_eq!(
+            origin_of(&conn, "edge-hand-made"),
+            "explicit",
+            "a hand-made `related` edge keeps its owner"
+        );
+        assert_eq!(origin_of(&conn, "edge-untouched"), "extract");
+    }
+
+    fn origin_of(conn: &Connection, id: &str) -> String {
+        conn.query_row(
+            "SELECT origin FROM graph_edges WHERE id = ?",
+            duckdb::params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("read origin")
     }
 
     #[test]

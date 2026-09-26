@@ -854,8 +854,54 @@ pub enum RelType {
     Supersedes,
 }
 
+/// Relations a person authors by hand with `link_nodes`, mostly in wiki maps:
+/// `детализирует`, `реализует`, `проверяет`, …
+///
+/// They are part of the §1.1 vocabulary but no extractor can produce them, so
+/// they are always `origin = explicit` (§1.6) and are always document → document.
+/// They exist in live graphs (118 edges measured 2026-09-25 on an auto-backup of
+/// the gateway database), so the store boundary must accept them and §7.1 must
+/// read them; a client that wants only the structural set names it explicitly.
+pub const WIKI_SEMANTIC_REL_TYPES: &[&str] = &[
+    "детализирует",
+    "зависит от",
+    "компенсируется",
+    "вызывает",
+    "публикует",
+    "обновляет",
+    "хранит",
+    "проверяет",
+    "использует",
+    "изменяет схему",
+    "реализует",
+];
+
+/// Relations that body-text extraction owns (§1.6).
+///
+/// The §1.6 rebuild delete predicate and the pre-`origin` backfill both inline
+/// these names in SQL, so they read this list rather than repeating it.
+pub const EXTRACT_OWNED_REL_TYPES: &[&str] = &["wikilink", "tagged", "mentions"];
+
+/// Context the pipeline stamps on the document → project placement edge (§1.6).
+pub const CONTEXT_PROJECT_MEMBERSHIP: &str = "project membership";
+
+/// Context the pipeline stamps on the document → directory placement edge (§1.6).
+pub const CONTEXT_DIRECTORY_MEMBERSHIP: &str = "directory membership";
+
+/// Every structural `related` context literal (§1.6).
+///
+/// A pre-`origin` database has nothing else to tell a membership edge from a
+/// hand-made `related` one — and `link_nodes` cannot write a `context` at all,
+/// so these strings are an exact ownership marker. Shared by the writer in
+/// [`crate::graph::resolve`] and the migrate backfill so they cannot drift.
+pub const STRUCTURAL_EDGE_CONTEXTS: &[&str] =
+    &[CONTEXT_PROJECT_MEMBERSHIP, CONTEXT_DIRECTORY_MEMBERSHIP];
+
 impl RelType {
-    /// Accepted wire strings. `embeds` is reserved and not an edge yet.
+    /// Accepted structural wire strings. `embeds` is reserved and not an edge yet.
+    ///
+    /// Hand-authored wiki relations are accepted at the store boundary too; see
+    /// [`WIKI_SEMANTIC_REL_TYPES`] and [`RelType::validate_wire`].
     pub const WIRE: &'static [&'static str] = &[
         "wikilink",
         "tagged",
@@ -886,6 +932,22 @@ impl RelType {
         Self::WIRE.contains(&raw)
     }
 
+    /// §1.1 store-boundary check: every name an edge may carry, i.e. the
+    /// structural enum plus the hand-authored wiki semantic set.
+    ///
+    /// Use [`RelType::parse`] when a structural variant is needed; this accepts
+    /// strictly more names on purpose.
+    pub fn validate_wire(raw: &str) -> crate::error::Result<()> {
+        if Self::is_wire(raw) || WIKI_SEMANTIC_REL_TYPES.contains(&raw) {
+            return Ok(());
+        }
+        Err(crate::error::AppError::config(format!(
+            "invalid rel_type '{raw}': expected one of {}, or a wiki semantic relation ({})",
+            Self::WIRE.join(", "),
+            WIKI_SEMANTIC_REL_TYPES.join(", "),
+        )))
+    }
+
     /// Parse a wire string, rejecting unknown relations.
     pub fn parse(raw: &str) -> crate::error::Result<Self> {
         match raw {
@@ -902,11 +964,6 @@ impl RelType {
                 Self::WIRE.join(", ")
             ))),
         }
-    }
-
-    /// Relations that body-text extraction owns (§1.6).
-    pub fn is_extract_owned(raw: &str) -> bool {
-        matches!(raw, "wikilink" | "tagged" | "mentions")
     }
 }
 
@@ -967,23 +1024,8 @@ pub struct GraphFilter {
 /// to be searched for a useful local focus.
 pub const UI_GRAPH_EXPORT_MAX_NODES: u32 = 100_000;
 
-/// Default PKB relation types for local graph and UI export
-/// (GRAPH_DESIGN §7.1: `wikilink` + `related`; tags / tunnel / Dep opt-in).
-pub const PKB_REL_TYPES: &[&str] = &[
-    "wikilink",
-    "related",
-    "детализирует",
-    "зависит от",
-    "компенсируется",
-    "вызывает",
-    "публикует",
-    "обновляет",
-    "хранит",
-    "проверяет",
-    "использует",
-    "изменяет схему",
-    "реализует",
-];
+/// Structural relations the PKB default read set walks (§7.1).
+pub const PKB_CORE_REL_TYPES: &[&str] = &["wikilink", "related"];
 
 /// Default node kinds for UI export (tags off unless explicitly included).
 pub const PKB_NODE_KINDS: &[&str] = &["document", "stub", "entity"];
@@ -992,9 +1034,14 @@ pub const PKB_NODE_KINDS: &[&str] = &["document", "stub", "entity"];
 ///
 /// `include_tags` adds the `tagged` edge, the only way tag hubs stay reachable.
 /// This is the single source of that choice: the UI projections, the MCP
-/// `get_neighbors` walk and `get_graph` all default through here.
+/// `get_neighbors` walk and `get_graph` all default through here, and the store
+/// boundary accepts exactly this set plus the rest of [`RelType::WIRE`].
 pub fn pkb_rel_types(include_tags: bool) -> Vec<String> {
-    let mut rel_types: Vec<String> = PKB_REL_TYPES.iter().map(|rel| (*rel).to_string()).collect();
+    let mut rel_types: Vec<String> = PKB_CORE_REL_TYPES
+        .iter()
+        .chain(WIKI_SEMANTIC_REL_TYPES.iter())
+        .map(|rel| (*rel).to_string())
+        .collect();
     if include_tags {
         rel_types.push("tagged".into());
     }
@@ -1016,7 +1063,8 @@ pub fn pkb_node_kinds(include_tags: bool) -> Vec<String> {
 impl GraphFilter {
     /// PKB defaults for exclusive `--db` inspector and Mode C snapshot dumps.
     ///
-    /// - `rel_types`: wikilink + related (`include_tags` adds `tagged`)
+    /// - `rel_types`: [`pkb_rel_types`] — wikilink + related + the §1.1 wiki
+    ///   semantic set (`include_tags` adds `tagged`)
     /// - kinds: document + stub + entity (`include_tags` adds `tag`)
     /// - `max_nodes`: `max_nodes` or [`UI_GRAPH_EXPORT_MAX_NODES`] (100,000)
     ///
@@ -1400,12 +1448,62 @@ impl Default for KgFact {
 mod tests {
     use super::{
         format_document_etag, parse_document_etag, Document, ProjectId, WikiPageListItem,
-        UI_GRAPH_EXPORT_MAX_NODES,
+        UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
     };
 
     #[test]
     fn ui_graph_export_limit_is_one_hundred_thousand() {
         assert_eq!(UI_GRAPH_EXPORT_MAX_NODES, 100_000);
+    }
+
+    #[test]
+    fn extract_owned_relations_are_structural_names_only() {
+        assert_eq!(
+            super::EXTRACT_OWNED_REL_TYPES,
+            &["wikilink", "tagged", "mentions"]
+        );
+        for rel_type in super::EXTRACT_OWNED_REL_TYPES {
+            super::RelType::parse(rel_type)
+                .unwrap_or_else(|error| panic!("{rel_type} must be structural: {error}"));
+            assert!(
+                !super::WIKI_SEMANTIC_REL_TYPES.contains(rel_type),
+                "{rel_type} is extraction-owned, so it must not be a hand-authored name"
+            );
+        }
+    }
+
+    #[test]
+    fn wiki_semantic_relations_are_writable_but_not_structural() {
+        assert!(!WIKI_SEMANTIC_REL_TYPES.is_empty());
+        for rel_type in WIKI_SEMANTIC_REL_TYPES {
+            super::RelType::validate_wire(rel_type)
+                .unwrap_or_else(|error| panic!("{rel_type} must be accepted: {error}"));
+            assert!(
+                super::RelType::parse(rel_type).is_err(),
+                "{rel_type} has no structural variant, so only validate_wire may gate it"
+            );
+        }
+    }
+
+    #[test]
+    fn every_pkb_default_rel_type_is_writable_and_a_structural_or_semantic_name() {
+        for rel_type in super::pkb_rel_types(true) {
+            super::RelType::validate_wire(&rel_type)
+                .unwrap_or_else(|error| panic!("PKB default {rel_type} unwritable: {error}"));
+        }
+        assert!(super::pkb_rel_types(false).contains(&"related".to_string()));
+        assert!(!super::pkb_rel_types(false).contains(&"tagged".to_string()));
+        assert!(super::pkb_rel_types(true).contains(&"tagged".to_string()));
+    }
+
+    #[test]
+    fn validate_wire_rejects_names_outside_both_lists() {
+        for rel_type in ["depends on", "depends-on", "зависимость", "", "related "] {
+            let error = super::RelType::validate_wire(rel_type)
+                .err()
+                .unwrap_or_else(|| panic!("{rel_type:?} must be rejected"));
+            assert!(error.to_string().contains("invalid rel_type"), "{error}");
+        }
     }
 
     #[test]

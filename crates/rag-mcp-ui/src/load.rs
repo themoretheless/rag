@@ -3,7 +3,7 @@
 
 use rag_mcp::db::store::WikiPageMetaFilter;
 use rag_mcp::{
-    GraphEdge, GraphFilter, GraphNode, GraphView, Store, PKB_REL_TYPES, UI_GRAPH_EXPORT_MAX_NODES,
+    pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Store, UI_GRAPH_EXPORT_MAX_NODES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -186,8 +186,10 @@ pub enum GraphSourceKind {
 }
 
 /// PKB default edge types for live Store load (EGUI_GRAPH_VIEW §7.1 / GRAPH_DESIGN §7.1).
-/// Alias of library constant so UI and server stay aligned.
-pub const PKB_DEFAULT_REL_TYPES: &[&str] = PKB_REL_TYPES;
+/// Calls the library function so the UI can no longer drift from the server.
+pub fn pkb_default_rel_types() -> Vec<String> {
+    pkb_rel_types(false)
+}
 
 impl GraphSourceKind {
     pub fn label(&self) -> &'static str {
@@ -1212,7 +1214,7 @@ pub fn export_graph_snapshot(args: &ExportArgs) -> Result<ExportResult, String> 
         && args.seed_ids.is_none()
         && args.rel_types.is_none()
     {
-        // Centralized Store helper (tags off, wikilink+related).
+        // Centralized Store helper (tags off; §7.1 set = wikilink, related, wiki semantic).
         store
             .export_graph_for_ui(Some(max_nodes), false)
             .map_err(|e| {
@@ -1224,12 +1226,7 @@ pub fn export_graph_snapshot(args: &ExportArgs) -> Result<ExportResult, String> 
             })?
     } else {
         let rel_types = if args.pkb {
-            Some(
-                PKB_DEFAULT_REL_TYPES
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect(),
-            )
+            Some(pkb_default_rel_types())
         } else {
             args.rel_types.clone()
         };

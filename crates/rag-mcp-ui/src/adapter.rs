@@ -233,6 +233,12 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
 
     let keep: HashSet<String> = kept_nodes.iter().map(|n| n.id.clone()).collect();
 
+    let pkb_rels: HashSet<String> = if opts.pkb_rels_only {
+        crate::load::pkb_default_rel_types().into_iter().collect()
+    } else {
+        HashSet::new()
+    };
+
     let candidate_edges: Vec<&GraphEdge> = view
         .edges
         .iter()
@@ -242,8 +248,9 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
             if !opts.pkb_rels_only {
                 return true;
             }
-            matches!(e.rel_type.as_str(), "wikilink" | "related")
-                || (opts.show_tags && e.rel_type == "tagged")
+            // Same PKB default set the server reads with (GRAPH_DESIGN §7.1), so
+            // a relation the gateway returns is never dropped here.
+            pkb_rels.contains(&e.rel_type) || (opts.show_tags && e.rel_type == "tagged")
         })
         .collect();
 
@@ -1089,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn pkb_rels_only_drops_depends_on_and_tunnel() {
+    fn pkb_rels_only_drops_depends_on_and_tunnel_but_keeps_wiki_semantic() {
         let view = GraphView {
             nodes: vec![
                 node("a", "document", "A"),
@@ -1099,16 +1106,16 @@ mod tests {
             edges: vec![
                 edge("w", "a", "b", "wikilink", 1.0),
                 edge("r", "a", "c", "related", 1.0),
+                edge("s", "a", "b", "реализует", 1.0),
                 edge("d", "b", "c", "depends_on", 1.0),
                 edge("t", "a", "c", "tunnel", 1.0),
             ],
         };
         let g = adapt(&view, &AdaptOptions::default());
-        assert_eq!(g.edges.len(), 2);
-        assert!(g
-            .edges
-            .iter()
-            .all(|e| matches!(e.rel_type.as_str(), "wikilink" | "related")));
+        let mut kept: Vec<&str> = g.edges.iter().map(|e| e.rel_type.as_str()).collect();
+        kept.sort_unstable();
+        // The §7.1 set the server reads with, hand-authored relations included.
+        assert_eq!(kept, ["related", "wikilink", "реализует"]);
         let g_all = adapt(
             &view,
             &AdaptOptions {
@@ -1116,7 +1123,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(g_all.edges.len(), 4);
+        assert_eq!(g_all.edges.len(), 5);
     }
 
     #[test]

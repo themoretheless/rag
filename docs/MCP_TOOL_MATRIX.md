@@ -20,7 +20,7 @@ Priority labels in this matrix may lag shipped code; for “exists today” pref
 | `get_graph` | Export `{nodes,edges}` topology (PKB defaults; tags/Dep opt-in) | Obsidian graph view of wiki | `mempalace_graph_stats` (palace graph) | v1 |
 | `get_neighbors` | Local BFS subgraph (depth; literary rels unless `rel_types`/`include_tags`) | Follow [[links]] neighborhood | `mempalace_traverse` | v1 |
 | `get_backlinks` | Incoming edges / who links here | Backlinks panel | Incoming KG / room links | v1 |
-| `link_nodes` | Explicit related edge (P0 also `tunnel`) | Manual cross-ref | `mempalace_create_tunnel` (cross-wing) | v1 |
+| `link_nodes` | Explicit `origin=explicit` edge; `rel_type` from the §1.1 vocabulary (structural names or a wiki semantic one such as `реализует`) | Manual cross-ref | `mempalace_create_tunnel` (cross-wing) | v1 |
 | `find_node` | Resolve node by label/id/doc | Find page by title | Entity/room lookup | v1 |
 
 ## P0 — search quality, integrity, compile layer

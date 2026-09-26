@@ -758,7 +758,9 @@ pub struct LinkNodesParams {
     pub source_id: String,
     /// Target graph node id.
     pub target_id: String,
-    /// Edge type (default `related`; `tunnel` allowed).
+    /// Edge type (default `related`). Accepts the structural names plus the
+    /// hand-authored wiki relations in §1.1 (`реализует`, `проверяет`, …);
+    /// unknown names are rejected at the store boundary.
     #[serde(default)]
     pub rel_type: Option<String>,
     /// Edge weight (default 1.0).

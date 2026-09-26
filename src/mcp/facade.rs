@@ -1510,7 +1510,7 @@ impl RagServer {
 
     #[tool(
         name = "get_neighbors",
-        description = "Local undirected BFS subgraph around a node (Obsidian local graph). Default edges are the PKB literary set (wikilink, related); pass include_tags=true to also walk tag hubs, or rel_types to name the relations you want (tunnel, mentions, derived_from, depends_on are opt-in there)."
+        description = "Local undirected BFS subgraph around a node (Obsidian local graph). Default edges are the PKB literary set (wikilink, related, and the hand-authored wiki relations such as реализует/проверяет); pass include_tags=true to also walk tag hubs, or rel_types to name the relations you want (tunnel, mentions, derived_from, depends_on are opt-in there)."
     )]
     async fn get_neighbors(
         &self,
@@ -1580,7 +1580,7 @@ impl RagServer {
 
     #[tool(
         name = "link_nodes",
-        description = "Create an explicit graph edge (default rel_type=related; tunnel allowed)."
+        description = "Create an explicit graph edge (default rel_type=related). Accepted rel_type: the structural names (wikilink, tagged, mentions, related, tunnel, depends_on, derived_from, supersedes) or a hand-authored wiki relation (реализует, проверяет, детализирует, зависит от, ...); anything else is rejected. The edge is origin=explicit, so rebuild never owns it."
     )]
     async fn link_nodes(
         &self,

@@ -61,7 +61,8 @@ pub use models::{
     IndexQueryResult, IngestResult, KgFact, KgStats, LlmStatusReport, OpsLogEntry, PlacementUpdate,
     RoomCount, SearchHit, SearchMode, Stats, StatusReport, Taxonomy, TaxonomyNode, TaxonomyRoom,
     TaxonomyWing, VacuumStoreReport, WakeUpReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
-    PKB_NODE_KINDS, PKB_REL_TYPES, UI_GRAPH_EXPORT_MAX_NODES,
+    pkb_node_kinds, pkb_rel_types, PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES,
+    WIKI_SEMANTIC_REL_TYPES,
 };
 pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
 

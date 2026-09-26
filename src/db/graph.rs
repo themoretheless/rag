@@ -468,8 +468,9 @@ impl Store {
     /// Create an explicit edge between two existing nodes.
     ///
     /// Empty `rel_type` defaults to `"related"`. Returns [`AppError::NotFound`] if
-    /// either endpoint is missing. `tunnel` and other rel types are allowed
-    /// (no allowlist; stored verbatim).
+    /// either endpoint is missing. §1.1: the name must be a structural wire string
+    /// or a hand-authored wiki relation, i.e. [`RelType::validate_wire`] gates this
+    /// write; anything else is rejected before it can reach the §1.6 predicate.
     pub fn link_nodes(
         &self,
         source_id: &str,
@@ -876,32 +877,47 @@ fn require_project(project: &str) -> Result<&str> {
     Ok(project)
 }
 
-fn scoped_relation_types(include_tags: bool) -> &'static str {
-    if include_tags {
-        "'wikilink', 'related', 'tagged', 'детализирует', 'зависит от', \
-         'компенсируется', 'вызывает', 'публикует', 'обновляет', 'хранит', \
-         'проверяет', 'использует', 'изменяет схему', 'реализует'"
-    } else {
-        "'wikilink', 'related', 'детализирует', 'зависит от', 'компенсируется', \
-         'вызывает', 'публикует', 'обновляет', 'хранит', 'проверяет', \
-         'использует', 'изменяет схему', 'реализует'"
-    }
+/// Inline a server-owned name list as a SQL `IN (…)` literal list.
+///
+/// Callers pass §1.1/§7.1 vocabulary constants, never caller input; the quote
+/// doubling only keeps this honest if a name ever carries an apostrophe. Shared
+/// with [`crate::db::schema`], whose §1.6 origin backfill inlines the structural
+/// membership contexts from the same server-owned vocabulary.
+pub(crate) fn sql_string_list<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
+    names
+        .into_iter()
+        .map(|name| format!("'{}'", name.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-fn scoped_companion_kinds(include_tags: bool) -> &'static str {
-    if include_tags {
-        "'stub', 'entity', 'tag'"
-    } else {
-        "'stub', 'entity'"
-    }
+/// §7.1 default relation set for project-scoped UI queries, from the one source
+/// ([`crate::models::pkb_rel_types`]) the MCP tools and the UI export use too.
+fn scoped_relation_types(include_tags: bool) -> String {
+    sql_string_list(
+        crate::models::pkb_rel_types(include_tags)
+            .iter()
+            .map(String::as_str),
+    )
 }
 
-fn ui_node_kinds(include_tags: bool) -> &'static str {
-    if include_tags {
-        "'document', 'stub', 'entity', 'tag'"
-    } else {
-        "'document', 'stub', 'entity'"
-    }
+/// Companion (non-document) node kinds reachable from a project export.
+fn scoped_companion_kinds(include_tags: bool) -> String {
+    sql_string_list(
+        crate::models::pkb_node_kinds(include_tags)
+            .iter()
+            .map(String::as_str)
+            .filter(|kind| *kind != "document"),
+    )
+}
+
+/// Node kinds a UI export may contain (§7.1).
+fn ui_node_kinds(include_tags: bool) -> String {
+    sql_string_list(
+        crate::models::pkb_node_kinds(include_tags)
+            .iter()
+            .map(String::as_str),
+    )
 }
 
 fn values_clause(len: usize) -> String {
@@ -1612,7 +1628,7 @@ pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNo
 /// document write path that already holds a `duckdb::Transaction`.
 ///
 /// Deviation from the literal `GRAPH_DESIGN.md` §1.6 predicate, which reads
-/// `origin = 'extract' OR rel_type IN ('wikilink','tagged','mentions')`. Applied
+/// `origin = 'extract' OR rel_type IN (<extraction-owned names>)`. Applied
 /// verbatim that OR also deletes user-created `link_nodes(..., 'wikilink')`
 /// edges, i.e. the provenance column stops protecting anything an agent wrote
 /// through the explicit API. Scoping the relation-name branch to rows whose
@@ -1623,18 +1639,24 @@ pub(crate) fn delete_derived_edges_from_locked(
     conn: &duckdb::Connection,
     source_id: &str,
 ) -> Result<()> {
-    conn.execute(
-        r#"
-        DELETE FROM graph_edges
-        WHERE source_id = ?
-          AND (
-            origin = 'extract'
-            OR (origin IS NULL AND rel_type IN ('wikilink', 'tagged', 'mentions'))
-          )
-        "#,
-        params![source_id],
-    )?;
+    conn.execute(delete_derived_edges_sql(), params![source_id])?;
     Ok(())
+}
+
+/// The §1.6 delete statement, with the extraction-owned names inlined from
+/// [`crate::models::EXTRACT_OWNED_REL_TYPES`]. Built once: this runs for every
+/// document rebuild, and the name list is server-owned vocabulary.
+fn delete_derived_edges_sql() -> &'static str {
+    static SQL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SQL.get_or_init(|| {
+        format!(
+            "DELETE FROM graph_edges \
+             WHERE source_id = ? \
+               AND (origin = 'extract' \
+                    OR (origin IS NULL AND rel_type IN ({extract_owned})))",
+            extract_owned = sql_string_list(crate::models::EXTRACT_OWNED_REL_TYPES.iter().copied())
+        )
+    })
 }
 
 /// §6.3 / §14: deleting a document **demotes** its graph node instead of wiping it.
@@ -1768,7 +1790,7 @@ fn validate_edge_vocabulary<'a>(
 ) -> Result<()> {
     EdgeOrigin::parse(origin)?;
     for edge in edges {
-        RelType::parse(&edge.rel_type)?;
+        RelType::validate_wire(&edge.rel_type)?;
     }
     Ok(())
 }
@@ -1897,6 +1919,89 @@ mod tests {
     use super::*;
     use crate::models::Document;
     use chrono::Utc;
+
+    /// The inlined SQL literals are a projection of §7.1, never a second copy.
+    #[test]
+    fn scoped_sql_name_lists_derive_from_the_models_sources() {
+        assert_eq!(
+            scoped_relation_types(false),
+            sql_string_list(
+                crate::models::pkb_rel_types(false)
+                    .iter()
+                    .map(String::as_str)
+            )
+        );
+        assert_eq!(
+            scoped_relation_types(true),
+            sql_string_list(
+                crate::models::pkb_rel_types(true)
+                    .iter()
+                    .map(String::as_str)
+            )
+        );
+        assert!(crate::models::pkb_rel_types(true)
+            .iter()
+            .any(|rel| rel == "реализует"));
+        assert!(!scoped_companion_kinds(true).contains("document"));
+        assert_eq!(
+            ui_node_kinds(false),
+            sql_string_list(
+                crate::models::pkb_node_kinds(false)
+                    .iter()
+                    .map(String::as_str)
+            )
+        );
+    }
+
+    /// §1.6: the rebuild delete predicate must inline the extraction-owned names
+    /// from the models list, never a second copy of them.
+    #[test]
+    fn delete_predicate_inlines_the_models_extract_owned_names() {
+        let sql = delete_derived_edges_sql();
+        assert!(sql.contains(&sql_string_list(
+            crate::models::EXTRACT_OWNED_REL_TYPES.iter().copied()
+        )));
+        assert!(sql.contains("origin = 'extract'"), "{sql}");
+        assert!(sql.contains("origin IS NULL"), "{sql}");
+    }
+
+    #[test]
+    fn sql_string_list_doubles_quotes() {
+        assert_eq!(sql_string_list(["a", "b'c"]), "'a', 'b''c'");
+    }
+
+    #[test]
+    fn hand_authored_wiki_relation_survives_the_boundary_and_the_pkb_walk() {
+        let store = open_temp();
+        for (id, label) in [("wiki-a", "A"), ("wiki-b", "B")] {
+            store
+                .upsert_graph_node(&node(id, "document", label, None))
+                .expect("insert node");
+        }
+
+        let edge = store
+            .link_nodes("wiki-a", "wiki-b", "реализует", 1.0)
+            .expect("link_nodes with a wiki semantic rel_type");
+        assert_eq!(edge.rel_type, "реализует");
+
+        let pkb_rels = crate::models::pkb_rel_types(false);
+        let view = store
+            .neighbors_filtered("wiki-a", 1, 100, Some(&pkb_rels))
+            .expect("PKB default walk");
+        assert!(
+            view.edges.iter().any(|e| e.rel_type == "реализует"),
+            "the §7.1 default must keep hand-authored relations: {:?}",
+            view.edges
+        );
+
+        let rejected = store.link_nodes("wiki-a", "wiki-b", "зависимость", 1.0);
+        assert!(
+            rejected
+                .err()
+                .is_some_and(|error| error.to_string().contains("invalid rel_type")),
+            "an unknown rel_type must stay rejected"
+        );
+    }
 
     fn open_temp() -> Store {
         let dir = tempfile::tempdir().expect("tempdir");

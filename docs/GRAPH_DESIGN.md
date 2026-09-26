@@ -48,6 +48,8 @@ pub enum RelType {
     DerivedFrom,  // wiki ← raw provenance
     Supersedes,   // replacement chain
     // Embeds reserved; ![[embed]] is NOT an edge in P0
+    // Hand-authored wiki relations are NOT enum variants: closed string list
+    // WIKI_SEMANTIC_REL_TYPES, accepted by RelType::validate_wire (below)
 }
 
 /// Graph layer copy from document (scope filter, not a second graph).
@@ -69,6 +71,27 @@ pub enum EdgeOrigin {
 ```
 
 Parse with `NodeKind::parse` / `RelType::parse` / `EdgeOrigin::parse`: unknown → structured error at MCP boundary. Store columns remain `VARCHAR` for adapter portability (DuckDB, Markdown sidecar same serde).
+
+**Wiki semantic relations are a second, closed list.** `RelType` covers only the
+structural relations extraction and the Dep/tunnel/compile workflows write. A
+second accepted set — `WIKI_SEMANTIC_REL_TYPES` — holds the relations people type
+by hand into wiki maps (`детализирует`, `реализует`, `проверяет`, `изменяет схему`,
+`зависит от`, `вызывает`, `публикует`, `обновляет`, `хранит`, `использует`,
+`компенсируется`). They carry spaces and Cyrillic, so they cannot be enum
+variants; the store boundary validates with `RelType::validate_wire`
+(`RelType::WIRE` ∪ this set), which is why it does not call `RelType::parse`.
+
+| Property | Consequence |
+|----------|-------------|
+| No extractor emits them | always `origin = explicit` (§1.6); rebuild and §6.3 demote never own them |
+| Endpoints are wiki pages | measured: 118 edges in live, 100% `document → document`, `weight = 1.0`, `context = NULL` |
+| They are the author's own distinctions | included in the §7.1 PKB default read set, so a default `get_graph` / UI view still shows them |
+| Still a closed list | `link_nodes(rel_type="зависимость")` is rejected; adding a name is a vocabulary change (§14) |
+
+The live count was measured read-only on the gateway's own 2026-09-24 auto-backup
+(`SELECT rel_type, COUNT(*) FROM graph_edges GROUP BY rel_type`), not assumed.
+`crates/rag-mcp-ui` localizes the structural names for display only; a semantic
+relation renders as its own `rel_type` string.
 
 ### 1.2 `GraphNode` (extended)
 
@@ -158,7 +181,9 @@ Backfill: `label_key = label_key(label)` in migrate Rust path. DuckDB lacks hard
 > default would retroactively claim every pre-existing user edge as derived and
 > hand it to the rebuild delete predicate. Mapping is `edge_origin='derived' →
 > extract`, `'manual' → explicit`, and for rows predating both columns the
-> extraction-owned relation names → `extract` while everything else → `explicit`.
+> extraction-owned relation names **plus the pipeline's structural membership
+> `related` edges** → `extract` while everything else → `explicit` (§1.6
+> amendment, 2026-09-25).
 > `edge_origin` is left in place as the immutable pre-migration record; `origin`
 > is authoritative. `label_key` cannot be derived in SQL at all (DuckDB has no
 > NFKC), so it is backfilled row-by-row in Rust behind a missing-key count guard.
@@ -204,6 +229,22 @@ reclaimed when a row carries a mis-tagged or missing owner.
 > intent (always reclaim extraction-owned noise, even from a mis-tagged row)
 > without letting the OR clause override the owner column.
 
+> **2026-09-25 amendment: the backfill must attribute membership edges.**
+> `graph::resolve::append_structural_edges` writes the project/directory
+> placement edges as `rel_type='related'`, which §1.6 classes as an **explicit**
+> relation. A backfill keyed on relation name alone therefore stamped the
+> pipeline's own rows `explicit`, hiding them from the delete predicate for good:
+> the guard on `origin IS NULL` makes the mislabel sticky, and every re-ingest
+> stacked a fresh pair instead of replacing it. Measured read-only on the
+> gateway's auto-backup: **165 893 of 166 020 `related` edges** are membership
+> rows (83 106 `project membership` + 82 787 `directory membership`); only 127
+> are hand-made `link_nodes` edges with `context IS NULL`. The predicate now
+> reads `rel_type='related' AND context IN (models::STRUCTURAL_EDGE_CONTEXTS)`,
+> a context list shared with the writer as constants, plus a guarded repair pass
+> for databases that already ran the name-only version. `context` is a safe
+> ownership marker because `link_nodes` cannot set it: no hand-made edge can
+> collide with the pipeline's literals.
+
 
 ---
 
@@ -214,13 +255,13 @@ reclaimed when a row carries a mis-tagged or missing owner.
 | `wikilink` | source cites target page | extract | yes | no | `[[...]]` |
 | `tagged` | source classified under tag | extract | opt-in | no | `#tag` |
 | `mentions` | weak unlinked mention | extract (P1) | opt-in | no | optional |
-| `related` | soft association | explicit | yes | no | no |
+| `related` | soft association | explicit, **and** `extract` for the pipeline's structural membership edges (§1.6, 2026-09-25) | yes | no | no from markup; yes from document placement |
 | `tunnel` | cross-wing bridge | explicit | opt-in | opt-in | no |
 | `depends_on` | source **requires** target | explicit | no | yes | no |
-| `derived_from` | wiki page from raw source | system/explicit | no | yes | on compile |
+| `derived_from` | wiki page from raw source | system/explicit — **no writer yet**: `EdgeOrigin::SYSTEM` exists but nothing stamps it, because the compile projection is P1 (§17) | no | yes | on compile |
 | `supersedes` | source replaces target | explicit | no | yes | no |
 
-**Weights:** extract wikilink/tagged `1.0`; mentions `0.5`; explicit uses caller weight (default `1.0`); clamp finite `> 0`.
+**Weights:** extract wikilink/tagged `1.0`; mentions `0.5`; explicit uses caller weight (default `1.0`); clamp finite `> 0` — **not enforced by `link_nodes`** (see §17; measured 2026-09-25: the live corpus has zero non-positive or non-finite weights).
 
 **depends_on:** directed only. Outbound = prerequisites; inbound = impact. Cycle on insert → structured SCC error (P1); do not silently accept DAGs that are not.
 
@@ -381,7 +422,7 @@ For large L: `SELECT WHERE label_key IN (...)` + alias batch; single transaction
 4. assign occurrence per (target_key, rel_type) in document order
 5. batch resolve targets → edge rows (origin=extract, offsets, alias, heading)
 6. chunk_id_for_span for each link if chunks present
-7. INSERT OR REPLACE edges by derived_edge_id
+7. INSERT edges (uuid id; `derived_edge_id` upsert key deferred by V-O8, §17)
 8. optional orphan prune AFTER reinsert (§6.3)
 9. return (node_id, edge_count)
 ```
@@ -454,7 +495,8 @@ pub struct NeighborsOpts {
 
 **Defaults (Obsidian-shaped):**
 
-- `get_neighbors`: undirected BFS; default `rel_types = [wikilink, related]`; tags off unless `include_tags`; tunnel opt-in.  
+- `get_neighbors`: undirected BFS; default `rel_types = pkb_rel_types(false)` =
+  `[wikilink, related]` + the §1.1 wiki semantic set; tags off unless `include_tags`; tunnel opt-in.  
 - `get_graph`: same PKB literary set unless client asks for Dep projection.  
 - Cap export: 500 nodes / 100 neighbors default.
 
@@ -464,6 +506,13 @@ pub struct NeighborsOpts {
 > Passing `rel_types` wins outright — including `["tagged"]` alone — and an empty
 > list is treated as "not supplied" rather than "no relations". `get_graph` also
 > infers tag edges when a caller names `tag` among `kinds`.
+>
+> **2026-09-25.** `pkb_rel_types` is now the only definition of this set: the UI
+> export constant and the hand-written SQL `IN (…)` literal in `db/graph.rs`
+> (`scoped_relation_types`, used by six project-scoped queries) were deleted and
+> derive from it, so the default read set can no longer drift from the §1.1
+> vocabulary. It includes the wiki semantic relations because they are in live
+> data (§14, 2026-09-25); `tunnel` remains opt-in.
 
 ### 7.2 Scale: frontier SQL (FATAL fix)
 
@@ -685,6 +734,9 @@ Domain pure; store adapter-agnostic signatures for Markdown vault.
 | Rebuild wipe all outgoing? | **Rejected**; derived-only (current bug) |
 | Prefer newest document on collision? | **Rejected** (wrong note) |
 | Title-based document node reuse? | **Rejected** (steal) |
+| `related` is an explicit rel_type, so the pipeline's membership edges keep that owner? | **Rejected** (2026-09-25). `resolve::append_structural_edges` emits `related` for project/directory placement; name-only attribution stamped **165 893 of 166 020** live `related` edges `explicit` (measured read-only on the gateway's auto-backup: 83 106 `project membership` + 82 787 `directory membership` vs 127 hand-made with `context IS NULL`), hiding them from §1.6 forever and stacking a fresh pair per re-ingest. Ownership is the `context` literal, shared with the writer as constants |
+| Enforce §1.6 `related` idempotency and the §2 weight clamp in `link_nodes` now? | **No** (2026-09-25, measured). Read-only on the gateway's auto-backup: among 234 654 edges the *only* duplicated `(source,target,rel)` `related` triples are 7 membership rows, which the fixed §1.6 predicate already reclaims on the next rebuild; hand-made `related` edges have **zero** duplicates, and weights are **zero** non-positive / non-finite (range `[0.5, 1.0]`). Enforcing either would change a live MCP tool's semantics for no measured defect, so both stay recorded in §17 |
+| 11 Cyrillic `rel_type` names in the PKB lists are dead → delete them? | **Rejected** (2026-09-25). Measured read-only on the gateway's own auto-backup: 118 live edges carry them, all `document → document`, `weight = 1.0`, `context = NULL`, `edge_origin = NULL` → the §1.6 backfill classifies them `explicit`. They are hand-authored facts, so the vocabulary grew to accept them (§1.1) instead of the lists shrinking |
 
 ---
 
@@ -712,7 +764,7 @@ Domain pure; store adapter-agnostic signatures for Markdown vault.
 
 | Phase | Work |
 |-------|------|
-| **P0a** | label_key column + normalize; fix resolve order (no tag, no steal); delete_derived_edges_from; promote id stability tests |
+| **P0a** | label_key column + normalize; fix resolve order (no tag, no steal); delete_derived_edges_from; promote id stability tests; §1.1 store-boundary vocabulary incl. wiki semantic rel_types (2026-09-25) |
 | **P0b** | char offsets on ExtractedLink/edges; multi-wikilink occurrence; GraphEdge provenance fields; neighbors frontier SQL |
 | **P0c** | `graph_expand_search` only — held by the V-O4 decision; `link_nodes` tunnel support and the PKB default filters on `get_neighbors` / `get_graph` shipped 2026-09-24 |
 | **P1** | unlink_nodes; resolve_stub; tunnel CRUD; node_aliases + rename retention; link_health; blake3 + migration; depends_on tools; backlinks occurrence API |
@@ -723,7 +775,7 @@ Domain pure; store adapter-agnostic signatures for Markdown vault.
 
 ## 17. Current code debt (map to this design)
 
-Status is as of 2026-09-24. "Closed" rows stay listed so a later reader can tell
+Status is as of 2026-09-25. "Closed" rows stay listed so a later reader can tell
 which §1–§6 clauses once had no code behind them.
 
 | Location | Bug vs design | Status |
@@ -734,7 +786,11 @@ which §1–§6 clauses once had no code behind them.
 | `find_nodes_by_label` case-sensitive | Permanent stubs → label_key | Closed (P0a-1): `graph/normalize.rs`, `label_key` column + migrate backfill, query keyed on `label_key` |
 | `extract.rs` byte positions for context only | Add char_start/char_end; convert at boundary | Closed (P0b-1): `Hit` byte spans are resolved to unicode scalars once per document and stored on extract-origin edges |
 | `db/graph.rs` neighbors loads all edges | Frontier SQL | Closed (P0b-2): `expand_frontier` + one indexed hop query per depth level for `neighbors`, `follow_tunnels` and both UI projections; §9 depth cap 5 enforced |
-| Random UUID stubs/tags | Deterministic after migrate | Deferred by decision (V-O8): no blake3 id flip without the merge pass |
+| `PKB_REL_TYPES` + `db/graph.rs::scoped_relation_types` | Two hand-written copies of the §7.1 default list, both naming `rel_type`s the §1.1 vocabulary rejected | Closed (2026-09-25): `models::pkb_rel_types(include_tags)` is the only list, and the SQL literals derive from it; the 11 wiki semantic names are now legal at the store boundary through `RelType::validate_wire` (§1.1), because 118 live edges carry them |
+| `EXTRACT_OWNED_REL_TYPES` spelled out in three places (dead `RelType::is_extract_owned`, the §1.6 delete SQL, the origin backfill SQL) | Same name list hand-copied per site | Closed (2026-09-25): `models::EXTRACT_OWNED_REL_TYPES` is the only copy; the delete predicate builds its SQL once through `sql_string_list`, the backfill derives the same way, the unused predicate method is gone |
+| Random UUID stubs/tags (nodes **and** edges) | Deterministic ids after migrate | Deferred by decision (V-O8): no blake3 id flip without the merge pass, so §1.6's `derived_edge_id` upsert key and §6.1 step 7 stay plain UUID inserts |
+| `link_nodes` does not enforce §1.6 `related` idempotency or the §2 weight clamp | Repeated calls add a row; a `weight <= 0` / NaN caller weight is stored as-is | Open, deliberately (2026-09-25): measured zero hand-made duplicates and zero bad weights on the live corpus, so there is no defect to fix and enforcing would change MCP tool semantics; `unlink_nodes` (P1) is the sanctioned removal path |
+| `schema::backfill_graph_edge_origins` keyed on rel_type only | `related` is an explicit name, so the pipeline's own project/directory membership rows were stamped `explicit` and escaped §1.6's delete predicate | Closed (2026-09-25): membership is attributed by the `context` literals shared with `resolve::structural_edge` (`models::STRUCTURAL_EDGE_CONTEXTS`), plus a guarded repair pass for stores that already ran the name-only version; `legacy_membership_edges_are_attributed_by_their_structural_context` locks the re-ingest behaviour |
 | No origin / multi-edge / aliases | Schema + API extensions above | Closed for storage (P0a-2 origin, P0b-1 `alias`/`heading`/`chunk_id`/`char_start`/`char_end`/`occurrence`); occurrence-aware read APIs (`list_backlinks` → `BacklinkHit`, `aggregate_view`) remain P1 |
 | `delete_document` wiped every incident edge | §6.3 demote-to-stub, keep inbound | Closed: `demote_graph_for_document_locked` clears `document_id`, sets `kind='stub'`/`resolved=false`, reclaims only outbound extract edges; inbound and explicit outbound stay. Applies to MCP delete, maintenance compaction and recovery replace alike, so a replaced note is an unresolved target rather than lost links |
 | `label` written without `label_key` | Single §3 key must not go stale | Closed: title refresh (`refresh_document_graph_label_locked`) and dedupe promotion both rewrite `label_key`, so a renamed note keeps resolving by label |
