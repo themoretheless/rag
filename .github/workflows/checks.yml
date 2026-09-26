@@ -26,7 +26,10 @@ jobs:
           # check-fmt-changed.sh compares the change against its merge base.
           fetch-depth: 0
       - name: Install stable Rust
-        run: rustup update stable --profile minimal
+        # The job died here on every run since feb5b9e: `rustup update` has no
+        # --profile, so nothing below it - tests, eval, and the clippy/fmt gates - ever ran.
+        # Minimal profile has to name the two components the gates call.
+        run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
       - name: Clippy without warnings
         run: cargo +stable clippy --workspace --all-targets --locked -- -D warnings
       - name: Formatting of changed lines
