@@ -80,6 +80,10 @@ impl Store {
     }
 
     /// Find a node by exact `uri` match.
+    ///
+    /// Several nodes can share a uri (§5.2 creates a second node rather than steal an
+    /// owned one). The canonical copy is the resolved, earliest created node, with the id
+    /// as the final tie-break, so repeated reads name the same node.
     pub fn find_node_by_uri(&self, uri: &str) -> Result<Option<GraphNode>> {
         let conn = self.lock()?;
         find_node_by_uri_locked(&conn, uri)
@@ -1842,16 +1846,35 @@ pub(crate) fn find_node_by_uri_locked(
     conn: &duckdb::Connection,
     uri: &str,
 ) -> Result<Option<GraphNode>> {
-    find_one_node_locked(
-        conn,
+    // A uri can be carried by more than one node (measured on the 2026-09-25 live
+    // snapshot: 5 groups of two `document` copies, each pair holding the same
+    // document_id and the same neighbour set). Without an order, `LIMIT 1` resolved to
+    // storage layout, so reads - and the §5.2 reuse that decides where new edges go -
+    // could name either copy. Resolved wins over a demoted stub, the first writer wins
+    // among equals (§5.2 keeps the original node id so its edges stay attached), and the
+    // unique id closes the order.
+    let mut stmt = conn.prepare(
         r#"
         SELECT id, kind, label, document_id, uri, resolved, metadata_json
         FROM graph_nodes
         WHERE uri = ?
-        LIMIT 1
+        ORDER BY COALESCE(resolved, FALSE) DESC, created_at, id
+        LIMIT 2
         "#,
-        uri,
-    )
+    )?;
+    let mut rows = stmt.query(params![uri])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    let node = row_to_node(row)?;
+    if rows.next()?.is_some() {
+        tracing::warn!(
+            uri,
+            canonical_node_id = %node.id,
+            "several graph nodes share this uri; the read follows the deterministic order"
+        );
+    }
+    Ok(Some(node))
 }
 
 fn find_one_node_locked(
@@ -2136,6 +2159,46 @@ mod tests {
         let bl_after_delete = store.backlinks("n2").unwrap();
         assert_eq!(bl_after_delete.edges.len(), 1);
         assert_eq!(bl_after_delete.edges[0].rel_type, "related");
+    }
+
+    /// §5.2 allows two nodes to carry one uri, so the lookup must name one of them the
+    /// same way on every read: a resolved node beats the stub that was created for the
+    /// uri before the document arrived, the first writer beats a newer copy (§5.2
+    /// rejects resolve-by-newest), and the id breaks an exact tie.
+    #[test]
+    fn find_node_by_uri_names_one_canonical_copy() {
+        let store = open_temp();
+        {
+            let conn = store.lock().unwrap();
+            conn.execute(
+                "INSERT INTO graph_nodes (id, kind, label, document_id, uri, resolved, created_at, updated_at) VALUES
+                 ('stub-from-a-wikilink', 'stub', 'dup.cs', NULL, 'file:///dup.cs', false, '2026-08-01 10:00:00', '2026-08-01 10:00:00'),
+                 ('older-copy',    'document', 'dup.cs',      'doc-a', 'file:///dup.cs', true,  '2026-09-02 10:00:00', '2026-09-04 10:00:00'),
+                 ('newer-copy',    'document', 'rag: dup.cs', 'doc-a', 'file:///dup.cs', true,  '2026-09-20 10:00:00', '2026-09-20 10:00:00'),
+                 ('zz-tie',        'document', 'tie.cs',   'doc-b', 'file:///tie.cs', true,  '2026-09-01 10:00:00', '2026-09-20 10:00:00'),
+                 ('aa-tie',        'document', 'tie.cs',   'doc-b', 'file:///tie.cs', true,  '2026-09-01 10:00:00', '2026-09-20 10:00:00')",
+                [],
+            )
+            .unwrap();
+        }
+
+        for _ in 0..3 {
+            let found = store
+                .find_node_by_uri("file:///dup.cs")
+                .unwrap()
+                .expect("canonical copy");
+            assert_eq!(found.id, "older-copy");
+            assert_eq!(found.label, "dup.cs");
+        }
+        let tie = store
+            .find_node_by_uri("file:///tie.cs")
+            .unwrap()
+            .expect("either copy is canonical");
+        assert_eq!(tie.id, "aa-tie");
+        assert!(store
+            .find_node_by_uri("file:///absent.cs")
+            .unwrap()
+            .is_none());
     }
 
     /// §6.3: extraction noise is reclaimed on delete, user-authored inbound links

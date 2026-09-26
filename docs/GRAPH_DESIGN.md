@@ -112,6 +112,8 @@ relation renders as its own `rel_type` string.
 
 **Rejected:** separate `label_norm` (NFC) and `label_key` (NFKC) columns. One key only: `label_key` (§3). Critic FATAL on NFC vs NFKC fork.
 
+**`uri` is not unique.** §5.2 step 2 creates a second node rather than stealing an owned uri, so live data carries duplicate groups (measured 2026-09-25: 5 groups of 2 in 105 579 nodes). Every uri read — and the reuse that decides where new edges land — names the canonical copy by one total order: `resolved` first, then earliest `created_at`, then `id`. Resolve-by-newest stays rejected above, so it is not reintroduced here.
+
 ### 1.3 `GraphEdge` (extended)
 
 | Field | Type | Notes |
