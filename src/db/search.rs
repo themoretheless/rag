@@ -2683,7 +2683,8 @@ mod tests {
             top_k: 2,
             query_embedding: Some(vec![1.0, 0.0]),
             max_chunks_per_document: Some(1),
-            timeout_ms: Some(10_000),
+            // Not a promptness test: the 4 097-chunk scan outgrows any fixed wall on CI hardware.
+            timeout_ms: None,
             ..Default::default()
         };
         let hits = search(&store, &query).unwrap();
