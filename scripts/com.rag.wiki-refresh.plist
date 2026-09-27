@@ -1,13 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  launchd agent for scripts/wiki-refresh.sh.
+  launchd agent for the wiki-refresh driver.
 
-  Install:
+  Install (the driver and its state must live outside ~/Documents - see below):
+    mkdir -p ~/.local/share/rag-mcp/cron
+    cp scripts/wiki-refresh.sh ~/.local/bin/rag-wiki-refresh.sh
+    chmod +x ~/.local/bin/rag-wiki-refresh.sh
     cp scripts/com.rag.wiki-refresh.plist ~/Library/LaunchAgents/
-    launchctl load ~/Library/LaunchAgents/com.rag.wiki-refresh.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rag.wiki-refresh.plist
 
   Uninstall:
-    launchctl unload ~/Library/LaunchAgents/com.rag.wiki-refresh.plist
+    launchctl bootout gui/$(id -u)/com.rag.wiki-refresh
+
+  Why nothing here points into ~/Documents: a launchd-spawned /bin/sh is denied
+  every read under ~/Documents by TCC (writes and traversal still work). That
+  blocks exec of the script itself, so a repo-path ProgramArguments exits 126
+  with "Operation not permitted". The gateway is a separately granted binary and
+  reads the queued paths fine, so only the driver's own files had to move.
+  $ROOT/.rag/pending-ingest.txt is kept as a symlink into the state dir so the
+  Claude Code hook still queues through the repo path.
+
+  StartInterval is 6 h, not the 5 min this file used to carry: a full run
+  measured ~15 min (stage 2 dominates), so any interval under that either
+  piles up behind the lock or spends its life logging SKIP.
 
   RunAtLoad is false on purpose: the agent must not fire while the rag-mcp
   gateway is still starting. The script is a no-op when the gateway is down,
@@ -20,29 +35,30 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/themoretheless/Documents/Sources/rag/scripts/wiki-refresh.sh</string>
+    <string>/Users/themoretheless/.local/bin/rag-wiki-refresh.sh</string>
   </array>
-
-  <key>WorkingDirectory</key>
-  <string>/Users/themoretheless/Documents/Sources/rag</string>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin:/Users/themoretheless/.local/bin</string>
     <key>RAG_MCP_URL</key>
     <string>http://127.0.0.1:7432/mcp</string>
     <key>RAG_CRON_WING</key>
     <string>rag</string>
+    <key>RAG_CRON_PROJECT_ROOT</key>
+    <string>/Users/themoretheless/Documents/Sources/rag</string>
+    <key>RAG_CRON_STATE_DIR</key>
+    <string>/Users/themoretheless/.local/share/rag-mcp/cron</string>
   </dict>
 
   <key>StartInterval</key>
-  <integer>300</integer>
+  <integer>21600</integer>
 
   <key>RunAtLoad</key>
   <false/>
 
   <key>StandardErrorPath</key>
-  <string>/Users/themoretheless/Documents/Sources/rag/.rag/wiki-refresh.err</string>
+  <string>/Users/themoretheless/.local/share/rag-mcp/cron/wiki-refresh.err</string>
 </dict>
 </plist>

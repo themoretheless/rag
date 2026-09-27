@@ -18,24 +18,35 @@
 # detects both conditions and says so rather than reporting a false success.
 #
 # Usage:  scripts/wiki-refresh.sh [--dry-run]
-# Env:    RAG_MCP_URL      default http://127.0.0.1:7432/mcp
-#         RAG_CRON_WING    wing passed to ingest_file (optional)
-#         RAG_CRON_ROOM    room passed to ingest_file (optional)
-#         RAG_CRON_MAX_DOCS  cap for refresh_stale_wiki (default: server side)
-#         RAG_CRON_SKIP    space-separated stage names: flush refresh lint maintain
+# Env:    RAG_MCP_URL        default http://127.0.0.1:7432/mcp
+#         RAG_CRON_WING      wing passed to ingest_file (optional)
+#         RAG_CRON_ROOM      room passed to ingest_file (optional)
+#         RAG_CRON_MAX_DOCS    cap for refresh_stale_wiki (default: server side)
+#         RAG_CRON_SKIP      space-separated stage names: flush refresh lint maintain
+#         RAG_CRON_PROJECT_ROOT  project the queue paths must live under
+#                              (default: the parent of this script's directory)
+#         RAG_CRON_STATE_DIR   where queue/log/lock live
+#                              (default: $RAG_CRON_PROJECT_ROOT/.rag)
+#
+# As a launchd agent this must be installed OUTSIDE ~/Documents and run with
+# RAG_CRON_STATE_DIR outside it too: TCC denies a launchd-spawned /bin/sh every
+# read under ~/Documents, so the script itself would not even be readable, let
+# alone its queue. The gateway is a separately-granted binary and still reads
+# the queued paths fine, so only this script's own files need to move.
 
 set -eu
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=${RAG_CRON_PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
+STATE=${RAG_CRON_STATE_DIR:-$ROOT/.rag}
 MCP_URL=${RAG_MCP_URL:-http://127.0.0.1:7432/mcp}
-QUEUE="$ROOT/.rag/pending-ingest.txt"
-LOG="$ROOT/.rag/wiki-refresh.log"
-LOCK="$ROOT/.rag/wiki-refresh.lock"
+QUEUE="$STATE/pending-ingest.txt"
+LOG="$STATE/wiki-refresh.log"
+LOCK="$STATE/wiki-refresh.lock"
 SKIP=${RAG_CRON_SKIP:-}
 DRY=false
 [ "${1:-}" = "--dry-run" ] && DRY=true
 
-mkdir -p "$ROOT/.rag"
+mkdir -p "$STATE"
 
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG"; }
 
@@ -44,15 +55,11 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   log "SKIP another run holds $LOCK"
   exit 0
 fi
-cleanup() { rmdir "$LOCK" 2>/dev/null || true; rm -f "$TMP_REQ" "$TMP_RES" "$TMP_SID" 2>/dev/null || true; }
+cleanup() { rmdir "$LOCK" 2>/dev/null || true; rm -f "$TMP_REQ" "$TMP_RES" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 TMP_REQ=$(mktemp -t ragreq)
 TMP_RES=$(mktemp -t ragres)
-# The session id lives in a file, not a variable: rpc() is always invoked inside
-# command substitution, which runs in a subshell, so a plain assignment would be
-# discarded and every call after initialize would be unauthenticated.
-TMP_SID=$(mktemp -t ragsid)
 RPC_ID=0
 
 skipped() {
@@ -65,19 +72,9 @@ skipped() {
 rpc() {
   RPC_ID=$((RPC_ID + 1))
   printf '{"jsonrpc":"2.0","id":%s,"method":"%s","params":%s}' "$RPC_ID" "$1" "$2" >"$TMP_REQ"
-  sid=$(cat "$TMP_SID" 2>/dev/null || true)
-  if [ -n "$sid" ]; then
-    curl -sS -m 900 -H 'Content-Type: application/json' \
-      -H 'Accept: application/json, text/event-stream' \
-      -H "Mcp-Session-Id: $sid" \
-      --data-binary @"$TMP_REQ" "$MCP_URL" >"$TMP_RES" 2>/dev/null || return 1
-  else
-    curl -sS -m 900 -D "$TMP_RES.hdr" -H 'Content-Type: application/json' \
-      -H 'Accept: application/json, text/event-stream' \
-      --data-binary @"$TMP_REQ" "$MCP_URL" >"$TMP_RES" 2>/dev/null || return 1
-    sed -n 's/^[Mm]cp-[Ss]ession-[Ii]d: *//p' "$TMP_RES.hdr" | tr -d '\r' >"$TMP_SID"
-    rm -f "$TMP_RES.hdr"
-  fi
+  curl -sS -m 900 -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    --data-binary @"$TMP_REQ" "$MCP_URL" >"$TMP_RES" 2>/dev/null || return 1
   sed -n 's/^data: //p' "$TMP_RES" | head -n 1 | jq -c '.result // empty'
 }
 
@@ -96,19 +93,16 @@ INIT=$(rpc initialize '{"protocolVersion":"2025-06-18","capabilities":{},"client
 }
 [ -n "$INIT" ] || { log "FATAL empty initialize response from $MCP_URL"; exit 1; }
 
-SESSION=$(cat "$TMP_SID")
-[ -n "$SESSION" ] || { log "FATAL no Mcp-Session-Id returned by $MCP_URL"; exit 1; }
-
 printf '{"jsonrpc":"2.0","method":"notifications/initialized"}' >"$TMP_REQ"
 curl -sS -m 30 -o /dev/null -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -H "Mcp-Session-Id: $SESSION" --data-binary @"$TMP_REQ" "$MCP_URL"
+  --data-binary @"$TMP_REQ" "$MCP_URL"
 
 TOOLS=$(rpc tools/list '{}' | jq -r '.tools[].name')
-[ -n "$TOOLS" ] || { log "FATAL tools/list returned nothing (session rejected?)"; exit 1; }
+[ -n "$TOOLS" ] || { log "FATAL tools/list returned nothing from $MCP_URL"; exit 1; }
 has_tool() { printf '%s\n' "$TOOLS" | grep -qx "$1"; }
 
-log "START session=$SESSION dry_run=$DRY tools=$(printf '%s\n' "$TOOLS" | wc -l | tr -d ' ')"
+log "START dry_run=$DRY tools=$(printf '%s\n' "$TOOLS" | wc -l | tr -d ' ')"
 
 # ---- stage 1: flush the ingest queue ---------------------------------------
 #
@@ -127,7 +121,10 @@ if ! skipped flush && [ -s "$QUEUE" ]; then
       "$ROOT"/*) ;;
       *) DROP=$((DROP + 1)); continue ;;
     esac
-    if [ ! -f "$path" ]; then DROP=$((DROP + 1)); continue; fi
+    # Only trust an existence test when we can see the project at all: a
+    # launchd-spawned shell gets EPERM under ~/Documents, which would otherwise
+    # read as "every queued file is gone" and silently drop the whole queue.
+    if [ -d "$ROOT" ] && [ ! -f "$path" ]; then DROP=$((DROP + 1)); continue; fi
     if [ "$DRY" = true ]; then
       log "  would ingest $path"
       printf '%s\n' "$path" >>"$REMAIN"
@@ -144,8 +141,10 @@ if ! skipped flush && [ -s "$QUEUE" ]; then
       printf '%s\n' "$path" >>"$REMAIN"   # keep for the next run
     fi
   done <"$QUEUE"
-  mv "$REMAIN" "$QUEUE"
-  [ -s "$QUEUE" ] || rm -f "$QUEUE"
+  # Truncate in place instead of renaming $REMAIN onto it: the installed job's
+  # queue is a symlink pointing out of ~/Documents, and a rename would leave a
+  # plain file behind that the next launchd run cannot read.
+  cat "$REMAIN" >"$QUEUE"
   log "flush ok=$OK failed=$FAIL dropped=$DROP"
 fi
 
