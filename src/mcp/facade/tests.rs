@@ -1,23 +1,36 @@
 //! Behavior tests for the composed MCP server: tool calls, guards, and policy.
 
-use super::*;
-use crate::db::recovery::{
-    decode_recovery_bundle, encode_recovery_bundle, RecoveryBundle, BUNDLE_VERSION,
-};
-use crate::db::search::SearchQuery;
-use crate::embeddings::MockEmbedder;
-use crate::mcp::maintain::clamp_maintenance_max_docs;
-use crate::mcp::recovery::prepare_recovery_bundle_for_import;
-use crate::mcp::recovery::LEGACY_RECOVERY_BUNDLE_VERSION;
-use crate::mcp::tools::*;
-use crate::models::Document;
-use crate::models::SearchMode;
-use crate::util::parse_optional_timestamp;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use async_trait::async_trait;
 use chrono::Utc;
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::*;
+use crate::db::recovery::{
+    decode_recovery_bundle, encode_recovery_bundle, BundleDocument, RecoveryBundle, BUNDLE_VERSION,
+};
+use crate::db::schema::SCHEMA_VERSION;
+use crate::db::search::SearchQuery;
+use crate::diagnostics::DiagnosticsService;
+use crate::embeddings::MockEmbedder;
+use crate::mcp::maintain::clamp_maintenance_max_docs;
+use crate::mcp::recovery::{prepare_recovery_bundle_for_import, LEGACY_RECOVERY_BUNDLE_VERSION};
+use crate::mcp::tools::*;
+use crate::models::{Chunk, DoctorReport, Document, SearchMode, StatusReport};
+use crate::util::{check_path_allowlist, content_hash, parse_optional_timestamp};
+
+impl RagServer {
+    /// MemPalace-style `status` health payload (vision §5.5 layer health).
+    fn status_report(&self) -> Result<StatusReport, AppError> {
+        DiagnosticsService::new(&self.store, &self.config).status()
+    }
+
+    /// Minimal `doctor` integrity payload.
+    fn doctor_report(&self) -> Result<DoctorReport, AppError> {
+        DiagnosticsService::new(&self.store, &self.config).doctor()
+    }
+}
 
 #[test]
 fn every_registered_tool_has_an_explicit_access_policy() {

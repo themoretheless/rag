@@ -20,14 +20,8 @@ use super::surface::{self, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB}
 
 use super::tools::{CollectionEntryParams, SyncSourcesParams, UpdateDocumentMetaParams};
 use crate::config::Config;
-#[cfg(test)]
-use crate::db::recovery::BundleDocument;
-#[cfg(test)]
-use crate::db::schema::SCHEMA_VERSION;
 use crate::db::store::CorpusMutationGuard;
 use crate::db::Store;
-#[cfg(test)]
-use crate::diagnostics::DiagnosticsService;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::ingest::{
@@ -35,12 +29,8 @@ use crate::ingest::{
     UpdateDocumentResult,
 };
 use crate::llm::ChatClient;
-#[cfg(test)]
-use crate::models::{Chunk, DoctorReport, StatusReport};
 use crate::models::{CollectionEntry, DocumentMetaUpdate, IngestResult, LlmStatusReport};
 use crate::util::non_blank;
-#[cfg(test)]
-use crate::util::{check_path_allowlist, content_hash};
 
 /// RAG MCP server holding store, embedder, optional chat client, and config.
 #[derive(Clone)]
@@ -313,18 +303,6 @@ impl RagServer {
                 ),
             },
         }
-    }
-
-    /// Build the MemPalace-style `status` health payload (vision §5.5 layer health).
-    #[cfg(test)]
-    pub(crate) fn status_report(&self) -> Result<StatusReport, AppError> {
-        DiagnosticsService::new(&self.store, &self.config).status()
-    }
-
-    /// Build the minimal `doctor` integrity payload.
-    #[cfg(test)]
-    pub(crate) fn doctor_report(&self) -> Result<DoctorReport, AppError> {
-        DiagnosticsService::new(&self.store, &self.config).doctor()
     }
 
     /// Probe local chat LLM and report embedding config (no corpus mutation).
