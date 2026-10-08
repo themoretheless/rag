@@ -2,7 +2,7 @@
 
 **Product:** `rag-mcp`
 
-**Updated:** 2026-09-03
+**Updated:** 2026-10-08
 
 **North star:** [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md)
 
@@ -113,7 +113,10 @@ database path is published last as the generation commit marker.
 | `db/{rows,fts,search,graph,kg,catalog,source_manifest,recovery,vault}.rs` | persistence repositories, scoped/global retrieval snapshots, aggregate health, atomic single-artifact recovery publication and coordinated backup-group publication |
 | `storage/` | small backend-neutral document contract; DuckDB and Markdown implementations |
 | `access.rs`, `http_api/auth.rs` | explicit MCP roles, shared HTTP/MCP Bearer authentication, HTTP operation permissions and remote startup guard |
-| `mcp/facade.rs`, `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs` | macro composition root and bounded MCP tool routers; per-request role checks and filtered tool discovery |
+| `mcp/facade.rs` | shared `RagServer` state, application-service adapters, per-request role checks, filtered tool discovery and audited dispatch |
+| `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs`, `mcp/server.rs`, `mcp/views.rs` | domain-owned MCP tool implementations (one `#[tool_router]` each) added together in `server.rs`; shared document/chunk response views |
+| `mcp/error.rs`, `http_api/error.rs`, `AppError::code` | one wire error vocabulary; JSON-RPC and HTTP envelopes only classify |
+| `util/{blocking,text,time}.rs` | shared blocking/detached task helpers, optional-string normalization and timestamp parsing used by both transports |
 | `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters |
 | `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
 | `crates/rag-mcp-ui/src/ui/` | workspace rendering; `app.rs` coordinates navigation and worker state |
@@ -134,9 +137,9 @@ database path is published last as the generation commit marker.
 | Native client → gateway | product workspaces consume lean APIs through one sanitized transport boundary; `/v1/projects` is authoritative independently from graph topology | graph failure is isolated to Connections; catalog failure retains the last authoritative list and has a targeted retry; Search responses retain submitted-request provenance; Library cursors reuse applied filters only; backlinks are project-scoped and failures stay visible; no second live DuckDB reader/writer is required; direct `--db` Wiki is read-only; project changes cannot drop in-flight wiki, restore or Operations mutations; verified backup gets a 30-minute timeout |
 | `Storage` | backend identity, capabilities and document lifecycle | unsupported backends/capabilities fail explicitly; no silent DuckDB alias |
 
-Compatibility boundaries are intentional: `mcp/facade.rs` remains the rmcp
-macro composition root, `Store` remains the public DuckDB façade, and `wing`
-remains the v1 wire/storage alias for project.
+Compatibility boundaries are intentional: `mcp/server.rs` is the rmcp router
+composition root while domain modules own their tools, `Store` remains the
+public DuckDB façade, and `wing` remains the v1 wire/storage alias for project.
 
 ## 5. Main workflows
 
@@ -227,7 +230,7 @@ Markdown application backend requires the conformance gate in the roadmap.
 
 | Concentration | Current risk | Gate |
 |---------------|--------------|------|
-| `Store`, `wiki`, `mcp/facade` and native `app` remain large compatibility/orchestration roots | Mechanical splitting could duplicate policy or break wire behavior | New workflows must enter through existing application seams; extract only with behavior tests |
+| `Store`, `wiki` and native `app` remain large compatibility/orchestration roots | Mechanical splitting could duplicate policy or break wire behavior | New workflows must enter through existing application seams; extract only with behavior tests |
 | Markdown implements only the document slice | Capability names can be mistaken for full parity | Shared search/graph/recovery conformance before it is marketed as a full backend |
 | Exact vector search is O(n) | Future corpora may exceed latency/RSS targets | ANN only after the roadmap's repeated 300 ms or resource gate fails |
 | Native layout has unit tests but no deterministic screenshot suite | Visual regressions can pass compilation | Add screenshot baselines only under the roadmap's visual-regression entry condition |

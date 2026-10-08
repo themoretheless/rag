@@ -77,6 +77,32 @@ impl From<serde_json::Error> for AppError {
 }
 
 impl AppError {
+    /// Stable machine-readable code shared by the HTTP envelope and MCP error data.
+    ///
+    /// Single owner of the wire vocabulary: add a variant here and both
+    /// transports pick it up without touching their mappers.
+    pub fn code(&self) -> &'static str {
+        match self {
+            AppError::Config(_) => "INVALID_REQUEST",
+            AppError::Db(_) => "DATABASE_ERROR",
+            AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
+            AppError::Llm(_) => "LLM_ERROR",
+            AppError::Io(_) => "IO_ERROR",
+            AppError::Chunking(_) => "CHUNKING_ERROR",
+            AppError::NotFound(_) => "NOT_FOUND",
+            AppError::Fts(_) => "FTS_ERROR",
+            AppError::Conflict(_) => "CONFLICT",
+            AppError::Forbidden(_) => "FORBIDDEN",
+            AppError::Busy(_) => "STORE_BUSY",
+            AppError::Other(_) => "INTERNAL_ERROR",
+        }
+    }
+
+    /// Whether a client may retry the identical request after a short delay.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, AppError::Busy(_))
+    }
+
     /// Convenience constructor for LLM chat errors.
     pub fn llm(msg: impl Into<String>) -> Self {
         AppError::Llm(msg.into())
@@ -125,5 +151,22 @@ impl AppError {
     /// Convenience constructor for store-busy / write-lock errors.
     pub fn busy(msg: impl Into<String>) -> Self {
         AppError::Busy(msg.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+
+    #[test]
+    fn only_busy_is_retryable_and_codes_are_stable() {
+        assert_eq!(AppError::busy("lane").code(), "STORE_BUSY");
+        assert!(AppError::busy("lane").is_retryable());
+        assert_eq!(AppError::config("x").code(), "INVALID_REQUEST");
+        assert!(!AppError::config("x").is_retryable());
+        assert_eq!(
+            AppError::Other(anyhow::anyhow!("boom")).code(),
+            "INTERNAL_ERROR"
+        );
     }
 }

@@ -25,7 +25,7 @@ use crate::retrieval::{self, SearchCommand, SimilarDocumentsQuery};
 use crate::revisions::{RestoreRevisionCommand, RevisionService};
 use crate::search_pack::pack_hits;
 use crate::telemetry;
-use crate::util::check_path_allowlist;
+use crate::util::{check_path_allowlist, non_blank};
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -314,15 +314,15 @@ pub(super) async fn search_http(
         default_mode: state.config.default_search_mode,
         top_k: body.top_k,
         default_top_k: state.config.default_top_k,
-        document_id: clean(body.document_id),
-        wing: clean(body.wing),
-        room: clean(body.room),
-        layer: clean(body.layer),
-        source_file: clean(body.source_file),
+        document_id: non_blank(body.document_id),
+        wing: non_blank(body.wing),
+        room: non_blank(body.room),
+        layer: non_blank(body.layer),
+        source_file: non_blank(body.source_file),
         include_archived: body.include_archived,
         min_score: body.min_score,
-        diversity: clean(body.diversity),
-        group_by: clean(body.group_by),
+        diversity: non_blank(body.diversity),
+        group_by: non_blank(body.group_by),
         recency_half_life_days: body.recency_half_life_days,
         max_context_tokens: body
             .max_context_tokens
@@ -330,7 +330,7 @@ pub(super) async fn search_http(
         max_chunks_per_document: body
             .max_chunks_per_document
             .or(Some(state.config.max_chunks_per_doc)),
-        context_expansion: clean(body.context_expansion),
+        context_expansion: non_blank(body.context_expansion),
         neighbor_chunks: body.neighbor_chunks,
         timeout_ms: body.timeout_ms.or(Some(5_000)),
         fts_stemmer: state.config.fts_stemmer.clone(),
@@ -340,7 +340,7 @@ pub(super) async fn search_http(
         match retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode) {
             Ok(mode) => mode,
             Err(error) => {
-                call.finish(false, Some(search_error_kind(&error).into()), None);
+                call.finish(false, Some(error.code().into()), None);
                 return api_err(error);
             }
         };
@@ -383,7 +383,7 @@ pub(super) async fn search_http(
             api_ok(response)
         }
         Err(error) => {
-            call.finish(false, Some(search_error_kind(&error).into()), None);
+            call.finish(false, Some(error.code().into()), None);
             api_err(error)
         }
     }
@@ -393,23 +393,6 @@ fn search_audit_args(body: &SearchBody) -> serde_json::Value {
     // Calls are visible to every client in the operations feed. Keep useful
     // shape diagnostics but never persist query text or resource identifiers.
     json!({"mode": body.mode, "top_k": body.top_k})
-}
-
-fn search_error_kind(error: &AppError) -> &'static str {
-    match error {
-        AppError::Config(_) => "INVALID_REQUEST",
-        AppError::Db(_) => "DATABASE_ERROR",
-        AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
-        AppError::Llm(_) => "LLM_ERROR",
-        AppError::Io(_) => "IO_ERROR",
-        AppError::Chunking(_) => "CHUNKING_ERROR",
-        AppError::NotFound(_) => "NOT_FOUND",
-        AppError::Fts(_) => "FTS_ERROR",
-        AppError::Conflict(_) => "CONFLICT",
-        AppError::Forbidden(_) => "FORBIDDEN",
-        AppError::Busy(_) => "STORE_BUSY",
-        AppError::Other(_) => "INTERNAL_ERROR",
-    }
 }
 
 /// `pack_context` mirror: full citation-block budget, including headers and expansion.
@@ -439,7 +422,7 @@ async fn pack_context_http(
     let include_trace = body.include_trace || body.prior_trace.is_some();
     let persist_trace = body.persist_trace;
     let prior_trace = body.prior_trace;
-    let expansion = match clean(body.context_expansion)
+    let expansion = match non_blank(body.context_expansion)
         .as_deref()
         .map(ContextExpansion::parse)
     {
@@ -663,14 +646,14 @@ async fn documents(
         Err(error) => return api_err(error),
     };
     let filter = DocumentCatalogFilter {
-        q: clean(query.q),
-        wing: clean(query.wing),
-        room: clean(query.room),
+        q: non_blank(query.q),
+        wing: non_blank(query.wing),
+        room: non_blank(query.room),
         source_file: None,
-        layer: clean(query.layer),
-        kind: clean(query.kind),
+        layer: non_blank(query.layer),
+        kind: non_blank(query.kind),
         compiled: query.compiled,
-        status: clean(query.status),
+        status: non_blank(query.status),
         include_archived: query.include_archived,
         limit,
         offset,
@@ -706,10 +689,6 @@ pub(super) fn decode_cursor(cursor: Option<&str>) -> Result<usize, AppError> {
             .and_then(|offset| offset.parse().ok())
             .ok_or_else(|| AppError::config("invalid cursor")),
     }
-}
-
-fn clean(value: Option<String>) -> Option<String> {
-    value.filter(|item| !item.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -805,7 +784,7 @@ mod tests {
         }
 
         let error = AppError::config("private acquisition plan");
-        assert_eq!(search_error_kind(&error), "INVALID_REQUEST");
-        assert!(!search_error_kind(&error).contains("private"));
+        assert_eq!(error.code(), "INVALID_REQUEST");
+        assert!(!error.code().contains("private"));
     }
 }

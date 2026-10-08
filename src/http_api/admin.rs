@@ -27,7 +27,7 @@ use super::{
 use crate::diagnostics;
 use crate::error::AppError;
 use crate::llm::ChatClient;
-use crate::mcp::facade::parse_optional_ts;
+use crate::util::{non_blank, parse_optional_timestamp};
 use crate::wiki;
 
 pub(super) fn routes() -> Router<HttpState> {
@@ -45,10 +45,6 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/tunnels", get(tunnels))
         .route("/v1/lint-wiki", get(lint_wiki))
         .route("/v1/eval/history", get(eval_history))
-}
-
-fn clean(value: Option<String>) -> Option<String> {
-    value.filter(|item| !item.trim().is_empty())
 }
 
 // --- Reads -----------------------------------------------------------------
@@ -71,14 +67,14 @@ struct OpsLogQuery {
 
 async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
-    let has_key = clean(q.id.clone()).is_some() || q.seq.is_some();
+    let has_key = non_blank(q.id.clone()).is_some() || q.seq.is_some();
     match st.store.read_ops_log(q.id.as_deref(), q.seq, Some(limit)) {
         Ok(rows) if has_key && rows.is_empty() => {
             api_err(AppError::not_found("ops_log entry not found"))
         }
         Ok(rows) => {
-            let agent = clean(q.agent);
-            let prefix = clean(q.prefix).map(|p| p.to_ascii_uppercase());
+            let agent = non_blank(q.agent);
+            let prefix = non_blank(q.prefix).map(|p| p.to_ascii_uppercase());
             let items: Vec<_> = rows
                 .into_iter()
                 .filter(|row| {
@@ -124,7 +120,7 @@ struct RoomsQuery {
 }
 
 async fn rooms(State(st): State<HttpState>, Query(q): Query<RoomsQuery>) -> impl IntoResponse {
-    match st.store.list_rooms(clean(q.wing).as_deref()) {
+    match st.store.list_rooms(non_blank(q.wing).as_deref()) {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
     }
@@ -172,7 +168,7 @@ async fn diary(State(st): State<HttpState>, Query(q): Query<DiaryQuery>) -> impl
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
     match st
         .store
-        .list_diary_entries(clean(q.agent).as_deref(), limit)
+        .list_diary_entries(non_blank(q.agent).as_deref(), limit)
     {
         Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
         Err(error) => api_err(error),
@@ -195,14 +191,14 @@ async fn kg_query(
     State(st): State<HttpState>,
     Query(q): Query<KgQueryParams>,
 ) -> impl IntoResponse {
-    let at_time = match parse_optional_ts(q.at_time.as_deref()) {
+    let at_time = match parse_optional_timestamp(q.at_time.as_deref()) {
         Ok(value) => value,
         Err(error) => return api_err(error),
     };
     match st.store.kg_query(
-        clean(q.subject).as_deref(),
-        clean(q.predicate).as_deref(),
-        clean(q.object).as_deref(),
+        non_blank(q.subject).as_deref(),
+        non_blank(q.predicate).as_deref(),
+        non_blank(q.object).as_deref(),
         at_time,
     ) {
         Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
@@ -239,7 +235,7 @@ struct TunnelsQuery {
 }
 
 async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> impl IntoResponse {
-    match st.store.list_tunnels(clean(q.node_id).as_deref()) {
+    match st.store.list_tunnels(non_blank(q.node_id).as_deref()) {
         Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
         Err(error) => api_err(error),
     }

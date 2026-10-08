@@ -15,7 +15,7 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, merge_metadata};
 use crate::models::{Chunk, Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
-use crate::util::{check_path_allowlist, content_hash};
+use crate::util::{check_path_allowlist, content_hash, non_blank};
 
 #[derive(Debug, Clone)]
 pub struct IngestCommand {
@@ -547,12 +547,12 @@ impl TryFrom<IngestCommand> for NormalizedIngest {
     type Error = AppError;
 
     fn try_from(command: IngestCommand) -> Result<Self, Self::Error> {
-        let metadata_json = nonempty(command.metadata_json).unwrap_or_else(|| "{}".into());
+        let metadata_json = non_blank(command.metadata_json).unwrap_or_else(|| "{}".into());
         serde_json::from_str::<serde_json::Value>(&metadata_json).map_err(|error| {
             AppError::config(format!("metadata_json is not valid JSON: {error}"))
         })?;
-        let uri = nonempty(command.uri).unwrap_or_else(|| format!("text://{}", Uuid::new_v4()));
-        let title = nonempty(command.title).unwrap_or_else(|| {
+        let uri = non_blank(command.uri).unwrap_or_else(|| format!("text://{}", Uuid::new_v4()));
+        let title = non_blank(command.title).unwrap_or_else(|| {
             uri.rsplit('/')
                 .next()
                 .filter(|value| !value.is_empty())
@@ -564,18 +564,14 @@ impl TryFrom<IngestCommand> for NormalizedIngest {
             title,
             uri,
             metadata_json,
-            wing: nonempty(command.wing),
-            room: nonempty(command.room),
-            source_file: nonempty(command.source_file),
+            wing: non_blank(command.wing),
+            room: non_blank(command.room),
+            source_file: non_blank(command.source_file),
             layer: normalized_or(command.layer, "raw"),
             kind: normalized_or(command.kind, "document"),
             immutable: command.immutable,
         })
     }
-}
-
-fn nonempty(value: Option<String>) -> Option<String> {
-    value.filter(|item| !item.trim().is_empty())
 }
 
 fn normalized_or(value: String, fallback: &str) -> String {

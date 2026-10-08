@@ -1,26 +1,23 @@
-//! Thin composition layer for the domain-clustered MCP tool router.
+//! Composition root for the domain-clustered MCP tool router.
 
 use rmcp::handler::server::tool::ToolRouter;
 
 pub use super::facade::RagServer;
-use super::{collections, graph, ingest, kg, maintain, recovery, search, wiki};
 
-/// Compose the public MCP facade from domain-owned tool registrations.
-pub(super) fn compose_tool_router(mut all: ToolRouter<RagServer>) -> ToolRouter<RagServer> {
-    let mut router = ToolRouter::new();
-    router.merge(ingest::router(&mut all));
-    router.merge(collections::router(&mut all));
-    router.merge(search::router(&mut all));
-    router.merge(graph::router(&mut all));
-    router.merge(wiki::router(&mut all));
-    router.merge(kg::router(&mut all));
-    router.merge(maintain::router(&mut all));
-    router.merge(recovery::router(&mut all));
-
-    debug_assert!(
-        all.map.is_empty(),
-        "every MCP tool must belong to a domain cluster"
-    );
-    router.merge(all);
-    router
+impl RagServer {
+    /// Compose the public MCP facade from domain-owned tool routers.
+    ///
+    /// Each domain module registers its own `#[tool_router]`; this is the only
+    /// place that knows the full set. Tool names stay unique across clusters
+    /// because rmcp keys routes by name.
+    pub(super) fn all_tools_router() -> ToolRouter<Self> {
+        Self::ingest_router()
+            + Self::collections_router()
+            + Self::search_router()
+            + Self::graph_router()
+            + Self::wiki_router()
+            + Self::kg_router()
+            + Self::maintain_router()
+            + Self::recovery_router()
+    }
 }

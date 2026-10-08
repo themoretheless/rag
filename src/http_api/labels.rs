@@ -20,6 +20,7 @@ use super::{
 };
 use crate::error::{AppError, Result};
 use crate::eval::ErrorLabel;
+use crate::util::trimmed_non_blank;
 
 const DEFAULT_LEASE_SECS: i64 = 300;
 const MAX_LEASE_SECS: i64 = 3_600;
@@ -154,11 +155,11 @@ async fn create(State(st): State<HttpState>, Json(body): Json<CreateBody>) -> Re
             id: Uuid::new_v4().to_string(),
             revision: 1,
             status: LabelStatus::Open,
-            query_id: clean(body.query_id),
+            query_id: trimmed_non_blank(body.query_id),
             label: body.label,
-            note: clean(body.note),
-            feedback_id: clean(body.feedback_id),
-            eval_run_id: clean(body.eval_run_id),
+            note: trimmed_non_blank(body.note),
+            feedback_id: trimmed_non_blank(body.feedback_id),
+            eval_run_id: trimmed_non_blank(body.eval_run_id),
             lease_owner: None,
             lease_until: None,
             created_at: now,
@@ -263,16 +264,16 @@ async fn update(
             item.label = body.label;
         }
         if body.note.is_some() {
-            item.note = clean(body.note);
+            item.note = trimmed_non_blank(body.note);
         }
         if body.feedback_id.is_some() {
-            item.feedback_id = clean(body.feedback_id);
+            item.feedback_id = trimmed_non_blank(body.feedback_id);
         }
         if body.eval_run_id.is_some() {
-            item.eval_run_id = clean(body.eval_run_id);
+            item.eval_run_id = trimmed_non_blank(body.eval_run_id);
         }
         if item.status == LabelStatus::Claimed {
-            if let Some(owner) = clean(body.lease_owner) {
+            if let Some(owner) = trimmed_non_blank(body.lease_owner) {
                 let lease_secs = body
                     .lease_secs
                     .unwrap_or(DEFAULT_LEASE_SECS)
@@ -322,17 +323,6 @@ fn parse_status(raw: &str) -> Result<LabelStatus> {
         "discarded" => Ok(LabelStatus::Discarded),
         other => Err(AppError::config(format!("unknown label status: {other}"))),
     }
-}
-
-fn clean(value: Option<String>) -> Option<String> {
-    value.and_then(|s| {
-        let t = s.trim().to_string();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
-    })
 }
 
 #[cfg(test)]

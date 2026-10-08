@@ -12,6 +12,7 @@ use crate::db::Store;
 use crate::embeddings::{l2_normalize, EmbeddingProvider};
 use crate::error::AppError;
 use crate::models::{Document, SearchHit, SearchMode};
+use crate::util::trimmed_non_blank;
 
 pub const MAX_MULTI_GET_DOCUMENTS: usize = 100;
 pub const MAX_NEIGHBOR_RADIUS: u32 = 20;
@@ -180,11 +181,11 @@ async fn prepare_search_with_mode(
         top_k: command.top_k.unwrap_or(command.default_top_k),
         query_text: Some(text.to_owned()),
         query_embedding,
-        document_id: nonempty(command.document_id),
-        wing: nonempty(command.wing),
-        room: nonempty(command.room),
-        layer: nonempty(command.layer),
-        source_file: nonempty(command.source_file),
+        document_id: trimmed_non_blank(command.document_id),
+        wing: trimmed_non_blank(command.wing),
+        room: trimmed_non_blank(command.room),
+        layer: trimmed_non_blank(command.layer),
+        source_file: trimmed_non_blank(command.source_file),
         include_archived: command.include_archived,
         min_score: command.min_score,
         diversity,
@@ -511,8 +512,8 @@ pub fn find_similar(
             top_k: top_k + 1,
             query_text: Some(document.title),
             query_embedding: Some(centroid),
-            wing: nonempty(query.wing),
-            room: nonempty(query.room),
+            wing: trimmed_non_blank(query.wing),
+            room: trimmed_non_blank(query.room),
             diversity: Some(DiversityMode::CollapseByDocument),
             max_chunks_per_document: Some(1),
             fts_stemmer: query.fts_stemmer,
@@ -523,13 +524,6 @@ pub fn find_similar(
     hits.retain(|hit| hit.document_id != document_id);
     hits.truncate(top_k);
     Ok(hits)
-}
-
-fn nonempty(value: Option<String>) -> Option<String> {
-    value.and_then(|item| {
-        let trimmed = item.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
 }
 
 #[cfg(test)]

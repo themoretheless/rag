@@ -65,6 +65,7 @@ use crate::db::Store;
 use crate::embeddings::{build_provider, EmbeddingProvider};
 use crate::mcp::RagServer;
 use crate::models::GraphView;
+use crate::util::run_blocking;
 
 pub use bind::parse_bind;
 
@@ -425,16 +426,6 @@ fn api_router(state: HttpState) -> Router {
 }
 
 const MAX_HTTP_BODY_BYTES: usize = 1_048_576;
-
-async fn run_blocking<T, F>(operation: &'static str, work: F) -> Result<T, crate::error::AppError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
-{
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|error| crate::error::AppError::db(format!("{operation} task failed: {error}")))?
-}
 
 #[derive(Clone)]
 struct RequestId(String);
