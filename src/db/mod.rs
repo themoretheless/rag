@@ -17,6 +17,7 @@ mod catalog;
 pub mod collections;
 pub mod fts;
 pub mod graph;
+pub(crate) mod payload_kv;
 pub mod kg;
 pub mod recovery;
 mod rows;

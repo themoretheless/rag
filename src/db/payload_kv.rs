@@ -1,4 +1,4 @@
-//! Shared `(id, payload)` JSON tables used by eval/jobs HTTP adapters.
+//! Shared `(id, payload)` JSON tables used by the eval, feedback and jobs stores.
 //!
 //! These tables share one DuckDB shape (`id VARCHAR PRIMARY KEY, payload VARCHAR`).
 //! Domain types stay in their modules; this only removes copy-pasted SQL and

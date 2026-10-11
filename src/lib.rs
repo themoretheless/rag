@@ -30,6 +30,7 @@ pub mod file_ingest;
 pub mod graph;
 pub mod http_api;
 pub mod ingest;
+pub mod jobs;
 pub mod llm;
 pub mod maintain;
 pub mod mcp;
