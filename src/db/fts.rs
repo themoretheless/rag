@@ -572,27 +572,32 @@ fn search_duckdb_bm25(
 
     let mut hits = Vec::new();
     while let Some(row) = rows.next()? {
-        let content: String = row.get(5)?;
         let score: f64 = row.get(8)?;
-        let score = score as f32;
-        let char_start: i32 = row.get(6)?;
-        let char_end: i32 = row.get(7)?;
-        hits.push(SearchHit {
-            chunk_id: row.get(0)?,
-            document_id: row.get(1)?,
-            document_title: row.get(2)?,
-            document_uri: row.get(3)?,
-            chunk_index: row.get(4)?,
-            content: content.clone(),
-            score,
-            score_lex: Some(score),
-            snippet: Some(make_snippet(&content, SNIPPET_CHARS)),
-            char_start: Some(char_start),
-            char_end: Some(char_end),
-            ..Default::default()
-        });
+        let content: String = row.get(5)?;
+        hits.push(lexical_hit(row, content, score as f32)?);
     }
     Ok(hits)
+}
+
+/// One lexical hit from the shared projection
+/// `(chunk id, document id, title, uri, chunk index, content, char_start, char_end)`
+/// used by both the BM25 and the term-frequency paths.
+fn lexical_hit(row: &duckdb::Row<'_>, content: String, score: f32) -> Result<SearchHit> {
+    let snippet = make_snippet(&content, SNIPPET_CHARS);
+    Ok(SearchHit {
+        chunk_id: row.get(0)?,
+        document_id: row.get(1)?,
+        document_title: row.get(2)?,
+        document_uri: row.get(3)?,
+        chunk_index: row.get(4)?,
+        content,
+        score,
+        score_lex: Some(score),
+        snippet: Some(snippet),
+        char_start: Some(row.get(6)?),
+        char_end: Some(row.get(7)?),
+        ..Default::default()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -642,23 +647,7 @@ fn search_tf(
         if score <= 0.0 {
             continue;
         }
-        let char_start: i32 = row.get(6)?;
-        let char_end: i32 = row.get(7)?;
-        let hit = SearchHit {
-            chunk_id: row.get(0)?,
-            document_id: row.get(1)?,
-            document_title: row.get(2)?,
-            document_uri: row.get(3)?,
-            chunk_index: row.get(4)?,
-            content: content.clone(),
-            score,
-            score_lex: Some(score),
-            snippet: Some(make_snippet(&content, SNIPPET_CHARS)),
-            char_start: Some(char_start),
-            char_end: Some(char_end),
-            ..Default::default()
-        };
-        scored.push((score, hit));
+        scored.push((score, lexical_hit(row, content, score)?));
     }
 
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
