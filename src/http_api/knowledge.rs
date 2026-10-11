@@ -36,7 +36,7 @@ impl Properties {
             || !["", "draft", "needs_review", "verified"].contains(&self.review_status.as_str())
             || self.owner.len() > 200
         {
-            return Err(AppError::config("invalid knowledge properties"));
+            return Err(AppError::invalid("invalid knowledge properties"));
         }
         date(&self.review_due)
     }
@@ -45,7 +45,7 @@ fn date(value: &str) -> Result<()> {
     if !value.is_empty()
         && (value.len() != 10 || chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_err())
     {
-        return Err(AppError::config("date must be a valid YYYY-MM-DD"));
+        return Err(AppError::invalid("date must be a valid YYYY-MM-DD"));
     }
     Ok(())
 }
@@ -63,7 +63,7 @@ struct Filter {
 impl Filter {
     fn validate(&self) -> Result<()> {
         if self.q.len() > 500 || self.wing.len() > 200 {
-            return Err(AppError::config("filter is too long"));
+            return Err(AppError::invalid("filter is too long"));
         }
         Properties {
             document_type: self.document_type.clone(),
@@ -137,12 +137,12 @@ fn update_properties(store: &Store, body: Update) -> Result<Value> {
         .get_document(&body.id)?
         .ok_or_else(|| AppError::not_found("wiki page not found"))?;
     if doc.layer != "wiki" {
-        return Err(AppError::config("knowledge properties require a wiki page"));
+        return Err(AppError::invalid("knowledge properties require a wiki page"));
     }
     let mut metadata: Value = serde_json::from_str(&doc.metadata_json)?;
     let object = metadata
         .as_object_mut()
-        .ok_or_else(|| AppError::config("metadata must be an object"))?;
+        .ok_or_else(|| AppError::invalid("metadata must be an object"))?;
     object.insert(
         "knowledge_properties".into(),
         serde_json::to_value(&body.properties)?,
@@ -201,7 +201,7 @@ fn persist_view(store: &Store, mut body: SaveView) -> Result<View> {
     body.filters.validate()?;
     body.filters.offset = 0;
     if body.name.trim().is_empty() || body.name.len() > 200 {
-        return Err(AppError::config("view name must contain 1..200 bytes"));
+        return Err(AppError::invalid("view name must contain 1..200 bytes"));
     }
     let conn = store.lock()?;
     let (id, revision) = if let Some(id) = body.id {
@@ -222,7 +222,7 @@ fn persist_view(store: &Store, mut body: SaveView) -> Result<View> {
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM knowledge_views", [], |r| r.get(0))?;
         if count >= 500 {
-            return Err(AppError::config("saved view limit reached"));
+            return Err(AppError::invalid("saved view limit reached"));
         }
         (uuid::Uuid::new_v4().to_string(), 1)
     };
@@ -247,7 +247,7 @@ mod tests {
     use super::*;
     use crate::models::Document;
     fn fixture() -> (Store, Document) {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let store = Store::open(&root.join("knowledge.duckdb")).unwrap();
         let doc = Document {
             id: "wiki-a".into(),

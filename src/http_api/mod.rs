@@ -665,7 +665,7 @@ mod tests {
     }
 
     fn app() -> Router {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("http.duckdb"),
             ..Config::default()
@@ -907,7 +907,7 @@ mod tests {
 
     #[tokio::test]
     async fn mounted_mcp_rejects_streamed_oversized_bodies() {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("mcp-http.duckdb"),
             ..Config::default()
@@ -951,7 +951,7 @@ mod tests {
 
     #[tokio::test]
     async fn mounted_mcp_enforces_dns_rebinding_host_allowlist() {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("mcp-host-guard.duckdb"),
             http_bind: Some("192.168.50.205:7432".into()),
@@ -1002,7 +1002,7 @@ mod tests {
 
     #[tokio::test]
     async fn revision_timeline_is_lean_paginated_and_snapshot_is_lazy() {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("revisions-http.duckdb"),
             ..Config::default()

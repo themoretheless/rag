@@ -11,7 +11,7 @@ use crate::error::AppError;
 pub(super) fn status_for(err: &AppError) -> StatusCode {
     match err {
         AppError::NotFound(_) => StatusCode::NOT_FOUND,
-        AppError::Config(_) => StatusCode::BAD_REQUEST,
+        AppError::Config(_) | AppError::Invalid(_) => StatusCode::BAD_REQUEST,
         AppError::Conflict(_) => StatusCode::CONFLICT,
         AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         AppError::Busy(_) => StatusCode::SERVICE_UNAVAILABLE,

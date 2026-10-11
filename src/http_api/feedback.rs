@@ -84,16 +84,16 @@ fn capture(store: &Store, body: Capture) -> Result<Feedback> {
         || body.expected.len() > 100
         || body.no_answer == !body.expected.is_empty()
     {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "provide expected sources or mark no_answer; id must be UUID",
         ));
     }
     let search: SearchBody =
-        serde_json::from_value(body.search).map_err(|e| AppError::config(e.to_string()))?;
+        serde_json::from_value(body.search).map_err(|e| AppError::invalid(e.to_string()))?;
     let search = serde_json::to_value(search)?;
     let query = search["query"].as_str().unwrap_or("");
     if query.trim().is_empty() || query.len() > 8000 {
-        return Err(AppError::config("query must contain 1..8000 bytes"));
+        return Err(AppError::invalid("query must contain 1..8000 bytes"));
     }
     let mut expected = Vec::new();
     for key in body.expected {
@@ -207,7 +207,7 @@ fn merge_search(base: &Value, overlay: &Value) -> Result<SearchBody> {
             merged.insert(k.clone(), v.clone());
         }
     }
-    serde_json::from_value(Value::Object(merged)).map_err(|e| AppError::config(e.to_string()))
+    serde_json::from_value(Value::Object(merged)).map_err(|e| AppError::invalid(e.to_string()))
 }
 async fn search_with_body(st: HttpState, body: SearchBody) -> Result<(Value, Vec<Value>)> {
     let response = search_http(State(st), Json(body)).await.into_response();
@@ -216,12 +216,12 @@ async fn search_with_body(st: HttpState, body: SearchBody) -> Result<(Value, Vec
     }
     let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
         .await
-        .map_err(|e| AppError::config(e.to_string()))?;
+        .map_err(|e| AppError::invalid(e.to_string()))?;
     let result: Value = serde_json::from_slice(&bytes)?;
     let hits = result["items"]
         .as_array()
         .cloned()
-        .ok_or_else(|| AppError::config("missing search items"))?;
+        .ok_or_else(|| AppError::invalid("missing search items"))?;
     Ok((result, hits))
 }
 async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
@@ -436,9 +436,9 @@ async fn response_error(response: Response) -> AppError {
     let status = response.status();
     let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
         Ok(bytes) => bytes,
-        Err(e) => return AppError::config(e.to_string()),
+        Err(e) => return AppError::invalid(e.to_string()),
     };
-    AppError::config(format!(
+    AppError::invalid(format!(
         "search failed ({status}): {}",
         String::from_utf8_lossy(&bytes)
     ))
@@ -450,7 +450,7 @@ mod tests {
     use crate::{config::Config, embeddings::MockEmbedder};
     use std::sync::Arc;
     async fn fixture() -> (HttpState, String) {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("feedback.duckdb"),
             embedding_dims: 16,

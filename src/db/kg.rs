@@ -540,11 +540,7 @@ mod tests {
     use chrono::TimeZone;
 
     fn open_temp() -> Store {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("kg.duckdb");
-        // Keep tempdir alive by leaking (tests are short-lived).
-        std::mem::forget(dir);
-        Store::open(&path).expect("open store")
+        crate::testkit::temp_store()
     }
 
     fn ts(y: i32, m: u32, d: u32) -> DateTime<Utc> {

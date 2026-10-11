@@ -173,7 +173,7 @@ async fn judge(State(st): State<HttpState>, Json(body): Json<JudgeBody>) -> Resp
 
 async fn judge_one(st: HttpState, body: JudgeBody) -> Result<Value> {
     if body.question.trim().is_empty() && body.answer_text.trim().is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "judge requires a question or answer_text",
         ));
     }
@@ -220,7 +220,7 @@ async fn online(State(st): State<HttpState>, Json(body): Json<OnlineBody>) -> Re
 async fn online_one(st: HttpState, body: OnlineBody) -> Result<Value> {
     let question = body.search.query.clone();
     if question.trim().is_empty() {
-        return Err(AppError::config("online eval requires a search query"));
+        return Err(AppError::invalid("online eval requires a search query"));
     }
     let response = search_http(State(st.clone()), Json(body.search.clone()))
         .await
@@ -230,7 +230,7 @@ async fn online_one(st: HttpState, body: OnlineBody) -> Result<Value> {
     }
     let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
         .await
-        .map_err(|e| AppError::config(e.to_string()))?;
+        .map_err(|e| AppError::invalid(e.to_string()))?;
     let search_result: Value = serde_json::from_slice(&bytes)?;
     let hits = search_result["items"]
         .as_array()
@@ -387,7 +387,7 @@ fn list_table_payloads(store: &Store, table: &str, limit: usize) -> Result<Vec<V
         "eval_traces" => super::payload_kv::PayloadTable::EvalTraces,
         "search_feedback" => super::payload_kv::PayloadTable::SearchFeedback,
         other => {
-            return Err(AppError::config(format!("unsupported export table: {other}")))
+            return Err(AppError::invalid(format!("unsupported export table: {other}")))
         }
     };
     let mut items = super::payload_kv::list_payload_values(store, table)?;
@@ -400,9 +400,9 @@ async fn search_failed(response: axum::response::Response) -> AppError {
     let status = response.status();
     let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
         Ok(bytes) => bytes,
-        Err(e) => return AppError::config(e.to_string()),
+        Err(e) => return AppError::invalid(e.to_string()),
     };
-    AppError::config(format!(
+    AppError::invalid(format!(
         "search failed ({status}): {}",
         String::from_utf8_lossy(&bytes)
     ))

@@ -138,13 +138,13 @@ impl RagServer {
         let wing = params.wing.trim();
         let room = params.room.trim();
         if wing.is_empty() {
-            return Err(McpError::from(AppError::config("wing must be non-empty")));
+            return Err(McpError::from(AppError::invalid("wing must be non-empty")));
         }
         if room.is_empty() {
-            return Err(McpError::from(AppError::config("room must be non-empty")));
+            return Err(McpError::from(AppError::invalid("room must be non-empty")));
         }
         if params.content.is_empty() {
-            return Err(McpError::from(AppError::config(
+            return Err(McpError::from(AppError::invalid(
                 "content must be non-empty",
             )));
         }
@@ -196,7 +196,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let source_file = params.source_file.trim();
         if source_file.is_empty() {
-            return Err(McpError::from(AppError::config(
+            return Err(McpError::from(AppError::invalid(
                 "source_file (or source) must be non-empty",
             )));
         }
@@ -312,7 +312,7 @@ impl RagServer {
             .filter(|s| !s.is_empty());
 
         if doc_id.is_none() && uri.is_none() {
-            return Err(McpError::from(AppError::config(
+            return Err(McpError::from(AppError::invalid(
                 "get_source requires document_id or uri",
             )));
         }

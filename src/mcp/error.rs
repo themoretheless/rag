@@ -17,6 +17,7 @@ impl From<AppError> for McpError {
         match err {
             AppError::NotFound(msg) => McpError::resource_not_found(msg, data),
             AppError::Config(msg)
+            | AppError::Invalid(msg)
             | AppError::Chunking(msg)
             | AppError::Embeddings(msg)
             | AppError::Conflict(msg)

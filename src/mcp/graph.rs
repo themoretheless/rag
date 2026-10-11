@@ -175,7 +175,7 @@ impl RagServer {
             .iter()
             .all(|key| key.as_deref().is_none_or(|value| value.trim().is_empty()))
         {
-            return Err(McpError::from(AppError::config(
+            return Err(McpError::from(AppError::invalid(
                 "get_backlinks requires node_id, document_id, or label",
             )));
         }
@@ -339,7 +339,7 @@ impl RagServer {
                 .map(|s| s.trim().is_empty())
                 .unwrap_or(true)
         {
-            return Err(McpError::from(AppError::config(
+            return Err(McpError::from(AppError::invalid(
                 "find_node requires node_id, document_id, or label",
             )));
         }

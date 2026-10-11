@@ -4,6 +4,9 @@
 //! single edit. Per-module helpers stay as thin wrappers that name their
 //! deliberate differences (kind, hash, scope) through the builder.
 
+use std::cell::RefCell;
+use std::path::PathBuf;
+
 use chrono::Utc;
 
 use crate::db::Store;
@@ -124,4 +127,25 @@ impl<'a> SeedDoc<'a> {
             }])
             .unwrap();
     }
+}
+
+thread_local! {
+    static SCRATCH_DIRS: RefCell<Vec<tempfile::TempDir>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A temporary directory removed when the calling test's thread ends.
+///
+/// For fixtures that return only handles (state, store) and cannot hand the
+/// `TempDir` guard back; `tempdir().keep()` there leaked one database per test
+/// run into the system temp directory.
+pub(crate) fn scratch_dir() -> PathBuf {
+    let dir = tempfile::tempdir().expect("create scratch dir");
+    let path = dir.path().to_path_buf();
+    SCRATCH_DIRS.with(|dirs| dirs.borrow_mut().push(dir));
+    path
+}
+
+/// A fresh Store in a [`scratch_dir`], removed when the test's thread ends.
+pub(crate) fn temp_store() -> Store {
+    Store::open(&scratch_dir().join("test.duckdb")).expect("open temp store")
 }

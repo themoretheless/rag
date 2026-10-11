@@ -71,7 +71,7 @@ async fn neighbors(
 ) -> impl IntoResponse {
     let seed = q.seed.trim();
     if seed.is_empty() {
-        return api_err(AppError::config("seed query param required"));
+        return api_err(AppError::invalid("seed query param required"));
     }
     let depth = q.depth.unwrap_or(1).clamp(1, 3);
     let max_nodes = q
@@ -130,7 +130,7 @@ struct FindQuery {
 async fn find_node(State(st): State<HttpState>, Query(q): Query<FindQuery>) -> impl IntoResponse {
     let key = q.q.trim();
     if key.is_empty() {
-        return api_err(AppError::config("q required"));
+        return api_err(AppError::invalid("q required"));
     }
     let key = key.to_owned();
     let store = st.store.clone();
@@ -220,7 +220,7 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
         q.q.as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| AppError::config("provide id, uri, or q"))?;
+            .ok_or_else(|| AppError::invalid("provide id, uri, or q"))?;
 
     // Direct document id or uri before graph seed.
     if let Some(doc) = store.get_document(key)? {

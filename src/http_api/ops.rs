@@ -286,7 +286,7 @@ mod tests {
     use crate::embeddings::MockEmbedder;
 
     fn state(mcp_http: bool) -> HttpState {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("ops-http.duckdb"),
             embedding_dims: 16,

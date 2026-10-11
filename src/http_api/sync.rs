@@ -122,7 +122,7 @@ async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, Ap
         } => (*origin_node, *change),
         WikiSyncWrite::Pull { event, .. } => (event.origin_node.as_str(), &event.change),
         WikiSyncWrite::Local(_) => {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "transport requires incoming sync provenance",
             ))
         }
@@ -246,7 +246,7 @@ fn bounded_sync_batch(
         if next > super::MAX_HTTP_BODY_BYTES || event_bytes > crate::db::sync::MAX_SYNC_EVENT_BYTES
         {
             if batch.is_empty() {
-                return Err(AppError::config("pending sync event exceeds the HTTP body limit; preserve the legacy outbox and repair the oversized entry before retrying"));
+                return Err(AppError::invalid("pending sync event exceeds the HTTP body limit; preserve the legacy outbox and repair the oversized entry before retrying"));
             }
             break;
         }
@@ -333,7 +333,7 @@ async fn sync_once(
         }
     }
     if reply.next_cursor != expected {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "sync reply cursor does not match its events",
         ));
     }

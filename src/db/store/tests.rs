@@ -3,11 +3,7 @@ use crate::models::GraphNode;
 use chrono::Utc;
 
 fn open_temp() -> Store {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("test.duckdb");
-    // Keep tempdir alive by leaking for test process lifetime.
-    std::mem::forget(dir);
-    Store::open(&path).expect("open store")
+    crate::testkit::temp_store()
 }
 
 fn sample_doc(id: &str, uri: &str) -> Document {

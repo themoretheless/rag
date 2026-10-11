@@ -1,7 +1,6 @@
 use super::*;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tempfile::tempdir;
 
 struct CountingEmbedder {
     calls: Arc<AtomicUsize>,
@@ -121,13 +120,7 @@ impl EmbeddingProvider for FailingEmbedder {
 }
 
 fn open_store() -> Store {
-    let dir = tempdir().unwrap();
-    let path = dir.path().join("schema.duckdb");
-    // Keep tempdir alive by leaking path under store open only for test process lifetime.
-    // Store owns the path; tempdir drop would remove file while open on some OSes,
-    // so convert to owned path inside store (file remains until process ends via open handle).
-    let _persist = Box::leak(Box::new(dir));
-    Store::open(&path).unwrap()
+    crate::testkit::temp_store()
 }
 
 #[test]

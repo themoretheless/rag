@@ -80,7 +80,7 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
         })
         .collect();
     let slug = crate::util::wiki_slug_from_uri(&p.base.uri)
-        .ok_or_else(|| AppError::config("proposal requires a wiki URI"))?;
+        .ok_or_else(|| AppError::invalid("proposal requires a wiki URI"))?;
     wiki::write_wiki_page_command(
         &st.store,
         &st.embedder,
@@ -117,7 +117,7 @@ mod tests {
     use std::sync::Arc;
 
     async fn fixture() -> (HttpState, review::Proposal) {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("review.duckdb"),
             embedding_dims: 16,

@@ -9,6 +9,11 @@ pub enum AppError {
     #[error("config error: {0}")]
     Config(String),
 
+    /// Caller input that fails validation (missing field, bad value, bad range).
+    /// Same wire code as `Config`; the message no longer claims a config fault.
+    #[error("invalid request: {0}")]
+    Invalid(String),
+
     /// DuckDB / storage failures.
     #[error("database error: {0}")]
     Db(String),
@@ -79,7 +84,7 @@ impl AppError {
     /// transports pick it up without touching their mappers.
     pub fn code(&self) -> &'static str {
         match self {
-            AppError::Config(_) => "INVALID_REQUEST",
+            AppError::Config(_) | AppError::Invalid(_) => "INVALID_REQUEST",
             AppError::Db(_) => "DATABASE_ERROR",
             AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
             AppError::Llm(_) => "LLM_ERROR",
@@ -102,6 +107,11 @@ impl AppError {
     /// Convenience constructor for LLM chat errors.
     pub fn llm(msg: impl Into<String>) -> Self {
         AppError::Llm(msg.into())
+    }
+
+    /// Convenience constructor for caller-input validation errors.
+    pub fn invalid(msg: impl Into<String>) -> Self {
+        AppError::Invalid(msg.into())
     }
 
     /// Convenience constructor for config errors.

@@ -207,7 +207,7 @@ async fn wiki_post(
 
 async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Response {
     if body.content.len() > super::MAX_HTTP_BODY_BYTES {
-        return api_err(AppError::config("wiki content exceeds HTTP body limit"));
+        return api_err(AppError::invalid("wiki content exceeds HTTP body limit"));
     }
     let if_match = match resolve_if_match(body.if_match_revision, body.if_match_etag.as_deref()) {
         Ok(v) => v,
@@ -224,7 +224,7 @@ async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Resp
         .unwrap_or_default();
     let slug = slug.trim();
     if slug.is_empty() {
-        return api_err(AppError::config("slug required (or uri=wiki://slug)"));
+        return api_err(AppError::invalid("slug required (or uri=wiki://slug)"));
     }
     let canonical_uri = format!("wiki://{}", slugify(slug, SlugPolicy::WikiPage));
     let requested_id = body
@@ -233,7 +233,7 @@ async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Resp
         .map(str::trim)
         .filter(|id| !id.is_empty());
     if create_only && (requested_id.is_some() || if_match.is_some()) {
-        return api_err(AppError::config(
+        return api_err(AppError::invalid(
             "creating a wiki page does not accept id or if_match",
         ));
     }
@@ -319,7 +319,7 @@ async fn wiki_backlinks(
 ) -> impl IntoResponse {
     let id = q.id.trim();
     if id.is_empty() {
-        return api_err(AppError::config("id query param required"));
+        return api_err(AppError::invalid("id query param required"));
     }
     let wing = q
         .wing
@@ -371,7 +371,7 @@ mod tests {
     use crate::models::{Document, GraphNode};
 
     fn test_state(name: &str) -> HttpState {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join(format!("{name}.duckdb")),
             embedding_dims: 16,

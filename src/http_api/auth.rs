@@ -65,7 +65,7 @@ impl HttpAuth {
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || b"-._~+/".contains(&c))
                 {
-                    return Err(AppError::config(format!(
+                    return Err(AppError::invalid(format!(
                         "{name} must contain 32..4096 valid Bearer token characters"
                     )));
                 }
@@ -74,7 +74,7 @@ impl HttpAuth {
                     .iter()
                     .any(|(_, existing)| existing.as_ref() == tag.as_ref())
                 {
-                    return Err(AppError::config(
+                    return Err(AppError::invalid(
                         "HTTP tokens for different roles must be distinct",
                     ));
                 }
@@ -128,7 +128,7 @@ fn token_env(name: &str) -> Result<Option<String>, AppError> {
     match std::env::var(name) {
         Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(_) => Err(AppError::config(format!("{name} must be valid UTF-8"))),
+        Err(_) => Err(AppError::invalid(format!("{name} must be valid UTF-8"))),
     }
 }
 

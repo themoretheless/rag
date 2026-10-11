@@ -192,7 +192,7 @@ async fn claim(State(st): State<HttpState>, Json(body): Json<ClaimBody>) -> Resp
     let result = super::run_blocking("claim eval label", move || {
         let owner = body.owner.trim();
         if owner.is_empty() || owner.len() > 128 {
-            return Err(AppError::config("owner must be 1..=128 chars"));
+            return Err(AppError::invalid("owner must be 1..=128 chars"));
         }
         let lease_secs = body
             .lease_secs
@@ -321,7 +321,7 @@ fn parse_status(raw: &str) -> Result<LabelStatus> {
         "claimed" => Ok(LabelStatus::Claimed),
         "resolved" => Ok(LabelStatus::Resolved),
         "discarded" => Ok(LabelStatus::Discarded),
-        other => Err(AppError::config(format!("unknown label status: {other}"))),
+        other => Err(AppError::invalid(format!("unknown label status: {other}"))),
     }
 }
 

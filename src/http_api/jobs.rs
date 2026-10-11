@@ -262,7 +262,7 @@ impl JobRegistry {
             ));
         }
         if prior.kind != "source_sync" || !prior.requeue_safe {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "job is not requeue_safe; only interrupted/failed source_sync jobs with committed-prefix awareness may be requeued",
             ));
         }
@@ -294,7 +294,7 @@ impl JobRegistry {
         requeued_from: Option<String>,
     ) -> Result<JobSnapshot, AppError> {
         if request.max_file_bytes == Some(0) {
-            return Err(AppError::config("max_file_bytes must be greater than zero"));
+            return Err(AppError::invalid("max_file_bytes must be greater than zero"));
         }
         let id = Uuid::new_v4().to_string();
         let cancellation = CancellationToken::new();
@@ -566,7 +566,7 @@ async fn start_sync(
     Json(request): Json<SyncJobRequest>,
 ) -> Response {
     if request.path.trim().is_empty() {
-        return api_err(AppError::config("path must not be empty"));
+        return api_err(AppError::invalid("path must not be empty"));
     }
     let snapshot = match state.jobs.start_source_sync(
         request,

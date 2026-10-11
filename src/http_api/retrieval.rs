@@ -683,7 +683,7 @@ pub(super) fn decode_cursor(cursor: Option<&str>) -> Result<usize, AppError> {
         Some(value) => value
             .strip_prefix("v1:")
             .and_then(|offset| offset.parse().ok())
-            .ok_or_else(|| AppError::config("invalid cursor")),
+            .ok_or_else(|| AppError::invalid("invalid cursor")),
     }
 }
 
@@ -789,7 +789,7 @@ mod tests {
             assert!(!serialized.contains(secret));
         }
 
-        let error = AppError::config("private acquisition plan");
+        let error = AppError::invalid("private acquisition plan");
         assert_eq!(error.code(), "INVALID_REQUEST");
         assert!(!error.code().contains("private"));
     }

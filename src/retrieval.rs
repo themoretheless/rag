@@ -133,15 +133,15 @@ pub async fn execute_search(
     }
     let mut query = tokio::time::timeout(budget, prepare_search_with_mode(embedder, command, mode))
         .await
-        .map_err(|_| AppError::config("search timeout budget exceeded during embedding"))??;
+        .map_err(|_| AppError::invalid("search timeout budget exceeded during embedding"))??;
     let remaining = budget
         .checked_sub(started.elapsed())
         .filter(|v| !v.is_zero())
-        .ok_or_else(|| AppError::config("search timeout budget exceeded before retrieval"))?;
+        .ok_or_else(|| AppError::invalid("search timeout budget exceeded before retrieval"))?;
     query.timeout_ms = Some(remaining.as_millis().max(1).min(u64::MAX as u128) as u64);
     let mut hits = search_with_corpus_guard(store, &query, &corpus_guard)?;
     if started.elapsed() > budget {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "search timeout budget exceeded after retrieval",
         ));
     }
@@ -180,7 +180,7 @@ pub async fn multi_query_search(
     command: MultiQuerySearchCommand,
 ) -> Result<Vec<SearchHit>, AppError> {
     if command.queries.is_empty() || command.queries.len() > MAX_MULTI_QUERIES {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "queries must contain 1..={MAX_MULTI_QUERIES} entries"
         )));
     }
@@ -254,10 +254,10 @@ async fn prepare_search_with_mode(
 ) -> Result<SearchQuery, AppError> {
     let text = command.query.trim();
     if text.is_empty() {
-        return Err(AppError::config("search query must not be empty"));
+        return Err(AppError::invalid("search query must not be empty"));
     }
     if text.chars().count() > MAX_QUERY_CHARS {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "query exceeds {MAX_QUERY_CHARS} characters"
         )));
     }
@@ -276,7 +276,7 @@ async fn prepare_search_with_mode(
             "document" | "document_id" => diversity = Some(DiversityMode::CollapseByDocument),
             "none" => {}
             other => {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "invalid group_by '{other}': expected document or none"
                 )))
             }
@@ -286,7 +286,7 @@ async fn prepare_search_with_mode(
         .recency_half_life_days
         .is_some_and(|days| !days.is_finite() || days <= 0.0)
     {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "recency_half_life_days must be finite and greater than zero",
         ));
     }
@@ -296,7 +296,7 @@ async fn prepare_search_with_mode(
         .map(ContextExpansion::parse)
         .transpose()?;
     if command.rrf_k.is_some_and(|k| !k.is_finite() || k <= 0.0) {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "rrf_k must be finite and greater than zero",
         ));
     }
@@ -423,7 +423,7 @@ pub fn multi_get(
     chunk_limit: Option<usize>,
 ) -> Result<MultiGetResult, AppError> {
     if document_ids.is_empty() || document_ids.len() > MAX_MULTI_GET_DOCUMENTS {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "document_ids must contain 1..={MAX_MULTI_GET_DOCUMENTS} ids"
         )));
     }
@@ -504,7 +504,7 @@ fn list_chunk_text_page(
     )?;
     let content_bytes = usize::try_from(content_bytes.max(0)).unwrap_or(usize::MAX);
     if content_bytes > max_content_bytes {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "included chunk text needs {content_bytes} bytes, exceeding the {max_content_bytes}-byte response budget; lower chunk_limit or set include_chunks=false"
         )));
     }
@@ -575,7 +575,7 @@ pub fn expand_chunks(
     if usize::try_from(content_bytes.max(0)).unwrap_or(usize::MAX)
         > MAX_INCLUDED_CHUNK_CONTENT_BYTES
     {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "expanded chunk text exceeds the {MAX_INCLUDED_CHUNK_CONTENT_BYTES}-byte response budget; lower radius"
         )));
     }
@@ -676,7 +676,7 @@ pub fn find_similar(
         .map(|chunk| chunk.embedding.len())
         .unwrap_or(0);
     if dims == 0 {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "seed document has no chunk embeddings; run doctor_repair first",
         ));
     }

@@ -177,7 +177,7 @@ impl RagServer {
         let payload_json = match params.payload_json {
             Some(s) if !s.trim().is_empty() => {
                 if let Err(e) = serde_json::from_str::<serde_json::Value>(&s) {
-                    return Err(McpError::from(AppError::config(format!(
+                    return Err(McpError::from(AppError::invalid(format!(
                         "payload_json is not valid JSON: {e}"
                     ))));
                 }

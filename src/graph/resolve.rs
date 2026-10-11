@@ -610,10 +610,7 @@ mod tests {
     use chrono::Utc;
 
     fn open_temp() -> Store {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("resolve.duckdb");
-        std::mem::forget(dir);
-        Store::open(&path).expect("open")
+        crate::testkit::temp_store()
     }
 
     fn doc(id: &str, title: &str, uri: &str, content: &str) -> Document {

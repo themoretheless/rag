@@ -225,7 +225,7 @@ fn recovery_format(requested: Option<&str>, path: &Path) -> Result<&'static str,
     match value.as_str() {
         "json" => Ok("json"),
         "jsonl" | "ndjson" => Ok("jsonl"),
-        other => Err(AppError::config(format!(
+        other => Err(AppError::invalid(format!(
             "invalid bundle format '{other}': expected json or jsonl"
         ))),
     }
@@ -240,7 +240,7 @@ pub(super) async fn prepare_recovery_bundle_for_import(
 ) -> Result<PreparedRecoveryBundle, AppError> {
     preflight_recovery_bundle(&bundle)?;
     if bundle.format != "rag-recovery-bundle" {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "unsupported recovery bundle format/version: {}/{}",
             bundle.format, bundle.version
         )));
@@ -254,7 +254,7 @@ pub(super) async fn prepare_recovery_bundle_for_import(
         });
     }
     if bundle.version != LEGACY_RECOVERY_BUNDLE_VERSION {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "unsupported recovery bundle format/version: {}/{}",
             bundle.format, bundle.version
         )));

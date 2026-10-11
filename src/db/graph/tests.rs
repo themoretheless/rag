@@ -86,10 +86,7 @@ fn hand_authored_wiki_relation_survives_the_boundary_and_the_pkb_walk() {
 }
 
 fn open_temp() -> Store {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("graph.duckdb");
-    std::mem::forget(dir);
-    Store::open(&path).expect("open")
+    crate::testkit::temp_store()
 }
 
 fn node(id: &str, kind: &str, label: &str, doc_id: Option<&str>) -> GraphNode {

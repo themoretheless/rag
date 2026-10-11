@@ -125,7 +125,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let report = if let Some(value) = params.analysis {
             serde_json::from_value::<maintain::AnalysisReport>(value).map_err(|e| {
-                McpError::from(AppError::config(format!(
+                McpError::from(AppError::invalid(format!(
                     "plan_maintenance analysis must be an AnalysisReport JSON object: {e}"
                 )))
             })?
