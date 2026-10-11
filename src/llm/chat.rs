@@ -583,122 +583,6 @@ impl ChatClient {
             .map_err(|e| e.to_string())
     }
 
-    /// Compile a raw source into wiki pages (JSON object in model output).
-    pub async fn compile_wiki(
-        &self,
-        schema_md: &str,
-        source_title: &str,
-        source_uri: &str,
-        source_body: &str,
-    ) -> Result<CompileResult> {
-        let system = r#"You are a knowledge compiler for a local LLM wiki (Karpathy-style).
-Given an immutable raw source, produce structured wiki pages.
-
-Rules:
-- Never invent facts not grounded in the source; mark gaps as TODO.
-- Use markdown. Cross-link with [[Page Title]] and tags as #tag.
-- Prefer few high-quality pages over many stubs.
-- Return ONLY valid JSON (no markdown fences) matching:
-{
-  "pages": [
-    {
-      "slug": "kebab-case",
-      "title": "Human Title",
-      "kind": "source_summary|entity|concept|wiki",
-      "category": "optional",
-      "content": "markdown body",
-      "summary": "one-line"
-    }
-  ],
-  "notes": "optional compiler notes"
-}
-"#;
-        let user = format!(
-            "## Wiki schema / conventions\n\n{schema}\n\n## Source\n- title: {title}\n- uri: {uri}\n\n```\n{body}\n```\n",
-            schema = truncate(schema_md, 6000),
-            title = source_title,
-            uri = source_uri,
-            body = truncate(source_body, 24_000),
-        );
-        let messages = [
-            ChatMessage {
-                role: "system".into(),
-                content: system.into(),
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: user,
-            },
-        ];
-        let raw = self.complete(&messages).await?;
-        parse_compile_json(&raw)
-    }
-
-    /// Merge N document texts into one consolidated wiki page proposal (JSON).
-    ///
-    /// Used by the `consolidate` maintenance tool: propose first; callers write
-    /// only when `apply=true`. Never invents facts beyond the provided sources.
-    pub async fn consolidate_wiki(
-        &self,
-        schema_md: &str,
-        sources: &[(String, String, String)],
-    ) -> Result<ConsolidateProposal> {
-        if sources.is_empty() {
-            return Err(AppError::llm(
-                "consolidate_wiki requires at least one source document",
-            ));
-        }
-        let system = r#"You are a knowledge consolidator for a local LLM wiki (Karpathy-style).
-Merge the given source documents into ONE durable wiki page (concept or entity).
-
-Rules:
-- Never invent facts not grounded in the sources; mark gaps as TODO.
-- Deduplicate overlapping claims; prefer precise wording over length.
-- Use markdown. Cross-link with [[Page Title]] and tags as #tag.
-- List provenance under a ## Sources section (titles / uris).
-- Return ONLY valid JSON (no markdown fences) matching:
-{
-  "slug": "kebab-case",
-  "title": "Human Title",
-  "kind": "concept|entity|wiki",
-  "category": "optional",
-  "content": "markdown body",
-  "summary": "one-line",
-  "suggested_links": ["Other Page", "[[Yet Another]]"],
-  "notes": "optional consolidator notes"
-}
-"#;
-        // Budget: schema + N sources within a reasonable prompt size.
-        let per_body = (20_000usize / sources.len().max(1)).clamp(1_500, 8_000);
-        let mut blocks = String::new();
-        for (i, (title, uri, body)) in sources.iter().enumerate() {
-            blocks.push_str(&format!(
-                "### Source {}\n- title: {}\n- uri: {}\n\n```\n{}\n```\n\n",
-                i + 1,
-                title,
-                uri,
-                truncate(body, per_body)
-            ));
-        }
-        let user = format!(
-            "## Wiki schema / conventions\n\n{schema}\n\n## Sources to consolidate ({n})\n\n{blocks}",
-            schema = truncate(schema_md, 4_000),
-            n = sources.len(),
-            blocks = blocks,
-        );
-        let messages = [
-            ChatMessage {
-                role: "system".into(),
-                content: system.into(),
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: user,
-            },
-        ];
-        let raw = self.complete(&messages).await?;
-        parse_consolidate_json(&raw)
-    }
 }
 
 fn elapsed_ms(start: Instant) -> u64 {
@@ -726,7 +610,7 @@ fn model_id_matches(listed: &str, configured: &str) -> bool {
     false
 }
 
-fn parse_compile_json(raw: &str) -> Result<CompileResult> {
+pub(crate) fn parse_compile_json(raw: &str) -> Result<CompileResult> {
     parse_model_object::<CompileResult>(raw).ok_or_else(|| {
         AppError::llm(format!(
             "failed to parse compile JSON from model output: {}",
@@ -735,7 +619,7 @@ fn parse_compile_json(raw: &str) -> Result<CompileResult> {
     })
 }
 
-fn parse_consolidate_json(raw: &str) -> Result<ConsolidateProposal> {
+pub(crate) fn parse_consolidate_json(raw: &str) -> Result<ConsolidateProposal> {
     if let Some(proposal) = parse_model_object::<ConsolidateProposal>(raw) {
         return validate_consolidate_proposal(proposal);
     }

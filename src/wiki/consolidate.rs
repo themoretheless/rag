@@ -1,6 +1,8 @@
 //! LLM-assisted consolidation of several sources into one page.
 
 use super::*;
+use crate::llm::json::truncate_chars as truncate;
+use crate::llm::{parse_consolidate_json, system_user, ChatCompleter};
 
 /// Optional overrides when consolidating (title/slug/kind/category).
 #[derive(Debug, Clone, Default)]
@@ -26,7 +28,7 @@ pub async fn consolidate(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    llm: &ChatClient,
+    llm: &dyn ChatCompleter,
     document_ids: &[String],
     apply: bool,
     opts: ConsolidateOpts,
@@ -77,7 +79,7 @@ pub async fn consolidate(
     } else {
         HashMap::new()
     };
-    let mut proposed = llm.consolidate_wiki(&schema, &sources).await?;
+    let mut proposed = consolidate_wiki(llm, &schema, &sources).await?;
 
     // Caller overrides (whitelist fields only).
     if let Some(s) = opts
@@ -317,4 +319,61 @@ pub(super) async fn apply_consolidate_proposal_at_revision(
     }
 
     Ok(wr)
+}
+
+/// Merge N document texts into one consolidated wiki page proposal (JSON).
+///
+/// Used by the `consolidate` maintenance tool: propose first; callers write
+/// only when `apply=true`. Never invents facts beyond the provided sources.
+pub(crate) async fn consolidate_wiki(
+    llm: &dyn ChatCompleter,
+    schema_md: &str,
+    sources: &[(String, String, String)],
+) -> Result<ConsolidateProposal> {
+    if sources.is_empty() {
+        return Err(AppError::llm(
+            "consolidate_wiki requires at least one source document",
+        ));
+    }
+    let system = r#"You are a knowledge consolidator for a local LLM wiki (Karpathy-style).
+Merge the given source documents into ONE durable wiki page (concept or entity).
+
+Rules:
+- Never invent facts not grounded in the sources; mark gaps as TODO.
+- Deduplicate overlapping claims; prefer precise wording over length.
+- Use markdown. Cross-link with [[Page Title]] and tags as #tag.
+- List provenance under a ## Sources section (titles / uris).
+- Return ONLY valid JSON (no markdown fences) matching:
+{
+  "slug": "kebab-case",
+  "title": "Human Title",
+  "kind": "concept|entity|wiki",
+  "category": "optional",
+  "content": "markdown body",
+  "summary": "one-line",
+  "suggested_links": ["Other Page", "[[Yet Another]]"],
+  "notes": "optional consolidator notes"
+}
+"#;
+    // Budget: schema + N sources within a reasonable prompt size.
+    let per_body = (20_000usize / sources.len().max(1)).clamp(1_500, 8_000);
+    let mut blocks = String::new();
+    for (i, (title, uri, body)) in sources.iter().enumerate() {
+        blocks.push_str(&format!(
+            "### Source {}\n- title: {}\n- uri: {}\n\n```\n{}\n```\n\n",
+            i + 1,
+            title,
+            uri,
+            truncate(body, per_body)
+        ));
+    }
+    let user = format!(
+        "## Wiki schema / conventions\n\n{schema}\n\n## Sources to consolidate ({n})\n\n{blocks}",
+        schema = truncate(schema_md, 4_000),
+        n = sources.len(),
+        blocks = blocks,
+    );
+    let messages = system_user(system, user);
+    let raw = llm.complete(&messages).await?;
+    parse_consolidate_json(&raw)
 }

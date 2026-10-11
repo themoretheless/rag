@@ -14,7 +14,7 @@ use crate::db::Store;
 use crate::embeddings::cosine_similarity;
 use crate::llm::json::{parse_model_object, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, ChatMessage};
+use crate::llm::ChatMessage;
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
 
@@ -173,7 +173,7 @@ pub struct OrganizeReport {
 pub async fn maintain_organize(
     store: &Store,
     config: &Config,
-    llm: Option<&ChatClient>,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
     opts: &OrganizeOptions,
 ) -> Result<OrganizeReport> {
     let max_docs = opts.max_docs.max(1);
@@ -886,7 +886,7 @@ struct LlmRefileItem {
 }
 
 async fn suggest_llm(
-    client: &ChatClient,
+    client: &dyn crate::llm::ChatCompleter,
     taxonomy: &Taxonomy,
     unscoped: &[Document],
 ) -> Result<Vec<RefileSuggestion>> {

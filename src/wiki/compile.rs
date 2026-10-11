@@ -1,13 +1,15 @@
 //! LLM-assisted compile of one raw source into wiki pages.
 
 use super::*;
+use crate::llm::json::truncate_chars as truncate;
+use crate::llm::{parse_compile_json, system_user, ChatCompleter};
 
 /// Compile raw document with local LLM into wiki pages.
 pub async fn compile_source(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    llm: &ChatClient,
+    llm: &dyn ChatCompleter,
     source_id_or_uri: &str,
     dry_run: bool,
     agent: Option<&str>,
@@ -25,9 +27,8 @@ pub async fn compile_source(
     } else {
         wiki_revision_snapshot(store)?
     };
-    let proposed = llm
-        .compile_wiki(&schema, &source.title, &source.uri, &source.content)
-        .await?;
+    let proposed =
+        compile_wiki(llm, &schema, &source.title, &source.uri, &source.content).await?;
 
     if dry_run {
         return Ok(CompileApplyResult {
@@ -145,4 +146,46 @@ pub(super) async fn write_generated_wiki_page(
     } else {
         create_wiki_page_command(store, embedder, config, command).await
     }
+}
+
+/// Compile a raw source into wiki pages (JSON object in model output).
+pub(crate) async fn compile_wiki(
+    llm: &dyn ChatCompleter,
+    schema_md: &str,
+    source_title: &str,
+    source_uri: &str,
+    source_body: &str,
+) -> Result<CompileResult> {
+    let system = r#"You are a knowledge compiler for a local LLM wiki (Karpathy-style).
+Given an immutable raw source, produce structured wiki pages.
+
+Rules:
+- Never invent facts not grounded in the source; mark gaps as TODO.
+- Use markdown. Cross-link with [[Page Title]] and tags as #tag.
+- Prefer few high-quality pages over many stubs.
+- Return ONLY valid JSON (no markdown fences) matching:
+{
+  "pages": [
+{
+  "slug": "kebab-case",
+  "title": "Human Title",
+  "kind": "source_summary|entity|concept|wiki",
+  "category": "optional",
+  "content": "markdown body",
+  "summary": "one-line"
+}
+  ],
+  "notes": "optional compiler notes"
+}
+"#;
+    let user = format!(
+        "## Wiki schema / conventions\n\n{schema}\n\n## Source\n- title: {title}\n- uri: {uri}\n\n```\n{body}\n```\n",
+        schema = truncate(schema_md, 6000),
+        title = source_title,
+        uri = source_uri,
+        body = truncate(source_body, 24_000),
+    );
+    let messages = system_user(system, user);
+    let raw = llm.complete(&messages).await?;
+    parse_compile_json(&raw)
 }

@@ -244,7 +244,7 @@ pub async fn refresh_stale_wiki(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    llm: Option<&ChatClient>,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
     dry_run: bool,
     max_docs: Option<usize>,
     agent: Option<&str>,

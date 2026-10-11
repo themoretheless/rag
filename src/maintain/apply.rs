@@ -24,7 +24,6 @@ use crate::db::{self, Store};
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::{rebuild_document_graph, REL_TAGGED};
-use crate::llm::ChatClient;
 use crate::models::{DocumentMetaUpdate, GraphEdge, OpsLogEntry};
 use crate::wiki::{self, FileAnswerCitation};
 
@@ -101,7 +100,7 @@ pub async fn apply_maintenance_plan(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    llm: Option<&ChatClient>,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
     actions: Vec<MaintenancePlanItem>,
     opts: &ApplyPlanOptions,
 ) -> Result<ApplyMaintenancePlanReport> {
@@ -298,7 +297,7 @@ struct MaintenanceExecutionContext<'a> {
     store: &'a Store,
     embedder: &'a Arc<dyn EmbeddingProvider>,
     config: &'a Config,
-    llm: Option<&'a ChatClient>,
+    llm: Option<&'a dyn crate::llm::ChatCompleter>,
     dry_run: bool,
     agent: Option<&'a str>,
     remaining_docs: usize,

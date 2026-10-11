@@ -14,7 +14,7 @@ use crate::db::Store;
 use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, CompileResult, ConsolidateProposal};
+use crate::llm::{CompileResult, ConsolidateProposal};
 use crate::models::{Document, OpsLogEntry, WikiIndexEntry};
 use crate::util::{content_hash, slugify as shared_slugify, SlugPolicy};
 use std::collections::{BTreeMap, HashMap, HashSet};

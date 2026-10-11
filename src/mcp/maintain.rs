@@ -149,7 +149,7 @@ impl RagServer {
             plan_opts.log_ops = v;
         }
 
-        let llm = self.llm.as_ref();
+        let llm = self.completer();
         let plan = maintain::plan_maintenance(&report, &self.config, llm, &plan_opts).await?;
 
         if plan_opts.log_ops {
@@ -194,7 +194,7 @@ impl RagServer {
         };
 
         let report = if opts.dry_run {
-            let llm = self.llm.as_ref();
+            let llm = self.completer();
             maintain::apply_maintenance_plan(
                 &self.store,
                 &self.embedder,
@@ -211,7 +211,7 @@ impl RagServer {
                 // This owned task intentionally survives a dropped MCP request:
                 // mutations and their terminal FTS refresh keep one lane lease.
                 let scoped_store = server.store.with_corpus_mutation_guard(mutation_guard)?;
-                let llm = server.llm.as_ref();
+                let llm = server.completer();
                 maintain::apply_maintenance_plan(
                     &scoped_store,
                     &server.embedder,
@@ -254,7 +254,7 @@ impl RagServer {
         opts.agent = params.agent.filter(|s| !s.trim().is_empty());
 
         let report = if opts.dry_run {
-            let llm = self.llm.as_ref();
+            let llm = self.completer();
             maintain::maintain_organize(&self.store, &self.config, llm, &opts).await
         } else {
             let server = self.clone();
@@ -262,7 +262,7 @@ impl RagServer {
                 // The maintenance service acquires the exclusive lease inside
                 // this owned task. A disconnected MCP client therefore cannot
                 // release it while an LLM-derived plan is still being applied.
-                let llm = server.llm.as_ref();
+                let llm = server.completer();
                 maintain::maintain_organize(&server.store, &server.config, llm, &opts).await
             })
             .await

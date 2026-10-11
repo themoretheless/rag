@@ -834,7 +834,7 @@ impl RagServer {
         }
 
         let llm_ref = if !dry_run && self.config.llm_enabled {
-            self.llm.as_ref()
+            self.completer()
         } else {
             None
         };

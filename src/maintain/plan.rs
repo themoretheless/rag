@@ -14,7 +14,7 @@ use crate::config::Config;
 use crate::db::Store;
 use crate::llm::json::{parse_embedded, strip_json_fences, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, ChatMessage};
+use crate::llm::ChatMessage;
 use crate::models::OpsLogEntry;
 
 /// Default cap on actions returned by a plan (LLM or heuristic).
@@ -870,7 +870,7 @@ fn push_capped(actions: &mut Vec<MaintenancePlanItem>, max: usize, action: Maint
 /// Call local LLM with analysis JSON + system prompt; parse and validate actions.
 pub async fn plan_with_llm(
     report: &AnalysisReport,
-    llm: &ChatClient,
+    llm: &dyn crate::llm::ChatCompleter,
     max_actions: usize,
 ) -> Result<MaintenancePlan> {
     let analysis_json = serde_json::to_string(report).map_err(|e| {
@@ -940,7 +940,7 @@ pub async fn plan_with_llm(
 pub async fn plan_maintenance(
     report: &AnalysisReport,
     config: &Config,
-    llm: Option<&ChatClient>,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
     opts: &PlanOptions,
 ) -> Result<MaintenancePlan> {
     let max_actions = opts.max_actions.max(1);
@@ -1010,6 +1010,44 @@ mod tests {
         NearDuplicatePair, SizeStats, StaleWikiPage,
     };
     use crate::models::DoctorReport;
+
+    /// In-process LLM double: no HTTP server, fixed model output.
+    struct ScriptedLlm(&'static str);
+
+    #[async_trait::async_trait]
+    impl crate::llm::ChatCompleter for ScriptedLlm {
+        async fn complete(&self, _: &[crate::llm::ChatMessage]) -> Result<String> {
+            Ok(self.0.to_string())
+        }
+        async fn complete_with_max_tokens(
+            &self,
+            messages: &[crate::llm::ChatMessage],
+            _: u32,
+        ) -> Result<String> {
+            self.complete(messages).await
+        }
+        fn model(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_planner_keeps_whitelisted_actions_and_rejects_the_rest() {
+        let llm = ScriptedLlm(
+            "```json\n{\"actions\": [{\"action\": \"vacuum\", \"reason\": \"wal\"}, {\"action\": \"drop_table\"}], \"notes\": \"n\"}\n```",
+        );
+        let config = Config {
+            llm_enabled: true,
+            ..Config::for_tests()
+        };
+        let plan = plan_maintenance(&empty_report(), &config, Some(&llm), &PlanOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.model.as_deref(), Some("scripted"));
+        assert_eq!(plan.actions.len(), 1);
+        assert_eq!(plan.actions[0].action, MaintenanceAction::Vacuum);
+        assert_eq!(plan.rejected.len(), 1);
+    }
 
     fn empty_report() -> AnalysisReport {
         AnalysisReport {

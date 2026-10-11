@@ -1,4 +1,5 @@
 use super::*;
+use crate::llm::ChatClient;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

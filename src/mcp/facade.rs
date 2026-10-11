@@ -227,6 +227,13 @@ impl RagServer {
         crate::util::run_blocking(operation, move || work(&store)).await
     }
 
+    /// The wired chat client as the domain LLM seam (None when unavailable).
+    pub(super) fn completer(&self) -> Option<&dyn crate::llm::ChatCompleter> {
+        self.llm
+            .as_ref()
+            .map(|client| client as &dyn crate::llm::ChatCompleter)
+    }
+
     /// Borrow the wired chat client, or refuse when missing / disabled.
     pub(super) fn require_llm(&self) -> Result<&ChatClient, AppError> {
         if !self.config.llm_enabled {
