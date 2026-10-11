@@ -368,6 +368,27 @@ impl<'a> SourceSyncService<'a> {
         let mut pending = Vec::new();
         let mut pending_chunks = 0usize;
         let mut processed_files = 0usize;
+        // Every early exit below reports the same cancelled outcome, and every
+        // batch flush either completes (resetting the chunk budget) or cancels.
+        macro_rules! cancelled {
+            ($processed:expr) => {
+                return Ok(cancelled_outcome(&control, report, total_files, $processed))
+            };
+        }
+        macro_rules! flush_pending {
+            () => {
+                match self
+                    .flush_pending_batch(&mut pending, &control, &mut report, total_files)
+                    .await
+                {
+                    BatchFlushOutcome::Completed(processed) => {
+                        pending_chunks = 0;
+                        processed
+                    }
+                    BatchFlushOutcome::Cancelled(processed) => cancelled!(processed),
+                }
+            };
+        }
         for (index, path) in files.into_iter().enumerate() {
             control.publish(SourceSyncProgress::from_report(
                 SourceSyncPhase::Syncing,
@@ -377,23 +398,13 @@ impl<'a> SourceSyncService<'a> {
                 &report,
             ));
             if control.is_cancelled() {
-                return Ok(cancelled_outcome(
-                    &control,
-                    report,
-                    total_files,
-                    processed_files,
-                ));
+                cancelled!(processed_files);
             }
             report.counters.preflight = report.counters.preflight.saturating_add(1);
 
             let preparation = self.prepare_source_file(&run, &path, &mut seen, &mut report);
             if control.is_cancelled() {
-                return Ok(cancelled_outcome(
-                    &control,
-                    report,
-                    total_files,
-                    processed_files,
-                ));
+                cancelled!(processed_files);
             }
 
             match preparation {
@@ -408,30 +419,9 @@ impl<'a> SourceSyncService<'a> {
                             || pending_chunks.saturating_add(chunk_count)
                                 > SOURCE_SYNC_BATCH_MAX_CHUNKS);
                     if exceeds_current_batch {
-                        match self
-                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
-                            .await
-                        {
-                            BatchFlushOutcome::Completed(processed) => {
-                                processed_files = processed;
-                                pending_chunks = 0;
-                                if control.is_cancelled() {
-                                    return Ok(cancelled_outcome(
-                                        &control,
-                                        report,
-                                        total_files,
-                                        processed,
-                                    ));
-                                }
-                            }
-                            BatchFlushOutcome::Cancelled(processed) => {
-                                return Ok(cancelled_outcome(
-                                    &control,
-                                    report,
-                                    total_files,
-                                    processed,
-                                ));
-                            }
+                        processed_files = flush_pending!();
+                        if control.is_cancelled() {
+                            cancelled!(processed_files);
                         }
                     }
 
@@ -445,23 +435,7 @@ impl<'a> SourceSyncService<'a> {
                         || pending_chunks >= SOURCE_SYNC_BATCH_MAX_CHUNKS
                         || chunk_count > SOURCE_SYNC_BATCH_MAX_CHUNKS
                     {
-                        match self
-                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
-                            .await
-                        {
-                            BatchFlushOutcome::Completed(processed) => {
-                                processed_files = processed;
-                                pending_chunks = 0;
-                            }
-                            BatchFlushOutcome::Cancelled(processed) => {
-                                return Ok(cancelled_outcome(
-                                    &control,
-                                    report,
-                                    total_files,
-                                    processed,
-                                ));
-                            }
-                        }
+                        processed_files = flush_pending!();
                     }
                 }
                 Ok(PreparedSourceFile::Skipped {
@@ -469,29 +443,9 @@ impl<'a> SourceSyncService<'a> {
                     manifest_refresh,
                 }) => {
                     if !pending.is_empty() {
-                        match self
-                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
-                            .await
-                        {
-                            BatchFlushOutcome::Completed(processed) => {
-                                pending_chunks = 0;
-                                if control.is_cancelled() {
-                                    return Ok(cancelled_outcome(
-                                        &control,
-                                        report,
-                                        total_files,
-                                        processed,
-                                    ));
-                                }
-                            }
-                            BatchFlushOutcome::Cancelled(processed) => {
-                                return Ok(cancelled_outcome(
-                                    &control,
-                                    report,
-                                    total_files,
-                                    processed,
-                                ));
-                            }
+                        let processed = flush_pending!();
+                        if control.is_cancelled() {
+                            cancelled!(processed);
                         }
                     }
                     let result = manifest_refresh
@@ -509,22 +463,7 @@ impl<'a> SourceSyncService<'a> {
                 }
                 Err(error) => {
                     if !pending.is_empty() {
-                        match self
-                            .flush_pending_batch(&mut pending, &control, &mut report, total_files)
-                            .await
-                        {
-                            BatchFlushOutcome::Completed(_) => {
-                                pending_chunks = 0;
-                            }
-                            BatchFlushOutcome::Cancelled(processed) => {
-                                return Ok(cancelled_outcome(
-                                    &control,
-                                    report,
-                                    total_files,
-                                    processed,
-                                ));
-                            }
-                        }
+                        flush_pending!();
                     }
                     report.errors.push(SourceSyncError {
                         path: path.display().to_string(),
@@ -536,12 +475,7 @@ impl<'a> SourceSyncService<'a> {
             }
 
             if control.is_cancelled() {
-                return Ok(cancelled_outcome(
-                    &control,
-                    report,
-                    total_files,
-                    processed_files,
-                ));
+                cancelled!(processed_files);
             }
         }
         if !pending.is_empty() {
@@ -549,21 +483,12 @@ impl<'a> SourceSyncService<'a> {
                 .flush_pending_batch(&mut pending, &control, &mut report, total_files)
                 .await
             {
-                BatchFlushOutcome::Completed(processed) => {
-                    processed_files = processed;
-                }
-                BatchFlushOutcome::Cancelled(processed) => {
-                    return Ok(cancelled_outcome(&control, report, total_files, processed));
-                }
+                BatchFlushOutcome::Completed(processed) => processed_files = processed,
+                BatchFlushOutcome::Cancelled(processed) => cancelled!(processed),
             }
         }
         if control.is_cancelled() {
-            return Ok(cancelled_outcome(
-                &control,
-                report,
-                total_files,
-                processed_files,
-            ));
+            cancelled!(processed_files);
         }
         if command.remove_deleted {
             control.publish(SourceSyncProgress::from_report(
@@ -574,12 +499,7 @@ impl<'a> SourceSyncService<'a> {
                 &report,
             ));
             if control.is_cancelled() {
-                return Ok(cancelled_outcome(
-                    &control,
-                    report,
-                    total_files,
-                    total_files,
-                ));
+                cancelled!(total_files);
             }
             if self.remove_deleted_with_probe(
                 &seen,
@@ -595,21 +515,11 @@ impl<'a> SourceSyncService<'a> {
                     }
                 },
             )? {
-                return Ok(cancelled_outcome(
-                    &control,
-                    report,
-                    total_files,
-                    total_files,
-                ));
+                cancelled!(total_files);
             }
         }
         if control.is_cancelled() {
-            return Ok(cancelled_outcome(
-                &control,
-                report,
-                total_files,
-                total_files,
-            ));
+            cancelled!(total_files);
         }
         let seen_paths = seen.iter().cloned().collect::<Vec<_>>();
         self.store.mark_source_manifest_seen(&root, &seen_paths)?;
@@ -621,12 +531,7 @@ impl<'a> SourceSyncService<'a> {
             &report,
         ));
         if control.is_cancelled() {
-            return Ok(cancelled_outcome(
-                &control,
-                report,
-                total_files,
-                total_files,
-            ));
+            cancelled!(total_files);
         }
         // A source sync owns the lexical coordination lane until its derived
         // index is generation-clean. Otherwise the first user search after a
