@@ -1071,3 +1071,22 @@ fn tunnel_create_list_delete_follow_find() {
     let loop_err = store.create_tunnel("n1", "n1", 1.0, None);
     assert!(matches!(loop_err, Err(AppError::Config(_))));
 }
+
+#[test]
+fn resolve_seed_prefers_ids_then_uri_then_document_labels() {
+    let store = open_temp();
+    let mut tag = node("tag-node", "tag", "Shared", None);
+    tag.uri = Some("tag://shared".into());
+    let doc = node("doc-node", "document", "Shared", Some("doc-1"));
+    store.upsert_graph_node(&tag).unwrap();
+    store.upsert_graph_node(&doc).unwrap();
+
+    let by_id = |seed: &str| store.resolve_seed(seed).unwrap().map(|n| n.id);
+    assert_eq!(by_id("tag-node").as_deref(), Some("tag-node"));
+    assert_eq!(by_id(" doc-1 ").as_deref(), Some("doc-node"));
+    assert_eq!(by_id("tag://shared").as_deref(), Some("tag-node"));
+    // A bare label shared by a tag hub and a document resolves to the document.
+    assert_eq!(by_id("Shared").as_deref(), Some("doc-node"));
+    assert_eq!(by_id("   "), None);
+    assert_eq!(by_id("missing"), None);
+}

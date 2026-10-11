@@ -357,6 +357,62 @@ fn eval_history_too_large(path: &Path, bytes: u64) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    async fn body(response: axum::response::Response) -> Value {
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn ops_log_filters_by_agent_and_prefix_and_404s_unknown_ids() {
+        let root = crate::testkit::scratch_dir();
+        let config = Config {
+            db_path: root.join("admin.duckdb"),
+            embedding_dims: 8,
+            ..Config::for_tests()
+        };
+        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        for (op, prefix, agent) in [
+            ("ingest", "INGEST", Some("alice")),
+            ("wiki_write", "WIKI", Some("alice")),
+            ("wiki_write", "WIKI", Some("bob")),
+        ] {
+            store
+                .append_ops_log(
+                    &crate::models::OpsLogEntry::new(op, prefix, op)
+                        .agent(agent.map(str::to_string)),
+                )
+                .unwrap();
+        }
+        let st = HttpState::new(
+            store,
+            false,
+            config,
+            Arc::new(crate::embeddings::MockEmbedder::new(8)),
+        );
+        let query = |agent: Option<&str>, prefix: Option<&str>, id: Option<&str>| OpsLogQuery {
+            limit: None,
+            id: id.map(str::to_string),
+            seq: None,
+            agent: agent.map(str::to_string),
+            prefix: prefix.map(str::to_string),
+        };
+
+        let response = ops_log(State(st.clone()), Query(query(Some("ALICE"), Some("wiki"), None)))
+            .await
+            .into_response();
+        let json = body(response).await;
+        assert_eq!(json["count"], 1, "{json}");
+        assert_eq!(json["items"][0]["op"], "wiki_write");
+
+        let missing = ops_log(State(st), Query(query(None, None, Some("no-such-id"))))
+            .await
+            .into_response();
+        assert_eq!(missing.status(), axum::http::StatusCode::NOT_FOUND);
+    }
 
     #[test]
     fn embedding_manifest_match_requires_the_same_base_endpoint() {

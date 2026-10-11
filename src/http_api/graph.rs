@@ -264,3 +264,44 @@ fn seed_not_found(seed: &str) -> AppError {
         "no graph node for seed '{seed}' (try id, document_id, or exact label)"
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn state() -> HttpState {
+        let root = crate::testkit::scratch_dir();
+        let config = crate::config::Config {
+            db_path: root.join("graph-http.duckdb"),
+            embedding_dims: 8,
+            ..crate::config::Config::for_tests()
+        };
+        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        HttpState::new(
+            store,
+            false,
+            config,
+            Arc::new(crate::embeddings::MockEmbedder::new(8)),
+        )
+    }
+
+    fn query(seed: &str, project: Option<&str>) -> NeighborsQuery {
+        serde_json::from_value(json!({"seed": seed, "project": project})).unwrap()
+    }
+
+    #[tokio::test]
+    async fn unknown_seed_is_not_found_instead_of_an_empty_graph() {
+        let st = state();
+        for project in [None, Some("rag")] {
+            let response = neighbors(State(st.clone()), Query(query("missing", project)))
+                .await
+                .into_response();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{project:?}");
+        }
+        let blank = neighbors(State(st), Query(query("   ", None)))
+            .await
+            .into_response();
+        assert_eq!(blank.status(), StatusCode::BAD_REQUEST);
+    }
+}
