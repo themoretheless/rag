@@ -1,6 +1,6 @@
 # Refactor plan: structure, architecture, SOLID / DRY
 
-**Status:** in progress (see [Progress](#progress)) · **Written:** 2026-10-11 · **Baseline:** branch
+**Status:** executed on this branch except the items listed under "Not done, with the reason" (see [Progress](#progress)) · **Written:** 2026-10-11 · **Baseline:** branch
 `claude/optimistic-pascal-8x90fc` (MCP facade split, `AppError::code()`,
 `util::{blocking,text,time}` already done; see [`SOLID_DRY_AUDIT.md`](SOLID_DRY_AUDIT.md)).
 
@@ -332,7 +332,43 @@ are fixed too:
 - 6.5: the audit overstated the web client; every component already goes
   through `api/client.ts` (auth, errors). Generated types remain open.
 
-Open: 4.1, 4.3, 4.4, rest of 4.5, 5.4, 5.7–5.9, 6.3, 6.4, 6.6.
+**Later additions**
+
+- 2.1: handler tests for `http_api/admin.rs` (ops-log filters, 404) and
+  `http_api/graph.rs` (unknown/blank seed), plus `Store::resolve_seed` order.
+- 2.3: `retrieval::multi_query_search` owns the use case and embeds every
+  rewrite in one provider call.
+- 3.7 done: `AppError::Invalid` for caller-input validation in transports and
+  retrieval (same `INVALID_REQUEST` code and HTTP 400).
+- 4.3 partial: one lexical-hit row decoder for the BM25 and TF paths.
+- 4.5: corpus lane, embedding manifest, ops log and wiki index live in
+  `db/store/{corpus_lane,manifest,ops_log,wiki_index}.rs`; `store.rs` is 3.5k
+  lines (from 4.2k plus 2.5k of tests).
+- 5.4 done: `llm::ChatCompleter`; compile/consolidate prompts live in `wiki`;
+  an in-process scripted LLM tests the maintenance planner.
+- 5.6: severity is `IssueSeverity`; finding codes stay an open string
+  vocabulary.
+- 5.7: `sync_with_control` repeated flush/cancel branches collapse into two
+  local macros (377 to about 280 lines).
+- Tests no longer leak a DuckDB directory per call (`testkit::{scratch_dir,
+  temp_store}`); a full run left about 110 directories and filled the disk.
+
+**Not done, with the reason**
+
+| Item | Why it stops here |
+|------|-------------------|
+| 2.2 `AppContext` | The concrete duplication (chat client built per request, MCP server built per request) is gone. Merging `HttpState` and `RagServer` fields now means either `Deref` composition, which hides ownership, or renaming several hundred field accesses for no behaviour change. |
+| 2.5 move `JobRegistry` | MCP `sync_sources` is synchronous by design; with no second consumer the move is pure relocation. Do it together with MCP job support. |
+| 2.x wiki upsert policy, list documents | HTTP `PUT /v1/wiki` (resolve slug/uri/id, then create or update) and the MCP write/update tools expose different wire semantics; the catalog page and the filtered list are different queries, not copies. |
+| 3.3 `EmbeddingIdentity` | `Store` reads four `Config` fields only through the manifest functions, now isolated in `db/store/manifest.rs`; retyping ~20 call sites changes no behaviour. |
+| 3.5 HTTP route roles | Unknown routes already default to Admin (fail-closed), so a missing entry cannot widen access. |
+| 4.1 query helpers, rest of 4.3 | ~94 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
+| 4.4 narrow `Store::lock` | Needs a repository per remaining caller (analyze, apply, compress, refresh, review, knowledge, feedback, labels, jobs, retrieval, `graph::resolve`). Each is its own reviewable change. |
+| 5.8 typed `layer`/`kind`/`status` | Touches persisted values and wire shapes; needs a migration and compatibility decision. |
+| 5.9 move report DTOs | They stay re-exported from `models` for every caller, so the move is cosmetic. |
+| 6.2 remaining DTO pairs | They differ on purpose (client tolerance); merging them is a wire-compatibility decision. |
+| 6.3 `UiBackend` | `--db` reopens DuckDB per request on purpose so the UI never holds the file lock; a trait would trade five `match`es for the same amount of code. |
+| 6.4 `GraphApp`, 6.5 generated TS types, 6.6 more crates | Large changes that need manual UI verification or a build-tooling decision (ts-rs vs schema export); each should be its own PR. |
 
 ## Not planned
 
