@@ -130,3 +130,39 @@ impl GraphFilter {
         }
     }
 }
+
+/// Body of `POST /v1/jobs/sync`: synchronize one allowlisted source root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncJobRequest {
+    pub path: String,
+    #[serde(default)]
+    pub remove_deleted: bool,
+    #[serde(default, alias = "project", skip_serializing_if = "Option::is_none")]
+    pub wing: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_file_bytes: Option<u64>,
+}
+
+/// Outcome of restoring an older revision as the new head.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreRevisionResult {
+    pub document_id: String,
+    pub restored_from_revision: i64,
+    pub revision: i64,
+    pub etag: String,
+    pub chunk_count: usize,
+    pub node_id: String,
+    pub edge_count: usize,
+}
+
+/// One changed line in a bounded revision diff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevisionLineChange {
+    /// `added` or `removed`.
+    pub kind: String,
+    pub line: usize,
+    pub content: String,
+    pub content_truncated: bool,
+}

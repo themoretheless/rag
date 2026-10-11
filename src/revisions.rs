@@ -23,16 +23,7 @@ pub struct RestoreRevisionCommand {
     pub if_match_revision: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RestoreRevisionResult {
-    pub document_id: String,
-    pub restored_from_revision: i64,
-    pub revision: i64,
-    pub etag: String,
-    pub chunk_count: usize,
-    pub node_id: String,
-    pub edge_count: usize,
-}
+pub use rag_mcp_core::RestoreRevisionResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RevisionDiffResult {
@@ -48,14 +39,7 @@ pub struct RevisionDiffResult {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RevisionLineChange {
-    /// `added` or `removed`.
-    pub kind: String,
-    pub line: usize,
-    pub content: String,
-    pub content_truncated: bool,
-}
+pub use rag_mcp_core::RevisionLineChange;
 
 pub struct RevisionService<'a> {
     store: &'a Store,

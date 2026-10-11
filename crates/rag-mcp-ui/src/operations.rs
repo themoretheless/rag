@@ -165,17 +165,7 @@ pub struct JobReport {
     pub counters: JobCounters,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub struct SyncJobRequest {
-    pub path: String,
-    pub remove_deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wing: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub room: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_file_bytes: Option<u64>,
-}
+pub use rag_mcp_core::SyncJobRequest;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JobSnapshot {

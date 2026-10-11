@@ -46,28 +46,15 @@ pub(super) fn routes() -> Router<HttpState> {
 /// batch; any uncommitted batch from the interrupted run was never written.
 pub const SOURCE_SYNC_REQUEUE_LIMITS: &str = "requeue_safe: source_sync skips unchanged committed files; does not resume mid-batch embeds or delete-phase mid-flight";
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SyncJobRequest {
-    pub path: String,
-    #[serde(default)]
-    pub remove_deleted: bool,
-    #[serde(default, alias = "project")]
-    pub wing: Option<String>,
-    #[serde(default)]
-    pub room: Option<String>,
-    #[serde(default)]
-    pub max_file_bytes: Option<u64>,
-}
+pub use rag_mcp_core::SyncJobRequest;
 
-impl SyncJobRequest {
-    fn command(&self) -> SourceSyncCommand {
-        SourceSyncCommand {
-            path: PathBuf::from(&self.path),
-            remove_deleted: self.remove_deleted,
-            wing: self.wing.clone(),
-            room: self.room.clone(),
-            max_file_bytes: self.max_file_bytes,
-        }
+fn sync_command(request: &SyncJobRequest) -> SourceSyncCommand {
+    SourceSyncCommand {
+        path: PathBuf::from(&request.path),
+        remove_deleted: request.remove_deleted,
+        wing: request.wing.clone(),
+        room: request.room.clone(),
+        max_file_bytes: request.max_file_bytes,
     }
 }
 
@@ -370,7 +357,7 @@ impl JobRegistry {
                 });
             });
             let result =
-                sync_sources_nonblocking(store, embedder, config, request.command(), control).await;
+                sync_sources_nonblocking(store, embedder, config, sync_command(&request), control).await;
             match result {
                 Ok(SourceSyncOutcome::Completed(report)) => {
                     let status = if report.errors.is_empty() {

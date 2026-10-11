@@ -292,7 +292,10 @@ are fixed too:
   honour `RAG_STORAGE_BACKEND`.
 - 3.5 partial: telemetry groups are explicit for every registered tool, with a
   completeness test. The HTTP route-role table is unchanged.
-- Open: 3.3, 3.6, 3.7.
+- 3.6 done without `ScopeFilter`: `mcp/tools/<domain>.rs` per router, re-exported
+  from `mcp::tools`. Flattening shared filter fields would change the generated
+  JSON schemas, so it waits for a wire-schema review.
+- Open: 3.3, 3.7.
 
 **Phase 5**
 
@@ -303,10 +306,33 @@ are fixed too:
   excerpt truncation for compile, consolidate, organize and plan.
 - 5.6 partial: `Document::metadata_field` for lenient reads.
 
-**Phase 6.5** — the audit overstated the web client: every component already
-goes through `api/client.ts` (auth, errors). Generated types remain open.
+- 5.5 done: `wiki/{schema,write,compile,consolidate,stale,file_answer,lint,
+  index}.rs`; `wiki/mod.rs` keeps layer constants, shared DTOs and re-exports.
 
-Phases 4, 5.4/5.5/5.7–5.9 and 6.1–6.4/6.6 are open.
+**Phase 4**
+
+- 4.2 partial: recovery import writes chunks through `insert_chunks_locked`
+  and formats timestamps like every other path (microsecond round-trip test).
+  It still restores revision and timestamps verbatim on purpose.
+- 4.5 partial: the 2.5k lines of store tests moved to `db/store/tests.rs`
+  (same for wiki, recovery, graph, search, source_sync and maintain/apply).
+- 4.6 done: `db/recovery/{bundle,import,publish}.rs`.
+
+**Phase 6**
+
+- 6.1 done: `crates/rag-mcp-core` (serde-only graph types and PKB defaults,
+  re-exported by `rag_mcp::models`). The UI's DuckDB code sits behind the
+  default `direct-db` feature; `--no-default-features` links no server crate,
+  and CI keeps that build compiling.
+- 6.2 partial: `SyncJobRequest`, `RestoreRevisionResult` and
+  `RevisionLineChange` were identical on both sides and now live in the core
+  crate. The remaining same-name pairs differ on purpose (the UI reads
+  timestamps as strings and a subset of fields to tolerate server drift), so
+  merging them is a wire-compatibility decision, not a refactor.
+- 6.5: the audit overstated the web client; every component already goes
+  through `api/client.ts` (auth, errors). Generated types remain open.
+
+Open: 4.1, 4.3, 4.4, rest of 4.5, 5.4, 5.7–5.9, 6.3, 6.4, 6.6.
 
 ## Not planned
 
