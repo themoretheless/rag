@@ -1014,6 +1014,16 @@ pub struct OpsLogEntry {
     pub agent_name: Option<String>,
 }
 
+/// Severity of a lint or corpus-analysis finding (wire: `info`/`warn`/`error`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueSeverity {
+    #[default]
+    Info,
+    Warn,
+    Error,
+}
+
 impl Default for OpsLogEntry {
     /// Blank entry: `append_ops_log` assigns `id`, `seq` and `ts` when unset.
     fn default() -> Self {

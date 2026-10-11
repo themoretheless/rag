@@ -1253,7 +1253,7 @@ mod tests {
         }];
         report.issues = vec![AnalysisIssue {
             code: "exact_dup".into(),
-            severity: "warn".into(),
+            severity: crate::models::IssueSeverity::Warn,
             message: "dup".into(),
             entity_id: Some("d1".into()),
         }];

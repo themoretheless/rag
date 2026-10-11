@@ -210,7 +210,7 @@ pub struct AnalysisIssue {
     /// Machine code: `exact_dup`, `orphan_node`, `unresolved_stub`, …
     pub code: String,
     /// `info` | `warn` | `error`
-    pub severity: String,
+    pub severity: crate::models::IssueSeverity,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_id: Option<String>,
@@ -276,7 +276,7 @@ pub fn analyze_corpus(
     if let Some(ref m) = embed_mismatch {
         issues.push(AnalysisIssue {
             code: "embed_mismatch".into(),
-            severity: "error".into(),
+            severity: crate::models::IssueSeverity::Error,
             message: m.message.clone(),
             entity_id: None,
         });
@@ -284,7 +284,7 @@ pub fn analyze_corpus(
     for g in &exact_duplicates {
         issues.push(AnalysisIssue {
             code: "exact_dup".into(),
-            severity: "warn".into(),
+            severity: crate::models::IssueSeverity::Warn,
             message: format!(
                 "{} documents share content_hash {} ({})",
                 g.count,
@@ -297,7 +297,7 @@ pub fn analyze_corpus(
     for p in &near_duplicates {
         issues.push(AnalysisIssue {
             code: "near_dup".into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: format!(
                 "near-duplicate cosine={:.3}: '{}' ~ '{}'",
                 p.cosine, p.title_a, p.title_b
@@ -308,7 +308,7 @@ pub fn analyze_corpus(
     for o in &orphan_nodes {
         issues.push(AnalysisIssue {
             code: "orphan_node".into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: format!("graph node '{}' ({}) has degree 0", o.label, o.kind),
             entity_id: Some(o.id.clone()),
         });
@@ -316,7 +316,7 @@ pub fn analyze_corpus(
     for o in &orphan_wiki_pages {
         issues.push(AnalysisIssue {
             code: "orphan_wiki".into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: format!("wiki page '{}' has no graph edges", o.label),
             entity_id: o.document_id.clone().or_else(|| Some(o.id.clone())),
         });
@@ -329,7 +329,11 @@ pub fn analyze_corpus(
             } else {
                 "unresolved_stub".into()
             },
-            severity: if aging { "warn".into() } else { "info".into() },
+            severity: if aging {
+                crate::models::IssueSeverity::Warn
+            } else {
+                crate::models::IssueSeverity::Info
+            },
             message: format!(
                 "unresolved stub '{}'{}",
                 s.label,
@@ -343,7 +347,7 @@ pub fn analyze_corpus(
     for w in &stale_wiki {
         issues.push(AnalysisIssue {
             code: "stale_wiki".into(),
-            severity: "warn".into(),
+            severity: crate::models::IssueSeverity::Warn,
             message: match w.link_kind.as_str() {
                 "source_missing" => format!(
                     "wiki '{}' has an unavailable source '{}'; restore or relink the source",
@@ -364,7 +368,7 @@ pub fn analyze_corpus(
     for a in &archive_candidates {
         issues.push(AnalysisIssue {
             code: "archive_candidate".into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: format!("{}: {}", a.title, a.reason),
             entity_id: Some(a.document_id.clone()),
         });
@@ -372,7 +376,7 @@ pub fn analyze_corpus(
     if !fts_ready && chunk_count > 0 {
         issues.push(AnalysisIssue {
             code: "fts_not_ready".into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: "FTS index not ready; lex search uses term-frequency fallback".into(),
             entity_id: None,
         });
@@ -437,7 +441,7 @@ fn push_doctor_issues(issues: &mut Vec<AnalysisIssue>, doctor: &DoctorReport) {
     if !doctor.schema_ok {
         issues.push(AnalysisIssue {
             code: "schema_lag".into(),
-            severity: "error".into(),
+            severity: crate::models::IssueSeverity::Error,
             message: format!(
                 "schema_version {} < expected {}",
                 doctor.schema_version, doctor.expected_schema_version
@@ -448,7 +452,7 @@ fn push_doctor_issues(issues: &mut Vec<AnalysisIssue>, doctor: &DoctorReport) {
     if !doctor.ok {
         issues.push(AnalysisIssue {
             code: "doctor_not_ok".into(),
-            severity: "error".into(),
+            severity: crate::models::IssueSeverity::Error,
             message: "doctor integrity gate failed (schema or embed)".into(),
             entity_id: None,
         });

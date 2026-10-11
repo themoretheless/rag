@@ -188,7 +188,7 @@ pub struct WikiWriteResult {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct LintIssue {
     pub code: String,
-    pub severity: String,
+    pub severity: crate::models::IssueSeverity,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_id: Option<String>,

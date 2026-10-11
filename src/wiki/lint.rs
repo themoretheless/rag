@@ -52,7 +52,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             };
             issues.push(LintIssue {
                 code: "broken_wikilink".into(),
-                severity: "error".into(),
+                severity: crate::models::IssueSeverity::Error,
                 message: format!(
                     "wikilink edge {} references missing {}; rebuild or remove this edge",
                     edge.id, missing
@@ -69,7 +69,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             let label = source.map(|n| n.label.as_str()).unwrap_or(&edge.source_id);
             issues.push(LintIssue {
                 code: "self_link".into(),
-                severity: "warn".into(),
+                severity: crate::models::IssueSeverity::Warn,
                 message: format!("'{label}' links to itself; remove the redundant wikilink"),
                 entity_id: Some(edge.id.clone()),
                 source_id: Some(edge.source_id.clone()),
@@ -100,7 +100,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             .unwrap_or(target_id);
         issues.push(LintIssue {
             code: "duplicate_wikilink".into(),
-            severity: "warn".into(),
+            severity: crate::models::IssueSeverity::Warn,
             message: format!(
                 "'{source_label}' links to '{target_label}' {} times; keep one occurrence unless repetition is intentional",
                 edges.len()
@@ -117,7 +117,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     if wiki_docs.is_empty() {
         issues.push(LintIssue {
             code: "wiki_empty".into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: "no wiki pages yet".into(),
             ..Default::default()
         });
@@ -131,7 +131,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
         if !in_index {
             issues.push(LintIssue {
                 code: "missing_index".into(),
-                severity: "warn".into(),
+                severity: crate::models::IssueSeverity::Warn,
                 message: format!("wiki page {} not in wiki_index", d.uri),
                 entity_id: Some(d.id.clone()),
                 ..Default::default()
@@ -145,7 +145,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             if store.get_document(pid)?.is_none() {
                 issues.push(LintIssue {
                     code: "stale_index".into(),
-                    severity: "warn".into(),
+                    severity: crate::models::IssueSeverity::Warn,
                     message: format!("index entry {} points to missing page {}", e.slug, pid),
                     entity_id: Some(e.id.clone()),
                     expected_label: Some(e.slug.clone()),
@@ -184,7 +184,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             };
             issues.push(LintIssue {
                 code: "unresolved_stub".into(),
-                severity: "info".into(),
+                severity: crate::models::IssueSeverity::Info,
                 message: format!(
                     "stub node '{}' unresolved ({}); write wiki/document with title or wiki:// slug matching this label",
                     n.label, refs_note
@@ -223,7 +223,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
                 "orphan_document"
             }
             .into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: format!(
                 "{} has no incoming or outgoing graph links; add a relevant wikilink or archive it",
                 doc.uri
@@ -258,7 +258,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             .collect();
         issues.push(LintIssue {
             code: "raw_uncompiled".into(),
-            severity: "info".into(),
+            severity: crate::models::IssueSeverity::Info,
             message: format!(
                 "{} uncompiled raw source(s) in {} wing/room shelf(ves); biggest first: {}. Page a shelf with list_documents(layer=raw, wing, room, compiled=false) and close it via bounded compile / file_answer, not a full corpus pass.",
                 health.uncompiled_raw_count,
@@ -287,7 +287,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
 
     let healthy = !issues
         .iter()
-        .any(|issue| issue.severity == "warn" || issue.severity == "error");
+        .any(|issue| issue.severity >= crate::models::IssueSeverity::Warn);
     Ok(LintReport {
         issue_count: issues.len(),
         issues,
