@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rag-mcp-ui"]
+members = [".", "crates/rag-mcp-core", "crates/rag-mcp-ui"]
 default-members = ["."]
 resolver = "2"
 
@@ -24,6 +24,7 @@ name = "ingest_file"
 path = "src/bin/ingest_file.rs"
 
 [dependencies]
+rag-mcp-core = { path = "crates/rag-mcp-core" }
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"

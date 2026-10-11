@@ -3479,6 +3479,7 @@ dependencies = [
  "duckdb",
  "libc",
  "notify",
+ "rag-mcp-core",
  "reqwest",
  "ring",
  "rmcp",
@@ -3498,6 +3499,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rag-mcp-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "rag-mcp-ui"
 version = "0.1.0"
 dependencies = [
@@ -3506,6 +3514,7 @@ dependencies = [
  "eframe",
  "egui",
  "rag-mcp",
+ "rag-mcp-core",
  "reqwest",
  "serde",
  "serde_json",

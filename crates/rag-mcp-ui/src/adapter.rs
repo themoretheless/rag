@@ -1,6 +1,6 @@
 //! Domain GraphView → UI graph: filter, multi-edge collapse, style helpers, hard caps.
 
-use rag_mcp::{GraphEdge, GraphNode, GraphView};
+use rag_mcp_core::{GraphEdge, GraphNode, GraphView};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::load::{UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES};

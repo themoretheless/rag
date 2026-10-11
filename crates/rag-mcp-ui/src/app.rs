@@ -6,7 +6,7 @@
 //! slot are dropped (race protection per EGUI_GRAPH_VIEW §2.5 / §8.3).
 
 use egui::Vec2;
-use rag_mcp::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
+use rag_mcp_core::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 
 use crate::adapter::{adapt, topology_generation, AdaptOptions, GraphLens, UiGraph};
 use crate::layout::{overview_grid_place, place_missing_near_neighbors, radial_place, PosCache};
@@ -4467,7 +4467,7 @@ mod tests {
 
     #[test]
     fn enter_prefers_exact_seed_over_first_substring_suggestion() {
-        let exact = rag_mcp::GraphNode {
+        let exact = rag_mcp_core::GraphNode {
             id: "z-exact".into(),
             kind: "document".into(),
             label: "Alpha".into(),
@@ -4476,7 +4476,7 @@ mod tests {
             resolved: true,
             metadata_json: "{}".into(),
         };
-        let misleading = rag_mcp::GraphNode {
+        let misleading = rag_mcp_core::GraphNode {
             id: "a-substring".into(),
             label: "Alpha appendix".into(),
             ..exact.clone()

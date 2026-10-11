@@ -122,7 +122,9 @@ database path is published last as the generation commit marker.
 | `bootstrap.rs` | shared start-up for `main` and the offline tools (tracing, configured store, manifest check, embedder) |
 | `llm/json.rs`, `maintain/audit.rs` | one parser for JSON in model output; one terminal `MAINT` audit row per maintenance run |
 | `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters (`activity.rs` only serves `/v1/activity`) |
+| `crates/rag-mcp-core` | serde-only wire types shared by the server and clients (graph view, PKB defaults) |
 | `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
+| `crates/rag-mcp-ui/src/direct_db.rs` | read-only `--db` mode behind the default `direct-db` feature; the only UI code that links the server crate |
 | `crates/rag-mcp-ui/src/ui/` | workspace rendering; `app.rs` coordinates navigation and worker state |
 
 ## 4. Structural seams

@@ -14,7 +14,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use rag_mcp::GraphView;
+use rag_mcp_core::GraphView;
 
 use crate::load::{
     expand_neighbors_http, expand_neighbors_local, expand_neighbors_store, fetch_activity_http,
@@ -1006,20 +1006,7 @@ fn fetch_backlinks(
 ) -> Result<Vec<BacklinkItem>, String> {
     match source {
         LoadSource::Http(base) => fetch_backlinks_http(base, document_id, project),
-        LoadSource::Db(path) => {
-            let store = rag_mcp::Store::open_read_only(path).map_err(|error| {
-                format!("open {} read-only for backlinks: {error}", path.display())
-            })?;
-            let rows = match project.map(str::trim).filter(|project| !project.is_empty()) {
-                Some(project) => store.wiki_backlinks_for_document_in_wing(document_id, project),
-                None => store.wiki_backlinks_for_document(document_id),
-            }
-            .map_err(|error| format!("load backlinks from {}: {error}", path.display()))?;
-            Ok(rows
-                .into_iter()
-                .map(|(label, id)| BacklinkItem { label, id })
-                .collect())
-        }
+        LoadSource::Db(path) => crate::direct_db::fetch_backlinks_db(path, document_id, project),
     }
 }
 

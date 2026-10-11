@@ -4,7 +4,7 @@
 //! a global hairball: prompt for seed label/id and show loaded topology stats.
 
 use egui::Ui;
-use rag_mcp::GraphView;
+use rag_mcp_core::GraphView;
 use std::collections::BTreeMap;
 
 use super::theme;
@@ -315,7 +315,7 @@ fn draw_loaded_stats(ui: &mut Ui, s: &EmptyGraphStats) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rag_mcp::{GraphEdge, GraphNode};
+    use rag_mcp_core::{GraphEdge, GraphNode};
 
     fn node(id: &str, kind: &str, label: &str) -> GraphNode {
         GraphNode {

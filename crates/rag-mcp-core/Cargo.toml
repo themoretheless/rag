@@ -1,0 +1,10 @@
+[package]
+name = "rag-mcp-core"
+version = "0.1.0"
+edition = "2021"
+description = "Serde-only wire types shared by rag-mcp and its clients"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
