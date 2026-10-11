@@ -518,6 +518,21 @@ fn parse_search_mode(raw: &str) -> Result<SearchMode, AppError> {
         .map_err(|e| AppError::config(format!("invalid RAG_DEFAULT_SEARCH_MODE: {e}")))
 }
 
+impl crate::db::EmbeddingIdentity for Config {
+    fn embedding_provider_name(&self) -> &str {
+        self.embedding_provider.as_str()
+    }
+    fn embedding_model_name(&self) -> &str {
+        &self.embedding_model
+    }
+    fn embedding_dimensions(&self) -> usize {
+        self.embedding_dims
+    }
+    fn embedding_endpoint(&self) -> &str {
+        &self.embedding_base_url
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

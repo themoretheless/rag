@@ -18,6 +18,7 @@ pub mod collections;
 pub mod fts;
 pub mod graph;
 pub mod analytics;
+pub mod embedding_identity;
 pub mod chunk_text;
 pub mod knowledge;
 pub(crate) mod payload_kv;
@@ -48,3 +49,4 @@ pub use source_dedupe::{
 };
 pub use source_manifest::{SourceManifestEntry, SourceManifestWrite, SourceRootSummary};
 pub use store::Store;
+pub use embedding_identity::EmbeddingIdentity;

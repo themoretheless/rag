@@ -38,7 +38,7 @@ impl Store {
     /// Does **not** overwrite an existing row (preserves corpus fingerprint so
     /// embedding identity drift can be detected). Call on server start and before
     /// first ingest.
-    pub fn ensure_embedding_manifest(&self, config: &Config) -> Result<EmbeddingManifest> {
+    pub fn ensure_embedding_manifest(&self, config: &impl EmbeddingIdentity) -> Result<EmbeddingManifest> {
         if let Some(existing) = self.get_embedding_manifest()? {
             return Ok(existing);
         }
@@ -79,7 +79,7 @@ impl Store {
     /// Overwrite the default embedding manifest to match live config (e.g. after reembed).
     pub fn write_embedding_manifest_from_config(
         &self,
-        config: &Config,
+        config: &impl EmbeddingIdentity,
     ) -> Result<EmbeddingManifest> {
         let manifest = embedding_manifest_from_config(config);
         self.set_embedding_manifest(&manifest)?;
@@ -91,7 +91,7 @@ impl Store {
     /// A missing manifest is not a match. Call [`Self::ensure_embedding_manifest`]
     /// first only when initializing a corpus whose current identity is already
     /// known to be the configured one (the normal server/ingest startup path).
-    pub fn embedding_manifest_matches_config(&self, config: &Config) -> Result<bool> {
+    pub fn embedding_manifest_matches_config(&self, config: &impl EmbeddingIdentity) -> Result<bool> {
         Ok(self
             .get_embedding_manifest()?
             .as_ref()
@@ -103,7 +103,7 @@ impl Store {
     /// A complete, uncapped `reembed_all` is the only supported migration path.
     /// Single-document refreshes must never publish a new corpus identity while
     /// other chunks may still contain vectors from the old model or endpoint.
-    pub fn require_embedding_manifest_match(&self, config: &Config) -> Result<()> {
+    pub fn require_embedding_manifest_match(&self, config: &impl EmbeddingIdentity) -> Result<()> {
         let Some(manifest) = self.get_embedding_manifest()? else {
             return Err(AppError::embeddings(
                 "embedding manifest is missing; initialize an empty corpus or run a complete uncapped reembed_all before vector operations",

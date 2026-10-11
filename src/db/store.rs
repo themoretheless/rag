@@ -8,7 +8,7 @@ use duckdb::{params, AccessMode, Config as DuckDbConfig, Connection};
 
 use super::rows;
 use super::schema;
-use crate::config::Config;
+use super::EmbeddingIdentity;
 use crate::error::{AppError, Result};
 use crate::models::{
     Chunk, DiaryEntry, Document, DocumentFilter, DocumentMetaApplyResult, DocumentMetaUpdate,
@@ -3456,15 +3456,15 @@ fn row_to_wiki_index(row: &duckdb::Row<'_>) -> Result<WikiIndexEntry> {
 }
 
 /// Build a default-id [`EmbeddingManifest`] snapshot from runtime config.
-pub fn embedding_manifest_from_config(config: &Config) -> EmbeddingManifest {
-    let provider = config.embedding_provider.as_str().to_string();
+pub fn embedding_manifest_from_config(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
+    let provider = config.embedding_provider_name().to_string();
     let fingerprint = embedding_config_fingerprint(config);
     EmbeddingManifest {
         id: "default".into(),
         provider,
-        model: config.embedding_model.clone(),
-        dims: config.embedding_dims as i32,
-        base_url: Some(config.embedding_base_url.clone()),
+        model: config.embedding_model_name().to_string(),
+        dims: config.embedding_dimensions() as i32,
+        base_url: Some(config.embedding_endpoint().to_string()),
         content_fingerprint: Some(fingerprint),
         updated_at: Utc::now(),
     }
@@ -3476,7 +3476,7 @@ pub fn embedding_manifest_from_config(config: &Config) -> EmbeddingManifest {
 /// their dimensions), while its authoritative fingerprint cannot match either
 /// the old or target config. The first successful vector mutation writes this
 /// marker in the same transaction; only a complete migration may replace it.
-pub(crate) fn embedding_migration_manifest(config: &Config) -> EmbeddingManifest {
+pub(crate) fn embedding_migration_manifest(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
     let mut marker = embedding_manifest_from_config(config);
     let target_fingerprint = marker
         .content_fingerprint
@@ -3496,26 +3496,26 @@ pub(crate) fn embedding_migration_manifest(config: &Config) -> EmbeddingManifest
 /// New manifests carry a fingerprint over provider/model/dims/base endpoint.
 /// All descriptive fields and that fingerprint must agree with live config;
 /// a missing fingerprint is unverifiable and remains fail-closed.
-pub fn embedding_manifest_matches_config(manifest: &EmbeddingManifest, config: &Config) -> bool {
+pub fn embedding_manifest_matches_config(manifest: &EmbeddingManifest, config: &impl EmbeddingIdentity) -> bool {
     match manifest.content_fingerprint.as_deref() {
         Some(fingerprint) => {
             manifest.id == "default"
-                && manifest.provider == config.embedding_provider.as_str()
-                && manifest.model == config.embedding_model
-                && manifest.dims == config.embedding_dims as i32
-                && manifest.base_url.as_deref() == Some(config.embedding_base_url.as_str())
+                && manifest.provider == config.embedding_provider_name()
+                && manifest.model == config.embedding_model_name()
+                && manifest.dims == config.embedding_dimensions() as i32
+                && manifest.base_url.as_deref() == Some(config.embedding_endpoint())
                 && fingerprint == embedding_config_fingerprint(config)
         }
         None => false,
     }
 }
 
-fn embedding_config_fingerprint(config: &Config) -> String {
+fn embedding_config_fingerprint(config: &impl EmbeddingIdentity) -> String {
     embedding_identity_fingerprint(
-        config.embedding_provider.as_str(),
-        &config.embedding_model,
-        config.embedding_dims as i32,
-        &config.embedding_base_url,
+        config.embedding_provider_name(),
+        config.embedding_model_name(),
+        config.embedding_dimensions() as i32,
+        config.embedding_endpoint(),
     )
 }
 

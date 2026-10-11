@@ -67,7 +67,7 @@ impl Store {
     /// a manifest and incomplete/mismatched migrations remain fail-closed.
     pub(crate) fn try_embedding_write_guard(
         &self,
-        config: &Config,
+        config: &impl EmbeddingIdentity,
         operation: &str,
     ) -> Result<EmbeddingWriteGuard> {
         let guard = if let Some(exclusive) = &self.corpus_mutation_guard {
