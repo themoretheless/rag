@@ -364,14 +364,23 @@ impl Store {
             let d = &item.document;
             tx.execute(
                 "INSERT INTO documents (id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, status, pinned, boost, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))",
-                params![d.id, d.uri, d.title, d.content, d.metadata_json, d.content_hash, d.wing, d.room, d.source_file, d.layer, d.kind, d.status, d.pinned, d.boost, d.revision, d.created_at.to_rfc3339(), d.updated_at.to_rfc3339()],
+                params![d.id, d.uri, d.title, d.content, d.metadata_json, d.content_hash, d.wing, d.room, d.source_file, d.layer, d.kind, d.status, d.pinned, d.boost, d.revision, crate::util::format_db_timestamp(d.created_at), crate::util::format_db_timestamp(d.updated_at)],
             )?;
-            for c in &item.chunks {
-                tx.execute(
-                    "INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-                    params![c.id, d.id, c.chunk_index, c.content, serde_json::to_string(&c.embedding)?, c.char_start, c.char_end, c.metadata_json],
-                )?;
-            }
+            // Restore keeps the bundle's revision and timestamps (no CAS bump),
+            // but chunk rows go through the same writer as every other path.
+            let chunks: Vec<Chunk> = item
+                .chunks
+                .iter()
+                .map(|chunk| Chunk {
+                    document_id: d.id.clone(),
+                    ..chunk.clone()
+                })
+                .collect();
+            let embedding_json = chunks
+                .iter()
+                .map(|chunk| serde_json::to_string(&chunk.embedding))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            crate::db::store::insert_chunks_locked(&tx, &chunks, &embedding_json)?;
         }
         if report.success && !dry_run {
             tx.commit()?;

@@ -3626,7 +3626,7 @@ fn upsert_document_cas_locked(
     Ok(new_rev)
 }
 
-fn insert_chunks_locked(
+pub(crate) fn insert_chunks_locked(
     conn: &Connection,
     chunks: &[Chunk],
     embedding_json: &[String],

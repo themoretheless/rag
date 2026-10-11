@@ -1137,3 +1137,42 @@ fn assert_no_backup_work_files(dir: &Path) {
         .collect::<Vec<_>>();
     assert!(leaked.is_empty(), "leaked backup work files: {leaked:?}");
 }
+
+#[test]
+fn import_preserves_document_timestamps_to_the_microsecond() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(&root.path().join("timestamps.duckdb")).unwrap();
+    let created = DateTime::parse_from_rfc3339("2024-03-05T10:11:12.123456Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let updated = DateTime::parse_from_rfc3339("2025-01-02T03:04:05.654321Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let mut document = recovery_document("timed", "recovery://timed", "timed body");
+    document.created_at = created;
+    document.updated_at = updated;
+    let bundle = RecoveryBundle {
+        format: "rag-recovery-bundle".into(),
+        version: BUNDLE_VERSION,
+        exported_at: Utc::now(),
+        embedding_manifest: Some(recovery_manifest()),
+        documents: vec![BundleDocument {
+            document,
+            chunks: vec![recovery_chunk("timed-chunk", "timed", "timed body")],
+        }],
+    };
+    let report = store
+        .import_recovery_bundle(
+            &bundle,
+            ConflictPolicy::Error,
+            false,
+            Path::new("fixture.json"),
+            "json",
+        )
+        .unwrap();
+    assert!(report.success, "{report:?}");
+    let restored = store.get_document("timed").unwrap().unwrap();
+    assert_eq!(restored.created_at, created);
+    assert_eq!(restored.updated_at, updated);
+    assert_eq!(store.list_chunks_for_document("timed").unwrap().len(), 1);
+}
