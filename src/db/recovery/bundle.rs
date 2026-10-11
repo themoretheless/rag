@@ -469,7 +469,10 @@ pub fn decode_recovery_bundle(input: &str, format: &str) -> Result<RecoveryBundl
     Ok(bundle)
 }
 
-pub(super) fn validate_embedding_manifest_json_shape(value: &serde_json::Value, context: &str) -> Result<()> {
+pub(super) fn validate_embedding_manifest_json_shape(
+    value: &serde_json::Value,
+    context: &str,
+) -> Result<()> {
     let manifest = value
         .as_object()
         .ok_or_else(|| AppError::config(format!("{context} must be an object")))?;
@@ -618,7 +621,9 @@ pub(super) fn nonnegative_metric(value: i64, name: &str) -> Result<u64> {
     })
 }
 
-pub(super) fn portable_store_preflight_locked(conn: &duckdb::Connection) -> Result<PortableBundlePreflight> {
+pub(super) fn portable_store_preflight_locked(
+    conn: &duckdb::Connection,
+) -> Result<PortableBundlePreflight> {
     let (documents_raw, document_string_bytes_raw): (i64, i64) = conn.query_row(
         r#"
         SELECT

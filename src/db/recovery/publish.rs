@@ -255,7 +255,10 @@ pub(super) fn backup_verifications_match(
     Ok(serde_json::to_value(left)? == serde_json::to_value(right)?)
 }
 
-pub(super) fn verify_published_backup_group(path: &Path, source: &Path) -> Result<BackupVerification> {
+pub(super) fn verify_published_backup_group(
+    path: &Path,
+    source: &Path,
+) -> Result<BackupVerification> {
     let verification = verify_backup(path)?;
     let artifacts = backup_artifact_paths(path);
     let file_name = path
@@ -725,7 +728,11 @@ pub(super) fn create_temporary_database_artifact(destination: &Path) -> Result<P
     )))
 }
 
-pub(super) fn publish_temporary_artifact(temporary: &Path, destination: &Path, overwrite: bool) -> Result<()> {
+pub(super) fn publish_temporary_artifact(
+    temporary: &Path,
+    destination: &Path,
+    overwrite: bool,
+) -> Result<()> {
     if overwrite {
         fs::rename(temporary, destination)?;
         return Ok(());

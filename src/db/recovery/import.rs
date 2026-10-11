@@ -382,7 +382,10 @@ impl Store {
     }
 }
 
-pub(super) fn embedding_manifests_match(left: &EmbeddingManifest, right: &EmbeddingManifest) -> bool {
+pub(super) fn embedding_manifests_match(
+    left: &EmbeddingManifest,
+    right: &EmbeddingManifest,
+) -> bool {
     if left.id != "default"
         || right.id != "default"
         || left.provider != right.provider
@@ -407,7 +410,9 @@ pub(super) fn embedding_manifests_match(left: &EmbeddingManifest, right: &Embedd
 /// This deliberately mirrors `store::embedding_config_fingerprint`: recovery
 /// manifests are untrusted input, so their persisted fingerprint must describe
 /// the provider/model/dimensions/base URL carried alongside it.
-pub(super) fn canonical_embedding_manifest_fingerprint(manifest: &EmbeddingManifest) -> Result<String> {
+pub(super) fn canonical_embedding_manifest_fingerprint(
+    manifest: &EmbeddingManifest,
+) -> Result<String> {
     if manifest.id != "default" {
         return Err(AppError::embeddings(format!(
             "embedding manifest id must be 'default' (got '{}')",
@@ -433,7 +438,10 @@ pub(super) fn canonical_embedding_manifest_fingerprint(manifest: &EmbeddingManif
     ))
 }
 
-pub(super) fn validate_embedding_manifest(manifest: &EmbeddingManifest, context: &str) -> Result<()> {
+pub(super) fn validate_embedding_manifest(
+    manifest: &EmbeddingManifest,
+    context: &str,
+) -> Result<()> {
     if manifest
         .content_fingerprint
         .as_deref()
@@ -487,7 +495,9 @@ pub(super) fn validate_bundle_structure(bundle: &RecoveryBundle) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn validate_bundle_embeddings(bundle: &RecoveryBundle) -> Result<Option<&EmbeddingManifest>> {
+pub(super) fn validate_bundle_embeddings(
+    bundle: &RecoveryBundle,
+) -> Result<Option<&EmbeddingManifest>> {
     let bundle_chunk_count = bundle
         .documents
         .iter()
