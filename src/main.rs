@@ -129,7 +129,11 @@ async fn run_serve_modes(
     config: Config,
 ) -> anyhow::Result<()> {
     rag_mcp::ops::spawn_auto_backup(store.clone());
-    RagServer::new(store.clone(), embedder.clone(), config.clone()).spawn_auto_sync();
+    // One context for every transport: config parsed once, one embedder, one
+    // chat client, one manifest check.
+    let context = rag_mcp::context::AppContext::new(store, embedder, config);
+    let config = context.config.clone();
+    RagServer::from_context(context.clone()).spawn_auto_sync();
     let http_only = env_flag("RAG_HTTP_ONLY");
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
     let mcp_http_enabled = env_truthy_default("RAG_MCP_HTTP", true);
@@ -141,17 +145,15 @@ async fn run_serve_modes(
             .expect("non-empty bind validated");
 
         let mcp_svc = if mcp_http_enabled {
-            Some(http_api::mcp_http_service(
-                store.clone(),
-                embedder.clone(),
-                config.clone(),
+            Some(http_api::mcp_http_service_for(
+                context.clone(),
                 CancellationToken::new(),
             ))
         } else {
             None
         };
 
-        let store_http = Arc::new(store.clone());
+        let http_context = context.clone();
         if http_only {
             tracing::info!(
                 %addr,
@@ -160,7 +162,7 @@ async fn run_serve_modes(
                 addr
             );
             tokio::select! {
-                result = http_api::serve(addr, store_http, mcp_svc) => {
+                result = http_api::serve(addr, http_context, mcp_svc) => {
                     result.context("HTTP API server error")?;
                 }
                 signal = shutdown_signal() => {
@@ -172,7 +174,7 @@ async fn run_serve_modes(
         }
 
         tokio::spawn(async move {
-            if let Err(e) = http_api::serve(addr, store_http, mcp_svc).await {
+            if let Err(e) = http_api::serve(addr, http_context, mcp_svc).await {
                 tracing::error!(error = %e, "HTTP API exited");
             }
         });
@@ -181,7 +183,7 @@ async fn run_serve_modes(
     }
 
     let has_http = http_bind.is_some();
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(context);
 
     tracing::info!("starting rag-mcp on stdio");
     match server.serve(stdio()).await {

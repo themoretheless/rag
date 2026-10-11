@@ -62,7 +62,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::db::Store;
-use crate::embeddings::{build_provider, EmbeddingProvider};
+use crate::embeddings::EmbeddingProvider;
 use crate::mcp::RagServer;
 use crate::models::GraphView;
 use crate::util::run_blocking;
@@ -104,18 +104,32 @@ impl HttpState {
         config: Config,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Self {
+        let llm = crate::llm::ChatClient::from_config(&config).ok();
+        Self::from_context(
+            crate::context::AppContext {
+                store,
+                embedder,
+                config,
+                llm,
+            },
+            mcp_http,
+        )
+    }
+
+    /// HTTP state over the process-wide [`crate::context::AppContext`].
+    pub fn from_context(context: crate::context::AppContext, mcp_http: bool) -> Self {
+        let store = context.store;
         let jobs = jobs::JobRegistry::restore_from_store(store.clone()).unwrap_or_else(|error| {
             tracing::warn!(%error, "failed to restore background jobs; starting empty registry");
             jobs::JobRegistry::with_store(store.clone())
         });
-        let llm = crate::llm::ChatClient::from_config(&config).ok();
         Self {
             store,
             mcp_http,
-            config,
-            embedder,
+            config: context.config,
+            embedder: context.embedder,
             jobs,
-            llm,
+            llm: context.llm,
             auth: auth::AuthPosture::default(),
         }
     }
@@ -143,14 +157,32 @@ pub fn mcp_http_service(
     config: Config,
     cancellation_token: CancellationToken,
 ) -> StreamableHttpService<RagServer, LocalSessionManager> {
+    mcp_http_service_for(
+        crate::context::AppContext::new(store, embedder, config),
+        cancellation_token,
+    )
+}
+
+/// Streamable-HTTP MCP over the shared [`crate::context::AppContext`].
+pub fn mcp_http_service_for(
+    context: crate::context::AppContext,
+    cancellation_token: CancellationToken,
+) -> StreamableHttpService<RagServer, LocalSessionManager> {
     let allowed_hosts = configured_http_allowed_hosts(
-        &config,
+        &context.config,
         std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
     );
-    // Build once: `RagServer::new` checks the embedding manifest, builds the
-    // HTTP/TLS chat client and composes the tool router. Each stateless request
-    // gets a cheap clone sharing the same `Arc` store and router.
-    let prototype = RagServer::new(store, embedder, config).with_transport("http-mcp");
+    // Build once: the context already holds the checked manifest and the chat
+    // client; each stateless request gets a cheap clone of this server.
+    let prototype = RagServer::from_context(context).with_transport("http-mcp");
+    mcp_service_from(prototype, allowed_hosts, cancellation_token)
+}
+
+fn mcp_service_from(
+    prototype: RagServer,
+    allowed_hosts: Vec<String>,
+    cancellation_token: CancellationToken,
+) -> StreamableHttpService<RagServer, LocalSessionManager> {
     StreamableHttpService::new(
         move || Ok(prototype.clone()),
         Arc::new(LocalSessionManager::default()),
@@ -201,12 +233,12 @@ fn configured_http_allowed_hosts(config: &Config, explicit: Option<&str>) -> Vec
 
 /// Start HTTP server (graph API + MCP `/mcp`); runs until process exit.
 ///
-/// Builds embedder/config from env for `PUT /v1/wiki` (same process env as MCP).
+/// Uses the process [`crate::context::AppContext`] (config, embedder, chat client).
 /// Route tables come from the private `health`, `graph`, and `wiki` route
 /// builders and are combined here without duplicating handlers.
 pub async fn serve(
     bind: SocketAddr,
-    store: Arc<Store>,
+    context: crate::context::AppContext,
     mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
 ) -> Result<(), std::io::Error> {
     let auth = auth::HttpAuth::from_env()
@@ -218,16 +250,8 @@ pub async fn serve(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
         })?;
     let mcp_http = mcp.is_some();
-    let config = Config::from_env().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("HTTP wiki write config: {e}"),
-        )
-    })?;
-    let embedder = build_provider(&config)
-        .map_err(|e| std::io::Error::other(format!("HTTP wiki write embedder: {e}")))?;
     let allowed_hosts = configured_http_allowed_hosts(
-        &config,
+        &context.config,
         std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
     );
     let posture = auth.posture();
@@ -238,7 +262,7 @@ pub async fn serve(
              listener is admin; set a role token before exposing the gateway beyond loopback"
         );
     }
-    let state = HttpState::new(store, mcp_http, config, embedder).with_auth_posture(posture);
+    let state = HttpState::from_context(context, mcp_http).with_auth_posture(posture);
     sync::spawn_worker(state.clone());
     let api = api_router(state);
 
@@ -629,6 +653,7 @@ pub type GraphJson = GraphView;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embeddings::build_provider;
     use axum::{
         body::{to_bytes, Body},
         http::Request,

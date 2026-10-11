@@ -183,21 +183,16 @@ impl RagServer {
     /// Records `embedding_manifest` when the store has none (server start path).
     /// Builds [`ChatClient`] from `RAG_LLM_*` when possible (warns and continues on failure).
     pub fn new(store: Store, embedder: Arc<dyn EmbeddingProvider>, config: Config) -> Self {
-        if let Err(e) = store.ensure_embedding_manifest(&config) {
-            tracing::warn!(error = %e, "failed to ensure embedding_manifest on start");
-        }
-        let llm = match ChatClient::from_config(&config) {
-            Ok(client) => Some(client),
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to build ChatClient; LLM tools unavailable");
-                None
-            }
-        };
+        Self::from_context(crate::context::AppContext::new(store, embedder, config))
+    }
+
+    /// Build a server over an already-initialized [`crate::context::AppContext`].
+    pub fn from_context(context: crate::context::AppContext) -> Self {
         let server = Self {
-            store: Arc::new(store),
-            embedder,
-            llm,
-            config,
+            store: context.store,
+            embedder: context.embedder,
+            llm: context.llm,
+            config: context.config,
             tool_router: Self::all_tools_router(),
             transport: "stdio",
         };

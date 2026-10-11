@@ -19,6 +19,7 @@ pub mod activity;
 pub mod bootstrap;
 pub mod chunking;
 pub mod config;
+pub mod context;
 pub mod db;
 pub mod diagnostics;
 pub mod diary;
