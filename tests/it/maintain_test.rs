@@ -10,14 +10,12 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
-use rag_mcp::models::{
-    Chunk, Document, GraphNode,
-};
+use rag_mcp::models::{Chunk, Document, GraphNode};
 use rag_mcp::util::content_hash;
 use rag_mcp::{
     analyze_corpus, apply_maintenance_plan, heuristic_plan, log_plan, maintain_compress,
-    plan_maintenance, ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions,
-    Config, MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store,
+    plan_maintenance, ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions, Config,
+    MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store,
 };
 use tempfile::TempDir;
 
@@ -50,10 +48,7 @@ fn mock_embedder() -> Arc<dyn EmbeddingProvider> {
 
 /// Seed a small fixture corpus: unique raws, an exact-hash twin pair, a wiki page,
 /// and an unresolved stub so analyze has real signals.
-async fn seed_fixture_corpus(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-) -> FixtureIds {
+async fn seed_fixture_corpus(store: &Store, embedder: &Arc<dyn EmbeddingProvider>) -> FixtureIds {
     let now = Utc::now();
     let mock = MockEmbedder::new(DIMS);
 
@@ -233,8 +228,7 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
     );
     assert_eq!(analysis.exact_duplicates[0].count, 2);
     assert!(
-        analysis
-            .exact_duplicates[0]
+        analysis.exact_duplicates[0]
             .document_ids
             .iter()
             .any(|id| id == &ids.twin_a),

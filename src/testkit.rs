@@ -85,9 +85,11 @@ impl<'a> SeedDoc<'a> {
 
     pub(crate) fn insert(self, store: &Store) {
         let now = Utc::now();
-        let kind = self
-            .kind
-            .unwrap_or(if self.layer == "wiki" { "wiki" } else { "document" });
+        let kind = self.kind.unwrap_or(if self.layer == "wiki" {
+            "wiki"
+        } else {
+            "document"
+        });
         store
             .upsert_document(&Document {
                 id: self.id.into(),

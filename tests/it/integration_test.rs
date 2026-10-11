@@ -8,7 +8,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use rag_mcp::chunking::{from_config, Chunker};
 use rag_mcp::db::search::search_chunks;
-use rag_mcp::embeddings::{MockEmbedder, EmbeddingProvider};
+use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document};
 use rag_mcp::Store;
 use tempfile::TempDir;
@@ -117,14 +117,8 @@ async fn ingest_search_delete_stats_roundtrip() {
         "doc://xylophone",
     )
     .await;
-    let (id_b, n_b) = ingest_text(
-        &store,
-        &embedder,
-        text_b,
-        "Banana Farming",
-        "doc://banana",
-    )
-    .await;
+    let (id_b, n_b) =
+        ingest_text(&store, &embedder, text_b, "Banana Farming", "doc://banana").await;
 
     assert!(n_a >= 1, "doc A should produce at least one chunk");
     assert!(n_b >= 1, "doc B should produce at least one chunk");
@@ -161,7 +155,8 @@ async fn ingest_search_delete_stats_roundtrip() {
         hits[0].score
     );
     assert!(
-        hits[0].content.contains("xylophone") || hits[0].content.contains("Xylophone")
+        hits[0].content.contains("xylophone")
+            || hits[0].content.contains("Xylophone")
             || hits[0].content.contains("quantum resonance"),
         "top hit content should reflect distinctive terms: {:?}",
         hits[0].content
@@ -258,7 +253,8 @@ async fn multi_chunk_document_search_still_finds_doc() {
     let embedder = MockEmbedder::new(DIMS);
     let now = Utc::now();
     let document_id = Uuid::new_v4().to_string();
-    let text = "alpha word one. beta word two. gamma word three. delta word four. epsilon word five.";
+    let text =
+        "alpha word one. beta word two. gamma word three. delta word four. epsilon word five.";
 
     let doc = Document {
         id: document_id.clone(),
@@ -274,7 +270,11 @@ async fn multi_chunk_document_search_still_finds_doc() {
 
     let chunker = from_config(20, 4);
     let pieces = Chunker::chunk(&chunker, text);
-    assert!(pieces.len() > 1, "expected multi-chunk split, got {}", pieces.len());
+    assert!(
+        pieces.len() > 1,
+        "expected multi-chunk split, got {}",
+        pieces.len()
+    );
 
     let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
     let embeddings = embedder.embed(&texts).await.unwrap();

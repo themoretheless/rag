@@ -66,8 +66,14 @@ mod tests {
     fn fenced_and_embedded_objects_parse_the_same() {
         let expected = Some(Probe { a: 1 });
         assert_eq!(parse_model_object::<Probe>("{\"a\":1}"), expected);
-        assert_eq!(parse_model_object::<Probe>("```json\n{\"a\":1}\n```"), expected);
-        assert_eq!(parse_model_object::<Probe>("```JSON {\"a\":1}```"), expected);
+        assert_eq!(
+            parse_model_object::<Probe>("```json\n{\"a\":1}\n```"),
+            expected
+        );
+        assert_eq!(
+            parse_model_object::<Probe>("```JSON {\"a\":1}```"),
+            expected
+        );
         assert_eq!(
             parse_model_object::<Probe>("Sure! Here it is: {\"a\":1} — done."),
             expected

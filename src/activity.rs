@@ -73,7 +73,14 @@ pub fn snapshot(limit: usize, after: Option<u64>) -> (Vec<ActivityEvent>, u64) {
 
 /// One MCP tool call (name, status, latency).
 pub fn record_mcp_tool(action: &str, status: u16, elapsed_ms: f64) {
-    record("mcp_tool", None, action, Some(status), Some(elapsed_ms), None);
+    record(
+        "mcp_tool",
+        None,
+        action,
+        Some(status),
+        Some(elapsed_ms),
+        None,
+    );
 }
 
 /// A named product action that has no HTTP status of its own.
