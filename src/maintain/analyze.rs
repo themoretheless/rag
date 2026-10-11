@@ -4,18 +4,23 @@
 
 use std::path::Path;
 
-use chrono::{DateTime, Duration, Utc};
-use duckdb::params;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::db::analytics::{
+    collect_counts, collect_size_stats, find_archive_candidates, find_exact_duplicates,
+    find_orphans, find_stubs, parse_ts, short_hash,
+};
+pub use crate::db::analytics::{
+    ArchiveCandidate, CorpusCounts, CountBucket, DuplicateGroup, OrphanNode, SizeStats, StubInfo,
+};
 use crate::db::Store;
 use crate::diagnostics::DiagnosticsService;
 use crate::embeddings::cosine_similarity;
 use crate::error::Result;
 use crate::models::{DoctorReport, OpsLogEntry};
-use crate::util::parse_db_timestamp;
 
 /// Default age (days) after which an unresolved stub is "aging".
 const DEFAULT_STUB_AGE_DAYS: u32 = 14;
@@ -23,8 +28,7 @@ const DEFAULT_STUB_AGE_DAYS: u32 = 14;
 const DEFAULT_ARCHIVE_MIN_AGE_DAYS: u32 = 90;
 /// Cap document pairs scanned for near-dup cosine (first-chunk embeddings).
 const NEAR_DUP_MAX_DOCS: usize = 200;
-/// Cap reported groups / lists to keep MCP payloads bounded.
-const REPORT_LIST_CAP: usize = 100;
+use crate::db::analytics::REPORT_LIST_CAP;
 
 /// Tunables for [`analyze_corpus`].
 #[derive(Debug, Clone)]
@@ -99,35 +103,6 @@ pub struct AnalysisReport {
     pub issue_count: usize,
 }
 
-/// Document / graph / layer tallies.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CorpusCounts {
-    pub documents: u64,
-    pub chunks: u64,
-    pub nodes: u64,
-    pub edges: u64,
-    pub by_layer: Vec<CountBucket>,
-    pub by_kind: Vec<CountBucket>,
-    pub by_status: Vec<CountBucket>,
-    pub by_wing: Vec<CountBucket>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CountBucket {
-    pub key: String,
-    pub count: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SizeStats {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub db_size_bytes: Option<u64>,
-    pub avg_chunk_chars: f64,
-    pub avg_document_chars: f64,
-    pub total_chunk_chars: u64,
-    pub total_document_chars: u64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbedMismatchInfo {
     pub config_dims: usize,
@@ -143,42 +118,12 @@ pub struct EmbedMismatchInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DuplicateGroup {
-    pub content_hash: String,
-    pub document_ids: Vec<String>,
-    pub titles: Vec<String>,
-    pub count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NearDuplicatePair {
     pub document_id_a: String,
     pub document_id_b: String,
     pub title_a: String,
     pub title_b: String,
     pub cosine: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrphanNode {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub document_id: Option<String>,
-    pub kind: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layer: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StubInfo {
-    pub node_id: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<DateTime<Utc>>,
-    /// Whole days since `created_at` (when known).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub age_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,16 +138,6 @@ pub struct StaleWikiPage {
     /// Source hash, missing-source, or legacy timestamp evidence.
     #[serde(default)]
     pub link_kind: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArchiveCandidate {
-    pub document_id: String,
-    pub title: String,
-    pub layer: String,
-    pub boost: f64,
-    pub updated_at: DateTime<Utc>,
-    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,7 +188,7 @@ pub fn analyze_corpus(
         })
     };
 
-    let exact_duplicates = find_exact_duplicates(store)?;
+    let exact_duplicates = find_exact_duplicates(store, false)?;
     let near_duplicates = if opts.include_near_dups {
         let corpus_guard =
             crate::db::search::acquire_corpus_search_guard(store, crate::models::SearchMode::Vec)?;
@@ -459,137 +394,6 @@ fn push_doctor_issues(issues: &mut Vec<AnalysisIssue>, doctor: &DoctorReport) {
     }
 }
 
-fn collect_counts(
-    store: &Store,
-    documents: u64,
-    chunks: u64,
-    nodes: u64,
-    edges: u64,
-) -> Result<CorpusCounts> {
-    let conn = store.lock()?;
-    Ok(CorpusCounts {
-        documents,
-        chunks,
-        nodes,
-        edges,
-        by_layer: group_count_locked(&conn, "SELECT COALESCE(layer, 'raw'), COUNT(*)::BIGINT FROM documents GROUP BY 1 ORDER BY 2 DESC")?,
-        by_kind: group_count_locked(&conn, "SELECT COALESCE(kind, 'document'), COUNT(*)::BIGINT FROM documents GROUP BY 1 ORDER BY 2 DESC")?,
-        by_status: group_count_locked(&conn, "SELECT COALESCE(status, 'active'), COUNT(*)::BIGINT FROM documents GROUP BY 1 ORDER BY 2 DESC")?,
-        by_wing: group_count_locked(
-            &conn,
-            r#"
-            SELECT CASE
-                     WHEN wing IS NULL OR TRIM(wing) = '' THEN '(unscoped)'
-                     ELSE wing
-                   END,
-                   COUNT(*)::BIGINT
-            FROM documents
-            GROUP BY 1
-            ORDER BY 2 DESC
-            "#,
-        )?,
-    })
-}
-
-fn group_count_locked(conn: &duckdb::Connection, sql: &str) -> Result<Vec<CountBucket>> {
-    let mut stmt = conn.prepare(sql)?;
-    let mut rows = stmt.query([])?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        let key: String = row.get(0)?;
-        let count: i64 = row.get(1)?;
-        out.push(CountBucket {
-            key,
-            count: count as u64,
-        });
-    }
-    Ok(out)
-}
-
-fn collect_size_stats(store: &Store, db_size_bytes: Option<u64>) -> Result<SizeStats> {
-    let conn = store.lock()?;
-    let (chunk_n, chunk_chars): (i64, i64) = conn.query_row(
-        "SELECT COUNT(*)::BIGINT, COALESCE(SUM(LENGTH(content)), 0)::BIGINT FROM chunks",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    let (doc_n, doc_chars): (i64, i64) = conn.query_row(
-        "SELECT COUNT(*)::BIGINT, COALESCE(SUM(LENGTH(content)), 0)::BIGINT FROM documents",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    let avg_chunk = if chunk_n > 0 {
-        chunk_chars as f64 / chunk_n as f64
-    } else {
-        0.0
-    };
-    let avg_doc = if doc_n > 0 {
-        doc_chars as f64 / doc_n as f64
-    } else {
-        0.0
-    };
-    Ok(SizeStats {
-        db_size_bytes,
-        avg_chunk_chars: avg_chunk,
-        avg_document_chars: avg_doc,
-        total_chunk_chars: chunk_chars as u64,
-        total_document_chars: doc_chars as u64,
-    })
-}
-
-fn find_exact_duplicates(store: &Store) -> Result<Vec<DuplicateGroup>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT content_hash, COUNT(*)::BIGINT
-        FROM documents
-        WHERE content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-        GROUP BY content_hash
-        HAVING COUNT(*) > 1
-        ORDER BY COUNT(*) DESC
-        LIMIT 50
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut hashes: Vec<(String, i64)> = Vec::new();
-    while let Some(row) = rows.next()? {
-        hashes.push((row.get(0)?, row.get(1)?));
-    }
-    drop(rows);
-    drop(stmt);
-
-    let mut groups = Vec::new();
-    for (hash, _n) in hashes {
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, title FROM documents
-            WHERE content_hash = ?
-            ORDER BY created_at ASC
-            "#,
-        )?;
-        let mut rows = stmt.query(params![hash.as_str()])?;
-        let mut ids = Vec::new();
-        let mut titles = Vec::new();
-        while let Some(row) = rows.next()? {
-            ids.push(row.get::<_, String>(0)?);
-            titles.push(row.get::<_, String>(1)?);
-        }
-        let count = ids.len();
-        if count > 1 {
-            groups.push(DuplicateGroup {
-                content_hash: hash,
-                document_ids: ids,
-                titles,
-                count,
-            });
-        }
-        if groups.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    Ok(groups)
-}
-
 fn find_near_duplicates(store: &Store, threshold: f64) -> Result<Vec<NearDuplicatePair>> {
     let threshold = threshold.clamp(0.0, 1.0) as f32;
     // The cap belongs in SQL: loading every vector and truncating afterwards
@@ -624,121 +428,6 @@ fn find_near_duplicates(store: &Store, threshold: f64) -> Result<Vec<NearDuplica
     Ok(pairs)
 }
 
-fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<OrphanNode>)> {
-    let conn = store.lock()?;
-
-    // Nodes with no incident edges.
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT n.id, n.document_id, n.kind, n.label
-        FROM graph_nodes n
-        WHERE NOT EXISTS (
-            SELECT 1 FROM graph_edges e
-            WHERE e.source_id = n.id OR e.target_id = n.id
-        )
-        ORDER BY n.kind ASC, n.label ASC
-        LIMIT 200
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut orphan_nodes = Vec::new();
-    while let Some(row) = rows.next()? {
-        orphan_nodes.push(OrphanNode {
-            id: row.get(0)?,
-            document_id: row.get(1)?,
-            kind: row.get(2)?,
-            label: row.get(3)?,
-            layer: None,
-        });
-        if orphan_nodes.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    drop(rows);
-    drop(stmt);
-
-    // Wiki documents whose graph node (if any) has degree 0, or no node at all.
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT d.id, d.title, d.layer, n.id
-        FROM documents d
-        LEFT JOIN graph_nodes n ON n.document_id = d.id
-        WHERE d.layer = 'wiki'
-          AND (
-            n.id IS NULL
-            OR NOT EXISTS (
-              SELECT 1 FROM graph_edges e
-              WHERE e.source_id = n.id OR e.target_id = n.id
-            )
-          )
-        ORDER BY d.title ASC
-        LIMIT 200
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut orphan_wiki = Vec::new();
-    while let Some(row) = rows.next()? {
-        let doc_id: String = row.get(0)?;
-        let title: String = row.get(1)?;
-        let layer: String = row.get(2)?;
-        let node_id: Option<String> = row.get(3)?;
-        orphan_wiki.push(OrphanNode {
-            id: node_id.unwrap_or_else(|| doc_id.clone()),
-            document_id: Some(doc_id),
-            kind: "wiki".into(),
-            label: title,
-            layer: Some(layer),
-        });
-        if orphan_wiki.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    Ok((orphan_nodes, orphan_wiki))
-}
-
-fn find_stubs(
-    store: &Store,
-    stub_age_days: u32,
-    now: DateTime<Utc>,
-) -> Result<(Vec<StubInfo>, Vec<StubInfo>)> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, label, CAST(created_at AS VARCHAR)
-        FROM graph_nodes
-        WHERE kind = 'stub' AND resolved = false
-        ORDER BY created_at ASC
-        LIMIT 200
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut unresolved = Vec::new();
-    let mut aging = Vec::new();
-    let age_cutoff = now - Duration::days(i64::from(stub_age_days));
-
-    while let Some(row) = rows.next()? {
-        let node_id: String = row.get(0)?;
-        let label: String = row.get(1)?;
-        let created_raw: Option<String> = row.get(2)?;
-        let created_at = created_raw.as_deref().and_then(parse_ts);
-        let age_days = created_at.map(|t| (now - t).num_days());
-        let info = StubInfo {
-            node_id,
-            label,
-            created_at,
-            age_days,
-        };
-        if created_at.map(|t| t <= age_cutoff).unwrap_or(false) {
-            aging.push(info.clone());
-        }
-        unresolved.push(info);
-        if unresolved.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    Ok((unresolved, aging))
-}
-
 fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiPage>> {
     // Reuse wiki-layer detection (graph related, metadata, citations, body markers).
     let items = crate::wiki::find_stale_wiki(store)?;
@@ -759,86 +448,14 @@ fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiPage>> {
     Ok(out)
 }
 
-fn find_archive_candidates(
-    store: &Store,
-    min_age_days: u32,
-    now: DateTime<Utc>,
-) -> Result<Vec<ArchiveCandidate>> {
-    let cutoff = now - Duration::days(i64::from(min_age_days));
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, title, COALESCE(layer, 'raw'), COALESCE(boost, 1.0), CAST(updated_at AS VARCHAR)
-        FROM documents
-        WHERE COALESCE(status, 'active') = 'active'
-          AND COALESCE(pinned, false) = false
-          AND COALESCE(boost, 1.0) < 1.0
-          AND layer NOT IN ('schema', 'index', 'log')
-        ORDER BY boost ASC, updated_at ASC
-        LIMIT 200
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let title: String = row.get(1)?;
-        let layer: String = row.get(2)?;
-        let boost: f64 = row.get(3)?;
-        let ts: String = row.get(4)?;
-        let Some(updated_at) = parse_ts(&ts) else {
-            continue;
-        };
-        if updated_at > cutoff && boost >= 0.5 {
-            // Only flag recent docs when boost is clearly suppressed.
-            continue;
-        }
-        let reason = if updated_at <= cutoff && boost < 1.0 {
-            format!(
-                "boost={boost:.2}, updated {}d ago",
-                (now - updated_at).num_days()
-            )
-        } else if boost < 0.5 {
-            format!("low boost={boost:.2}")
-        } else {
-            continue;
-        };
-        out.push(ArchiveCandidate {
-            document_id: id,
-            title,
-            layer,
-            boost,
-            updated_at,
-            reason,
-        });
-        if out.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    Ok(out)
-}
-
 fn file_size_bytes(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.len())
-}
-
-fn short_hash(h: &str) -> String {
-    if h.chars().count() <= 12 {
-        h.to_string()
-    } else {
-        let mut s: String = h.chars().take(12).collect();
-        s.push('…');
-        s
-    }
-}
-
-fn parse_ts(raw: &str) -> Option<DateTime<Utc>> {
-    parse_db_timestamp(raw)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};
     use crate::util::content_hash;
     use std::path::PathBuf;

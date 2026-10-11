@@ -199,34 +199,33 @@ async fn claim(State(st): State<HttpState>, Json(body): Json<ClaimBody>) -> Resp
             .unwrap_or(DEFAULT_LEASE_SECS)
             .clamp(1, MAX_LEASE_SECS);
         let now = Utc::now();
-        let conn = st.store.lock()?;
-        let mut candidates = super::payload_kv::list_payload_pairs_conn(
-            &conn,
-            super::payload_kv::PayloadTable::EvalLabelQueue,
-        )?
-        .into_iter()
-        .map(|(id, payload)| Ok::<_, AppError>((id, serde_json::from_str::<LabelQueueItem>(&payload)?)))
-        .collect::<Result<Vec<_>>>()?;
-        candidates.sort_by(|(_, a), (_, b)| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
-        let Some((id, mut item)) = candidates.into_iter().find(|(_, item)| {
-            item.status == LabelStatus::Open
-                || (item.status == LabelStatus::Claimed
-                    && item.lease_until.is_none_or(|until| until <= now))
-        }) else {
-            return Ok(json!({"ok": true, "item": Value::Null, "claimed": false}));
-        };
-        item.status = LabelStatus::Claimed;
-        item.lease_owner = Some(owner.to_string());
-        item.lease_until = Some(now + Duration::seconds(lease_secs));
-        item.revision = item.revision.saturating_add(1);
-        item.updated_at = now;
-        super::payload_kv::upsert_payload_conn(
-            &conn,
-            super::payload_kv::PayloadTable::EvalLabelQueue,
-            &id,
-            &item,
-        )?;
-        Ok(json!({"ok": true, "item": item, "claimed": true}))
+        super::payload_kv::with_session(&st.store, |kv| {
+            let mut candidates = kv.list_pairs(
+                super::payload_kv::PayloadTable::EvalLabelQueue,
+            )?
+            .into_iter()
+            .map(|(id, payload)| Ok::<_, AppError>((id, serde_json::from_str::<LabelQueueItem>(&payload)?)))
+            .collect::<Result<Vec<_>>>()?;
+            candidates.sort_by(|(_, a), (_, b)| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+            let Some((id, mut item)) = candidates.into_iter().find(|(_, item)| {
+                item.status == LabelStatus::Open
+                    || (item.status == LabelStatus::Claimed
+                        && item.lease_until.is_none_or(|until| until <= now))
+            }) else {
+                return Ok(json!({"ok": true, "item": Value::Null, "claimed": false}));
+            };
+            item.status = LabelStatus::Claimed;
+            item.lease_owner = Some(owner.to_string());
+            item.lease_until = Some(now + Duration::seconds(lease_secs));
+            item.revision = item.revision.saturating_add(1);
+            item.updated_at = now;
+            kv.upsert(
+                super::payload_kv::PayloadTable::EvalLabelQueue,
+                &id,
+                &item,
+            )?;
+            Ok(json!({"ok": true, "item": item, "claimed": true}))
+        })
     })
     .await;
     match result {
@@ -241,60 +240,59 @@ async fn update(
     Json(body): Json<UpdateBody>,
 ) -> Response {
     let result = super::run_blocking("update eval label", move || {
-        let conn = st.store.lock()?;
-        let payload = super::payload_kv::get_payload_raw_conn(
-            &conn,
-            super::payload_kv::PayloadTable::EvalLabelQueue,
-            &id,
-        )?;
-        let Some(payload) = payload else {
-            return Err(AppError::not_found(format!("label not found: {id}")));
-        };
-        let mut item: LabelQueueItem = serde_json::from_str(&payload)?;
-        if item.revision != body.if_match_revision {
-            return Err(AppError::conflict(format!(
-                "label revision mismatch: have {}, if_match {}",
-                item.revision, body.if_match_revision
-            )));
-        }
-        if let Some(status) = body.status {
-            item.status = status;
-        }
-        if body.label.is_some() {
-            item.label = body.label;
-        }
-        if body.note.is_some() {
-            item.note = trimmed_non_blank(body.note);
-        }
-        if body.feedback_id.is_some() {
-            item.feedback_id = trimmed_non_blank(body.feedback_id);
-        }
-        if body.eval_run_id.is_some() {
-            item.eval_run_id = trimmed_non_blank(body.eval_run_id);
-        }
-        if item.status == LabelStatus::Claimed {
-            if let Some(owner) = trimmed_non_blank(body.lease_owner) {
-                let lease_secs = body
-                    .lease_secs
-                    .unwrap_or(DEFAULT_LEASE_SECS)
-                    .clamp(1, MAX_LEASE_SECS);
-                item.lease_owner = Some(owner);
-                item.lease_until = Some(Utc::now() + Duration::seconds(lease_secs));
+        super::payload_kv::with_session(&st.store, |kv| {
+            let payload = kv.get_raw(
+                super::payload_kv::PayloadTable::EvalLabelQueue,
+                &id,
+            )?;
+            let Some(payload) = payload else {
+                return Err(AppError::not_found(format!("label not found: {id}")));
+            };
+            let mut item: LabelQueueItem = serde_json::from_str(&payload)?;
+            if item.revision != body.if_match_revision {
+                return Err(AppError::conflict(format!(
+                    "label revision mismatch: have {}, if_match {}",
+                    item.revision, body.if_match_revision
+                )));
             }
-        } else if matches!(item.status, LabelStatus::Resolved | LabelStatus::Discarded | LabelStatus::Open)
-        {
-            item.lease_owner = None;
-            item.lease_until = None;
-        }
-        item.revision = item.revision.saturating_add(1);
-        item.updated_at = Utc::now();
-        super::payload_kv::upsert_payload_conn(
-            &conn,
-            super::payload_kv::PayloadTable::EvalLabelQueue,
-            &id,
-            &item,
-        )?;
-        Ok(item)
+            if let Some(status) = body.status {
+                item.status = status;
+            }
+            if body.label.is_some() {
+                item.label = body.label;
+            }
+            if body.note.is_some() {
+                item.note = trimmed_non_blank(body.note);
+            }
+            if body.feedback_id.is_some() {
+                item.feedback_id = trimmed_non_blank(body.feedback_id);
+            }
+            if body.eval_run_id.is_some() {
+                item.eval_run_id = trimmed_non_blank(body.eval_run_id);
+            }
+            if item.status == LabelStatus::Claimed {
+                if let Some(owner) = trimmed_non_blank(body.lease_owner) {
+                    let lease_secs = body
+                        .lease_secs
+                        .unwrap_or(DEFAULT_LEASE_SECS)
+                        .clamp(1, MAX_LEASE_SECS);
+                    item.lease_owner = Some(owner);
+                    item.lease_until = Some(Utc::now() + Duration::seconds(lease_secs));
+                }
+            } else if matches!(item.status, LabelStatus::Resolved | LabelStatus::Discarded | LabelStatus::Open)
+            {
+                item.lease_owner = None;
+                item.lease_until = None;
+            }
+            item.revision = item.revision.saturating_add(1);
+            item.updated_at = Utc::now();
+            kv.upsert(
+                super::payload_kv::PayloadTable::EvalLabelQueue,
+                &id,
+                &item,
+            )?;
+            Ok(item)
+        })
     })
     .await;
     match result {

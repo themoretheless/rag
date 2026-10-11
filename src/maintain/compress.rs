@@ -225,10 +225,7 @@ pub fn maintain_compress(
     actions.push("checkpoint".into());
     actions.push("reindex_fts".into());
     let mut l0_report = if dry_run {
-        let status = {
-            let conn = store.lock()?;
-            db::fts_status(&conn)?
-        };
+        let status = store.fts_status()?;
         Some(CompressL0Report {
             checkpointed: false,
             fts_backend: status.as_ref().map(|s| s.backend.as_str().to_string()),
@@ -238,13 +235,9 @@ pub fn maintain_compress(
             dry_run: true,
         })
     } else {
-        {
-            let conn = store.lock()?;
-            conn.execute_batch("CHECKPOINT")?;
-        }
+        store.checkpoint()?;
         let fts = if level == 0 {
-            let conn = store.lock()?;
-            Some(db::reindex_with_stemmer(&conn, &config.fts_stemmer)?)
+            Some(store.reindex_fts(Some(&config.fts_stemmer))?)
         } else {
             // Levels 1 and 2 rebuild once after their merge phases.
             None
@@ -262,7 +255,7 @@ pub fn maintain_compress(
     // --- L1: exact hash merge ---
     if level >= 1 {
         actions.push("merge_exact_dup".into());
-        exact_dup_groups = find_exact_duplicate_groups(store)?;
+        exact_dup_groups = crate::db::analytics::find_exact_duplicates(store, true)?;
 
         for group in &exact_dup_groups {
             if group.document_ids.len() < 2 {
@@ -531,10 +524,7 @@ pub fn maintain_compress(
 
     // Final checkpoint after mutations so size stats are meaningful.
     if !dry_run && level >= 1 && (docs_removed > 0 || docs_tombstoned > 0) {
-        let checkpoint = store
-            .lock()
-            .and_then(|conn| conn.execute_batch("CHECKPOINT").map_err(Into::into));
-        if let Err(error) = checkpoint {
+        if let Err(error) = store.checkpoint() {
             errors.push(format!(
                 "CHECKPOINT_FINALIZATION_FAILED retryable=true durable_mutation_committed=true: {error}"
             ));
@@ -639,8 +629,7 @@ fn finalize_compress_fts(store: &Store, stemmer: &str) -> Result<db::FtsState> {
     #[cfg(test)]
     db::fts::test_fault::check("compress", stemmer)?;
 
-    let conn = store.lock()?;
-    db::reindex_with_stemmer(&conn, stemmer)
+    store.reindex_fts(Some(stemmer))
 }
 
 fn is_inactive(doc: &Document) -> bool {
@@ -676,61 +665,6 @@ fn load_docs_ordered(store: &Store, ids: &[String]) -> Result<Vec<Document>> {
         }
     }
     Ok(out)
-}
-
-fn find_exact_duplicate_groups(store: &Store) -> Result<Vec<DuplicateGroup>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT content_hash, COUNT(*)::BIGINT
-        FROM documents
-        WHERE content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-          AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')
-        GROUP BY content_hash
-        HAVING COUNT(*) > 1
-        ORDER BY COUNT(*) DESC
-        LIMIT 50
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut hashes: Vec<(String, i64)> = Vec::new();
-    while let Some(row) = rows.next()? {
-        hashes.push((row.get(0)?, row.get(1)?));
-    }
-    drop(rows);
-    drop(stmt);
-
-    let mut groups = Vec::new();
-    for (hash, _n) in hashes {
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, title FROM documents
-            WHERE content_hash = ?
-              AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')
-            ORDER BY created_at ASC
-            "#,
-        )?;
-        let mut rows = stmt.query(duckdb::params![hash.as_str()])?;
-        let mut ids = Vec::new();
-        let mut titles = Vec::new();
-        while let Some(row) = rows.next()? {
-            ids.push(row.get::<_, String>(0)?);
-            titles.push(row.get::<_, String>(1)?);
-        }
-        let count = ids.len();
-        if count > 1 {
-            groups.push(DuplicateGroup {
-                content_hash: hash,
-                document_ids: ids,
-                titles,
-                count,
-            });
-        }
-        if groups.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    Ok(groups)
 }
 
 fn find_near_duplicate_pairs(store: &Store, threshold: f64) -> Result<Vec<NearDuplicatePair>> {

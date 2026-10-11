@@ -168,28 +168,20 @@ impl JobRegistry {
     /// starts a fresh sync that skips already-committed unchanged files.
     pub fn restore_from_store(store: Arc<Store>) -> Result<Self, AppError> {
         let registry = Self::with_store(store.clone());
-        let snapshots = {
-            let conn = store.lock()?;
-            let pairs = crate::db::payload_kv::list_payload_pairs_conn(
-                &conn,
-                crate::db::payload_kv::PayloadTable::BackgroundJobs,
-            )?;
+        let snapshots = crate::db::payload_kv::with_session(&store, |kv| {
+            let table = crate::db::payload_kv::PayloadTable::BackgroundJobs;
+            let pairs = kv.list_pairs(table)?;
             let mut out = Vec::with_capacity(pairs.len());
             for (id, payload) in pairs {
                 let mut snapshot: JobSnapshot = serde_json::from_str(&payload)?;
                 if !snapshot.status.is_terminal() {
                     mark_interrupted(&mut snapshot);
-                    crate::db::payload_kv::upsert_payload_conn(
-                        &conn,
-                        crate::db::payload_kv::PayloadTable::BackgroundJobs,
-                        &id,
-                        &snapshot,
-                    )?;
+                    kv.upsert(table, &id, &snapshot)?;
                 }
                 out.push(snapshot);
             }
-            out
-        };
+            Ok(out)
+        })?;
         {
             let mut jobs = registry.jobs();
             for snapshot in snapshots {
@@ -224,9 +216,11 @@ impl JobRegistry {
         let Some(store) = &self.inner.store else {
             return Ok(());
         };
-        let conn = store.lock()?;
-        conn.execute("DELETE FROM background_jobs WHERE id=?", [id])?;
-        Ok(())
+        crate::db::payload_kv::delete_payload(
+            store,
+            crate::db::payload_kv::PayloadTable::BackgroundJobs,
+            id,
+        )
     }
 
     /// Requeue a terminal `source_sync` job that is marked `requeue_safe`.

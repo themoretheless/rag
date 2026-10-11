@@ -6,7 +6,8 @@
 
 pub mod extract;
 pub mod normalize;
-pub mod resolve;
+/// Graph persistence (node upsert, wikilink/tag resolution) lives in `db`.
+pub use crate::db::graph::resolve;
 
 pub use extract::{
     extract_links, extract_links_with, ExtractOptions, ExtractedLink, DEFAULT_MAX_LINKS_PER_DOC,

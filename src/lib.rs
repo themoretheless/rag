@@ -39,7 +39,8 @@ pub mod models;
 pub mod ops;
 pub mod retrieval;
 pub mod revisions;
-pub mod review;
+/// Wiki change proposals; persistence lives in [`db::review`].
+pub use db::review;
 pub mod search_pack;
 pub mod source_scan;
 pub mod source_sync;

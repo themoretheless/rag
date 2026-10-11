@@ -20,6 +20,7 @@ pub enum PayloadTable {
     EvalLabelQueue,
     SearchFeedback,
     BackgroundJobs,
+    KnowledgeViews,
 }
 
 impl PayloadTable {
@@ -31,6 +32,7 @@ impl PayloadTable {
             Self::EvalLabelQueue => "eval_label_queue",
             Self::SearchFeedback => "search_feedback",
             Self::BackgroundJobs => "background_jobs",
+            Self::KnowledgeViews => "knowledge_views",
         }
     }
 }
@@ -147,6 +149,70 @@ pub fn list_payload_page(
     let mut items = list_payload_values(store, table)?;
     sort_by_created_at_desc(&mut items);
     Ok((total, page_values(items, offset, limit)))
+}
+
+/// Total row count and one page of payloads ordered by `id`.
+pub fn page_payloads_by_id(
+    store: &Store,
+    table: PayloadTable,
+    offset: u32,
+    limit: usize,
+) -> Result<(i64, Vec<Value>)> {
+    let conn = store.lock()?;
+    let total: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {}", table.as_str()), [], |r| {
+        r.get(0)
+    })?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT payload FROM {} ORDER BY id LIMIT ? OFFSET ?",
+        table.as_str()
+    ))?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let items = stmt
+        .query_map(params![limit, i64::from(offset)], |r| r.get::<_, String>(0))?
+        .map(|raw| Ok(serde_json::from_str::<Value>(&raw?)?))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((total, items))
+}
+
+/// One locked connection for read-modify-write over payload tables.
+///
+/// Lease claims and CAS updates must read and write under the same Store lock;
+/// callers get this handle instead of a raw DuckDB connection.
+pub struct PayloadSession<'a> {
+    conn: &'a duckdb::Connection,
+}
+
+impl PayloadSession<'_> {
+    pub fn list_pairs(&self, table: PayloadTable) -> Result<Vec<(String, String)>> {
+        list_payload_pairs_conn(self.conn, table)
+    }
+
+    pub fn get_raw(&self, table: PayloadTable, id: &str) -> Result<Option<String>> {
+        get_payload_raw_conn(self.conn, table, id)
+    }
+
+    pub fn upsert(&self, table: PayloadTable, id: &str, payload: &impl Serialize) -> Result<()> {
+        upsert_payload_conn(self.conn, table, id, payload)
+    }
+
+    pub fn count(&self, table: PayloadTable) -> Result<i64> {
+        let sql = format!("SELECT COUNT(*) FROM {}", table.as_str());
+        Ok(self.conn.query_row(&sql, [], |r| r.get(0))?)
+    }
+}
+
+/// Run `work` with one [`PayloadSession`] under the Store lock.
+pub fn with_session<R>(store: &Store, work: impl FnOnce(&PayloadSession<'_>) -> Result<R>) -> Result<R> {
+    let conn = store.lock()?;
+    work(&PayloadSession { conn: &conn })
+}
+
+/// Delete one payload row by id (no-op when absent).
+pub fn delete_payload(store: &Store, table: PayloadTable, id: &str) -> Result<()> {
+    let conn = store.lock()?;
+    let sql = format!("DELETE FROM {} WHERE id=?", table.as_str());
+    conn.execute(&sql, [id])?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -20,11 +20,11 @@ use super::refresh::{
     REEMBED_ALL_INCOMPLETE_CODE,
 };
 use crate::config::Config;
-use crate::db::{self, Store};
+use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::graph::{rebuild_document_graph, REL_TAGGED};
-use crate::models::{DocumentMetaUpdate, GraphEdge, OpsLogEntry};
+use crate::graph::rebuild_document_graph;
+use crate::models::{DocumentMetaUpdate, OpsLogEntry};
 use crate::wiki::{self, FileAnswerCitation};
 
 /// Options for [`apply_maintenance_plan`].
@@ -120,8 +120,7 @@ pub async fn apply_maintenance_plan(
     let chunks_generation_before = if dry_run {
         None
     } else {
-        let conn = store.lock()?;
-        Some(db::chunks_generation(&conn)?)
+        Some(store.chunks_generation()?)
     };
 
     for (index, raw) in actions.into_iter().enumerate() {
@@ -196,10 +195,7 @@ pub async fn apply_maintenance_plan(
     }
 
     if let Some(chunks_generation_before) = chunks_generation_before {
-        let chunks_generation_after = {
-            let conn = store.lock()?;
-            db::chunks_generation(&conn)?
-        };
+        let chunks_generation_after = store.chunks_generation()?;
         if chunks_generation_after != chunks_generation_before {
             // A plan may combine reindex with later delete/re-embed/write
             // actions. Reconcile once at the plan boundary, independent of
@@ -283,7 +279,7 @@ pub async fn apply_maintenance_plan(
 
 async fn finalize_fts_after_plan(store: &Store, stemmer: &str) -> Result<()> {
     #[cfg(test)]
-    db::fts::test_fault::check("apply", stemmer)?;
+    crate::db::fts::test_fault::check("apply", stemmer)?;
 
     ensure_fts_nonblocking(store, stemmer, "apply_maintenance_plan final refresh").await
 }
@@ -921,36 +917,12 @@ fn apply_set_tags_inner(
         }
     };
 
-    // Replace + relink is one unit of work: a failure part-way leaves the
-    // previous tag edges intact instead of a half-cleared document.
-    let mut linked = Vec::new();
-    {
-        let mut conn = store.lock()?;
-        let tx = conn.transaction()?;
-        if replace {
-            tx.execute(
-                "DELETE FROM graph_edges WHERE source_id = ? AND rel_type = ?",
-                duckdb::params![doc_node.id.as_str(), REL_TAGGED],
-            )?;
-        }
-        for tag in tags {
-            let label = tag.trim().trim_start_matches('#');
-            let tag_id = crate::graph::resolve::upsert_tag_node(&tx, label)?;
-            if !edge_exists(&tx, &doc_node.id, &tag_id, REL_TAGGED)? {
-                let edge = GraphEdge {
-                    id: Uuid::new_v4().to_string(),
-                    source_id: doc_node.id.clone(),
-                    target_id: tag_id,
-                    rel_type: REL_TAGGED.into(),
-                    weight: 1.0,
-                    context: None,
-                };
-                db::graph::insert_graph_edges_locked(&tx, &[edge])?;
-            }
-            linked.push(tag.clone());
-        }
-        tx.commit()?;
-    }
+    let labels: Vec<String> = tags
+        .iter()
+        .map(|tag| tag.trim().trim_start_matches('#').to_string())
+        .collect();
+    store.set_document_tags(&doc_node.id, &labels, replace)?;
+    let linked = tags;
 
     Ok(StepResult {
         outcome: ok_outcome(
@@ -963,18 +935,6 @@ fn apply_set_tags_inner(
         ),
         docs_delta: 1,
     })
-}
-
-fn edge_exists(conn: &duckdb::Connection, source: &str, target: &str, rel: &str) -> Result<bool> {
-    let n: i64 = conn.query_row(
-        r#"
-        SELECT COUNT(*)::BIGINT FROM graph_edges
-        WHERE source_id = ? AND target_id = ? AND rel_type = ?
-        "#,
-        duckdb::params![source, target, rel],
-        |r| r.get(0),
-    )?;
-    Ok(n > 0)
 }
 
 fn apply_rebuild_index(
@@ -1676,24 +1636,7 @@ fn apply_drop_tombstones(
         .max(1)
         .min(config.maint_max_docs.max(1));
 
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, COALESCE(layer, 'raw') FROM documents
-        WHERE COALESCE(status, 'active') = 'tombstone'
-        ORDER BY updated_at ASC
-        LIMIT ?
-        "#,
-    )?;
-    let limit = i64::try_from(max_docs).unwrap_or(i64::MAX);
-    let mut rows = stmt.query(duckdb::params![limit])?;
-    let mut candidates: Vec<(String, String)> = Vec::new();
-    while let Some(row) = rows.next()? {
-        candidates.push((row.get(0)?, row.get(1)?));
-    }
-    drop(rows);
-    drop(stmt);
-    drop(conn);
+    let candidates = crate::db::analytics::tombstone_candidates(store, max_docs)?;
 
     if candidates.is_empty() {
         return Ok(StepResult {

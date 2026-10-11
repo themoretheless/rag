@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::db::store::{embedding_manifest_matches_config, embedding_migration_manifest};
-use crate::db::{self, Store};
+use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
@@ -267,11 +267,7 @@ pub struct MaintainRefreshReport {
 ///
 /// Uses `stemmer` when provided; otherwise the last meta stemmer / `"porter"`.
 pub fn reindex_fts(store: &Store, stemmer: Option<&str>) -> Result<ReindexFtsReport> {
-    let conn = store.lock()?;
-    let state = match stemmer {
-        Some(s) if !s.trim().is_empty() => db::reindex_with_stemmer(&conn, s)?,
-        _ => db::reindex(&conn)?,
-    };
+    let state = store.reindex_fts(stemmer)?;
     Ok(ReindexFtsReport {
         backend: state.backend.as_str().to_string(),
         stemmer: state.stemmer,
@@ -290,7 +286,7 @@ pub(crate) async fn reindex_fts_nonblocking(
     operation: &'static str,
 ) -> Result<ReindexFtsReport> {
     #[cfg(test)]
-    db::fts::test_fault::check("refresh", stemmer)?;
+    crate::db::fts::test_fault::check("refresh", stemmer)?;
 
     let store = store.clone();
     let stemmer = stemmer.to_string();
@@ -309,7 +305,7 @@ pub(crate) async fn ensure_fts_nonblocking(
     operation: &'static str,
 ) -> Result<()> {
     #[cfg(test)]
-    db::fts::test_fault::check("refresh", stemmer)?;
+    crate::db::fts::test_fault::check("refresh", stemmer)?;
 
     let store = store.clone();
     let stemmer = stemmer.to_string();
@@ -437,18 +433,7 @@ struct ReembedChunkInventory {
 /// than pruned: maintenance repair owns deletion policy, while re-embedding
 /// must fail closed instead of silently certifying vectors it never replaced.
 fn reembed_chunk_inventory(store: &Store) -> Result<ReembedChunkInventory> {
-    let conn = store.lock()?;
-    let (total, attached): (i64, i64) = conn.query_row(
-        r#"
-        SELECT
-          COUNT(*)::BIGINT,
-          COUNT(d.id)::BIGINT
-        FROM chunks c
-        LEFT JOIN documents d ON d.id = c.document_id
-        "#,
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let (total, attached) = crate::db::analytics::chunk_attachment_counts(store)?;
     let total = usize::try_from(total).map_err(|_| {
         AppError::db(format!(
             "invalid chunk count during reembed preflight: {total}"
@@ -747,10 +732,7 @@ pub async fn maintain_refresh(
 
     if flags.reindex_fts {
         if dry_run {
-            let status = {
-                let conn = store.lock()?;
-                db::fts_status(&conn)?
-            };
+            let status = store.fts_status()?;
             report.reindex_fts = Some(ReindexFtsReport {
                 backend: status
                     .as_ref()
@@ -1531,7 +1513,7 @@ mod tests {
             "raw",
         );
         store.ensure_fts(&config.fts_stemmer).unwrap();
-        config.fts_stemmer = db::fts::test_fault::fail("refresh");
+        config.fts_stemmer = crate::db::fts::test_fault::fail("refresh");
 
         let report = maintain_refresh(
             &store,

@@ -269,13 +269,22 @@ impl Store {
         &self.path
     }
 
-    /// Shared connection handle for sibling modules that prefer raw access.
-    #[allow(dead_code)]
-    pub(crate) fn conn(&self) -> &Arc<Mutex<Connection>> {
-        &self.conn
+    /// The raw DuckDB connection, for persistence code only.
+    ///
+    /// Production code outside `db` goes through Store methods and the `db::*`
+    /// repositories; the wider visibility exists only so tests can seed and
+    /// inspect fixtures directly.
+    #[cfg(not(test))]
+    pub(in crate::db) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+        self.lock_connection()
     }
 
+    #[cfg(test)]
     pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+        self.lock_connection()
+    }
+
+    fn lock_connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()
             .map_err(|e| AppError::db(format!("database lock poisoned: {e}")))
@@ -515,7 +524,7 @@ impl Store {
             tx.commit()?;
             return Ok((None, sequence));
         }
-        crate::review::accept_locked(&tx, doc, audit_entry)?;
+        super::review::accept_locked(&tx, doc, audit_entry)?;
         let result = write_document_locked(
             &tx,
             doc,
@@ -2123,6 +2132,21 @@ impl Store {
     pub fn fts_status(&self) -> Result<Option<super::fts::FtsState>> {
         let conn = self.lock()?;
         super::fts::fts_status(&conn)
+    }
+
+    /// Rebuild the lexical index now; `None`/blank keeps the recorded stemmer.
+    pub fn reindex_fts(&self, stemmer: Option<&str>) -> Result<super::fts::FtsState> {
+        let conn = self.lock()?;
+        match stemmer.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(stemmer) => super::fts::reindex_with_stemmer(&conn, stemmer),
+            None => super::fts::reindex(&conn),
+        }
+    }
+
+    /// Generation counter bumped by every chunk text/row mutation.
+    pub fn chunks_generation(&self) -> Result<u64> {
+        let conn = self.lock()?;
+        super::fts::chunks_generation(&conn)
     }
 
     /// Ensure lexical search is ready (DuckDB BM25 or term-frequency fallback).

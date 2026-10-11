@@ -15,7 +15,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use duckdb::{params, OptionalExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -62,15 +61,12 @@ struct CompareBody {
 }
 async fn list(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
     let result = super::run_blocking("list feedback", move || {
-        let conn = st.store.lock()?;
-        let total: i64 =
-            conn.query_row("SELECT COUNT(*) FROM search_feedback", [], |r| r.get(0))?;
-        let mut stmt =
-            conn.prepare("SELECT payload FROM search_feedback ORDER BY id LIMIT 50 OFFSET ?")?;
-        let items = stmt
-            .query_map([q.offset as i64], |r| r.get::<_, String>(0))?
-            .map(|r| Ok(serde_json::from_str::<Value>(&r?)?))
-            .collect::<Result<Vec<_>>>()?;
+        let (total, items) = super::payload_kv::page_payloads_by_id(
+            &st.store,
+            super::payload_kv::PayloadTable::SearchFeedback,
+            q.offset,
+            50,
+        )?;
         Ok(json!({"items":items,"total":total,"offset":q.offset}))
     })
     .await;
@@ -117,31 +113,25 @@ fn capture(store: &Store, body: Capture) -> Result<Feedback> {
         no_answer: body.no_answer,
         saved_at: chrono::Utc::now().to_rfc3339(),
     };
-    let conn = store.lock()?;
-    let prior: Option<String> = conn
-        .query_row(
-            "SELECT payload FROM search_feedback WHERE id=?",
-            [&item.id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if let Some(prior) = prior {
-        let prior: Feedback = serde_json::from_str(&prior)?;
-        if prior.search != item.search
-            || prior.no_answer != item.no_answer
-            || serde_json::to_value(&prior.expected)? != serde_json::to_value(&item.expected)?
-        {
-            return Err(AppError::conflict(
-                "capture id already belongs to a different evaluation",
-            ));
+    // Lookup and insert share one lock so two captures with the same id
+    // cannot both pass the "no prior" check.
+    super::payload_kv::with_session(store, |kv| {
+        let table = super::payload_kv::PayloadTable::SearchFeedback;
+        if let Some(prior) = kv.get_raw(table, &item.id)? {
+            let prior: Feedback = serde_json::from_str(&prior)?;
+            if prior.search != item.search
+                || prior.no_answer != item.no_answer
+                || serde_json::to_value(&prior.expected)? != serde_json::to_value(&item.expected)?
+            {
+                return Err(AppError::conflict(
+                    "capture id already belongs to a different evaluation",
+                ));
+            }
+            return Ok(prior);
         }
-        return Ok(prior);
-    }
-    conn.execute(
-        "INSERT INTO search_feedback VALUES (?,?)",
-        params![item.id, serde_json::to_string(&item)?],
-    )?;
-    Ok(item)
+        kv.upsert(table, &item.id, &item)?;
+        Ok(item)
+    })
 }
 async fn create(State(st): State<HttpState>, Json(body): Json<Capture>) -> Response {
     match super::run_blocking("save labelled question", move || capture(&st.store, body)).await {
@@ -241,15 +231,13 @@ async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Respon
     }
 }
 fn load_feedback_questions(store: &Store, ids: Option<&[String]>) -> Result<Vec<Feedback>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare("SELECT id, payload FROM search_feedback")?;
-    let items = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-        .map(|r| {
-            let (_id, payload) = r?;
-            Ok(serde_json::from_str::<Feedback>(&payload)?)
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let items = super::payload_kv::list_payload_pairs(
+        store,
+        super::payload_kv::PayloadTable::SearchFeedback,
+    )?
+    .into_iter()
+    .map(|(_id, payload)| Ok(serde_json::from_str::<Feedback>(&payload)?))
+    .collect::<Result<Vec<_>>>()?;
     Ok(match ids {
         Some(filter) if !filter.is_empty() => items
             .into_iter()
@@ -336,17 +324,13 @@ async fn run_one(
     answer_text: Option<String>,
     use_llm: bool,
 ) -> Result<Value> {
-    let item: Feedback = {
-        let conn = st.store.lock()?;
-        let payload: Option<String> = conn
-            .query_row(
-                "SELECT payload FROM search_feedback WHERE id=?",
-                [&id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        serde_json::from_str(&payload.ok_or_else(|| AppError::not_found("question not found"))?)?
-    };
+    let payload = super::payload_kv::get_payload_raw(
+        &st.store,
+        super::payload_kv::PayloadTable::SearchFeedback,
+        &id,
+    )?;
+    let item: Feedback =
+        serde_json::from_str(&payload.ok_or_else(|| AppError::not_found("question not found"))?)?;
     if stale(&st.store, &item)? {
         let result = json!({
             "id": id,

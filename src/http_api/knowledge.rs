@@ -13,7 +13,6 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use duckdb::{params, params_from_iter, OptionalExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 pub(super) fn routes() -> Router<HttpState> {
@@ -76,48 +75,34 @@ impl Filter {
 }
 fn query(store: &Store, f: Filter) -> Result<Value> {
     f.validate()?;
-    let mut clauses = vec![
-        "layer = 'wiki'".to_string(),
-        "COALESCE(status,'active') NOT IN ('archived','tombstone')".into(),
-    ];
-    let mut values = Vec::new();
-    if !f.q.is_empty() {
-        clauses.push("contains(lower(title || ' ' || uri), lower(?))".into());
-        values.push(f.q);
-    }
-    if !f.wing.is_empty() {
-        clauses.push("wing = ?".into());
-        values.push(f.wing);
-    }
-    for (name, value) in [
-        ("document_type", f.document_type),
-        ("review_status", f.review_status),
-        ("owner", f.owner),
-    ] {
-        if !value.is_empty() {
-            clauses.push(format!("json_extract_string(TRY_CAST(metadata_json AS JSON), '$.knowledge_properties.{name}') = ?"));
-            values.push(value);
-        }
-    }
-    if !f.due_before.is_empty() {
-        clauses.push("TRY_CAST(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.knowledge_properties.review_due') AS DATE) <= CAST(? AS DATE)".into());
-        values.push(f.due_before);
-    }
-    let condition = clauses.join(" AND ");
-    let conn = store.lock()?;
-    let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM documents WHERE {condition}"),
-        params_from_iter(values.iter()),
-        |r| r.get(0),
+    let offset = f.offset;
+    let (total, rows) = crate::db::knowledge::list_knowledge_pages(
+        store,
+        &crate::db::knowledge::KnowledgePageQuery {
+            q: f.q,
+            wing: f.wing,
+            document_type: f.document_type,
+            review_status: f.review_status,
+            owner: f.owner,
+            due_before: f.due_before,
+            offset,
+        },
     )?;
-    let sql=format!("SELECT id,uri,title,wing,revision,metadata_json FROM documents WHERE {condition} ORDER BY title,id LIMIT 50 OFFSET {}",f.offset);
-    let mut stmt = conn.prepare(&sql)?;
-    let items=stmt.query_map(params_from_iter(values.iter()),|r| {
-        let metadata:String=r.get(5)?;
-        let metadata:Value=serde_json::from_str(&metadata).unwrap_or(json!({}));
-        Ok(json!({"id":r.get::<_,String>(0)?,"uri":r.get::<_,String>(1)?,"title":r.get::<_,String>(2)?,"wing":r.get::<_,Option<String>>(3)?,"revision":r.get::<_,i64>(4)?,"properties":metadata.get("knowledge_properties").cloned().unwrap_or(json!({}))}))
-    })?.collect::<std::result::Result<Vec<_>,_>>()?;
-    Ok(json!({"items":items,"total":total,"offset":f.offset}))
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            let metadata: Value = serde_json::from_str(&row.metadata_json).unwrap_or(json!({}));
+            json!({
+                "id": row.id,
+                "uri": row.uri,
+                "title": row.title,
+                "wing": row.wing,
+                "revision": row.revision,
+                "properties": metadata.get("knowledge_properties").cloned().unwrap_or(json!({})),
+            })
+        })
+        .collect();
+    Ok(json!({"items":items,"total":total,"offset":offset}))
 }
 async fn list(State(st): State<HttpState>, Query(f): Query<Filter>) -> Response {
     match super::run_blocking("knowledge view", move || query(&st.store, f)).await {
@@ -183,12 +168,12 @@ struct SaveView {
 }
 async fn views(State(st): State<HttpState>) -> Response {
     let result = super::run_blocking("saved views", move || {
-        let conn = st.store.lock()?;
-        let mut stmt = conn.prepare("SELECT payload FROM knowledge_views ORDER BY id LIMIT 500")?;
-        let items = stmt
-            .query_map([], |r| r.get::<_, String>(0))?
-            .map(|r| Ok(serde_json::from_str::<View>(&r?)?))
-            .collect::<Result<Vec<_>>>()?;
+        let (_, items) = crate::db::payload_kv::page_payloads_by_id(
+            &st.store,
+            crate::db::payload_kv::PayloadTable::KnowledgeViews,
+            0,
+            MAX_SAVED_VIEWS,
+        )?;
         Ok(json!({"items":items}))
     })
     .await;
@@ -197,43 +182,41 @@ async fn views(State(st): State<HttpState>) -> Response {
         Err(e) => api_err(e),
     }
 }
+const MAX_SAVED_VIEWS: usize = 500;
+
 fn persist_view(store: &Store, mut body: SaveView) -> Result<View> {
     body.filters.validate()?;
     body.filters.offset = 0;
     if body.name.trim().is_empty() || body.name.len() > 200 {
         return Err(AppError::invalid("view name must contain 1..200 bytes"));
     }
-    let conn = store.lock()?;
-    let (id, revision) = if let Some(id) = body.id {
-        let prior: Option<String> = conn
-            .query_row(
-                "SELECT payload FROM knowledge_views WHERE id=?",
-                [&id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let prior: View =
-            serde_json::from_str(&prior.ok_or_else(|| AppError::not_found("view not found"))?)?;
-        if Some(prior.revision) != body.revision {
-            return Err(AppError::conflict("view changed"));
-        }
-        (id, prior.revision + 1)
-    } else {
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM knowledge_views", [], |r| r.get(0))?;
-        if count >= 500 {
-            return Err(AppError::invalid("saved view limit reached"));
-        }
-        (uuid::Uuid::new_v4().to_string(), 1)
-    };
-    let view = View {
-        id,
-        name: body.name.trim().into(),
-        revision,
-        filters: body.filters,
-    };
-    conn.execute("INSERT INTO knowledge_views VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",params![view.id,serde_json::to_string(&view)?])?;
-    Ok(view)
+    let table = crate::db::payload_kv::PayloadTable::KnowledgeViews;
+    // Revision check, limit check and write share one lock (CAS on saved views).
+    crate::db::payload_kv::with_session(store, |kv| {
+        let (id, revision) = if let Some(id) = body.id {
+            let prior = kv
+                .get_raw(table, &id)?
+                .ok_or_else(|| AppError::not_found("view not found"))?;
+            let prior: View = serde_json::from_str(&prior)?;
+            if Some(prior.revision) != body.revision {
+                return Err(AppError::conflict("view changed"));
+            }
+            (id, prior.revision + 1)
+        } else {
+            if kv.count(table)? >= MAX_SAVED_VIEWS as i64 {
+                return Err(AppError::invalid("saved view limit reached"));
+            }
+            (uuid::Uuid::new_v4().to_string(), 1)
+        };
+        let view = View {
+            id,
+            name: body.name.trim().into(),
+            revision,
+            filters: body.filters,
+        };
+        kv.upsert(table, &view.id, &view)?;
+        Ok(view)
+    })
 }
 async fn save_view(State(st): State<HttpState>, Json(body): Json<SaveView>) -> Response {
     match super::run_blocking("save knowledge view", move || persist_view(&st.store, body)).await {

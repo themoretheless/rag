@@ -28,6 +28,43 @@ impl Store {
     }
 
     /// Insert edge rows (empty slice is a no-op).
+    /// Link a document node to the canonical tag hubs for `labels` in one
+    /// transaction; `replace` first drops its existing `tagged` edges. A
+    /// failure part-way leaves the previous tag edges intact.
+    pub fn set_document_tags(&self, node_id: &str, labels: &[String], replace: bool) -> Result<()> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        if replace {
+            tx.execute(
+                "DELETE FROM graph_edges WHERE source_id = ? AND rel_type = ?",
+                params![node_id, crate::graph::REL_TAGGED],
+            )?;
+        }
+        for label in labels {
+            let tag_id = resolve::upsert_tag_node(&tx, label)?;
+            let exists: i64 = tx.query_row(
+                "SELECT COUNT(*)::BIGINT FROM graph_edges WHERE source_id = ? AND target_id = ? AND rel_type = ?",
+                params![node_id, tag_id.as_str(), crate::graph::REL_TAGGED],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                insert_graph_edges_locked(
+                    &tx,
+                    &[GraphEdge {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        source_id: node_id.to_string(),
+                        target_id: tag_id,
+                        rel_type: crate::graph::REL_TAGGED.into(),
+                        weight: 1.0,
+                        context: None,
+                    }],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn insert_graph_edges(&self, edges: &[GraphEdge]) -> Result<()> {
         let conn = self.lock()?;
         insert_graph_edges_locked(&conn, edges)
@@ -1983,6 +2020,8 @@ fn load_node_locked(conn: &duckdb::Connection, id: &str) -> Result<Option<GraphN
         None => Ok(None),
     }
 }
+
+pub mod resolve;
 
 #[cfg(test)]
 mod tests;

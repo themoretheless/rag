@@ -1,4 +1,5 @@
 use super::*;
+use crate::db;
 use crate::llm::ChatClient;
 use crate::embeddings::MockEmbedder;
 use crate::models::SearchMode;

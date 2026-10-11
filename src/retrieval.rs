@@ -1,6 +1,5 @@
 //! Transport-independent retrieval use cases shared by MCP and HTTP adapters.
 
-use duckdb::params;
 use serde::Serialize;
 
 use crate::config::Config;
@@ -352,22 +351,8 @@ pub struct DocumentWithChunks {
     pub chunks_truncated: Option<bool>,
 }
 
-/// Public document-read chunk projection. Embedding vectors are deliberately
-/// excluded from transport responses.
-#[derive(Debug, Serialize)]
-pub struct ChunkText {
-    pub id: String,
-    pub chunk_index: i32,
-    pub content: String,
-    pub char_start: i32,
-    pub char_end: i32,
-}
-
-struct ChunkTextPage {
-    items: Vec<ChunkText>,
-    total: u64,
-    content_bytes: usize,
-}
+pub use crate::db::chunk_text::ChunkText;
+use crate::db::chunk_text::{chunk_text_page, ChunkTextPage};
 
 #[derive(Debug, Serialize)]
 pub struct MultiGetResult {
@@ -472,71 +457,25 @@ fn with_chunk_page(document: Document, page: Option<ChunkTextPage>) -> DocumentW
     }
 }
 
-/// Read a bounded text-only page under one connection lock. The SQL byte
-/// preflight runs before any chunk content is materialized and excludes stored
-/// embedding vectors from both memory and the response model.
+/// Read a bounded text-only page of one document's chunks.
 fn list_chunk_text_page(
     store: &Store,
     document_id: &str,
     limit: usize,
     max_content_bytes: usize,
 ) -> Result<ChunkTextPage, AppError> {
-    let conn = store.lock()?;
-    let total: i64 = conn.query_row(
-        "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
-        [document_id],
-        |row| row.get(0),
-    )?;
-    let limit = limit.clamp(1, MAX_INCLUDED_CHUNKS);
-    let content_bytes: i64 = conn.query_row(
-        r#"
-        SELECT COALESCE(SUM(octet_length(encode(content))), 0)::BIGINT
-        FROM (
-            SELECT content
-            FROM chunks
-            WHERE document_id = ?
-            ORDER BY chunk_index, id
-            LIMIT ?
-        ) selected
-        "#,
-        params![document_id, i64::try_from(limit).unwrap_or(i64::MAX)],
-        |row| row.get(0),
-    )?;
-    let content_bytes = usize::try_from(content_bytes.max(0)).unwrap_or(usize::MAX);
-    if content_bytes > max_content_bytes {
-        return Err(AppError::invalid(format!(
-            "included chunk text needs {content_bytes} bytes, exceeding the {max_content_bytes}-byte response budget; lower chunk_limit or set include_chunks=false"
-        )));
-    }
-
-    let mut statement = conn.prepare(
-        r#"
-        SELECT id, chunk_index, content, char_start, char_end
-        FROM chunks
-        WHERE document_id = ?
-        ORDER BY chunk_index, id
-        LIMIT ?
-        "#,
-    )?;
-    let mut rows = statement.query(params![
+    chunk_text_page(
+        store,
         document_id,
-        i64::try_from(limit).unwrap_or(i64::MAX)
-    ])?;
-    let mut items = Vec::with_capacity(limit.min(total.max(0) as usize));
-    while let Some(row) = rows.next()? {
-        items.push(ChunkText {
-            id: row.get(0)?,
-            chunk_index: row.get(1)?,
-            content: row.get(2)?,
-            char_start: row.get(3)?,
-            char_end: row.get(4)?,
-        });
-    }
-    Ok(ChunkTextPage {
-        items,
-        total: total.max(0) as u64,
-        content_bytes,
-    })
+        None,
+        limit.clamp(1, MAX_INCLUDED_CHUNKS),
+        max_content_bytes,
+        |content_bytes| {
+            AppError::invalid(format!(
+                "included chunk text needs {content_bytes} bytes, exceeding the {max_content_bytes}-byte response budget; lower chunk_limit or set include_chunks=false"
+            ))
+        },
+    )
 }
 
 pub fn expand_chunks(
@@ -552,58 +491,19 @@ pub fn expand_chunks(
         .unwrap_or(MAX_NEIGHBOR_RADIUS as usize)
         .saturating_mul(2)
         .saturating_add(1);
-    let conn = store.lock()?;
-    let content_bytes: i64 = conn.query_row(
-        r#"
-        SELECT COALESCE(SUM(octet_length(encode(content))), 0)::BIGINT
-        FROM (
-            SELECT content
-            FROM chunks
-            WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
-            ORDER BY chunk_index, id
-            LIMIT ?
-        ) selected
-        "#,
-        params![
-            document_id.trim(),
-            start,
-            end,
-            i64::try_from(limit).unwrap_or(i64::MAX)
-        ],
-        |row| row.get(0),
-    )?;
-    if usize::try_from(content_bytes.max(0)).unwrap_or(usize::MAX)
-        > MAX_INCLUDED_CHUNK_CONTENT_BYTES
-    {
-        return Err(AppError::invalid(format!(
-            "expanded chunk text exceeds the {MAX_INCLUDED_CHUNK_CONTENT_BYTES}-byte response budget; lower radius"
-        )));
-    }
-    let mut statement = conn.prepare(
-        r#"
-        SELECT id, chunk_index, content, char_start, char_end
-        FROM chunks
-        WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
-        ORDER BY chunk_index, id
-        LIMIT ?
-        "#,
-    )?;
-    let mut rows = statement.query(params![
+    let chunks = chunk_text_page(
+        store,
         document_id.trim(),
-        start,
-        end,
-        i64::try_from(limit).unwrap_or(i64::MAX)
-    ])?;
-    let mut chunks = Vec::with_capacity(limit);
-    while let Some(row) = rows.next()? {
-        chunks.push(ChunkText {
-            id: row.get(0)?,
-            chunk_index: row.get(1)?,
-            content: row.get(2)?,
-            char_start: row.get(3)?,
-            char_end: row.get(4)?,
-        });
-    }
+        Some((start, end)),
+        limit,
+        MAX_INCLUDED_CHUNK_CONTENT_BYTES,
+        |_| {
+            AppError::invalid(format!(
+                "expanded chunk text exceeds the {MAX_INCLUDED_CHUNK_CONTENT_BYTES}-byte response budget; lower radius"
+            ))
+        },
+    )?
+    .items;
     if chunks.is_empty() {
         return Err(AppError::not_found(format!(
             "no chunks around document_id={} chunk_index={chunk_index}",
