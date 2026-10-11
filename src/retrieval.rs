@@ -5,14 +5,15 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::db::search::{
-    acquire_corpus_search_guard, search_with_corpus_guard, ContextExpansion, DiversityMode,
-    SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
+    acquire_corpus_search_guard, attach_context, search_with_corpus_guard, ContextExpansion,
+    DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
 };
 use crate::db::Store;
 use crate::embeddings::{l2_normalize, EmbeddingProvider};
 use crate::error::AppError;
 use crate::models::{Document, SearchHit, SearchMode};
-use crate::util::trimmed_non_blank;
+use crate::search_pack::{pack_hits, PackedContext};
+use crate::util::{non_blank, trimmed_non_blank};
 
 pub const MAX_MULTI_GET_DOCUMENTS: usize = 100;
 pub const MAX_NEIGHBOR_RADIUS: u32 = 20;
@@ -48,6 +49,68 @@ pub struct SearchCommand {
     pub fts_stemmer: String,
     /// RRF constant for hybrid fusion; `None` keeps [`crate::db::search::DEFAULT_RRF_K`].
     pub rrf_k: Option<f32>,
+}
+
+/// Transport-neutral search input: what a caller sent, before defaults.
+///
+/// [`SearchRequest::into_command`] is the single place that drops blank
+/// strings and applies the configured defaults, so MCP and HTTP resolve the
+/// same request to the same [`SearchCommand`].
+#[derive(Debug, Clone, Default)]
+pub struct SearchRequest {
+    pub query: String,
+    pub mode: Option<String>,
+    pub top_k: Option<usize>,
+    pub document_id: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub layer: Option<String>,
+    pub source_file: Option<String>,
+    pub include_archived: bool,
+    pub min_score: Option<f32>,
+    pub diversity: Option<String>,
+    pub group_by: Option<String>,
+    pub recency_half_life_days: Option<f64>,
+    pub max_context_tokens: Option<usize>,
+    pub max_chunks_per_document: Option<usize>,
+    pub context_expansion: Option<String>,
+    pub neighbor_chunks: Option<usize>,
+    pub timeout_ms: Option<u64>,
+    pub rrf_k: Option<f32>,
+}
+
+/// Search deadline when the caller does not set one.
+pub const DEFAULT_SEARCH_TIMEOUT_MS: u64 = 5_000;
+
+impl SearchRequest {
+    pub fn into_command(self, config: &Config) -> SearchCommand {
+        SearchCommand {
+            query: self.query,
+            mode: non_blank(self.mode),
+            default_mode: config.default_search_mode,
+            top_k: self.top_k,
+            default_top_k: config.default_top_k,
+            document_id: non_blank(self.document_id),
+            wing: non_blank(self.wing),
+            room: non_blank(self.room),
+            layer: non_blank(self.layer),
+            source_file: non_blank(self.source_file),
+            include_archived: self.include_archived,
+            min_score: self.min_score,
+            diversity: non_blank(self.diversity),
+            group_by: non_blank(self.group_by),
+            recency_half_life_days: self.recency_half_life_days,
+            max_context_tokens: self.max_context_tokens.or(Some(config.max_context_tokens)),
+            max_chunks_per_document: self
+                .max_chunks_per_document
+                .or(Some(config.max_chunks_per_doc)),
+            context_expansion: non_blank(self.context_expansion),
+            neighbor_chunks: self.neighbor_chunks,
+            timeout_ms: self.timeout_ms.or(Some(DEFAULT_SEARCH_TIMEOUT_MS)),
+            fts_stemmer: config.fts_stemmer.clone(),
+            rrf_k: self.rrf_k,
+        }
+    }
 }
 
 pub async fn execute_search(
@@ -474,6 +537,52 @@ pub fn expand_chunks(
     Ok(chunks)
 }
 
+/// `pack_context` use case shared by MCP and HTTP.
+///
+/// Owns the defaults (one neighbour chunk, `RAG_MAX_CONTEXT_TOKENS`) and the
+/// blank-expansion rule so both transports pack identically.
+#[derive(Debug, Clone, Default)]
+pub struct PackContextCommand {
+    pub hits: Vec<SearchHit>,
+    pub max_tokens: Option<usize>,
+    pub context_expansion: Option<String>,
+    pub neighbor_chunks: Option<usize>,
+}
+
+/// Packed block plus the expanded hits it was cut from (trace provenance).
+pub struct PackContextOutcome {
+    pub expanded_hits: Vec<SearchHit>,
+    pub packed: PackedContext,
+}
+
+/// Expand hits with neighbouring/parent context and pack them under budget.
+/// Blocking: reads chunks from the store.
+pub fn pack_context(
+    store: &Store,
+    config: &Config,
+    command: PackContextCommand,
+) -> Result<PackContextOutcome, AppError> {
+    let expansion = non_blank(command.context_expansion)
+        .as_deref()
+        .map(ContextExpansion::parse)
+        .transpose()?;
+    let mut hits = command.hits;
+    attach_context(
+        store,
+        &mut hits,
+        expansion,
+        command.neighbor_chunks.unwrap_or(1),
+    )?;
+    let packed = pack_hits(
+        &hits,
+        command.max_tokens.unwrap_or(config.max_context_tokens),
+    );
+    Ok(PackContextOutcome {
+        expanded_hits: hits,
+        packed,
+    })
+}
+
 pub fn find_similar(
     store: &Store,
     config: &Config,
@@ -529,6 +638,27 @@ pub fn find_similar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_request_drops_blank_scope_and_applies_config_defaults() {
+        let config = Config::for_tests();
+        let command = SearchRequest {
+            query: "q".into(),
+            mode: Some("  ".into()),
+            wing: Some("".into()),
+            room: Some("src".into()),
+            diversity: Some(" ".into()),
+            ..SearchRequest::default()
+        }
+        .into_command(&config);
+        assert_eq!(command.mode, None);
+        assert_eq!(command.wing, None);
+        assert_eq!(command.room.as_deref(), Some("src"));
+        assert_eq!(command.diversity, None);
+        assert_eq!(command.timeout_ms, Some(DEFAULT_SEARCH_TIMEOUT_MS));
+        assert_eq!(command.max_context_tokens, Some(config.max_context_tokens));
+        assert_eq!(command.max_chunks_per_document, Some(config.max_chunks_per_doc));
+    }
     use crate::embeddings::MockEmbedder;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};

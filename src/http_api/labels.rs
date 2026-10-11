@@ -349,6 +349,7 @@ mod tests {
             embedder: Arc::new(MockEmbedder::new(16)),
             config,
             jobs: JobRegistry::default(),
+            llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),
         }
     }

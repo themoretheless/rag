@@ -9,16 +9,14 @@
 //! (tombstones instead). Every run appends `ops_log`. See
 //! `docs/LOCAL_LLM_MAINTENANCE.md` §3.4.
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::{self, Store};
 use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
 use crate::maintain::analyze::{DuplicateGroup, NearDuplicatePair};
-use crate::models::{Document, OpsLogEntry};
+use crate::models::Document;
 
 /// Highest compression level implemented (L0–L2).
 pub const COMPRESS_LEVEL_MAX: u8 = 2;
@@ -185,10 +183,6 @@ pub struct MaintainCompressReport {
     pub notes: Vec<String>,
 }
 
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_finalize_fts__";
-#[cfg(test)]
-const TEST_FINALIZE_FTS_PANIC_STEMMER: &str = "__test_panic_finalize_fts__";
 
 /// Run compression according to `opts.level`.
 ///
@@ -606,11 +600,6 @@ pub fn maintain_compress(
     };
 
     if opts.log_ops {
-        let op = if dry_run {
-            "maintain_compress_dry_run"
-        } else {
-            "maintain_compress"
-        };
         let message = format!(
             "maintain_compress level={} dry_run={} removed={} tombstoned={} near_pairs={} errors={}",
             level,
@@ -620,19 +609,17 @@ pub fn maintain_compress(
             report.near_duplicates.len(),
             report.errors.len()
         );
-        let payload = serde_json::to_string(&report).unwrap_or_else(|_| "{}".into());
-        let written = store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: op.into(),
-            prefix: Some("MAINT".into()),
+        // Best-effort audit: the mutation already committed, so a failed
+        // summary write is reported instead of failing the run.
+        let written = super::audit::record_run(
+            store,
+            "maintain_compress",
+            dry_run,
+            "corpus",
             message,
-            entity_id: None,
-            entity_kind: Some("corpus".into()),
-            payload_json: payload,
-            agent_name: None,
-        });
+            None,
+            &report,
+        );
         match written {
             Ok(written) => {
                 report.ops_log_id = Some(written.id);
@@ -650,13 +637,7 @@ pub fn maintain_compress(
 
 fn finalize_compress_fts(store: &Store, stemmer: &str) -> Result<db::FtsState> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected final FTS reindex failure"));
-    }
-    #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_PANIC_STEMMER {
-        panic!("injected final FTS reindex panic");
-    }
+    db::fts::test_fault::check("compress", stemmer)?;
 
     let conn = store.lock()?;
     db::reindex_with_stemmer(&conn, stemmer)
@@ -791,74 +772,27 @@ fn find_near_duplicate_pairs(store: &Store, threshold: f64) -> Result<Vec<NearDu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Chunk, SearchMode};
-    use crate::util::content_hash;
+    use crate::testkit::SeedDoc;
+    use crate::models::SearchMode;
+    
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf) -> Config {
         Config {
             db_path,
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".into(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".into(),
             embedding_dims: 8,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            default_top_k: 5,
-            ingest_roots: vec![],
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".into(),
-            default_search_mode: SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".into(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".into(),
-            llm_api_key: "ollama".into(),
             llm_enabled: false,
-            llm_timeout_secs: 120,
-            llm_max_tokens: 4096,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
+            ..Config::for_tests()
         }
     }
 
     fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str, emb: Vec<f32>) {
-        let now = Utc::now();
-        store
-            .upsert_document(&Document {
-                id: id.into(),
-                uri: format!("text://{id}"),
-                title: title.into(),
-                content: content.into(),
-                metadata_json: "{}".into(),
-                created_at: now,
-                updated_at: now,
-                layer: layer.into(),
-                kind: if layer == "wiki" {
-                    "wiki".into()
-                } else {
-                    "document".into()
-                },
-                content_hash: Some(content_hash(content)),
-                ..Default::default()
-            })
-            .unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: format!("{id}-c0"),
-                document_id: id.into(),
-                chunk_index: 0,
-                content: content.into(),
-                embedding: emb,
-                char_start: 0,
-                char_end: content.len() as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+        SeedDoc::new(id, title, content)
+            .layer(layer)
+            .embedding(emb)
+            .hashed()
+            .insert(store);
     }
 
     fn assert_finalization_failure_audit(
@@ -1129,6 +1063,9 @@ mod tests {
         seed_doc(&store, "drop", "Drop", "unique body two", "wiki", emb);
         let migration = crate::db::store::embedding_migration_manifest(&cfg);
         store.set_embedding_manifest(&migration).unwrap();
+        // Compare against the persisted round-trip: DuckDB keeps microseconds,
+        // while `Utc::now()` carries nanoseconds on Linux.
+        let manifest_before = serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap();
         let stats_before = store.stats().unwrap();
         let documents_before = serde_json::to_value(store.list_documents().unwrap()).unwrap();
         let chunks_before =
@@ -1157,7 +1094,11 @@ mod tests {
         assert!(store.list_ops_log(10).unwrap().is_empty());
         assert_eq!(
             serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap(),
-            serde_json::to_value(Some(migration)).unwrap()
+            manifest_before
+        );
+        assert_eq!(
+            manifest_before["content_fingerprint"],
+            serde_json::to_value(migration.content_fingerprint).unwrap()
         );
     }
 
@@ -1196,7 +1137,7 @@ mod tests {
         seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
         seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
         store.ensure_fts(&cfg.fts_stemmer).unwrap();
-        cfg.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+        cfg.fts_stemmer = db::fts::test_fault::fail("compress");
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 1;
@@ -1209,7 +1150,7 @@ mod tests {
         assert_finalization_failure_audit(
             &store,
             &report,
-            "injected final FTS reindex failure",
+            "injected compress FTS finalization failure",
             true,
         );
         let generation = {
@@ -1234,7 +1175,7 @@ mod tests {
         seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
         seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
         store.ensure_fts(&cfg.fts_stemmer).unwrap();
-        cfg.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+        cfg.fts_stemmer = db::fts::test_fault::panic("compress");
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 1;
@@ -1272,7 +1213,7 @@ mod tests {
             vec![0.2; 8],
         );
         store.ensure_fts(&cfg.fts_stemmer).unwrap();
-        cfg.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+        cfg.fts_stemmer = db::fts::test_fault::panic("compress");
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 1;

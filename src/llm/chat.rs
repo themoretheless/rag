@@ -6,6 +6,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use super::json::{parse_model_object, truncate_chars as truncate, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
 use crate::llm::provider::{LlmApiDialect, LlmProviderKind};
 
@@ -122,8 +123,9 @@ pub struct ChatClient {
 impl ChatClient {
     /// Build a client. `base_url` is API root (e.g. `http://127.0.0.1:11434/v1`).
     ///
-    /// Timeout: `RAG_LLM_TIMEOUT_SECS` (default 600).  
-    /// Completion budget: `RAG_LLM_MAX_TOKENS` (default 2048).
+    /// Uses fixed defaults (600 s timeout, 2048 completion tokens) and does not
+    /// read the environment; production code builds clients with
+    /// [`Self::from_config`] so `RAG_LLM_*` is parsed once by `Config`.
     pub fn new(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -134,8 +136,8 @@ impl ChatClient {
             base_url,
             api_key,
             model,
-            timeout_secs_from_env(),
-            max_tokens_from_env(),
+            DEFAULT_TIMEOUT_SECS,
+            DEFAULT_MAX_TOKENS,
         )
     }
 
@@ -699,22 +701,6 @@ Rules:
     }
 }
 
-fn timeout_secs_from_env() -> u64 {
-    std::env::var("RAG_LLM_TIMEOUT_SECS")
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_TIMEOUT_SECS)
-}
-
-fn max_tokens_from_env() -> u32 {
-    std::env::var("RAG_LLM_MAX_TOKENS")
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_MAX_TOKENS)
-}
-
 fn elapsed_ms(start: Instant) -> u64 {
     start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
@@ -740,52 +726,18 @@ fn model_id_matches(listed: &str, configured: &str) -> bool {
     false
 }
 
-fn strip_json_fences(raw: &str) -> &str {
-    let trimmed = raw.trim();
-    if let Some(rest) = trimmed.strip_prefix("```") {
-        let rest = rest
-            .strip_prefix("json")
-            .or_else(|| rest.strip_prefix("JSON"))
-            .unwrap_or(rest);
-        let rest = rest.trim_start_matches('\n');
-        rest.strip_suffix("```").unwrap_or(rest).trim()
-    } else {
-        trimmed
-    }
-}
-
 fn parse_compile_json(raw: &str) -> Result<CompileResult> {
-    let unfenced = strip_json_fences(raw);
-    // Try full parse, then first {...} slice.
-    if let Ok(v) = serde_json::from_str::<CompileResult>(unfenced) {
-        return Ok(v);
-    }
-    if let (Some(start), Some(end)) = (unfenced.find('{'), unfenced.rfind('}')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(v) = serde_json::from_str::<CompileResult>(slice) {
-                return Ok(v);
-            }
-        }
-    }
-    Err(AppError::llm(format!(
-        "failed to parse compile JSON from model output: {}",
-        truncate(raw, 400)
-    )))
+    parse_model_object::<CompileResult>(raw).ok_or_else(|| {
+        AppError::llm(format!(
+            "failed to parse compile JSON from model output: {}",
+            truncate(raw, ERROR_EXCERPT_CHARS)
+        ))
+    })
 }
 
 fn parse_consolidate_json(raw: &str) -> Result<ConsolidateProposal> {
-    let unfenced = strip_json_fences(raw);
-    if let Ok(v) = serde_json::from_str::<ConsolidateProposal>(unfenced) {
-        return validate_consolidate_proposal(v);
-    }
-    if let (Some(start), Some(end)) = (unfenced.find('{'), unfenced.rfind('}')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(v) = serde_json::from_str::<ConsolidateProposal>(slice) {
-                return validate_consolidate_proposal(v);
-            }
-        }
+    if let Some(proposal) = parse_model_object::<ConsolidateProposal>(raw) {
+        return validate_consolidate_proposal(proposal);
     }
     // Fallback: model returned compile-style `{ "pages": [ ... ] }` with one page.
     if let Ok(compile) = parse_compile_json(raw) {
@@ -804,7 +756,7 @@ fn parse_consolidate_json(raw: &str) -> Result<ConsolidateProposal> {
     }
     Err(AppError::llm(format!(
         "failed to parse consolidate JSON from model output: {}",
-        truncate(raw, 400)
+        truncate(raw, ERROR_EXCERPT_CHARS)
     )))
 }
 
@@ -852,15 +804,6 @@ fn validate_consolidate_proposal(mut p: ConsolidateProposal) -> Result<Consolida
     Ok(p)
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(max).collect();
-        t.push('…');
-        t
-    }
-}
 
 #[derive(Serialize)]
 struct ChatRequest<'a> {

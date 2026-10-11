@@ -150,6 +150,43 @@ pub fn duckdb_capability_names() -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// One lifecycle contract, run against every backend that implements it.
+    fn assert_document_lifecycle(storage: &dyn Storage) {
+        let mut doc = Document {
+            id: "conformance-doc".into(),
+            uri: "file:///conformance.md".into(),
+            title: "Conformance".into(),
+            content: "first body".into(),
+            metadata_json: "{}".into(),
+            ..Default::default()
+        };
+        storage.upsert_document(&doc).unwrap();
+        assert_eq!(
+            storage.get_document(&doc.id).unwrap().unwrap().content,
+            "first body"
+        );
+        doc.content = "second body".into();
+        storage.upsert_document(&doc).unwrap();
+        let listed = storage.list_documents().unwrap();
+        assert_eq!(listed.iter().filter(|d| d.id == doc.id).count(), 1);
+        assert_eq!(
+            storage.get_document(&doc.id).unwrap().unwrap().content,
+            "second body"
+        );
+        assert!(storage.delete_document(&doc.id).unwrap());
+        assert!(storage.get_document(&doc.id).unwrap().is_none());
+        assert!(!storage.delete_document(&doc.id).unwrap());
+    }
+
+    #[test]
+    fn document_lifecycle_conforms_on_every_backend() {
+        let root = tempfile::tempdir().unwrap();
+        let duck = crate::db::Store::open(&root.path().join("conformance.duckdb")).unwrap();
+        assert_document_lifecycle(&duck);
+        let vault = markdown::MarkdownVaultStorage::open(root.path().join("vault")).unwrap();
+        assert_document_lifecycle(&vault);
+    }
+
     #[test]
     fn backend_parser_is_explicit_and_capabilities_are_stable() {
         assert_eq!(BackendKind::parse("vault").unwrap(), BackendKind::Markdown);

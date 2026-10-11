@@ -86,6 +86,8 @@ pub struct HttpState {
     pub embedder: Arc<dyn EmbeddingProvider>,
     /// Process-local background job registry and single writer lane.
     pub(super) jobs: jobs::JobRegistry,
+    /// Chat client built once from `RAG_LLM_*` (None when it cannot be built).
+    pub(super) llm: Option<crate::llm::ChatClient>,
     /// Non-secret listener auth posture, reported by `/v1/capabilities`. Only
     /// [`serve`] can know it; state built without it stays in the default
     /// loopback-trusted description rather than claiming tokens it never read.
@@ -106,12 +108,14 @@ impl HttpState {
             tracing::warn!(%error, "failed to restore background jobs; starting empty registry");
             jobs::JobRegistry::with_store(store.clone())
         });
+        let llm = crate::llm::ChatClient::from_config(&config).ok();
         Self {
             store,
             mcp_http,
             config,
             embedder,
             jobs,
+            llm,
             auth: auth::AuthPosture::default(),
         }
     }
@@ -143,13 +147,12 @@ pub fn mcp_http_service(
         &config,
         std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
     );
+    // Build once: `RagServer::new` checks the embedding manifest, builds the
+    // HTTP/TLS chat client and composes the tool router. Each stateless request
+    // gets a cheap clone sharing the same `Arc` store and router.
+    let prototype = RagServer::new(store, embedder, config).with_transport("http-mcp");
     StreamableHttpService::new(
-        move || {
-            Ok(
-                RagServer::new(store.clone(), embedder.clone(), config.clone())
-                    .with_transport("http-mcp"),
-            )
-        },
+        move || Ok(prototype.clone()),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
             .with_stateful_mode(false)
@@ -534,7 +537,7 @@ async fn http_metadata(
         // `x-request-id` is caller-controlled. Keep it for the response header
         // and process log correlation, but never copy it into the cross-client
         // activity feed where it could smuggle paths, queries, or document ids.
-        activity::record(
+        crate::activity::record(
             "http",
             client.clone(),
             format!("{method} {activity_path}"),
@@ -601,28 +604,6 @@ fn sanitize_client_host(value: &str) -> Option<String> {
     Some(value.to_ascii_lowercase())
 }
 
-pub(crate) fn record_mcp_tool(action: &str, status: u16, elapsed_ms: f64) {
-    activity::record(
-        "mcp_tool",
-        None,
-        action,
-        Some(status),
-        Some(elapsed_ms),
-        None,
-    );
-}
-
-#[cfg(test)]
-pub(crate) fn latest_mcp_activity_for_test(action: &str) -> Option<activity::ActivityEvent> {
-    activity::latest_matching("mcp_tool", action)
-}
-
-#[cfg(test)]
-pub(crate) use activity::TEST_LOCK as ACTIVITY_TEST_LOCK;
-
-pub(crate) fn record_rag_action(action: &str) {
-    activity::record("rag", None, action, Some(200), None, None);
-}
 
 fn loopback_origin(origin: &str) -> bool {
     [
@@ -699,6 +680,7 @@ mod tests {
                 config,
                 embedder,
                 jobs: jobs::JobRegistry::default(),
+                llm: None,
                 auth: crate::http_api::auth::AuthPosture::default(),
             }),
             allowed_hosts,
@@ -945,6 +927,7 @@ mod tests {
             config,
             embedder,
             jobs: jobs::JobRegistry::default(),
+            llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),
         });
         let response = gateway_layers(
@@ -1052,6 +1035,7 @@ mod tests {
                 config,
                 embedder,
                 jobs: jobs::JobRegistry::default(),
+                llm: None,
                 auth: crate::http_api::auth::AuthPosture::default(),
             }),
             allowed_hosts,

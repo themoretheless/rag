@@ -188,9 +188,10 @@ async fn document(
             "wing": doc.wing,
             "room": doc.room,
             "source_file": doc.source_file,
-            "source_versions": serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok()
-                .and_then(|metadata| metadata.get("source_versions").cloned())
-                .filter(serde_json::Value::is_array).unwrap_or_else(|| json!([])),
+            "source_versions": doc
+                .metadata_field("source_versions")
+                .filter(serde_json::Value::is_array)
+                .unwrap_or_else(|| json!([])),
             "updated_at": doc.updated_at.to_rfc3339(),
             "revision": doc.revision,
             "etag": doc.etag(),
@@ -232,10 +233,9 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
         return Err(AppError::not_found(format!("document uri '{key}'")));
     }
 
-    let node_id = resolve_seed(store, key)?;
     let node = store
-        .find_node_by_id(&node_id)?
-        .ok_or_else(|| AppError::not_found(format!("node {node_id}")))?;
+        .resolve_seed(key)?
+        .ok_or_else(|| seed_not_found(key))?;
     if let Some(doc_id) = node.document_id.as_deref() {
         return store
             .get_document(doc_id)?
@@ -253,20 +253,14 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
 }
 
 fn resolve_seed(store: &Store, seed: &str) -> Result<String, AppError> {
-    if let Some(n) = store.find_node_by_id(seed)? {
-        return Ok(n.id);
-    }
-    if let Some(n) = store.find_node_by_document_id(seed)? {
-        return Ok(n.id);
-    }
-    if let Some(n) = store.find_node_by_uri(seed)? {
-        return Ok(n.id);
-    }
-    let by_label = store.find_nodes_by_label(seed)?;
-    if let Some(n) = by_label.into_iter().next() {
-        return Ok(n.id);
-    }
-    Err(AppError::not_found(format!(
+    store
+        .resolve_seed(seed)?
+        .map(|node| node.id)
+        .ok_or_else(|| seed_not_found(seed))
+}
+
+fn seed_not_found(seed: &str) -> AppError {
+    AppError::not_found(format!(
         "no graph node for seed '{seed}' (try id, document_id, or exact label)"
-    )))
+    ))
 }

@@ -89,6 +89,26 @@ impl Store {
         find_node_by_uri_locked(&conn, uri)
     }
 
+    /// Resolve one free-form seed (UI / HTTP `seed=`): node id, then document
+    /// id, then node URI, then exact label with the same document-first
+    /// preference as [`Self::resolve_node`].
+    pub fn resolve_seed(&self, seed: &str) -> Result<Option<GraphNode>> {
+        let seed = seed.trim();
+        if seed.is_empty() {
+            return Ok(None);
+        }
+        if let Some(node) = self.find_node_by_id(seed)? {
+            return Ok(Some(node));
+        }
+        if let Some(node) = self.find_node_by_document_id(seed)? {
+            return Ok(Some(node));
+        }
+        if let Some(node) = self.find_node_by_uri(seed)? {
+            return Ok(Some(node));
+        }
+        self.resolve_node(None, None, Some(seed))
+    }
+
     /// Resolve a single node by id, document id, or exact label (priority order).
     ///
     /// Label matches prefer resolved `document` nodes, then any document, else first hit.

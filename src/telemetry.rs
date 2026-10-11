@@ -247,7 +247,13 @@ fn sanitize_result_hint(hint: &str) -> Option<String> {
 
 /// Coarse tool family used by the console for share breakdowns.
 pub fn tool_group(tool: &str) -> &'static str {
-    match tool {
+    explicit_tool_group(tool).unwrap_or("ops")
+}
+
+/// Group for every registered MCP tool; `None` only for unknown names.
+/// `mcp::facade` tests assert each registered tool has an entry here.
+pub fn explicit_tool_group(tool: &str) -> Option<&'static str> {
+    let group = match tool {
         "search" | "multi_query_search" | "query_with_index" | "search_wiki" | "pack_context"
         | "find_similar" | "expand_chunks" | "multi_get" | "get_document" | "get_source"
         | "list_documents" | "list_sources" | "check_duplicate" => "search",
@@ -297,8 +303,25 @@ pub fn tool_group(tool: &str) -> &'static str {
         | "maintain_organize"
         | "maintain_refresh"
         | "maintain_compress" => "maintain",
-        _ => "ops",
-    }
+        "collection_create" | "collection_get" | "collection_list" | "collection_update" => {
+            "collections"
+        }
+        "backup_db" | "export_bundle" | "export_vault" | "import_bundle" => "recovery",
+        "cleanup_source_duplicates"
+        | "doctor"
+        | "doctor_repair"
+        | "get_embedding_manifest"
+        | "get_taxonomy"
+        | "list_rooms"
+        | "list_wings"
+        | "llm_status"
+        | "reconnect"
+        | "stats"
+        | "status"
+        | "vacuum_store" => "ops",
+        _ => return None,
+    };
+    Some(group)
 }
 
 /// Newest-first records, optionally filtered by agent and/or tool.

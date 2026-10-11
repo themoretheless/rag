@@ -25,7 +25,7 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::{rebuild_document_graph, REL_TAGGED};
 use crate::llm::ChatClient;
-use crate::models::{DocumentMetaUpdate, GraphEdge, GraphNode, OpsLogEntry};
+use crate::models::{DocumentMetaUpdate, GraphEdge, OpsLogEntry};
 use crate::wiki::{self, FileAnswerCitation};
 
 /// Options for [`apply_maintenance_plan`].
@@ -92,9 +92,6 @@ pub struct ApplyMaintenancePlanReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ops_log_seq: Option<i64>,
 }
-
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_finalize_fts__";
 
 /// Apply (or dry-run) a list of whitelist maintenance plan items.
 ///
@@ -213,10 +210,14 @@ pub async fn apply_maintenance_plan(
                 // aggregate outcomes and make the derived-index failure an
                 // additive result that the next lexical read can retry.
                 let error_message = error.to_string();
-                let dirty_marker_error = store
-                    .mark_fts_dirty_for_retry()
-                    .err()
-                    .map(|marker_error| marker_error.to_string());
+                // Same safety record as every other corpus workflow: dirty
+                // marker for the next lexical read plus the canonical
+                // `fts_finalization_failed` audit row.
+                let failure = store.record_fts_finalization_failure(
+                    "apply_maintenance_plan",
+                    true,
+                    &error_message,
+                );
                 let mut outcome = ActionOutcome {
                     index: total_actions,
                     action: "finalize_fts".into(),
@@ -230,8 +231,9 @@ pub async fn apply_maintenance_plan(
                         "stage": "finalize_fts",
                         "durable_mutation_committed": true,
                         "retryable": true,
-                        "fallback_dirty_marked": dirty_marker_error.is_none(),
-                        "dirty_marker_error": dirty_marker_error,
+                        "fallback_dirty_marked": failure.dirty_marker_written,
+                        "dirty_marker_error": failure.dirty_marker_error,
+                        "ops_log_error": failure.ops_log_error,
                         "error": error_message,
                     })),
                     ops_log_id: None,
@@ -265,19 +267,15 @@ pub async fn apply_maintenance_plan(
         report.skipped.len(),
         report.errors.len(),
     );
-    let payload = serde_json::to_string(&report).unwrap_or_else(|_| "{}".into());
-    let written = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: op.into(),
-        prefix: Some("MAINT".into()),
+    let written = super::audit::record_run(
+        store,
+        "apply_maintenance_plan",
+        dry_run,
+        "maintenance",
         message,
-        entity_id: None,
-        entity_kind: Some("maintenance".into()),
-        payload_json: payload,
-        agent_name: agent.map(|s| s.to_string()),
-    })?;
+        agent.map(str::to_string),
+        &report,
+    )?;
     report.ops_log_id = Some(written.id);
     report.ops_log_seq = Some(written.seq);
 
@@ -286,9 +284,7 @@ pub async fn apply_maintenance_plan(
 
 async fn finalize_fts_after_plan(store: &Store, stemmer: &str) -> Result<()> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected final FTS refresh failure"));
-    }
+    db::fts::test_fault::check("apply", stemmer)?;
 
     ensure_fts_nonblocking(store, stemmer, "apply_maintenance_plan final refresh").await
 }
@@ -926,31 +922,35 @@ fn apply_set_tags_inner(
         }
     };
 
-    if replace {
-        let conn = store.lock()?;
-        conn.execute(
-            "DELETE FROM graph_edges WHERE source_id = ? AND rel_type = ?",
-            duckdb::params![doc_node.id.as_str(), REL_TAGGED],
-        )?;
-        drop(conn);
-    }
-
+    // Replace + relink is one unit of work: a failure part-way leaves the
+    // previous tag edges intact instead of a half-cleared document.
     let mut linked = Vec::new();
-    for tag in tags {
-        let tag_id = upsert_tag_node(store, tag)?;
-        let already = edge_exists(store, &doc_node.id, &tag_id, REL_TAGGED)?;
-        if !already {
-            let edge = GraphEdge {
-                id: Uuid::new_v4().to_string(),
-                source_id: doc_node.id.clone(),
-                target_id: tag_id,
-                rel_type: REL_TAGGED.into(),
-                weight: 1.0,
-                context: None,
-            };
-            store.insert_graph_edges(&[edge])?;
+    {
+        let mut conn = store.lock()?;
+        let tx = conn.transaction()?;
+        if replace {
+            tx.execute(
+                "DELETE FROM graph_edges WHERE source_id = ? AND rel_type = ?",
+                duckdb::params![doc_node.id.as_str(), REL_TAGGED],
+            )?;
         }
-        linked.push(tag.clone());
+        for tag in tags {
+            let label = tag.trim().trim_start_matches('#');
+            let tag_id = crate::graph::resolve::upsert_tag_node(&tx, label)?;
+            if !edge_exists(&tx, &doc_node.id, &tag_id, REL_TAGGED)? {
+                let edge = GraphEdge {
+                    id: Uuid::new_v4().to_string(),
+                    source_id: doc_node.id.clone(),
+                    target_id: tag_id,
+                    rel_type: REL_TAGGED.into(),
+                    weight: 1.0,
+                    context: None,
+                };
+                db::graph::insert_graph_edges_locked(&tx, &[edge])?;
+            }
+            linked.push(tag.clone());
+        }
+        tx.commit()?;
     }
 
     Ok(StepResult {
@@ -966,27 +966,7 @@ fn apply_set_tags_inner(
     })
 }
 
-fn upsert_tag_node(store: &Store, label: &str) -> Result<String> {
-    let existing = store.find_nodes_by_label(label)?;
-    if let Some(node) = existing.into_iter().find(|n| n.kind == "tag") {
-        return Ok(node.id);
-    }
-    let node = GraphNode {
-        id: Uuid::new_v4().to_string(),
-        kind: "tag".into(),
-        label: label.to_string(),
-        document_id: None,
-        uri: Some(format!("tag://{label}")),
-        resolved: true,
-        metadata_json: "{}".into(),
-    };
-    let id = node.id.clone();
-    store.upsert_graph_node(&node)?;
-    Ok(id)
-}
-
-fn edge_exists(store: &Store, source: &str, target: &str, rel: &str) -> Result<bool> {
-    let conn = store.lock()?;
+fn edge_exists(conn: &duckdb::Connection, source: &str, target: &str, rel: &str) -> Result<bool> {
     let n: i64 = conn.query_row(
         r#"
         SELECT COUNT(*)::BIGINT FROM graph_edges
@@ -1803,8 +1783,9 @@ fn apply_vacuum(store: &Store, index: usize, name: &str, dry_run: bool) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::SeedDoc;
     use crate::embeddings::MockEmbedder;
-    use crate::models::{Chunk, Document, SearchMode};
+    use crate::models::SearchMode;
     use crate::util::content_hash;
     use async_trait::async_trait;
     use std::path::PathBuf;
@@ -1832,63 +1813,20 @@ mod tests {
     fn test_config(db_path: PathBuf, max_docs: usize) -> Config {
         Config {
             db_path,
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".into(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".into(),
             embedding_dims: 8,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            default_top_k: 5,
-            ingest_roots: vec![],
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".into(),
-            default_search_mode: SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".into(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".into(),
-            llm_api_key: "ollama".into(),
             llm_enabled: false,
-            llm_timeout_secs: 120,
-            llm_max_tokens: 4096,
             maint_max_docs: max_docs,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
+            ..Config::for_tests()
         }
     }
 
     fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str) {
-        let now = Utc::now();
-        store
-            .upsert_document(&Document {
-                id: id.into(),
-                uri: format!("text://{id}"),
-                title: title.into(),
-                content: content.into(),
-                metadata_json: "{}".into(),
-                created_at: now,
-                updated_at: now,
-                layer: layer.into(),
-                kind: "document".into(),
-                content_hash: Some(content_hash(content)),
-                ..Default::default()
-            })
-            .unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: format!("{id}-c0"),
-                document_id: id.into(),
-                chunk_index: 0,
-                content: content.into(),
-                embedding: vec![0.1; 8],
-                char_start: 0,
-                char_end: content.len() as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+        SeedDoc::new(id, title, content)
+            .layer(layer)
+            .kind("document")
+            .hashed()
+            .insert(store);
     }
 
     fn item(
@@ -2342,6 +2280,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_tags_reuses_the_canonical_tag_hub_for_hash_and_case_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tag-hub.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 50);
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        seed_doc(&store, "d1", "One", "body", "raw");
+        seed_doc(&store, "d2", "Two", "body", "raw");
+        let plan = vec![
+            item(
+                MaintenanceAction::SetTags,
+                Some("d1"),
+                json!({"tags": ["#Alpha"], "mode": "replace"}),
+            ),
+            item(
+                MaintenanceAction::SetTags,
+                Some("d2"),
+                json!({"tags": ["alpha"], "mode": "replace"}),
+            ),
+        ];
+        let opts = ApplyPlanOptions {
+            dry_run: false,
+            ..Default::default()
+        };
+        let report = apply_maintenance_plan(&store, &embedder, &config, None, plan, &opts)
+            .await
+            .unwrap();
+        assert_eq!(report.errors.len(), 0, "{:?}", report.errors);
+        let conn = store.lock().unwrap();
+        let uris: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT uri FROM graph_nodes WHERE kind = 'tag' ORDER BY uri")
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(uris, vec!["tag://alpha".to_string()]);
+    }
+
+    #[tokio::test]
     async fn rebuild_index_and_noop() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("idx.duckdb");
@@ -2530,7 +2508,7 @@ mod tests {
         seed_doc(&store, "keep", "Keep", body, "wiki");
         seed_doc(&store, "drop", "Drop", body, "wiki");
         store.ensure_fts(&config.fts_stemmer).unwrap();
-        config.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+        config.fts_stemmer = db::fts::test_fault::fail("apply");
 
         let report = apply_maintenance_plan(
             &store,
@@ -2581,6 +2559,11 @@ mod tests {
             .find(|entry| entry.id == summary_id)
             .expect("terminal summary ops_log row");
         assert_eq!(summary.op, "apply_maintenance_plan");
+        assert!(store
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed"));
         let payload: serde_json::Value = serde_json::from_str(&summary.payload_json).unwrap();
         assert!(payload["errors"]
             .as_array()

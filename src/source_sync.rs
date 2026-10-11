@@ -26,10 +26,6 @@ const SOURCE_SYNC_BATCH_MAX_DOCUMENTS: usize = 64;
 const SOURCE_SYNC_BATCH_MAX_CHUNKS: usize = 64;
 const FTS_FINALIZATION_ERROR_CODE: &str = "FTS_FINALIZATION_FAILED";
 
-#[cfg(test)]
-pub(crate) const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_source_sync_finalize_fts__";
-#[cfg(test)]
-const TEST_FINALIZE_FTS_PANIC_STEMMER: &str = "__test_panic_source_sync_finalize_fts__";
 
 #[derive(Debug, Clone)]
 pub struct SourceSyncCommand {
@@ -931,15 +927,7 @@ fn metadata_means_missing(metadata: std::io::Result<std::fs::Metadata>) -> std::
 
 fn finalize_source_sync_fts(store: &Store, stemmer: &str) -> Result<(), AppError> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_PANIC_STEMMER {
-        panic!("injected source-sync FTS finalization panic");
-    }
-    #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts(
-            "injected source-sync FTS finalization failure",
-        ));
-    }
+    crate::db::fts::test_fault::check("source-sync", stemmer)?;
 
     store.ensure_fts(stemmer).map(|_| ())
 }
@@ -2144,7 +2132,7 @@ mod tests {
         };
         let store = Store::open(&config.db_path).unwrap();
         store.ensure_fts(&config.fts_stemmer).unwrap();
-        config.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+        config.fts_stemmer = crate::db::fts::test_fault::panic("source-sync");
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
         let progress = Arc::new(Mutex::new(Vec::new()));
         let progress_from_callback = progress.clone();

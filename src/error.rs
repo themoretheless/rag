@@ -63,12 +63,8 @@ impl From<duckdb::Error> for AppError {
     }
 }
 
-impl From<reqwest::Error> for AppError {
-    fn from(err: reqwest::Error) -> Self {
-        // Chat and embeddings share reqwest; callers usually wrap context.
-        AppError::Embeddings(err.to_string())
-    }
-}
+// No blanket `From<reqwest::Error>`: chat, embeddings and replication share
+// reqwest, so each call site names its own variant (`Llm`, `Embeddings`, …).
 
 impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {

@@ -11,11 +11,10 @@ use rag_mcp::http_api;
 use rag_mcp::mcp::RagServer;
 use rmcp::{transport::stdio, ServiceExt};
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing();
+    rag_mcp::bootstrap::init_tracing("info");
     let startup_started = Instant::now();
     rag_mcp::ops::set_startup_phase("loading_config");
 
@@ -220,16 +219,6 @@ async fn shutdown_signal() -> std::io::Result<()> {
     }
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_target(true)
-        .init();
 }
 
 fn env_flag(name: &str) -> bool {

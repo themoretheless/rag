@@ -42,7 +42,9 @@ impl RagServer {
             seed_ids: params.seed_ids,
             kinds,
         };
-        let view = self.store.get_graph_view(filter)?;
+        let view = self
+            .blocking("get_graph", move |store| store.get_graph_view(filter))
+            .await?;
         Self::json_result(&view)
     }
 
@@ -169,37 +171,26 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<GetBacklinksParams>,
     ) -> Result<CallToolResult, McpError> {
-        let target = if let Some(id) = params
-            .node_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
+        if [&params.node_id, &params.document_id, &params.label]
+            .iter()
+            .all(|key| key.as_deref().is_none_or(|value| value.trim().is_empty()))
         {
-            self.store.find_node_by_id(id)?
-        } else if let Some(doc_id) = params
-            .document_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            self.store.find_node_by_document_id(doc_id)?
-        } else if let Some(label) = params
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            self.store.find_nodes_by_label(label)?.into_iter().next()
-        } else {
             return Err(McpError::from(AppError::config(
                 "get_backlinks requires node_id, document_id, or label",
             )));
         }
-        .ok_or_else(|| {
-            McpError::from(AppError::not_found(
-                "graph node not found (provide node_id, document_id, or label)",
-            ))
-        })?;
+        let target = self
+            .store
+            .resolve_node(
+                params.node_id.as_deref(),
+                params.document_id.as_deref(),
+                params.label.as_deref(),
+            )?
+            .ok_or_else(|| {
+                McpError::from(AppError::not_found(
+                    "graph node not found (provide node_id, document_id, or label)",
+                ))
+            })?;
         let view = self.store.backlinks(&target.id)?;
         Self::json_result(&view)
     }
@@ -318,7 +309,9 @@ impl RagServer {
         description = "Object graph aggregates: total nodes/edges, node counts by kind, edge counts by rel_type (includes tunnel), and edge counts cut by (rel_type, origin, context) so hand-authored relations stay separate from rebuild-owned membership and tag edges."
     )]
     pub(super) async fn graph_stats(&self) -> Result<CallToolResult, McpError> {
-        let body = self.store.graph_stats()?;
+        let body = self
+            .blocking("graph_stats", |store| store.graph_stats())
+            .await?;
         Self::json_result(&body)
     }
 

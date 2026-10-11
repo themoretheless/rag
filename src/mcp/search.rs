@@ -12,14 +12,11 @@ use super::tools::{
 };
 use super::views::{ChunkView, DocumentDetail};
 use crate::db::search::{
-    acquire_corpus_search_guard, attach_context, fuse_rrf_many, search_with_corpus_guard,
-    ContextExpansion, SearchQuery,
+    acquire_corpus_search_guard, fuse_rrf_many, search_with_corpus_guard, SearchQuery,
 };
 use crate::error::AppError;
 use crate::models::{SearchHit, SearchMode};
-use crate::retrieval::SearchCommand;
 use crate::retrieval::{self, SimilarDocumentsQuery};
-use crate::search_pack::pack_hits;
 use crate::util::{non_blank, run_blocking};
 
 #[tool_router(router = search_router, vis = "pub(super)")]
@@ -32,12 +29,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let command = SearchCommand {
+        let command = retrieval::SearchRequest {
             query: params.query,
             mode: params.mode,
-            default_mode: self.config.default_search_mode,
             top_k: params.top_k.map(|value| value as usize),
-            default_top_k: self.config.default_top_k,
             document_id: params.document_id,
             wing: params.wing,
             room: params.room,
@@ -48,20 +43,14 @@ impl RagServer {
             diversity: params.diversity,
             group_by: params.group_by,
             recency_half_life_days: params.recency_half_life_days,
-            max_context_tokens: params
-                .max_context_tokens
-                .map(|value| value as usize)
-                .or(Some(self.config.max_context_tokens)),
-            max_chunks_per_document: params
-                .max_chunks_per_document
-                .map(|value| value as usize)
-                .or(Some(self.config.max_chunks_per_doc)),
+            max_context_tokens: params.max_context_tokens.map(|value| value as usize),
+            max_chunks_per_document: params.max_chunks_per_document.map(|value| value as usize),
             context_expansion: params.context_expansion,
             neighbor_chunks: params.neighbor_chunks.map(|value| value as usize),
-            timeout_ms: params.timeout_ms.or(Some(5_000)),
-            fts_stemmer: self.config.fts_stemmer.clone(),
+            timeout_ms: params.timeout_ms,
             rrf_k: params.rrf_k,
-        };
+        }
+        .into_command(&self.config);
         let hits = crate::retrieval::execute_search(
             &self.store,
             self.embedder.as_ref(),
@@ -230,8 +219,8 @@ impl RagServer {
             SimilarDocumentsQuery {
                 document_id: params.document_id,
                 top_k: params.top_k.unwrap_or(self.config.default_top_k as u32) as usize,
-                wing: params.wing.filter(|value| !value.trim().is_empty()),
-                room: params.room.filter(|value| !value.trim().is_empty()),
+                wing: params.wing,
+                room: params.room,
                 fts_stemmer: self.config.fts_stemmer.clone(),
             },
         )?;
@@ -246,24 +235,19 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<PackContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let max_tokens = params
-            .max_tokens
-            .map(|t| t as usize)
-            .unwrap_or(self.config.max_context_tokens);
-
-        let expansion = match params.context_expansion.as_deref() {
-            Some(raw) => Some(ContextExpansion::parse(raw)?),
-            None => None,
+        let command = retrieval::PackContextCommand {
+            hits: params.hits.into_iter().map(SearchHit::from).collect(),
+            max_tokens: params.max_tokens.map(|t| t as usize),
+            context_expansion: params.context_expansion,
+            neighbor_chunks: params.neighbor_chunks.map(|n| n as usize),
         };
-        let mut hits: Vec<SearchHit> = params.hits.into_iter().map(SearchHit::from).collect();
-        attach_context(
-            &self.store,
-            &mut hits,
-            expansion,
-            params.neighbor_chunks.unwrap_or(1) as usize,
-        )?;
-        let packed = pack_hits(&hits, max_tokens);
-
+        let store = self.store.clone();
+        let config = self.config.clone();
+        let packed = run_blocking("pack_context", move || {
+            retrieval::pack_context(&store, &config, command)
+        })
+        .await?
+        .packed;
         let body = PackContextResult {
             hits: packed.hits,
             total_tokens: packed.total_tokens,

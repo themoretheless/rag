@@ -375,7 +375,7 @@ impl Store {
     /// committed. Advancing the generation is a safe false-positive: it may
     /// invalidate one vector snapshot and force one lexical rebuild, but it can
     /// never publish stale BM25 rows as current.
-    pub(crate) fn mark_fts_dirty_for_retry(&self) -> Result<()> {
+    fn mark_fts_dirty_for_retry(&self) -> Result<()> {
         let conn = self.lock()?;
         super::fts::mark_fts_dirty(&conn)?;
         Ok(())
@@ -484,6 +484,30 @@ impl Store {
         derived: DocumentDerivedWrite<'_>,
     ) -> Result<AtomicDocumentWriteResult> {
         self.write_document_atomic_with_manifest(doc, if_match_revision, derived, None, None)
+    }
+
+    /// Persist an unchunked document (e.g. `schema://agents`), rebuild its
+    /// outgoing graph slice and append its audit row in one transaction.
+    ///
+    /// Either all three land or none do: a graph or ops-log failure leaves the
+    /// previous document, graph and log untouched.
+    pub(crate) fn write_unchunked_document_with_audit(
+        &self,
+        doc: &Document,
+        audit: &OpsLogEntry,
+    ) -> Result<AtomicDocumentWriteResult> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let revision = upsert_document_cas_locked(&tx, doc, None)?;
+        let (node_id, edge_count) =
+            crate::graph::resolve::rebuild_document_graph_locked(&tx, doc)?;
+        append_ops_log_locked(&tx, audit)?;
+        tx.commit()?;
+        Ok(AtomicDocumentWriteResult {
+            revision,
+            node_id: Some(node_id),
+            edge_count,
+        })
     }
 
     /// Persist a synchronized source document and its manifest ownership in the
@@ -2165,22 +2189,35 @@ impl Store {
         if dry_run || (chunks == 0 && nodes == 0 && edges == 0) {
             return Ok((chunks, nodes, edges));
         }
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        // A real transaction handle: any failing statement drops `tx` and rolls
+        // back, so the shared connection never stays inside an open transaction.
+        let tx = conn.transaction()?;
         if chunks > 0 {
-            super::fts::mark_fts_dirty(&conn)?;
+            super::fts::mark_fts_dirty(&tx)?;
         }
-        conn.execute_batch(
-            "BEGIN TRANSACTION;
-             DELETE FROM graph_nodes WHERE document_id IS NOT NULL AND NOT EXISTS
-               (SELECT 1 FROM documents d WHERE d.id = graph_nodes.document_id);
-             DELETE FROM graph_edges WHERE NOT EXISTS
+        tx.execute(
+            "DELETE FROM graph_nodes WHERE document_id IS NOT NULL AND NOT EXISTS
+               (SELECT 1 FROM documents d WHERE d.id = graph_nodes.document_id)",
+            [],
+        )?;
+        #[cfg(test)]
+        if PRUNE_ORPHANS_FAIL_AFTER_NODES.with(std::cell::Cell::get) {
+            return Err(AppError::db("injected prune_orphans failure after node delete"));
+        }
+        tx.execute(
+            "DELETE FROM graph_edges WHERE NOT EXISTS
                (SELECT 1 FROM graph_nodes n WHERE n.id = graph_edges.source_id)
                OR NOT EXISTS
-               (SELECT 1 FROM graph_nodes n WHERE n.id = graph_edges.target_id);
-             DELETE FROM chunks WHERE NOT EXISTS
-               (SELECT 1 FROM documents d WHERE d.id = chunks.document_id);
-             COMMIT;",
+               (SELECT 1 FROM graph_nodes n WHERE n.id = graph_edges.target_id)",
+            [],
         )?;
+        tx.execute(
+            "DELETE FROM chunks WHERE NOT EXISTS
+               (SELECT 1 FROM documents d WHERE d.id = chunks.document_id)",
+            [],
+        )?;
+        tx.commit()?;
         Ok((chunks, nodes, edges))
     }
 
@@ -2641,7 +2678,7 @@ impl Store {
     ///
     /// Returns an empty list when `ops_log` is missing (no error).
     pub fn list_recent_ops(&self, limit: usize) -> Result<Vec<OpsLogEntry>> {
-        let limit = limit.max(1) as i64;
+        let limit = limit.clamp(1, MAX_OPS_LOG_PAGE) as i64;
         let conn = self.lock()?;
         if !table_exists_locked(&conn, "ops_log") {
             return Ok(Vec::new());
@@ -2669,7 +2706,7 @@ impl Store {
     /// Used by MCP `memories_filed_away`. Empty when `ops_log` is missing or no
     /// matching rows. Newest first.
     pub fn memories_filed_away(&self, limit: usize) -> Result<Vec<OpsLogEntry>> {
-        let limit = limit.max(1) as i64;
+        let limit = limit.clamp(1, MAX_OPS_LOG_PAGE) as i64;
         let conn = self.lock()?;
         if !table_exists_locked(&conn, "ops_log") {
             return Ok(Vec::new());
@@ -3982,6 +4019,14 @@ fn meta_summary_category(metadata_json: &str) -> (Option<String>, Option<String>
     (summary, category)
 }
 
+#[cfg(test)]
+thread_local! {
+    static PRUNE_ORPHANS_FAIL_AFTER_NODES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Upper bound on one ops-log page for every reader (MCP, HTTP, services).
+pub const MAX_OPS_LOG_PAGE: usize = 500;
+
 fn append_ops_log_locked(conn: &Connection, entry: &OpsLogEntry) -> Result<OpsLogEntry> {
     let op = entry.op.trim();
     if op.is_empty() {
@@ -4234,6 +4279,80 @@ mod tests {
         let after = store.integrity_counts().unwrap();
         assert_eq!((after.1, after.2, after.3), (0, 0, 0));
         assert_eq!(store.prune_orphans(false).unwrap(), (0, 0, 0));
+    }
+
+    #[test]
+    fn prune_orphans_failure_rolls_back_and_releases_the_connection() {
+        let store = open_temp();
+        {
+            let conn = store.lock().unwrap();
+            conn.execute("INSERT INTO graph_nodes (id, uri, label, kind, document_id, resolved, created_at, updated_at) VALUES ('lost', 'doc://lost', 'Lost', 'document', 'missing', true, current_timestamp, current_timestamp)", []).unwrap();
+        }
+        // Fail after the graph-node delete has already run in the same unit of work.
+        PRUNE_ORPHANS_FAIL_AFTER_NODES.with(|flag| flag.set(true));
+        let result = store.prune_orphans(false);
+        PRUNE_ORPHANS_FAIL_AFTER_NODES.with(|flag| flag.set(false));
+        assert!(result.is_err());
+        let conn = store.lock().unwrap();
+        let lost: i64 = conn
+            .query_row("SELECT COUNT(*) FROM graph_nodes WHERE id = 'lost'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(lost, 1, "partial prune must roll back");
+        conn.execute_batch("BEGIN TRANSACTION; COMMIT;")
+            .expect("connection must not be left inside an open transaction");
+    }
+
+    #[test]
+    fn unchunked_document_audit_failure_writes_nothing() {
+        let store = open_temp();
+        let doc = Document {
+            id: "schema-doc".into(),
+            uri: "schema://agents".into(),
+            title: "Schema".into(),
+            content: "links [[Target]]".into(),
+            metadata_json: "{}".into(),
+            layer: "schema".into(),
+            kind: "schema".into(),
+            ..Default::default()
+        };
+        let bad_audit = OpsLogEntry {
+            op: "   ".into(),
+            payload_json: "{}".into(),
+            ..Default::default()
+        };
+        assert!(store
+            .write_unchunked_document_with_audit(&doc, &bad_audit)
+            .is_err());
+        assert!(store.get_document("schema-doc").unwrap().is_none());
+        assert!(store.find_node_by_document_id("schema-doc").unwrap().is_none());
+
+        let audit = OpsLogEntry {
+            op: "schema_init".into(),
+            ..bad_audit
+        };
+        store.write_unchunked_document_with_audit(&doc, &audit).unwrap();
+        assert!(store.get_document("schema-doc").unwrap().is_some());
+        assert!(store.find_node_by_document_id("schema-doc").unwrap().is_some());
+        assert_eq!(store.list_ops_log(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ops_log_pages_are_bounded_for_every_caller() {
+        let store = open_temp();
+        for n in 0..(MAX_OPS_LOG_PAGE + 3) {
+            store
+                .append_ops_log(&OpsLogEntry {
+                    op: format!("op_{n}"),
+                    payload_json: "{}".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        assert_eq!(store.list_recent_ops(usize::MAX).unwrap().len(), MAX_OPS_LOG_PAGE);
+        assert_eq!(
+            store.read_ops_log(None, None, Some(10_000)).unwrap().len(),
+            MAX_OPS_LOG_PAGE
+        );
     }
 
     #[test]

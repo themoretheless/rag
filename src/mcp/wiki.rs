@@ -26,7 +26,6 @@ use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::diagnostics::DiagnosticsService;
 use crate::diary;
 use crate::error::AppError;
-use crate::llm::ChatClient;
 use crate::memory_lifecycle;
 use crate::models::{
     Document, IndexQueryPage, IndexQueryResult, OpsLogEntry, SearchMode, WikiIndexEntry,
@@ -485,7 +484,10 @@ impl RagServer {
             .trim()
             .to_ascii_lowercase();
         let markdown = if format == "markdown" || format == "md" {
-            Some(self.store.render_wiki_index_markdown()?)
+            Some(
+                self.blocking("read_index", |store| store.render_wiki_index_markdown())
+                    .await?,
+            )
         } else {
             None
         };
@@ -543,7 +545,9 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<RebuildIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        let count = self.store.rebuild_wiki_index_from_docs()?;
+        let count = self
+            .blocking("rebuild_index", |store| store.rebuild_wiki_index_from_docs())
+            .await?;
 
         let _ = self.store.append_ops_log(&OpsLogEntry {
             id: Uuid::new_v4().to_string(),
@@ -698,16 +702,14 @@ impl RagServer {
                 "LLM disabled (RAG_LLM_ENABLED=false)",
             )));
         }
-        let llm = ChatClient::new(
-            self.config.llm_base_url.clone(),
-            self.config.llm_api_key.clone(),
-            self.config.llm_model.clone(),
-        )?;
+        // The configured client: provider dialect, timeout and max_tokens all
+        // come from `Config`, exactly as for every other LLM tool.
+        let llm = self.require_llm()?;
         let res = wiki::compile_source(
             &self.store,
             &self.embedder,
             &self.config,
-            &llm,
+            llm,
             &params.source_id_or_uri,
             params.dry_run.unwrap_or(false),
             params.agent.as_deref(),

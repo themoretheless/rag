@@ -215,6 +215,23 @@ backlink failures remain visible instead of collapsing into a successful empty
 list. Direct `--db` exposes read-only Wiki/Connections only, so native writes
 remain behind the gateway adapter.
 
+### Transport-free layering and shared start-up
+
+`config` no longer imports `mcp` or `http_api`: `ToolSurface` and the bind
+parser live in configuration and the transports re-export them. The activity
+feed is `crate::activity`, so MCP dispatch records without depending on HTTP.
+`PackHitParams` lives with `search_pack`. `bootstrap` owns start-up for `main`
+and the offline tools. `retrieval::{pack_context, SearchRequest}` and
+`Store::{resolve_seed, resolve_node}` are the shared use cases behind both
+transports; ops-log page size is bounded once in `Store`.
+
+### LLM output and maintenance audit
+
+`llm::json` owns fence stripping, embedded JSON extraction and error excerpts
+for every LLM-backed workflow. `maintain::audit::record_run` writes the one
+terminal `MAINT` row per maintenance run; derived-index finalization failures
+always go through `Store::record_fts_finalization_failure`.
+
 ## Deliberate compatibility boundaries
 
 1. `mcp/server.rs` is the rmcp router composition root and `mcp/facade.rs`

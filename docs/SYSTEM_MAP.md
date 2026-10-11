@@ -117,7 +117,11 @@ database path is published last as the generation commit marker.
 | `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs`, `mcp/server.rs`, `mcp/views.rs` | domain-owned MCP tool implementations (one `#[tool_router]` each) added together in `server.rs`; shared document/chunk response views |
 | `mcp/error.rs`, `http_api/error.rs`, `AppError::code` | one wire error vocabulary; JSON-RPC and HTTP envelopes only classify |
 | `util/{blocking,text,time}.rs` | shared blocking/detached task helpers, optional-string normalization and timestamp parsing used by both transports |
-| `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters |
+| `config.rs` | environment parsing and validation, including `ToolSurface` and the `RAG_HTTP_BIND` gate; imports no transport |
+| `activity.rs`, `telemetry.rs` | process-local activity feed and call log written by both transports; `http_api` only serves them |
+| `bootstrap.rs` | shared start-up for `main` and the offline tools (tracing, configured store, manifest check, embedder) |
+| `llm/json.rs`, `maintain/audit.rs` | one parser for JSON in model output; one terminal `MAINT` audit row per maintenance run |
+| `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters (`activity.rs` only serves `/v1/activity`) |
 | `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
 | `crates/rag-mcp-ui/src/ui/` | workspace rendering; `app.rs` coordinates navigation and worker state |
 

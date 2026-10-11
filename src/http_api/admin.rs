@@ -24,10 +24,12 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
+use crate::config::Config;
+use crate::db::store::embedding_manifest_matches_config;
+use crate::db::Store;
 use crate::diagnostics;
 use crate::error::AppError;
-use crate::llm::ChatClient;
-use crate::util::{non_blank, parse_optional_timestamp};
+use crate::util::{non_blank, parse_optional_timestamp, run_blocking};
 use crate::wiki;
 
 pub(super) fn routes() -> Router<HttpState> {
@@ -66,9 +68,11 @@ struct OpsLogQuery {
 }
 
 async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
-    let has_key = non_blank(q.id.clone()).is_some() || q.seq.is_some();
-    match st.store.read_ops_log(q.id.as_deref(), q.seq, Some(limit)) {
+    // Page size is bounded by `Store` (MAX_OPS_LOG_PAGE) for every transport.
+    let limit = q.limit.unwrap_or(50);
+    let id = non_blank(q.id);
+    let has_key = id.is_some() || q.seq.is_some();
+    match st.store.read_ops_log(id.as_deref(), q.seq, Some(limit)) {
         Ok(rows) if has_key && rows.is_empty() => {
             api_err(AppError::not_found("ops_log entry not found"))
         }
@@ -127,33 +131,41 @@ async fn rooms(State(st): State<HttpState>, Query(q): Query<RoomsQuery>) -> impl
 }
 
 async fn llm_status(State(st): State<HttpState>) -> impl IntoResponse {
-    let client = ChatClient::from_config(&st.config).ok();
-    let report = diagnostics::llm_status(&st.config, client.as_ref()).await;
+    let report = diagnostics::llm_status(&st.config, st.llm.as_ref()).await;
     api_ok(json!({"ok": true, "llm": report}))
 }
 
 async fn embedding_manifest(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.get_embedding_manifest() {
-        Ok(manifest) => {
-            let matches = manifest.as_ref().is_some_and(|m| {
-                m.dims as usize == st.config.embedding_dims
-                    && m.provider == st.config.embedding_provider.as_str()
-                    && m.model == st.config.embedding_model
-            });
-            api_ok(json!({
-                "ok": true,
-                "manifest": manifest,
-                "live": {
-                    "provider": st.config.embedding_provider.as_str(),
-                    "model": st.config.embedding_model,
-                    "dims": st.config.embedding_dims,
-                    "base_url": st.config.embedding_base_url,
-                },
-                "match": matches,
-            }))
-        }
+    let store = st.store.clone();
+    let config = st.config.clone();
+    match run_blocking("embedding manifest", move || {
+        embedding_manifest_report(&store, &config)
+    })
+    .await
+    {
+        Ok(report) => api_ok(report),
         Err(error) => api_err(error),
     }
+}
+
+/// `match` uses the canonical corpus-identity predicate (provider, model, dims,
+/// base endpoint and fingerprint), the same one that gates vector retrieval.
+fn embedding_manifest_report(store: &Store, config: &Config) -> Result<Value, AppError> {
+    let manifest = store.get_embedding_manifest()?;
+    let matches = manifest
+        .as_ref()
+        .is_some_and(|m| embedding_manifest_matches_config(m, config));
+    Ok(json!({
+        "ok": true,
+        "manifest": manifest,
+        "live": {
+            "provider": config.embedding_provider.as_str(),
+            "model": config.embedding_model,
+            "dims": config.embedding_dims,
+            "base_url": config.embedding_base_url,
+        },
+        "match": matches,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -340,4 +352,30 @@ fn eval_history_too_large(path: &Path, bytes: u64) -> AppError {
         "RAG_EVAL_HISTORY '{}' is {bytes} bytes; maximum is {MAX_EVAL_HISTORY_BYTES}. Rotate or compact the JSONL history file before reading it through HTTP",
         path.display()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedding_manifest_match_requires_the_same_base_endpoint() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config {
+            db_path: root.path().join("manifest.duckdb"),
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        store.ensure_embedding_manifest(&config).unwrap();
+        let same = embedding_manifest_report(&store, &config).unwrap();
+        assert_eq!(same["match"], true);
+
+        let moved = Config {
+            embedding_base_url: "http://other-endpoint.invalid/v1".into(),
+            ..config.clone()
+        };
+        let report = embedding_manifest_report(&store, &moved).unwrap();
+        assert_eq!(report["match"], false, "{report}");
+    }
 }

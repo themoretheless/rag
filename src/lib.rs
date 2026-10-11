@@ -15,6 +15,8 @@
 //! | [`maintain`] | Corpus analyze / plan whitelist / organize / refresh (ops_log) |
 
 pub mod access;
+pub mod activity;
+pub mod bootstrap;
 pub mod chunking;
 pub mod config;
 pub mod db;
@@ -42,6 +44,8 @@ pub mod source_scan;
 pub mod source_sync;
 pub mod storage;
 pub mod telemetry;
+#[cfg(test)]
+pub(crate) mod testkit;
 pub mod util;
 pub mod wiki;
 

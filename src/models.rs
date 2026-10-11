@@ -147,6 +147,16 @@ pub struct Document {
 }
 
 impl Document {
+    /// One top-level field of `metadata_json`, or `None` when the JSON is
+    /// malformed, not an object, or lacks `key`. For lenient reads only;
+    /// writers that must reject bad metadata parse it themselves.
+    pub fn metadata_field(&self, key: &str) -> Option<serde_json::Value> {
+        match serde_json::from_str::<serde_json::Value>(&self.metadata_json).ok()? {
+            serde_json::Value::Object(mut map) => map.remove(key),
+            _ => None,
+        }
+    }
+
     /// Weak entity-tag for multi-LLM writers: `W/"<revision>"`.
     pub fn etag(&self) -> String {
         format_document_etag(self.revision)
@@ -1122,6 +1132,54 @@ pub struct OpsLogEntry {
     pub agent_name: Option<String>,
 }
 
+impl Default for OpsLogEntry {
+    /// Blank entry: `append_ops_log` assigns `id`, `seq` and `ts` when unset.
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            seq: 0,
+            ts: DateTime::<Utc>::UNIX_EPOCH,
+            op: String::new(),
+            prefix: None,
+            message: String::new(),
+            entity_id: None,
+            entity_kind: None,
+            payload_json: default_empty_object_json(),
+            agent_name: None,
+        }
+    }
+}
+
+impl OpsLogEntry {
+    /// Audit row for `op` under `prefix` (e.g. `MAINT`, `WIKI`), stamped now.
+    pub fn new(op: impl Into<String>, prefix: &str, message: impl Into<String>) -> Self {
+        Self {
+            ts: Utc::now(),
+            op: op.into(),
+            prefix: Some(prefix.to_string()),
+            message: message.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn entity(mut self, id: Option<String>, kind: &str) -> Self {
+        self.entity_id = id;
+        self.entity_kind = Some(kind.to_string());
+        self
+    }
+
+    /// Serialized JSON payload (callers keep their own serialization errors).
+    pub fn payload(mut self, payload_json: String) -> Self {
+        self.payload_json = payload_json;
+        self
+    }
+
+    pub fn agent(mut self, agent_name: Option<String>) -> Self {
+        self.agent_name = agent_name;
+        self
+    }
+}
+
 /// Named ordered set of documents, optionally shaped as an outline and dependency graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collection {
@@ -1296,15 +1354,12 @@ impl DiaryEntry {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .or_else(|| {
-                serde_json::from_str::<serde_json::Value>(&doc.metadata_json)
-                    .ok()
-                    .and_then(|v| {
-                        v.get("agent_name")
-                            .and_then(|x| x.as_str())
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                    })
+                doc.metadata_field("agent_name")
+                    .as_ref()
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
             })
             .or_else(|| {
                 doc.wing.as_deref().and_then(|w| {

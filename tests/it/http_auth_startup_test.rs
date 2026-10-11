@@ -31,9 +31,13 @@ fn insecure_or_invalid_remote_auth_fails_before_creating_the_database() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
+        // The assertion is "fails before touching the DB", not "fails fast": the
+        // budget only guards against a server that starts listening instead.
+        // Debug binaries can take tens of seconds to print an anyhow backtrace
+        // when RUST_BACKTRACE is set, so keep the bound generous.
         let started = Instant::now();
         while child.try_wait().unwrap().is_none() {
-            if started.elapsed() > Duration::from_secs(5) {
+            if started.elapsed() > Duration::from_secs(120) {
                 let _ = child.kill();
                 let _ = child.wait();
                 panic!("insecure startup did not fail promptly");

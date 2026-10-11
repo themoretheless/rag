@@ -664,6 +664,7 @@ mod tests {
             embedder: Arc::new(MockEmbedder::new(16)),
             config,
             jobs: JobRegistry::default(),
+            llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),
         }
     }
@@ -819,7 +820,7 @@ mod tests {
         std::fs::write(root.path().join("README.md"), "durable job mutation").unwrap();
         let mut state = state(root.path());
         state.store.ensure_fts(&state.config.fts_stemmer).unwrap();
-        state.config.fts_stemmer = crate::source_sync::TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+        state.config.fts_stemmer = crate::db::fts::test_fault::fail("source-sync");
         let job = state
             .jobs
             .start_source_sync(

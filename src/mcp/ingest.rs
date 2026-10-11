@@ -174,11 +174,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CheckDuplicateParams>,
     ) -> Result<CallToolResult, McpError> {
-        let body = self.store.check_duplicate(
-            params.content.as_deref(),
-            params.content_hash.as_deref(),
-            params.uri.as_deref(),
-        )?;
+        let body = self
+            .blocking("check_duplicate", move |store| {
+                store.check_duplicate(
+                    params.content.as_deref(),
+                    params.content_hash.as_deref(),
+                    params.uri.as_deref(),
+                )
+            })
+            .await?;
         Self::json_result(&body)
     }
 
@@ -403,7 +407,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<DeleteDocumentParams>,
     ) -> Result<CallToolResult, McpError> {
-        let deleted = self.store.delete_document(&params.document_id)?;
+        let document_id = params.document_id.clone();
+        let deleted = self
+            .blocking("delete_document", move |store| store.delete_document(&document_id))
+            .await?;
         if !deleted {
             return Err(McpError::from(AppError::not_found(format!(
                 "document not found: {}",

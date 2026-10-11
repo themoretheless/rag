@@ -1,6 +1,6 @@
 # Refactor plan: structure, architecture, SOLID / DRY
 
-**Status:** proposed · **Written:** 2026-10-11 · **Baseline:** branch
+**Status:** in progress (see [Progress](#progress)) · **Written:** 2026-10-11 · **Baseline:** branch
 `claude/optimistic-pascal-8x90fc` (MCP facade split, `AppError::code()`,
 `util::{blocking,text,time}` already done; see [`SOLID_DRY_AUDIT.md`](SOLID_DRY_AUDIT.md)).
 
@@ -238,6 +238,75 @@ keeps its default through an explicit policy parameter.
    1, carve out `db` and `http_api` crates for incremental build parallelism.
 
 ---
+
+## Progress
+
+Status of each item on this branch. "Done" means implemented with a test that
+fails without the change, unless the item is a pure move.
+
+**Phase 0 — all ten done.** Three more defects surfaced while fixing them and
+are fixed too:
+
+- HTTP-MCP built a new `RagServer` per request (manifest check, reqwest/TLS
+  client, tool router). It now clones one prototype per request.
+- MCP `compile_source` built its own `ChatClient` with provider `Custom` and
+  env-derived limits (600 s / 2048 tokens instead of the configured values),
+  which is the wrong protocol for Anthropic. It now uses the configured client.
+- MCP `get_backlinks` resolved labels with "first match" instead of the
+  document-first preference of `Store::resolve_node`; it now calls it.
+
+**Phase 1**
+
+- 1.1 done. Bundled DuckDB build output fell from 3.9 GB to 0.9 GB per profile.
+- 1.2 done: `tests/it/main.rs` links DuckDB once instead of eight times.
+- 1.3 done: every `test_config` copy collapses onto `Config::for_tests()`;
+  `testkit::SeedDoc` backs the four `seed_doc` helpers.
+- 1.4 done: `db::fts::test_fault` replaces six per-module magic stemmers.
+- 1.5 dropped: clippy's `large_enum_variant` no longer fires, events move once
+  through a channel, and boxing would touch the 480-line event match for no
+  measurable gain.
+
+**Phase 2**
+
+- Shared use cases: `retrieval::pack_context`, `SearchRequest::into_command`,
+  `Store::resolve_seed` / `resolve_node`, `retrieval::find_similar` scope.
+- Ops-log pages are bounded by `Store` (`MAX_OPS_LOG_PAGE`) for every caller.
+  MCP `diary_read` was already bounded by `diary::diary_read`, so the planned
+  diary decision was unnecessary.
+- `HttpState` caches the chat client; `llm_status` and the eval judge reuse it.
+- Corpus-scale MCP calls run on the blocking pool via `RagServer::blocking`.
+  A dispatcher-wide `block_in_place` was rejected: it would make every tool
+  call uncancellable.
+- Open: `AppContext` (2.2), list-documents/list-wiki and wiki-upsert policy,
+  `multi_query_search` into `retrieval`, moving `JobRegistry` (2.5), parity
+  tests for `admin.rs`/`graph.rs` (2.1).
+
+**Phase 3**
+
+- 3.1 done: no `config`/domain → transport imports remain (`ToolSurface`,
+  `parse_bind` in `config`; `crate::activity`; `PackHitParams` in
+  `search_pack`; static tool count).
+- 3.2 partial: `ChatClient` no longer reads `RAG_LLM_*`. The remaining reads
+  are one-time start-up settings of their subsystem (backup, sync, PID file).
+- 3.4 done: `bootstrap::{open_offline, init_tracing}`; offline tools now also
+  honour `RAG_STORAGE_BACKEND`.
+- 3.5 partial: telemetry groups are explicit for every registered tool, with a
+  completeness test. The HTTP route-role table is unchanged.
+- Open: 3.3, 3.6, 3.7.
+
+**Phase 5**
+
+- 5.1 done (`record_fts_finalization_failure` everywhere).
+- 5.2 done: `maintain::audit::record_run` + `OpsLogEntry::new` builder; the
+  compress best-effort audit policy stays explicit at its call site.
+- 5.3 done: `llm::json` owns fence stripping, embedded-object parsing and
+  excerpt truncation for compile, consolidate, organize and plan.
+- 5.6 partial: `Document::metadata_field` for lenient reads.
+
+**Phase 6.5** — the audit overstated the web client: every component already
+goes through `api/client.ts` (auth, errors). Generated types remain open.
+
+Phases 4, 5.4/5.5/5.7–5.9 and 6.1–6.4/6.6 are open.
 
 ## Not planned
 

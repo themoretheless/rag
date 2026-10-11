@@ -3,43 +3,9 @@
 //! See `docs/ARCHITECTURE_VISION.md` §5. Env: `RAG_TOOLS=spine|full`.
 
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::LazyLock;
 
-use crate::error::AppError;
-
-/// Which tools are advertised and callable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ToolSurface {
-    /// 33 compile-first tools (default; count-bounded by test).
-    #[default]
-    Spine,
-    /// All registered tools.
-    Full,
-}
-
-impl ToolSurface {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Spine => "spine",
-            Self::Full => "full",
-        }
-    }
-}
-
-impl FromStr for ToolSurface {
-    type Err = AppError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "spine" | "default" | "core" => Ok(Self::Spine),
-            "full" | "all" | "advanced" => Ok(Self::Full),
-            other => Err(AppError::config(format!(
-                "invalid RAG_TOOLS '{other}': expected 'spine' or 'full'"
-            ))),
-        }
-    }
-}
+pub use crate::config::ToolSurface;
 
 /// Spine tools (index-first cascade + minimal control). Keep SPEC names.
 ///

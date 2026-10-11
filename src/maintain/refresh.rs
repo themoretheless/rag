@@ -5,9 +5,7 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
 use serde::Serialize;
-use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::store::{embedding_manifest_matches_config, embedding_migration_manifest};
@@ -15,7 +13,7 @@ use crate::db::{self, Store};
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
-use crate::models::{EmbeddingManifest, OpsLogEntry};
+use crate::models::EmbeddingManifest;
 
 /// Allowed `maintain_refresh` action names (safety whitelist).
 pub const REFRESH_ACTION_WHITELIST: &[&str] = &[
@@ -281,8 +279,6 @@ pub fn reindex_fts(store: &Store, stemmer: Option<&str>) -> Result<ReindexFtsRep
     })
 }
 
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_refresh_finalize_fts__";
 
 /// Run an explicit FTS rebuild on Tokio's blocking pool.
 ///
@@ -294,9 +290,7 @@ pub(crate) async fn reindex_fts_nonblocking(
     operation: &'static str,
 ) -> Result<ReindexFtsReport> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected refresh FTS finalization failure"));
-    }
+    db::fts::test_fault::check("refresh", stemmer)?;
 
     let store = store.clone();
     let stemmer = stemmer.to_string();
@@ -315,9 +309,7 @@ pub(crate) async fn ensure_fts_nonblocking(
     operation: &'static str,
 ) -> Result<()> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected refresh FTS finalization failure"));
-    }
+    db::fts::test_fault::check("refresh", stemmer)?;
 
     let store = store.clone();
     let stemmer = stemmer.to_string();
@@ -897,29 +889,20 @@ pub async fn maintain_refresh(
     }
 
     // ops_log every run (including dry_run) for auditability.
-    let op = if dry_run {
-        "maintain_refresh_dry_run"
-    } else {
-        "maintain_refresh"
-    };
     let message = if dry_run {
         format!("dry_run maintain_refresh actions=[{}]", actions.join(","))
     } else {
         format!("maintain_refresh actions=[{}]", actions.join(","))
     };
-    let payload = serde_json::to_string(&report).unwrap_or_else(|_| "{}".into());
-    let written = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: op.into(),
-        prefix: Some("MAINT".into()),
+    let written = super::audit::record_run(
+        store,
+        "maintain_refresh",
+        dry_run,
+        "corpus",
         message,
-        entity_id: None,
-        entity_kind: Some("corpus".into()),
-        payload_json: payload,
-        agent_name: None,
-    })?;
+        None,
+        &report,
+    )?;
     report.ops_log_id = Some(written.id);
     report.ops_log_seq = Some(written.seq);
 
@@ -927,27 +910,19 @@ pub async fn maintain_refresh(
 }
 
 fn fts_finalization_failure(store: &Store, operation: &str, error: &AppError) -> String {
-    let marker_error = store
-        .mark_fts_dirty_for_retry()
-        .err()
-        .map(|marker_error| marker_error.to_string());
-    let mut message = format!(
-        "FTS_FINALIZATION_FAILED: {operation} committed corpus work, but final FTS refresh failed: {error}; retryable=true"
-    );
-    if let Some(marker_error) = marker_error {
-        message.push_str(&format!(
-            "; additionally failed to mark FTS dirty for retry: {marker_error}"
-        ));
-    }
-    message
+    store
+        .record_fts_finalization_failure(operation, true, &error.to_string())
+        .message
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::SeedDoc;
+    use chrono::Utc;
     use crate::embeddings::MockEmbedder;
-    use crate::models::{Chunk, Document, SearchMode};
-    use crate::wiki::{write_wiki_page, LAYER_WIKI};
+    use crate::models::{Chunk, SearchMode};
+    use crate::wiki::write_wiki_page;
     use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -975,66 +950,15 @@ mod tests {
     fn test_config(db_path: PathBuf, dims: usize) -> Config {
         Config {
             db_path,
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".to_string(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".to_string(),
             embedding_dims: dims,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            default_top_k: 5,
-            ingest_roots: Vec::new(),
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".to_string(),
-            default_search_mode: SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".to_string(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".to_string(),
-            llm_api_key: "ollama".to_string(),
             llm_enabled: false,
-            llm_timeout_secs: 120,
-            llm_max_tokens: 4096,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
+            ..Config::for_tests()
         }
     }
 
     fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str) {
-        let now = Utc::now();
-        store
-            .upsert_document(&Document {
-                id: id.into(),
-                uri: format!("text://{id}"),
-                title: title.into(),
-                content: content.into(),
-                metadata_json: "{}".into(),
-                created_at: now,
-                updated_at: now,
-                layer: layer.into(),
-                kind: if layer == LAYER_WIKI {
-                    "wiki".into()
-                } else {
-                    "document".into()
-                },
-                ..Default::default()
-            })
-            .unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: format!("{id}-c0"),
-                document_id: id.into(),
-                chunk_index: 0,
-                content: content.into(),
-                embedding: vec![0.1; 8],
-                char_start: 0,
-                char_end: content.len() as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+        SeedDoc::new(id, title, content).layer(layer).insert(store);
     }
 
     #[test]
@@ -1607,7 +1531,7 @@ mod tests {
             "raw",
         );
         store.ensure_fts(&config.fts_stemmer).unwrap();
-        config.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+        config.fts_stemmer = db::fts::test_fault::fail("refresh");
 
         let report = maintain_refresh(
             &store,
@@ -1646,6 +1570,11 @@ mod tests {
             .expect("terminal summary ops_log row");
         let payload: serde_json::Value = serde_json::from_str(&summary.payload_json).unwrap();
         assert_eq!(payload["errors"].as_array().unwrap().len(), 1);
+        assert!(store
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed"));
     }
 
     #[tokio::test]

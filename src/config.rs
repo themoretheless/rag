@@ -1,6 +1,7 @@
 //! Environment-backed configuration for the RAG MCP server.
 
 use std::env;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -88,7 +89,7 @@ pub struct Config {
     /// (`RAG_MAINT_NEAR_DUP_THRESHOLD`, default **0.92**). Values in (0, 1].
     pub maint_near_dup_threshold: f64,
     /// Public MCP tool surface (`RAG_TOOLS`: `spine` default | `full`).
-    pub tool_surface: crate::mcp::ToolSurface,
+    pub tool_surface: ToolSurface,
     /// Optional HTTP gateway (`RAG_HTTP_BIND`, e.g. `127.0.0.1:7432`).
     /// Empty = disabled. Same process / DuckDB: graph UI routes + streamable MCP at `/mcp`.
     pub http_bind: Option<String>,
@@ -96,6 +97,66 @@ pub struct Config {
     /// Env: `RAG_WIKI_REQUIRE_IF_MATCH` (default **false**). Creates may still omit it.
     /// Omit-if-match = last-write-wins when this flag is false.
     pub wiki_require_if_match: bool,
+}
+
+/// Which tools are advertised and callable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolSurface {
+    /// 33 compile-first tools (default; count-bounded by test).
+    #[default]
+    Spine,
+    /// All registered tools.
+    Full,
+}
+
+impl ToolSurface {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Spine => "spine",
+            Self::Full => "full",
+        }
+    }
+}
+
+impl FromStr for ToolSurface {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "spine" | "default" | "core" => Ok(Self::Spine),
+            "full" | "all" | "advanced" => Ok(Self::Full),
+            other => Err(AppError::config(format!(
+                "invalid RAG_TOOLS '{other}': expected 'spine' or 'full'"
+            ))),
+        }
+    }
+}
+
+/// Parse `RAG_HTTP_BIND` like `127.0.0.1:7432`. Empty / unset → None.
+///
+/// Non-loopback binds require `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on`.
+/// Startup additionally validates bearer credentials via `validate_security`.
+pub fn parse_bind(raw: &str) -> Result<Option<SocketAddr>, AppError> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let addr = s
+        .parse::<SocketAddr>()
+        .map_err(|e| AppError::config(format!("invalid RAG_HTTP_BIND '{s}': {e}")))?;
+    if !addr.ip().is_loopback() {
+        let allow = std::env::var("RAG_HTTP_ALLOW_REMOTE")
+            .ok()
+            .and_then(|v| crate::config::parse_env_truthy(&v))
+            .unwrap_or(false);
+        if !allow {
+            return Err(AppError::config(format!(
+                "RAG_HTTP_BIND '{s}' is not loopback; set RAG_HTTP_ALLOW_REMOTE=true to expose \
+                 authenticated HTTP/MCP on the network"
+            )));
+        }
+    }
+    Ok(Some(addr))
 }
 
 impl Default for Config {
@@ -127,7 +188,7 @@ impl Default for Config {
             llm_max_tokens: 4096,
             maint_max_docs: 50,
             maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Spine,
+            tool_surface: ToolSurface::Spine,
             http_bind: None,
             wiki_require_if_match: false,
         }
@@ -143,7 +204,7 @@ impl Config {
     pub fn for_tests() -> Self {
         Self {
             llm_api_key: "ollama".to_string(),
-            tool_surface: crate::mcp::ToolSurface::Full,
+            tool_surface: ToolSurface::Full,
             wiki_require_if_match: false,
             ..Self::default()
         }
@@ -217,13 +278,13 @@ impl Config {
         let maint_near_dup_threshold = parse_f64("RAG_MAINT_NEAR_DUP_THRESHOLD", "0.92")?;
         let tool_surface = env::var("RAG_TOOLS")
             .unwrap_or_else(|_| "spine".to_string())
-            .parse::<crate::mcp::ToolSurface>()?;
+            .parse::<ToolSurface>()?;
         let http_bind = env::var("RAG_HTTP_BIND")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         if let Some(ref b) = http_bind {
-            crate::http_api::parse_bind(b)?;
+            parse_bind(b)?;
         }
         let wiki_require_if_match = parse_bool_env("RAG_WIKI_REQUIRE_IF_MATCH", false)?;
 
@@ -582,7 +643,7 @@ mod tests {
         let cfg = Config::for_tests();
         assert!(cfg.validate().is_ok());
         assert!(!cfg.wiki_require_if_match);
-        assert_eq!(cfg.tool_surface, crate::mcp::ToolSurface::Full);
+        assert_eq!(cfg.tool_surface, ToolSurface::Full);
         assert_eq!(cfg.embedding_provider, EmbeddingProviderKind::Mock);
     }
 
@@ -591,7 +652,7 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.embedding_provider, EmbeddingProviderKind::Mock);
         assert_eq!(cfg.embedding_dims, 1536);
-        assert_eq!(cfg.tool_surface, crate::mcp::ToolSurface::Spine);
+        assert_eq!(cfg.tool_surface, ToolSurface::Spine);
         assert!(!cfg.wiki_require_if_match);
         assert!(cfg.validate().is_ok());
     }

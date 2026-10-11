@@ -44,6 +44,17 @@ fn every_registered_tool_has_an_explicit_access_policy() {
 }
 
 #[test]
+fn every_registered_tool_has_an_explicit_telemetry_group() {
+    for tool in RagServer::all_tools_router().list_all() {
+        assert!(
+            crate::telemetry::explicit_tool_group(tool.name.as_ref()).is_some(),
+            "missing telemetry group for {}",
+            tool.name
+        );
+    }
+}
+
+#[test]
 fn maintenance_max_docs_never_exceeds_configured_boundary() {
     assert_eq!(clamp_maintenance_max_docs(50, None), 50);
     assert_eq!(clamp_maintenance_max_docs(50, Some(0)), 1);
@@ -96,31 +107,11 @@ impl EmbeddingProvider for GatedEmbedder {
 fn test_config(db_path: PathBuf, roots: Vec<PathBuf>, dims: usize) -> Config {
     Config {
         db_path,
-        embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-        embedding_base_url: "https://api.openai.com/v1".to_string(),
-        embedding_api_key: String::new(),
         embedding_model: "mock".to_string(),
         embedding_dims: dims,
-        chunk_size: 800,
-        chunk_overlap: 120,
-        default_top_k: 5,
         ingest_roots: roots,
-        max_context_tokens: 4096,
-        max_chunks_per_doc: 3,
-        fts_stemmer: "porter".to_string(),
-        default_search_mode: SearchMode::Vec,
-        llm_base_url: "http://127.0.0.1:11434/v1".to_string(),
-        llm_provider: crate::llm::LlmProviderKind::Ollama,
-        llm_model: "llama3.2".to_string(),
-        llm_api_key: "ollama".to_string(),
         llm_enabled: false,
-        llm_timeout_secs: 120,
-        llm_max_tokens: 4096,
-        maint_max_docs: 50,
-        maint_near_dup_threshold: 0.92,
-        tool_surface: crate::mcp::ToolSurface::Full,
-        http_bind: None,
-        wiki_require_if_match: false,
+        ..Config::for_tests()
     }
 }
 
@@ -1227,7 +1218,7 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
         .await
         .expect("seed document");
     server.store.ensure_fts(&server.config.fts_stemmer).unwrap();
-    server.config.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+    server.config.fts_stemmer = crate::db::fts::test_fault::fail("facade");
 
     let result = server
         .delete_by_source(Parameters(DeleteBySourceParams {

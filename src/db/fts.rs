@@ -120,6 +120,40 @@ pub struct LexFilters {
 }
 
 impl LexFilters {
+    /// The one scope predicate shared by the lexical and vector retrieval legs.
+    ///
+    /// Values are trimmed and blank values ignored, so both legs of a hybrid
+    /// query always see the same scope. `document_id_column` names the column
+    /// that carries the document id in the caller's join (`c.document_id` or
+    /// `d.id`); every other column is qualified with the `d` documents alias.
+    pub(crate) fn scope_where_clause(&self, document_id_column: &str) -> (String, Vec<String>) {
+        let mut parts = Vec::new();
+        let mut bind = Vec::new();
+        for (column, value) in [
+            (document_id_column, self.document_id.as_deref()),
+            ("d.wing", self.wing.as_deref()),
+            ("d.room", self.room.as_deref()),
+            ("d.layer", self.layer.as_deref()),
+            ("d.kind", self.kind.as_deref()),
+            ("d.uri", self.uri.as_deref()),
+            ("d.source_file", self.source_file.as_deref()),
+        ] {
+            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+                parts.push(format!("{column} = ?"));
+                bind.push(value.to_string());
+            }
+        }
+        if !self.include_archived {
+            parts.push("COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')".into());
+        }
+        let where_sql = if parts.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", parts.join(" AND "))
+        };
+        (where_sql, bind)
+    }
+
     /// Convenience: filter to a single document id.
     pub fn document_id(id: impl Into<String>) -> Self {
         Self {
@@ -489,7 +523,7 @@ fn search_duckdb_bm25(
     top_k: usize,
     filters: &LexFilters,
 ) -> Result<Vec<SearchHit>> {
-    let (where_sql, mut bind) = filter_where_clause(filters);
+    let (where_sql, mut bind) = filters.scope_where_clause("c.document_id");
     // query first for match_bm25, then filter binds. `top_k` is inlined (usize).
     let mut all_binds: Vec<String> = Vec::with_capacity(bind.len() + 1);
     all_binds.push(query.to_string());
@@ -576,7 +610,7 @@ fn search_tf(
         return Ok(Vec::new());
     }
 
-    let (where_sql, bind) = filter_where_clause(filters);
+    let (where_sql, bind) = filters.scope_where_clause("c.document_id");
     let sql = format!(
         r#"
         SELECT
@@ -680,39 +714,6 @@ pub fn tokenize(text: &str) -> Vec<String> {
 // Filters / meta / helpers
 // ---------------------------------------------------------------------------
 
-fn filter_where_clause(filters: &LexFilters) -> (String, Vec<String>) {
-    let mut parts: Vec<String> = Vec::new();
-    let mut bind: Vec<String> = Vec::new();
-
-    push_eq(&mut parts, &mut bind, "c.document_id", &filters.document_id);
-    push_eq(&mut parts, &mut bind, "d.wing", &filters.wing);
-    push_eq(&mut parts, &mut bind, "d.room", &filters.room);
-    push_eq(&mut parts, &mut bind, "d.layer", &filters.layer);
-    push_eq(&mut parts, &mut bind, "d.kind", &filters.kind);
-    push_eq(&mut parts, &mut bind, "d.uri", &filters.uri);
-    push_eq(&mut parts, &mut bind, "d.source_file", &filters.source_file);
-
-    if !filters.include_archived {
-        parts.push("COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')".into());
-    }
-
-    let where_sql = if parts.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", parts.join(" AND "))
-    };
-    (where_sql, bind)
-}
-
-fn push_eq(parts: &mut Vec<String>, bind: &mut Vec<String>, column: &str, value: &Option<String>) {
-    if let Some(v) = value {
-        if !v.is_empty() {
-            parts.push(format!("{column} = ?"));
-            bind.push(v.clone());
-        }
-    }
-}
-
 fn persist_state(conn: &Connection, state: &FtsState) -> Result<()> {
     upsert_meta(conn, META_BACKEND, state.backend.as_str())?;
     upsert_meta(conn, META_STEMMER, &state.stemmer)?;
@@ -764,7 +765,7 @@ fn increment_rebuild_count(conn: &Connection) -> Result<u64> {
 }
 
 /// Allow only ascii alpha / underscore stemmer names (DuckDB language list + none).
-fn sanitize_stemmer(raw: &str) -> String {
+pub(super) fn sanitize_stemmer(raw: &str) -> String {
     let t = raw.trim().to_ascii_lowercase();
     if t.is_empty() {
         return DEFAULT_STEMMER.to_string();
@@ -787,9 +788,61 @@ fn make_snippet(content: &str, max_chars: usize) -> String {
     format!("{s}...")
 }
 
+/// Test-only fault injection for derived-index finalization.
+///
+/// A workflow names its finalization site; a test selects that one site by
+/// putting [`test_fault::fail`] or [`test_fault::panic`] into the configured
+/// stemmer. Other sites in the same flow keep the real refresh path.
+#[cfg(test)]
+pub(crate) mod test_fault {
+    use crate::error::{AppError, Result};
+
+    const FAIL_PREFIX: &str = "__test_fail_finalize_fts__:";
+    const PANIC_PREFIX: &str = "__test_panic_finalize_fts__:";
+
+    /// Stemmer value that makes `site`'s finalization return an FTS error.
+    pub(crate) fn fail(site: &str) -> String {
+        format!("{FAIL_PREFIX}{site}")
+    }
+
+    /// Stemmer value that makes `site`'s finalization panic.
+    pub(crate) fn panic(site: &str) -> String {
+        format!("{PANIC_PREFIX}{site}")
+    }
+
+    /// Called at the top of each finalization site.
+    pub(crate) fn check(site: &str, stemmer: &str) -> Result<()> {
+        if stemmer.strip_prefix(PANIC_PREFIX) == Some(site) {
+            panic!("injected {site} FTS finalization panic");
+        }
+        if stemmer.strip_prefix(FAIL_PREFIX) == Some(site) {
+            return Err(AppError::fts(format!(
+                "injected {site} FTS finalization failure"
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lexical_and_vector_legs_share_one_trimmed_scope() {
+        let filters = LexFilters {
+            wing: Some(" rag ".into()),
+            room: Some("   ".into()),
+            document_id: Some(" doc-1".into()),
+            ..LexFilters::default()
+        };
+        let (lexical_sql, lexical_bind) = filters.scope_where_clause("c.document_id");
+        let (vector_sql, vector_bind) = filters.scope_where_clause("d.id");
+        assert_eq!(lexical_bind, vec!["doc-1".to_string(), "rag".to_string()]);
+        assert_eq!(lexical_bind, vector_bind);
+        assert!(lexical_sql.contains("c.document_id = ?") && vector_sql.contains("d.id = ?"));
+        assert!(!lexical_sql.contains("d.room"), "blank scope values are ignored");
+    }
     use crate::db::schema;
     use crate::models::{Chunk, Document};
     use chrono::Utc;

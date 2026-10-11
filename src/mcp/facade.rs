@@ -50,8 +50,6 @@ pub(super) struct FtsFinalizationOutcome {
     pub(super) error: Option<String>,
 }
 
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_facade_finalize_fts__";
 
 /// Keep the exclusive corpus lane owned by detached blocking work.
 ///
@@ -72,9 +70,7 @@ where
 
 fn ensure_fts_for_finalization(store: &Store, stemmer: &str) -> Result<(), AppError> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected facade FTS finalization failure"));
-    }
+    crate::db::fts::test_fault::check("facade", stemmer)?;
 
     store.ensure_fts(stemmer)?;
     Ok(())
@@ -99,10 +95,6 @@ impl RagServer {
                     Some(serde_json::json!({"code":"AUTH_REQUIRED"})),
                 )
             })
-    }
-
-    pub(crate) fn tool_count(&self) -> usize {
-        self.tool_router.map.len()
     }
 
     /// Label the transport this server instance serves (call-log attribution).
@@ -220,6 +212,19 @@ impl RagServer {
             "MCP tool surface initialized"
         );
         server
+    }
+
+    /// Run DuckDB-bound tool work on the blocking pool with a shared store handle.
+    ///
+    /// Use it for corpus-scale reads and writes (whole-graph views, deletes,
+    /// index rebuilds) so a long query never stalls the async executor.
+    pub(super) async fn blocking<T, F>(&self, operation: &'static str, work: F) -> Result<T, AppError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Store) -> Result<T, AppError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        crate::util::run_blocking(operation, move || work(&store)).await
     }
 
     /// Borrow the wired chat client, or refuse when missing / disabled.
@@ -465,7 +470,7 @@ impl ServerHandler for RagServer {
             Ok(value) => tool_result_succeeded(value),
             Err(_) => false,
         };
-        crate::http_api::record_mcp_tool(
+        crate::activity::record_mcp_tool(
             &audit_action,
             if operation_ok { 200 } else { 500 },
             started.elapsed().as_secs_f64() * 1000.0,
@@ -492,7 +497,7 @@ fn record_rejected_tool_call(
     error: &str,
 ) {
     let call = crate::telemetry::begin(agent, transport, audit_action, None);
-    crate::http_api::record_mcp_tool(audit_action, status, 0.0);
+    crate::activity::record_mcp_tool(audit_action, status, 0.0);
     call.finish(false, Some(error.to_string()), None);
 }
 
@@ -542,7 +547,7 @@ mod audit_tests {
         let _telemetry_guard = crate::telemetry::TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let _activity_guard = crate::http_api::ACTIVITY_TEST_LOCK
+        let _activity_guard = crate::activity::TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let agent = format!("disabled-tool-test-{}", uuid::Uuid::new_v4());
@@ -576,7 +581,7 @@ mod audit_tests {
         assert!(metric.count >= 1);
         assert!(metric.errors >= 1);
 
-        let activity = crate::http_api::latest_mcp_activity_for_test(tool)
+        let activity = crate::activity::latest_matching("mcp_tool", tool)
             .expect("disabled tool included in activity feed");
         assert_eq!(activity.status, Some(403));
         assert_eq!(activity.action, tool);

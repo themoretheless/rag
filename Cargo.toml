@@ -56,3 +56,15 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
+
+# Debug info dominates build output: every test and binary target statically
+# links bundled DuckDB. Line tables keep panic backtraces readable for our code;
+# dependencies need none.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"

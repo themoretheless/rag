@@ -8,9 +8,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
-use rag_mcp::config::EmbeddingProviderKind;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
-use rag_mcp::models::{Document, GraphNode, SearchMode, StatusReport};
+use rag_mcp::models::{Document, GraphNode, StatusReport};
 use rag_mcp::{content_hash, diary_read, diary_write, wake_up, Config, Store, REL_TUNNEL};
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -27,31 +26,10 @@ fn open_temp_store() -> (TempDir, Store) {
 fn test_config(db_path: PathBuf, dims: usize) -> Config {
     Config {
         db_path,
-        embedding_provider: EmbeddingProviderKind::Mock,
-        embedding_base_url: "https://api.openai.com/v1".to_string(),
-        embedding_api_key: String::new(),
         embedding_model: "mock".to_string(),
         embedding_dims: dims,
-        chunk_size: 800,
-        chunk_overlap: 120,
-        default_top_k: 5,
-        ingest_roots: Vec::new(),
-        max_context_tokens: 4096,
-        max_chunks_per_doc: 3,
-        fts_stemmer: "porter".to_string(),
-        default_search_mode: SearchMode::Vec,
-        llm_provider: rag_mcp::llm::LlmProviderKind::Ollama,
-        llm_base_url: "http://127.0.0.1:11434/v1".to_string(),
-        llm_model: "llama3.2".to_string(),
-        llm_api_key: "ollama".to_string(),
         llm_enabled: false,
-        llm_timeout_secs: 120,
-        llm_max_tokens: 4096,
-        maint_max_docs: 50,
-        maint_near_dup_threshold: 0.92,
-        tool_surface: rag_mcp::mcp::ToolSurface::Full,
-        http_bind: None,
-        wiki_require_if_match: false,
+        ..Config::for_tests()
     }
 }
 

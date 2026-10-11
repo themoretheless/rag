@@ -13,17 +13,15 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
-use crate::db::search::{attach_context, ContextExpansion};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
 use crate::eval::{
     source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder,
 };
-use crate::mcp::tools::PackHitParams;
+use crate::search_pack::PackHitParams;
 use crate::models::SearchHit;
-use crate::retrieval::{self, SearchCommand, SimilarDocumentsQuery};
+use crate::retrieval::{self, SimilarDocumentsQuery};
 use crate::revisions::{RestoreRevisionCommand, RevisionService};
-use crate::search_pack::pack_hits;
 use crate::telemetry;
 use crate::util::{check_path_allowlist, non_blank};
 
@@ -114,7 +112,7 @@ async fn source_file(
             .headers_mut()
             .insert(header::CONTENT_DISPOSITION, value);
     }
-    super::record_rag_action(source_download_audit_action());
+    crate::activity::record_rag_action(source_download_audit_action());
     response
 }
 
@@ -308,34 +306,28 @@ pub(super) async fn search_http(
     let include_trace = body.include_trace;
     let persist_trace = body.persist_trace;
     let call = telemetry::begin("http", "http", "search", Some(&audit_args));
-    let command = SearchCommand {
+    let command = retrieval::SearchRequest {
         query: body.query,
         mode: body.mode,
-        default_mode: state.config.default_search_mode,
         top_k: body.top_k,
-        default_top_k: state.config.default_top_k,
-        document_id: non_blank(body.document_id),
-        wing: non_blank(body.wing),
-        room: non_blank(body.room),
-        layer: non_blank(body.layer),
-        source_file: non_blank(body.source_file),
+        document_id: body.document_id,
+        wing: body.wing,
+        room: body.room,
+        layer: body.layer,
+        source_file: body.source_file,
         include_archived: body.include_archived,
         min_score: body.min_score,
-        diversity: non_blank(body.diversity),
-        group_by: non_blank(body.group_by),
+        diversity: body.diversity,
+        group_by: body.group_by,
         recency_half_life_days: body.recency_half_life_days,
-        max_context_tokens: body
-            .max_context_tokens
-            .or(Some(state.config.max_context_tokens)),
-        max_chunks_per_document: body
-            .max_chunks_per_document
-            .or(Some(state.config.max_chunks_per_doc)),
-        context_expansion: non_blank(body.context_expansion),
+        max_context_tokens: body.max_context_tokens,
+        max_chunks_per_document: body.max_chunks_per_document,
+        context_expansion: body.context_expansion,
         neighbor_chunks: body.neighbor_chunks,
-        timeout_ms: body.timeout_ms.or(Some(5_000)),
-        fts_stemmer: state.config.fts_stemmer.clone(),
+        timeout_ms: body.timeout_ms,
         rrf_k: body.rrf_k,
-    };
+    }
+    .into_command(&state.config);
     let resolved_mode =
         match retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode) {
             Ok(mode) => mode,
@@ -422,32 +414,25 @@ async fn pack_context_http(
     let include_trace = body.include_trace || body.prior_trace.is_some();
     let persist_trace = body.persist_trace;
     let prior_trace = body.prior_trace;
-    let expansion = match non_blank(body.context_expansion)
-        .as_deref()
-        .map(ContextExpansion::parse)
-    {
-        Some(Ok(value)) => Some(value),
-        Some(Err(error)) => return api_err(error),
-        None => None,
+    let command = retrieval::PackContextCommand {
+        hits: body.hits.into_iter().map(SearchHit::from).collect(),
+        max_tokens: body.max_tokens,
+        context_expansion: body.context_expansion,
+        neighbor_chunks: body.neighbor_chunks,
     };
-    let hits: Vec<SearchHit> = body.hits.into_iter().map(SearchHit::from).collect();
     let store = state.store.clone();
-    let neighbor_chunks = body.neighbor_chunks.unwrap_or(1);
+    let config = state.config.clone();
     let pack_span = include_trace.then(|| SpanBuilder::start("pack_context"));
-    let hits = match super::run_blocking("pack-context expansion", move || {
-        let mut hits = hits;
-        attach_context(&store, &mut hits, expansion, neighbor_chunks)?;
-        Ok(hits)
+    let outcome = match super::run_blocking("pack-context expansion", move || {
+        retrieval::pack_context(&store, &config, command)
     })
     .await
     {
-        Ok(hits) => hits,
+        Ok(outcome) => outcome,
         Err(error) => return api_err(error),
     };
-    let packed = pack_hits(
-        &hits,
-        body.max_tokens.unwrap_or(state.config.max_context_tokens),
-    );
+    let hits = outcome.expanded_hits;
+    let packed = outcome.packed;
     let mut response = json!({
         "ok": true,
         "total_tokens": packed.total_tokens,
@@ -582,19 +567,30 @@ struct SimilarQuery {
     document_id: String,
     #[serde(default)]
     top_k: Option<usize>,
+    #[serde(default)]
+    wing: Option<String>,
+    #[serde(default)]
+    room: Option<String>,
+}
+
+impl SimilarQuery {
+    /// Same scope as MCP `find_similar`; blank values are dropped by the service.
+    fn into_command(self, config: &crate::config::Config) -> SimilarDocumentsQuery {
+        SimilarDocumentsQuery {
+            document_id: self.document_id,
+            top_k: self.top_k.unwrap_or(config.default_top_k),
+            wing: self.wing,
+            room: self.room,
+            fts_stemmer: config.fts_stemmer.clone(),
+        }
+    }
 }
 
 async fn find_similar(
     State(state): State<HttpState>,
     Query(query): Query<SimilarQuery>,
 ) -> impl IntoResponse {
-    let query = SimilarDocumentsQuery {
-        document_id: query.document_id,
-        top_k: query.top_k.unwrap_or(state.config.default_top_k),
-        wing: None,
-        room: None,
-        fts_stemmer: state.config.fts_stemmer.clone(),
-    };
+    let query = query.into_command(&state.config);
     let store = state.store.clone();
     let config = state.config.clone();
     let result = super::run_blocking("find similar", move || {
@@ -737,6 +733,16 @@ mod tests {
                 assert_eq!(result["hits"].as_array().unwrap().len(), 1);
             }
         }
+    }
+
+    #[test]
+    fn find_similar_http_keeps_the_project_scope() {
+        let query: SimilarQuery =
+            serde_json::from_value(json!({"document_id": "d", "wing": "rag", "room": "src"}))
+                .unwrap();
+        let command = query.into_command(&crate::config::Config::for_tests());
+        assert_eq!(command.wing.as_deref(), Some("rag"));
+        assert_eq!(command.room.as_deref(), Some("src"));
     }
 
     #[test]

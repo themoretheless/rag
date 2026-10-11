@@ -1027,7 +1027,7 @@ fn build_vector_snapshot_with_filters(
 ) -> Result<VectorSnapshot> {
     let (join_sql, where_sql, bind) = match filters {
         Some(filters) => {
-            let (where_sql, bind) = vector_document_where_clause(filters);
+            let (where_sql, bind) = filters.scope_where_clause("d.id");
             (
                 "INNER JOIN documents d ON d.id = c.document_id",
                 where_sql,
@@ -1082,7 +1082,7 @@ fn load_vector_documents(
     conn: &duckdb::Connection,
     filters: &LexFilters,
 ) -> Result<VectorDocumentLookup> {
-    let (where_sql, bind) = vector_document_where_clause(filters);
+    let (where_sql, bind) = filters.scope_where_clause("d.id");
     let sql = format!("SELECT d.id, d.title, d.uri FROM documents d {where_sql}");
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(bind.iter()))?;
@@ -1091,34 +1091,6 @@ fn load_vector_documents(
         documents.insert(row.get(0)?, (row.get(1)?, row.get(2)?));
     }
     Ok(documents)
-}
-
-fn vector_document_where_clause(filters: &LexFilters) -> (String, Vec<String>) {
-    let mut parts = Vec::new();
-    let mut bind = Vec::new();
-    for (column, value) in [
-        ("d.id", filters.document_id.as_deref()),
-        ("d.wing", filters.wing.as_deref()),
-        ("d.room", filters.room.as_deref()),
-        ("d.layer", filters.layer.as_deref()),
-        ("d.kind", filters.kind.as_deref()),
-        ("d.uri", filters.uri.as_deref()),
-        ("d.source_file", filters.source_file.as_deref()),
-    ] {
-        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-            parts.push(format!("{column} = ?"));
-            bind.push(value.to_string());
-        }
-    }
-    if !filters.include_archived {
-        parts.push("COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')".into());
-    }
-    let where_sql = if parts.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", parts.join(" AND "))
-    };
-    (where_sql, bind)
 }
 
 fn normalized_vector(vector: &[f32]) -> Option<Vec<f32>> {
@@ -1188,22 +1160,6 @@ fn search_lex(
         "lex search via db::fts (BM25 or TF fallback)"
     );
     Ok(hits)
-}
-
-/// Allow only safe stemmer identifiers (unit tests).
-#[cfg(test)]
-fn sanitize_stemmer(raw: &str) -> String {
-    let s = raw.trim().to_ascii_lowercase();
-    if s.is_empty() {
-        return "porter".into();
-    }
-    if s.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        s
-    } else {
-        "porter".into()
-    }
 }
 
 /// Simple term-frequency lexical ranking (direct TF path for unit tests).
@@ -1656,10 +1612,10 @@ mod tests {
 
     #[test]
     fn sanitize_stemmer_rejects_injection() {
-        assert_eq!(sanitize_stemmer("porter"), "porter");
-        assert_eq!(sanitize_stemmer("none"), "none");
-        assert_eq!(sanitize_stemmer("  German "), "german");
-        assert_eq!(sanitize_stemmer("x'; DROP TABLE"), "porter");
+        assert_eq!(fts::sanitize_stemmer("porter"), "porter");
+        assert_eq!(fts::sanitize_stemmer("none"), "none");
+        assert_eq!(fts::sanitize_stemmer("  German "), "german");
+        assert_eq!(fts::sanitize_stemmer("x'; DROP TABLE"), "porter");
     }
 
     #[test]

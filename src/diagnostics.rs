@@ -32,8 +32,6 @@ pub struct DoctorRepairReport {
     pub after: DoctorReport,
 }
 
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_doctor_finalize_fts__";
 
 /// Probe the configured chat LLM and describe embedding config (no corpus mutation).
 ///
@@ -152,11 +150,7 @@ impl<'a> DiagnosticsService<'a> {
                     let refresh_result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             #[cfg(test)]
-                            if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-                                return Err(AppError::fts(
-                                    "injected doctor FTS finalization failure",
-                                ));
-                            }
+                            crate::db::fts::test_fault::check("doctor", &stemmer)?;
                             store.ensure_fts(&stemmer).map(|_| ())
                         }))
                         .unwrap_or_else(|_| {
@@ -709,7 +703,7 @@ mod tests {
         let config = Config {
             db_path: path,
             embedding_dims: 8,
-            fts_stemmer: TEST_FINALIZE_FTS_FAILURE_STEMMER.into(),
+            fts_stemmer: crate::db::fts::test_fault::fail("doctor"),
             ..Config::for_tests()
         };
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));

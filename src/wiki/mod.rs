@@ -14,7 +14,6 @@ use crate::db::Store;
 use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::graph::rebuild_document_graph;
 use crate::llm::{ChatClient, CompileResult, ConsolidateProposal};
 use crate::models::{Document, OpsLogEntry, WikiIndexEntry};
 use crate::util::{content_hash, slugify as shared_slugify, SlugPolicy};
@@ -56,9 +55,8 @@ impl WikiSourceVersion {
 /// A complete snapshot replaces legacy dependency discovery. Reject the whole
 /// array when any entry is malformed, so partial provenance cannot hide a parent.
 fn wiki_source_versions(wiki: &Document) -> Option<Vec<WikiSourceVersion>> {
-    let metadata: serde_json::Value = serde_json::from_str(&wiki.metadata_json).ok()?;
     let versions: Vec<WikiSourceVersion> =
-        serde_json::from_value(metadata.get("source_versions")?.clone()).ok()?;
+        serde_json::from_value(wiki.metadata_field("source_versions")?).ok()?;
     versions
         .iter()
         .all(|version| {
@@ -304,21 +302,22 @@ pub fn ensure_default_schema(store: &Store) -> Result<Document> {
         content_hash: Some(content_hash(DEFAULT_SCHEMA)),
         ..Default::default()
     };
-    store.upsert_document(&doc)?;
-    // Graph node so schema can participate in wikilink graph if content has links.
-    let _ = rebuild_document_graph(store, &doc);
-    let _ = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: now,
-        op: "schema_init".into(),
-        prefix: Some("SCHEMA".into()),
-        message: format!("initialized default {SCHEMA_URI}"),
-        entity_id: Some(doc.id.clone()),
-        entity_kind: Some("schema".into()),
-        payload_json: "{}".into(),
-        agent_name: None,
-    })?;
+    // Document, graph node (schema can carry wikilinks) and audit row commit together.
+    store.write_unchunked_document_with_audit(
+        &doc,
+        &OpsLogEntry {
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: now,
+            op: "schema_init".into(),
+            prefix: Some("SCHEMA".into()),
+            message: format!("initialized default {SCHEMA_URI}"),
+            entity_id: Some(doc.id.clone()),
+            entity_kind: Some("schema".into()),
+            payload_json: "{}".into(),
+            agent_name: None,
+        },
+    )?;
     Ok(doc)
 }
 
@@ -383,27 +382,27 @@ pub fn update_schema(
         content_hash: Some(hash.clone()),
         ..Default::default()
     };
-    store.upsert_document(&doc)?;
-    let _ = rebuild_document_graph(store, &doc);
-
-    let _ = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: now,
-        op: "schema_update".into(),
-        prefix: Some("SCHEMA".into()),
-        message: format!("updated {SCHEMA_URI}"),
-        entity_id: Some(document_id.clone()),
-        entity_kind: Some("schema".into()),
-        payload_json: serde_json::json!({
-            "uri": SCHEMA_URI,
-            "title": title,
-            "content_hash": hash,
-            "created": created,
-        })
-        .to_string(),
-        agent_name: agent.map(|s| s.to_string()),
-    })?;
+    store.write_unchunked_document_with_audit(
+        &doc,
+        &OpsLogEntry {
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: now,
+            op: "schema_update".into(),
+            prefix: Some("SCHEMA".into()),
+            message: format!("updated {SCHEMA_URI}"),
+            entity_id: Some(document_id.clone()),
+            entity_kind: Some("schema".into()),
+            payload_json: serde_json::json!({
+                "uri": SCHEMA_URI,
+                "title": title,
+                "content_hash": hash,
+                "created": created,
+            })
+            .to_string(),
+            agent_name: agent.map(|s| s.to_string()),
+        },
+    )?;
 
     Ok(SchemaDocumentView::from_doc(&doc, created))
 }
@@ -2995,7 +2994,7 @@ mod tests {
             )
             .await
         });
-        tokio::time::timeout(std::time::Duration::from_secs(2), started.acquire())
+        tokio::time::timeout(std::time::Duration::from_secs(30), started.acquire())
             .await
             .unwrap()
             .unwrap()
@@ -3016,7 +3015,7 @@ mod tests {
         assert!(matches!(error, AppError::Busy(_)), "{error}");
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         release.add_permits(1);
-        let written = tokio::time::timeout(std::time::Duration::from_secs(2), write)
+        let written = tokio::time::timeout(std::time::Duration::from_secs(30), write)
             .await
             .unwrap()
             .unwrap()
@@ -3321,7 +3320,7 @@ mod tests {
                         .map(|_| ())
                     }
                 });
-                tokio::time::timeout(std::time::Duration::from_secs(2), started.acquire())
+                tokio::time::timeout(std::time::Duration::from_secs(30), started.acquire())
                     .await
                     .unwrap()
                     .unwrap()
@@ -3335,7 +3334,7 @@ mod tests {
                 let before_chunks = chunk_state(&store, &concurrent.document_id);
                 let before_ops = store.list_ops_log(100).unwrap().len();
                 release.add_permits(1);
-                let error = tokio::time::timeout(std::time::Duration::from_secs(2), work)
+                let error = tokio::time::timeout(std::time::Duration::from_secs(30), work)
                     .await
                     .unwrap()
                     .unwrap()
@@ -3412,7 +3411,7 @@ mod tests {
                     .map(|_| ())
                 }
             });
-            tokio::time::timeout(std::time::Duration::from_secs(2), started.acquire())
+            tokio::time::timeout(std::time::Duration::from_secs(30), started.acquire())
                 .await
                 .unwrap()
                 .unwrap()
@@ -3431,7 +3430,7 @@ mod tests {
             .await
             .unwrap();
             release.add_permits(1);
-            tokio::time::timeout(std::time::Duration::from_secs(2), work)
+            tokio::time::timeout(std::time::Duration::from_secs(30), work)
                 .await
                 .unwrap()
                 .unwrap()

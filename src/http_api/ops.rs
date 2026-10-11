@@ -177,9 +177,6 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/operations/backup", post(backup))
 }
 
-fn server(st: &HttpState) -> RagServer {
-    RagServer::new((*st.store).clone(), st.embedder.clone(), st.config.clone())
-}
 async fn status(State(st): State<HttpState>) -> impl IntoResponse {
     match DiagnosticsService::new(&st.store, &st.config).status() {
         Ok(value) => api_ok(value),
@@ -261,7 +258,7 @@ const fn default_true() -> bool {
 async fn capabilities(State(st): State<HttpState>) -> impl IntoResponse {
     api_ok(json!({
         "api_version":"v1", "mcp_http":st.mcp_http, "tool_surface":st.config.tool_surface.as_str(),
-        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { server(&st).tool_count() },
+        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { RagServer::registered_tool_count() },
         "features":CAPABILITY_FEATURES,
         "deprecated_tools":[],
         "auth":st.auth

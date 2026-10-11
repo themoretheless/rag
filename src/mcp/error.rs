@@ -8,15 +8,19 @@ use rmcp::ErrorData as McpError;
 use crate::error::AppError;
 
 impl From<AppError> for McpError {
+    /// Every error carries `data.code` from [`AppError::code`], so agents can
+    /// tell a CAS `CONFLICT` from `INVALID_REQUEST` even though both use the
+    /// JSON-RPC `invalid_params` class. `Busy` additionally carries retry hints.
     fn from(err: AppError) -> Self {
         let code = err.code();
+        let data = Some(serde_json::json!({ "code": code }));
         match err {
-            AppError::NotFound(msg) => McpError::resource_not_found(msg, None),
+            AppError::NotFound(msg) => McpError::resource_not_found(msg, data),
             AppError::Config(msg)
             | AppError::Chunking(msg)
             | AppError::Embeddings(msg)
             | AppError::Conflict(msg)
-            | AppError::Forbidden(msg) => McpError::invalid_params(msg, None),
+            | AppError::Forbidden(msg) => McpError::invalid_params(msg, data),
             AppError::Busy(msg) => McpError::internal_error(
                 msg,
                 Some(serde_json::json!({
@@ -25,8 +29,8 @@ impl From<AppError> for McpError {
                     "retry_after_ms": 1_000,
                 })),
             ),
-            AppError::Llm(msg) => McpError::internal_error(msg, None),
-            other => McpError::internal_error(other.to_string(), None),
+            AppError::Llm(msg) => McpError::internal_error(msg, data),
+            other => McpError::internal_error(other.to_string(), data),
         }
     }
 }
@@ -47,5 +51,15 @@ mod tests {
         let data = busy.data.expect("busy carries retry data");
         assert_eq!(data["code"], "STORE_BUSY");
         assert_eq!(data["retryable"], true);
+    }
+
+    #[test]
+    fn conflict_and_invalid_input_are_distinguishable_by_data_code() {
+        let conflict = McpError::from(AppError::conflict("stale revision"));
+        let invalid = McpError::from(AppError::config("slug required"));
+        assert_eq!(conflict.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(invalid.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(conflict.data.unwrap()["code"], "CONFLICT");
+        assert_eq!(invalid.data.unwrap()["code"], "INVALID_REQUEST");
     }
 }

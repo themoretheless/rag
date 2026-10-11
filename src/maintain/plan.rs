@@ -12,6 +12,7 @@ use super::analyze::AnalysisReport;
 use super::prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
 use crate::config::Config;
 use crate::db::Store;
+use crate::llm::json::{parse_embedded, strip_json_fences, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
 use crate::llm::{ChatClient, ChatMessage};
 use crate::models::OpsLogEntry;
@@ -588,7 +589,7 @@ struct PlanEnvelope {
 ///
 /// Returns string-keyed raw items so unknown action names can be soft-rejected.
 pub fn parse_plan_json(raw: &str) -> Result<(Vec<serde_json::Value>, Option<String>)> {
-    let unfenced = strip_json_fences(raw.trim());
+    let unfenced = strip_json_fences(raw);
     let (items, notes) = parse_plan_json_raw(unfenced)?;
     let values = items
         .into_iter()
@@ -613,25 +614,15 @@ fn parse_plan_json_raw(unfenced: &str) -> Result<(Vec<RawPlanItem>, Option<Strin
     if let Ok(list) = serde_json::from_str::<Vec<RawPlanItem>>(unfenced) {
         return Ok((list, None));
     }
-    if let (Some(start), Some(end)) = (unfenced.find('{'), unfenced.rfind('}')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(env) = serde_json::from_str::<PlanEnvelope>(slice) {
-                return Ok((env.actions, env.notes));
-            }
-        }
+    if let Some(env) = parse_embedded::<PlanEnvelope>(unfenced, '{', '}') {
+        return Ok((env.actions, env.notes));
     }
-    if let (Some(start), Some(end)) = (unfenced.find('['), unfenced.rfind(']')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(list) = serde_json::from_str::<Vec<RawPlanItem>>(slice) {
-                return Ok((list, None));
-            }
-        }
+    if let Some(list) = parse_embedded::<Vec<RawPlanItem>>(unfenced, '[', ']') {
+        return Ok((list, None));
     }
     Err(AppError::llm(format!(
         "failed to parse maintenance plan JSON from model output: {}",
-        truncate(unfenced, 400)
+        truncate_chars(unfenced, ERROR_EXCERPT_CHARS)
     )))
 }
 
@@ -643,7 +634,7 @@ pub fn parse_and_filter_plan(
     Vec<RejectedAction>,
     Option<String>,
 )> {
-    let unfenced = strip_json_fences(raw.trim());
+    let unfenced = strip_json_fences(raw);
     let (items, notes) = parse_plan_json_raw(unfenced)?;
     let (accepted, rejected) = filter_raw_plan(items);
     Ok((accepted, rejected, notes))
@@ -665,18 +656,6 @@ pub fn action_from_parts(
     .into_validated()
 }
 
-fn strip_json_fences(trimmed: &str) -> &str {
-    if let Some(rest) = trimmed.strip_prefix("```") {
-        let rest = rest
-            .strip_prefix("json")
-            .or_else(|| rest.strip_prefix("JSON"))
-            .unwrap_or(rest);
-        let rest = rest.trim_start_matches('\n').trim_start();
-        rest.strip_suffix("```").unwrap_or(rest).trim()
-    } else {
-        trimmed
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Heuristic + LLM planners
@@ -899,7 +878,7 @@ pub async fn plan_with_llm(
             "failed to serialize AnalysisReport for planner: {e}"
         ))
     })?;
-    let analysis_json = truncate(&analysis_json, ANALYSIS_JSON_MAX_CHARS);
+    let analysis_json = truncate_chars(&analysis_json, ANALYSIS_JSON_MAX_CHARS);
 
     let user = format!("{PLAN_MAINTENANCE_USER_PREFIX}{analysis_json}");
     let messages = [
@@ -913,7 +892,7 @@ pub async fn plan_with_llm(
         },
     ];
     let raw = llm.complete(&messages).await?;
-    let unfenced = strip_json_fences(raw.trim());
+    let unfenced = strip_json_fences(&raw);
     let (parsed, notes) = parse_plan_json_raw(unfenced).map_err(|e| {
         // Preserve llm-flavoured error for bad model output.
         AppError::llm(e.to_string())
@@ -1018,15 +997,6 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
     Ok(())
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(max).collect();
-        t.push('…');
-        t
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Tests

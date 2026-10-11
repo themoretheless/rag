@@ -22,7 +22,6 @@ use crate::eval::{
     replay_bundle, replay_run_payload, validate_prompt, AnswerJudgeInput, AnswerJudgeResult,
     EvalExportBundle, PromptVersion,
 };
-use crate::llm::ChatClient;
 
 const PAGE_SIZE: i64 = 50;
 const EXPORT_CAP: usize = 200;
@@ -344,8 +343,10 @@ pub(super) async fn maybe_llm_judge(
         seed_builtin_prompt(&st.store)?;
         builtin_answer_judge()
     };
-    let client = ChatClient::from_config(&st.config)?;
-    let llm = judge_answer_llm(&client, &prompt, &input).await?;
+    let client = st.llm.as_ref().ok_or_else(|| {
+        AppError::llm("ChatClient is not configured; check RAG_LLM_BASE_URL and RAG_LLM_MODEL")
+    })?;
+    let llm = judge_answer_llm(client, &prompt, &input).await?;
     let heuristic = judge_answer_heuristic(&input);
     Ok(Some(merge_llm_scores(heuristic, llm, &prompt)))
 }
@@ -431,6 +432,7 @@ mod tests {
             embedder: Arc::new(MockEmbedder::new(16)),
             config,
             jobs: JobRegistry::default(),
+            llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),
         }
     }
