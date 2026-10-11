@@ -11,13 +11,9 @@ use super::tools::{
     PackContextParams, ReembedDocumentParams, SearchParams,
 };
 use super::views::{ChunkView, DocumentDetail};
-use crate::db::search::{
-    acquire_corpus_search_guard, fuse_rrf_many, search_with_corpus_guard, SearchQuery,
-};
-use crate::error::AppError;
-use crate::models::{SearchHit, SearchMode};
+use crate::models::SearchHit;
 use crate::retrieval::{self, SimilarDocumentsQuery};
-use crate::util::{non_blank, run_blocking};
+use crate::util::run_blocking;
 
 #[tool_router(router = search_router, vis = "pub(super)")]
 impl RagServer {
@@ -69,62 +65,23 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<MultiQuerySearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        if params.queries.is_empty() || params.queries.len() > 16 {
-            return Err(McpError::from(AppError::config(
-                "queries must contain 1..=16 entries",
-            )));
-        }
-        let top_k = params
-            .top_k
-            .map(|v| v as usize)
-            .unwrap_or(self.config.default_top_k);
-        let mode = retrieval::resolve_search_mode(
-            params.mode.as_deref(),
-            self.config.default_search_mode,
-        )?;
-        let corpus_guard = acquire_corpus_search_guard(&self.store, mode)?;
-        if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
-            self.require_vec_compatible()?;
-        }
-        let mut lists = Vec::with_capacity(params.queries.len());
-        for text in params.queries {
-            let embedding = if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
-                Some(
-                    self.embedder
-                        .embed(std::slice::from_ref(&text))
-                        .await?
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| {
-                            McpError::internal_error("embedder returned no vector for query", None)
-                        })?,
-                )
-            } else {
-                None
-            };
-            lists.push(search_with_corpus_guard(
-                &self.store,
-                &SearchQuery {
-                    mode,
-                    top_k,
-                    query_text: Some(text),
-                    query_embedding: embedding,
-                    wing: non_blank(params.wing.clone()),
-                    room: non_blank(params.room.clone()),
-                    layer: non_blank(params.layer.clone()),
-                    source_file: non_blank(params.source_file.clone()),
-                    timeout_ms: params.timeout_ms.or(Some(5_000)),
-                    fts_stemmer: self.config.fts_stemmer.clone(),
-                    ..SearchQuery::default()
-                },
-                &corpus_guard,
-            )?);
-        }
-        Self::json_result(&fuse_rrf_many(
-            &lists,
-            crate::db::search::DEFAULT_RRF_K,
-            top_k,
-        ))
+        let hits = retrieval::multi_query_search(
+            &self.store,
+            self.embedder.as_ref(),
+            &self.config,
+            retrieval::MultiQuerySearchCommand {
+                queries: params.queries,
+                top_k: params.top_k.map(|v| v as usize),
+                mode: params.mode,
+                wing: params.wing,
+                room: params.room,
+                layer: params.layer,
+                source_file: params.source_file,
+                timeout_ms: params.timeout_ms,
+            },
+        )
+        .await?;
+        Self::json_result(&hits)
     }
 
     #[tool(

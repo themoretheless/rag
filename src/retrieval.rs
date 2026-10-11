@@ -5,8 +5,8 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::db::search::{
-    acquire_corpus_search_guard, attach_context, search_with_corpus_guard, ContextExpansion,
-    DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
+    acquire_corpus_search_guard, attach_context, fuse_rrf_many, search_with_corpus_guard,
+    ContextExpansion, DiversityMode, SearchQuery, DEFAULT_RRF_K, MAX_QUERY_CHARS, MAX_TOP_K,
 };
 use crate::db::Store;
 use crate::embeddings::{l2_normalize, EmbeddingProvider};
@@ -151,6 +151,82 @@ pub async fn execute_search(
         }
     }
     Ok(hits)
+}
+
+/// Upper bound on queries fused by one `multi_query_search`.
+pub const MAX_MULTI_QUERIES: usize = 16;
+
+/// Original query plus caller-supplied rewrites, fused with RRF.
+#[derive(Debug, Clone, Default)]
+pub struct MultiQuerySearchCommand {
+    pub queries: Vec<String>,
+    pub top_k: Option<usize>,
+    pub mode: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub layer: Option<String>,
+    pub source_file: Option<String>,
+    pub timeout_ms: Option<u64>,
+}
+
+/// Run every query under one corpus read guard and fuse the ranked lists.
+///
+/// All query texts are embedded in a single provider call. No rewrite is
+/// generated here; the caller supplies the variants.
+pub async fn multi_query_search(
+    store: &Store,
+    embedder: &dyn EmbeddingProvider,
+    config: &Config,
+    command: MultiQuerySearchCommand,
+) -> Result<Vec<SearchHit>, AppError> {
+    if command.queries.is_empty() || command.queries.len() > MAX_MULTI_QUERIES {
+        return Err(AppError::config(format!(
+            "queries must contain 1..={MAX_MULTI_QUERIES} entries"
+        )));
+    }
+    let top_k = command.top_k.unwrap_or(config.default_top_k);
+    let mode = resolve_search_mode(command.mode.as_deref(), config.default_search_mode)?;
+    let corpus_guard = acquire_corpus_search_guard(store, mode)?;
+    let embeddings = if mode.needs_embedding() {
+        store.ensure_embedding_manifest(config)?;
+        store.require_embedding_manifest_match(config)?;
+        let vectors = embedder.embed(&command.queries).await?;
+        if vectors.len() != command.queries.len() {
+            return Err(AppError::embeddings(format!(
+                "embedder returned {} vectors for {} queries",
+                vectors.len(),
+                command.queries.len()
+            )));
+        }
+        vectors.into_iter().map(Some).collect()
+    } else {
+        vec![None; command.queries.len()]
+    };
+    let wing = non_blank(command.wing);
+    let room = non_blank(command.room);
+    let layer = non_blank(command.layer);
+    let source_file = non_blank(command.source_file);
+    let mut lists = Vec::with_capacity(command.queries.len());
+    for (text, embedding) in command.queries.into_iter().zip(embeddings) {
+        lists.push(search_with_corpus_guard(
+            store,
+            &SearchQuery {
+                mode,
+                top_k,
+                query_text: Some(text),
+                query_embedding: embedding,
+                wing: wing.clone(),
+                room: room.clone(),
+                layer: layer.clone(),
+                source_file: source_file.clone(),
+                timeout_ms: command.timeout_ms.or(Some(DEFAULT_SEARCH_TIMEOUT_MS)),
+                fts_stemmer: config.fts_stemmer.clone(),
+                ..SearchQuery::default()
+            },
+            &corpus_guard,
+        )?);
+    }
+    Ok(fuse_rrf_many(&lists, DEFAULT_RRF_K, top_k))
 }
 
 pub async fn prepare_search(
@@ -760,6 +836,42 @@ mod tests {
         assert!(matches!(error, AppError::Busy(_)));
         assert_eq!(embedder.calls.load(Ordering::Relaxed), 0);
         drop(sync_guard);
+    }
+
+    #[tokio::test]
+    async fn multi_query_search_embeds_all_rewrites_in_one_provider_call() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Store::open(&dir.path().join("multi-query.duckdb")).expect("open");
+        let embedder = CountingEmbedder {
+            calls: AtomicUsize::new(0),
+        };
+        let config = Config {
+            db_path: store.path().to_path_buf(),
+            embedding_dims: 2,
+            ..Config::for_tests()
+        };
+        let hits = multi_query_search(
+            &store,
+            &embedder,
+            &config,
+            MultiQuerySearchCommand {
+                queries: vec!["alpha".into(), "beta".into(), "gamma".into()],
+                mode: Some("vec".into()),
+                ..MultiQuerySearchCommand::default()
+            },
+        )
+        .await
+        .expect("empty corpus still answers");
+        assert!(hits.is_empty());
+        assert_eq!(embedder.calls.load(Ordering::Relaxed), 1);
+
+        let too_many = MultiQuerySearchCommand {
+            queries: vec!["q".into(); MAX_MULTI_QUERIES + 1],
+            ..MultiQuerySearchCommand::default()
+        };
+        assert!(multi_query_search(&store, &embedder, &config, too_many)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
