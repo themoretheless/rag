@@ -193,30 +193,33 @@ pub async fn diary_write(
         ..Default::default()
     };
 
-    store.upsert_document(&doc)?;
+    crate::util::blocking_section(|| store.upsert_document(&doc))?;
 
     let chunk_count = embed_and_store_chunks(store, embedder, config, &doc).await?;
-    let (node_id, edge_count) = rebuild_document_graph(store, &doc)?;
+    let (node_id, edge_count) =
+        crate::util::blocking_section(|| rebuild_document_graph(store, &doc))?;
 
     let mut ops_log_id = None;
     if command.log_ops {
-        let written = store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: now,
-            op: "diary_write".into(),
-            prefix: Some("DIARY".into()),
-            message: format!("diary entry for agent '{agent}' topic={topic}"),
-            entity_id: Some(document_id.clone()),
-            entity_kind: Some(KIND_DIARY.into()),
-            payload_json: serde_json::json!({
-                "agent_name": agent,
-                "topic": topic,
-                "uri": uri,
-                "wing": wing,
+        let written = crate::util::blocking_section(|| {
+            store.append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: now,
+                op: "diary_write".into(),
+                prefix: Some("DIARY".into()),
+                message: format!("diary entry for agent '{agent}' topic={topic}"),
+                entity_id: Some(document_id.clone()),
+                entity_kind: Some(KIND_DIARY.into()),
+                payload_json: serde_json::json!({
+                    "agent_name": agent,
+                    "topic": topic,
+                    "uri": uri,
+                    "wing": wing,
+                })
+                .to_string(),
+                agent_name: Some(agent.clone()),
             })
-            .to_string(),
-            agent_name: Some(agent.clone()),
         })?;
         ops_log_id = Some(written.id);
     }
@@ -318,7 +321,10 @@ pub async fn checkpoint(
                     content: body.to_string(),
                     wing: None,
                     topic: Some("session-checkpoint".into()),
-                    title: Some(format!("checkpoint: {}", crate::util::first_line(summary, 80))),
+                    title: Some(format!(
+                        "checkpoint: {}",
+                        crate::util::first_line(summary, 80)
+                    )),
                     log_ops: true,
                 },
             )
@@ -342,17 +348,19 @@ pub async fn checkpoint(
             serde_json::Value::String(format!("diary://{}/{}", d.entry.agent_name, d.entry.id));
     }
 
-    let ops_log = store.append_ops_log(&OpsLogEntry {
-        id: String::new(),
-        seq: 0,
-        ts: Utc::now(),
-        op: "checkpoint".into(),
-        prefix: Some("CKPT".into()),
-        message: summary.to_string(),
-        entity_id: diary_result.as_ref().map(|d| d.entry.id.clone()),
-        entity_kind: diary_result.as_ref().map(|_| KIND_DIARY.to_string()),
-        payload_json: payload.to_string(),
-        agent_name: agent_for_log.clone(),
+    let ops_log = crate::util::blocking_section(|| {
+        store.append_ops_log(&OpsLogEntry {
+            id: String::new(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "checkpoint".into(),
+            prefix: Some("CKPT".into()),
+            message: summary.to_string(),
+            entity_id: diary_result.as_ref().map(|d| d.entry.id.clone()),
+            entity_kind: diary_result.as_ref().map(|_| KIND_DIARY.to_string()),
+            payload_json: payload.to_string(),
+            agent_name: agent_for_log.clone(),
+        })
     })?;
 
     Ok(CheckpointResult {
@@ -393,7 +401,7 @@ async fn embed_and_store_chunks(
         });
     }
     let n = chunks.len();
-    store.insert_chunks(&chunks)?;
+    crate::util::blocking_section(|| store.insert_chunks(&chunks))?;
     Ok(n)
 }
 

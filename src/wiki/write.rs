@@ -186,7 +186,21 @@ pub(crate) async fn write_wiki_page_synced_command(
     let if_match = opts.if_match_revision;
     // Never delete chunks before CAS succeeds: a stale if_match (or a concurrent
     // loser) must leave the previous body+chunks intact for retrieval.
-    let existing = store.find_by_uri(&uri)?;
+    // Point reads, but they wait on the store mutex, which a long rebuild may
+    // hold: read on the blocking pool, never on an async worker.
+    let (existing, existing_index) = {
+        let (store, uri, slug) = (store.clone(), uri.clone(), slug.clone());
+        crate::util::run_blocking("wiki write read", move || {
+            let existing = store.find_by_uri(&uri)?;
+            let existing_index = if existing.is_some() {
+                store.get_wiki_index_by_slug(&slug)?
+            } else {
+                None
+            };
+            Ok((existing, existing_index))
+        })
+        .await?
+    };
     if create_only && existing.is_some() {
         return Err(AppError::conflict("wiki page already exists"));
     }
@@ -253,12 +267,6 @@ pub(crate) async fn write_wiki_page_synced_command(
             metadata_overlay_requested,
         )?
     };
-    let existing_index = if existing.is_some() {
-        store.get_wiki_index_by_slug(&slug)?
-    } else {
-        None
-    };
-
     let mut doc = existing.clone().unwrap_or_default();
     doc.id = document_id.clone();
     doc.uri = uri.clone();
@@ -379,15 +387,38 @@ pub(crate) async fn write_wiki_page_synced_command(
         payload_json: payload.to_string(),
         agent_name: agent.clone(),
     };
-    let (write, sequence) = store.write_wiki_document_atomic(
-        &doc,
-        if_match,
-        &chunks,
-        &index_entry,
-        &audit_entry,
-        &sync,
-        create_only,
-    )?;
+    // The commit writes chunks and rebuilds the page's graph slice. Local
+    // writes (every agent and HTTP write) commit on the blocking pool; the
+    // replication paths borrow their sync event, so they hand their worker to
+    // blocking mode instead.
+    let (write, sequence) = match sync {
+        crate::db::sync::WikiSyncWrite::Local(identity) => {
+            let store = store.clone();
+            crate::util::run_blocking("wiki write commit", move || {
+                store.write_wiki_document_atomic(
+                    &doc,
+                    if_match,
+                    &chunks,
+                    &index_entry,
+                    &audit_entry,
+                    &crate::db::sync::WikiSyncWrite::Local(identity),
+                    create_only,
+                )
+            })
+            .await?
+        }
+        replicated => crate::util::blocking_section(|| {
+            store.write_wiki_document_atomic(
+                &doc,
+                if_match,
+                &chunks,
+                &index_entry,
+                &audit_entry,
+                &replicated,
+                create_only,
+            )
+        })?,
+    };
     let Some(write) = write else {
         return Ok((None, sequence));
     };
@@ -653,7 +684,11 @@ pub async fn ingest_raw(
             .to_string()
     });
 
-    let (document_id, created_at) = if let Some(existing) = store.find_by_uri(&uri)? {
+    let existing = {
+        let (store, uri) = (store.clone(), uri.clone());
+        crate::util::run_blocking("ingest_raw read", move || store.find_by_uri(&uri)).await?
+    };
+    let (document_id, created_at) = if let Some(existing) = existing {
         (existing.id, existing.created_at)
     } else {
         (Uuid::new_v4().to_string(), now)
@@ -679,13 +714,7 @@ pub async fn ingest_raw(
         .build_plain_chunks(&doc)
         .await?;
     let chunk_count = chunks.len();
-    // Re-ingest replace path: intentionally does not call assert_content_mutable.
-    let write = store.write_document_atomic(
-        &doc,
-        None,
-        DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-    )?;
-    let _ = store.append_ops_log(&OpsLogEntry {
+    let audit_entry = OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: now,
@@ -696,14 +725,30 @@ pub async fn ingest_raw(
         entity_kind: Some(LAYER_RAW.into()),
         payload_json: "{}".into(),
         agent_name: None,
-    })?;
+    };
+    let content_digest = content_hash(&doc.content);
+    // Commit (chunks + graph slice) and audit on the blocking pool.
+    let write = {
+        let store = store.clone();
+        crate::util::run_blocking("ingest_raw commit", move || {
+            // Re-ingest replace path: intentionally does not call assert_content_mutable.
+            let write = store.write_document_atomic(
+                &doc,
+                None,
+                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+            )?;
+            store.append_ops_log(&audit_entry)?;
+            Ok(write)
+        })
+        .await?
+    };
     let rev = write.revision;
     Ok(crate::models::IngestResult {
         document_id,
         chunk_count,
         node_id: write.node_id.unwrap_or_default(),
         edge_count: write.edge_count,
-        content_hash: content_hash(&doc.content),
+        content_hash: content_digest,
         op: "inserted".into(),
         revision: rev,
         etag: crate::models::format_document_etag(rev),

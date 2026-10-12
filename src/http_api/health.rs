@@ -28,22 +28,24 @@ async fn live() -> impl IntoResponse {
 }
 
 async fn ready(State(st): State<HttpState>) -> impl IntoResponse {
-    let runtime = crate::ops::runtime_snapshot();
-    let store_ok = st.store.stats().is_ok() && st.store.fts_ready().unwrap_or(false);
-    let ok = runtime.ready && store_ok;
-    let status = if ok {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-    (
-        status,
-        axum::Json(json!({"ok": ok, "phase": runtime.startup_phase, "store_ok": store_ok})),
-    )
+    crate::util::blocking_section(|| {
+        let runtime = crate::ops::runtime_snapshot();
+        let store_ok = st.store.stats().is_ok() && st.store.fts_ready().unwrap_or(false);
+        let ok = runtime.ready && store_ok;
+        let status = if ok {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        (
+            status,
+            axum::Json(json!({"ok": ok, "phase": runtime.startup_phase, "store_ok": store_ok})),
+        )
+    })
 }
 
 async fn health(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.stats() {
+    crate::util::blocking_section(|| match st.store.stats() {
         Ok((docs, chunks, nodes, edges)) => {
             let schema_version = st.store.schema_version().ok().flatten().unwrap_or(0);
             let fts_ready = st.store.fts_ready().unwrap_or(false);
@@ -80,5 +82,5 @@ async fn health(State(st): State<HttpState>) -> impl IntoResponse {
             }))
         }
         Err(e) => api_err(e),
-    }
+    })
 }

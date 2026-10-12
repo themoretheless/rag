@@ -41,11 +41,13 @@ impl RagServer {
             .unwrap_or(configured_cap)
             .max(1)
             .min(configured_cap);
-        let mut report = self.store.cleanup_source_duplicates(
-            dry_run,
-            params.confirm.unwrap_or(false),
-            max_candidates,
-        )?;
+        let mut report = crate::util::blocking_section(|| {
+            self.store.cleanup_source_duplicates(
+                dry_run,
+                params.confirm.unwrap_or(false),
+                max_candidates,
+            )
+        })?;
         if report.applied {
             // Keep the exclusive source-mutation lane until the derived lexical
             // index covers the committed deletions. Otherwise the first user
@@ -95,24 +97,26 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<AnalyzeCorpusParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut opts = maintain::AnalyzeOptions::from_config(&self.config);
-        if let Some(d) = params.stub_age_days {
-            opts.stub_age_days = d;
-        }
-        if let Some(v) = params.include_near_dups {
-            opts.include_near_dups = v;
-        }
-        if let Some(t) = params.near_dup_threshold {
-            opts.near_dup_threshold = t;
-        }
-        if let Some(d) = params.archive_min_age_days {
-            opts.archive_min_age_days = d;
-        }
-        if let Some(v) = params.log_ops {
-            opts.log_ops = v;
-        }
-        let report = maintain::analyze_corpus(&self.store, &self.config, &opts)?;
-        Self::json_result(&report)
+        crate::util::blocking_section(|| {
+            let mut opts = maintain::AnalyzeOptions::from_config(&self.config);
+            if let Some(d) = params.stub_age_days {
+                opts.stub_age_days = d;
+            }
+            if let Some(v) = params.include_near_dups {
+                opts.include_near_dups = v;
+            }
+            if let Some(t) = params.near_dup_threshold {
+                opts.near_dup_threshold = t;
+            }
+            if let Some(d) = params.archive_min_age_days {
+                opts.archive_min_age_days = d;
+            }
+            if let Some(v) = params.log_ops {
+                opts.log_ops = v;
+            }
+            let report = maintain::analyze_corpus(&self.store, &self.config, &opts)?;
+            Self::json_result(&report)
+        })
     }
 
     #[tool(
@@ -135,7 +139,9 @@ impl RagServer {
             if let Some(v) = params.include_near_dups {
                 opts.include_near_dups = v;
             }
-            maintain::analyze_corpus(&self.store, &self.config, &opts)?
+            crate::util::blocking_section(|| {
+                maintain::analyze_corpus(&self.store, &self.config, &opts)
+            })?
         };
 
         let mut plan_opts = maintain::PlanOptions::from_config(&self.config);
@@ -153,7 +159,7 @@ impl RagServer {
         let plan = maintain::plan_maintenance(&report, &self.config, llm, &plan_opts).await?;
 
         if plan_opts.log_ops {
-            maintain::log_plan(&self.store, &plan)?;
+            crate::util::blocking_section(|| maintain::log_plan(&self.store, &plan))?;
         }
 
         Self::json_result(&plan)
@@ -360,8 +366,10 @@ impl RagServer {
         description = "Safe L0 maintenance: DuckDB CHECKPOINT (flush WAL into main file). Returns db_path and file size bytes_before/bytes_after/bytes_delta when readable. Logs to ops_log. Does not delete rows."
     )]
     pub(super) async fn vacuum_store(&self) -> Result<CallToolResult, McpError> {
-        let report: VacuumStoreReport = self.store.vacuum_store()?;
-        Self::json_result(&report)
+        crate::util::blocking_section(|| {
+            let report: VacuumStoreReport = self.store.vacuum_store()?;
+            Self::json_result(&report)
+        })
     }
 }
 

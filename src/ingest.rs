@@ -131,6 +131,7 @@ pub struct UpdateDocumentResult {
 
 pub struct IngestService<'a> {
     store: &'a Store,
+    embedder: &'a Arc<dyn EmbeddingProvider>,
     indexer: DocumentIndexer<'a>,
     config: &'a Config,
 }
@@ -143,13 +144,41 @@ impl<'a> IngestService<'a> {
     ) -> Self {
         Self {
             store,
+            embedder,
             indexer: DocumentIndexer::new(embedder.as_ref(), config),
             config,
         }
     }
 
+    /// Run synchronous work (file extraction, chunking, DuckDB reads and
+    /// commits) on the blocking pool with an owned service, so ingest never
+    /// pins an async worker. Only the embedding call stays on the executor.
+    async fn off_thread<T, F>(&self, operation: &'static str, work: F) -> Result<T, AppError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&IngestService<'_>) -> Result<T, AppError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        let embedder = self.embedder.clone();
+        let config = self.config.clone();
+        crate::util::run_blocking(operation, move || {
+            work(&IngestService::new(&store, &embedder, &config))
+        })
+        .await
+    }
+
     /// Read, extract, and ingest one allowlisted file as `layer=raw`, `kind=document`.
     pub async fn ingest_file(&self, command: IngestFileCommand) -> Result<IngestResult, AppError> {
+        let ingest = self
+            .off_thread("ingest_file extract", move |service| {
+                service.file_ingest_command(command)
+            })
+            .await?;
+        self.ingest(ingest).await
+    }
+
+    /// Extract an allowlisted file and build its ingest command (blocking I/O).
+    fn file_ingest_command(&self, command: IngestFileCommand) -> Result<IngestCommand, AppError> {
         let path = Path::new(&command.path);
         check_path_allowlist(path, &self.config.ingest_roots)?;
         let extracted = extract_file(path).map_err(|error| {
@@ -179,7 +208,7 @@ impl<'a> IngestService<'a> {
         let source_file = canonical
             .map(|p| p.display().to_string())
             .or_else(|| Some(command.path.clone()));
-        self.ingest(IngestCommand {
+        Ok(IngestCommand {
             text: extracted.text,
             title: command.title.or(default_title),
             uri: Some(uri),
@@ -191,11 +220,15 @@ impl<'a> IngestService<'a> {
             kind: crate::models::DocumentKind::Document.as_str().into(),
             immutable: false,
         })
-        .await
     }
 
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
-        match self.prepare_ingest(command, None)? {
+        let preparation = self
+            .off_thread("ingest prepare", move |service| {
+                service.prepare_ingest(command, None)
+            })
+            .await?;
+        match preparation {
             IngestPreparation::Complete(result) => Ok(result),
             IngestPreparation::Pending(prepared) => {
                 let embedded = self
@@ -203,7 +236,10 @@ impl<'a> IngestService<'a> {
                     .await?
                     .pop()
                     .expect("one prepared ingest yields one embedded ingest");
-                self.commit_embedded(embedded)
+                self.off_thread("ingest commit", move |service| {
+                    service.commit_embedded(embedded)
+                })
+                .await
             }
         }
     }
@@ -222,8 +258,26 @@ impl<'a> IngestService<'a> {
             (0..commands.len()).map(|_| None).collect();
         let mut group: Vec<(usize, PreparedIngest)> = Vec::new();
         let mut group_chunks = 0usize;
-        for (index, command) in commands.into_iter().enumerate() {
-            match self.prepare_ingest(command, None) {
+        let preparations = self
+            .off_thread("ingest_many prepare", move |service| {
+                Ok(commands
+                    .into_iter()
+                    .map(|command| service.prepare_ingest(command, None))
+                    .collect::<Vec<_>>())
+            })
+            .await;
+        let preparations = match preparations {
+            Ok(preparations) => preparations,
+            Err(error) => {
+                let message = error.to_string();
+                return results
+                    .into_iter()
+                    .map(|_| Err(AppError::db(message.clone())))
+                    .collect();
+            }
+        };
+        for (index, preparation) in preparations.into_iter().enumerate() {
+            match preparation {
                 Ok(IngestPreparation::Complete(result)) => results[index] = Some(Ok(result)),
                 Ok(IngestPreparation::Pending(prepared)) => {
                     let chunks = prepared.chunk_count();
@@ -254,27 +308,51 @@ impl<'a> IngestService<'a> {
             return;
         }
         let (indexes, prepared): (Vec<usize>, Vec<PreparedIngest>) = group.into_iter().unzip();
-        if prepared.len() == 1 {
-            let embedded = self.embed_prepared_batch(prepared).await;
-            results[indexes[0]] = Some(embedded.and_then(|mut embedded| {
-                self.commit_embedded(embedded.pop().expect("one prepared ingest"))
-            }));
-            return;
-        }
         // Keep a copy of each plan so a failed group can be retried per document.
-        let retry: Vec<PreparedIngest> = prepared.clone();
-        match self.embed_prepared_batch(prepared).await {
-            Ok(embedded) => {
-                for (index, embedded) in indexes.into_iter().zip(embedded) {
-                    results[index] = Some(self.commit_embedded(embedded));
+        let retry: Option<Vec<PreparedIngest>> = (prepared.len() > 1).then(|| prepared.clone());
+        let mut embedded: Vec<(usize, Result<EmbeddedIngest, AppError>)> = Vec::new();
+        match (self.embed_prepared_batch(prepared).await, retry) {
+            (Ok(vectors), _) => {
+                embedded.extend(indexes.into_iter().zip(vectors.into_iter().map(Ok)));
+            }
+            (Err(error), None) => embedded.push((indexes[0], Err(error))),
+            (Err(_), Some(retry)) => {
+                for (index, prepared) in indexes.into_iter().zip(retry) {
+                    let one = self
+                        .embed_prepared_batch(vec![prepared])
+                        .await
+                        .map(|mut one| {
+                            one.pop()
+                                .expect("one prepared ingest yields one embedded ingest")
+                        });
+                    embedded.push((index, one));
                 }
             }
-            Err(_) => {
-                for (index, prepared) in indexes.into_iter().zip(retry) {
-                    let embedded = self.embed_prepared_batch(vec![prepared]).await;
-                    results[index] = Some(embedded.and_then(|mut embedded| {
-                        self.commit_embedded(embedded.pop().expect("one prepared ingest"))
-                    }));
+        }
+        // Commit every embedded document (each at its own boundary) in one
+        // blocking-pool hop.
+        let committed = self
+            .off_thread("ingest_many commit", move |service| {
+                Ok(embedded
+                    .into_iter()
+                    .map(|(index, embedded)| {
+                        (
+                            index,
+                            embedded.and_then(|embedded| service.commit_embedded(embedded)),
+                        )
+                    })
+                    .collect::<Vec<_>>())
+            })
+            .await;
+        match committed {
+            Ok(committed) => {
+                for (index, result) in committed {
+                    results[index] = Some(result);
+                }
+            }
+            Err(error) => {
+                for slot in results.iter_mut().filter(|slot| slot.is_none()) {
+                    *slot = Some(Err(AppError::db(error.to_string())));
                 }
             }
         }

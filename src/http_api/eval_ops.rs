@@ -320,11 +320,13 @@ async fn replay(State(st): State<HttpState>, Json(body): Json<ReplayBody>) -> Re
 }
 
 async fn replay_one(st: HttpState, body: ReplayBody) -> Result<Value> {
-    let report = replay_bundle(&body.bundle)?;
-    if body.persist {
-        persist_eval_run(&st.store, &replay_run_payload(&report))?;
-    }
-    Ok(json!({"ok": true, "persisted": body.persist, "report": report}))
+    crate::util::blocking_section(|| {
+        let report = replay_bundle(&body.bundle)?;
+        if body.persist {
+            persist_eval_run(&st.store, &replay_run_payload(&report))?;
+        }
+        Ok(json!({"ok": true, "persisted": body.persist, "report": report}))
+    })
 }
 
 /// Optional LLM enrichment. Returns `None` when disabled or the client cannot be built.

@@ -7,7 +7,7 @@ pub mod slug;
 pub mod text;
 pub mod time;
 
-pub use blocking::{run_blocking, run_detached};
+pub use blocking::{blocking_section, run_blocking, run_detached};
 pub use hash::{check_path_allowlist, content_hash, parse_ingest_roots};
 pub use path::{
     backup_artifact_paths, refuse_live_database_target, resolve_allowlisted_output_file,

@@ -68,53 +68,57 @@ struct OpsLogQuery {
 }
 
 async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> impl IntoResponse {
-    // Page size is bounded by `Store` (MAX_OPS_LOG_PAGE) for every transport.
-    let limit = q.limit.unwrap_or(50);
-    let id = non_blank(q.id);
-    let has_key = id.is_some() || q.seq.is_some();
-    match st.store.read_ops_log(id.as_deref(), q.seq, Some(limit)) {
-        Ok(rows) if has_key && rows.is_empty() => {
-            api_err(AppError::not_found("ops_log entry not found"))
-        }
-        Ok(rows) => {
-            let agent = non_blank(q.agent);
-            let prefix = non_blank(q.prefix).map(|p| p.to_ascii_uppercase());
-            let items: Vec<_> = rows
-                .into_iter()
-                .filter(|row| {
-                    agent.as_deref().is_none_or(|a| {
-                        row.agent_name
-                            .as_deref()
-                            .is_some_and(|name| name.eq_ignore_ascii_case(a))
+    crate::util::blocking_section(|| {
+        // Page size is bounded by `Store` (MAX_OPS_LOG_PAGE) for every transport.
+        let limit = q.limit.unwrap_or(50);
+        let id = non_blank(q.id);
+        let has_key = id.is_some() || q.seq.is_some();
+        match st.store.read_ops_log(id.as_deref(), q.seq, Some(limit)) {
+            Ok(rows) if has_key && rows.is_empty() => {
+                api_err(AppError::not_found("ops_log entry not found"))
+            }
+            Ok(rows) => {
+                let agent = non_blank(q.agent);
+                let prefix = non_blank(q.prefix).map(|p| p.to_ascii_uppercase());
+                let items: Vec<_> = rows
+                    .into_iter()
+                    .filter(|row| {
+                        agent.as_deref().is_none_or(|a| {
+                            row.agent_name
+                                .as_deref()
+                                .is_some_and(|name| name.eq_ignore_ascii_case(a))
+                        })
                     })
-                })
-                .filter(|row| {
-                    prefix.as_deref().is_none_or(|p| {
-                        row.prefix
-                            .as_deref()
-                            .is_some_and(|value| value.eq_ignore_ascii_case(p))
+                    .filter(|row| {
+                        prefix.as_deref().is_none_or(|p| {
+                            row.prefix
+                                .as_deref()
+                                .is_some_and(|value| value.eq_ignore_ascii_case(p))
+                        })
                     })
-                })
-                .collect();
-            let next_seq = st.store.next_ops_seq().ok();
-            api_ok(json!({"ok": true, "count": items.len(), "next_seq": next_seq, "items": items}))
+                    .collect();
+                let next_seq = st.store.next_ops_seq().ok();
+                api_ok(
+                    json!({"ok": true, "count": items.len(), "next_seq": next_seq, "items": items}),
+                )
+            }
+            Err(error) => api_err(error),
         }
-        Err(error) => api_err(error),
-    }
+    })
 }
 
 async fn taxonomy(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.get_taxonomy() {
+    crate::util::blocking_section(|| match st.store.get_taxonomy() {
         Ok(value) => api_ok(json!({"ok": true, "taxonomy": value})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 async fn wings(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.list_wings() {
+    crate::util::blocking_section(|| match st.store.list_wings() {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]
@@ -124,10 +128,10 @@ struct RoomsQuery {
 }
 
 async fn rooms(State(st): State<HttpState>, Query(q): Query<RoomsQuery>) -> impl IntoResponse {
-    match st.store.list_rooms(non_blank(q.wing).as_deref()) {
+    crate::util::blocking_section(|| match st.store.list_rooms(non_blank(q.wing).as_deref()) {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 async fn llm_status(State(st): State<HttpState>) -> impl IntoResponse {
@@ -203,19 +207,21 @@ async fn kg_query(
     State(st): State<HttpState>,
     Query(q): Query<KgQueryParams>,
 ) -> impl IntoResponse {
-    let at_time = match parse_optional_timestamp(q.at_time.as_deref()) {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
-    match st.store.kg_query(
-        non_blank(q.subject).as_deref(),
-        non_blank(q.predicate).as_deref(),
-        non_blank(q.object).as_deref(),
-        at_time,
-    ) {
-        Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        let at_time = match parse_optional_timestamp(q.at_time.as_deref()) {
+            Ok(value) => value,
+            Err(error) => return api_err(error),
+        };
+        match st.store.kg_query(
+            non_blank(q.subject).as_deref(),
+            non_blank(q.predicate).as_deref(),
+            non_blank(q.object).as_deref(),
+            at_time,
+        ) {
+            Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -227,17 +233,17 @@ async fn kg_timeline(
     State(st): State<HttpState>,
     Query(q): Query<KgTimelineQuery>,
 ) -> impl IntoResponse {
-    match st.store.kg_timeline(q.subject.trim()) {
+    crate::util::blocking_section(|| match st.store.kg_timeline(q.subject.trim()) {
         Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 async fn kg_stats(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.kg_stats() {
+    crate::util::blocking_section(|| match st.store.kg_stats() {
         Ok(value) => api_ok(json!({"ok": true, "stats": value})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]
@@ -247,17 +253,19 @@ struct TunnelsQuery {
 }
 
 async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> impl IntoResponse {
-    match st.store.list_tunnels(non_blank(q.node_id).as_deref()) {
-        Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(
+        || match st.store.list_tunnels(non_blank(q.node_id).as_deref()) {
+            Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
+            Err(error) => api_err(error),
+        },
+    )
 }
 
 async fn lint_wiki(State(st): State<HttpState>) -> impl IntoResponse {
-    match wiki::lint_wiki(&st.store) {
+    crate::util::blocking_section(|| match wiki::lint_wiki(&st.store) {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]

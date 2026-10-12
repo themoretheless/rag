@@ -39,14 +39,16 @@ fn identity() -> Result<(String, String, Option<String>), AppError> {
 }
 
 async fn status(State(st): State<HttpState>) -> impl IntoResponse {
-    let (role, node_id, primary_url) = match identity() {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
-    match st.store.sync_status(&role, &node_id, primary_url) {
-        Ok(value) => api_ok(json!({"ok": true, "sync": value})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        let (role, node_id, primary_url) = match identity() {
+            Ok(value) => value,
+            Err(error) => return api_err(error),
+        };
+        match st.store.sync_status(&role, &node_id, primary_url) {
+            Ok(value) => api_ok(json!({"ok": true, "sync": value})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -91,7 +93,9 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
     }
     // Validate the whole batch before the first mutation. Each accepted event then
     // commits page+journal together; a retry safely resumes any committed prefix.
-    if let Err(error) = st.store.preflight_sync_batch(&body.node_id, &body.changes) {
+    if let Err(error) = crate::util::blocking_section(|| {
+        st.store.preflight_sync_batch(&body.node_id, &body.changes)
+    }) {
         return api_err(error);
     }
     let mut primary_sequences = Vec::with_capacity(body.changes.len());
@@ -129,7 +133,9 @@ async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, Ap
     };
     let payload = validate_wiki_change(change)?;
     for attempt in 0..3 {
-        if let Some(sequence) = st.store.previously_applied_sync(&mode)? {
+        if let Some(sequence) =
+            crate::util::blocking_section(|| st.store.previously_applied_sync(&mode))?
+        {
             return Ok(sequence);
         }
         let result = wiki::write_wiki_page_synced_command(
@@ -142,7 +148,10 @@ async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, Ap
                 content: payload.content.clone(),
                 wing: payload.wing.clone(),
                 room: payload.room.clone(),
-                kind: payload.kind.clone().unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
+                kind: payload
+                    .kind
+                    .clone()
+                    .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
                 category: payload.category.clone(),
                 summary: payload.summary.clone(),
                 agent: Some(format!("sync:{origin_node}")),
@@ -191,7 +200,9 @@ pub(super) fn spawn_worker(st: HttpState) {
         .sync_node_name
         .clone()
         .unwrap_or_else(|| node_id.clone());
-    if let Err(error) = st.store.register_sync_node(&node_id, &hostname, &role) {
+    if let Err(error) =
+        crate::util::blocking_section(|| st.store.register_sync_node(&node_id, &hostname, &role))
+    {
         tracing::error!(%error, %node_id, "cannot initialize database sync node");
     }
     let Some(primary_url) = configured_primary else {
@@ -222,7 +233,9 @@ pub(super) fn spawn_worker(st: HttpState) {
     };
     tokio::spawn(async move {
         let base = primary_url.trim_end_matches('/').to_string();
-        let _ = st.store.register_sync_node(&node_id, &hostname, "replica");
+        let _ = crate::util::blocking_section(|| {
+            st.store.register_sync_node(&node_id, &hostname, "replica")
+        });
         loop {
             if let Err(error) = sync_once(&st, &client, &base, &node_id, &hostname).await {
                 tracing::warn!(%error, %node_id, "database sync cycle failed");
@@ -272,7 +285,10 @@ async fn sync_once(
         .error_for_status()
         .map_err(|error| AppError::db(format!("sync register response: {error}")))?;
 
-    let pending = bounded_sync_batch(node_id, &st.store.pending_sync_outbox(100)?)?;
+    let pending = bounded_sync_batch(
+        node_id,
+        &crate::util::blocking_section(|| st.store.pending_sync_outbox(100))?,
+    )?;
     if !pending.is_empty() {
         let reply = client
             .post(format!("{base}/v1/sync/push"))
@@ -293,7 +309,7 @@ async fn sync_once(
             .zip(reply.primary_sequences)
             .map(|(change, primary)| (change.origin_seq, primary))
             .collect::<Vec<_>>();
-        st.store.mark_sync_outbox_sent(&assignments)?;
+        crate::util::blocking_section(|| st.store.mark_sync_outbox_sent(&assignments))?;
     }
 
     let local = st
@@ -397,10 +413,12 @@ struct AckBody {
 }
 
 async fn ack(State(st): State<HttpState>, Json(body): Json<AckBody>) -> impl IntoResponse {
-    match st.store.acknowledge_sync_cursor(&body.node_id, body.cursor) {
-        Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id, "cursor": body.cursor})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match st.store.acknowledge_sync_cursor(&body.node_id, body.cursor) {
+            Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id, "cursor": body.cursor})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[cfg(test)]

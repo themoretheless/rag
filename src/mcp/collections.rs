@@ -24,30 +24,32 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionCreateParams>,
     ) -> Result<CallToolResult, McpError> {
-        let now = Utc::now();
-        let collection = Collection {
-            id: Uuid::new_v4().to_string(),
-            name: params.name.trim().to_string(),
-            description: non_blank(params.description),
-            metadata_json: params.metadata_json.unwrap_or_else(|| "{}".into()),
-            created_at: now.to_rfc3339(),
-            updated_at: now.to_rfc3339(),
-        };
-        let entries = Self::collection_entries(params.entries);
-        let detail = self.store.create_collection(&collection, &entries)?;
-        let _ = self.store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: now,
-            op: "collection_create".into(),
-            prefix: Some("COLLECTION".into()),
-            message: detail.collection.name.clone(),
-            entity_id: Some(detail.collection.id.clone()),
-            entity_kind: Some("collection".into()),
-            payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
-            agent_name: None,
-        });
-        Self::json_result(&detail)
+        crate::util::blocking_section(|| {
+            let now = Utc::now();
+            let collection = Collection {
+                id: Uuid::new_v4().to_string(),
+                name: params.name.trim().to_string(),
+                description: non_blank(params.description),
+                metadata_json: params.metadata_json.unwrap_or_else(|| "{}".into()),
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+            };
+            let entries = Self::collection_entries(params.entries);
+            let detail = self.store.create_collection(&collection, &entries)?;
+            let _ = self.store.append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: now,
+                op: "collection_create".into(),
+                prefix: Some("COLLECTION".into()),
+                message: detail.collection.name.clone(),
+                entity_id: Some(detail.collection.id.clone()),
+                entity_kind: Some("collection".into()),
+                payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
+                agent_name: None,
+            });
+            Self::json_result(&detail)
+        })
     }
 
     #[tool(
@@ -58,7 +60,7 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<CollectionListParams>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.list_collections()?)
+        crate::util::blocking_section(|| Self::json_result(&self.store.list_collections()?))
     }
 
     #[tool(
@@ -89,34 +91,36 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionUpdateParams>,
     ) -> Result<CallToolResult, McpError> {
-        let entries = params.entries.map(Self::collection_entries);
-        let description = params.description.as_deref().map(|value| {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
-        let detail = self.store.update_collection(
-            params.collection_id.trim(),
-            params.name.as_deref(),
-            description,
-            params.metadata_json.as_deref(),
-            entries.as_deref(),
-        )?;
-        let _ = self.store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "collection_update".into(),
-            prefix: Some("COLLECTION".into()),
-            message: detail.collection.name.clone(),
-            entity_id: Some(detail.collection.id.clone()),
-            entity_kind: Some("collection".into()),
-            payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
-            agent_name: None,
-        });
-        Self::json_result(&detail)
+        crate::util::blocking_section(|| {
+            let entries = params.entries.map(Self::collection_entries);
+            let description = params.description.as_deref().map(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+            let detail = self.store.update_collection(
+                params.collection_id.trim(),
+                params.name.as_deref(),
+                description,
+                params.metadata_json.as_deref(),
+                entries.as_deref(),
+            )?;
+            let _ = self.store.append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: Utc::now(),
+                op: "collection_update".into(),
+                prefix: Some("COLLECTION".into()),
+                message: detail.collection.name.clone(),
+                entity_id: Some(detail.collection.id.clone()),
+                entity_kind: Some("collection".into()),
+                payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
+                agent_name: None,
+            });
+            Self::json_result(&detail)
+        })
     }
 }

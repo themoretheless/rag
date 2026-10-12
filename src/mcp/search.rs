@@ -89,17 +89,19 @@ impl RagServer {
         description = "Return the corpus embedding identity (provider, model, dims, endpoint fingerprint). Empty object fields when none recorded yet."
     )]
     pub(super) async fn get_embedding_manifest(&self) -> Result<CallToolResult, McpError> {
-        let manifest = self.store.get_embedding_manifest()?;
-        match manifest {
-            Some(m) => Self::json_result(&m),
-            None => Self::json_result(&serde_json::json!({
-                "id": null,
-                "provider": null,
-                "model": null,
-                "dims": null,
-                "recorded": false,
-            })),
-        }
+        crate::util::blocking_section(|| {
+            let manifest = self.store.get_embedding_manifest()?;
+            match manifest {
+                Some(m) => Self::json_result(&m),
+                None => Self::json_result(&serde_json::json!({
+                    "id": null,
+                    "provider": null,
+                    "model": null,
+                    "dims": null,
+                    "recorded": false,
+                })),
+            }
+        })
     }
 
     #[tool(
@@ -150,16 +152,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExpandChunksParams>,
     ) -> Result<CallToolResult, McpError> {
-        let chunks = retrieval::expand_chunks(
-            &self.store,
-            &params.document_id,
-            params.chunk_index,
-            params.radius.unwrap_or(1),
-        )?
-        .into_iter()
-        .map(ChunkView::from)
-        .collect::<Vec<_>>();
-        Self::json_result(&chunks)
+        crate::util::blocking_section(|| {
+            let chunks = retrieval::expand_chunks(
+                &self.store,
+                &params.document_id,
+                params.chunk_index,
+                params.radius.unwrap_or(1),
+            )?
+            .into_iter()
+            .map(ChunkView::from)
+            .collect::<Vec<_>>();
+            Self::json_result(&chunks)
+        })
     }
 
     #[tool(
@@ -170,18 +174,20 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FindSimilarParams>,
     ) -> Result<CallToolResult, McpError> {
-        let hits = retrieval::find_similar(
-            &self.store,
-            &self.config,
-            SimilarDocumentsQuery {
-                document_id: params.document_id,
-                top_k: params.top_k.unwrap_or(self.config.default_top_k as u32) as usize,
-                wing: params.wing,
-                room: params.room,
-                fts_stemmer: self.config.fts_stemmer.clone(),
-            },
-        )?;
-        Self::json_result(&hits)
+        crate::util::blocking_section(|| {
+            let hits = retrieval::find_similar(
+                &self.store,
+                &self.config,
+                SimilarDocumentsQuery {
+                    document_id: params.document_id,
+                    top_k: params.top_k.unwrap_or(self.config.default_top_k as u32) as usize,
+                    wing: params.wing,
+                    room: params.room,
+                    fts_stemmer: self.config.fts_stemmer.clone(),
+                },
+            )?;
+            Self::json_result(&hits)
+        })
     }
 
     #[tool(

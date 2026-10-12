@@ -138,7 +138,14 @@ pub async fn execute_search(
         .filter(|v| !v.is_zero())
         .ok_or_else(|| AppError::invalid("search timeout budget exceeded before retrieval"))?;
     query.timeout_ms = Some(remaining.as_millis().max(1).min(u64::MAX as u128) as u64);
-    let mut hits = search_with_corpus_guard(store, &query, &corpus_guard)?;
+    // Retrieval is synchronous DuckDB work (and may lazily rebuild BM25 or the
+    // vector snapshot): run it on the blocking pool so a slow search never
+    // pins an async worker. The read guard moves along and drops after it.
+    let search_store = store.clone();
+    let mut hits = crate::util::run_blocking("search", move || {
+        search_with_corpus_guard(&search_store, &query, &corpus_guard)
+    })
+    .await?;
     if started.elapsed() > budget {
         return Err(AppError::invalid(
             "search timeout budget exceeded after retrieval",
@@ -198,26 +205,33 @@ pub async fn multi_query_search(
     let room = non_blank(command.room);
     let layer = non_blank(command.layer);
     let source_file = non_blank(command.source_file);
-    let mut lists = Vec::with_capacity(command.queries.len());
-    for (text, embedding) in command.queries.into_iter().zip(embeddings) {
-        lists.push(search_with_corpus_guard(
-            store,
-            &SearchQuery {
-                mode,
-                top_k,
-                query_text: Some(text),
-                query_embedding: embedding,
-                wing: wing.clone(),
-                room: room.clone(),
-                layer: layer.clone(),
-                source_file: source_file.clone(),
-                timeout_ms: command.timeout_ms.or(Some(DEFAULT_SEARCH_TIMEOUT_MS)),
-                fts_stemmer: config.fts_stemmer.clone(),
-                ..SearchQuery::default()
-            },
-            &corpus_guard,
-        )?);
-    }
+    let queries: Vec<SearchQuery> = command
+        .queries
+        .into_iter()
+        .zip(embeddings)
+        .map(|(text, embedding)| SearchQuery {
+            mode,
+            top_k,
+            query_text: Some(text),
+            query_embedding: embedding,
+            wing: wing.clone(),
+            room: room.clone(),
+            layer: layer.clone(),
+            source_file: source_file.clone(),
+            timeout_ms: command.timeout_ms.or(Some(DEFAULT_SEARCH_TIMEOUT_MS)),
+            fts_stemmer: config.fts_stemmer.clone(),
+            ..SearchQuery::default()
+        })
+        .collect();
+    // All retrievals run on the blocking pool under the one read guard.
+    let search_store = store.clone();
+    let lists = crate::util::run_blocking("multi_query_search", move || {
+        queries
+            .iter()
+            .map(|query| search_with_corpus_guard(&search_store, query, &corpus_guard))
+            .collect::<Result<Vec<_>, AppError>>()
+    })
+    .await?;
     Ok(fuse_rrf_many(&lists, DEFAULT_RRF_K, top_k))
 }
 

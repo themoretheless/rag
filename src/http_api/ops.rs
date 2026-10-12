@@ -178,16 +178,20 @@ pub(super) fn routes() -> Router<HttpState> {
 }
 
 async fn status(State(st): State<HttpState>) -> impl IntoResponse {
-    match DiagnosticsService::new(&st.store, &st.config).status() {
-        Ok(value) => api_ok(value),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match DiagnosticsService::new(&st.store, &st.config).status() {
+            Ok(value) => api_ok(value),
+            Err(error) => api_err(error),
+        }
+    })
 }
 async fn doctor(State(st): State<HttpState>) -> impl IntoResponse {
-    match DiagnosticsService::new(&st.store, &st.config).doctor() {
-        Ok(value) => api_ok(value),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match DiagnosticsService::new(&st.store, &st.config).doctor() {
+            Ok(value) => api_ok(value),
+            Err(error) => api_err(error),
+        }
+    })
 }
 async fn version() -> impl IntoResponse {
     api_ok(
@@ -195,10 +199,10 @@ async fn version() -> impl IntoResponse {
     )
 }
 async fn projects(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.list_projects() {
+    crate::util::blocking_section(|| match st.store.list_projects() {
         Ok(items) => api_ok(json!({"ok":true, "items":items})),
         Err(error) => api_err(error),
-    }
+    })
 }
 #[derive(Deserialize)]
 struct ProjectHomeQuery {
@@ -209,17 +213,17 @@ async fn project_home(
     State(st): State<HttpState>,
     Query(query): Query<ProjectHomeQuery>,
 ) -> impl IntoResponse {
-    match st.store.project_home(&query.project) {
+    crate::util::blocking_section(|| match st.store.project_home(&query.project) {
         Ok(value) => api_ok(json!({"ok": true, "project": value})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 async fn checkpoint(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.vacuum_store() {
+    crate::util::blocking_section(|| match st.store.vacuum_store() {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]

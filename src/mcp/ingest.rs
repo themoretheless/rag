@@ -202,10 +202,12 @@ impl RagServer {
         }
         let dry_run = params.dry_run.unwrap_or(false);
         if dry_run {
-            let matched = self.store.list_documents_filtered(&DocumentFilter {
-                source_file: Some(source_file.to_string()),
-                include_archived: Some(true),
-                ..Default::default()
+            let matched = crate::util::blocking_section(|| {
+                self.store.list_documents_filtered(&DocumentFilter {
+                    source_file: Some(source_file.to_string()),
+                    include_archived: Some(true),
+                    ..Default::default()
+                })
             })?;
             let document_ids: Vec<String> = matched.iter().map(|d| d.id.clone()).collect();
             return Self::json_result(&serde_json::json!({
@@ -219,7 +221,8 @@ impl RagServer {
         }
 
         let mut mutation_guard = Some(self.store.try_corpus_mutation_guard("source deletion")?);
-        let document_ids = self.store.delete_by_source_ids(source_file)?;
+        let document_ids =
+            crate::util::blocking_section(|| self.store.delete_by_source_ids(source_file))?;
         let deleted = document_ids.len() as u64;
         let match_count = deleted;
         let mut finalization_errors = Vec::new();
@@ -443,8 +446,10 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<ListWingsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let wings = self.store.list_wings()?;
-        Self::json_result(&wings)
+        crate::util::blocking_section(|| {
+            let wings = self.store.list_wings()?;
+            Self::json_result(&wings)
+        })
     }
 
     #[tool(
@@ -455,13 +460,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListRoomsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let wing = params
-            .wing
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let rooms = self.store.list_rooms(wing)?;
-        Self::json_result(&rooms)
+        crate::util::blocking_section(|| {
+            let wing = params
+                .wing
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let rooms = self.store.list_rooms(wing)?;
+            Self::json_result(&rooms)
+        })
     }
 
     #[tool(
@@ -472,8 +479,10 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<GetTaxonomyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tax = self.store.get_taxonomy()?;
-        Self::json_result(&tax)
+        crate::util::blocking_section(|| {
+            let tax = self.store.get_taxonomy()?;
+            Self::json_result(&tax)
+        })
     }
 
     #[tool(
@@ -481,15 +490,17 @@ impl RagServer {
         description = "Return store counts (documents, chunks, graph nodes/edges) and db path."
     )]
     pub(super) async fn stats(&self) -> Result<CallToolResult, McpError> {
-        let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
-        let body = Stats {
-            document_count,
-            chunk_count,
-            node_count,
-            edge_count,
-            db_path: self.store.path().display().to_string(),
-        };
-        Self::json_result(&body)
+        crate::util::blocking_section(|| {
+            let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
+            let body = Stats {
+                document_count,
+                chunk_count,
+                node_count,
+                edge_count,
+                db_path: self.store.path().display().to_string(),
+            };
+            Self::json_result(&body)
+        })
     }
 
     #[tool(
@@ -497,8 +508,10 @@ impl RagServer {
         description = "Index health: backend=duckdb, docs/chunks/nodes/edges, wings summary, ready_for_search, fts_ready, embed_dims, db path, db/WAL sizes, and the automatic snapshot footprint (count, bytes, retention, free disk) when configured."
     )]
     pub(super) async fn status(&self) -> Result<CallToolResult, McpError> {
-        let body = DiagnosticsService::new(&self.store, &self.config).status()?;
-        Self::json_result(&body)
+        crate::util::blocking_section(|| {
+            let body = DiagnosticsService::new(&self.store, &self.config).status()?;
+            Self::json_result(&body)
+        })
     }
 
     #[tool(
@@ -506,8 +519,10 @@ impl RagServer {
         description = "Minimal integrity: schema_version vs expected, FTS ready, embed dims vs manifest, ingest_roots, ready_for_search."
     )]
     pub(super) async fn doctor(&self) -> Result<CallToolResult, McpError> {
-        let body = DiagnosticsService::new(&self.store, &self.config).doctor()?;
-        Self::json_result(&body)
+        crate::util::blocking_section(|| {
+            let body = DiagnosticsService::new(&self.store, &self.config).doctor()?;
+            Self::json_result(&body)
+        })
     }
 
     #[tool(

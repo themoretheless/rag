@@ -67,7 +67,7 @@ async fn change(State(st): State<HttpState>, Json(body): Json<Change>) -> Respon
     }
 }
 async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result<review::Proposal> {
-    let p = review::get(&st.store, id)?;
+    let p = crate::util::blocking_section(|| review::get(&st.store, id))?;
     if p.revision != revision || p.status != "pending" {
         return Err(AppError::conflict("proposal changed; reload it"));
     }
@@ -105,7 +105,7 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
         },
     )
     .await?;
-    review::get(&st.store, id)
+    crate::util::blocking_section(|| review::get(&st.store, id))
 }
 
 #[cfg(test)]
