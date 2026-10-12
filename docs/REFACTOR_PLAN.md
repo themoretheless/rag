@@ -498,6 +498,71 @@ comment is back on its function. `llm::json` keeps its own excerpt rule
 
 Nothing: every planned item above is done.
 
+## Performance round
+
+A read-only hot-path audit after the refactor found 20 runtime issues. Each was
+checked against the code, and then fixed or kept with a recorded reason.
+
+**Search**
+- Context expansion reads chunk bodies without embedding JSON. Plain searches
+  fetch section labels for all hits in one metadata query. Previously every
+  search loaded and parsed every embedding of every hit's document.
+- Vector hits hydrate content in `IN (...)` batches, where they used one point
+  query per candidate (pools reach 4096).
+- Scoped vector search reuses a current global snapshot, and caches the last
+  scoped snapshot, so refill rounds and multi-query fan-out stop re-parsing
+  embeddings.
+- Snippets are built only for returned hits. The TF fallback keeps a top-k heap.
+  MMR is O(k·n) with deterministic ties. Field boosts tokenize the query once.
+- Bug fixed: `make_snippet` panicked when lowercasing changed byte lengths
+  (`İ`). A regression test covers it.
+
+**Graph and wiki**
+- `backlinks` is one query (was N+1). The HTTP backlinks handler reads once and
+  groups through maps (was O(rows·edges·nodes)).
+- `get_graph_view` filters and caps in SQL and joins edges to the selected nodes.
+- `lint_wiki` reads document refs, nodes and edges once, and derives stub
+  backlinks in memory (was one query per stub).
+- Stale detection borrows the raw corpus instead of cloning it twice.
+- A graph rebuild memoizes link resolution per document. The resolution
+  lookups use cached prepared statements.
+- The wiki index rebuild is one transaction: one commit, and no window in which
+  the index is empty.
+
+**Writes and ingest**
+- Chunk and edge inserts use 64-row `VALUES` statements. This measured 3–4.5×
+  faster than per-row execution (200–2000 chunks, 768-dim vectors).
+- Ingest counts chunks with `COUNT(*)`.
+- `reembed_all` embeds up to 128 chunks per provider call across documents. A
+  failing group is retried per document.
+- Source sync keeps its batch across unchanged files; it used to flush on every
+  skipped file.
+- The Ollama embedder remembers a working legacy endpoint.
+- Bug fixed: `near_duplicate_pairs` returns the most similar pairs. It used to
+  stop at the first 100 matches in scan order.
+- The release profile uses thin LTO and one codegen unit. `cargo build --release`
+  was verified with it.
+
+**Measured** (debug build, mock embeddings, `repository-v1`, the same corpus
+for the old and new binaries; recall and MRR are identical):
+
+| Mode | Mean before → after | p95 before → after |
+|------|---------------------|--------------------|
+| lex | 213 → 140 ms (−34%) | 270 → 162 ms |
+| hybrid | 399 → 172 ms (−57%) | 492 → 208 ms |
+
+**Kept on purpose, with the reason**
+- FTS rebuild timing: the BM25 index is already rebuilt lazily at the first
+  search after any number of writes, so a burst of ingests pays once. Serving
+  stale or TF results instead would break read-your-writes.
+- `prepare_cached` everywhere: measured at about 10% per point query, because
+  execution dominates. It is applied only to the per-link resolution lookups.
+- Stored `content_hash` in stale detection: writers may supply their own hash
+  (see `merge_exact_dup`), so the check keeps hashing the body.
+- `load_vector_documents`: one id/title/uri projection per query, which is cheap
+  next to the removed per-candidate queries. It also has to reflect live
+  title/status changes that do not advance the chunk generation.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit
