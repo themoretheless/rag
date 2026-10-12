@@ -106,7 +106,7 @@ database path is published last as the generation commit marker.
 | `retrieval.rs`, `search_pack.rs` | validated search use cases, multi-get/expand/similar and token packing |
 | `revisions.rs` | revision diff and CAS-protected restore use cases |
 | `diagnostics.rs`, `ops.rs` | shared HTTP/MCP health/status/doctor policy and report DTOs, aggregate layer health and scheduled operational state |
-| `graph/` | pure wikilink/tag extraction; resolution persists through `db::graph::resolve` |
+| `graph/` | re-exports `rag-mcp-markup` extraction; resolution persists through `db::graph::resolve` |
 | `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams; `wiki::put_wiki_page` is the slug/uri/id upsert policy used by HTTP |
 | `maintain/`, `memory_lifecycle.rs`, `diary/` | explicit maintenance and memory workflows |
 | `db/store.rs`, `db/store/*.rs` | DuckDB façade and transaction boundary (`Store::with_tx`); methods grouped by documents, chunks, health, revisions, schema/diary, corpus lane, manifest, ops log and wiki index. `Store::lock` is private to `db` outside tests |
@@ -126,6 +126,7 @@ database path is published last as the generation commit marker.
 | `bootstrap.rs` | shared start-up for `main` and the offline tools (tracing, configured store, manifest check, embedder) |
 | `llm/json.rs`, `maintain/audit.rs` | one parser for JSON in model output; one terminal `MAINT` audit row per maintenance run |
 | `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters (`activity.rs` only serves `/v1/activity`) |
+| `crates/rag-mcp-markup` | pure `[[wikilink]]`/`#tag` parsing and label normalization; the server graph and the native UI renderer share it |
 | `crates/rag-mcp-core` | serde-only wire types shared by the server and clients (graph view, PKB defaults, `Layer`) |
 | `web-svelte/src/api/types.ts` | web client wire types; the graph and search shapes are checked against Rust by `tests/it/web_types_contract_test.rs` |
 | `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |

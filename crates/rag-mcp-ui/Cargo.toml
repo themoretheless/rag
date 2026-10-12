@@ -19,6 +19,8 @@ direct-db = ["dep:rag-mcp"]
 [dependencies]
 # Serde-only wire types (GraphView / GraphNode / GraphEdge, PKB defaults).
 rag-mcp-core = { path = "../rag-mcp-core" }
+# Same [[wikilink]] parser the server uses to build graph edges.
+rag-mcp-markup = { path = "../rag-mcp-markup" }
 # Full server crate (bundled DuckDB) only for the read-only `--db` mode.
 rag-mcp = { path = "../..", optional = true }
 

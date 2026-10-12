@@ -661,6 +661,49 @@ fn link_resolved(key: &str, titles: &HashSet<String>, slugs: &HashSet<String>) -
         || slugs.iter().any(|s| s.eq_ignore_ascii_case(k))
 }
 
+/// Text split into plain runs and wikilinks, using the server's parser so
+/// links inside code spans and `![[embeds]]` are not rendered as links.
+#[derive(Debug, PartialEq, Eq)]
+enum InlineSegment<'a> {
+    Plain(&'a str),
+    /// `key` is the link target (heading stripped); `display` is the alias or target.
+    Link { key: String, display: String },
+}
+
+fn wikilink_segments(text: &str) -> Vec<InlineSegment<'_>> {
+    let mut byte_of_char: Vec<usize> = text.char_indices().map(|(byte, _)| byte).collect();
+    byte_of_char.push(text.len());
+    let last = byte_of_char.len() - 1;
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+    for link in rag_mcp_markup::extract_links(text)
+        .into_iter()
+        .filter(|link| link.rel_type == rag_mcp_markup::REL_WIKILINK)
+    {
+        let start = byte_of_char[link.char_start.min(last)];
+        let end = byte_of_char[link.char_end.min(last)];
+        if start < cursor {
+            continue;
+        }
+        if start > cursor {
+            segments.push(InlineSegment::Plain(&text[cursor..start]));
+        }
+        let display = link
+            .alias
+            .clone()
+            .unwrap_or_else(|| link.target_label.clone());
+        segments.push(InlineSegment::Link {
+            key: link.target_label,
+            display,
+        });
+        cursor = end;
+    }
+    if cursor < text.len() {
+        segments.push(InlineSegment::Plain(&text[cursor..]));
+    }
+    segments
+}
+
 fn draw_inline_with_wikilinks(
     ui: &mut Ui,
     text: &str,
@@ -668,49 +711,34 @@ fn draw_inline_with_wikilinks(
     known_slugs: &HashSet<String>,
 ) -> Option<String> {
     let mut clicked: Option<String> = None;
-    let mut rest = text;
-    while let Some(start) = rest.find("[[") {
-        let before = &rest[..start];
-        if !before.is_empty() {
-            emit_rich_plain(ui, before);
-        }
-        let after_open = &rest[start + 2..];
-        if let Some(end) = after_open.find("]]") {
-            let target = after_open[..end].trim();
-            let (link_key, display) = if let Some((a, b)) = target.split_once('|') {
-                (a.trim(), b.trim())
-            } else {
-                (target, target)
-            };
-            let resolved = link_resolved(link_key, known_titles, known_slugs);
-            let color = if resolved {
-                egui::Color32::from_rgb(100, 160, 255)
-            } else {
-                egui::Color32::from_rgb(140, 140, 140)
-            };
-            let mut rich = RichText::new(display).color(color);
-            if resolved {
-                rich = rich.underline();
+    for segment in wikilink_segments(text) {
+        let (link_key, display) = match segment {
+            InlineSegment::Plain(plain) => {
+                emit_rich_plain(ui, plain);
+                continue;
             }
-            let mut resp = ui.add(egui::Label::new(rich).sense(Sense::click()));
-            if resp.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
-            if !resolved {
-                resp = resp.on_hover_text("Не найдено: страницы с таким заголовком/slug нет");
-            }
-            if resp.clicked() && !link_key.is_empty() {
-                clicked = Some(link_key.to_string());
-            }
-            rest = &after_open[end + 2..];
+            InlineSegment::Link { key, display } => (key, display),
+        };
+        let resolved = link_resolved(&link_key, known_titles, known_slugs);
+        let color = if resolved {
+            egui::Color32::from_rgb(100, 160, 255)
         } else {
-            emit_rich_plain(ui, &rest[start..]);
-            rest = "";
-            break;
+            egui::Color32::from_rgb(140, 140, 140)
+        };
+        let mut rich = RichText::new(display).color(color);
+        if resolved {
+            rich = rich.underline();
         }
-    }
-    if !rest.is_empty() {
-        emit_rich_plain(ui, rest);
+        let mut resp = ui.add(egui::Label::new(rich).sense(Sense::click()));
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if !resolved {
+            resp = resp.on_hover_text("Не найдено: страницы с таким заголовком/slug нет");
+        }
+        if resp.clicked() && !link_key.is_empty() {
+            clicked = Some(link_key);
+        }
     }
     clicked
 }
@@ -801,6 +829,39 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri};
+
+    #[test]
+    fn wikilink_segments_follow_the_server_parser() {
+        use super::{wikilink_segments, InlineSegment};
+        let text = "See [[Alpha|the alpha]] and [[Beta#Setup]], not `[[Code]]` or ![[img.png]].";
+        let links: Vec<_> = wikilink_segments(text)
+            .into_iter()
+            .filter_map(|segment| match segment {
+                InlineSegment::Link { key, display } => Some((key, display)),
+                InlineSegment::Plain(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            links,
+            vec![
+                ("Alpha".to_string(), "the alpha".to_string()),
+                ("Beta".to_string(), "Beta".to_string()),
+            ]
+        );
+        assert_eq!(wikilink_segments("plain"), vec![InlineSegment::Plain("plain")]);
+        // Multi-byte text before a link keeps slicing on char boundaries.
+        assert_eq!(
+            wikilink_segments("Привет [[Мир]]!"),
+            vec![
+                InlineSegment::Plain("Привет "),
+                InlineSegment::Link {
+                    key: "Мир".into(),
+                    display: "Мир".into()
+                },
+                InlineSegment::Plain("!"),
+            ]
+        );
+    }
 
     #[test]
     fn cancel_is_disabled_while_wiki_save_is_in_flight() {

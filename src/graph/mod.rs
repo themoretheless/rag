@@ -4,8 +4,8 @@
 //! - [`normalize`]: single `label_key` normalization used by resolve and store lookups
 //! - [`resolve`]: match targets to nodes / stubs and write edges
 
-pub mod extract;
-pub mod normalize;
+/// Pure link parsing lives in the `rag-mcp-markup` crate, shared with the UI.
+pub use rag_mcp_markup::{extract, normalize};
 /// Graph persistence (node upsert, wikilink/tag resolution) lives in `db`.
 pub use crate::db::graph::resolve;
 

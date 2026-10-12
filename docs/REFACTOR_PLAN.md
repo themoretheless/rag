@@ -405,6 +405,11 @@ are fixed too:
   not needed because there are exactly two closed variants.
 - 6.4 done: `GraphApp` is split into `app/{mod,events,frame,graph,revisions,
   wiki}.rs`.
+- 6.6 done: `crates/rag-mcp-markup` holds the pure `[[wikilink]]`/`#tag`
+  parser and label normalization (`graph::{extract, normalize}` re-export it).
+  The native UI renders wiki links with it instead of its own naive `[[...]]`
+  scan, so links inside code spans and `![[embeds]]` are no longer drawn as
+  links and `[[Page#Heading]]` resolves to `Page`, as in the server graph.
 - 6.5 done as a contract test: `tests/it/web_types_contract_test.rs` round-trips
   every field of the TS `GraphNode`, `GraphEdge`, `SearchHit` and
   `SearchExplanation` through the Rust types. It found three `GraphNode` fields
@@ -418,7 +423,6 @@ are fixed too:
 | 4.1 remaining row loops | 33 collect-into-`Vec` loops use `db::rows::query_vec` and 17 transaction blocks use `Store::with_tx`. The ~45 loops left filter rows, fill maps or return early, so a generic helper would hide logic rather than remove repetition. |
 | 5.8 page `kind` as a closed enum | `rag_mcp_core::PageKind` names the kinds the server writes or special-cases (`wiki`, `source_summary`, `entity`, `concept`, `diary`), and the defaults use it. `Document::kind` stays a string because agents write their own kinds; a closed enum would reject valid pages. |
 | 6.2 merging the tolerant pairs | `ActivityEvent` moved to core. `JobSnapshot`, `ProjectHome` and `SearchHit` stay separate on purpose (string timestamps, field subsets so the UI survives server drift); `crates/rag-mcp-ui/src/wire_contract.rs` serializes the server type and requires the UI copy to read it. |
-| 6.6 more crates | `rag-mcp-core` already lets clients avoid the server crate. Splitting `db` or `wiki` into crates would need their `Config`/LLM seams to be crate-public first, and no second consumer exists. |
 
 ## Not planned
 

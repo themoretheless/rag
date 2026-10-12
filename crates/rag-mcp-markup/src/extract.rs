@@ -42,7 +42,7 @@ impl Default for ExtractOptions {
 pub struct ExtractedLink {
     /// Target label (wikilink destination or tag name without `#`).
     pub target_label: String,
-    /// [`label_key`](crate::graph::normalize::label_key) of the target, or the
+    /// [`label_key`](crate::normalize::label_key) of the target, or the
     /// path key for path-like targets: the identity used to bind and dedupe.
     pub target_key: String,
     /// `wikilink` or `tagged`.
@@ -66,10 +66,10 @@ pub struct ExtractedLink {
 
 impl ExtractedLink {
     /// Tag edge from document metadata rather than body text (§4.3 frontmatter tags).
-    pub(crate) fn from_metadata_tag(tag: &str) -> Self {
+    pub fn from_metadata_tag(tag: &str) -> Self {
         Self {
             target_label: tag.to_string(),
-            target_key: crate::graph::normalize::tag_key(tag),
+            target_key: crate::normalize::tag_key(tag),
             rel_type: REL_TAGGED.to_string(),
             context: Some("document metadata tag".to_string()),
             alias: None,
@@ -191,9 +191,9 @@ fn assign_occurrences(links: &mut [ExtractedLink]) {
 fn wikilink_key(target: &str) -> String {
     if path_like(target) {
         // Paths keep their separators; only case and surrounding width fold.
-        return crate::graph::normalize::display_label(target).to_lowercase();
+        return crate::normalize::display_label(target).to_lowercase();
     }
-    crate::graph::normalize::label_key(target)
+    crate::normalize::label_key(target)
 }
 
 fn path_like(target: &str) -> bool {
@@ -456,7 +456,7 @@ fn extract_tags(masked: &str, original: &str) -> Vec<Hit> {
                 out.push(Hit {
                     link: ExtractedLink {
                         target_label: label.clone(),
-                        target_key: crate::graph::normalize::tag_key(&label),
+                        target_key: crate::normalize::tag_key(&label),
                         rel_type: REL_TAGGED.to_string(),
                         context: context_snippet(original, idx, body_end),
                         alias: None,
