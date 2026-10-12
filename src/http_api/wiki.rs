@@ -12,8 +12,7 @@ use crate::db::store::WikiPageMetaFilter;
 use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
 use crate::models::resolve_if_match;
-use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
-use crate::wiki::{self, WriteWikiOpts};
+use crate::wiki;
 
 use super::error::{api_err, api_ok};
 use super::HttpState;
@@ -190,7 +189,7 @@ struct WikiPutBody {
     if_match_etag: Option<String>,
 }
 
-/// Create/overwrite a wiki page via [`wiki::write_wiki_page_with_opts`].
+/// Create/overwrite a wiki page via [`wiki::put_wiki_page`].
 ///
 /// Optional `if_match_revision` / `if_match_etag` enforce CAS; mismatch → **409**.
 async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) -> impl IntoResponse {
@@ -213,87 +212,22 @@ async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Resp
         Ok(v) => v,
         Err(e) => return api_err(e),
     };
-    let slug_from_uri = body.uri.as_deref().and_then(wiki_slug_from_uri);
-    let slug = body
-        .slug
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or(slug_from_uri)
-        .unwrap_or_default();
-    let slug = slug.trim();
-    if slug.is_empty() {
-        return api_err(AppError::invalid("slug required (or uri=wiki://slug)"));
-    }
-    let canonical_uri = format!("wiki://{}", slugify(slug, SlugPolicy::WikiPage));
-    let requested_id = body
-        .id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty());
-    if create_only && (requested_id.is_some() || if_match.is_some()) {
-        return api_err(AppError::invalid(
-            "creating a wiki page does not accept id or if_match",
-        ));
-    }
-    let existing = match requested_id {
-        Some(id) => match wiki::get_wiki_page(&st.store, id) {
-            Ok(document) if document.uri == canonical_uri => Some(document),
-            Ok(document) => {
-                return api_err(AppError::conflict(format!(
-                    "wiki document id '{id}' belongs to '{}', not requested URI '{canonical_uri}'",
-                    document.uri
-                )))
-            }
-            Err(error) => return api_err(error),
-        },
-        None => match st.store.find_by_uri(&canonical_uri) {
-            Ok(document) => document,
-            Err(error) => return api_err(error),
-        },
+    let command = wiki::WikiPutCommand {
+        slug: body.slug,
+        uri: body.uri,
+        id: body.id,
+        title: body.title,
+        content: body.content,
+        wing: body.wing,
+        room: body.room,
+        kind: body.kind,
+        category: body.category,
+        summary: body.summary,
+        agent: body.agent,
+        if_match_revision: if_match,
+        create_only,
     };
-
-    if create_only && existing.is_some() {
-        return api_err(AppError::conflict("wiki page URI is already in use"));
-    }
-    let result = if let Some(existing) = existing {
-        wiki::update_wiki_page_cas(
-            &st.store,
-            &st.embedder,
-            &st.config,
-            &existing.id,
-            Some(&body.title),
-            &body.content,
-            body.kind.as_deref(),
-            body.category.as_deref(),
-            body.summary.as_deref(),
-            body.agent.as_deref(),
-            if_match,
-        )
-        .await
-    } else {
-        let command = wiki::WikiWriteCommand {
-            slug: slug.to_string(),
-            title: body.title,
-            content: body.content,
-            wing: body.wing,
-            room: body.room,
-            kind: body.kind.unwrap_or_else(|| "wiki".into()),
-            category: body.category,
-            summary: body.summary,
-            agent: body.agent,
-            options: WriteWikiOpts {
-                if_match_revision: if_match,
-                ..Default::default()
-            },
-        };
-        if create_only {
-            wiki::create_wiki_page_command(&st.store, &st.embedder, &st.config, command).await
-        } else {
-            wiki::write_wiki_page_command(&st.store, &st.embedder, &st.config, command).await
-        }
-    };
+    let result = wiki::put_wiki_page(&st.store, &st.embedder, &st.config, command).await;
     match result {
         Ok(res) => api_ok(json!({
             "ok": true,

@@ -291,6 +291,7 @@ mod stale;
 mod file_answer;
 mod lint;
 mod index;
+mod put;
 
 pub use self::schema::*;
 pub use self::write::*;
@@ -300,6 +301,7 @@ pub use self::stale::*;
 pub use self::file_answer::*;
 pub use self::lint::*;
 pub use self::index::*;
+pub use self::put::*;
 
 #[cfg(test)]
 mod tests;
