@@ -10,7 +10,7 @@
     "docs/LOCAL_LLM_WIKI.md",
     "docs/ROADMAP.md",
     "docs/CONNECT.md",
-    "src/review.rs",
+    "src/db/review.rs",
     "src/graph/extract.rs",
     "src/http_api/auth.rs",
     "src/revisions.rs",
