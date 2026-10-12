@@ -289,7 +289,7 @@ pub fn maintain_compress(
                     continue;
                 }
 
-                let is_raw = doc.layer.eq_ignore_ascii_case("raw");
+                let is_raw = crate::models::Layer::Raw.is(&doc.layer);
                 let (action_name, disposition, reason) = if is_raw && !opts.allow_raw_delete {
                     (
                         "tombstone_raw_dup",
@@ -429,7 +429,7 @@ pub fn maintain_compress(
                 continue;
             }
 
-            let is_raw = remove.layer.eq_ignore_ascii_case("raw");
+            let is_raw = crate::models::Layer::Raw.is(&remove.layer);
             if is_raw && !opts.allow_raw_delete {
                 planned_tombstones.push(remove.id.clone());
                 docs_tombstoned += 1;

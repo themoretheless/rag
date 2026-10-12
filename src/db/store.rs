@@ -704,7 +704,7 @@ impl Store {
             let mut merged = Vec::with_capacity(sources.len());
             let mut raw_protected = Vec::new();
             for (index, source) in sources.into_iter().enumerate() {
-                if hard_delete && (!source.layer.eq_ignore_ascii_case("raw") || allow_raw_delete) {
+                if hard_delete && (!crate::models::Layer::Raw.is(&source.layer) || allow_raw_delete) {
                     if !delete_document_locked(tx, &source.id)? {
                         return Err(AppError::not_found(format!(
                             "document disappeared during merge_exact_dup: {}",
@@ -838,7 +838,7 @@ fn journal_generic_wiki_change_locked(
     doc: &Document,
     identity: Option<&super::sync::SyncIdentity>,
 ) -> Result<()> {
-    if !doc.layer.eq_ignore_ascii_case("wiki") {
+    if !crate::models::Layer::Wiki.is(&doc.layer) {
         return Ok(());
     }
     let Some(slug) = canonical_wiki_slug(&doc.uri) else {
@@ -975,7 +975,7 @@ fn apply_document_meta_update(
 ) -> Result<DocumentMetaApplyResult> {
     let mut content_changed = false;
     let mut title_changed = false;
-    let persisted_raw = doc.layer.eq_ignore_ascii_case("raw");
+    let persisted_raw = crate::models::Layer::Raw.is(&doc.layer);
 
     // Layer transition policy is deliberately asymmetric: mutable documents
     // may be frozen by moving to `raw`, but a persisted raw source cannot leave
@@ -987,7 +987,7 @@ fn apply_document_meta_update(
             .as_deref()
             .map(str::trim)
             .filter(|layer| !layer.is_empty())
-            .is_some_and(|layer| !layer.eq_ignore_ascii_case("raw"))
+            .is_some_and(|layer| !crate::models::Layer::Raw.is(layer))
     {
         return Err(AppError::conflict(format!(
             "document {} is layer=raw (immutable source); changing its layer is forbidden",
@@ -1018,7 +1018,7 @@ fn apply_document_meta_update(
     if let Some(ref layer) = update.layer {
         let layer = layer.trim();
         if !layer.is_empty() {
-            doc.layer = if layer.eq_ignore_ascii_case("raw") {
+            doc.layer = if crate::models::Layer::Raw.is(layer) {
                 "raw".to_string()
             } else {
                 layer.to_string()

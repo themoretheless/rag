@@ -308,6 +308,7 @@ mod file_answer;
 mod lint;
 mod index;
 mod put;
+mod review;
 
 pub use self::schema::*;
 pub use self::write::*;
@@ -318,6 +319,7 @@ pub use self::file_answer::*;
 pub use self::lint::*;
 use self::index::*;
 pub use self::put::*;
+pub use self::review::create_review_proposal;
 
 #[cfg(test)]
 mod tests;

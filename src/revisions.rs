@@ -137,7 +137,7 @@ impl<'a> RevisionService<'a> {
             .to_string(),
             agent_name: None,
         };
-        let write = if restored.layer.eq_ignore_ascii_case("wiki") {
+        let write = if crate::models::Layer::Wiki.is(&restored.layer) {
             let slug = restored
                 .uri
                 .strip_prefix("wiki://")
@@ -286,7 +286,7 @@ impl<'a> RevisionService<'a> {
 }
 
 fn is_source_controlled(document: &crate::models::Document) -> bool {
-    document.layer.eq_ignore_ascii_case("raw")
+    crate::models::Layer::Raw.is(&document.layer)
         || document
             .source_file
             .as_deref()

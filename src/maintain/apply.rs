@@ -1657,7 +1657,7 @@ fn apply_drop_tombstones(
 
     let delete_ids = candidates
         .iter()
-        .filter(|(_, layer)| allow_raw_delete || !layer.eq_ignore_ascii_case("raw"))
+        .filter(|(_, layer)| allow_raw_delete || !crate::models::Layer::Raw.is(layer))
         .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
     let skipped_raw = candidates.len().saturating_sub(delete_ids.len());

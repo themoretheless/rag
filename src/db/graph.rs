@@ -962,7 +962,7 @@ fn scoped_companion_kinds(include_tags: bool) -> String {
         crate::models::pkb_node_kinds(include_tags)
             .iter()
             .map(String::as_str)
-            .filter(|kind| *kind != "document"),
+            .filter(|kind| !NodeKind::Document.is(kind)),
     )
 }
 

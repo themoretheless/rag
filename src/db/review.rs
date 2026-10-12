@@ -50,18 +50,9 @@ pub fn list(store: &Store) -> Result<Vec<Proposal>> {
     let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
     rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
 }
-pub fn create(store: &Store, document_id: &str) -> Result<Proposal> {
-    let base = crate::wiki::get_wiki_page(store, document_id)?;
-    let mut sources = Vec::new();
-    for (id, uri) in crate::wiki::review_parent_ids(store, &base)? {
-        let source = store.get_document(&id)?;
-        sources.push(ReviewSource {
-            document_id: id,
-            uri: source.as_ref().map(|d| d.uri.clone()).unwrap_or(uri),
-            content_hash: source.as_ref().map(|d| content_hash(&d.content)),
-            content: source.map(|d| d.content),
-        });
-    }
+/// Store a new pending proposal for `base` with its source snapshots.
+/// Building those snapshots is wiki policy (`wiki::create_review_proposal`).
+pub fn insert_new(store: &Store, base: Document, sources: Vec<ReviewSource>) -> Result<Proposal> {
     let proposal = Proposal {
         id: uuid::Uuid::new_v4().to_string(),
         content: base.content.clone(),

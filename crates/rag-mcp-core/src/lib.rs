@@ -333,9 +333,10 @@ impl Layer {
         .find(|layer| layer.as_str() == value)
     }
 
-    /// True when `value` is exactly this layer's wire string.
+    /// True when `value` names this layer, ignoring ASCII case. One rule for
+    /// every check, so raw-layer immutability cannot depend on letter case.
     pub fn is(self, value: &str) -> bool {
-        self.as_str() == value
+        value.eq_ignore_ascii_case(self.as_str())
     }
 }
 
@@ -577,7 +578,7 @@ mod tests {
             assert_eq!(Layer::parse(layer.as_str()), Some(layer));
         }
         assert_eq!(Layer::parse("Wiki"), None);
-        assert!(Layer::Raw.is("raw"));
+        assert!(Layer::Raw.is("raw") && Layer::Raw.is("RAW") && !Layer::Raw.is("raw2"));
     }
 
     #[test]

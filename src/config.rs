@@ -140,6 +140,16 @@ pub struct Config {
     pub sync_primary_url: Option<String>,
     /// Bearer token sent to the primary. Env: `RAG_PRIMARY_TOKEN`.
     pub sync_primary_token: Option<Secret>,
+    /// Run DuckDB `CHECKPOINT` at start-up. Env: `RAG_CHECKPOINT_ON_START` (default true).
+    pub checkpoint_on_start: bool,
+    /// Serve only HTTP (no stdio MCP). Env: `RAG_HTTP_ONLY` (default false).
+    pub http_only: bool,
+    /// Mount streamable MCP at `/mcp` when HTTP is bound. Env: `RAG_MCP_HTTP` (default true).
+    pub mcp_http: bool,
+    /// Bearer tokens per HTTP role. Env: `RAG_HTTP_{READ,WRITE,ADMIN}_TOKEN`.
+    pub http_read_token: Option<Secret>,
+    pub http_write_token: Option<Secret>,
+    pub http_admin_token: Option<Secret>,
 }
 
 /// Which tools are advertised and callable.
@@ -254,6 +264,12 @@ impl Default for Config {
             sync_node_id: None,
             sync_primary_url: None,
             sync_primary_token: None,
+            checkpoint_on_start: true,
+            http_only: false,
+            mcp_http: true,
+            http_read_token: None,
+            http_write_token: None,
+            http_admin_token: None,
         }
     }
 }
@@ -475,6 +491,26 @@ impl Config {
         let sync_node_id = env::var("RAG_NODE_ID").ok();
         let sync_primary_url = env::var("RAG_PRIMARY_URL").ok();
         let sync_primary_token = env::var("RAG_PRIMARY_TOKEN").ok().map(Secret::from);
+        // Lenient flags: an unparseable value keeps the default, as before.
+        let lenient_flag = |name: &str, default: bool| {
+            env::var(name)
+                .ok()
+                .and_then(|value| parse_env_truthy(&value))
+                .unwrap_or(default)
+        };
+        let checkpoint_on_start = lenient_flag("RAG_CHECKPOINT_ON_START", true);
+        let http_only = lenient_flag("RAG_HTTP_ONLY", false);
+        let mcp_http = lenient_flag("RAG_MCP_HTTP", true);
+        let token = |name: &str| -> Result<Option<Secret>, AppError> {
+            match env::var(name) {
+                Ok(value) => Ok(Some(Secret::from(value))),
+                Err(env::VarError::NotPresent) => Ok(None),
+                Err(_) => Err(AppError::invalid(format!("{name} must be valid UTF-8"))),
+            }
+        };
+        let http_read_token = token("RAG_HTTP_READ_TOKEN")?;
+        let http_write_token = token("RAG_HTTP_WRITE_TOKEN")?;
+        let http_admin_token = token("RAG_HTTP_ADMIN_TOKEN")?;
 
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
@@ -534,6 +570,12 @@ impl Config {
             sync_node_id,
             sync_primary_url,
             sync_primary_token,
+            checkpoint_on_start,
+            http_only,
+            mcp_http,
+            http_read_token,
+            http_write_token,
+            http_admin_token,
         };
         config.validate()?;
         Ok(config)

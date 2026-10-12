@@ -36,11 +36,11 @@ impl HttpAuth {
     pub(super) fn local_for_tests() -> Self {
         Self::from_tokens(None, None, None).unwrap()
     }
-    pub(crate) fn from_env() -> Result<Self, AppError> {
+    pub(crate) fn from_config(config: &crate::config::Config) -> Result<Self, AppError> {
         Self::from_tokens(
-            token_env(AccessRole::Read.env_name())?.as_deref(),
-            token_env(AccessRole::Write.env_name())?.as_deref(),
-            token_env(AccessRole::Admin.env_name())?.as_deref(),
+            config.http_read_token.as_ref().map(|t| t.expose()),
+            config.http_write_token.as_ref().map(|t| t.expose()),
+            config.http_admin_token.as_ref().map(|t| t.expose()),
         )
     }
 
@@ -124,13 +124,6 @@ impl HttpAuth {
     }
 }
 
-fn token_env(name: &str) -> Result<Option<String>, AppError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(_) => Err(AppError::invalid(format!("{name} must be valid UTF-8"))),
-    }
-}
 
 /// Routes that require admin on purpose (operations, sync transport, jobs).
 /// Listed so the route-catalog test can tell them from unclassified routes.

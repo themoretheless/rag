@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().context("failed to load config from environment")?;
     if let Some(bind) = config.http_bind.as_deref() {
         if let Some(address) = http_api::parse_bind(bind)? {
-            http_api::validate_security(address).context("HTTP security configuration")?;
+            http_api::validate_security(address, &config).context("HTTP security configuration")?;
         }
     }
     config.apply_process_limits();
@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     let store = rag_mcp::storage::open_configured(&config)
         .context("failed to open configured storage backend")?;
 
-    if env_truthy_default("RAG_CHECKPOINT_ON_START", true) {
+    if config.checkpoint_on_start {
         rag_mcp::ops::set_startup_phase("checkpoint");
         let phase = Instant::now();
         store.checkpoint().context(
@@ -135,9 +135,9 @@ async fn run_serve_modes(
     let context = rag_mcp::context::AppContext::new(store, embedder, config);
     let config = context.config.clone();
     RagServer::from_context(context.clone()).spawn_auto_sync();
-    let http_only = env_flag("RAG_HTTP_ONLY");
+    let http_only = config.http_only;
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
-    let mcp_http_enabled = env_truthy_default("RAG_MCP_HTTP", true);
+    let mcp_http_enabled = config.mcp_http;
 
     let http_bind = config.http_bind.clone();
     if let Some(ref bind_str) = http_bind {
@@ -224,17 +224,4 @@ async fn shutdown_signal() -> std::io::Result<()> {
     tokio::signal::ctrl_c().await
 }
 
-fn env_flag(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| rag_mcp::config::parse_env_truthy(&v))
-        .unwrap_or(false)
-}
 
-/// Bool env with default when unset (`false`/`0`/`off` force off).
-fn env_truthy_default(name: &str, default: bool) -> bool {
-    match std::env::var(name) {
-        Ok(v) => rag_mcp::config::parse_env_truthy(&v).unwrap_or(default),
-        Err(_) => default,
-    }
-}

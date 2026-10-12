@@ -70,8 +70,11 @@ use crate::util::run_blocking;
 pub use bind::parse_bind;
 
 /// Validate security before opening the store or starting background writers.
-pub fn validate_security(bind: SocketAddr) -> Result<(), crate::AppError> {
-    auth::HttpAuth::from_env()?.validate_bind(bind)
+pub fn validate_security(
+    bind: SocketAddr,
+    config: &crate::config::Config,
+) -> Result<(), crate::AppError> {
+    auth::HttpAuth::from_config(config)?.validate_bind(bind)
 }
 
 /// Shared state for graph/wiki HTTP handlers (clone of MCP store).
@@ -239,7 +242,7 @@ pub async fn serve(
     context: crate::context::AppContext,
     mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
 ) -> Result<(), std::io::Error> {
-    let auth = auth::HttpAuth::from_env()
+    let auth = auth::HttpAuth::from_config(&context.config)
         .and_then(|auth| {
             auth.validate_bind(bind)?;
             Ok(auth)

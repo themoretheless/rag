@@ -46,7 +46,7 @@ async fn change(State(st): State<HttpState>, Json(body): Json<Change>) -> Respon
         Change::Accept { id, revision } => accept(&st, &id, revision).await,
         other => {
             super::run_blocking("change review proposal", move || match other {
-                Change::Create { document_id } => review::create(&st.store, &document_id),
+                Change::Create { document_id } => crate::wiki::create_review_proposal(&st.store, &document_id),
                 Change::Save {
                     id,
                     revision,
@@ -138,7 +138,7 @@ mod tests {
             slug:"review-test".into(), title:"Review".into(), content:"Before".into(), kind:"wiki".into(), wing:None, room:None, category:None, summary:None, agent:None,
             options: WriteWikiOpts { extra_metadata:Some(json!({"source_versions":[{"document_id":"source","uri":"raw://source","content_hash":content_hash("source version one")}]})), ..Default::default() },
         }).await.unwrap();
-        let p = review::create(&st.store, &page.document_id).unwrap();
+        let p = crate::wiki::create_review_proposal(&st.store, &page.document_id).unwrap();
         let p = review::update(&st.store, &p.id, p.revision, "After".into(), false).unwrap();
         (st, p)
     }
@@ -201,7 +201,7 @@ mod tests {
     async fn missing_source_reappearing_with_new_id_blocks_acceptance() {
         let (st, p) = fixture().await;
         st.store.delete_document("source").unwrap();
-        let p = review::create(&st.store, &p.base.id).unwrap();
+        let p = crate::wiki::create_review_proposal(&st.store, &p.base.id).unwrap();
         assert_eq!(p.sources[0].uri, "raw://source");
         assert!(p.sources[0].content_hash.is_none());
         st.store
