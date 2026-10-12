@@ -270,17 +270,7 @@ pub struct GatewayHealth {
     pub relational_integrity_ok: bool,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ActivityEvent {
-    pub seq: u64,
-    pub at: String,
-    pub kind: String,
-    pub client: Option<String>,
-    pub action: String,
-    pub status: Option<u16>,
-    pub elapsed_ms: Option<f64>,
-    pub request_id: Option<String>,
-}
+pub use rag_mcp_core::ActivityEvent;
 
 #[derive(Debug, serde::Deserialize)]
 struct ActivityResponse {

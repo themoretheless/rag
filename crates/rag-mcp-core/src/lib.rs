@@ -57,6 +57,23 @@ impl std::fmt::Display for Layer {
     }
 }
 
+/// One `/v1/activity` feed entry (HTTP request or MCP call).
+///
+/// `kind` is a `Cow` so the server records static labels without allocating
+/// while clients deserialize owned strings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityEvent {
+    pub seq: u64,
+    pub at: String,
+    /// `http` | `mcp` | ...
+    pub kind: std::borrow::Cow<'static, str>,
+    pub client: Option<String>,
+    pub action: String,
+    pub status: Option<u16>,
+    pub elapsed_ms: Option<f64>,
+    pub request_id: Option<String>,
+}
+
 /// Object-graph node (document, tag, stub, or entity).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {

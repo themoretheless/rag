@@ -8,22 +8,11 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use serde::Serialize;
 
 /// Ring-buffer capacity; the oldest event is dropped first.
 pub const MAX_ACTIVITY_EVENTS: usize = 1_000;
 
-#[derive(Clone, Debug, Serialize)]
-pub struct ActivityEvent {
-    pub seq: u64,
-    pub at: String,
-    pub kind: &'static str,
-    pub client: Option<String>,
-    pub action: String,
-    pub status: Option<u16>,
-    pub elapsed_ms: Option<f64>,
-    pub request_id: Option<String>,
-}
+pub use rag_mcp_core::ActivityEvent;
 
 static EVENTS: OnceLock<Mutex<VecDeque<ActivityEvent>>> = OnceLock::new();
 static NEXT_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -46,7 +35,7 @@ pub fn record(
     let event = ActivityEvent {
         seq: NEXT_SEQ.fetch_add(1, Ordering::Relaxed),
         at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
-        kind,
+        kind: kind.into(),
         client,
         action: action.into(),
         status,
@@ -140,7 +129,7 @@ mod tests {
             .map(|seq| ActivityEvent {
                 seq,
                 at: String::new(),
-                kind: "test",
+                kind: "test".into(),
                 client: None,
                 action: format!("event-{seq}"),
                 status: None,

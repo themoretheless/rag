@@ -402,7 +402,7 @@ are fixed too:
 | 3.5 HTTP route roles | Unknown routes already default to Admin (fail-closed), so a missing entry cannot widen access. |
 | 4.1 query helpers, rest of 4.3 | ~90 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
 | 5.8 typed `kind`/`status` | `status` already has named constants; `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
-| 6.2 remaining DTO pairs | They differ on purpose (the UI tolerates server drift and reads timestamps as strings); merging them is a wire-compatibility decision. |
+| 6.2 merging the tolerant pairs | `ActivityEvent` moved to core. `JobSnapshot`, `ProjectHome` and `SearchHit` stay separate on purpose (string timestamps, field subsets so the UI survives server drift); `crates/rag-mcp-ui/src/wire_contract.rs` serializes the server type and requires the UI copy to read it. |
 | 6.6 more crates | `rag-mcp-core` already lets clients avoid the server crate. Splitting `db` or `wiki` into crates would need their `Config`/LLM seams to be crate-public first, and no second consumer exists. |
 
 ## Not planned
@@ -424,4 +424,4 @@ are fixed too:
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
 | Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~3.3k | < 2k |
 | Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |
-| UI copies of server DTOs | 11 | 8 | 0 |
+| UI copies of server DTOs without a contract test | 11 | 0 (4 shared via core, 3 tolerant copies round-trip tested) | 0 |

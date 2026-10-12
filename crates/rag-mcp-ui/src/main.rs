@@ -23,6 +23,8 @@ mod revisions;
 mod search;
 mod ui;
 mod worker;
+#[cfg(all(test, feature = "direct-db"))]
+mod wire_contract;
 
 use app::GraphApp;
 use clap::Parser;

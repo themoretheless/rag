@@ -1237,7 +1237,7 @@ impl eframe::App for GraphApp {
                                     }
                                     let local_time = event.at.get(..19).unwrap_or(&event.at).replace('T', " ");
                                     ui.monospace(local_time);
-                                    ui.label(&event.kind);
+                                    ui.label(event.kind.as_ref());
                                     ui.monospace(event.client.as_deref().unwrap_or("—"));
                                     ui.label(&event.action)
                                         .on_hover_text(format!("событие #{}", event.seq));
