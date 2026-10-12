@@ -1,10 +1,9 @@
 //! Revision history HTTP client. Restore always uses gateway-side CAS.
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::time::Duration;
 
 use crate::gateway::{
-    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
+    GatewayClient, Method,
     ReqwestGatewayClient,
 };
 use crate::load::DocumentBody;
@@ -184,7 +183,7 @@ pub fn restore_revision_http(
 }
 
 fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
-    ReqwestGatewayClient::new(Duration::from_secs(timeout_secs))
+    crate::gateway::client(timeout_secs)
 }
 
 fn get_json<T: DeserializeOwned>(
@@ -202,29 +201,7 @@ fn send_json<T: DeserializeOwned>(
     method: Method,
     body: Option<String>,
 ) -> Result<T, String> {
-    let url = join(base, path)?;
-    let response = execute_request(
-        client,
-        Request {
-            method,
-            url: url.clone(),
-            body,
-            headers: Vec::new(),
-        },
-    )?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, revision_context(path)));
-    }
-    serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error(revision_context(path), &error))
-}
-
-fn join(base: &str, path: &str) -> Result<String, String> {
-    let base = base.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("http base URL is empty".to_string());
-    }
-    Ok(format!("{base}/{}", path.trim_start_matches('/')))
+    crate::gateway::send_json(client, base, path, method, body, revision_context(path))
 }
 
 fn revision_context(path: &str) -> &'static str {
@@ -254,6 +231,7 @@ fn encode_query(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Request;
     use crate::gateway::Response;
     use std::collections::VecDeque;
     use std::sync::Mutex;

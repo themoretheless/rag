@@ -212,7 +212,7 @@ pub fn analyze_corpus(
         let corpus_guard =
             crate::db::search::acquire_corpus_search_guard(store, crate::models::SearchMode::Vec)?;
         store.require_embedding_manifest_match(config)?;
-        let pairs = find_near_duplicates(store, opts.near_dup_threshold)?;
+        let pairs = near_duplicate_pairs(store, opts.near_dup_threshold, false)?;
         drop(corpus_guard);
         pairs
     } else {
@@ -413,15 +413,20 @@ fn push_doctor_issues(issues: &mut Vec<AnalysisIssue>, doctor: &DoctorReport) {
     }
 }
 
-fn find_near_duplicates(store: &Store, threshold: f64) -> Result<Vec<NearDuplicatePair>> {
+/// Document pairs whose representative embeddings reach `threshold` cosine,
+/// most similar first. At most `NEAR_DUP_MAX_DOCS` documents are compared (the
+/// cap is applied in SQL) and at most `REPORT_LIST_CAP` pairs are returned.
+pub(crate) fn near_duplicate_pairs(
+    store: &Store,
+    threshold: f64,
+    active_only: bool,
+) -> Result<Vec<NearDuplicatePair>> {
     let threshold = threshold.clamp(0.0, 1.0) as f32;
-    // The cap belongs in SQL: loading every vector and truncating afterwards
-    // can exhaust the sole gateway writer on a large corpus.
     let entries =
-        store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, false, false, false)?;
+        store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, active_only, false, false)?;
 
     let mut pairs = Vec::new();
-    for i in 0..entries.len() {
+    'scan: for i in 0..entries.len() {
         for j in (i + 1)..entries.len() {
             let cos = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
             if cos >= threshold {
@@ -433,17 +438,12 @@ fn find_near_duplicates(store: &Store, threshold: f64) -> Result<Vec<NearDuplica
                     cosine: cos,
                 });
                 if pairs.len() >= REPORT_LIST_CAP {
-                    return Ok(pairs);
+                    break 'scan;
                 }
             }
         }
     }
-    // Highest similarity first.
-    pairs.sort_by(|a, b| {
-        b.cosine
-            .partial_cmp(&a.cosine)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    pairs.sort_by(|a, b| b.cosine.total_cmp(&a.cosine));
     Ok(pairs)
 }
 

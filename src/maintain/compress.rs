@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::db::{self, Store};
-use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
 use crate::maintain::analyze::{DuplicateGroup, NearDuplicatePair};
 use crate::models::Document;
@@ -21,8 +20,6 @@ use crate::models::Document;
 /// Highest compression level implemented (L0–L2).
 pub const COMPRESS_LEVEL_MAX: u8 = 2;
 
-/// Cap document pairs scanned for near-dup cosine (first-chunk embeddings).
-const NEAR_DUP_MAX_DOCS: usize = 200;
 /// Cap reported merge/list lines.
 const REPORT_LIST_CAP: usize = 100;
 
@@ -348,7 +345,8 @@ pub fn maintain_compress(
     // --- L2: near-dup list (+ merge with confirm) ---
     if level >= 2 {
         actions.push("list_near_dup".into());
-        near_duplicates = find_near_duplicate_pairs(store, opts.near_dup_threshold)?;
+        near_duplicates =
+            super::analyze::near_duplicate_pairs(store, opts.near_dup_threshold, true)?;
 
         let apply_near = opts.confirm && !dry_run;
         if apply_near {
@@ -665,42 +663,6 @@ fn load_docs_ordered(store: &Store, ids: &[String]) -> Result<Vec<Document>> {
         }
     }
     Ok(out)
-}
-
-fn find_near_duplicate_pairs(store: &Store, threshold: f64) -> Result<Vec<NearDuplicatePair>> {
-    let threshold = threshold.clamp(0.0, 1.0) as f32;
-    // Keep the advertised cap in the data query rather than materializing the
-    // entire vector corpus before truncation.
-    let entries =
-        store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, true, false, false)?;
-
-    let mut pairs = Vec::new();
-    for i in 0..entries.len() {
-        for j in (i + 1)..entries.len() {
-            let cos = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
-            if cos >= threshold {
-                pairs.push(NearDuplicatePair {
-                    document_id_a: entries[i].document_id.clone(),
-                    document_id_b: entries[j].document_id.clone(),
-                    title_a: entries[i].title.clone(),
-                    title_b: entries[j].title.clone(),
-                    cosine: cos,
-                });
-                if pairs.len() >= REPORT_LIST_CAP {
-                    break;
-                }
-            }
-        }
-        if pairs.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    pairs.sort_by(|a, b| {
-        b.cosine
-            .partial_cmp(&a.cosine)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    Ok(pairs)
 }
 
 #[cfg(test)]

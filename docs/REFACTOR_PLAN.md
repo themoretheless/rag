@@ -429,6 +429,34 @@ are fixed too:
   the server never sends and a dead `layer === 'wiki'` check in the inspector;
   both are fixed. No codegen dependency was added.
 
+**Independent audit after the plan**
+
+A separate read-only audit of the code (not of this document) found further
+items; all are fixed:
+
+- Performance: search recency and field boosts did two full `get_document`
+  loads per hit; one batched ranking-field query replaces them.
+  `attach_context` reloads no document's chunks twice; MCP graph search
+  resolves each hit document's node once.
+- Duplication: `util::{first_line, first_prose_line}`, `embeddings::embed_exact`,
+  `http_api::error::search_response_error`, `OPS_LOG_COLUMNS`,
+  `prefer_document_node`, one `near_duplicate_pairs`, merged scoped/UI graph
+  neighbor and edge queries (with the relation count derived from
+  `pkb_rel_types`), and shared UI gateway helpers (`gateway::{client,
+  join_url, send_json}`). The dead `wiki::render_index_markdown` copy is gone.
+- Layering: `db::review` no longer calls into `wiki`
+  (`wiki::create_review_proposal` builds the snapshots).
+- Configuration: `RAG_CHECKPOINT_ON_START`, `RAG_HTTP_ONLY`, `RAG_MCP_HTTP`
+  and the HTTP role tokens are read by `Config`.
+- Vocabulary: `Layer::is` ignores ASCII case and replaces ten
+  `eq_ignore_ascii_case` checks, so raw immutability has one rule. The UI's
+  display lookups keep string matches because they map open vocabularies
+  (`l0`, `code`, `concept`) with a fallback.
+- Size: `db/graph.rs` → `graph/{export,tunnels}.rs`, `maintain/apply.rs` →
+  `apply/{metadata,index,llm,dedupe}.rs`, store helpers →
+  `store/{wiki_meta,wiki_index,ops_log,manifest}.rs`, UI `frame.rs` →
+  `app/{panels,workspace}.rs`. No production file exceeds 1.5k lines.
+
 **Not done, with the reason**
 
 Nothing: every planned item above is done.
@@ -450,6 +478,6 @@ Nothing: every planned item above is done.
 | Integration-test binaries linking DuckDB | 8 | 1 | 1–2 |
 | `RAG_*` env reads outside `config.rs` | ~30 | 0 | 0 |
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
-| Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~1.7k | < 2k |
-| Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |
+| Largest production file (without tests) | ~4.2k lines (`db/store.rs`) | ~1.5k | < 2k |
+| Largest UI file (`app.rs`) | 4.6k lines | 1.3k (`load.rs`, `app/mod.rs`) | — |
 | UI copies of server DTOs | 11 | 0 (all shared via `rag-mcp-core`) | 0 |

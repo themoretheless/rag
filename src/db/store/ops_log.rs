@@ -52,8 +52,7 @@ impl Store {
             LIMIT ?
             "#
         ))?;
-        let out =
-            crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
+        let out = crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
         Ok(out)
     }
 
@@ -84,8 +83,7 @@ impl Store {
             LIMIT ?
             "#
         ))?;
-        let out =
-            crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
+        let out = crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
         Ok(out)
     }
 
@@ -139,4 +137,77 @@ impl Store {
         }
         self.list_recent_ops(limit.unwrap_or(50))
     }
+}
+
+pub(super) fn append_ops_log_locked(conn: &Connection, entry: &OpsLogEntry) -> Result<OpsLogEntry> {
+    let op = entry.op.trim();
+    if op.is_empty() {
+        return Err(AppError::config("ops_log op must be non-empty"));
+    }
+    let mut out = entry.clone();
+    out.op = op.to_string();
+    if out.id.is_empty() {
+        out.id = uuid::Uuid::new_v4().to_string();
+    }
+    if out.ts.timestamp() == 0 {
+        out.ts = Utc::now();
+    }
+    if out.payload_json.trim().is_empty() {
+        out.payload_json = "{}".into();
+    }
+    if let Some(ref prefix) = out.prefix {
+        let prefix = prefix.trim();
+        out.prefix = if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix.to_string())
+        };
+    }
+    if out.seq <= 0 {
+        out.seq = next_ops_seq_locked(conn)?;
+    }
+    conn.execute(
+        r#"
+        INSERT INTO ops_log
+          (id, seq, ts, op, prefix, message, entity_id, entity_kind, payload_json, agent_name)
+        VALUES
+          (?, ?, CAST(? AS TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)
+        "#,
+        params![
+            out.id,
+            out.seq,
+            format_ts(out.ts),
+            out.op,
+            out.prefix,
+            out.message,
+            out.entity_id,
+            out.entity_kind,
+            out.payload_json,
+            out.agent_name,
+        ],
+    )?;
+    Ok(out)
+}
+
+pub(super) fn next_ops_seq_locked(conn: &Connection) -> Result<i64> {
+    let max: Option<i64> = conn
+        .query_row("SELECT MAX(seq) FROM ops_log", [], |r| r.get(0))
+        .unwrap_or(None);
+    Ok(max.unwrap_or(0) + 1)
+}
+
+pub(super) fn row_to_ops_log(row: &duckdb::Row<'_>) -> Result<OpsLogEntry> {
+    let ts_raw: String = row.get(2)?;
+    Ok(OpsLogEntry {
+        id: row.get(0)?,
+        seq: row.get(1)?,
+        ts: parse_ts(&ts_raw)?,
+        op: row.get(3)?,
+        prefix: row.get(4)?,
+        message: row.get(5)?,
+        entity_id: row.get(6)?,
+        entity_kind: row.get(7)?,
+        payload_json: row.get(8)?,
+        agent_name: row.get(9)?,
+    })
 }

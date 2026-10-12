@@ -38,7 +38,10 @@ impl Store {
     /// Does **not** overwrite an existing row (preserves corpus fingerprint so
     /// embedding identity drift can be detected). Call on server start and before
     /// first ingest.
-    pub fn ensure_embedding_manifest(&self, config: &impl EmbeddingIdentity) -> Result<EmbeddingManifest> {
+    pub fn ensure_embedding_manifest(
+        &self,
+        config: &impl EmbeddingIdentity,
+    ) -> Result<EmbeddingManifest> {
         if let Some(existing) = self.get_embedding_manifest()? {
             return Ok(existing);
         }
@@ -91,7 +94,10 @@ impl Store {
     /// A missing manifest is not a match. Call [`Self::ensure_embedding_manifest`]
     /// first only when initializing a corpus whose current identity is already
     /// known to be the configured one (the normal server/ingest startup path).
-    pub fn embedding_manifest_matches_config(&self, config: &impl EmbeddingIdentity) -> Result<bool> {
+    pub fn embedding_manifest_matches_config(
+        &self,
+        config: &impl EmbeddingIdentity,
+    ) -> Result<bool> {
         Ok(self
             .get_embedding_manifest()?
             .as_ref()
@@ -166,4 +172,80 @@ impl Store {
             manifest.dims, manifest.provider, manifest.model, expected
         )))
     }
+}
+
+/// Build a default-id [`EmbeddingManifest`] snapshot from runtime config.
+pub fn embedding_manifest_from_config(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
+    let provider = config.embedding_provider_name().to_string();
+    let fingerprint = embedding_config_fingerprint(config);
+    EmbeddingManifest {
+        id: "default".into(),
+        provider,
+        model: config.embedding_model_name().to_string(),
+        dims: config.embedding_dimensions() as i32,
+        base_url: Some(config.embedding_endpoint().to_string()),
+        content_fingerprint: Some(fingerprint),
+        updated_at: Utc::now(),
+    }
+}
+
+/// Build a durable fail-closed marker for an in-progress corpus migration.
+///
+/// Its descriptive fields identify the target vectors (and therefore validate
+/// their dimensions), while its authoritative fingerprint cannot match either
+/// the old or target config. The first successful vector mutation writes this
+/// marker in the same transaction; only a complete migration may replace it.
+pub(crate) fn embedding_migration_manifest(config: &impl EmbeddingIdentity) -> EmbeddingManifest {
+    let mut marker = embedding_manifest_from_config(config);
+    let target_fingerprint = marker
+        .content_fingerprint
+        .as_deref()
+        .unwrap_or_default()
+        .to_string();
+    marker.content_fingerprint = Some(format!(
+        "{EMBEDDING_MIGRATION_FINGERPRINT_PREFIX}{}",
+        target_fingerprint
+    ));
+    marker.updated_at = Utc::now();
+    marker
+}
+
+/// Canonical corpus identity predicate.
+///
+/// New manifests carry a fingerprint over provider/model/dims/base endpoint.
+/// All descriptive fields and that fingerprint must agree with live config;
+/// a missing fingerprint is unverifiable and remains fail-closed.
+pub fn embedding_manifest_matches_config(
+    manifest: &EmbeddingManifest,
+    config: &impl EmbeddingIdentity,
+) -> bool {
+    match manifest.content_fingerprint.as_deref() {
+        Some(fingerprint) => {
+            manifest.id == "default"
+                && manifest.provider == config.embedding_provider_name()
+                && manifest.model == config.embedding_model_name()
+                && manifest.dims == config.embedding_dimensions() as i32
+                && manifest.base_url.as_deref() == Some(config.embedding_endpoint())
+                && fingerprint == embedding_config_fingerprint(config)
+        }
+        None => false,
+    }
+}
+
+pub(super) fn embedding_config_fingerprint(config: &impl EmbeddingIdentity) -> String {
+    embedding_identity_fingerprint(
+        config.embedding_provider_name(),
+        config.embedding_model_name(),
+        config.embedding_dimensions() as i32,
+        config.embedding_endpoint(),
+    )
+}
+
+pub(crate) fn embedding_identity_fingerprint(
+    provider: &str,
+    model: &str,
+    dims: i32,
+    base_url: &str,
+) -> String {
+    content_hash(&format!("{}|{}|{}|{}", provider, model, dims, base_url))
 }

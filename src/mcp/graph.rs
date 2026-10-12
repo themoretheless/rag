@@ -423,7 +423,12 @@ impl RagServer {
             std::collections::HashMap::new();
 
         let mut seen_doc_nodes = std::collections::HashSet::new();
+        let mut seen_documents = std::collections::HashSet::new();
         for hit in &hits {
+            // Hits often share a document; resolve each document's node once.
+            if !seen_documents.insert(hit.document_id.as_str()) {
+                continue;
+            }
             let Some(node) = self.store.find_node_by_document_id(&hit.document_id)? else {
                 continue;
             };

@@ -604,6 +604,13 @@ mod tests {
     }
 
     #[test]
+    fn pkb_relation_counts_bound_graph_edge_queries() {
+        // db::graph sizes its bounded edge queries with these counts.
+        assert_eq!(super::pkb_rel_types(true).len(), 14);
+        assert_eq!(super::pkb_rel_types(false).len(), 13);
+    }
+
+    #[test]
     fn node_kind_round_trips_wire_strings() {
         use super::NodeKind;
         for kind in [

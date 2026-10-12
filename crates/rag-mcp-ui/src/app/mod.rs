@@ -53,8 +53,10 @@ use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 mod events;
 mod frame;
 mod graph;
+mod panels;
 mod revisions;
 mod wiki;
+mod workspace;
 
 fn nonempty(value: &str) -> Option<String> {
     let value = value.trim();

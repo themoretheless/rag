@@ -496,7 +496,7 @@ struct BacklinksResponse {
 // ---------------------------------------------------------------------------
 
 fn gateway_client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
-    ReqwestGatewayClient::new(std::time::Duration::from_secs(timeout_secs))
+    crate::gateway::client(timeout_secs)
 }
 
 fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {

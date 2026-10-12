@@ -25,8 +25,7 @@ impl Store {
             ORDER BY COALESCE(title, label, id) ASC
             "#,
         )?;
-        let out =
-            crate::db::rows::query_vec(&mut stmt, [], row_to_wiki_index)?;
+        let out = crate::db::rows::query_vec(&mut stmt, [], row_to_wiki_index)?;
         Ok(out)
     }
 
@@ -77,7 +76,8 @@ impl Store {
         for doc in docs {
             let slug = wiki_slug_from_uri(&doc.uri).unwrap_or_else(|| slugify(&doc.title));
             let (meta_summary, meta_category) = meta_summary_category(&doc.metadata_json);
-            let summary = meta_summary.unwrap_or_else(|| crate::util::first_prose_line(&doc.content, 240));
+            let summary =
+                meta_summary.unwrap_or_else(|| crate::util::first_prose_line(&doc.content, 240));
             let entry = WikiIndexEntry {
                 id: format!("idx-{}", doc.id),
                 slug: slug.clone(),
@@ -250,4 +250,149 @@ impl Store {
             .map(|(score, entry)| crate::models::IndexQueryMatch { entry, score })
             .collect())
     }
+}
+
+/// Whitespace / punctuation tokenization for index query matching.
+pub(super) fn tokenize_index_query(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_ascii_lowercase())
+        .collect()
+}
+
+/// Field-weighted catalog score so top_k discriminates (slug > title > summary > kind).
+///
+/// Whole-token match (same tokenizer as query). Exact phrase on slug/title boosts hard.
+pub(super) fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32 {
+    if terms.is_empty() {
+        return 1.0;
+    }
+    let slug_tokens = tokenize_index_query(&entry.slug);
+    let title_tokens = tokenize_index_query(&entry.title);
+    let summary_tokens = tokenize_index_query(entry.summary.as_deref().unwrap_or(""));
+    let kind_tokens = tokenize_index_query(&entry.kind);
+    let cat_tokens = tokenize_index_query(entry.category.as_deref().unwrap_or(""));
+
+    let slug_lc = entry.slug.to_ascii_lowercase();
+    let title_lc = entry.title.to_ascii_lowercase();
+    let summary_lc = entry.summary.as_deref().unwrap_or("").to_ascii_lowercase();
+
+    let mut score = 0.0f32;
+    let mut terms_hit = 0u32;
+    for t in terms {
+        let mut hit = false;
+        if slug_tokens.iter().any(|h| h == t) {
+            score += 4.0;
+            hit = true;
+        }
+        if title_tokens.iter().any(|h| h == t) {
+            score += 3.0;
+            hit = true;
+        }
+        if summary_tokens.iter().any(|h| h == t) {
+            score += 1.5;
+            hit = true;
+        }
+        if kind_tokens.iter().any(|h| h == t) || cat_tokens.iter().any(|h| h == t) {
+            score += 0.5;
+            hit = true;
+        }
+        // Substring on slug/title only (e.g. "spine" in "spine-tools")
+        if !hit {
+            if slug_lc.contains(t.as_str()) {
+                score += 2.0;
+                hit = true;
+            } else if title_lc.contains(t.as_str()) {
+                score += 1.5;
+                hit = true;
+            } else if summary_lc.contains(t.as_str()) {
+                score += 0.75;
+                hit = true;
+            }
+        }
+        if hit {
+            terms_hit += 1;
+        }
+    }
+    if terms_hit == 0 {
+        return 0.0;
+    }
+
+    // Average per query term so longer queries do not dominate by raw sum alone.
+    score /= terms.len() as f32;
+
+    // Full-phrase identity / containment boosts ranking head.
+    let phrase = terms.join(" ");
+    let slug_phrase = slug_tokens.join(" ");
+    let title_phrase = title_tokens.join(" ");
+    if slug_phrase == phrase || title_phrase == phrase {
+        score += 2.0;
+    } else if slug_lc.contains(&phrase) || title_lc.contains(&phrase) {
+        score += 1.0;
+    }
+    // Prefer covering all query terms.
+    if terms_hit as usize == terms.len() {
+        score += 0.5;
+    }
+    score
+}
+
+pub(super) fn slugify(s: &str) -> String {
+    shared_slugify(s, SlugPolicy::IndexLookup)
+}
+
+// ---------------------------------------------------------------------------
+// Wiki catalog listing: SQL filter/count/page + lean DTO map
+// (kept free of search ranking and CAS upsert paths)
+// ---------------------------------------------------------------------------
+
+pub(super) fn upsert_wiki_index_entry_locked(
+    conn: &Connection,
+    entry: &WikiIndexEntry,
+) -> Result<()> {
+    let title = if entry.title.is_empty() {
+        entry.slug.clone()
+    } else {
+        entry.title.clone()
+    };
+    let label = title.clone();
+    let page_id = entry.page_id.clone();
+    let document_id = page_id.clone();
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO wiki_index
+          (id, slug, title, label, kind, summary, category, document_id, page_id, updated_at)
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
+        "#,
+        params![
+            entry.id,
+            entry.slug,
+            title,
+            label,
+            entry.kind,
+            entry.summary,
+            entry.category,
+            document_id,
+            page_id,
+            format_ts(entry.updated_at),
+        ],
+    )?;
+    Ok(())
+}
+
+pub(super) fn row_to_wiki_index(row: &duckdb::Row<'_>) -> Result<WikiIndexEntry> {
+    let updated_raw: String = row.get(7)?;
+    Ok(WikiIndexEntry {
+        id: row.get(0)?,
+        slug: row.get(1)?,
+        title: row.get(2)?,
+        kind: row.get(3)?,
+        category: row.get(4)?,
+        summary: row.get(5)?,
+        page_id: row.get(6)?,
+        updated_at: parse_ts(&updated_raw)?,
+    })
 }
