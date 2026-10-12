@@ -170,6 +170,15 @@ fn snippet_around_query_term() {
 }
 
 #[test]
+fn snippet_survives_case_folding_that_changes_byte_length() {
+    // `İ` lowercases to two chars (three bytes more than one ASCII byte), so a
+    // match offset in the lowered text is not a char boundary in the original.
+    let content = format!("{}İİİ needle tail", "İ".repeat(40));
+    let snip = make_snippet(&content, Some("needle"), 12).expect("snippet");
+    assert!(snip.contains("needle"), "{snip}");
+}
+
+#[test]
 fn snippet_prefix_without_query() {
     let content = "hello world this is a long piece of text for testing";
     let snip = make_snippet(content, None, 11).expect("snippet");
@@ -544,7 +553,9 @@ fn search_vec_respects_wing_room_source_and_archived() {
         "the implicit active-status filter alone must retain the global cache path"
     );
 
-    let (scoped_after_global, _) = vector_search_inputs(
+    // With a current global snapshot in memory a scoped read reuses it
+    // instead of re-parsing embeddings; the document lookup still scopes it.
+    let (scoped_after_global, scoped_documents) = vector_search_inputs(
         &store,
         &LexFilters {
             wing: Some("research".into()),
@@ -552,7 +563,11 @@ fn search_vec_respects_wing_room_source_and_archived() {
         },
     )
     .unwrap();
-    assert_eq!(scoped_after_global.chunks.len(), 1);
+    assert_eq!(scoped_after_global.chunks.len(), 3);
+    assert_eq!(
+        scoped_documents.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["active"]
+    );
     assert_eq!(
         vector_snapshots()
             .lock()
@@ -562,7 +577,7 @@ fn search_vec_respects_wing_room_source_and_archived() {
             .chunks
             .len(),
         3,
-        "a scoped read must neither consult nor replace the global snapshot"
+        "a scoped read must not replace the global snapshot"
     );
 
     // Wing filter.

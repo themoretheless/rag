@@ -18,13 +18,13 @@ use duckdb::params_from_iter;
 use tracing::{debug, warn};
 
 use crate::error::{AppError, Result};
-use crate::models::{Chunk, SearchContextChunk, SearchExplanation, SearchHit, SearchMode};
+use crate::models::{SearchContextChunk, SearchExplanation, SearchHit, SearchMode};
 
 #[cfg(test)]
 use crate::embeddings::cosine_similarity;
 
 use super::fts::{self, LexFilters};
-use super::store::Store;
+use super::store::{ChunkBody, Store};
 
 /// Default RRF rank constant (Cormack / common IR practice).
 pub const DEFAULT_RRF_K: f32 = 60.0;
@@ -476,20 +476,12 @@ fn run_hybrid(
     )))
 }
 
-/// Post-process ranked hits: snippets, min_score, diversity, top_k, token pack.
+/// Post-process ranked hits: min_score, boosts, diversity, top_k, snippets, token pack.
 fn finalize_hits(
     store: &Store,
     mut hits: Vec<SearchHit>,
     query: &SearchQuery,
 ) -> Result<Vec<SearchHit>> {
-    // Attach snippets (modes that already set score_* leave those intact).
-    let qtext = query.query_text.as_deref();
-    for hit in &mut hits {
-        if query.snippet_max_chars > 0 && hit.snippet.is_none() {
-            hit.snippet = make_snippet(&hit.content, qtext, query.snippet_max_chars);
-        }
-    }
-
     if let Some(min) = query.min_score {
         hits = apply_min_score(hits, min);
     }
@@ -578,6 +570,14 @@ fn finalize_hits(
 
     hits.truncate(query.top_k);
 
+    // Snippets only for the returned hits; the refill pool can be thousands.
+    let qtext = query.query_text.as_deref();
+    for hit in &mut hits {
+        if query.snippet_max_chars > 0 && hit.snippet.is_none() {
+            hit.snippet = make_snippet(&hit.content, qtext, query.snippet_max_chars);
+        }
+    }
+
     attach_context(
         store,
         &mut hits,
@@ -655,6 +655,9 @@ fn apply_field_boosts(
         return;
     };
     let needle = raw.to_lowercase();
+    let terms = tokenize(&needle);
+    // Per-document checks repeat for every hit of that document: memoize.
+    let mut uri_matches: HashMap<&str, bool> = HashMap::new();
     for hit in hits {
         let mut reasons = Vec::new();
         if let Some(document) = ranking.get(&hit.document_id) {
@@ -662,11 +665,11 @@ fn apply_field_boosts(
                 hit.score *= 1.35;
                 reasons.push("exact_title_boost".into());
             }
-            let uri = document.uri.to_lowercase();
-            if tokenize(&needle)
-                .into_iter()
-                .all(|term| uri.contains(&term))
-            {
+            let uri_match = *uri_matches.entry(document.uri.as_str()).or_insert_with(|| {
+                let uri = document.uri.to_lowercase();
+                terms.iter().all(|term| uri.contains(term.as_str()))
+            });
+            if uri_match {
                 hit.score *= 1.15;
                 reasons.push("uri_match_boost".into());
             }
@@ -724,68 +727,84 @@ pub fn attach_context(
     expansion: Option<ContextExpansion>,
     neighbor_chunks: usize,
 ) -> Result<()> {
-    // Several hits often come from one document: load its chunks once.
-    let mut chunks_by_document: HashMap<String, Vec<Chunk>> = HashMap::new();
+    let Some(expansion) = expansion else {
+        // Section labels only: one metadata read for all hits, no chunk bodies.
+        let ids: Vec<&str> = hits.iter().map(|hit| hit.chunk_id.as_str()).collect();
+        let metadata = store.chunk_metadata_by_ids(&ids)?;
+        for hit in hits {
+            if let Some(json) = metadata.get(&hit.chunk_id) {
+                (hit.heading_path, hit.section) = section_metadata(json);
+            }
+        }
+        return Ok(());
+    };
+
+    // Several hits often come from one document: load its chunk bodies (no
+    // embeddings) and parse each chunk's section metadata once.
+    type Sectioned = (ChunkBody, Option<Vec<String>>, Option<String>);
+    let mut chunks_by_document: HashMap<String, Vec<Sectioned>> = HashMap::new();
     for hit in hits {
         if !chunks_by_document.contains_key(&hit.document_id) {
-            let loaded = store.list_chunks_for_document(&hit.document_id)?;
+            let loaded = store
+                .list_chunk_bodies_for_document(&hit.document_id)?
+                .into_iter()
+                .map(|chunk| {
+                    let (path, section) = section_metadata(&chunk.metadata_json);
+                    (chunk, path, section)
+                })
+                .collect();
             chunks_by_document.insert(hit.document_id.clone(), loaded);
         }
         let chunks = &chunks_by_document[&hit.document_id];
-        let Some(current) = chunks.iter().find(|c| c.id == hit.chunk_id) else {
+        let Some((current, heading_path, section)) =
+            chunks.iter().find(|(c, _, _)| c.id == hit.chunk_id)
+        else {
             continue;
         };
-        let (heading_path, section) = chunk_section_metadata(current);
         hit.heading_path = heading_path.clone();
         hit.section = section.clone();
 
-        let Some(expansion) = expansion else { continue };
-        let selected: Vec<&Chunk> = match expansion {
+        let selected: Vec<&Sectioned> = match expansion {
             ContextExpansion::Neighbors => {
                 let radius = neighbor_chunks.max(1) as i32;
                 chunks
                     .iter()
-                    .filter(|c| (c.chunk_index - current.chunk_index).abs() <= radius)
+                    .filter(|(c, _, _)| (c.chunk_index - current.chunk_index).abs() <= radius)
                     .collect()
             }
             ContextExpansion::ParentSection => chunks
                 .iter()
-                .filter(|c| {
-                    let (path, _) = chunk_section_metadata(c);
-                    heading_path.is_some() && path == heading_path
-                })
+                .filter(|(_, path, _)| heading_path.is_some() && path == heading_path)
                 .collect(),
         };
-        let selected = if selected.is_empty() {
-            vec![current]
+        let selected: Vec<&Sectioned> = if selected.is_empty() {
+            chunks.iter().filter(|(c, _, _)| c.id == current.id).collect()
         } else {
             selected
         };
         hit.context = Some(
             selected
                 .iter()
-                .map(|chunk| {
-                    let (heading_path, section) = chunk_section_metadata(chunk);
-                    SearchContextChunk {
-                        chunk_id: chunk.id.clone(),
-                        chunk_index: chunk.chunk_index,
-                        content: chunk.content.clone(),
-                        heading_path,
-                        section,
-                    }
+                .map(|(chunk, heading_path, section)| SearchContextChunk {
+                    chunk_id: chunk.id.clone(),
+                    chunk_index: chunk.chunk_index,
+                    content: chunk.content.clone(),
+                    heading_path: heading_path.clone(),
+                    section: section.clone(),
                 })
                 .collect(),
         );
         hit.content = selected
             .iter()
-            .map(|c| c.content.as_str())
+            .map(|(c, _, _)| c.content.as_str())
             .collect::<Vec<_>>()
             .join("\n");
     }
     Ok(())
 }
 
-fn chunk_section_metadata(chunk: &Chunk) -> (Option<Vec<String>>, Option<String>) {
+#[cfg(test)]
+fn chunk_section_metadata(chunk: &crate::models::Chunk) -> (Option<Vec<String>>, Option<String>) {
     section_metadata(&chunk.metadata_json)
 }
 
@@ -830,54 +849,51 @@ fn mmr_select(hits: Vec<SearchHit>, max_per_doc: usize, limit: usize) -> Vec<Sea
         .map(|h| tokenize(&h.content).into_iter().collect())
         .collect();
 
+    // `max_sim[i]` is hit i's highest similarity to anything selected so far;
+    // each round folds in only the newest pick: O(limit * pool), not
+    // O(limit^2 * pool). Candidates are scanned in rank order so score ties
+    // resolve deterministically to the better-ranked hit.
+    let mut max_sim = vec![0.0f32; hits.len()];
+    let mut available = vec![true; hits.len()];
     let mut selected: Vec<usize> = Vec::new();
-    let mut remaining: HashSet<usize> = (0..hits.len()).collect();
-    let mut per_doc: HashMap<String, usize> = HashMap::new();
+    let mut per_doc: HashMap<&str, usize> = HashMap::new();
 
-    while selected.len() < limit && !remaining.is_empty() {
-        let mut best_i: Option<usize> = None;
-        let mut best_score = f32::NEG_INFINITY;
-
-        for &i in &remaining {
-            let count = per_doc.get(&hits[i].document_id).copied().unwrap_or(0);
+    while selected.len() < limit {
+        let mut best: Option<(usize, f32)> = None;
+        for i in (0..hits.len()).filter(|&i| available[i]) {
+            let count = per_doc.get(hits[i].document_id.as_str()).copied().unwrap_or(0);
             if count >= max_per_doc {
                 continue;
             }
-            let rel = hits[i].score;
-            let max_sim = selected
-                .iter()
-                .map(|&j| jaccard(&token_sets[i], &token_sets[j]))
-                .fold(0.0f32, f32::max);
-            let mmr = lambda * rel - (1.0 - lambda) * max_sim;
-            if mmr > best_score {
-                best_score = mmr;
-                best_i = Some(i);
+            let mmr = lambda * hits[i].score - (1.0 - lambda) * max_sim[i];
+            if best.is_none_or(|(_, best_score)| mmr > best_score) {
+                best = Some((i, mmr));
             }
         }
-
-        match best_i {
-            Some(i) => {
-                remaining.remove(&i);
-                *per_doc.entry(hits[i].document_id.clone()).or_insert(0) += 1;
-                selected.push(i);
-            }
-            None => break,
+        let Some((pick, _)) = best else { break };
+        available[pick] = false;
+        *per_doc.entry(hits[pick].document_id.as_str()).or_insert(0) += 1;
+        selected.push(pick);
+        for i in (0..hits.len()).filter(|&i| available[i]) {
+            max_sim[i] = max_sim[i].max(jaccard(&token_sets[i], &token_sets[pick]));
         }
     }
 
-    selected.into_iter().map(|i| hits[i].clone()).collect()
+    let mut slots: Vec<Option<SearchHit>> = hits.into_iter().map(Some).collect();
+    selected
+        .into_iter()
+        .filter_map(|i| slots[i].take())
+        .collect()
 }
 
 fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<String>) -> f32 {
-    if a.is_empty() && b.is_empty() {
-        return 0.0;
-    }
-    let inter = a.intersection(b).count() as f32;
-    let union = a.union(b).count() as f32;
-    if union == 0.0 {
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let inter = small.iter().filter(|token| large.contains(*token)).count();
+    let union = a.len() + b.len() - inter;
+    if union == 0 {
         0.0
     } else {
-        inter / union
+        inter as f32 / union as f32
     }
 }
 
@@ -1032,35 +1048,52 @@ fn vector_search_inputs(
 ) -> Result<(Arc<VectorSnapshot>, VectorDocumentLookup)> {
     let conn = store.lock()?;
     let generation = fts::chunks_generation(&conn)?;
-    let snapshot = if has_selective_vector_scope(filters) {
-        // Exact project/document searches should pay only for their matching
-        // chunks. Do not populate or consult the database-wide cache: unrelated
-        // source-sync commits advance the global generation continuously.
-        Arc::new(build_vector_snapshot_with_filters(
-            &conn,
-            generation,
-            Some(filters),
-        )?)
-    } else {
-        let key = store.path().to_path_buf();
-        let cached = vector_snapshots()
-            .lock()
-            .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
-            .get(&key)
-            .filter(|snapshot| snapshot.generation == generation)
-            .cloned();
-        match cached {
-            Some(snapshot) => snapshot,
-            None => {
-                let snapshot = Arc::new(build_vector_snapshot(&conn, generation)?);
-                vector_snapshots()
-                    .lock()
-                    .map_err(|error| {
-                        AppError::db(format!("vector snapshot lock poisoned: {error}"))
-                    })?
-                    .insert(key, snapshot.clone());
-                snapshot
+    let key = store.path().to_path_buf();
+    // A database-wide snapshot already built for this generation serves any
+    // scope: `search_vec` skips chunks whose document is outside the scope.
+    let global = cached_snapshot(vector_snapshots(), &key, generation)?;
+    let snapshot = match global {
+        Some(snapshot) => snapshot,
+        None if has_selective_vector_scope(filters) => {
+            // Exact project/document searches should pay only for their
+            // matching chunks. Do not populate the database-wide cache:
+            // unrelated source-sync commits advance the global generation
+            // continuously. The last scope per store is cached instead, so
+            // candidate refill rounds and multi-query fan-out reuse it.
+            let scope = filters.scope_where_clause("d.id");
+            let scoped = scoped_vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .get(&key)
+                .filter(|(cached_scope, snapshot)| {
+                    *cached_scope == scope && snapshot.generation == generation
+                })
+                .map(|(_, snapshot)| snapshot.clone());
+            match scoped {
+                Some(snapshot) => snapshot,
+                None => {
+                    let snapshot = Arc::new(build_vector_snapshot_with_filters(
+                        &conn,
+                        generation,
+                        Some(filters),
+                    )?);
+                    scoped_vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .insert(key, (scope, snapshot.clone()));
+                    snapshot
+                }
             }
+        }
+        None => {
+            let snapshot = Arc::new(build_vector_snapshot(&conn, generation)?);
+            vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .insert(key, snapshot.clone());
+            snapshot
         }
     };
     let documents = load_vector_documents(&conn, filters)?;
@@ -1081,6 +1114,27 @@ fn has_selective_vector_scope(filters: &LexFilters) -> bool {
 
 fn vector_snapshots() -> &'static Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>> {
     VECTOR_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Scope key (SQL clause plus binds) and snapshot of the last scoped search.
+type ScopedVectorSnapshot = ((String, Vec<String>), Arc<VectorSnapshot>);
+
+fn scoped_vector_snapshots() -> &'static Mutex<HashMap<PathBuf, ScopedVectorSnapshot>> {
+    static SCOPED: OnceLock<Mutex<HashMap<PathBuf, ScopedVectorSnapshot>>> = OnceLock::new();
+    SCOPED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_snapshot(
+    cache: &Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>>,
+    key: &std::path::Path,
+    generation: u64,
+) -> Result<Option<Arc<VectorSnapshot>>> {
+    Ok(cache
+        .lock()
+        .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+        .get(key)
+        .filter(|snapshot| snapshot.generation == generation)
+        .cloned())
 }
 
 fn build_vector_snapshot(conn: &duckdb::Connection, generation: u64) -> Result<VectorSnapshot> {
@@ -1173,15 +1227,37 @@ fn hydrate_vector_hits(
     documents: &VectorDocumentLookup,
     ranked: Vec<RankedVectorCandidate>,
 ) -> Result<Vec<SearchHit>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare("SELECT content FROM chunks WHERE id = ?")?;
+    // Candidate pools reach thousands during refill: read contents in a few
+    // `IN (...)` batches instead of one point query per candidate.
+    const CONTENT_BATCH: usize = 512;
+    let ids: Vec<&str> = ranked
+        .iter()
+        .map(|candidate| snapshot.chunks[candidate.snapshot_index].id.as_str())
+        .collect();
+    let mut contents: HashMap<String, String> = HashMap::with_capacity(ids.len());
+    {
+        let conn = store.lock()?;
+        for batch in ids.chunks(CONTENT_BATCH) {
+            let placeholders = vec!["?"; batch.len()].join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, content FROM chunks WHERE id IN ({placeholders})"
+            ))?;
+            crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+                contents.insert(row.get(0)?, row.get(1)?);
+                Ok(())
+            })?;
+        }
+    }
     let mut hits = Vec::with_capacity(ranked.len());
     for candidate in ranked {
         let chunk = &snapshot.chunks[candidate.snapshot_index];
         let Some((title, uri)) = documents.get(&chunk.document_id) else {
             continue;
         };
-        let content = stmt.query_row([chunk.id.as_str()], |row| row.get(0))?;
+        // A chunk replaced after the snapshot was taken has no row left.
+        let Some(content) = contents.remove(&chunk.id) else {
+            continue;
+        };
         let (heading_path, section) = section_metadata(&chunk.metadata_json);
         hits.push(SearchHit {
             chunk_id: chunk.id.clone(),
@@ -1270,6 +1346,7 @@ fn search_lex_tf(
     for (score, idx) in scored {
         let chunk = &chunks[idx];
         let (title, uri) = resolve_doc(store, &chunk.document_id, &mut doc_cache)?;
+        let (heading_path, section) = chunk_section_metadata(chunk);
         hits.push(SearchHit {
             chunk_id: chunk.id.clone(),
             document_id: chunk.document_id.clone(),
@@ -1284,8 +1361,8 @@ fn search_lex_tf(
             snippet: None,
             char_start: Some(chunk.char_start),
             char_end: Some(chunk.char_end),
-            heading_path: chunk_section_metadata(chunk).0,
-            section: chunk_section_metadata(chunk).1,
+            heading_path,
+            section,
             context: None,
             explanation: None,
             rank_vec: None,
@@ -1421,37 +1498,48 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
         return None;
     }
 
-    let chars: Vec<char> = content.chars().collect();
-    if chars.is_empty() {
-        return None;
-    }
-
     let mut anchor = 0usize;
     if let Some(q) = query {
-        let lower_content: String = content.to_lowercase();
+        // Lowercasing can change byte lengths (`İ` → `i̇`), so offsets found in
+        // the lowered text are mapped back through each char's lowered start.
+        let mut lower_content = String::with_capacity(content.len());
+        let mut lower_starts = Vec::new();
+        for ch in content.chars() {
+            lower_starts.push(lower_content.len());
+            lower_content.extend(ch.to_lowercase());
+        }
         for term in tokenize(q) {
             if term.is_empty() {
                 continue;
             }
             if let Some(byte_pos) = lower_content.find(&term) {
-                // Map byte offset to char index.
-                anchor = content[..byte_pos].chars().count();
+                anchor = lower_starts
+                    .partition_point(|&start| start <= byte_pos)
+                    .saturating_sub(1);
                 break;
             }
         }
     }
 
     // Center a window of max_chars around the anchor when possible.
+    let total = content.chars().count();
     let half = max_chars / 2;
     let start = anchor.saturating_sub(half);
-    let end = (start + max_chars).min(chars.len());
+    let end = (start + max_chars).min(total);
     let start = end.saturating_sub(max_chars);
 
-    let mut snippet: String = chars[start..end].iter().collect();
+    let byte_at = |char_index: usize| {
+        content
+            .char_indices()
+            .nth(char_index)
+            .map_or(content.len(), |(byte, _)| byte)
+    };
+    let mut snippet = String::with_capacity(max_chars * 4 + 6);
     if start > 0 {
-        snippet.insert(0, '…');
+        snippet.push('…');
     }
-    if end < chars.len() {
+    snippet.push_str(&content[byte_at(start)..byte_at(end)]);
+    if end < total {
         snippet.push('…');
     }
     if snippet.is_empty() {
@@ -1466,7 +1554,7 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-fn load_chunks(store: &Store, document_id: Option<&str>) -> Result<Vec<Chunk>> {
+fn load_chunks(store: &Store, document_id: Option<&str>) -> Result<Vec<crate::models::Chunk>> {
     match document_id {
         Some(doc_id) => store.list_chunks_for_document(doc_id),
         None => store.all_chunks_with_embeddings(),

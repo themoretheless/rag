@@ -641,20 +641,78 @@ fn search_tf(
         stmt.query(params_from_iter(bind.iter()))?
     };
 
-    let mut scored: Vec<(f32, SearchHit)> = Vec::new();
+    // Bounded top-k: a hit (and its snippet) is built only for rows that
+    // currently rank inside the window, not for every matching chunk.
+    let mut best: std::collections::BinaryHeap<std::cmp::Reverse<TfCandidate>> =
+        std::collections::BinaryHeap::with_capacity(top_k.saturating_add(1));
+    let mut ordinal = 0usize;
     crate::db::rows::try_visit_rows(&mut rows, |row| {
+        ordinal += 1;
+        if top_k == 0 {
+            return Ok(std::ops::ControlFlow::Break(()));
+        }
         let content: String = row.get(5)?;
         let score = term_frequency_score(&query_terms, &content);
         if score <= 0.0 {
             return Ok(std::ops::ControlFlow::Continue(()));
         }
-        scored.push((score, lexical_hit(row, content, score)?));
+        let rank = (score, ordinal);
+        if best.len() >= top_k && best.peek().is_some_and(|worst| !worst.0.ranks_below(rank)) {
+            return Ok(std::ops::ControlFlow::Continue(()));
+        }
+        best.push(std::cmp::Reverse(TfCandidate {
+            score,
+            ordinal,
+            hit: lexical_hit(row, content, score)?,
+        }));
+        if best.len() > top_k {
+            best.pop();
+        }
         Ok(std::ops::ControlFlow::Continue(()))
     })?;
 
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(top_k);
-    Ok(scored.into_iter().map(|(_, h)| h).collect())
+    let mut ranked: Vec<TfCandidate> = best.into_iter().map(|entry| entry.0).collect();
+    ranked.sort_by(|a, b| b.cmp(a));
+    Ok(ranked.into_iter().map(|candidate| candidate.hit).collect())
+}
+
+/// TF fallback candidate: higher score first, then earlier row (stable order).
+struct TfCandidate {
+    score: f32,
+    ordinal: usize,
+    hit: SearchHit,
+}
+
+impl TfCandidate {
+    /// Whether this candidate ranks below a new `(score, ordinal)`.
+    fn ranks_below(&self, (score, ordinal): (f32, usize)) -> bool {
+        self.score
+            .total_cmp(&score)
+            .then_with(|| ordinal.cmp(&self.ordinal))
+            .is_lt()
+    }
+}
+
+impl PartialEq for TfCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for TfCandidate {}
+
+impl PartialOrd for TfCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TfCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score
+            .total_cmp(&other.score)
+            .then_with(|| other.ordinal.cmp(&self.ordinal))
+    }
 }
 
 /// Term-frequency score: sum of occurrences of each query term in `content`.

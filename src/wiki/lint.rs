@@ -5,26 +5,35 @@ use super::*;
 /// Lint wiki catalog and graph link health.
 pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     let mut issues = Vec::new();
-    let documents = store.list_documents()?;
-    let wiki_docs = store.list_documents_by_layer(LAYER_WIKI)?;
+    // Ids, URIs and layers only: lint never reads document bodies.
+    let documents = store.list_document_refs()?;
+    let wiki_docs: Vec<&crate::db::store::DocumentRef> =
+        documents.iter().filter(|doc| doc.layer == LAYER_WIKI).collect();
     let index = store.list_wiki_index()?;
-    let graph = store.get_graph_view(crate::models::GraphFilter {
-        max_nodes: Some(u32::MAX),
-        ..Default::default()
-    })?;
+    // Nodes and the raw edge list are each read once; everything else
+    // (incident nodes, stub backlinks) is derived in memory.
+    let graph_nodes = store.list_graph_nodes()?;
     let all_edges = store.list_graph_edges()?;
-    let node_by_id: HashMap<&str, &crate::models::GraphNode> = graph
-        .nodes
+    let node_by_id: HashMap<&str, &crate::models::GraphNode> = graph_nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect();
+    let mut incoming_sources: HashMap<&str, std::collections::BTreeSet<&str>> = HashMap::new();
+    for edge in &all_edges {
+        if node_by_id.contains_key(edge.source_id.as_str()) {
+            incoming_sources
+                .entry(edge.target_id.as_str())
+                .or_default()
+                .insert(edge.source_id.as_str());
+        }
+    }
     let mut incident_nodes = HashSet::new();
     let mut duplicate_wikilinks: BTreeMap<(&str, &str), Vec<&crate::models::GraphEdge>> =
         BTreeMap::new();
     let mut health = LinkHealthCounts {
         documents: documents.len(),
         wiki_pages: wiki_docs.len(),
-        graph_nodes: graph.nodes.len(),
+        graph_nodes: graph_nodes.len(),
         graph_edges: all_edges.len(),
         ..Default::default()
     };
@@ -125,7 +134,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
 
     // Pages missing from index
     let indexed_pages: HashSet<&str> = index.iter().filter_map(|e| e.page_id.as_deref()).collect();
-    let wiki_ids: HashSet<&str> = wiki_docs.iter().map(|d| d.id.as_str()).collect();
+    let document_ids: HashSet<&str> = documents.iter().map(|d| d.id.as_str()).collect();
     for d in &wiki_docs {
         if !indexed_pages.contains(d.id.as_str()) {
             issues.push(LintIssue {
@@ -141,8 +150,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     // Index entries pointing nowhere
     for e in &index {
         if let Some(pid) = &e.page_id {
-            // Most entries point at a known wiki page; query only the rest.
-            if !wiki_ids.contains(pid.as_str()) && store.get_document(pid)?.is_none() {
+            if !document_ids.contains(pid.as_str()) {
                 issues.push(LintIssue {
                     code: LintCode::StaleIndex,
                     severity: crate::models::IssueSeverity::Warn,
@@ -156,19 +164,16 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     }
 
     // Unresolved stubs in graph (include who links + expected label)
-    for n in graph.nodes.iter().filter(|n| crate::models::NodeKind::Stub.is(&n.kind)) {
+    for n in graph_nodes.iter().filter(|n| crate::models::NodeKind::Stub.is(&n.kind)) {
         if !n.resolved {
             health.unresolved_targets += 1;
-            let bl = store
-                .backlinks(&n.id)
-                .unwrap_or_else(|_| crate::models::GraphView {
-                    nodes: vec![],
-                    edges: vec![],
-                });
-            let referenced_by: Vec<String> = bl
-                .nodes
-                .iter()
-                .filter(|src| src.id != n.id)
+            // Distinct incoming sources in id order (what `backlinks` returned).
+            let referenced_by: Vec<String> = incoming_sources
+                .get(n.id.as_str())
+                .into_iter()
+                .flatten()
+                .filter(|&&src| src != n.id)
+                .filter_map(|src| node_by_id.get(src))
                 .map(|src| {
                     if src.label.is_empty() {
                         src.id.clone()
@@ -198,8 +203,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     }
 
     // Documents with no graph node, or document nodes with no incident edges.
-    let node_by_document: HashMap<&str, &crate::models::GraphNode> = graph
-        .nodes
+    let node_by_document: HashMap<&str, &crate::models::GraphNode> = graph_nodes
         .iter()
         .filter_map(|node| node.document_id.as_deref().map(|id| (id, node)))
         .collect();

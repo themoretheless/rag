@@ -175,66 +175,76 @@ impl Store {
     ///
     /// Edges are restricted to the returned node set (both endpoints present).
     pub fn get_graph_view(&self, filter: GraphFilter) -> Result<GraphView> {
-        let max_nodes = filter.max_nodes.unwrap_or(500) as usize;
+        // A cap of 0 historically still returned the first node.
+        let max_nodes = i64::from(filter.max_nodes.unwrap_or(500).max(1));
         let conn = self.lock()?;
 
-        let mut nodes: Vec<GraphNode> = Vec::new();
-        {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT id, kind, label, document_id, uri, resolved, metadata_json
-                FROM graph_nodes
-                ORDER BY label ASC, id ASC
-                "#,
-            )?;
-            let mut rows = stmt.query([])?;
-            crate::db::rows::try_visit_rows(&mut rows, |row| {
-                let node = row_to_node(row)?;
-                if let Some(ref kinds) = filter.kinds {
-                    if !kinds.iter().any(|k| k == &node.kind) {
-                        return Ok(std::ops::ControlFlow::Continue(()));
-                    }
+        // Kind / seed filters and the node cap run in SQL; edges are joined
+        // against the same selected node set instead of scanning every edge.
+        let mut node_where = Vec::new();
+        let mut node_binds: Vec<String> = Vec::new();
+        for (column, values) in [("kind", &filter.kinds), ("id", &filter.seed_ids)] {
+            if let Some(values) = values {
+                if values.is_empty() {
+                    return Ok(GraphView::default());
                 }
-                if let Some(ref seeds) = filter.seed_ids {
-                    if !seeds.iter().any(|s| s == &node.id) {
-                        return Ok(std::ops::ControlFlow::Continue(()));
-                    }
-                }
-                nodes.push(node);
-                if nodes.len() >= max_nodes {
-                    return Ok(std::ops::ControlFlow::Break(()));
-                }
-                Ok(std::ops::ControlFlow::Continue(()))
-            })?;
+                node_where.push(format!("{column} IN ({})", vec!["?"; values.len()].join(",")));
+                node_binds.extend(values.iter().cloned());
+            }
+        }
+        let node_where = if node_where.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", node_where.join(" AND "))
+        };
+        let selected_nodes = format!(
+            "SELECT id, kind, label, document_id, uri, resolved, metadata_json \
+             FROM graph_nodes {node_where} ORDER BY label ASC, id ASC LIMIT {max_nodes}"
+        );
+
+        let nodes = {
+            let mut stmt = conn.prepare(&selected_nodes)?;
+            crate::db::rows::query_vec(&mut stmt, params_from_iter(node_binds.iter()), row_to_node)?
+        };
+        if nodes.is_empty() {
+            return Ok(GraphView::default());
         }
 
-        let node_ids: HashSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
-
-        let mut edges: Vec<GraphEdge> = Vec::new();
-        {
-            let mut stmt = conn.prepare(
+        let mut edge_binds = node_binds.clone();
+        let rel_where = match &filter.rel_types {
+            Some(rels) if rels.is_empty() => return Ok(GraphView { nodes, edges: Vec::new() }),
+            Some(rels) => {
+                edge_binds.extend(rels.iter().cloned());
+                format!("WHERE e.rel_type IN ({})", vec!["?"; rels.len()].join(","))
+            }
+            None => String::new(),
+        };
+        let edges = {
+            let mut stmt = conn.prepare(&format!(
                 r#"
-                SELECT id, source_id, target_id, rel_type, weight, context
-                FROM graph_edges
-                ORDER BY id ASC
-                "#,
-            )?;
-            crate::db::rows::for_each_row(&mut stmt, [], |row| {
-                let edge = row_to_edge(row)?;
-                if let Some(ref rels) = filter.rel_types {
-                    if !rels.iter().any(|r| r == &edge.rel_type) {
-                        return Ok(());
-                    }
-                }
-                if !node_ids.contains(&edge.source_id) || !node_ids.contains(&edge.target_id) {
-                    return Ok(());
-                }
-                edges.push(edge);
-                Ok(())
-            })?;
-        }
+                WITH selected AS ({selected_nodes})
+                SELECT e.id, e.source_id, e.target_id, e.rel_type, e.weight, e.context
+                FROM graph_edges e
+                JOIN selected s ON s.id = e.source_id
+                JOIN selected t ON t.id = e.target_id
+                {rel_where}
+                ORDER BY e.id ASC
+                "#
+            ))?;
+            crate::db::rows::query_vec(&mut stmt, params_from_iter(edge_binds.iter()), row_to_edge)?
+        };
 
         Ok(GraphView { nodes, edges })
+    }
+
+    /// Every graph node ordered by `(label, id)`, without loading any edge.
+    pub fn list_graph_nodes(&self) -> Result<Vec<GraphNode>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, label, document_id, uri, resolved, metadata_json \
+             FROM graph_nodes ORDER BY label ASC, id ASC",
+        )?;
+        crate::db::rows::query_vec(&mut stmt, [], row_to_node)
     }
 
     /// Return every graph edge, including edges whose endpoint node is missing.
@@ -325,20 +335,18 @@ impl Store {
             })?;
         }
 
-        let mut nodes = Vec::new();
-        let mut seen = HashSet::new();
-        if let Some(n) = load_node_locked(&conn, node_id)? {
-            seen.insert(n.id.clone());
-            nodes.push(n);
-        }
-        for e in &edges {
-            if seen.insert(e.source_id.clone()) {
-                if let Some(n) = load_node_locked(&conn, &e.source_id)? {
-                    nodes.push(n);
-                }
-            }
-        }
-        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        // The target plus every distinct source, in one read (hubs and tag
+        // nodes have thousands of incoming edges).
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, kind, label, document_id, uri, resolved, metadata_json
+            FROM graph_nodes
+            WHERE id = ?
+               OR id IN (SELECT source_id FROM graph_edges WHERE target_id = ?)
+            ORDER BY id ASC
+            "#,
+        )?;
+        let nodes = crate::db::rows::query_vec(&mut stmt, params![node_id, node_id], row_to_node)?;
 
         Ok(GraphView { nodes, edges })
     }

@@ -1,5 +1,7 @@
 //! Wiki catalog, write (CAS), and backlinks HTTP handlers.
 
+use std::collections::HashMap;
+
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -260,23 +262,43 @@ async fn wiki_backlinks(
         .as_deref()
         .map(str::trim)
         .filter(|wing| !wing.is_empty());
+    // One backlinks read serves both the rows and their contexts.
+    let view = match st.store.wiki_backlink_view(id) {
+        Ok(view) => view,
+        Err(error) => return api_err(error),
+    };
     let rows = match wing {
         Some(wing) => st.store.wiki_backlinks_for_document_in_wing(id, wing),
-        None => st.store.wiki_backlinks_for_document(id),
+        None => Ok(view
+            .as_ref()
+            .map(|(node_id, view)| crate::db::store::wiki_backlink_rows(node_id, view))
+            .unwrap_or_default()),
     };
+    let view = view.map(|(_, view)| view);
     match rows {
         Ok(rows) => {
-            let view = match st.store.find_node_by_document_id(id)
-                .and_then(|node| node.map(|node| st.store.backlinks(&node.id)).transpose()) {
-                Ok(view) => view,
-                Err(error) => return api_err(error),
-            };
+            // Group wikilink contexts by source document key in one pass.
+            let mut contexts_by_key: HashMap<&str, Vec<&str>> = HashMap::new();
+            if let Some(view) = view.as_ref() {
+                let key_by_node: HashMap<&str, &str> = view
+                    .nodes
+                    .iter()
+                    .map(|node| (node.id.as_str(), node.document_id.as_deref().unwrap_or(&node.id)))
+                    .collect();
+                for edge in view.edges.iter().filter(|edge| edge.rel_type == "wikilink") {
+                    let (Some(key), Some(context)) =
+                        (key_by_node.get(edge.source_id.as_str()), edge.context.as_deref())
+                    else {
+                        continue;
+                    };
+                    let contexts = contexts_by_key.entry(key).or_default();
+                    if contexts.len() < 3 {
+                        contexts.push(context);
+                    }
+                }
+            }
             let links: Vec<_> = rows.into_iter().map(|(label, key)| {
-                let contexts: Vec<_> = view.as_ref().map(|view| view.edges.iter()
-                    .filter(|edge| edge.rel_type == "wikilink")
-                    .filter(|edge| view.nodes.iter().any(|node| node.id == edge.source_id
-                        && node.document_id.as_deref().unwrap_or(&node.id) == key))
-                    .filter_map(|edge| edge.context.as_deref()).take(3).collect()).unwrap_or_default();
+                let contexts = contexts_by_key.get(key.as_str()).cloned().unwrap_or_default();
                 json!({ "label": label, "id": key, "contexts": contexts })
             }).collect();
             api_ok(json!({ "ok": true, "count": links.len(), "backlinks": links }))

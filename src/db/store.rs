@@ -1492,6 +1492,8 @@ mod wiki_meta;
 
 use self::{ops_log::*, wiki_index::*, wiki_meta::*};
 pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
+pub(crate) use self::chunks::ChunkBody;
+pub(crate) use self::documents::{wiki_backlink_rows, DocumentRef};
 pub(crate) use self::manifest::{embedding_identity_fingerprint, embedding_migration_manifest};
 
 #[cfg(test)]

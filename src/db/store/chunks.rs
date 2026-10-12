@@ -2,11 +2,70 @@
 
 use super::*;
 
+/// Chunk text plus section metadata, without the embedding vector.
+#[derive(Debug, Clone)]
+pub(crate) struct ChunkBody {
+    pub id: String,
+    pub chunk_index: i32,
+    pub content: String,
+    pub metadata_json: String,
+}
+
 impl Store {
     /// List chunks for a document ordered by `chunk_index`.
     pub fn list_chunks_for_document(&self, doc_id: &str) -> Result<Vec<Chunk>> {
         let conn = self.lock()?;
         list_chunks_for_document_locked(&conn, doc_id)
+    }
+
+    /// Chunk bodies of a document in `chunk_index` order, without embeddings.
+    ///
+    /// Search context expansion needs text and section metadata only; the
+    /// embedding JSON is the bulk of a chunk row and is never parsed here.
+    pub(crate) fn list_chunk_bodies_for_document(&self, doc_id: &str) -> Result<Vec<ChunkBody>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, chunk_index, content, metadata_json
+            FROM chunks
+            WHERE document_id = ?
+            ORDER BY chunk_index ASC, id ASC
+            "#,
+        )?;
+        crate::db::rows::query_vec(&mut stmt, params![doc_id], |row| {
+            Ok(ChunkBody {
+                id: row.get(0)?,
+                chunk_index: row.get(1)?,
+                content: row.get(2)?,
+                metadata_json: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            })
+        })
+    }
+
+    /// `metadata_json` for each of `chunk_ids` that exists, in one query.
+    pub(crate) fn chunk_metadata_by_ids(
+        &self,
+        chunk_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        if chunk_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let placeholders = vec!["?"; chunk_ids.len()].join(",");
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, metadata_json FROM chunks WHERE id IN ({placeholders})"
+        ))?;
+        let rows = crate::db::rows::query_vec(
+            &mut stmt,
+            duckdb::params_from_iter(chunk_ids.iter()),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                ))
+            },
+        )?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Load one representative vector for at most `limit` deterministic

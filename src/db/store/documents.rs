@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// Identity of a document without its body or metadata.
+#[derive(Debug, Clone)]
+pub(crate) struct DocumentRef {
+    pub id: String,
+    pub uri: String,
+    pub layer: String,
+}
+
 impl Store {
     /// Fetch a document by id.
     pub fn get_document(&self, id: &str) -> Result<Option<Document>> {
@@ -166,6 +174,20 @@ impl Store {
 
         let out = crate::db::rows::query_vec(&mut stmt, [], rows::document)?;
         Ok(out)
+    }
+
+    /// `(id, uri, layer)` of every document ordered by `created_at`, without bodies.
+    pub(crate) fn list_document_refs(&self) -> Result<Vec<DocumentRef>> {
+        let conn = self.lock()?;
+        let mut stmt =
+            conn.prepare("SELECT id, uri, layer FROM documents ORDER BY created_at ASC")?;
+        crate::db::rows::query_vec(&mut stmt, [], |row| {
+            Ok(DocumentRef {
+                id: row.get(0)?,
+                uri: row.get(1)?,
+                layer: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            })
+        })
     }
 
     /// Count documents without loading document bodies.
@@ -409,25 +431,22 @@ impl Store {
 
     /// Incoming wikilink sources for a document (label, document_id or node id).
     pub fn wiki_backlinks_for_document(&self, document_id: &str) -> Result<Vec<(String, String)>> {
-        let node = match self.find_node_by_document_id(document_id)? {
-            Some(n) => n,
-            None => return Ok(Vec::new()),
+        Ok(self
+            .wiki_backlink_view(document_id)?
+            .map(|(node_id, view)| wiki_backlink_rows(&node_id, &view))
+            .unwrap_or_default())
+    }
+
+    /// The document's graph node id and its incoming-edge view, if it has a node.
+    pub fn wiki_backlink_view(
+        &self,
+        document_id: &str,
+    ) -> Result<Option<(String, crate::models::GraphView)>> {
+        let Some(node) = self.find_node_by_document_id(document_id)? else {
+            return Ok(None);
         };
-        let bl = self.backlinks(&node.id)?;
-        let mut out = Vec::new();
-        for e in &bl.edges {
-            if e.target_id != node.id || e.rel_type != "wikilink" {
-                continue;
-            }
-            let Some(src) = bl.nodes.iter().find(|n| n.id == e.source_id) else {
-                continue;
-            };
-            let key = src.document_id.clone().unwrap_or_else(|| src.id.clone());
-            out.push((src.label.clone(), key));
-        }
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out.dedup_by(|a, b| a.1 == b.1);
-        Ok(out)
+        let view = self.backlinks(&node.id)?;
+        Ok(Some((node.id, view)))
     }
 
     /// Incoming wikilink sources constrained to the same project wing.
@@ -754,4 +773,25 @@ impl Store {
     ) -> Result<Option<Document>> {
         Ok(self.update_document_meta(id, update)?.map(|r| r.document))
     }
+}
+
+/// `(label, document key)` of each wikilink source in a backlinks `view` of
+/// `target_id`, sorted by label with adjacent duplicate keys collapsed.
+pub fn wiki_backlink_rows(target_id: &str, view: &crate::models::GraphView) -> Vec<(String, String)> {
+    let nodes: std::collections::HashMap<&str, &crate::models::GraphNode> =
+        view.nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+    let mut out = Vec::new();
+    for e in &view.edges {
+        if e.target_id != target_id || e.rel_type != "wikilink" {
+            continue;
+        }
+        let Some(src) = nodes.get(e.source_id.as_str()) else {
+            continue;
+        };
+        let key = src.document_id.clone().unwrap_or_else(|| src.id.clone());
+        out.push((src.label.clone(), key));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.dedup_by(|a, b| a.1 == b.1);
+    out
 }
