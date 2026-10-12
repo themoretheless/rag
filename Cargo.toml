@@ -70,3 +70,11 @@ debug = false
 
 [profile.test]
 debug = "line-tables-only"
+
+# Production builds (`cargo build --release`, see docs/PROD_RUN.md): one codegen
+# unit plus thin LTO lets rustc inline across crates (serde, duckdb glue, axum)
+# at a modest link-time cost; debug info is dropped from shipped binaries.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
