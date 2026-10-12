@@ -12,35 +12,8 @@ use crate::gateway::{
     ReqwestGatewayClient, Response,
 };
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ProjectHome {
-    pub project_id: String,
-    pub documents: u64,
-    pub chunks: u64,
-    pub raw_documents: u64,
-    pub wiki_documents: u64,
-    pub diary_documents: u64,
-    pub archived_documents: u64,
-    pub rooms: u64,
-    pub source_files: u64,
-    pub graph_nodes: u64,
-    pub graph_edges: u64,
-    pub unresolved_links: u64,
-    #[serde(default)]
-    pub last_updated_at: Option<String>,
-    #[serde(default)]
-    pub source_roots: Vec<ProjectSourceRoot>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ProjectSourceRoot {
-    pub canonical_root: String,
-    pub file_count: u64,
-    #[serde(default)]
-    pub last_seen: Option<String>,
-    #[serde(default)]
-    pub last_synced: Option<String>,
-}
+/// Shared with the server; `last_updated_at` is a UTC timestamp.
+pub use rag_mcp_core::ProjectHome;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LibraryItem {

@@ -127,7 +127,7 @@ database path is published last as the generation commit marker.
 | `llm/json.rs`, `maintain/audit.rs` | one parser for JSON in model output; one terminal `MAINT` audit row per maintenance run |
 | `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters (`activity.rs` only serves `/v1/activity`) |
 | `crates/rag-mcp-markup` | pure `[[wikilink]]`/`#tag` parsing and label normalization; the server graph and the native UI renderer share it |
-| `crates/rag-mcp-core` | serde-only wire types shared by the server and clients (graph view, PKB defaults, `Layer`) |
+| `crates/rag-mcp-core` | wire types shared by the server and clients: graph view, search hits, project home, background jobs, activity events, `Layer`/`NodeKind` (serde + chrono only) |
 | `web-svelte/src/api/types.ts` | web client wire types; the graph and search shapes are checked against Rust by `tests/it/web_types_contract_test.rs` |
 | `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
 | `crates/rag-mcp-ui/src/direct_db.rs` | read-only `--db` mode behind the default `direct-db` feature; the only UI code that links the server crate |

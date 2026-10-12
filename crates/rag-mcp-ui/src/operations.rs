@@ -123,73 +123,16 @@ struct ActivityEnvelope {
     items: Vec<ObservedActivity>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-pub struct JobCounters {
-    pub preflight: u64,
-    pub extracted: u64,
-    pub embedded: u64,
+pub use rag_mcp_core::{JobSnapshot, JobStatus, SyncJobRequest};
+
+/// UI-side job helpers; the snapshot type is shared with the server.
+pub trait JobSnapshotExt {
+    fn can_cancel(&self) -> bool;
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobProgress {
-    pub phase: String,
-    pub total_files: usize,
-    pub processed_files: usize,
-    #[serde(default)]
-    pub current_path: Option<String>,
-    pub added: usize,
-    pub updated: usize,
-    pub skipped: usize,
-    pub deleted: usize,
-    pub errors: usize,
-    #[serde(default)]
-    pub counters: JobCounters,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobErrorSample {
-    pub path: String,
-    pub error: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobReport {
-    pub added_count: usize,
-    pub updated_count: usize,
-    pub skipped_count: usize,
-    pub deleted_count: usize,
-    pub error_count: usize,
-    #[serde(default)]
-    pub error_samples: Vec<JobErrorSample>,
-    #[serde(default)]
-    pub counters: JobCounters,
-}
-
-pub use rag_mcp_core::SyncJobRequest;
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobSnapshot {
-    pub id: String,
-    pub kind: String,
-    pub status: String,
-    pub request: SyncJobRequest,
-    #[serde(default)]
-    pub progress: Option<JobProgress>,
-    #[serde(default)]
-    pub report: Option<JobReport>,
-    #[serde(default)]
-    pub error: Option<String>,
-    pub cancel_requested: bool,
-    pub created_at: String,
-    #[serde(default)]
-    pub started_at: Option<String>,
-    #[serde(default)]
-    pub finished_at: Option<String>,
-}
-
-impl JobSnapshot {
-    pub fn can_cancel(&self) -> bool {
-        matches!(self.status.as_str(), "queued" | "running") && !self.cancel_requested
+impl JobSnapshotExt for JobSnapshot {
+    fn can_cancel(&self) -> bool {
+        matches!(self.status, JobStatus::Queued | JobStatus::Running) && !self.cancel_requested
     }
 }
 

@@ -96,6 +96,204 @@ impl SearchHit {
     }
 }
 
+/// Lean source-root aggregate for project registry / status surfaces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceRootSummary {
+    pub canonical_root: String,
+    pub file_count: u64,
+    pub last_seen: Option<String>,
+    pub last_synced: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectHome {
+    pub project_id: String,
+    pub documents: u64,
+    pub chunks: u64,
+    pub raw_documents: u64,
+    pub wiki_documents: u64,
+    pub diary_documents: u64,
+    pub archived_documents: u64,
+    pub rooms: u64,
+    pub source_files: u64,
+    pub graph_nodes: u64,
+    pub graph_edges: u64,
+    pub unresolved_links: u64,
+    #[serde(default)]
+    pub source_roots: Vec<SourceRootSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+// --- Background source-sync jobs (`/v1/jobs`) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceSyncError {
+    pub path: String,
+    pub error: String,
+}
+
+/// Structured terminal failure after source-sync mutations have already run.
+///
+/// This is additive to the existing per-path `errors` list so older clients
+/// still classify the run as completed-with-errors, while newer clients can
+/// distinguish a derived-index failure from a failed or rolled-back sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceSyncFinalizationError {
+    pub code: String,
+    pub stage: String,
+    pub durable_mutation_committed: bool,
+    pub retryable: bool,
+    pub fallback_dirty_marked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dirty_marker_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ops_log_error: Option<String>,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceSyncCounters {
+    pub preflight: u64,
+    pub extracted: u64,
+    pub embedded: u64,
+}
+
+/// Observable phases for a cooperative source synchronization run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSyncPhase {
+    Scanning,
+    Syncing,
+    RemovingDeleted,
+    RefreshingFts,
+    Completed,
+    Cancelled,
+    /// A phase this build does not know (newer server).
+    #[serde(other)]
+    Unknown,
+}
+
+/// Progress snapshot emitted while a source tree is synchronized.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceSyncProgress {
+    pub phase: SourceSyncPhase,
+    pub total_files: usize,
+    pub processed_files: usize,
+    #[serde(default)]
+    pub current_path: Option<String>,
+    pub added: usize,
+    pub updated: usize,
+    pub skipped: usize,
+    pub deleted: usize,
+    pub errors: usize,
+    #[serde(default)]
+    pub counters: SourceSyncCounters,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobStatus {
+    Queued,
+    Running,
+    Succeeded,
+    CompletedWithErrors,
+    Failed,
+    Cancelled,
+    /// A status this build does not know (newer server or stored job).
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceSyncJobReport {
+    pub added_count: usize,
+    pub updated_count: usize,
+    pub skipped_count: usize,
+    pub deleted_count: usize,
+    pub error_count: usize,
+    #[serde(default)]
+    pub error_samples: Vec<SourceSyncError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalization_error: Option<SourceSyncFinalizationError>,
+    #[serde(default)]
+    pub counters: SourceSyncCounters,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobSnapshot {
+    pub id: String,
+    pub kind: String,
+    pub status: JobStatus,
+    pub request: SyncJobRequest,
+    #[serde(default)]
+    pub progress: Option<SourceSyncProgress>,
+    #[serde(default)]
+    pub report: Option<SourceSyncJobReport>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub cancel_requested: bool,
+    /// True when a new sync with the same request is safe after interrupt/failure.
+    /// Source sync is committed-prefix aware (unchanged files skip); mid-batch
+    /// embeds are not resumed.
+    #[serde(default)]
+    pub requeue_safe: bool,
+    /// Human-readable resume limits when `requeue_safe` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_limits: Option<String>,
+    /// Job id this snapshot was requeued from, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requeued_from: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl JobStatus {
+    /// True once the job can no longer change. Unknown statuses count as
+    /// terminal so a client never offers to cancel what it cannot classify.
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded
+                | Self::CompletedWithErrors
+                | Self::Failed
+                | Self::Cancelled
+                | Self::Unknown
+        )
+    }
+
+    /// Wire string (`queued`, `running`, ...).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::CompletedWithErrors => "completed_with_errors",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl SourceSyncPhase {
+    /// Wire string (`scanning`, `syncing`, ...).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Scanning => "scanning",
+            Self::Syncing => "syncing",
+            Self::RemovingDeleted => "removing_deleted",
+            Self::RefreshingFts => "refreshing_fts",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// Known document layers. Stored and sent as plain strings (`raw`, `wiki`, ...);
 /// this type only gives comparisons a name. Unknown stored values parse to `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -380,6 +578,28 @@ mod tests {
         }
         assert_eq!(Layer::parse("Wiki"), None);
         assert!(Layer::Raw.is("raw"));
+    }
+
+    #[test]
+    fn job_snapshot_tolerates_newer_servers() {
+        use super::{JobSnapshot, JobStatus, SourceSyncPhase};
+        let job: JobSnapshot = serde_json::from_value(serde_json::json!({
+            "id": "j", "kind": "source_sync", "status": "paused_by_operator",
+            "request": {"path": "/vault"},
+            "progress": {"phase": "rebalancing", "total_files": 2, "processed_files": 1,
+                         "added": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": 0},
+            "cancel_requested": false,
+            "created_at": "2026-10-01T12:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(job.status, JobStatus::Unknown);
+        assert!(job.status.is_terminal());
+        assert_eq!(job.progress.unwrap().phase, SourceSyncPhase::Unknown);
+        assert!(job.report.is_none() && job.started_at.is_none());
+        assert_eq!(
+            serde_json::to_value(JobStatus::CompletedWithErrors).unwrap(),
+            JobStatus::CompletedWithErrors.as_str()
+        );
     }
 
     #[test]

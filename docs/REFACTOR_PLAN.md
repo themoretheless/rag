@@ -338,7 +338,13 @@ are fixed too:
   re-exported by `rag_mcp::models`). The UI's DuckDB code sits behind the
   default `direct-db` feature; `--no-default-features` links no server crate,
   and CI keeps that build compiling.
-- 6.2: `SyncJobRequest`, `RestoreRevisionResult` and
+- 6.2 done: every UI copy of a server DTO is gone. `ActivityEvent`,
+  `SearchHit`, `ProjectHome`/`SourceRootSummary` and `JobSnapshot` with its
+  progress/report types live in `rag-mcp-core`. Tolerance moved into the shared
+  types: `JobStatus` and `SourceSyncPhase` have a `#[serde(other)] Unknown`
+  variant and optional fields default, so an older UI still reads a newer
+  server (core test `job_snapshot_tolerates_newer_servers`).
+- Earlier: `SyncJobRequest`, `RestoreRevisionResult` and
   `RevisionLineChange` were identical on both sides and now live in the core
   crate. The remaining same-name pairs differ on purpose (the UI reads
   timestamps as strings and a subset of fields to tolerate server drift), so
@@ -426,9 +432,9 @@ are fixed too:
 
 **Not done, with the reason**
 
-| Item | Why it stops here |
-|------|-------------------|
-| 6.2 last two tolerant pairs | `ActivityEvent` and `SearchHit` (with `SearchExplanation`, `SearchContextChunk`) now live in `rag-mcp-core` and the UI uses them directly. `ProjectHome` would pull `chrono` into the serde-only core crate, and the UI's `JobSnapshot` keeps `status` as a string so an older UI survives a newer server status; both are round-trip tested against the server types in `crates/rag-mcp-ui/src/wire_contract.rs`. |
+Nothing: every planned item above is done. The only explicit row loop left
+(`recovery::publish`) returns a value from its function mid-scan, which a
+visitor closure cannot express.
 
 ## Not planned
 
@@ -449,4 +455,4 @@ are fixed too:
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
 | Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~1.7k | < 2k |
 | Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |
-| UI copies of server DTOs without a contract test | 11 | 0 (5 shared via core, 2 tolerant copies round-trip tested) | 0 |
+| UI copies of server DTOs | 11 | 0 (all shared via `rag-mcp-core`) | 0 |

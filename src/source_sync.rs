@@ -8,6 +8,11 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+pub use rag_mcp_core::{
+    SourceSyncCounters, SourceSyncError, SourceSyncFinalizationError, SourceSyncPhase,
+    SourceSyncProgress,
+};
+
 use crate::config::Config;
 use crate::db::{SourceManifestEntry, SourceManifestWrite, Store};
 use crate::embeddings::EmbeddingProvider;
@@ -50,30 +55,7 @@ impl SourceSyncCommand {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceSyncError {
-    pub path: String,
-    pub error: String,
-}
 
-/// Structured terminal failure after source-sync mutations have already run.
-///
-/// This is additive to the existing per-path `errors` list so older clients
-/// still classify the run as completed-with-errors, while newer clients can
-/// distinguish a derived-index failure from a failed or rolled-back sync.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceSyncFinalizationError {
-    pub code: String,
-    pub stage: String,
-    pub durable_mutation_committed: bool,
-    pub retryable: bool,
-    pub fallback_dirty_marked: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dirty_marker_error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ops_log_error: Option<String>,
-    pub error: String,
-}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceSyncReport {
@@ -87,12 +69,6 @@ pub struct SourceSyncReport {
     pub counters: SourceSyncCounters,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SourceSyncCounters {
-    pub preflight: u64,
-    pub extracted: u64,
-    pub embedded: u64,
-}
 
 impl SourceSyncReport {
     fn sort_paths(&mut self) {
@@ -105,53 +81,26 @@ impl SourceSyncReport {
     }
 }
 
-/// Observable phases for a cooperative source synchronization run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceSyncPhase {
-    Scanning,
-    Syncing,
-    RemovingDeleted,
-    RefreshingFts,
-    Completed,
-    Cancelled,
-}
 
-/// Progress snapshot emitted while a source tree is synchronized.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceSyncProgress {
-    pub phase: SourceSyncPhase,
-    pub total_files: usize,
-    pub processed_files: usize,
-    pub current_path: Option<String>,
-    pub added: usize,
-    pub updated: usize,
-    pub skipped: usize,
-    pub deleted: usize,
-    pub errors: usize,
-    pub counters: SourceSyncCounters,
-}
 
-impl SourceSyncProgress {
-    fn from_report(
-        phase: SourceSyncPhase,
-        total_files: usize,
-        processed_files: usize,
-        current_path: Option<String>,
-        report: &SourceSyncReport,
-    ) -> Self {
-        Self {
-            phase,
-            total_files,
-            processed_files,
-            current_path,
-            added: report.added.len(),
-            updated: report.updated.len(),
-            skipped: report.skipped.len(),
-            deleted: report.deleted.len(),
-            errors: report.errors.len(),
-            counters: report.counters.clone(),
-        }
+fn progress_from_report(
+    phase: SourceSyncPhase,
+    total_files: usize,
+    processed_files: usize,
+    current_path: Option<String>,
+    report: &SourceSyncReport,
+) -> SourceSyncProgress {
+    SourceSyncProgress {
+        phase,
+        total_files,
+        processed_files,
+        current_path,
+        added: report.added.len(),
+        updated: report.updated.len(),
+        skipped: report.skipped.len(),
+        deleted: report.deleted.len(),
+        errors: report.errors.len(),
+        counters: report.counters.clone(),
     }
 }
 
@@ -316,7 +265,7 @@ impl<'a> SourceSyncService<'a> {
                 return Ok(cancelled_outcome(&control, report, 0, 0));
             }
         };
-        control.publish(SourceSyncProgress::from_report(
+        control.publish(progress_from_report(
             SourceSyncPhase::Scanning,
             0,
             0,
@@ -390,7 +339,7 @@ impl<'a> SourceSyncService<'a> {
             };
         }
         for (index, path) in files.into_iter().enumerate() {
-            control.publish(SourceSyncProgress::from_report(
+            control.publish(progress_from_report(
                 SourceSyncPhase::Syncing,
                 total_files,
                 processed_files,
@@ -491,7 +440,7 @@ impl<'a> SourceSyncService<'a> {
             cancelled!(processed_files);
         }
         if command.remove_deleted {
-            control.publish(SourceSyncProgress::from_report(
+            control.publish(progress_from_report(
                 SourceSyncPhase::RemovingDeleted,
                 total_files,
                 total_files,
@@ -523,7 +472,7 @@ impl<'a> SourceSyncService<'a> {
         }
         let seen_paths = seen.iter().cloned().collect::<Vec<_>>();
         self.store.mark_source_manifest_seen(&root, &seen_paths)?;
-        control.publish(SourceSyncProgress::from_report(
+        control.publish(progress_from_report(
             SourceSyncPhase::RefreshingFts,
             total_files,
             total_files,
@@ -577,7 +526,7 @@ impl<'a> SourceSyncService<'a> {
         // this future is dropped while waiting, detached blocking work owns it.
         let _sync_guard = sync_guard;
         report.sort_paths();
-        control.publish(SourceSyncProgress::from_report(
+        control.publish(progress_from_report(
             SourceSyncPhase::Completed,
             total_files,
             total_files,
@@ -775,7 +724,7 @@ impl<'a> SourceSyncService<'a> {
         let mut sources = preloaded.keys().collect::<Vec<_>>();
         sources.sort();
         for source in sources {
-            control.publish(SourceSyncProgress::from_report(
+            control.publish(progress_from_report(
                 SourceSyncPhase::RemovingDeleted,
                 total_files,
                 total_files,
@@ -884,7 +833,7 @@ fn cancelled_outcome(
     processed_files: usize,
 ) -> SourceSyncOutcome {
     report.sort_paths();
-    control.publish(SourceSyncProgress::from_report(
+    control.publish(progress_from_report(
         SourceSyncPhase::Cancelled,
         total_files,
         processed_files,
@@ -900,7 +849,7 @@ fn publish_file_completion(
     total_files: usize,
     processed_files: usize,
 ) {
-    control.publish(SourceSyncProgress::from_report(
+    control.publish(progress_from_report(
         SourceSyncPhase::Syncing,
         total_files,
         processed_files,

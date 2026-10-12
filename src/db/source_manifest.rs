@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::path::{Path, MAIN_SEPARATOR};
 
 use duckdb::{params, params_from_iter};
-use serde::{Deserialize, Serialize};
 
 use super::store::Store;
 use crate::error::{AppError, Result};
+
+pub use rag_mcp_core::SourceRootSummary;
 
 /// Manifest state plus the joined document/chunk health needed by source sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,14 +42,6 @@ pub struct SourceManifestWrite<'a> {
     pub document_id: &'a str,
 }
 
-/// Lean source-root aggregate for project registry / status surfaces.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceRootSummary {
-    pub canonical_root: String,
-    pub file_count: u64,
-    pub last_seen: Option<String>,
-    pub last_synced: Option<String>,
-}
 
 impl Store {
     /// List synchronized roots, optionally restricted to one project (`wing`).

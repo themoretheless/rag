@@ -526,7 +526,8 @@ pub fn draw_project_home(
                 theme::card().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Исходные каталоги · свежесть");
-                        if let Some(updated) = home.last_updated_at.as_deref() {
+                        let updated = home.last_updated_at.map(|at| at.to_rfc3339());
+                        if let Some(updated) = updated.as_deref() {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "последнее изменение {}",

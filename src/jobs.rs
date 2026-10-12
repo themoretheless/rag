@@ -8,18 +8,18 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+pub use rag_mcp_core::{JobSnapshot, JobStatus, SourceSyncJobReport};
 
 use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::source_sync::{
-    sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncCounters,
-    SourceSyncError, SourceSyncFinalizationError, SourceSyncOutcome, SourceSyncProgress,
+    sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncOutcome,
     SourceSyncReport,
 };
 
@@ -45,38 +45,7 @@ pub(crate) fn sync_command(request: &SyncJobRequest) -> SourceSyncCommand {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JobStatus {
-    Queued,
-    Running,
-    Succeeded,
-    CompletedWithErrors,
-    Failed,
-    Cancelled,
-}
 
-impl JobStatus {
-    pub(crate) fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Succeeded | Self::CompletedWithErrors | Self::Failed | Self::Cancelled
-        )
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceSyncJobReport {
-    pub added_count: usize,
-    pub updated_count: usize,
-    pub skipped_count: usize,
-    pub deleted_count: usize,
-    pub error_count: usize,
-    pub error_samples: Vec<SourceSyncError>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub finalization_error: Option<SourceSyncFinalizationError>,
-    pub counters: SourceSyncCounters,
-}
 
 impl From<SourceSyncReport> for SourceSyncJobReport {
     fn from(report: SourceSyncReport) -> Self {
@@ -93,31 +62,6 @@ impl From<SourceSyncReport> for SourceSyncJobReport {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobSnapshot {
-    pub id: String,
-    pub kind: String,
-    pub status: JobStatus,
-    pub request: SyncJobRequest,
-    pub progress: Option<SourceSyncProgress>,
-    pub report: Option<SourceSyncJobReport>,
-    pub error: Option<String>,
-    pub cancel_requested: bool,
-    /// True when a new sync with the same request is safe after interrupt/failure.
-    /// Source sync is committed-prefix aware (unchanged files skip); mid-batch
-    /// embeds are not resumed.
-    #[serde(default)]
-    pub requeue_safe: bool,
-    /// Human-readable resume limits when `requeue_safe` is set.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resume_limits: Option<String>,
-    /// Job id this snapshot was requeued from, when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requeued_from: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub finished_at: Option<DateTime<Utc>>,
-}
 
 pub(crate) struct JobEntry {
     pub(crate) sequence: u64,
