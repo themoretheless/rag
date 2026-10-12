@@ -321,6 +321,7 @@ impl Layer {
         }
     }
 
+    /// Known layer named by `value`, ignoring ASCII case.
     pub fn parse(value: &str) -> Option<Self> {
         [
             Self::Raw,
@@ -330,7 +331,17 @@ impl Layer {
             Self::Document,
         ]
         .into_iter()
-        .find(|layer| layer.as_str() == value)
+        .find(|layer| layer.is(value))
+    }
+
+    /// The spelling to store: a known layer in lowercase, anything else
+    /// trimmed as given. SQL filters compare exactly, so writes canonicalize.
+    pub fn canonicalize(value: &str) -> std::borrow::Cow<'_, str> {
+        let value = value.trim();
+        match Self::parse(value) {
+            Some(layer) => std::borrow::Cow::Borrowed(layer.as_str()),
+            None => std::borrow::Cow::Borrowed(value),
+        }
     }
 
     /// True when `value` names this layer, ignoring ASCII case. One rule for
@@ -577,7 +588,9 @@ mod tests {
         ] {
             assert_eq!(Layer::parse(layer.as_str()), Some(layer));
         }
-        assert_eq!(Layer::parse("Wiki"), None);
+        assert_eq!(Layer::parse("Wiki"), Some(Layer::Wiki));
+        assert_eq!(Layer::canonicalize(" RAW "), "raw");
+        assert_eq!(Layer::canonicalize("custom"), "custom");
         assert!(Layer::Raw.is("raw") && Layer::Raw.is("RAW") && !Layer::Raw.is("raw2"));
     }
 

@@ -364,7 +364,7 @@ fn node_visible_for_lens(
         GraphLens::Knowledge => {
             lens_edge_ids.contains(node.id.as_str())
                 || matches!(node.kind.as_str(), "concept" | "tag" | "stub")
-                || node.metadata_json.contains("\"layer\":\"wiki\"")
+                || node_layer_is_wiki(&node.metadata_json)
         }
         GraphLens::Quality => quality_context_ids.contains(node.id.as_str()),
     }
@@ -681,6 +681,14 @@ pub fn topology_generation(view: &GraphView) -> u64 {
     node_ids.hash(&mut h);
     edge_ids.hash(&mut h);
     h.finish()
+}
+
+/// True when a node's metadata names the wiki layer (any key order or spacing).
+fn node_layer_is_wiki(metadata_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(metadata_json)
+        .ok()
+        .and_then(|value| value.get("layer")?.as_str().map(|layer| rag_mcp_core::Layer::Wiki.is(layer)))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

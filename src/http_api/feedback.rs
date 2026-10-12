@@ -94,8 +94,7 @@ fn capture(store: &Store, body: Capture) -> Result<Feedback> {
     let mut expected = Vec::new();
     for key in body.expected {
         let doc = store
-            .get_document(&key)?
-            .or(store.find_by_uri(&key)?)
+            .find_by_id_or_uri(&key, &key)?
             .ok_or_else(|| AppError::not_found(format!("expected source not found: {key}")))?;
         if !expected.iter().any(|e: &Expected| e.document_id == doc.id) {
             expected.push(Expected {
@@ -149,9 +148,7 @@ struct Run {
 }
 fn stale(store: &Store, item: &Feedback) -> Result<bool> {
     for e in &item.expected {
-        let doc = store
-            .get_document(&e.document_id)?
-            .or(store.find_by_uri(&e.uri)?);
+        let doc = store.find_by_id_or_uri(&e.document_id, &e.uri)?;
         if doc.map(|d| content_hash(&d.content)) != Some(e.hash.clone()) {
             return Ok(true);
         }

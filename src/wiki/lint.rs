@@ -6,7 +6,7 @@ use super::*;
 pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     let mut issues = Vec::new();
     let documents = store.list_documents()?;
-    let wiki_docs = store.list_documents_by_layer("wiki")?;
+    let wiki_docs = store.list_documents_by_layer(LAYER_WIKI)?;
     let index = store.list_wiki_index()?;
     let graph = store.get_graph_view(crate::models::GraphFilter {
         max_nodes: Some(u32::MAX),
@@ -124,11 +124,10 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     }
 
     // Pages missing from index
+    let indexed_pages: HashSet<&str> = index.iter().filter_map(|e| e.page_id.as_deref()).collect();
+    let wiki_ids: HashSet<&str> = wiki_docs.iter().map(|d| d.id.as_str()).collect();
     for d in &wiki_docs {
-        let in_index = index
-            .iter()
-            .any(|e| e.page_id.as_deref() == Some(d.id.as_str()));
-        if !in_index {
+        if !indexed_pages.contains(d.id.as_str()) {
             issues.push(LintIssue {
                 code: LintCode::MissingIndex,
                 severity: crate::models::IssueSeverity::Warn,
@@ -142,7 +141,8 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     // Index entries pointing nowhere
     for e in &index {
         if let Some(pid) = &e.page_id {
-            if store.get_document(pid)?.is_none() {
+            // Most entries point at a known wiki page; query only the rest.
+            if !wiki_ids.contains(pid.as_str()) && store.get_document(pid)?.is_none() {
                 issues.push(LintIssue {
                     code: LintCode::StaleIndex,
                     severity: crate::models::IssueSeverity::Warn,

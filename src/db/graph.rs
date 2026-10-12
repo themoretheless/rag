@@ -386,6 +386,21 @@ impl Store {
     ///
     /// Empty graph yields zeros and empty maps. Includes all kinds/rel_types
     /// present in the store (including `tunnel`).
+    /// Document id pairs joined by a `rel_type` edge, as `(source, target)`.
+    /// Both endpoints must be document-backed nodes.
+    pub fn document_pairs_by_relation(&self, rel_type: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT s.document_id, t.document_id FROM graph_edges e \
+             JOIN graph_nodes s ON s.id = e.source_id \
+             JOIN graph_nodes t ON t.id = e.target_id \
+             WHERE e.rel_type = ? AND s.document_id IS NOT NULL AND t.document_id IS NOT NULL",
+        )?;
+        crate::db::rows::query_vec(&mut stmt, params![rel_type], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+    }
+
     pub fn graph_stats(&self) -> Result<GraphStats> {
         let conn = self.lock()?;
 

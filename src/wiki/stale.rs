@@ -86,37 +86,19 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     let mut pairs: std::collections::BTreeMap<(String, String), StaleWikiItem> =
         std::collections::BTreeMap::new();
 
-    // 1) Graph related edges from raw → wiki (and undirected neighbors).
-    for raw in &raws {
-        let Some(src_node) = store.find_node_by_document_id(&raw.id)? else {
-            continue;
-        };
-        let view = store.neighbors(&src_node.id, 1, 500)?;
-        for e in &view.edges {
-            if e.rel_type != "related" {
-                continue;
-            }
-            let other = if e.source_id == src_node.id {
-                e.target_id.as_str()
-            } else if e.target_id == src_node.id {
-                e.source_id.as_str()
-            } else {
+    // 1) Graph `related` edges between a raw source and a wiki page, either
+    // direction: one edge query instead of a neighborhood walk per raw.
+    let wiki_docs = store.list_documents_by_layer(LAYER_WIKI)?;
+    let wiki_by_id: HashMap<&str, &Document> =
+        wiki_docs.iter().map(|wiki| (wiki.id.as_str(), wiki)).collect();
+    for (a, b) in store.document_pairs_by_relation("related")? {
+        for (raw_id, wiki_id) in [(&a, &b), (&b, &a)] {
+            let (Some(raw), Some(wiki)) = (raw_by_id.get(raw_id), wiki_by_id.get(wiki_id.as_str()))
+            else {
                 continue;
             };
-            let Some(other_node) = view.nodes.iter().find(|n| n.id == other) else {
-                continue;
-            };
-            let Some(doc_id) = other_node.document_id.as_deref() else {
-                continue;
-            };
-            let Some(wiki) = store.get_document(doc_id)? else {
-                continue;
-            };
-            if !is_wiki_layer(&wiki.layer) {
-                continue;
-            }
-            if wiki.updated_at < raw.updated_at && wiki_source_versions(&wiki).is_none() {
-                insert_stale_pair(&mut pairs, &wiki, raw, "graph_related");
+            if wiki.updated_at < raw.updated_at && wiki_source_versions(wiki).is_none() {
+                insert_stale_pair(&mut pairs, wiki, raw, "graph_related");
             }
         }
     }
@@ -124,16 +106,10 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     // Snapshot parents are authoritative, including an explicitly empty set.
     // Legacy metadata/content references may survive a later compilation and
     // must not add parents outside that snapshot.
-    let wiki_docs = store.list_documents_by_layer(LAYER_WIKI)?;
     for wiki in &wiki_docs {
         if let Some(versions) = wiki_source_versions(wiki) {
             for version in versions {
-                let source = store.get_document(&version.document_id)?;
-                let source = match source {
-                    Some(source) => Some(source),
-                    None if !version.uri.is_empty() => store.find_by_uri(&version.uri)?,
-                    None => None,
-                };
+                let source = store.find_by_id_or_uri(&version.document_id, &version.uri)?;
                 if let Some(source) = source {
                     if content_hash(&source.content) != version.content_hash {
                         insert_stale_pair(&mut pairs, wiki, &source, "source_version");
@@ -181,9 +157,7 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
     if let Some(versions) = wiki_source_versions(page) {
         let mut refs = Vec::new();
         for v in versions {
-            let source = store
-                .get_document(&v.document_id)?
-                .or(store.find_by_uri(&v.uri)?);
+            let source = store.find_by_id_or_uri(&v.document_id, &v.uri)?;
             refs.push(
                 source
                     .map(|d| (d.id, d.uri))

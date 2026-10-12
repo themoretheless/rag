@@ -2476,3 +2476,19 @@ fn wiki_backlinks_project_scope_excludes_foreign_documents_and_stubs() {
         3
     );
 }
+
+#[test]
+fn known_layers_are_stored_lowercase_so_sql_filters_see_them() {
+    let store = open_temp();
+    let doc = Document {
+        id: "mixed-case".into(),
+        uri: "wiki://mixed".into(),
+        title: "Mixed".into(),
+        content: "body".into(),
+        layer: "Wiki".into(),
+        ..Document::default()
+    };
+    store.upsert_document(&doc).unwrap();
+    assert_eq!(store.get_document("mixed-case").unwrap().unwrap().layer, "wiki");
+    assert_eq!(store.count_documents_by_layer("wiki").unwrap(), 1);
+}

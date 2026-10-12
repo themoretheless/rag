@@ -609,8 +609,8 @@ impl<'a> SourceSyncService<'a> {
                     .or_else(|| existing.and_then(|entry| entry.document_room.clone()))
                     .or(Some(inferred_room)),
                 source_file: Some(source_file.clone()),
-                layer: "raw".into(),
-                kind: "document".into(),
+                layer: crate::models::Layer::Raw.as_str().into(),
+                kind: crate::models::DocumentKind::Document.as_str().into(),
                 immutable: false,
             },
             SourceManifestStamp {

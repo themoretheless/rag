@@ -1,6 +1,7 @@
 //! Obsidian/Notion-style wiki browser: page list + article body with `[[wikilinks]]`.
 //! Supports read view and an in-app editor (writes go through HTTP PUT).
 
+use crate::ui::text::truncate;
 use std::collections::{BTreeMap, HashSet};
 
 use egui::{RichText, Sense, Ui};
@@ -817,14 +818,6 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{t}…")
-    }
-}
 
 #[cfg(test)]
 mod tests {

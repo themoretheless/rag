@@ -1,5 +1,6 @@
 //! Paginated revision timeline, lazy snapshots, bounded line diff and CAS restore.
 
+use crate::ui::text::{short_timestamp, truncate};
 use crate::load::DocumentBody;
 use rag_mcp_core::Layer;
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
@@ -304,21 +305,7 @@ fn summary(item: &RevisionItem) -> String {
     )
 }
 
-fn short_timestamp(value: &str) -> String {
-    value.strip_suffix('Z').unwrap_or(value).replace('T', " ")
-}
 
-fn truncate(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut value = value
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    value.push('…');
-    value
-}
 
 #[cfg(test)]
 mod tests {

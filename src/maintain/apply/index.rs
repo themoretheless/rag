@@ -9,7 +9,7 @@ pub(super) fn apply_rebuild_index(
     dry_run: bool,
 ) -> Result<StepResult> {
     if dry_run {
-        let n = store.count_documents_by_layer("wiki")?;
+        let n = store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,

@@ -372,14 +372,23 @@ pub fn maintain_compress(
             }
         }
 
+        // A document often appears in several pairs; load each one once.
+        let mut loaded: std::collections::HashMap<String, Option<Document>> =
+            std::collections::HashMap::new();
+        let mut load = |id: &str| -> Result<Option<Document>> {
+            if !loaded.contains_key(id) {
+                loaded.insert(id.to_string(), store.get_document(id)?);
+            }
+            Ok(loaded[id].clone())
+        };
         for pair in &near_duplicates {
             if consumed.contains(&pair.document_id_a) || consumed.contains(&pair.document_id_b) {
                 continue;
             }
-            let Some(doc_a) = store.get_document(&pair.document_id_a)? else {
+            let Some(doc_a) = load(&pair.document_id_a)? else {
                 continue;
             };
-            let Some(doc_b) = store.get_document(&pair.document_id_b)? else {
+            let Some(doc_b) = load(&pair.document_id_b)? else {
                 continue;
             };
             // Skip if either is already non-active (e.g. tombstoned earlier).

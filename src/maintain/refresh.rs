@@ -774,7 +774,7 @@ pub async fn maintain_refresh(
 
     if flags.rebuild_wiki_index {
         if dry_run {
-            let n = store.count_documents_by_layer("wiki")?;
+            let n = store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())?;
             report.rebuild_wiki_index = Some(WikiIndexRebuildReport {
                 entry_count: n,
                 dry_run: true,

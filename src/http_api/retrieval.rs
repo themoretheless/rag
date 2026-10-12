@@ -468,17 +468,16 @@ fn source_versions_for_hits(
     store: &crate::db::Store,
     hits: &[SearchHit],
 ) -> Vec<SourceVersion> {
+    let ids: Vec<&str> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
+    // One query for every hit's stored hash (was one full document load per hit).
+    let hashes = store.content_hashes(&ids).unwrap_or_default();
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for hit in hits {
         if !seen.insert(hit.document_id.clone()) {
             continue;
         }
-        let content_hash = store
-            .get_document(&hit.document_id)
-            .ok()
-            .flatten()
-            .and_then(|doc| doc.content_hash);
+        let content_hash = hashes.get(&hit.document_id).cloned().flatten();
         out.push(SourceVersion {
             document_id: hit.document_id.clone(),
             uri: Some(hit.document_uri.clone()),

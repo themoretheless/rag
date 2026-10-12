@@ -1018,11 +1018,7 @@ fn apply_document_meta_update(
     if let Some(ref layer) = update.layer {
         let layer = layer.trim();
         if !layer.is_empty() {
-            doc.layer = if crate::models::Layer::Raw.is(layer) {
-                "raw".to_string()
-            } else {
-                layer.to_string()
-            };
+            doc.layer = crate::models::Layer::canonicalize(layer).into_owned();
         }
     }
     if let Some(ref kind) = update.kind {
@@ -1156,11 +1152,12 @@ fn upsert_document_cas_locked(
         Some(h) if !h.is_empty() => h.to_string(),
         _ => content_hash(&doc.content),
     };
-    let layer = if doc.layer.is_empty() {
-        "raw"
+    let layer = if doc.layer.trim().is_empty() {
+        std::borrow::Cow::Borrowed("raw")
     } else {
-        doc.layer.as_str()
+        crate::models::Layer::canonicalize(&doc.layer)
     };
+    let layer = layer.as_ref();
     let kind = if doc.kind.is_empty() {
         "document"
     } else {

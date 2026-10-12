@@ -211,13 +211,14 @@ impl Store {
         };
 
         if let Some(w) = wing {
-            let mut kept = Vec::new();
-            for e in edges {
-                if self.tunnel_touches_wing(&e, w)? {
-                    kept.push(e);
-                }
-            }
-            edges = kept;
+            let endpoints: Vec<&str> = edges
+                .iter()
+                .flat_map(|e| [e.source_id.as_str(), e.target_id.as_str()])
+                .collect();
+            let in_wing = self.nodes_in_wing(&endpoints, w)?;
+            edges.retain(|e| {
+                in_wing.contains(e.source_id.as_str()) || in_wing.contains(e.target_id.as_str())
+            });
         }
 
         if let Some(lim) = limit {
@@ -228,20 +229,27 @@ impl Store {
         Ok(edges)
     }
 
-    /// True when either endpoint node is linked to a document in `wing`.
-    pub(super) fn tunnel_touches_wing(&self, edge: &GraphEdge, wing: &str) -> Result<bool> {
-        for nid in [&edge.source_id, &edge.target_id] {
-            if let Some(node) = self.find_node_by_id(nid)? {
-                if let Some(ref doc_id) = node.document_id {
-                    if let Some(doc) = self.get_document(doc_id)? {
-                        if doc.wing.as_deref() == Some(wing) {
-                            return Ok(true);
-                        }
-                    }
-                }
-            }
+    /// Which of `node_ids` are linked to a document in `wing`, in one query.
+    pub(super) fn nodes_in_wing(
+        &self,
+        node_ids: &[&str],
+        wing: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        if node_ids.is_empty() {
+            return Ok(std::collections::HashSet::new());
         }
-        Ok(false)
+        let placeholders = vec!["?"; node_ids.len()].join(",");
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT n.id FROM graph_nodes n JOIN documents d ON d.id = n.document_id \
+             WHERE d.wing = ? AND n.id IN ({placeholders})"
+        ))?;
+        let mut binds: Vec<&str> = vec![wing];
+        binds.extend_from_slice(node_ids);
+        let ids = crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), |row| {
+            Ok(row.get::<_, String>(0)?)
+        })?;
+        Ok(ids.into_iter().collect())
     }
 
     /// Existing tunnel edge between two nodes (either direction), if any.

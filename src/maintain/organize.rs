@@ -438,7 +438,7 @@ pub async fn maintain_organize(
             .any(|a| a.action == MaintenanceAction::RebuildIndex)
     {
         if dry_run {
-            let n = store.list_documents_by_layer("wiki")?.len();
+            let n = store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())?;
             rebuild_index_entries = Some(n);
         } else if applied_ok > 0 || suggestions.is_empty() {
             let n = store.rebuild_wiki_index_from_docs()?;

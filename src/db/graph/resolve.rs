@@ -16,7 +16,7 @@ use crate::error::Result;
 use crate::graph::extract::{
     extract_links_with, ExtractOptions, ExtractedLink, DEFAULT_MAX_LINKS_PER_DOC,
 };
-use crate::models::{Document, GraphEdge, GraphNode, NodeKind};
+use crate::models::{Document, GraphEdge, GraphNode, Layer, NodeKind};
 use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 
 /// Rebuild the object-graph slice for `doc`.
@@ -156,7 +156,7 @@ fn extract_options() -> ExtractOptions {
 }
 
 fn document_supports_knowledge_markup(doc: &Document) -> bool {
-    if matches!(doc.layer.as_str(), "wiki" | "diary") {
+    if Layer::Wiki.is(&doc.layer) || Layer::Diary.is(&doc.layer) {
         return true;
     }
     let Some(source_file) = doc.source_file.as_deref() else {
@@ -365,7 +365,7 @@ fn owned_by_other_document(node: &GraphNode, document_id: &str) -> bool {
 /// entity carries its own identity, and a node already owned by another document
 /// must not be stolen by title match.
 fn promotable_as_document(node: &GraphNode, document_id: &str) -> bool {
-    !matches!(node.kind.as_str(), "tag" | "entity")
+    !(NodeKind::Tag.is(&node.kind) || NodeKind::Entity.is(&node.kind))
         && (NodeKind::Stub.is(&node.kind) || !node.resolved)
         && !owned_by_other_document(node, document_id)
 }

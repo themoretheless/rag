@@ -143,10 +143,8 @@ pub(crate) struct WikiSyncPayload {
 
 /// Validate the complete immutable event before any page is prepared or written.
 pub(crate) fn validate_wiki_change(change: &SyncChangeInput) -> Result<WikiSyncPayload> {
+    // validate_change already restricts events to wiki upserts.
     validate_change(change)?;
-    if change.entity_kind != "wiki" || change.operation != "upsert" {
-        return Err(AppError::config("sync accepts only wiki upsert changes"));
-    }
     let payload: WikiSyncPayload = serde_json::from_str(&change.payload_json)
         .map_err(|error| AppError::config(format!("invalid wiki sync payload: {error}")))?;
     if let Some(metadata) = &payload.metadata_json {

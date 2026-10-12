@@ -1,5 +1,6 @@
 //! Operations workspace: observable jobs and safe one-writer maintenance.
 
+use crate::ui::text::short_timestamp;
 use crate::operations::{
     JobSnapshotExt,
     BackupRequest, JobSnapshot, MaintenanceResult, OperationsSnapshot, SyncJobRequest,
@@ -531,9 +532,6 @@ fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
-fn short_timestamp(value: &str) -> String {
-    value.get(..19).unwrap_or(value).replace('T', " ")
-}
 
 fn health_metric(ui: &mut egui::Ui, label: &str, value: &str, healthy: bool) {
     egui::Frame::group(ui.style())

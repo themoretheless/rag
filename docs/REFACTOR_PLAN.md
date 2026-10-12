@@ -457,6 +457,31 @@ items; all are fixed:
   `store/{wiki_meta,wiki_index,ops_log,manifest}.rs`, UI `frame.rs` →
   `app/{panels,workspace}.rs`. No production file exceeds 1.5k lines.
 
+**Verification re-audit**
+
+A second independent audit confirmed layering, configuration, row loops, raw
+locks and file sizes clean, and found the following; all are fixed:
+
+- Layer case: known layers are stored lowercase (`Layer::canonicalize` on
+  the one document insert path, and on meta updates), and `Layer::parse`
+  ignores case like `Layer::is`, so SQL filters and Rust checks agree on a
+  page written as `Wiki`.
+- N+1 queries: `Store::content_hashes` (one query for retrieval source
+  versions), `Store::find_by_id_or_uri` (the uri lookup runs only on an id
+  miss), `Store::nodes_in_wing` (tunnel wing filter),
+  `Store::document_pairs_by_relation` (stale-wiki `related` scan instead of a
+  neighborhood walk per raw document), set lookups in wiki lint, counting
+  instead of loading wiki pages in organize, and a per-run document cache in
+  compress pair planning.
+- Literals: graph resolve and maintenance use `Layer`/`NodeKind`/
+  `DocumentKind` instead of `"wiki"`/`"raw"`/`"tag"` strings; the UI reads a
+  node's layer from parsed metadata instead of a substring match.
+- Duplicates: one sync kind check, shared UI `ui::text::{truncate,
+  short_timestamp}` (the three copies disagreed on length and format).
+- Kept as is: the four UI graph walks (stable-order cap, depth map, depth
+  rings, depth limit with availability filter) share only the BFS skeleton;
+  a common walker would need hooks for each variant and different key types.
+
 **Not done, with the reason**
 
 Nothing: every planned item above is done.

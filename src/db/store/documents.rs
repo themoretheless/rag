@@ -22,6 +22,38 @@ impl Store {
         }
     }
 
+    /// Document by id, else by uri. The uri query runs only when the id misses.
+    pub fn find_by_id_or_uri(&self, id: &str, uri: &str) -> Result<Option<Document>> {
+        if let Some(document) = self.get_document(id)? {
+            return Ok(Some(document));
+        }
+        if uri.is_empty() {
+            return Ok(None);
+        }
+        self.find_by_uri(uri)
+    }
+
+    /// Stored `content_hash` for each id that exists, in one query.
+    pub fn content_hashes(
+        &self,
+        ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, Option<String>>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, content_hash FROM documents WHERE id IN ({placeholders})"
+        ))?;
+        let rows = crate::db::rows::query_vec(
+            &mut stmt,
+            duckdb::params_from_iter(ids.iter()),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )?;
+        Ok(rows.into_iter().collect())
+    }
+
     /// Fetch the first document matching `content_hash` (dedupe probe).
     pub fn find_by_content_hash(&self, hash: &str) -> Result<Option<Document>> {
         Ok(self.list_by_content_hash(hash)?.into_iter().next())

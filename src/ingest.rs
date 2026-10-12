@@ -182,8 +182,8 @@ impl<'a> IngestService<'a> {
             wing: command.wing,
             room: command.room,
             source_file,
-            layer: "raw".into(),
-            kind: "document".into(),
+            layer: crate::models::Layer::Raw.as_str().into(),
+            kind: crate::models::DocumentKind::Document.as_str().into(),
             immutable: false,
         })
         .await

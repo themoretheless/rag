@@ -4,6 +4,7 @@
 //! id, kind, label, document_id, uri, plus incident edges with provenance.
 //! Optional document body (wiki/raw) from HTTP `/v1/document` or exclusive DB.
 
+use crate::ui::text::truncate;
 use egui::Ui;
 
 use crate::adapter::{suspicious_tag_label, GraphLens, UiEdge, UiGraph, UiNode};
@@ -361,11 +362,3 @@ fn draw_copy_actions(ui: &mut Ui, node: &UiNode) {
     });
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max).collect();
-        format!("{t}…")
-    }
-}
