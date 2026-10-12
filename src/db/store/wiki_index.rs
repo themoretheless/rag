@@ -67,35 +67,39 @@ impl Store {
     /// `metadata_json.category` when set.
     pub fn rebuild_wiki_index_from_docs(&self) -> Result<usize> {
         let docs = self.list_documents_by_layer("wiki")?;
-        {
-            let conn = self.lock()?;
-            conn.execute("DELETE FROM wiki_index", [])?;
-        }
         let now = Utc::now();
-        let mut n = 0usize;
-        for doc in docs {
-            let slug = wiki_slug_from_uri(&doc.uri).unwrap_or_else(|| slugify(&doc.title));
-            let (meta_summary, meta_category) = meta_summary_category(&doc.metadata_json);
-            let summary =
-                meta_summary.unwrap_or_else(|| crate::util::first_prose_line(&doc.content, 240));
-            let entry = WikiIndexEntry {
-                id: format!("idx-{}", doc.id),
-                slug: slug.clone(),
-                title: doc.title.clone(),
-                kind: if doc.kind.is_empty() {
-                    "wiki".into()
-                } else {
-                    doc.kind.to_string()
-                },
-                category: meta_category,
-                summary: Some(summary),
-                page_id: Some(doc.id.clone()),
-                updated_at: now,
-            };
-            self.upsert_wiki_index_entry(&entry)?;
-            n += 1;
-        }
-        Ok(n)
+        let entries: Vec<WikiIndexEntry> = docs
+            .into_iter()
+            .map(|doc| {
+                let slug = wiki_slug_from_uri(&doc.uri).unwrap_or_else(|| slugify(&doc.title));
+                let (meta_summary, meta_category) = meta_summary_category(&doc.metadata_json);
+                let summary = meta_summary
+                    .unwrap_or_else(|| crate::util::first_prose_line(&doc.content, 240));
+                WikiIndexEntry {
+                    id: format!("idx-{}", doc.id),
+                    slug,
+                    title: doc.title,
+                    kind: if doc.kind.is_empty() {
+                        "wiki".into()
+                    } else {
+                        doc.kind.to_string()
+                    },
+                    category: meta_category,
+                    summary: Some(summary),
+                    page_id: Some(doc.id),
+                    updated_at: now,
+                }
+            })
+            .collect();
+        // Clear and refill atomically: readers never observe an empty or
+        // half-built catalog, and the rebuild is one commit instead of N.
+        self.with_tx(|tx| {
+            tx.execute("DELETE FROM wiki_index", [])?;
+            for entry in &entries {
+                upsert_wiki_index_entry_locked(tx, entry)?;
+            }
+            Ok(entries.len())
+        })
     }
 
     /// Create or merge-update a catalog entry keyed by `slug`.

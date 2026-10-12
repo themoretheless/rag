@@ -63,8 +63,20 @@ pub(crate) fn rebuild_document_graph_locked(
     let chunks = load_chunk_spans(conn, &doc.id)?;
     let mut edges: Vec<DerivedEdge> = Vec::with_capacity(links.len() + 2);
 
+    // Repeated links (`occurrence > 1`) resolve to the same node: each
+    // distinct target costs its lookups once per rebuild.
+    let mut resolved: std::collections::HashMap<(bool, &str), String> =
+        std::collections::HashMap::new();
     for link in &links {
-        let target_id = resolve_target(conn, link)?;
+        let key = (link.rel_type == "tagged", link.target_label.as_str());
+        let target_id = match resolved.get(&key) {
+            Some(id) => id.clone(),
+            None => {
+                let id = resolve_target(conn, link)?;
+                resolved.insert(key, id.clone());
+                id
+            }
+        };
         let char_start = i64::try_from(link.char_start).unwrap_or(i64::MAX);
         let char_end = i64::try_from(link.char_end).unwrap_or(i64::MAX);
         edges.push(DerivedEdge {

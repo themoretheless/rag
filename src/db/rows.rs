@@ -9,6 +9,36 @@ fn timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
         .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", value.trim())))
 }
 
+/// Rows per multi-row `INSERT ... VALUES (..), (..)` statement.
+const INSERT_BATCH_ROWS: usize = 64;
+
+/// Insert `items` with multi-row `VALUES` statements of up to
+/// [`INSERT_BATCH_ROWS`] rows each.
+///
+/// `head` is the `INSERT INTO t (cols) VALUES` prefix, `row` one row's
+/// placeholder tuple, and `bind` pushes that row's values in tuple order.
+/// DuckDB executes each statement as a full query, so one statement per 64
+/// rows is several times faster than re-executing a one-row statement.
+pub(crate) fn insert_rows<'a, T>(
+    conn: &duckdb::Connection,
+    head: &str,
+    row: &str,
+    items: &'a [T],
+    mut bind: impl FnMut(&'a T, &mut Vec<&'a dyn duckdb::ToSql>),
+) -> Result<()> {
+    let mut values: Vec<&'a dyn duckdb::ToSql> = Vec::new();
+    for batch in items.chunks(INSERT_BATCH_ROWS) {
+        values.clear();
+        for item in batch {
+            bind(item, &mut values);
+        }
+        let tuples = vec![row; batch.len()].join(", ");
+        let mut stmt = conn.prepare(&format!("{head} {tuples}"))?;
+        stmt.execute(duckdb::params_from_iter(values.iter()))?;
+    }
+    Ok(())
+}
+
 /// Run `stmt` with `params` and map every row with `map`.
 ///
 /// Replaces the hand-written `while let Some(row) = rows.next()?` push loops.

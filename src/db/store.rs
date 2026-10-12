@@ -1348,28 +1348,27 @@ pub(crate) fn insert_chunks_locked(
     }
 
     let now = format_ts(Utc::now());
-    let mut stmt = conn.prepare(
-        r#"
-        INSERT INTO chunks
-          (id, document_id, chunk_index, content, embedding_json, char_start, char_end, created_at, metadata_json)
-        VALUES
-          (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
-        "#,
-    )?;
-    for (chunk, embedding_json) in chunks.iter().zip(embedding_json) {
-        stmt.execute(params![
-            chunk.id,
-            chunk.document_id,
-            chunk.chunk_index,
-            chunk.content,
-            embedding_json,
-            chunk.char_start,
-            chunk.char_end,
-            now.as_str(),
-            chunk.metadata_json,
-        ])?;
-    }
-    Ok(())
+    let rows: Vec<(&Chunk, &String)> = chunks.iter().zip(embedding_json).collect();
+    rows::insert_rows(
+        conn,
+        "INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+         char_start, char_end, created_at, metadata_json) VALUES",
+        "(?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)",
+        &rows,
+        |(chunk, embedding_json), values| {
+            values.extend([
+                &chunk.id as &dyn duckdb::ToSql,
+                &chunk.document_id,
+                &chunk.chunk_index,
+                &chunk.content,
+                *embedding_json,
+                &chunk.char_start,
+                &chunk.char_end,
+                &now,
+                &chunk.metadata_json,
+            ]);
+        },
+    )
 }
 
 fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Result<Vec<Chunk>> {

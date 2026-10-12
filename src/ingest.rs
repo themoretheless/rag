@@ -324,7 +324,7 @@ impl<'a> IngestService<'a> {
                     .unwrap_or_else(|| content_hash(&existing.content));
                 if existing_hash == new_hash {
                     let etag = existing.etag();
-                    let chunk_count = self.store.list_chunks_for_document(&existing.id)?.len();
+                    let chunk_count = self.store.count_chunks_for_document(&existing.id)? as usize;
                     let node_id = self
                         .store
                         .find_node_by_document_id(&existing.id)?
@@ -465,8 +465,7 @@ impl<'a> IngestService<'a> {
         } else {
             let chunk_count = self
                 .store
-                .list_chunks_for_document(&applied.document.id)?
-                .len();
+                .count_chunks_for_document(&applied.document.id)? as usize;
             let derived = if applied.title_changed {
                 DocumentDerivedWrite::RefreshGraphLabel
             } else {

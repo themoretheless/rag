@@ -425,26 +425,31 @@ pub(crate) fn near_duplicate_pairs(
     let entries =
         store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, active_only, false, false)?;
 
-    let mut pairs = Vec::new();
-    'scan: for i in 0..entries.len() {
+    // Score every pair first (at most NEAR_DUP_MAX_DOCS^2 / 2), then keep the
+    // most similar REPORT_LIST_CAP. Stopping at the first cap matches in scan
+    // order used to drop stronger duplicates found later in the scan.
+    let mut scored: Vec<(f32, usize, usize)> = Vec::new();
+    for i in 0..entries.len() {
         for j in (i + 1)..entries.len() {
             let cos = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
             if cos >= threshold {
-                pairs.push(NearDuplicatePair {
-                    document_id_a: entries[i].document_id.clone(),
-                    document_id_b: entries[j].document_id.clone(),
-                    title_a: entries[i].title.clone(),
-                    title_b: entries[j].title.clone(),
-                    cosine: cos,
-                });
-                if pairs.len() >= REPORT_LIST_CAP {
-                    break 'scan;
-                }
+                scored.push((cos, i, j));
             }
         }
     }
-    pairs.sort_by(|a, b| b.cosine.total_cmp(&a.cosine));
-    Ok(pairs)
+    // Stable sort: equal scores keep scan order.
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scored.truncate(REPORT_LIST_CAP);
+    Ok(scored
+        .into_iter()
+        .map(|(cosine, i, j)| NearDuplicatePair {
+            document_id_a: entries[i].document_id.clone(),
+            document_id_b: entries[j].document_id.clone(),
+            title_a: entries[i].title.clone(),
+            title_b: entries[j].title.clone(),
+            cosine,
+        })
+        .collect())
 }
 
 fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiPage>> {

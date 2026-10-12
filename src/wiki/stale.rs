@@ -71,16 +71,7 @@ pub struct RefreshStaleWikiResult {
 /// 4. body lines `source: <uri-or-id>`
 pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     let raws = store.list_documents_by_layer(LAYER_RAW)?;
-    let mut raw_by_id: std::collections::HashMap<String, Document> =
-        std::collections::HashMap::with_capacity(raws.len());
-    let mut raw_by_uri: std::collections::HashMap<String, Document> =
-        std::collections::HashMap::with_capacity(raws.len());
-    for r in &raws {
-        raw_by_id.insert(r.id.clone(), r.clone());
-        if !r.uri.is_empty() {
-            raw_by_uri.insert(r.uri.clone(), r.clone());
-        }
-    }
+    let (raw_by_id, raw_by_uri) = raw_lookups(&raws);
 
     // (wiki_id, raw_id) -> item (prefer more specific link_kind if already present)
     let mut pairs: std::collections::BTreeMap<(String, String), StaleWikiItem> =
@@ -93,7 +84,8 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
         wiki_docs.iter().map(|wiki| (wiki.id.as_str(), wiki)).collect();
     for (a, b) in store.document_pairs_by_relation("related")? {
         for (raw_id, wiki_id) in [(&a, &b), (&b, &a)] {
-            let (Some(raw), Some(wiki)) = (raw_by_id.get(raw_id), wiki_by_id.get(wiki_id.as_str()))
+            let (Some(raw), Some(wiki)) =
+                (raw_by_id.get(raw_id.as_str()), wiki_by_id.get(wiki_id.as_str()))
             else {
                 continue;
             };
@@ -112,9 +104,9 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
                 // Sources are almost always raw or wiki pages already in memory by
                 // id; a miss falls back to the store (id, then uri), as before.
                 let in_memory = raw_by_id
-                    .get(&version.document_id)
-                    .or_else(|| wiki_by_id.get(version.document_id.as_str()).copied())
-                    .cloned();
+                    .get(version.document_id.as_str())
+                    .or_else(|| wiki_by_id.get(version.document_id.as_str()))
+                    .map(|source| (*source).clone());
                 let source = match in_memory {
                     Some(source) => Some(source),
                     None => store.find_by_id_or_uri(&version.document_id, &version.uri)?,
@@ -178,8 +170,7 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
         return Ok(refs);
     }
     let raws = store.list_documents_by_layer(LAYER_RAW)?;
-    let ids = raws.iter().map(|d| (d.id.clone(), d.clone())).collect();
-    let uris = raws.iter().map(|d| (d.uri.clone(), d.clone())).collect();
+    let (ids, uris) = raw_lookups(&raws);
     let mut result: Vec<(String, String)> = linked_raws_for_wiki(store, page, &ids, &uris)?
         .into_iter()
         .map(|(d, _)| (d.id.clone(), d.uri.clone()))
@@ -191,6 +182,11 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
                 "review dependency set exceeds graph limit",
             ));
         }
+        let node_documents: HashMap<&str, &str> = view
+            .nodes
+            .iter()
+            .filter_map(|n| n.document_id.as_deref().map(|doc| (n.id.as_str(), doc)))
+            .collect();
         for edge in &view.edges {
             if edge.rel_type != "related" {
                 continue;
@@ -200,13 +196,10 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
             } else {
                 &edge.source_id
             };
-            if let Some(id) = view
-                .nodes
-                .iter()
-                .find(|n| &n.id == other)
-                .and_then(|n| n.document_id.as_ref())
-            {
-                if let Some(source) = store.get_document(id)? {
+            if let Some(id) = node_documents.get(other.as_str()) {
+                if let Some(raw) = ids.get(id) {
+                    result.push((raw.id.clone(), raw.uri.clone()));
+                } else if let Some(source) = store.get_document(id)? {
                     result.push((source.id, source.uri));
                 }
             }
@@ -418,11 +411,25 @@ pub(super) fn group_raw_targets(stale: &[StaleWikiItem]) -> Vec<RawRefreshTarget
 }
 
 /// Resolve raw parents linked from a wiki page (metadata + content).
+/// Raw documents keyed by id or uri, borrowing the loaded list (no clones).
+pub(super) type RawLookup<'a> = HashMap<&'a str, &'a Document>;
+
+/// Id and (non-empty) uri lookups over `raws`.
+pub(super) fn raw_lookups(raws: &[Document]) -> (RawLookup<'_>, RawLookup<'_>) {
+    let by_id = raws.iter().map(|raw| (raw.id.as_str(), raw)).collect();
+    let by_uri = raws
+        .iter()
+        .filter(|raw| !raw.uri.is_empty())
+        .map(|raw| (raw.uri.as_str(), raw))
+        .collect();
+    (by_id, by_uri)
+}
+
 pub(super) fn linked_raws_for_wiki(
     store: &Store,
     wiki: &Document,
-    raw_by_id: &std::collections::HashMap<String, Document>,
-    raw_by_uri: &std::collections::HashMap<String, Document>,
+    raw_by_id: &RawLookup<'_>,
+    raw_by_uri: &RawLookup<'_>,
 ) -> Result<Vec<(Document, &'static str)>> {
     let mut out: Vec<(Document, &'static str)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -494,8 +501,8 @@ pub(super) fn try_push_raw(
     store: &Store,
     id_or_uri: &str,
     kind: &'static str,
-    raw_by_id: &std::collections::HashMap<String, Document>,
-    raw_by_uri: &std::collections::HashMap<String, Document>,
+    raw_by_id: &RawLookup<'_>,
+    raw_by_uri: &RawLookup<'_>,
     seen: &mut std::collections::HashSet<String>,
     out: &mut Vec<(Document, &'static str)>,
 ) -> Result<()> {
@@ -504,9 +511,9 @@ pub(super) fn try_push_raw(
         return Ok(());
     }
     let raw = if let Some(r) = raw_by_id.get(id) {
-        r.clone()
+        (*r).clone()
     } else if let Some(r) = raw_by_uri.get(id) {
-        r.clone()
+        (*r).clone()
     } else if let Some(d) = store.get_document(id)? {
         if is_raw_layer(&d.layer) {
             d

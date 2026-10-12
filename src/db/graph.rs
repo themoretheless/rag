@@ -658,27 +658,25 @@ pub(crate) fn insert_graph_edges_locked(
     }
     validate_edge_vocabulary(edges.iter(), EdgeOrigin::EXPLICIT)?;
     let now = format_ts_now();
-    let mut stmt = conn.prepare(
-        r#"
-        INSERT INTO graph_edges
-          (id, source_id, target_id, rel_type, weight, context, created_at, origin)
-        VALUES
-          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
-        "#,
-    )?;
-    for edge in edges {
-        stmt.execute(params![
-            edge.id,
-            edge.source_id,
-            edge.target_id,
-            edge.rel_type,
-            edge.weight,
-            edge.context,
-            now.as_str(),
-            EdgeOrigin::EXPLICIT,
-        ])?;
-    }
-    Ok(())
+    crate::db::rows::insert_rows(
+        conn,
+        "INSERT INTO graph_edges \
+         (id, source_id, target_id, rel_type, weight, context, created_at, origin) VALUES",
+        "(?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)",
+        edges,
+        |edge, values| {
+            values.extend([
+                &edge.id as &dyn duckdb::ToSql,
+                &edge.source_id,
+                &edge.target_id,
+                &edge.rel_type,
+                &edge.weight,
+                &edge.context,
+                &now,
+                &EdgeOrigin::EXPLICIT,
+            ]);
+        },
+    )
 }
 
 /// Where one extracted edge came from (§4.1, §6.1 step 5): the document span,
@@ -706,34 +704,32 @@ pub(crate) fn insert_derived_graph_edges_locked(
     }
     validate_edge_vocabulary(edges.iter().map(|row| &row.edge), EdgeOrigin::EXTRACT)?;
     let now = format_ts_now();
-    let mut stmt = conn.prepare(
-        r#"
-        INSERT INTO graph_edges
-          (id, source_id, target_id, rel_type, weight, context, created_at, origin,
-           alias, heading, chunk_id, char_start, char_end, occurrence)
-        VALUES
-          (?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)
-        "#,
-    )?;
-    for row in edges {
-        stmt.execute(params![
-            row.edge.id,
-            row.edge.source_id,
-            row.edge.target_id,
-            row.edge.rel_type,
-            row.edge.weight,
-            row.edge.context,
-            now.as_str(),
-            EdgeOrigin::EXTRACT,
-            row.alias,
-            row.heading,
-            row.chunk_id,
-            row.char_start,
-            row.char_end,
-            row.occurrence,
-        ])?;
-    }
-    Ok(())
+    crate::db::rows::insert_rows(
+        conn,
+        "INSERT INTO graph_edges \
+         (id, source_id, target_id, rel_type, weight, context, created_at, origin, \
+          alias, heading, chunk_id, char_start, char_end, occurrence) VALUES",
+        "(?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)",
+        edges,
+        |row, values| {
+            values.extend([
+                &row.edge.id as &dyn duckdb::ToSql,
+                &row.edge.source_id,
+                &row.edge.target_id,
+                &row.edge.rel_type,
+                &row.edge.weight,
+                &row.edge.context,
+                &now,
+                &EdgeOrigin::EXTRACT,
+                &row.alias,
+                &row.heading,
+                &row.chunk_id,
+                &row.char_start,
+                &row.char_end,
+                &row.occurrence,
+            ]);
+        },
+    )
 }
 
 /// §1.1: the store boundary is where the vocabulary is enforced, so no row can

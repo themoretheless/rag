@@ -4,6 +4,9 @@
 //! path (`OpenAiEmbedder` against `{base}/embeddings`). This module targets the
 //! Ollama-native host root (e.g. `http://127.0.0.1:11434`).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -26,6 +29,9 @@ pub struct OllamaEmbedder {
     root: String,
     model: String,
     dims: usize,
+    /// Set once `/api/embed` answered 404 and the legacy endpoint then worked:
+    /// later batches skip the doomed batch probe instead of paying a 404 each.
+    legacy_only: Arc<AtomicBool>,
 }
 
 impl OllamaEmbedder {
@@ -56,6 +62,7 @@ impl OllamaEmbedder {
             root,
             model,
             dims,
+            legacy_only: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -179,14 +186,17 @@ impl OllamaEmbedder {
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        if let Some(vectors) = self.embed_batch_api_embed(texts).await? {
-            return Ok(vectors);
+        if !self.legacy_only.load(Ordering::Relaxed) {
+            if let Some(vectors) = self.embed_batch_api_embed(texts).await? {
+                return Ok(vectors);
+            }
         }
         // Legacy single-prompt endpoint.
         let mut vectors = Vec::with_capacity(texts.len());
         for text in texts {
             vectors.push(self.embed_one_api_embeddings(text).await?);
         }
+        self.legacy_only.store(true, Ordering::Relaxed);
         Ok(vectors)
     }
 }
