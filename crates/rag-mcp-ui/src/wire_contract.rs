@@ -91,27 +91,3 @@ fn server_project_home_reads_as_ui_project_home() {
     assert_eq!(ui.source_roots[0].canonical_root, "/vault");
     assert!(ui.last_updated_at.is_some());
 }
-
-#[test]
-fn server_search_hit_reads_as_ui_search_hit() {
-    let server = rag_mcp::models::SearchHit {
-        chunk_id: "c1".into(),
-        document_id: "d1".into(),
-        document_title: "Alpha".into(),
-        document_uri: "wiki://alpha".into(),
-        chunk_index: 2,
-        content: "body".into(),
-        score: 0.5,
-        score_lex: Some(1.5),
-        snippet: Some("…body…".into()),
-        heading_path: Some(vec!["Intro".into()]),
-        section: Some("Intro".into()),
-        ..Default::default()
-    };
-    let wire = serde_json::to_value(&server).unwrap();
-    let ui: crate::search::SearchHit =
-        serde_json::from_value(wire).expect("UI reads server SearchHit");
-    assert_eq!(ui.chunk_index, 2);
-    assert_eq!(ui.score_lex, Some(1.5));
-    assert_eq!(ui.heading_path.as_deref(), Some(&["Intro".to_string()][..]));
-}

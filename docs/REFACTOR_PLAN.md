@@ -422,7 +422,7 @@ are fixed too:
 |------|-------------------|
 | 4.1 last 22 row loops | 47 collect loops use `db::rows::query_vec`, 9 visitor loops use `db::rows::for_each_row`, and 17 transaction blocks use `Store::with_tx`. The 22 loops left return early, `break`, or nest another loop; a closure cannot return from the enclosing function, so they keep the explicit `while let`. |
 | 5.8 page `kind` as a closed enum | `rag_mcp_core::PageKind` names the kinds the server writes or special-cases (`wiki`, `source_summary`, `entity`, `concept`, `diary`), and the defaults use it. `Document::kind` stays a string because agents write their own kinds; a closed enum would reject valid pages. |
-| 6.2 merging the tolerant pairs | `ActivityEvent` moved to core. `JobSnapshot`, `ProjectHome` and `SearchHit` stay separate on purpose (string timestamps, field subsets so the UI survives server drift); `crates/rag-mcp-ui/src/wire_contract.rs` serializes the server type and requires the UI copy to read it. |
+| 6.2 last two tolerant pairs | `ActivityEvent` and `SearchHit` (with `SearchExplanation`, `SearchContextChunk`) now live in `rag-mcp-core` and the UI uses them directly. `ProjectHome` would pull `chrono` into the serde-only core crate, and the UI's `JobSnapshot` keeps `status` as a string so an older UI survives a newer server status; both are round-trip tested against the server types in `crates/rag-mcp-ui/src/wire_contract.rs`. |
 
 ## Not planned
 
@@ -443,4 +443,4 @@ are fixed too:
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
 | Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~1.7k | < 2k |
 | Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |
-| UI copies of server DTOs without a contract test | 11 | 0 (4 shared via core, 3 tolerant copies round-trip tested) | 0 |
+| UI copies of server DTOs without a contract test | 11 | 0 (5 shared via core, 2 tolerant copies round-trip tested) | 0 |
