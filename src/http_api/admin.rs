@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use axum::{
     extract::{Query, State},
@@ -268,20 +268,14 @@ struct EvalHistoryQuery {
 
 const MAX_EVAL_HISTORY_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Path of the eval history JSONL written by `cargo run --bin eval -- --history-jsonl`.
-///
-/// Read from `RAG_EVAL_HISTORY`; never from the request, so the gateway cannot be
-/// used to read arbitrary files.
-fn eval_history_path() -> Option<PathBuf> {
-    std::env::var("RAG_EVAL_HISTORY")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .map(PathBuf::from)
-}
-
-async fn eval_history(Query(q): Query<EvalHistoryQuery>) -> impl IntoResponse {
+/// Eval history JSONL written by `cargo run --bin eval -- --history-jsonl`;
+/// the path comes from `Config::eval_history_path`, never from the request.
+async fn eval_history(
+    State(st): State<HttpState>,
+    Query(q): Query<EvalHistoryQuery>,
+) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(30).clamp(1, 500);
-    let Some(path) = eval_history_path() else {
+    let Some(path) = st.config.eval_history_path.clone() else {
         return api_ok(json!({
             "ok": true, "configured": false, "path": null, "count": 0, "items": [],
             "hint": "set RAG_EVAL_HISTORY to the --history-jsonl file written by the eval binary",

@@ -367,7 +367,8 @@ are fixed too:
   HTTP handler is a thin adapter. MCP keeps its separate create/update tools.
 - 3.3 done: `db::EmbeddingIdentity` replaces `Config` in the store's manifest
   functions; `db` no longer imports `config`.
-- 3.2: `RAG_HTTP_ALLOWED_HOSTS` and `RAG_AUTO_SYNC_*` are read by
+- 3.2: `RAG_HTTP_ALLOWED_HOSTS`, `RAG_AUTO_SYNC_*`, `RAG_EVAL_HISTORY`,
+  `RAG_NODE_NAME` and `RAG_SYNC_INTERVAL_SECS` are read by
   `Config::from_env`.
 - 4.4 done: `Store::lock` is `pub(in crate::db)` outside tests. Former callers
   use `db::{payload_kv, analytics, knowledge, chunk_text, review,
@@ -393,7 +394,7 @@ are fixed too:
 
 | Item | Why it stops here |
 |------|-------------------|
-| 3.2 remaining env reads | Backup, PID file, WAL warning, sync node identity and call-log size are read once by the subsystem that owns them at start-up, several before `Config` exists. |
+| 3.2 remaining env reads | Backup, PID file, WAL warning, storage backend and call-log size are read at start-up before `Config` exists. Sync identity (`RAG_NODE_ID`, `RAG_PRIMARY_URL`) is read inside `db` write paths, and `RAG_PRIMARY_TOKEN` stays out of `Config` because `Config` derives `Debug`. |
 | 3.5 HTTP route roles | Unknown routes already default to Admin (fail-closed), so a missing entry cannot widen access. |
 | 4.1 query helpers, rest of 4.3 | ~90 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
 | 5.8 typed `kind`/`status` | `status` already has named constants; `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
@@ -415,7 +416,7 @@ are fixed too:
 | Operations implemented in both transports without a shared service | ~8 | 0 | 0 |
 | `fn test_config` bodies not built on `Config::for_tests()` | 11 | 0 | 0 |
 | Integration-test binaries linking DuckDB | 8 | 1 | 1–2 |
-| `RAG_*` env reads outside `config.rs` | ~30 | 18 | 0 |
+| `RAG_*` env reads outside `config.rs` | ~30 | 15 | 0 |
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
 | Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~3.3k | < 2k |
 | Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |

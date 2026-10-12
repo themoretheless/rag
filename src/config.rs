@@ -105,6 +105,13 @@ pub struct Config {
     pub auto_sync_roots: Vec<String>,
     /// Seconds between auto-sync cycles. Env: `RAG_AUTO_SYNC_INTERVAL_SECS` (default 3600).
     pub auto_sync_interval_secs: u64,
+    /// Eval history JSONL served by `GET /v1/eval/history`. Env: `RAG_EVAL_HISTORY`.
+    /// Never taken from a request, so the gateway cannot read arbitrary files.
+    pub eval_history_path: Option<PathBuf>,
+    /// Display name of this sync node. Env: `RAG_NODE_NAME` (default: node id).
+    pub sync_node_name: Option<String>,
+    /// Replica pull interval in seconds. Env: `RAG_SYNC_INTERVAL_SECS` (default 5, min 1).
+    pub sync_interval_secs: u64,
 }
 
 /// Which tools are advertised and callable.
@@ -202,6 +209,9 @@ impl Default for Config {
             http_allowed_hosts: None,
             auto_sync_roots: Vec::new(),
             auto_sync_interval_secs: 3600,
+            eval_history_path: None,
+            sync_node_name: None,
+            sync_interval_secs: 5,
         }
     }
 }
@@ -316,6 +326,16 @@ impl Config {
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(3600);
+        let eval_history_path = env::var("RAG_EVAL_HISTORY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .map(PathBuf::from);
+        let sync_node_name = env::var("RAG_NODE_NAME").ok();
+        let sync_interval_secs = env::var("RAG_SYNC_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(5u64)
+            .max(1);
 
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
@@ -358,6 +378,9 @@ impl Config {
             http_allowed_hosts,
             auto_sync_roots,
             auto_sync_interval_secs,
+            eval_history_path,
+            sync_node_name,
+            sync_interval_secs,
         };
         config.validate()?;
         Ok(config)

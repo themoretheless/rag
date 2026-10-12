@@ -186,18 +186,18 @@ pub(super) fn spawn_worker(st: HttpState) {
             return;
         }
     };
-    let hostname = std::env::var("RAG_NODE_NAME").unwrap_or_else(|_| node_id.clone());
+    let hostname = st
+        .config
+        .sync_node_name
+        .clone()
+        .unwrap_or_else(|| node_id.clone());
     if let Err(error) = st.store.register_sync_node(&node_id, &hostname, &role) {
         tracing::error!(%error, %node_id, "cannot initialize database sync node");
     }
     let Some(primary_url) = configured_primary else {
         return;
     };
-    let interval_secs = std::env::var("RAG_SYNC_INTERVAL_SECS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(5u64)
-        .max(1);
+    let interval_secs = st.config.sync_interval_secs;
     let mut headers = reqwest::header::HeaderMap::new();
     if let Ok(token) = std::env::var("RAG_PRIMARY_TOKEN") {
         let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
