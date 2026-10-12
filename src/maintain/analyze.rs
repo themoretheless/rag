@@ -605,7 +605,7 @@ mod tests {
 
         let mut wiki = doc("wiki1", "wiki://sum", "Summary", "old summary", "wiki");
         wiki.updated_at = older;
-        wiki.kind = "source_summary".into();
+        wiki.kind = crate::models::PageKind::SourceSummary.as_str().into();
         store.upsert_document(&wiki).unwrap();
 
         store

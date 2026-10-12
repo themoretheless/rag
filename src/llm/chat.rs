@@ -77,7 +77,7 @@ pub struct ConsolidateProposal {
 }
 
 fn default_consolidate_kind() -> String {
-    "concept".into()
+    crate::models::PageKind::Concept.as_str().into()
 }
 
 /// Result of [`ChatClient::llm_status`] (rich health probe).

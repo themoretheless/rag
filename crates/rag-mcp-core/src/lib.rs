@@ -74,6 +74,53 @@ pub struct ActivityEvent {
     pub request_id: Option<String>,
 }
 
+/// Known wiki page kinds. `Document::kind` is an open vocabulary written by
+/// agents, so this names the values the server itself writes or special-cases
+/// without rejecting others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PageKind {
+    /// Default kind for a compiled page.
+    Wiki,
+    /// One page per ingested source.
+    SourceSummary,
+    /// People, products, systems.
+    Entity,
+    /// Ideas and patterns; default for consolidated pages.
+    Concept,
+    /// Agent diary entry.
+    Diary,
+}
+
+impl PageKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Wiki => "wiki",
+            Self::SourceSummary => "source_summary",
+            Self::Entity => "entity",
+            Self::Concept => "concept",
+            Self::Diary => "diary",
+        }
+    }
+
+    /// `Some` for a known kind; unknown kinds are valid and return `None`.
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Wiki,
+            Self::SourceSummary,
+            Self::Entity,
+            Self::Concept,
+            Self::Diary,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == value)
+    }
+
+    /// True when `value` is exactly this kind's wire string.
+    pub fn is(self, value: &str) -> bool {
+        self.as_str() == value
+    }
+}
+
 /// Graph node kinds. Stored and sent as plain strings; this type names them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
@@ -290,6 +337,17 @@ mod tests {
         }
         assert_eq!(Layer::parse("Wiki"), None);
         assert!(Layer::Raw.is("raw"));
+    }
+
+    #[test]
+    fn page_kind_names_known_values_and_allows_others() {
+        use super::PageKind;
+        assert_eq!(
+            PageKind::parse("source_summary"),
+            Some(PageKind::SourceSummary)
+        );
+        assert_eq!(PageKind::parse("runbook"), None);
+        assert!(PageKind::Wiki.is("wiki"));
     }
 
     #[test]

@@ -612,7 +612,7 @@ pub struct VacuumStoreReport {
 }
 
 pub use rag_mcp_core::{
-    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind,
+    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind, PageKind,
     PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
 

@@ -3128,7 +3128,7 @@ fn fetch_wiki_page_meta_items(
         let kind = kind.trim();
         if !kind.is_empty() {
             // Match stored kind; empty DB kind is projected as "wiki" in the DTO map.
-            if kind == "wiki" {
+            if crate::models::PageKind::Wiki.is(kind) {
                 predicates.push("(COALESCE(kind, '') = '' OR kind = ?)".into());
             } else {
                 predicates.push("kind = ?".into());
@@ -3224,7 +3224,7 @@ fn map_wiki_page_meta_row(row: &duckdb::Row<'_>) -> Result<crate::models::WikiPa
     let kind: String = row
         .get::<_, Option<String>>(3)?
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "wiki".into());
+        .unwrap_or_else(|| crate::models::PageKind::Wiki.as_str().into());
     let metadata_json: String = row.get(4)?;
     let revision: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(1);
     let updated_raw: String = row.get(6)?;

@@ -405,8 +405,8 @@ are fixed too:
 
 | Item | Why it stops here |
 |------|-------------------|
-| 4.1 query helpers, rest of 4.3 | ~90 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
-| 5.8 typed document `kind` | Graph node kinds are typed (`rag_mcp_core::NodeKind`, shared by server and UI) and `status` has named constants. A document's page `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
+| 4.1 remaining row loops | 33 collect-into-`Vec` loops use `db::rows::query_vec` and 17 transaction blocks use `Store::with_tx`. The ~45 loops left filter rows, fill maps or return early, so a generic helper would hide logic rather than remove repetition. |
+| 5.8 page `kind` as a closed enum | `rag_mcp_core::PageKind` names the kinds the server writes or special-cases (`wiki`, `source_summary`, `entity`, `concept`, `diary`), and the defaults use it. `Document::kind` stays a string because agents write their own kinds; a closed enum would reject valid pages. |
 | 6.2 merging the tolerant pairs | `ActivityEvent` moved to core. `JobSnapshot`, `ProjectHome` and `SearchHit` stay separate on purpose (string timestamps, field subsets so the UI survives server drift); `crates/rag-mcp-ui/src/wire_contract.rs` serializes the server type and requires the UI copy to read it. |
 | 6.6 more crates | `rag-mcp-core` already lets clients avoid the server crate. Splitting `db` or `wiki` into crates would need their `Config`/LLM seams to be crate-public first, and no second consumer exists. |
 
