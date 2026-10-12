@@ -542,19 +542,31 @@ pub async fn reembed_all(
             ));
             break;
         }
+        after_id = page.last().cloned();
+        // Load the page, then embed its chunks in cross-document groups: a
+        // corpus of small documents costs ~chunks/REEMBED_GROUP_CHUNKS
+        // provider calls instead of one call per document.
+        let mut loaded = Vec::with_capacity(page.len());
         for document_id in page {
-            after_id = Some(document_id.clone());
+            let pending = load_reembed_document(store, &document_id);
+            loaded.push((document_id, pending));
+        }
+        let mut embedded = embed_reembed_groups(embedder, &loaded).await.into_iter();
+        for (document_id, pending) in loaded {
             documents_processed += 1;
             let manifest = migration_marker.as_ref().filter(|_| !migration_started);
-            let result = match reembed_one_document(
-                store,
-                embedder,
-                &document_id,
-                config.embedding_dims,
-                manifest,
-            )
-            .await
-            {
+            let outcome = match pending {
+                Err(e) => Err(e),
+                Ok(pending) => {
+                    let vectors = embedded.next().unwrap_or_else(|| {
+                        Err(AppError::embeddings("missing embeddings for document"))
+                    });
+                    vectors.and_then(|vectors| {
+                        apply_reembedding(store, &pending, &vectors, config.embedding_dims, manifest)
+                    })
+                }
+            };
+            let result = match outcome {
                 Ok(chunk_count) => {
                     if chunk_count > 0 && manifest.is_some() {
                         migration_started = true;
@@ -646,25 +658,96 @@ pub async fn reembed_all(
     })
 }
 
-async fn reembed_one_document(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    document_id: &str,
-    expected_dims: usize,
-    manifest: Option<&EmbeddingManifest>,
-) -> Result<usize> {
+/// Chunks per provider call when re-embedding across documents.
+const REEMBED_GROUP_CHUNKS: usize = 128;
+
+/// A document's revision and current chunks, read before re-embedding.
+struct PendingReembed {
+    document_id: String,
+    revision: i64,
+    chunks: Vec<crate::models::Chunk>,
+}
+
+fn load_reembed_document(store: &Store, document_id: &str) -> Result<PendingReembed> {
     let doc = store
         .get_document(document_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-
     let chunks = store.list_chunks_for_document(&doc.id)?;
-    let chunk_count = chunks.len();
-    if chunks.is_empty() {
+    Ok(PendingReembed {
+        document_id: doc.id,
+        revision: doc.revision,
+        chunks,
+    })
+}
+
+/// Embeddings for every successfully loaded document, in order.
+///
+/// Documents are grouped up to [`REEMBED_GROUP_CHUNKS`] chunks per call. When a
+/// group call fails, its documents are retried one by one so a single bad
+/// document still fails alone, as before batching.
+async fn embed_reembed_groups(
+    embedder: &Arc<dyn EmbeddingProvider>,
+    loaded: &[(String, Result<PendingReembed>)],
+) -> Vec<Result<Vec<Vec<f32>>>> {
+    let pending: Vec<&PendingReembed> = loaded
+        .iter()
+        .filter_map(|(_, pending)| pending.as_ref().ok())
+        .collect();
+    let mut out = Vec::with_capacity(pending.len());
+    let mut start = 0;
+    while start < pending.len() {
+        let mut end = start;
+        let mut chunk_total = 0;
+        while end < pending.len()
+            && (end == start || chunk_total + pending[end].chunks.len() <= REEMBED_GROUP_CHUNKS)
+        {
+            chunk_total += pending[end].chunks.len();
+            end += 1;
+        }
+        let group = &pending[start..end];
+        let texts: Vec<String> = group
+            .iter()
+            .flat_map(|doc| doc.chunks.iter().map(|c| c.content.clone()))
+            .collect();
+        let grouped = if texts.is_empty() {
+            Ok(Vec::new())
+        } else {
+            crate::embeddings::embed_exact(embedder.as_ref(), &texts).await
+        };
+        match grouped {
+            Ok(vectors) => {
+                let mut vectors = vectors.into_iter();
+                for doc in group {
+                    out.push(Ok(vectors.by_ref().take(doc.chunks.len()).collect()));
+                }
+            }
+            Err(_) if group.len() > 1 => {
+                for doc in group {
+                    let texts: Vec<String> = doc.chunks.iter().map(|c| c.content.clone()).collect();
+                    out.push(if texts.is_empty() {
+                        Ok(Vec::new())
+                    } else {
+                        crate::embeddings::embed_exact(embedder.as_ref(), &texts).await
+                    });
+                }
+            }
+            Err(e) => out.push(Err(e)),
+        }
+        start = end;
+    }
+    out
+}
+
+fn apply_reembedding(
+    store: &Store,
+    pending: &PendingReembed,
+    embeddings: &[Vec<f32>],
+    expected_dims: usize,
+    manifest: Option<&EmbeddingManifest>,
+) -> Result<usize> {
+    if pending.chunks.is_empty() {
         return Ok(0);
     }
-
-    let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-    let embeddings = crate::embeddings::embed_exact(embedder.as_ref(), &texts).await?;
     if let Some((index, embedding)) = embeddings
         .iter()
         .enumerate()
@@ -675,8 +758,14 @@ async fn reembed_one_document(
             embedding.len()
         )));
     }
-    store.update_chunk_embeddings_atomic(&doc.id, doc.revision, &chunks, &embeddings, manifest)?;
-    Ok(chunk_count)
+    store.update_chunk_embeddings_atomic(
+        &pending.document_id,
+        pending.revision,
+        &pending.chunks,
+        embeddings,
+        manifest,
+    )?;
+    Ok(pending.chunks.len())
 }
 
 /// Run whitelist refresh actions according to `flags`.
@@ -902,16 +991,22 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct FailAfterFirstEmbedder {
+    /// Seeded body the failing embedder refuses.
+    const FAILING_TEXT: &str = "second body";
+
+    struct FailOnTextEmbedder {
         calls: AtomicUsize,
         dims: usize,
     }
 
     #[async_trait]
-    impl EmbeddingProvider for FailAfterFirstEmbedder {
+    impl EmbeddingProvider for FailOnTextEmbedder {
         async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-            let call = self.calls.fetch_add(1, Ordering::Relaxed);
-            if call > 0 {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            // Re-embedding groups documents into one call; failing on one
+            // document's text (not on the Nth call) keeps the failure per
+            // document whatever the grouping.
+            if texts.iter().any(|text| text.contains(FAILING_TEXT)) {
                 return Err(AppError::embeddings("injected provider failure"));
             }
             Ok(texts.iter().map(|_| vec![0.25; self.dims]).collect())
@@ -1333,7 +1428,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .content_fingerprint;
-        let failing = Arc::new(FailAfterFirstEmbedder {
+        let failing = Arc::new(FailOnTextEmbedder {
             calls: AtomicUsize::new(0),
             dims: 8,
         });
@@ -1374,6 +1469,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reembed_all_groups_small_documents_into_one_provider_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reembed-grouped.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 16);
+        for (id, body) in [("g1", "alpha body"), ("g2", "beta body"), ("g3", "gamma body")] {
+            seed_doc(&store, id, id, body, "raw");
+        }
+        let counting = Arc::new(FailOnTextEmbedder {
+            calls: AtomicUsize::new(0),
+            dims: 16,
+        });
+        let embedder: Arc<dyn EmbeddingProvider> = counting.clone();
+
+        let report = reembed_all(&store, &embedder, &config, 3).await.unwrap();
+
+        assert_eq!(report.documents_succeeded, 3);
+        assert_eq!(report.documents_failed, 0);
+        assert_eq!(counting.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
     async fn partial_migration_marker_refuses_old_and_target_until_full_retry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reembed-partial.duckdb");
@@ -1386,7 +1503,7 @@ mod tests {
         seed_doc(&store, "d1", "A", "first body", "raw");
         seed_doc(&store, "d2", "B", "second body", "raw");
 
-        let failing = Arc::new(FailAfterFirstEmbedder {
+        let failing = Arc::new(FailOnTextEmbedder {
             calls: AtomicUsize::new(0),
             dims: 16,
         });
@@ -1397,7 +1514,8 @@ mod tests {
         assert_eq!(partial.documents_succeeded, 1);
         assert_eq!(partial.documents_failed, 1);
         assert_eq!(partial.skipped_cap, 0);
-        assert_eq!(failing.calls.load(Ordering::Relaxed), 2);
+        // One grouped call fails, then each document is retried alone.
+        assert_eq!(failing.calls.load(Ordering::Relaxed), 3);
 
         drop(store);
         let store = Store::open(&target_config.db_path).expect("reopen partial migration");
@@ -1457,7 +1575,7 @@ mod tests {
             .unwrap();
         seed_doc(&store, "d1", "A", "first body", "raw");
         seed_doc(&store, "d2", "B", "second body", "raw");
-        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailAfterFirstEmbedder {
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailOnTextEmbedder {
             calls: AtomicUsize::new(0),
             dims: 16,
         });

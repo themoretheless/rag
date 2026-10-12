@@ -1481,3 +1481,52 @@ fn source_stamp_rejects_a_file_that_exceeds_the_scan_guard() {
     let error = source_stamp(&source, &policy).unwrap_err();
     assert!(error.to_string().contains("exceeds max_file_bytes"));
 }
+
+#[tokio::test]
+async fn unchanged_files_between_changed_ones_keep_one_batch() {
+    let root = tempfile::tempdir().unwrap();
+    let db = tempfile::tempdir().unwrap();
+    for (name, body) in [("a.md", "alpha body"), ("b.md", "bravo body"), ("c.md", "charlie body")] {
+        std::fs::write(root.path().join(name), body).unwrap();
+    }
+    let config = Config {
+        db_path: db.path().join("interleaved-skip.duckdb"),
+        ingest_roots: vec![root.path().to_path_buf()],
+        embedding_dims: 4,
+        chunk_size: 1_024,
+        chunk_overlap: 0,
+        ..Config::for_tests()
+    };
+    let store = Store::open(&config.db_path).unwrap();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(RecordingEmbedder {
+        dims: 4,
+        calls: calls.clone(),
+    });
+    let service = SourceSyncService::new(&store, &embedder, &config);
+    service
+        .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+        .await
+        .unwrap();
+    calls.lock().unwrap().clear();
+
+    // b.md stays unchanged between the two edited files.
+    std::fs::write(root.path().join("a.md"), "alpha body, edited").unwrap();
+    std::fs::write(root.path().join("c.md"), "charlie body, edited").unwrap();
+    let report = service
+        .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+        .await
+        .unwrap();
+
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    let b_path = root.path().join("b.md").canonicalize().unwrap();
+    assert_eq!(report.skipped, vec![b_path.display().to_string()]);
+    assert_eq!(report.updated.len(), 2);
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        &[vec![
+            "alpha body, edited".to_string(),
+            "charlie body, edited".to_string(),
+        ]]
+    );
+}

@@ -585,7 +585,7 @@ fn find_document_node_data(
     sql: &str,
     value: &str,
 ) -> Result<Option<(String, String, String)>> {
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare_cached(sql)?;
     let mut rows = stmt.query(params![value])?;
     match rows.next()? {
         Some(row) => Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?))),
@@ -594,7 +594,7 @@ fn find_document_node_data(
 }
 
 fn find_wiki_index_page_id(conn: &Connection, slug: &str) -> Result<Option<String>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         r#"
         SELECT COALESCE(page_id, document_id)
         FROM wiki_index

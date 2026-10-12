@@ -317,6 +317,11 @@ impl<'a> SourceSyncService<'a> {
         let mut pending = Vec::new();
         let mut pending_chunks = 0usize;
         let mut processed_files = 0usize;
+        // Index + 1 of the last skipped/failed file handled while a batch was
+        // pending. Those files need no ingest, so they no longer force a flush
+        // (which shrank batches to one document in incremental re-syncs); once
+        // the batch flushes, every file before this frontier is done.
+        let mut handled_through = 0usize;
         // Every early exit below reports the same cancelled outcome, and every
         // batch flush either completes (resetting the chunk budget) or cancels.
         macro_rules! cancelled {
@@ -332,7 +337,7 @@ impl<'a> SourceSyncService<'a> {
                 {
                     BatchFlushOutcome::Completed(processed) => {
                         pending_chunks = 0;
-                        processed
+                        processed.max(handled_through)
                     }
                     BatchFlushOutcome::Cancelled(processed) => cancelled!(processed),
                 }
@@ -391,12 +396,6 @@ impl<'a> SourceSyncService<'a> {
                     source_file,
                     manifest_refresh,
                 }) => {
-                    if !pending.is_empty() {
-                        let processed = flush_pending!();
-                        if control.is_cancelled() {
-                            cancelled!(processed);
-                        }
-                    }
                     let result = manifest_refresh
                         .as_ref()
                         .map_or(Ok(()), |refresh| refresh.commit(self.store));
@@ -407,19 +406,22 @@ impl<'a> SourceSyncService<'a> {
                             error: error.to_string(),
                         }),
                     }
-                    processed_files = index + 1;
-                    publish_file_completion(&control, &report, total_files, processed_files);
+                    handled_through = index + 1;
+                    if pending.is_empty() {
+                        processed_files = index + 1;
+                        publish_file_completion(&control, &report, total_files, processed_files);
+                    }
                 }
                 Err(error) => {
-                    if !pending.is_empty() {
-                        flush_pending!();
-                    }
                     report.errors.push(SourceSyncError {
                         path: path.display().to_string(),
                         error: error.to_string(),
                     });
-                    processed_files = index + 1;
-                    publish_file_completion(&control, &report, total_files, processed_files);
+                    handled_through = index + 1;
+                    if pending.is_empty() {
+                        processed_files = index + 1;
+                        publish_file_completion(&control, &report, total_files, processed_files);
+                    }
                 }
             }
 
@@ -432,7 +434,10 @@ impl<'a> SourceSyncService<'a> {
                 .flush_pending_batch(&mut pending, &control, &mut report, total_files)
                 .await
             {
-                BatchFlushOutcome::Completed(processed) => processed_files = processed,
+                BatchFlushOutcome::Completed(processed) => {
+                    processed_files = processed.max(handled_through);
+                    publish_file_completion(&control, &report, total_files, processed_files);
+                }
                 BatchFlushOutcome::Cancelled(processed) => cancelled!(processed),
             }
         }

@@ -9,15 +9,22 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct FailAfterFirstEmbedder {
+/// Seeded body the failing embedder refuses.
+const FAILING_TEXT: &str = "second body";
+
+struct FailOnTextEmbedder {
     calls: AtomicUsize,
     dims: usize,
 }
 
 #[async_trait]
-impl EmbeddingProvider for FailAfterFirstEmbedder {
+impl EmbeddingProvider for FailOnTextEmbedder {
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        if self.calls.fetch_add(1, Ordering::Relaxed) > 0 {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        // Re-embedding groups documents into one call; failing on one
+        // document's text (not on the Nth call) keeps the failure per
+        // document whatever the grouping.
+        if texts.iter().any(|text| text.contains(FAILING_TEXT)) {
             return Err(AppError::embeddings("injected provider failure"));
         }
         Ok(texts.iter().map(|_| vec![0.25; self.dims]).collect())
@@ -627,7 +634,7 @@ async fn partial_reembed_failure_is_structured_error_and_keeps_migration_marker(
         .unwrap();
     seed_doc(&store, "d1", "One", "first body", "wiki");
     seed_doc(&store, "d2", "Two", "second body", "wiki");
-    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailAfterFirstEmbedder {
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailOnTextEmbedder {
         calls: AtomicUsize::new(0),
         dims: 8,
     });

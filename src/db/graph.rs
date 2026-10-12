@@ -772,7 +772,7 @@ pub(crate) fn find_node_by_uri_locked(
     // could name either copy. Resolved wins over a demoted stub, the first writer wins
     // among equals (§5.2 keeps the original node id so its edges stay attached), and the
     // unique id closes the order.
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         r#"
         SELECT id, kind, label, document_id, uri, resolved, metadata_json
         FROM graph_nodes
@@ -801,7 +801,7 @@ fn find_one_node_locked(
     sql: &str,
     value: &str,
 ) -> Result<Option<GraphNode>> {
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare_cached(sql)?;
     let mut rows = stmt.query(params![value])?;
     match rows.next()? {
         Some(row) => Ok(Some(row_to_node(row)?)),
@@ -814,7 +814,7 @@ pub(crate) fn find_nodes_by_label_locked(
     label: &str,
 ) -> Result<Vec<GraphNode>> {
     let key = crate::graph::normalize::label_key(label);
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         r#"
         SELECT id, kind, label, document_id, uri, resolved, metadata_json
         FROM graph_nodes
@@ -876,7 +876,7 @@ fn row_to_edge(row: &duckdb::Row<'_>) -> Result<GraphEdge> {
 }
 
 fn load_node_locked(conn: &duckdb::Connection, id: &str) -> Result<Option<GraphNode>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         r#"
         SELECT id, kind, label, document_id, uri, resolved, metadata_json
         FROM graph_nodes
