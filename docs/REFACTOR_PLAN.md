@@ -287,7 +287,7 @@ are fixed too:
 - 3.1 done: no `config`/domain → transport imports remain (`ToolSurface`,
   `parse_bind` in `config`; `crate::activity`; `PackHitParams` in
   `search_pack`; static tool count).
-- 3.2 partial: `ChatClient` no longer reads `RAG_LLM_*`. The remaining reads
+- 3.2 (first pass): `ChatClient` no longer reads `RAG_LLM_*`. The remaining reads
   are one-time start-up settings of their subsystem (backup, sync, PID file).
 - 3.4 done: `bootstrap::{open_offline, init_tracing}`; offline tools now also
   honour `RAG_STORAGE_BACKEND`.
@@ -308,16 +308,23 @@ are fixed too:
   compress best-effort audit policy stays explicit at its call site.
 - 5.3 done: `llm::json` owns fence stripping, embedded-object parsing and
   excerpt truncation for compile, consolidate, organize and plan.
-- 5.6 partial: `Document::metadata_field` for lenient reads.
+- 5.6 done: `Document::{metadata, metadata_lenient, metadata_field}` replace
+  ad hoc `metadata_json` parsing in revisions, memory lifecycle, wiki write and
+  stale, the indexer and knowledge properties. Lint and analysis findings use
+  `LintCode` / `AnalysisCode` (named codes plus `Other`, serialized as the same
+  strings, so client-supplied reports with custom codes still parse).
 
 - 5.5 done: `wiki/{schema,write,compile,consolidate,stale,file_answer,lint,
   index}.rs`; `wiki/mod.rs` keeps layer constants, shared DTOs and re-exports.
 
 **Phase 4**
 
-- 4.2 partial: recovery import writes chunks through `insert_chunks_locked`
+- 4.2 done: recovery import writes chunks through `insert_chunks_locked`
   and formats timestamps like every other path (microsecond round-trip test).
-  It still restores revision and timestamps verbatim on purpose.
+  Embedding JSON and chunk-ownership checks have one implementation
+  (`store::{embedding_json, owned_embedding_json}`) used by atomic writes,
+  sync writes, chunk replacement and recovery import. Import restores revision
+  and timestamps verbatim on purpose.
 - 4.5 done: `Store` methods are grouped in `db/store/{documents,chunks,health,
   revisions,schema_diary,corpus_lane,manifest,ops_log,wiki_index}.rs`, leaving
   `store.rs` with the write/transaction core (~1.7k production lines). The
@@ -331,7 +338,7 @@ are fixed too:
   re-exported by `rag_mcp::models`). The UI's DuckDB code sits behind the
   default `direct-db` feature; `--no-default-features` links no server crate,
   and CI keeps that build compiling.
-- 6.2 partial: `SyncJobRequest`, `RestoreRevisionResult` and
+- 6.2: `SyncJobRequest`, `RestoreRevisionResult` and
   `RevisionLineChange` were identical on both sides and now live in the core
   crate. The remaining same-name pairs differ on purpose (the UI reads
   timestamps as strings and a subset of fields to tolerate server drift), so
@@ -347,14 +354,14 @@ are fixed too:
   rewrite in one provider call.
 - 3.7 done: `AppError::Invalid` for caller-input validation in transports and
   retrieval (same `INVALID_REQUEST` code and HTTP 400).
-- 4.3 partial: one lexical-hit row decoder for the BM25 and TF paths.
+- 4.3 done: one lexical-hit row decoder for the BM25 and TF paths; the vector
+  path builds hits from its snapshot, and the remaining builder is test-only.
 - 4.5: corpus lane, embedding manifest, ops log and wiki index live in
   `db/store/{corpus_lane,manifest,ops_log,wiki_index}.rs`; `store.rs` is 3.5k
   lines (from 4.2k plus 2.5k of tests).
 - 5.4 done: `llm::ChatCompleter`; compile/consolidate prompts live in `wiki`;
   an in-process scripted LLM tests the maintenance planner.
-- 5.6: severity is `IssueSeverity`; finding codes stay an open string
-  vocabulary.
+- 5.6: severity is `IssueSeverity`; finding codes were typed later (see above).
 - 5.7: `sync_with_control` repeated flush/cancel branches collapse into two
   local macros (377 to about 280 lines).
 - Tests no longer leak a DuckDB directory per call (`testkit::{scratch_dir,

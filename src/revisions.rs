@@ -144,7 +144,7 @@ impl<'a> RevisionService<'a> {
                 .filter(|slug| !slug.is_empty())
                 .ok_or_else(|| AppError::config("wiki revision has no canonical wiki URI"))?;
             let existing_index = self.store.get_wiki_index_by_slug(slug)?;
-            let metadata: serde_json::Value = serde_json::from_str(&restored.metadata_json)?;
+            let metadata = restored.metadata()?;
             let index = WikiIndexEntry {
                 id: existing_index
                     .map(|entry| entry.id)

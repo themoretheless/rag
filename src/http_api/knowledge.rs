@@ -124,7 +124,7 @@ fn update_properties(store: &Store, body: Update) -> Result<Value> {
     if !crate::models::Layer::Wiki.is(&doc.layer) {
         return Err(AppError::invalid("knowledge properties require a wiki page"));
     }
-    let mut metadata: Value = serde_json::from_str(&doc.metadata_json)?;
+    let mut metadata = doc.metadata()?;
     let object = metadata
         .as_object_mut()
         .ok_or_else(|| AppError::invalid("metadata must be an object"))?;

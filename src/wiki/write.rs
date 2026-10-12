@@ -317,7 +317,7 @@ pub(crate) async fn write_wiki_page_synced_command(
     }
     let chunk_count = chunks.len();
 
-    let metadata = serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok();
+    let metadata = doc.metadata_lenient();
     let category = category.or_else(|| {
         if incoming {
             return None;

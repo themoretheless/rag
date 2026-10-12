@@ -147,11 +147,22 @@ pub struct Document {
 }
 
 impl Document {
+    /// Parsed `metadata_json`. Errors when it is not valid JSON; writers use
+    /// this so malformed metadata is reported instead of silently replaced.
+    pub fn metadata(&self) -> crate::error::Result<serde_json::Value> {
+        Ok(serde_json::from_str(&self.metadata_json)?)
+    }
+
+    /// Parsed `metadata_json`, or `None` when it is malformed. For lenient reads.
+    pub fn metadata_lenient(&self) -> Option<serde_json::Value> {
+        serde_json::from_str(&self.metadata_json).ok()
+    }
+
     /// One top-level field of `metadata_json`, or `None` when the JSON is
     /// malformed, not an object, or lacks `key`. For lenient reads only;
     /// writers that must reject bad metadata parse it themselves.
     pub fn metadata_field(&self, key: &str) -> Option<serde_json::Value> {
-        match serde_json::from_str::<serde_json::Value>(&self.metadata_json).ok()? {
+        match self.metadata_lenient()? {
             serde_json::Value::Object(mut map) => map.remove(key),
             _ => None,
         }
@@ -1205,6 +1216,72 @@ impl Default for KgFact {
         }
     }
 }
+
+/// Define a finding-code vocabulary: named known codes plus `Other(String)`.
+///
+/// Serialized as the plain code string, so the wire format is unchanged and
+/// unknown codes (for example from a client-supplied report) still round-trip.
+macro_rules! finding_codes {
+    ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $wire:literal,)+ }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub enum $name {
+            $($(#[$vmeta])* $variant,)+
+            /// A code this build does not name.
+            Other(String),
+        }
+
+        impl $name {
+            pub fn as_str(&self) -> &str {
+                match self {
+                    $(Self::$variant => $wire,)+
+                    Self::Other(code) => code,
+                }
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(code: &str) -> Self {
+                match code {
+                    $($wire => Self::$variant,)+
+                    other => Self::Other(other.to_string()),
+                }
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::Other(String::new())
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool {
+                self.as_str() == *other
+            }
+        }
+
+        impl serde::Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+                serializer.serialize_str(self.as_str())
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+                let code = String::deserialize(deserializer)?;
+                Ok(Self::from(code.as_str()))
+            }
+        }
+    };
+}
+pub(crate) use finding_codes;
 
 #[cfg(test)]
 mod tests {

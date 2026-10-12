@@ -116,7 +116,7 @@ fn resolve_unique(store: &Store, ids: &[String], exclude: Option<&str>) -> Resul
 }
 
 fn object_metadata(doc: &Document) -> Result<serde_json::Map<String, Value>> {
-    match serde_json::from_str::<Value>(&doc.metadata_json)? {
+    match doc.metadata()? {
         Value::Object(map) => Ok(map),
         _ => Err(AppError::config(format!("document {} metadata_json must be an object", doc.id))),
     }

@@ -184,10 +184,26 @@ pub struct WikiWriteResult {
     pub etag: String,
 }
 
+crate::models::finding_codes! {
+    /// `lint_wiki` finding codes.
+    LintCode {
+        BrokenWikilink => "broken_wikilink",
+        DuplicateWikilink => "duplicate_wikilink",
+        MissingIndex => "missing_index",
+        OrphanDocument => "orphan_document",
+        OrphanWikiPage => "orphan_wiki_page",
+        RawUncompiled => "raw_uncompiled",
+        SelfLink => "self_link",
+        StaleIndex => "stale_index",
+        UnresolvedStub => "unresolved_stub",
+        WikiEmpty => "wiki_empty",
+    }
+}
+
 /// Lint finding.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct LintIssue {
-    pub code: String,
+    pub code: LintCode,
     pub severity: crate::models::IssueSeverity,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]

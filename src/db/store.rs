@@ -407,18 +407,7 @@ impl Store {
     ) -> Result<AtomicDocumentWriteResult> {
         let prepared_embeddings = match &derived {
             DocumentDerivedWrite::ReplaceChunksAndGraph(chunks) => {
-                if let Some(chunk) = chunks.iter().find(|chunk| chunk.document_id != doc.id) {
-                    return Err(AppError::config(format!(
-                        "chunk {} belongs to document {}, expected {}",
-                        chunk.id, chunk.document_id, doc.id
-                    )));
-                }
-                Some(
-                    chunks
-                        .iter()
-                        .map(|chunk| serde_json::to_string(&chunk.embedding))
-                        .collect::<std::result::Result<Vec<_>, _>>()?,
-                )
+                Some(owned_embedding_json(&doc.id, chunks)?)
             }
             DocumentDerivedWrite::Preserve | DocumentDerivedWrite::RefreshGraphLabel => None,
         };
@@ -469,18 +458,7 @@ impl Store {
                 )));
             }
         }
-        let prepared_embeddings = chunks
-            .iter()
-            .map(|chunk| {
-                if chunk.document_id != doc.id {
-                    return Err(AppError::config(format!(
-                        "chunk {} belongs to document {}, expected {}",
-                        chunk.id, chunk.document_id, doc.id
-                    )));
-                }
-                Ok(serde_json::to_string(&chunk.embedding)?)
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let prepared_embeddings = owned_embedding_json(&doc.id, chunks)?;
 
         let local_event = super::sync::SyncChangeInput {
             origin_seq: 1,
@@ -566,10 +544,7 @@ impl Store {
             return Ok(());
         }
 
-        let embedding_json = chunks
-            .iter()
-            .map(|chunk| serde_json::to_string(&chunk.embedding))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let embedding_json = embedding_json(chunks)?;
         let conn = self.lock()?;
         super::fts::mark_fts_dirty(&conn)?;
         insert_chunks_locked(&conn, chunks, &embedding_json)
@@ -1339,6 +1314,26 @@ fn upsert_document_cas_locked(
         )?;
     }
     Ok(new_rev)
+}
+
+/// JSON-encode chunk embeddings for [`insert_chunks_locked`], before any lock
+/// is taken so a serialization failure cannot leave a partial write.
+pub(crate) fn embedding_json(chunks: &[Chunk]) -> Result<Vec<String>> {
+    chunks
+        .iter()
+        .map(|chunk| Ok(serde_json::to_string(&chunk.embedding)?))
+        .collect()
+}
+
+/// [`embedding_json`] after checking that every chunk belongs to `document_id`.
+pub(crate) fn owned_embedding_json(document_id: &str, chunks: &[Chunk]) -> Result<Vec<String>> {
+    if let Some(chunk) = chunks.iter().find(|chunk| chunk.document_id != document_id) {
+        return Err(AppError::config(format!(
+            "chunk {} belongs to document {}, expected {}",
+            chunk.id, chunk.document_id, document_id
+        )));
+    }
+    embedding_json(chunks)
 }
 
 pub(crate) fn insert_chunks_locked(

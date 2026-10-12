@@ -197,8 +197,8 @@ enum ChunkingProfile {
 }
 
 fn uses_code_chunking(document: &Document) -> bool {
-    serde_json::from_str::<serde_json::Value>(&document.metadata_json)
-        .ok()
+    document
+        .metadata_lenient()
         .is_some_and(|value| value.get("language").is_some())
 }
 

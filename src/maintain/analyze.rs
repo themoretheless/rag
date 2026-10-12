@@ -141,10 +141,28 @@ pub struct StaleWikiPage {
     pub link_kind: String,
 }
 
+crate::models::finding_codes! {
+    /// `analyze_corpus` finding codes.
+    AnalysisCode {
+        AgingStub => "aging_stub",
+        ArchiveCandidate => "archive_candidate",
+        DoctorNotOk => "doctor_not_ok",
+        EmbedMismatch => "embed_mismatch",
+        ExactDup => "exact_dup",
+        FtsNotReady => "fts_not_ready",
+        NearDup => "near_dup",
+        OrphanNode => "orphan_node",
+        OrphanWiki => "orphan_wiki",
+        SchemaLag => "schema_lag",
+        StaleWiki => "stale_wiki",
+        UnresolvedStub => "unresolved_stub",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisIssue {
-    /// Machine code: `exact_dup`, `orphan_node`, `unresolved_stub`, …
-    pub code: String,
+    /// Machine code; unknown codes from a supplied report stay `Other`.
+    pub code: AnalysisCode,
     /// `info` | `warn` | `error`
     pub severity: crate::models::IssueSeverity,
     pub message: String,
@@ -211,7 +229,7 @@ pub fn analyze_corpus(
     push_doctor_issues(&mut issues, &doctor);
     if let Some(ref m) = embed_mismatch {
         issues.push(AnalysisIssue {
-            code: "embed_mismatch".into(),
+            code: AnalysisCode::EmbedMismatch,
             severity: crate::models::IssueSeverity::Error,
             message: m.message.clone(),
             entity_id: None,
@@ -219,7 +237,7 @@ pub fn analyze_corpus(
     }
     for g in &exact_duplicates {
         issues.push(AnalysisIssue {
-            code: "exact_dup".into(),
+            code: AnalysisCode::ExactDup,
             severity: crate::models::IssueSeverity::Warn,
             message: format!(
                 "{} documents share content_hash {} ({})",
@@ -232,7 +250,7 @@ pub fn analyze_corpus(
     }
     for p in &near_duplicates {
         issues.push(AnalysisIssue {
-            code: "near_dup".into(),
+            code: AnalysisCode::NearDup,
             severity: crate::models::IssueSeverity::Info,
             message: format!(
                 "near-duplicate cosine={:.3}: '{}' ~ '{}'",
@@ -243,7 +261,7 @@ pub fn analyze_corpus(
     }
     for o in &orphan_nodes {
         issues.push(AnalysisIssue {
-            code: "orphan_node".into(),
+            code: AnalysisCode::OrphanNode,
             severity: crate::models::IssueSeverity::Info,
             message: format!("graph node '{}' ({}) has degree 0", o.label, o.kind),
             entity_id: Some(o.id.clone()),
@@ -251,7 +269,7 @@ pub fn analyze_corpus(
     }
     for o in &orphan_wiki_pages {
         issues.push(AnalysisIssue {
-            code: "orphan_wiki".into(),
+            code: AnalysisCode::OrphanWiki,
             severity: crate::models::IssueSeverity::Info,
             message: format!("wiki page '{}' has no graph edges", o.label),
             entity_id: o.document_id.clone().or_else(|| Some(o.id.clone())),
@@ -261,9 +279,9 @@ pub fn analyze_corpus(
         let aging = aging_stubs.iter().any(|a| a.node_id == s.node_id);
         issues.push(AnalysisIssue {
             code: if aging {
-                "aging_stub".into()
+                AnalysisCode::AgingStub
             } else {
-                "unresolved_stub".into()
+                AnalysisCode::UnresolvedStub
             },
             severity: if aging {
                 crate::models::IssueSeverity::Warn
@@ -282,7 +300,7 @@ pub fn analyze_corpus(
     }
     for w in &stale_wiki {
         issues.push(AnalysisIssue {
-            code: "stale_wiki".into(),
+            code: AnalysisCode::StaleWiki,
             severity: crate::models::IssueSeverity::Warn,
             message: match w.link_kind.as_str() {
                 "source_missing" => format!(
@@ -303,7 +321,7 @@ pub fn analyze_corpus(
     }
     for a in &archive_candidates {
         issues.push(AnalysisIssue {
-            code: "archive_candidate".into(),
+            code: AnalysisCode::ArchiveCandidate,
             severity: crate::models::IssueSeverity::Info,
             message: format!("{}: {}", a.title, a.reason),
             entity_id: Some(a.document_id.clone()),
@@ -311,7 +329,7 @@ pub fn analyze_corpus(
     }
     if !fts_ready && chunk_count > 0 {
         issues.push(AnalysisIssue {
-            code: "fts_not_ready".into(),
+            code: AnalysisCode::FtsNotReady,
             severity: crate::models::IssueSeverity::Info,
             message: "FTS index not ready; lex search uses term-frequency fallback".into(),
             entity_id: None,
@@ -376,7 +394,7 @@ pub fn analyze_corpus(
 fn push_doctor_issues(issues: &mut Vec<AnalysisIssue>, doctor: &DoctorReport) {
     if !doctor.schema_ok {
         issues.push(AnalysisIssue {
-            code: "schema_lag".into(),
+            code: AnalysisCode::SchemaLag,
             severity: crate::models::IssueSeverity::Error,
             message: format!(
                 "schema_version {} < expected {}",
@@ -387,7 +405,7 @@ fn push_doctor_issues(issues: &mut Vec<AnalysisIssue>, doctor: &DoctorReport) {
     }
     if !doctor.ok {
         issues.push(AnalysisIssue {
-            code: "doctor_not_ok".into(),
+            code: AnalysisCode::DoctorNotOk,
             severity: crate::models::IssueSeverity::Error,
             message: "doctor integrity gate failed (schema or embed)".into(),
             entity_id: None,
@@ -456,6 +474,18 @@ fn file_size_bytes(path: &Path) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analysis_codes_keep_wire_strings_and_accept_unknown_codes() {
+        let issue: AnalysisIssue = serde_json::from_value(serde_json::json!({
+            "code": "custom_client_code", "severity": "info", "message": "m"
+        }))
+        .unwrap();
+        assert_eq!(issue.code, AnalysisCode::Other("custom_client_code".into()));
+        assert_eq!(serde_json::to_value(&issue).unwrap()["code"], "custom_client_code");
+        assert_eq!(serde_json::to_value(AnalysisCode::ExactDup).unwrap(), "exact_dup");
+        assert_eq!(AnalysisCode::from("stale_wiki"), AnalysisCode::StaleWiki);
+    }
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};
     use crate::util::content_hash;
     use chrono::Duration;

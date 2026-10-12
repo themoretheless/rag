@@ -376,10 +376,7 @@ impl Store {
                     ..chunk.clone()
                 })
                 .collect();
-            let embedding_json = chunks
-                .iter()
-                .map(|chunk| serde_json::to_string(&chunk.embedding))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let embedding_json = crate::db::store::embedding_json(&chunks)?;
             crate::db::store::insert_chunks_locked(&tx, &chunks, &embedding_json)?;
         }
         if report.success && !dry_run {

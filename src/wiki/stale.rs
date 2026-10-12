@@ -444,7 +444,7 @@ pub(super) fn linked_raws_for_wiki(
     let mut out: Vec<(Document, &'static str)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&wiki.metadata_json) {
+    if let Some(meta) = wiki.metadata_lenient() {
         if let Some(sid) = meta.get("source_id").and_then(|v| v.as_str()) {
             try_push_raw(
                 store, sid, "metadata", raw_by_id, raw_by_uri, &mut seen, &mut out,

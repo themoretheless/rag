@@ -129,10 +129,7 @@ impl Store {
 
     /// Atomically replace all chunks for a document, preserving caller-supplied ids.
     pub fn replace_chunks_for_document(&self, document_id: &str, chunks: &[Chunk]) -> Result<()> {
-        let embedding_json = chunks
-            .iter()
-            .map(|chunk| serde_json::to_string(&chunk.embedding))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let embedding_json = embedding_json(chunks)?;
         self.with_tx(|tx| {
             crate::db::fts::mark_fts_dirty(tx)?;
             tx.execute(
