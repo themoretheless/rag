@@ -8,4 +8,5 @@ mod integration_test;
 mod maintain_test;
 mod mempalace_parity_test;
 mod recovery_cli_test;
+mod web_types_contract_test;
 mod wiki_test;

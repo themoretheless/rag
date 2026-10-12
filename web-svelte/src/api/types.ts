@@ -1,4 +1,9 @@
-/** Types matching rag-mcp HTTP gateway JSON. */
+/**
+ * Types matching rag-mcp HTTP gateway JSON.
+ *
+ * GraphNode, GraphEdge, SearchHit and SearchExplanation are checked against the
+ * Rust DTOs by `tests/it/web_types_contract_test.rs`.
+ */
 
 export interface HealthResponse {
   ok: boolean
@@ -117,10 +122,8 @@ export interface GraphNode {
   kind?: string
   document_id?: string | null
   uri?: string | null
-  layer?: string | null
-  wing?: string | null
-  room?: string | null
   resolved?: boolean
+  /** JSON object text; wing/room live here, not on the node. */
   metadata_json?: string
 }
 
