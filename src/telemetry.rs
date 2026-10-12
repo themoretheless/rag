@@ -5,7 +5,8 @@
 //! bounded ring buffer of every call with latency and outcome. Nothing here touches
 //! the database; the buffer is lost on restart by design.
 //!
-//! Capacity: `RAG_CALL_LOG_CAPACITY` (default [`DEFAULT_CAPACITY`]).
+//! Capacity: `Config::call_log_capacity` via [`configure_capacity`]
+//! (env `RAG_CALL_LOG_CAPACITY`, default [`DEFAULT_CAPACITY`]).
 //! Surfaces: `GET /v1/calls`, `GET /v1/agents`.
 
 use std::collections::{HashMap, VecDeque};
@@ -50,12 +51,15 @@ struct Buffer {
     records: VecDeque<CallRecord>,
 }
 
+static CAPACITY: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// Set the call-log size before the first call is recorded. First value wins.
+pub fn configure_capacity(capacity: usize) {
+    let _ = CAPACITY.set(capacity.max(1));
+}
+
 static BUFFER: LazyLock<RwLock<Buffer>> = LazyLock::new(|| {
-    let capacity = std::env::var("RAG_CALL_LOG_CAPACITY")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_CAPACITY);
+    let capacity = *CAPACITY.get_or_init(|| DEFAULT_CAPACITY);
     RwLock::new(Buffer {
         next_seq: 1,
         capacity,

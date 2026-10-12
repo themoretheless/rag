@@ -130,6 +130,10 @@ pub struct Config {
     pub auto_backup_keep: usize,
     /// Free-space headroom required before a snapshot. Env: `RAG_AUTO_BACKUP_MIN_FREE_BYTES`.
     pub auto_backup_min_free_bytes: u64,
+    /// Per-document link ceiling for graph extraction. Env: `RAG_MAX_LINKS_PER_DOC`.
+    pub max_links_per_doc: usize,
+    /// In-memory call-log ring size. Env: `RAG_CALL_LOG_CAPACITY`.
+    pub call_log_capacity: usize,
 }
 
 /// Which tools are advertised and callable.
@@ -239,6 +243,8 @@ impl Default for Config {
             auto_backup_interval_secs: 86_400,
             auto_backup_keep: 7,
             auto_backup_min_free_bytes: DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES,
+            max_links_per_doc: crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
+            call_log_capacity: crate::telemetry::DEFAULT_CAPACITY,
         }
     }
 }
@@ -258,6 +264,13 @@ fn parse_auto_sync_roots(raw: &str) -> Vec<String> {
 }
 
 impl Config {
+    /// Push process-global limits (graph link ceiling, call-log size) into the
+    /// subsystems that hold them. Call once at start-up, before first use.
+    pub fn apply_process_limits(&self) {
+        crate::db::graph::resolve::configure_max_links(self.max_links_per_doc);
+        crate::telemetry::configure_capacity(self.call_log_capacity);
+    }
+
     /// Shared baseline for unit and integration tests.
     ///
     /// Mock-friendly defaults: full MCP tool surface, `wiki_require_if_match = false`,
@@ -394,6 +407,19 @@ impl Config {
         let auto_backup_min_free_bytes = parsed("RAG_AUTO_BACKUP_MIN_FREE_BYTES")
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES);
+        let positive_usize = |name: &str, default: usize| {
+            env::var(name)
+                .ok()
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(default)
+        };
+        let max_links_per_doc = positive_usize(
+            "RAG_MAX_LINKS_PER_DOC",
+            crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
+        );
+        let call_log_capacity =
+            positive_usize("RAG_CALL_LOG_CAPACITY", crate::telemetry::DEFAULT_CAPACITY);
 
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
@@ -448,6 +474,8 @@ impl Config {
             auto_backup_interval_secs,
             auto_backup_keep,
             auto_backup_min_free_bytes,
+            max_links_per_doc,
+            call_log_capacity,
         };
         config.validate()?;
         Ok(config)

@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
             http_api::validate_security(address).context("HTTP security configuration")?;
         }
     }
+    config.apply_process_limits();
     rag_mcp::ops::configure_runtime(config.tool_surface.as_str(), config.http_bind.clone());
     rag_mcp::ops::set_startup_phase("validating_paths");
     rag_mcp::ops::validate_runtime_paths(&config)

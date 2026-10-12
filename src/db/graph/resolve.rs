@@ -143,18 +143,18 @@ fn metadata_tag_links(metadata_json: &str) -> Vec<ExtractedLink> {
         .collect()
 }
 
-/// §4.2 rule 6: `RAG_MAX_LINKS_PER_DOC` overrides the 2000-link ceiling. Read
-/// once per process so ingest never touches the environment per document.
+static MAX_LINKS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// §4.2 rule 6: set the per-document link ceiling from `Config::max_links_per_doc`.
+/// The first value wins; later calls are ignored so ingest sees one ceiling.
+pub fn configure_max_links(max_links: usize) {
+    let _ = MAX_LINKS.set(max_links.max(1));
+}
+
 fn extract_options() -> ExtractOptions {
-    static OPTIONS: std::sync::OnceLock<ExtractOptions> = std::sync::OnceLock::new();
-    *OPTIONS.get_or_init(|| {
-        let max_links = std::env::var("RAG_MAX_LINKS_PER_DOC")
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_MAX_LINKS_PER_DOC);
-        ExtractOptions { max_links }
-    })
+    ExtractOptions {
+        max_links: *MAX_LINKS.get_or_init(|| DEFAULT_MAX_LINKS_PER_DOC),
+    }
 }
 
 fn document_supports_knowledge_markup(doc: &Document) -> bool {

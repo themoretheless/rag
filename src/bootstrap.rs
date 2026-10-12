@@ -38,6 +38,7 @@ pub struct OfflineRuntime {
 pub fn open_offline(db_path: PathBuf) -> Result<OfflineRuntime> {
     let mut config = Config::from_env().context("Config::from_env")?;
     config.db_path = db_path;
+    config.apply_process_limits();
     let store = crate::storage::open_configured(&config).context("open DuckDB")?;
     store
         .ensure_embedding_manifest(&config)
