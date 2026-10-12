@@ -52,7 +52,7 @@ async fn health(State(st): State<HttpState>) -> impl IntoResponse {
             let relational_integrity_ok =
                 orphan_chunks == 0 && orphan_nodes == 0 && orphan_edges == 0;
             let wal_bytes = st.store.wal_file_size_bytes();
-            let wal_warn_bytes = crate::ops::wal_warn_bytes();
+            let wal_warn_bytes = st.config.wal_warn_bytes;
             let runtime = crate::ops::runtime_snapshot();
             api_ok(json!({
                 "ok": true,

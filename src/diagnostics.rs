@@ -403,8 +403,8 @@ impl<'a> DiagnosticsService<'a> {
             uptime_seconds: runtime.uptime_seconds,
             db_file_bytes: self.store.db_file_size_bytes(),
             wal_bytes: self.store.wal_file_size_bytes(),
-            wal_warn_bytes: crate::ops::wal_warn_bytes(),
-            auto_backup: crate::ops::auto_backup_inventory(),
+            wal_warn_bytes: self.config.wal_warn_bytes,
+            auto_backup: crate::ops::auto_backup_inventory(self.config),
         })
     }
 
@@ -428,7 +428,7 @@ impl<'a> DiagnosticsService<'a> {
         let relational_integrity_ok =
             orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
         let wal_bytes = self.store.wal_file_size_bytes();
-        let wal_warn_bytes = crate::ops::wal_warn_bytes();
+        let wal_warn_bytes = self.config.wal_warn_bytes;
         let wal_too_large = wal_bytes >= wal_warn_bytes;
         let repair_hint = if !embed_ok {
             Some(
@@ -587,10 +587,13 @@ mod tests {
         std::fs::create_dir_all(&backups).expect("backup dir");
         std::fs::write(backups.join("rag-auto-a.duckdb"), b"12345").expect("snapshot");
         std::fs::write(backups.join("notes.txt"), b"0000000000").expect("non-snapshot");
-        std::env::set_var("RAG_AUTO_BACKUP_DIR", &backups);
-        let configured = serde_json::to_value(service.status().expect("footprint status"));
-        std::env::remove_var("RAG_AUTO_BACKUP_DIR");
-        let configured = configured.expect("serialize footprint");
+        let config = Config {
+            auto_backup_dir: Some(backups),
+            ..config
+        };
+        let service = DiagnosticsService::new(&store, &config);
+        let configured = serde_json::to_value(service.status().expect("footprint status"))
+            .expect("serialize footprint");
 
         // Only snapshot groups (`rag-auto-*.duckdb` and their sidecars) are billed.
         assert_eq!(configured["auto_backup"]["snapshots"], 1);

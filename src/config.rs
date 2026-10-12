@@ -112,6 +112,24 @@ pub struct Config {
     pub sync_node_name: Option<String>,
     /// Replica pull interval in seconds. Env: `RAG_SYNC_INTERVAL_SECS` (default 5, min 1).
     pub sync_interval_secs: u64,
+    /// Storage adapter name. Env: `RAG_STORAGE_BACKEND` (default `duckdb`).
+    pub storage_backend: String,
+    /// Markdown vault root for `storage_backend = markdown`. Env: `RAG_VAULT_PATH`.
+    pub vault_path: Option<PathBuf>,
+    /// PID metadata file. Env: `RAG_PID_FILE` (default: `<db_path>.pid`).
+    pub pid_file: Option<PathBuf>,
+    /// WAL size reported as too large by health/doctor. Env: `RAG_WAL_WARN_BYTES`.
+    pub wal_warn_bytes: u64,
+    /// Start-up phase duration that logs a warning. Env: `RAG_STARTUP_WARN_MS`.
+    pub startup_warn_ms: u64,
+    /// Automatic snapshot directory; `None` disables the loop. Env: `RAG_AUTO_BACKUP_DIR`.
+    pub auto_backup_dir: Option<PathBuf>,
+    /// Env: `RAG_AUTO_BACKUP_INTERVAL_SECS` (default one day, min 1).
+    pub auto_backup_interval_secs: u64,
+    /// Snapshots kept by retention. Env: `RAG_AUTO_BACKUP_KEEP` (default 7, min 1).
+    pub auto_backup_keep: usize,
+    /// Free-space headroom required before a snapshot. Env: `RAG_AUTO_BACKUP_MIN_FREE_BYTES`.
+    pub auto_backup_min_free_bytes: u64,
 }
 
 /// Which tools are advertised and callable.
@@ -212,9 +230,23 @@ impl Default for Config {
             eval_history_path: None,
             sync_node_name: None,
             sync_interval_secs: 5,
+            storage_backend: "duckdb".to_string(),
+            vault_path: None,
+            pid_file: None,
+            wal_warn_bytes: DEFAULT_WAL_WARN_BYTES,
+            startup_warn_ms: 30_000,
+            auto_backup_dir: None,
+            auto_backup_interval_secs: 86_400,
+            auto_backup_keep: 7,
+            auto_backup_min_free_bytes: DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES,
         }
     }
 }
+
+/// Default `RAG_WAL_WARN_BYTES` (256 MiB).
+pub const DEFAULT_WAL_WARN_BYTES: u64 = 256 * 1024 * 1024;
+/// Default `RAG_AUTO_BACKUP_MIN_FREE_BYTES` (2 GiB).
+pub const DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// `;`-separated directory list, trimmed, blanks dropped.
 fn parse_auto_sync_roots(raw: &str) -> Vec<String> {
@@ -336,6 +368,32 @@ impl Config {
             .and_then(|value| value.parse().ok())
             .unwrap_or(5u64)
             .max(1);
+        let non_blank_path = |name: &str| {
+            env::var_os(name)
+                .filter(|value| !value.to_string_lossy().trim().is_empty())
+                .map(|value| PathBuf::from(value.to_string_lossy().trim()))
+        };
+        let parsed = |name: &str| env::var(name).ok().and_then(|v| v.trim().parse::<u64>().ok());
+        let storage_backend =
+            env::var("RAG_STORAGE_BACKEND").unwrap_or_else(|_| "duckdb".to_string());
+        let vault_path = non_blank_path("RAG_VAULT_PATH");
+        let pid_file = non_blank_path("RAG_PID_FILE");
+        let wal_warn_bytes = parsed("RAG_WAL_WARN_BYTES")
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_WAL_WARN_BYTES);
+        let startup_warn_ms = parsed("RAG_STARTUP_WARN_MS").unwrap_or(30_000);
+        let auto_backup_dir = non_blank_path("RAG_AUTO_BACKUP_DIR");
+        let auto_backup_interval_secs = parsed("RAG_AUTO_BACKUP_INTERVAL_SECS")
+            .unwrap_or(86_400)
+            .max(1);
+        let auto_backup_keep = env::var("RAG_AUTO_BACKUP_KEEP")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(7)
+            .max(1);
+        let auto_backup_min_free_bytes = parsed("RAG_AUTO_BACKUP_MIN_FREE_BYTES")
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES);
 
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
@@ -381,6 +439,15 @@ impl Config {
             eval_history_path,
             sync_node_name,
             sync_interval_secs,
+            storage_backend,
+            vault_path,
+            pid_file,
+            wal_warn_bytes,
+            startup_warn_ms,
+            auto_backup_dir,
+            auto_backup_interval_secs,
+            auto_backup_keep,
+            auto_backup_min_free_bytes,
         };
         config.validate()?;
         Ok(config)

@@ -26,10 +26,10 @@ async fn main() -> anyhow::Result<()> {
     }
     rag_mcp::ops::configure_runtime(config.tool_surface.as_str(), config.http_bind.clone());
     rag_mcp::ops::set_startup_phase("validating_paths");
-    rag_mcp::ops::validate_runtime_paths(&config.db_path, &config.ingest_roots)
+    rag_mcp::ops::validate_runtime_paths(&config)
         .context("runtime path validation failed")?;
     rag_mcp::ops::set_startup_phase("opening_store");
-    let store = rag_mcp::storage::open_configured(&config.db_path)
+    let store = rag_mcp::storage::open_configured(&config)
         .context("failed to open configured storage backend")?;
 
     if env_truthy_default("RAG_CHECKPOINT_ON_START", true) {
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         store.checkpoint().context(
             "startup DuckDB CHECKPOINT failed; run db_repair offline if this is an ART/index error",
         )?;
-        rag_mcp::ops::set_startup_timing("checkpoint", phase.elapsed());
+        rag_mcp::ops::set_startup_timing("checkpoint", phase.elapsed(), config.startup_warn_ms);
     }
 
     // FTS / BM25 (or TF fallback) before serving tools so lex/hybrid is ready.
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let fts_state = store
         .ensure_fts(&config.fts_stemmer)
         .context("failed to ensure FTS index")?;
-    rag_mcp::ops::set_startup_timing("fts", phase.elapsed());
+    rag_mcp::ops::set_startup_timing("fts", phase.elapsed(), config.startup_warn_ms);
 
     // Corpus embedding fingerprint (does not overwrite an existing row).
     rag_mcp::ops::set_startup_phase("embedding_manifest");
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Err(error) => return Err(error).context("failed to record embedding_manifest"),
     };
-    rag_mcp::ops::set_startup_timing("manifest", phase.elapsed());
+    rag_mcp::ops::set_startup_timing("manifest", phase.elapsed(), config.startup_warn_ms);
     // Persist migration, FTS DDL, and manifest writes before accepting traffic.
     // Otherwise a SIGTERM/restart can leave FTS catalog DDL in WAL that DuckDB
     // cannot replay on the next open because extension objects depend on it.
@@ -105,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
 
     rag_mcp::ops::set_startup_phase("embedding_provider");
     let embedder = build_provider(&config).context("failed to build embedding provider")?;
-    rag_mcp::ops::set_startup_timing("total", startup_started.elapsed());
+    rag_mcp::ops::set_startup_timing("total", startup_started.elapsed(), config.startup_warn_ms);
     rag_mcp::ops::mark_ready();
     tracing::info!(startup = %serde_json::to_string(&rag_mcp::ops::runtime_snapshot()).unwrap_or_default(), "startup summary");
     let result = run_serve_modes(store.clone(), embedder, config).await;
@@ -128,7 +128,7 @@ async fn run_serve_modes(
     embedder: Arc<dyn EmbeddingProvider>,
     config: Config,
 ) -> anyhow::Result<()> {
-    rag_mcp::ops::spawn_auto_backup(store.clone());
+    rag_mcp::ops::spawn_auto_backup(store.clone(), &config);
     // One context for every transport: config parsed once, one embedder, one
     // chat client, one manifest check.
     let context = rag_mcp::context::AppContext::new(store, embedder, config);

@@ -9,14 +9,9 @@ use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::config::Config;
 use crate::db::Store;
 
-pub fn wal_warn_bytes() -> u64 {
-    std::env::var("RAG_WAL_WARN_BYTES").ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(256 * 1024 * 1024)
-}
 use crate::error::{AppError, Result};
 
 const BACKUP_PREFIX: &str = "rag-auto-";
@@ -117,12 +112,12 @@ pub fn set_startup_phase(phase: &str) {
     RUNTIME.write().unwrap_or_else(|p| p.into_inner()).phase = phase.into();
 }
 
-pub fn set_startup_timing(name: &str, elapsed: Duration) {
+/// Record a start-up phase duration; phases at or above `warn_ms` log a warning.
+pub fn set_startup_timing(name: &str, elapsed: Duration, warn_ms: u64) {
     let ms = elapsed.as_millis().min(u64::MAX as u128) as u64;
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     match name { "checkpoint" => state.checkpoint_ms = Some(ms), "fts" => state.fts_init_ms = Some(ms),
         "manifest" => state.manifest_validation_ms = Some(ms), "total" => state.startup_total_ms = Some(ms), _ => {} }
-    let warn_ms = std::env::var("RAG_STARTUP_WARN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(30_000);
     if ms >= warn_ms { tracing::warn!(phase = name, elapsed_ms = ms, warn_ms, "slow startup phase"); }
 }
 
@@ -157,7 +152,9 @@ fn set_autosync_next(interval: Duration) {
         Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
 
-pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Result<()> {
+pub fn validate_runtime_paths(config: &Config) -> Result<()> {
+    let db_path = config.db_path.as_path();
+    let ingest_roots = &config.ingest_roots;
     let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
     if !parent.exists() { fs::create_dir_all(parent)?; }
     if fs::metadata(parent)?.permissions().readonly() { return Err(AppError::config(format!("database directory is read-only: {}", parent.display()))); }
@@ -167,22 +164,16 @@ pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Resul
         // block a background process indefinitely before the HTTP listener opens.
         // Individual sync/ingest calls still perform and report the real read.
     }
-    if let Some(dir) = auto_backup_dir() {
+    if let Some(dir) = config.auto_backup_dir.clone() {
         fs::create_dir_all(&dir)?;
         if fs::metadata(&dir)?.permissions().readonly() { return Err(AppError::config(format!("auto-backup directory is read-only: {}", dir.display()))); }
     }
-    let pid_path = std::env::var("RAG_PID_FILE").ok().filter(|v| !v.trim().is_empty())
-        .map(PathBuf::from).unwrap_or_else(|| db_path.with_extension("pid"));
+    let pid_path = config.pid_file.clone().unwrap_or_else(|| db_path.with_extension("pid"));
     let stale = fs::read_to_string(&pid_path).ok().map(|v| v.trim() != std::process::id().to_string()).unwrap_or(false);
     fs::write(&pid_path, format!("{}\n", std::process::id()))?;
     *PID_PATH.write().unwrap_or_else(|p| p.into_inner()) = Some(pid_path);
     RUNTIME.write().unwrap_or_else(|p| p.into_inner()).stale_pid_metadata_detected = stale;
     Ok(())
-}
-
-fn auto_backup_dir() -> Option<PathBuf> {
-    std::env::var("RAG_AUTO_BACKUP_DIR").ok().map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
 /// Snapshot-loop settings, read together so the running loop and the reported
@@ -195,28 +186,12 @@ struct AutoBackupSettings {
     min_free_bytes: u64,
 }
 
-fn auto_backup_settings() -> Option<AutoBackupSettings> {
-    let dir = auto_backup_dir()?;
-    let interval_secs = std::env::var("RAG_AUTO_BACKUP_INTERVAL_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(86_400)
-        .max(1);
-    let keep = std::env::var("RAG_AUTO_BACKUP_KEEP")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(7)
-        .max(1);
-    let min_free_bytes = std::env::var("RAG_AUTO_BACKUP_MIN_FREE_BYTES")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(2 * 1024 * 1024 * 1024);
+fn auto_backup_settings(config: &Config) -> Option<AutoBackupSettings> {
     Some(AutoBackupSettings {
-        dir,
-        interval: Duration::from_secs(interval_secs),
-        keep,
-        min_free_bytes,
+        dir: config.auto_backup_dir.clone()?,
+        interval: Duration::from_secs(config.auto_backup_interval_secs.max(1)),
+        keep: config.auto_backup_keep.max(1),
+        min_free_bytes: config.auto_backup_min_free_bytes,
     })
 }
 
@@ -263,8 +238,8 @@ pub struct AutoBackupInventory {
     pub free_bytes: Option<u64>,
 }
 
-pub fn auto_backup_inventory() -> Option<AutoBackupInventory> {
-    let settings = auto_backup_settings()?;
+pub fn auto_backup_inventory(config: &Config) -> Option<AutoBackupInventory> {
+    let settings = auto_backup_settings(config)?;
     Some(inventory_at(&settings))
 }
 
@@ -293,8 +268,8 @@ fn inventory_at(settings: &AutoBackupSettings) -> AutoBackupInventory {
 
 /// Spawn the optional automatic backup loop. Disabled unless
 /// `RAG_AUTO_BACKUP_DIR` is configured.
-pub fn spawn_auto_backup(store: Store) {
-    let Some(settings) = auto_backup_settings() else {
+pub fn spawn_auto_backup(store: Store, config: &Config) {
+    let Some(settings) = auto_backup_settings(config) else {
         return;
     };
     let dir = settings.dir.clone();
@@ -558,7 +533,12 @@ mod tests {
         let db = root.path().join("rag.duckdb");
         let pid = db.with_extension("pid");
         fs::write(&pid, "999999\n").unwrap();
-        validate_runtime_paths(&db, &[root.path().to_path_buf()]).unwrap();
+        let config = Config {
+            db_path: db.clone(),
+            ingest_roots: vec![root.path().to_path_buf()],
+            ..Config::for_tests()
+        };
+        validate_runtime_paths(&config).unwrap();
         assert!(runtime_snapshot().stale_pid_metadata_detected);
         assert_eq!(fs::read_to_string(pid).unwrap().trim(), std::process::id().to_string());
     }
