@@ -23,16 +23,26 @@ impl Store {
     /// Search context expansion needs text and section metadata only; the
     /// embedding JSON is the bulk of a chunk row and is never parsed here.
     pub(crate) fn list_chunk_bodies_for_document(&self, doc_id: &str) -> Result<Vec<ChunkBody>> {
+        self.list_chunk_bodies_in_range(doc_id, i32::MIN, i32::MAX)
+    }
+
+    /// Chunk bodies of a document with `chunk_index` in `low..=high`, in order.
+    pub(crate) fn list_chunk_bodies_in_range(
+        &self,
+        doc_id: &str,
+        low: i32,
+        high: i32,
+    ) -> Result<Vec<ChunkBody>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             r#"
             SELECT id, chunk_index, content, metadata_json
             FROM chunks
-            WHERE document_id = ?
+            WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
             ORDER BY chunk_index ASC, id ASC
             "#,
         )?;
-        crate::db::rows::query_vec(&mut stmt, params![doc_id], |row| {
+        crate::db::rows::query_vec(&mut stmt, params![doc_id, low, high], |row| {
             Ok(ChunkBody {
                 id: row.get(0)?,
                 chunk_index: row.get(1)?,
@@ -148,28 +158,47 @@ impl Store {
     }
 
     /// Load only the first chunk vector for a specific document.
-    pub(crate) fn first_chunk_embedding(&self, document_id: &str) -> Result<Option<Vec<f32>>> {
+    /// First-chunk embedding of each of `document_ids` that has chunks, in one query.
+    pub(crate) fn first_chunk_embeddings(
+        &self,
+        document_ids: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, Vec<f32>>> {
+        let mut out = std::collections::BTreeMap::new();
+        if document_ids.is_empty() {
+            return Ok(out);
+        }
+        let placeholders = vec!["?"; document_ids.len()].join(",");
         let conn = self.lock()?;
-        let raw = match conn.query_row(
+        let mut stmt = conn.prepare(&format!(
             r#"
-            SELECT embedding_json
-            FROM chunks
-            WHERE document_id = ?
-            ORDER BY chunk_index ASC, id ASC
-            LIMIT 1
-            "#,
-            params![document_id],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(raw) => raw,
-            Err(duckdb::Error::QueryReturnedNoRows) => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        serde_json::from_str(&raw).map(Some).map_err(|error| {
-            AppError::db(format!(
-                "invalid representative embedding JSON for document {document_id}: {error}"
-            ))
-        })
+            SELECT document_id, embedding_json
+            FROM (
+                SELECT document_id, embedding_json,
+                       row_number() OVER (
+                           PARTITION BY document_id ORDER BY chunk_index ASC, id ASC
+                       ) AS position
+                FROM chunks
+                WHERE document_id IN ({placeholders})
+            )
+            WHERE position = 1
+            "#
+        ))?;
+        crate::db::rows::for_each_row(
+            &mut stmt,
+            duckdb::params_from_iter(document_ids.iter()),
+            |row| {
+                let document_id: String = row.get(0)?;
+                let raw: String = row.get(1)?;
+                let embedding = serde_json::from_str(&raw).map_err(|error| {
+                    AppError::db(format!(
+                        "invalid representative embedding JSON for document {document_id}: {error}"
+                    ))
+                })?;
+                out.insert(document_id, embedding);
+                Ok(())
+            },
+        )?;
+        Ok(out)
     }
 
     /// Load every chunk with its embedding (for in-process vector search).

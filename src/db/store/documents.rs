@@ -176,6 +176,28 @@ impl Store {
         Ok(out)
     }
 
+    /// Current `revision` of one document, without loading its body.
+    pub(crate) fn document_revision(&self, id: &str) -> Result<Option<i64>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare_cached("SELECT revision FROM documents WHERE id = ?")?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// `(id, uri)` of one document, without loading its body.
+    pub(crate) fn document_id_and_uri(&self, id: &str) -> Result<Option<(String, String)>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare_cached("SELECT id, uri FROM documents WHERE id = ?")?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
+            None => Ok(None),
+        }
+    }
+
     /// `(id, uri, layer)` of every document ordered by `created_at`, without bodies.
     pub(crate) fn list_document_refs(&self) -> Result<Vec<DocumentRef>> {
         let conn = self.lock()?;
@@ -347,9 +369,11 @@ impl Store {
             [],
             |row| row.get(0),
         )?;
+        // Organize heuristics read titles, uris and paths only: skip bodies.
         let sql = format!(
-            "SELECT {DOCUMENT_SELECT} FROM documents WHERE {predicate} \
-             ORDER BY updated_at DESC, title ASC, id ASC LIMIT ?"
+            "SELECT {} FROM documents WHERE {predicate} \
+             ORDER BY updated_at DESC, title ASC, id ASC LIMIT ?",
+            document_select_without_body()
         );
         let mut statement = conn.prepare(&sql)?;
         let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
@@ -794,4 +818,10 @@ pub fn wiki_backlink_rows(target_id: &str, view: &crate::models::GraphView) -> V
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out.dedup_by(|a, b| a.1 == b.1);
     out
+}
+
+/// [`DOCUMENT_SELECT`] with an empty `content`, for listings that never read
+/// document bodies.
+fn document_select_without_body() -> String {
+    DOCUMENT_SELECT.replacen("content,", "'' AS content,", 1)
 }

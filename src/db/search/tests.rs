@@ -1256,3 +1256,70 @@ fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
         .reasons
         .contains(&"diversity_candidate_refill".into()));
 }
+
+#[test]
+fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("scoped-cache.duckdb")).unwrap();
+    let now = Utc::now();
+    for (id, wing) in [("inside", "research"), ("outside", "ops")] {
+        store
+            .upsert_document(&Document {
+                id: id.into(),
+                uri: format!("uri://{id}"),
+                title: id.into(),
+                content: format!("{id} body"),
+                metadata_json: "{}".into(),
+                created_at: now,
+                updated_at: now,
+                wing: Some(wing.into()),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .insert_chunks(&[Chunk {
+                id: format!("c-{id}"),
+                document_id: id.into(),
+                chunk_index: 0,
+                content: format!("{id} body"),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: 10,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+    }
+    let scoped = |store: &Store| {
+        let mut ids: Vec<String> = search(
+            store,
+            &SearchQuery {
+                mode: SearchMode::Vec,
+                top_k: 10,
+                query_embedding: Some(vec![1.0, 0.0]),
+                wing: Some("research".into()),
+                ..SearchQuery::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.document_id)
+        .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(scoped(&store), vec!["inside"]);
+
+    // A metadata-only move does not advance the chunk generation.
+    store
+        .update_document_placement(
+            "outside",
+            &crate::models::PlacementUpdate {
+                wing: Some("research".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .expect("moved");
+
+    assert_eq!(scoped(&store), vec!["inside", "outside"]);
+}

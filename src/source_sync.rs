@@ -211,17 +211,24 @@ struct SourceManifestRefresh {
 }
 
 impl SourceManifestRefresh {
-    fn commit(&self, store: &Store) -> Result<(), AppError> {
-        store.upsert_source_manifest(SourceManifestWrite {
+    fn write(&self) -> SourceManifestWrite<'_> {
+        SourceManifestWrite {
             canonical_path: &self.stamp.canonical_path,
             canonical_root: &self.stamp.canonical_root,
             size_bytes: self.stamp.size_bytes,
             mtime_ns: self.stamp.mtime_ns,
             content_hash: &self.content_hash,
             document_id: &self.document_id,
-        })
+        }
+    }
+
+    fn commit(&self, store: &Store) -> Result<(), AppError> {
+        store.upsert_source_manifest(self.write())
     }
 }
+
+/// Unchanged files whose manifest refreshes share one transaction.
+const SKIPPED_COMMIT_BATCH: usize = 256;
 
 enum BatchFlushOutcome {
     Completed(usize),
@@ -322,12 +329,17 @@ impl<'a> SourceSyncService<'a> {
         // (which shrank batches to one document in incremental re-syncs); once
         // the batch flushes, every file before this frontier is done.
         let mut handled_through = 0usize;
+        // Unchanged files, with the manifest refresh a touched-but-identical
+        // file needs. Refreshes commit together (one transaction per
+        // SKIPPED_COMMIT_BATCH files) instead of one autocommit per file.
+        let mut skipped: Vec<(String, Option<SourceManifestRefresh>)> = Vec::new();
         // Every early exit below reports the same cancelled outcome, and every
         // batch flush either completes (resetting the chunk budget) or cancels.
         macro_rules! cancelled {
-            ($processed:expr) => {
-                return Ok(cancelled_outcome(&control, report, total_files, $processed))
-            };
+            ($processed:expr) => {{
+                self.commit_skipped(&mut skipped, &mut report);
+                return Ok(cancelled_outcome(&control, report, total_files, $processed));
+            }};
         }
         macro_rules! flush_pending {
             () => {
@@ -396,15 +408,9 @@ impl<'a> SourceSyncService<'a> {
                     source_file,
                     manifest_refresh,
                 }) => {
-                    let result = manifest_refresh
-                        .as_ref()
-                        .map_or(Ok(()), |refresh| refresh.commit(self.store));
-                    match result {
-                        Ok(()) => report.skipped.push(source_file),
-                        Err(error) => report.errors.push(SourceSyncError {
-                            path: source_file,
-                            error: error.to_string(),
-                        }),
+                    skipped.push((source_file, manifest_refresh));
+                    if skipped.len() >= SKIPPED_COMMIT_BATCH {
+                        self.commit_skipped(&mut skipped, &mut report);
                     }
                     handled_through = index + 1;
                     if pending.is_empty() {
@@ -441,6 +447,7 @@ impl<'a> SourceSyncService<'a> {
                 BatchFlushOutcome::Cancelled(processed) => cancelled!(processed),
             }
         }
+        self.commit_skipped(&mut skipped, &mut report);
         if control.is_cancelled() {
             cancelled!(processed_files);
         }
@@ -629,6 +636,37 @@ impl<'a> SourceSyncService<'a> {
             source_file,
             prepared,
         })
+    }
+
+    /// Commit buffered manifest refreshes in one transaction and record the
+    /// files as skipped, in order. If the shared transaction fails, each
+    /// refresh is retried alone so one bad row fails only its own file.
+    fn commit_skipped(
+        &self,
+        skipped: &mut Vec<(String, Option<SourceManifestRefresh>)>,
+        report: &mut SourceSyncReport,
+    ) {
+        if skipped.is_empty() {
+            return;
+        }
+        let writes: Vec<SourceManifestWrite<'_>> = skipped
+            .iter()
+            .filter_map(|(_, refresh)| refresh.as_ref().map(SourceManifestRefresh::write))
+            .collect();
+        let batched = self.store.upsert_source_manifests(&writes).is_ok();
+        for (source_file, refresh) in skipped.drain(..) {
+            let result = match refresh {
+                Some(refresh) if !batched => refresh.commit(self.store),
+                _ => Ok(()),
+            };
+            match result {
+                Ok(()) => report.skipped.push(source_file),
+                Err(error) => report.errors.push(SourceSyncError {
+                    path: source_file,
+                    error: error.to_string(),
+                }),
+            }
+        }
     }
 
     async fn flush_pending_batch(

@@ -169,8 +169,10 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
         refs.dedup();
         return Ok(refs);
     }
-    let raws = store.list_documents_by_layer(LAYER_RAW)?;
-    let (ids, uris) = raw_lookups(&raws);
+    // One page cites few sources: resolve each reference on demand
+    // (`try_push_raw` falls back to id, then uri, lookups) instead of loading
+    // every raw document with its body.
+    let (ids, uris) = (RawLookup::new(), RawLookup::new());
     let mut result: Vec<(String, String)> = linked_raws_for_wiki(store, page, &ids, &uris)?
         .into_iter()
         .map(|(d, _)| (d.id.clone(), d.uri.clone()))
@@ -197,10 +199,8 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
                 &edge.source_id
             };
             if let Some(id) = node_documents.get(other.as_str()) {
-                if let Some(raw) = ids.get(id) {
-                    result.push((raw.id.clone(), raw.uri.clone()));
-                } else if let Some(source) = store.get_document(id)? {
-                    result.push((source.id, source.uri));
+                if let Some((id, uri)) = store.document_id_and_uri(id)? {
+                    result.push((id, uri));
                 }
             }
         }

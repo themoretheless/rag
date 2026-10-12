@@ -563,6 +563,45 @@ for the old and new binaries; recall and MRR are identical):
   next to the removed per-candidate queries. It also has to reflect live
   title/status changes that do not advance the chunk generation.
 
+### Performance re-audit
+
+An independent review checked the round's diff and looked for remaining hot
+spots.
+
+**Regression found and fixed:** the scoped vector-snapshot cache was keyed only
+on the chunk generation. Metadata-only writes do not advance that generation:
+placement, archive and restore. A document moved into a scope was therefore
+missing from that scope's vector results until the next chunk write. The
+cache now records which documents were in scope when it was built, and
+rebuilds when a document joins the scope. A regression test fails without the
+fix.
+
+**Further fixes**
+- Orphan checks (`find_orphans`, `prune_orphan_stubs`, `prune_orphan_tags`)
+  used a correlated `source_id = n.id OR target_id = n.id`, which DuckDB runs
+  as a nested loop. They now anti-join against `db::graph::INCIDENT_NODE_IDS`.
+  Measured 77 s → 35 ms on 20k nodes / 50k edges (debug build).
+- `Neighbors` context expansion reads only the `index ± radius` window.
+- Wiki review resolves a page's cited sources on demand, where it loaded every
+  raw document with its body.
+- `reembed_all` reads only the revision as its CAS token.
+- Source sync commits manifest refreshes for unchanged files in one transaction
+  per 256 files, retrying per file if that fails.
+- Organize suggestions skip document bodies and read first-chunk embeddings in
+  one query.
+
+**Kept, with the reason**
+- `find_exact_duplicates`: at most 50 indexed lookups through one prepared
+  statement, in a maintenance-only path.
+- Doctor repair, one document at a time: a rare repair path.
+- Lint column projections: maintenance only; the queries are already one pass.
+- `compiled_link_exists`: flagged as unconfirmed; it needs `EXPLAIN ANALYZE` on
+  a large corpus before any change.
+- Behaviour notes from the review that are accepted:
+  - Autocommit `insert_chunks` / `insert_graph_edges` now fail per 64-row batch
+    rather than per row.
+  - Compress plans from the strongest duplicate pairs.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit

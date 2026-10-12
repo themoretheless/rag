@@ -739,23 +739,40 @@ pub fn attach_context(
         return Ok(());
     };
 
-    // Several hits often come from one document: load its chunk bodies (no
-    // embeddings) and parse each chunk's section metadata once.
+    // Parent sections can span a whole document, so those load every chunk
+    // body once per document; neighbor windows read only `index ± radius`.
+    // Bodies never include embeddings, and section metadata is parsed once.
     type Sectioned = (ChunkBody, Option<Vec<String>>, Option<String>);
+    let sectioned = |bodies: Vec<ChunkBody>| -> Vec<Sectioned> {
+        bodies
+            .into_iter()
+            .map(|chunk| {
+                let (path, section) = section_metadata(&chunk.metadata_json);
+                (chunk, path, section)
+            })
+            .collect()
+    };
+    let radius = neighbor_chunks.max(1) as i32;
     let mut chunks_by_document: HashMap<String, Vec<Sectioned>> = HashMap::new();
+    let mut window: Vec<Sectioned>;
     for hit in hits {
-        if !chunks_by_document.contains_key(&hit.document_id) {
-            let loaded = store
-                .list_chunk_bodies_for_document(&hit.document_id)?
-                .into_iter()
-                .map(|chunk| {
-                    let (path, section) = section_metadata(&chunk.metadata_json);
-                    (chunk, path, section)
-                })
-                .collect();
-            chunks_by_document.insert(hit.document_id.clone(), loaded);
-        }
-        let chunks = &chunks_by_document[&hit.document_id];
+        let chunks: &Vec<Sectioned> = match expansion {
+            ContextExpansion::ParentSection => {
+                if !chunks_by_document.contains_key(&hit.document_id) {
+                    let loaded = sectioned(store.list_chunk_bodies_for_document(&hit.document_id)?);
+                    chunks_by_document.insert(hit.document_id.clone(), loaded);
+                }
+                &chunks_by_document[&hit.document_id]
+            }
+            ContextExpansion::Neighbors => {
+                window = sectioned(store.list_chunk_bodies_in_range(
+                    &hit.document_id,
+                    hit.chunk_index.saturating_sub(radius),
+                    hit.chunk_index.saturating_add(radius),
+                )?);
+                &window
+            }
+        };
         let Some((current, heading_path, section)) =
             chunks.iter().find(|(c, _, _)| c.id == hit.chunk_id)
         else {
@@ -766,7 +783,6 @@ pub fn attach_context(
 
         let selected: Vec<&Sectioned> = match expansion {
             ContextExpansion::Neighbors => {
-                let radius = neighbor_chunks.max(1) as i32;
                 chunks
                     .iter()
                     .filter(|(c, _, _)| (c.chunk_index - current.chunk_index).abs() <= radius)
@@ -1048,6 +1064,9 @@ fn vector_search_inputs(
 ) -> Result<(Arc<VectorSnapshot>, VectorDocumentLookup)> {
     let conn = store.lock()?;
     let generation = fts::chunks_generation(&conn)?;
+    // Read live: metadata-only writes (placement, archive, restore) change the
+    // scope membership without advancing the chunk generation.
+    let documents = load_vector_documents(&conn, filters)?;
     let key = store.path().to_path_buf();
     // A database-wide snapshot already built for this generation serves any
     // scope: `search_vec` skips chunks whose document is outside the scope.
@@ -1059,16 +1078,20 @@ fn vector_search_inputs(
             // matching chunks. Do not populate the database-wide cache:
             // unrelated source-sync commits advance the global generation
             // continuously. The last scope per store is cached instead, so
-            // candidate refill rounds and multi-query fan-out reuse it.
+            // candidate refill rounds and multi-query fan-out reuse it. It is
+            // reused only while every document now in scope was in scope when
+            // it was built; a document moved into the scope forces a rebuild.
             let scope = filters.scope_where_clause("d.id");
             let scoped = scoped_vector_snapshots()
                 .lock()
                 .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
                 .get(&key)
-                .filter(|(cached_scope, snapshot)| {
-                    *cached_scope == scope && snapshot.generation == generation
+                .filter(|entry| {
+                    entry.scope == scope
+                        && entry.snapshot.generation == generation
+                        && documents.keys().all(|id| entry.documents.contains(id))
                 })
-                .map(|(_, snapshot)| snapshot.clone());
+                .map(|entry| entry.snapshot.clone());
             match scoped {
                 Some(snapshot) => snapshot,
                 None => {
@@ -1082,7 +1105,14 @@ fn vector_search_inputs(
                         .map_err(|error| {
                             AppError::db(format!("vector snapshot lock poisoned: {error}"))
                         })?
-                        .insert(key, (scope, snapshot.clone()));
+                        .insert(
+                            key,
+                            ScopedVectorSnapshot {
+                                scope,
+                                documents: documents.keys().cloned().collect(),
+                                snapshot: snapshot.clone(),
+                            },
+                        );
                     snapshot
                 }
             }
@@ -1096,7 +1126,6 @@ fn vector_search_inputs(
             snapshot
         }
     };
-    let documents = load_vector_documents(&conn, filters)?;
     Ok((snapshot, documents))
 }
 
@@ -1116,8 +1145,14 @@ fn vector_snapshots() -> &'static Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>> {
     VECTOR_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Scope key (SQL clause plus binds) and snapshot of the last scoped search.
-type ScopedVectorSnapshot = ((String, Vec<String>), Arc<VectorSnapshot>);
+/// The last scoped search's snapshot, with the scope it was built for.
+struct ScopedVectorSnapshot {
+    /// Scope SQL clause plus binds.
+    scope: (String, Vec<String>),
+    /// Documents in scope when the snapshot was built.
+    documents: HashSet<String>,
+    snapshot: Arc<VectorSnapshot>,
+}
 
 fn scoped_vector_snapshots() -> &'static Mutex<HashMap<PathBuf, ScopedVectorSnapshot>> {
     static SCOPED: OnceLock<Mutex<HashMap<PathBuf, ScopedVectorSnapshot>>> = OnceLock::new();

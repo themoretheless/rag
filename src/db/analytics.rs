@@ -228,18 +228,18 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
     let conn = store.lock()?;
 
     // Nodes with no incident edges.
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         r#"
         SELECT n.id, n.document_id, n.kind, n.label
         FROM graph_nodes n
         WHERE NOT EXISTS (
-            SELECT 1 FROM graph_edges e
-            WHERE e.source_id = n.id OR e.target_id = n.id
+            SELECT 1 FROM ({incident}) AS incident WHERE incident.id = n.id
         )
         ORDER BY n.kind ASC, n.label ASC
         LIMIT 200
         "#,
-    )?;
+        incident = crate::db::graph::INCIDENT_NODE_IDS,
+    ))?;
     let mut rows = stmt.query([])?;
     let mut orphan_nodes = Vec::new();
     crate::db::rows::try_visit_rows(&mut rows, |row| {
@@ -259,7 +259,7 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
     drop(stmt);
 
     // Wiki documents whose graph node (if any) has degree 0, or no node at all.
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         r#"
         SELECT d.id, d.title, d.layer, n.id
         FROM documents d
@@ -268,14 +268,14 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
           AND (
             n.id IS NULL
             OR NOT EXISTS (
-              SELECT 1 FROM graph_edges e
-              WHERE e.source_id = n.id OR e.target_id = n.id
+              SELECT 1 FROM ({incident}) AS incident WHERE incident.id = n.id
             )
           )
         ORDER BY d.title ASC
         LIMIT 200
         "#,
-    )?;
+        incident = crate::db::graph::INCIDENT_NODE_IDS,
+    ))?;
     let mut rows = stmt.query([])?;
     let mut orphan_wiki = Vec::new();
     crate::db::rows::try_visit_rows(&mut rows, |row| {

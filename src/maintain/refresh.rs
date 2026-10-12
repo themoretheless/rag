@@ -669,13 +669,14 @@ struct PendingReembed {
 }
 
 fn load_reembed_document(store: &Store, document_id: &str) -> Result<PendingReembed> {
-    let doc = store
-        .get_document(document_id)?
+    // The revision is the CAS token; the document body is never needed.
+    let revision = store
+        .document_revision(document_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-    let chunks = store.list_chunks_for_document(&doc.id)?;
+    let chunks = store.list_chunks_for_document(document_id)?;
     Ok(PendingReembed {
-        document_id: doc.id,
-        revision: doc.revision,
+        document_id: document_id.to_string(),
+        revision,
         chunks,
     })
 }

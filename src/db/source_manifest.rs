@@ -198,6 +198,19 @@ impl Store {
         upsert_source_manifest_locked(&conn, entry)
     }
 
+    /// Upsert several manifest rows in one transaction (all or nothing).
+    pub fn upsert_source_manifests(&self, entries: &[SourceManifestWrite<'_>]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.with_tx(|tx| {
+            for entry in entries {
+                upsert_source_manifest_locked(tx, *entry)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Update `last_seen` for a scanned root in bounded batches, without one
     /// connection acquisition/query per file.
     pub fn mark_source_manifest_seen(

@@ -768,13 +768,8 @@ fn first_chunk_embeddings(
     store: &Store,
     documents: &[Document],
 ) -> Result<BTreeMap<String, Vec<f32>>> {
-    let mut first: BTreeMap<String, Vec<f32>> = BTreeMap::new();
-    for document in documents {
-        if let Some(embedding) = store.first_chunk_embedding(&document.id)? {
-            first.insert(document.id.clone(), embedding);
-        }
-    }
-    Ok(first)
+    let ids: Vec<&str> = documents.iter().map(|document| document.id.as_str()).collect();
+    store.first_chunk_embeddings(&ids)
 }
 
 fn path_segments(path: &str) -> Vec<String> {

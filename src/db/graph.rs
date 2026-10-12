@@ -494,15 +494,17 @@ impl Store {
     pub fn prune_orphan_stubs(&self) -> Result<usize> {
         let conn = self.lock()?;
         let deleted = conn.execute(
-            r#"
+            &format!(
+                r#"
             DELETE FROM graph_nodes AS node
             WHERE node.kind = 'stub'
               AND NOT node.resolved
               AND NOT EXISTS (
-                SELECT 1 FROM graph_edges AS edge
-                WHERE edge.source_id = node.id OR edge.target_id = node.id
+                SELECT 1 FROM ({INCIDENT_NODE_IDS}) AS incident
+                WHERE incident.id = node.id
               )
-            "#,
+            "#
+            ),
             [],
         )?;
         Ok(deleted)
@@ -512,14 +514,16 @@ impl Store {
     pub fn prune_orphan_tags(&self) -> Result<usize> {
         let conn = self.lock()?;
         let deleted = conn.execute(
-            r#"
+            &format!(
+                r#"
             DELETE FROM graph_nodes AS node
             WHERE node.kind = 'tag'
               AND NOT EXISTS (
-                SELECT 1 FROM graph_edges AS edge
-                WHERE edge.source_id = node.id OR edge.target_id = node.id
+                SELECT 1 FROM ({INCIDENT_NODE_IDS}) AS incident
+                WHERE incident.id = node.id
               )
-            "#,
+            "#
+            ),
             [],
         )?;
         Ok(deleted)
@@ -528,6 +532,14 @@ impl Store {
     // --- Tunnels (`rel_type = tunnel`) ---
 
 }
+
+/// Ids of every node with at least one incident edge.
+///
+/// Orphan checks anti-join against this instead of a correlated
+/// `source_id = n.id OR target_id = n.id`, which DuckDB cannot hash-join:
+/// measured 77 s vs 35 ms on 20k nodes / 50k edges (debug build).
+pub(crate) const INCIDENT_NODE_IDS: &str =
+    "SELECT source_id AS id FROM graph_edges UNION SELECT target_id FROM graph_edges";
 
 /// Inline a server-owned name list as a SQL `IN (…)` literal list.
 ///
