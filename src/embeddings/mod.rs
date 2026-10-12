@@ -64,7 +64,7 @@ pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
         EmbeddingProviderKind::OpenAi => {
             let provider = OpenAiEmbedder::new(
                 config.embedding_base_url.clone(),
-                config.embedding_api_key.clone(),
+                config.embedding_api_key.expose().to_string(),
                 config.embedding_model.clone(),
                 config.embedding_dims,
             )?;
@@ -76,7 +76,7 @@ pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
             if ollama::prefers_openai_compat_path(&config.embedding_base_url) {
                 let provider = OpenAiEmbedder::new(
                     config.embedding_base_url.clone(),
-                    config.embedding_api_key.clone(),
+                    config.embedding_api_key.expose().to_string(),
                     config.embedding_model.clone(),
                     config.embedding_dims,
                 )?;

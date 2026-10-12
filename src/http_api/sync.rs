@@ -199,7 +199,7 @@ pub(super) fn spawn_worker(st: HttpState) {
     };
     let interval_secs = st.config.sync_interval_secs;
     let mut headers = reqwest::header::HeaderMap::new();
-    if let Ok(token) = std::env::var("RAG_PRIMARY_TOKEN") {
+    if let Some(token) = st.config.sync_primary_token.as_ref().map(|t| t.expose()) {
         let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
         else {
             tracing::error!("RAG_PRIMARY_TOKEN is not a valid credential header");

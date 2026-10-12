@@ -151,7 +151,7 @@ impl ChatClient {
         Self::with_provider(
             config.llm_provider,
             config.llm_base_url.as_str(),
-            config.llm_api_key.as_str(),
+            config.llm_api_key.expose(),
             config.llm_model.as_str(),
             config.llm_timeout_secs,
             max_tokens,

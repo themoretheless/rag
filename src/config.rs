@@ -53,7 +53,7 @@ pub struct Config {
     pub db_path: PathBuf,
     pub embedding_provider: EmbeddingProviderKind,
     pub embedding_base_url: String,
-    pub embedding_api_key: String,
+    pub embedding_api_key: Secret,
     pub embedding_model: String,
     pub embedding_dims: usize,
     pub chunk_size: usize,
@@ -76,7 +76,7 @@ pub struct Config {
     /// Chat model name (provider default unless `RAG_LLM_MODEL` set).
     pub llm_model: String,
     /// API key (`RAG_LLM_API_KEY` or provider-specific env; see docs/LLM_PROVIDERS.md).
-    pub llm_api_key: String,
+    pub llm_api_key: Secret,
     /// When false, compile_source / chat tools refuse with a clear error.
     pub llm_enabled: bool,
     /// HTTP timeout for chat/completions (`RAG_LLM_TIMEOUT_SECS`, default **120**).
@@ -138,6 +138,8 @@ pub struct Config {
     pub sync_node_id: Option<String>,
     /// Primary to replicate from; `None` makes this node the primary. Env: `RAG_PRIMARY_URL`.
     pub sync_primary_url: Option<String>,
+    /// Bearer token sent to the primary. Env: `RAG_PRIMARY_TOKEN`.
+    pub sync_primary_token: Option<Secret>,
 }
 
 /// Which tools are advertised and callable.
@@ -209,7 +211,7 @@ impl Default for Config {
             db_path: PathBuf::from("./rag.duckdb"),
             embedding_provider: EmbeddingProviderKind::Mock,
             embedding_base_url: "https://api.openai.com/v1".to_string(),
-            embedding_api_key: String::new(),
+            embedding_api_key: Secret::default(),
             embedding_model: "text-embedding-3-small".to_string(),
             embedding_dims: 1536,
             chunk_size: 800,
@@ -223,7 +225,7 @@ impl Default for Config {
             llm_provider,
             llm_base_url: llm_provider.default_base_url().to_string(),
             llm_model: llm_provider.default_model().to_string(),
-            llm_api_key: String::new(),
+            llm_api_key: Secret::default(),
             llm_enabled: true,
             llm_timeout_secs: 120,
             llm_max_tokens: 4096,
@@ -251,7 +253,43 @@ impl Default for Config {
             call_log_capacity: crate::telemetry::DEFAULT_CAPACITY,
             sync_node_id: None,
             sync_primary_url: None,
+            sync_primary_token: None,
         }
+    }
+}
+
+/// A credential held in `Config`. `Debug` prints `"***"` (or `""` when empty)
+/// so a logged `Config` never reveals keys or tokens; use [`Secret::expose`]
+/// at the one place that sends it.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Secret(String);
+
+impl Secret {
+    /// The raw credential, for the request that needs it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() { "\"\"" } else { "\"***\"" })
+    }
+}
+
+impl From<String> for Secret {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
     }
 }
 
@@ -288,7 +326,7 @@ impl Config {
     /// `Config { db_path, embedding_dims: 32, llm_enabled: false, ..Config::for_tests() }`.
     pub fn for_tests() -> Self {
         Self {
-            llm_api_key: "ollama".to_string(),
+            llm_api_key: Secret::from("ollama"),
             tool_surface: ToolSurface::Full,
             wiki_require_if_match: false,
             ..Self::default()
@@ -359,7 +397,7 @@ impl Config {
         let llm_model =
             env::var("RAG_LLM_MODEL").unwrap_or_else(|_| llm_provider.default_model().to_string());
         let llm_api_key_raw = env::var("RAG_LLM_API_KEY").unwrap_or_default();
-        let llm_api_key = resolve_api_key(llm_provider, &llm_api_key_raw);
+        let llm_api_key = Secret::from(resolve_api_key(llm_provider, &llm_api_key_raw));
         let llm_enabled = parse_bool_env("RAG_LLM_ENABLED", true)?;
         let llm_timeout_secs = parse_u64("RAG_LLM_TIMEOUT_SECS", "120")?;
         let llm_max_tokens = parse_usize("RAG_LLM_MAX_TOKENS", "4096")?;
@@ -436,6 +474,7 @@ impl Config {
             positive_usize("RAG_CALL_LOG_CAPACITY", crate::telemetry::DEFAULT_CAPACITY);
         let sync_node_id = env::var("RAG_NODE_ID").ok();
         let sync_primary_url = env::var("RAG_PRIMARY_URL").ok();
+        let sync_primary_token = env::var("RAG_PRIMARY_TOKEN").ok().map(Secret::from);
 
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
@@ -443,9 +482,9 @@ impl Config {
                 || (embedding_provider == EmbeddingProviderKind::OpenAi
                     && is_local_openai_base(&embedding_base_url)))
         {
-            "ollama".to_string()
+            Secret::from("ollama")
         } else {
-            embedding_api_key
+            Secret::from(embedding_api_key)
         };
 
         let config = Self {
@@ -494,6 +533,7 @@ impl Config {
             call_log_capacity,
             sync_node_id,
             sync_primary_url,
+            sync_primary_token,
         };
         config.validate()?;
         Ok(config)
@@ -537,7 +577,7 @@ impl Config {
         }
 
         if self.embedding_provider == EmbeddingProviderKind::OpenAi
-            && self.embedding_api_key.trim().is_empty()
+            && self.embedding_api_key.expose().trim().is_empty()
             && !is_local_openai_base(&self.embedding_base_url)
         {
             return Err(AppError::config(
@@ -572,7 +612,7 @@ impl Config {
                     "RAG_LLM_MODEL must be non-empty when RAG_LLM_ENABLED=true",
                 ));
             }
-            if !self.llm_provider.allows_empty_api_key() && self.llm_api_key.trim().is_empty() {
+            if !self.llm_provider.allows_empty_api_key() && self.llm_api_key.expose().trim().is_empty() {
                 return Err(AppError::config(format!(
                     "RAG_LLM_API_KEY (or provider key env) required when RAG_LLM_PROVIDER={}",
                     self.llm_provider.as_str()
@@ -847,5 +887,17 @@ mod tests {
             vec!["/a".to_string(), "/b".to_string()]
         );
         assert!(super::parse_auto_sync_roots("  ").is_empty());
+    }
+
+    #[test]
+    fn secrets_are_redacted_in_config_debug() {
+        let config = super::Config {
+            llm_api_key: "sk-live-123".into(),
+            sync_primary_token: Some("tok-456".into()),
+            ..super::Config::for_tests()
+        };
+        let printed = format!("{config:?}");
+        assert!(!printed.contains("sk-live-123") && !printed.contains("tok-456"), "{printed}");
+        assert_eq!(config.llm_api_key.expose(), "sk-live-123");
     }
 }

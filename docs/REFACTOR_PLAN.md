@@ -370,12 +370,14 @@ are fixed too:
   HTTP handler is a thin adapter. MCP keeps its separate create/update tools.
 - 3.3 done: `db::EmbeddingIdentity` replaces `Config` in the store's manifest
   functions; `db` no longer imports `config`.
-- 3.2: `RAG_HTTP_ALLOWED_HOSTS`, `RAG_AUTO_SYNC_*`, `RAG_EVAL_HISTORY`,
+- 3.2 done: credentials (`RAG_*_API_KEY`, `RAG_PRIMARY_TOKEN`) are
+  `config::Secret`, whose `Debug` prints `***`, so a logged `Config` no longer
+  reveals them. `RAG_HTTP_ALLOWED_HOSTS`, `RAG_AUTO_SYNC_*`, `RAG_EVAL_HISTORY`,
   `RAG_NODE_NAME`, `RAG_SYNC_INTERVAL_SECS`, `RAG_STORAGE_BACKEND`,
   `RAG_VAULT_PATH`, `RAG_PID_FILE`, `RAG_WAL_WARN_BYTES`,
   `RAG_STARTUP_WARN_MS`, `RAG_AUTO_BACKUP_*`, `RAG_MAX_LINKS_PER_DOC`,
   `RAG_CALL_LOG_CAPACITY`, `RAG_NODE_ID`, `RAG_PRIMARY_URL` and
-  `RAG_INGEST_ROOTS` are read by
+  `RAG_INGEST_ROOTS` and `RAG_PRIMARY_TOKEN` are read by
   `Config::from_env`.
 - 4.4 done: `Store::lock` is `pub(in crate::db)` outside tests. Former callers
   use `db::{payload_kv, analytics, knowledge, chunk_text, review,
@@ -403,7 +405,6 @@ are fixed too:
 
 | Item | Why it stops here |
 |------|-------------------|
-| 3.2 `RAG_PRIMARY_TOKEN` | The one remaining read outside `config.rs`, kept on purpose: `Config` derives `Debug`, so a credential stored there would reach logs. |
 | 4.1 query helpers, rest of 4.3 | ~90 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
 | 5.8 typed document `kind` | Graph node kinds are typed (`rag_mcp_core::NodeKind`, shared by server and UI) and `status` has named constants. A document's page `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
 | 6.2 merging the tolerant pairs | `ActivityEvent` moved to core. `JobSnapshot`, `ProjectHome` and `SearchHit` stay separate on purpose (string timestamps, field subsets so the UI survives server drift); `crates/rag-mcp-ui/src/wire_contract.rs` serializes the server type and requires the UI copy to read it. |
@@ -424,7 +425,7 @@ are fixed too:
 | Operations implemented in both transports without a shared service | ~8 | 0 | 0 |
 | `fn test_config` bodies not built on `Config::for_tests()` | 11 | 0 | 0 |
 | Integration-test binaries linking DuckDB | 8 | 1 | 1–2 |
-| `RAG_*` env reads outside `config.rs` | ~30 | 1 (`RAG_PRIMARY_TOKEN`, by design) | 0 |
+| `RAG_*` env reads outside `config.rs` | ~30 | 0 | 0 |
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
 | Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~3.3k | < 2k |
 | Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |
