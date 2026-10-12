@@ -156,7 +156,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     }
 
     // Unresolved stubs in graph (include who links + expected label)
-    for n in graph.nodes.iter().filter(|n| n.kind == "stub") {
+    for n in graph.nodes.iter().filter(|n| crate::models::NodeKind::Stub.is(&n.kind)) {
         if !n.resolved {
             health.unresolved_targets += 1;
             let bl = store

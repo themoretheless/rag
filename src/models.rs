@@ -612,7 +612,7 @@ pub struct VacuumStoreReport {
 }
 
 pub use rag_mcp_core::{
-    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer,
+    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind,
     PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
 
@@ -643,55 +643,15 @@ pub struct EdgeCutRow {
     pub count: u64,
 }
 
-/// Node kinds — see `GRAPH_DESIGN.md` §1.1.
-///
-/// Store columns stay `VARCHAR` for adapter portability, so the wire form is a
-/// string and these enums are the validation/parse boundary (§1.1: reject
-/// unknown at the MCP/store boundary).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeKind {
-    /// Backed by a live `documents` row.
-    Document,
-    /// Classification hub; never a wikilink target.
-    Tag,
-    /// Unresolved wikilink target.
-    Stub,
-    /// Reserved for compiled entity pages.
-    Entity,
-}
-
-impl NodeKind {
-    /// Accepted wire strings.
-    pub const WIRE: &'static [&'static str] = &["document", "tag", "stub", "entity"];
-
-    /// Wire string for this kind.
-    pub fn as_wire(self) -> &'static str {
-        match self {
-            Self::Document => "document",
-            Self::Tag => "tag",
-            Self::Stub => "stub",
-            Self::Entity => "entity",
-        }
-    }
-
-    /// True when `raw` is a known wire string.
-    pub fn is_wire(raw: &str) -> bool {
-        Self::WIRE.contains(&raw)
-    }
-
-    /// Parse a wire string, rejecting unknown kinds.
-    pub fn parse(raw: &str) -> crate::error::Result<Self> {
-        match raw {
-            "document" => Ok(Self::Document),
-            "tag" => Ok(Self::Tag),
-            "stub" => Ok(Self::Stub),
-            "entity" => Ok(Self::Entity),
-            other => Err(crate::error::AppError::config(format!(
-                "invalid node kind '{other}': expected one of {}",
-                Self::WIRE.join(", ")
-            ))),
-        }
-    }
+/// Parse a node kind at the MCP/store boundary, rejecting unknown values
+/// (`GRAPH_DESIGN.md` §1.1). The enum itself lives in `rag_mcp_core`.
+pub fn parse_node_kind(raw: &str) -> crate::error::Result<NodeKind> {
+    NodeKind::parse(raw).ok_or_else(|| {
+        crate::error::AppError::config(format!(
+            "invalid node kind '{raw}': expected one of {}",
+            NodeKind::WIRE.join(", ")
+        ))
+    })
 }
 
 /// Edge relation types — see `GRAPH_DESIGN.md` §1.1/§2.

@@ -153,10 +153,10 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .nodes
         .iter()
         .filter(|node| {
-            node.kind == "stub"
+            rag_mcp_core::NodeKind::Stub.is(&node.kind)
                 || !node.resolved
                 || !all_edge_ids.contains(node.id.as_str())
-                || (node.kind == "tag" && suspicious_tag_label(&node.label))
+                || (rag_mcp_core::NodeKind::Tag.is(&node.kind) && suspicious_tag_label(&node.label))
         })
         .map(|node| node.id.as_str())
         .collect();
@@ -195,7 +195,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let anchors: HashSet<&str> = kind_visible
         .iter()
         .filter(|node| {
-            node.kind == "document" && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
+            rag_mcp_core::NodeKind::Document.is(&node.kind) && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
         })
         .map(|node| node.id.as_str())
         .collect();
@@ -612,7 +612,7 @@ fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition 
     }
 
     if missing_placement {
-        if node.kind == "document" {
+        if rag_mcp_core::NodeKind::Document.is(&node.kind) {
             ScopeDisposition::Excluded
         } else {
             ScopeDisposition::Companion

@@ -54,10 +54,10 @@ pub fn draw_detail(
 
     draw_node_fields(ui, node);
 
-    if node.kind == "stub" || !node.resolved {
+    if rag_mcp_core::NodeKind::Stub.is(&node.kind) || !node.resolved {
         ui.add_space(6.0);
         draw_stub_diagnostic(ui, graph, node);
-    } else if node.kind == "tag" && suspicious_tag_label(&node.label) {
+    } else if rag_mcp_core::NodeKind::Tag.is(&node.kind) && suspicious_tag_label(&node.label) {
         ui.add_space(6.0);
         draw_suspicious_tag_diagnostic(ui, graph, node);
     }

@@ -379,8 +379,10 @@ are fixed too:
   graph::resolve}` or `Store` methods (`reindex_fts`, `chunks_generation`,
   `set_document_tags`, `checkpoint`). `payload_kv::with_session` gives
   read-modify-write callers one lock without exposing the connection.
-- 5.8 partial: `rag_mcp_core::Layer` names the layer values; constants and
-  production comparisons use it. Stored values and JSON stay strings.
+- 5.8: `rag_mcp_core::Layer` and `rag_mcp_core::NodeKind` name the layer and
+  graph-node values; production comparisons in server and UI use them, and the
+  server's former `models::NodeKind` copy is gone. Stored values and JSON stay
+  strings.
 - 5.9 done: status/doctor/LLM-status reports live in `diagnostics`,
   `WakeUpReport` in `diary`; the crate root still re-exports them.
 - 6.3 done as inherent methods: `LoadSource::{wiki_catalog, document,
@@ -401,7 +403,7 @@ are fixed too:
 | 3.2 `RAG_PRIMARY_TOKEN` | The one remaining read outside `config.rs`, kept on purpose: `Config` derives `Debug`, so a credential stored there would reach logs. |
 | 3.5 HTTP route roles | Unknown routes already default to Admin (fail-closed), so a missing entry cannot widen access. |
 | 4.1 query helpers, rest of 4.3 | ~90 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
-| 5.8 typed `kind`/`status` | `status` already has named constants; `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
+| 5.8 typed document `kind` | Graph node kinds are typed (`rag_mcp_core::NodeKind`, shared by server and UI) and `status` has named constants. A document's page `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
 | 6.2 merging the tolerant pairs | `ActivityEvent` moved to core. `JobSnapshot`, `ProjectHome` and `SearchHit` stay separate on purpose (string timestamps, field subsets so the UI survives server drift); `crates/rag-mcp-ui/src/wire_contract.rs` serializes the server type and requires the UI copy to read it. |
 | 6.6 more crates | `rag-mcp-core` already lets clients avoid the server crate. Splitting `db` or `wiki` into crates would need their `Config`/LLM seams to be crate-public first, and no second consumer exists. |
 

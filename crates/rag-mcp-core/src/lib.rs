@@ -74,6 +74,44 @@ pub struct ActivityEvent {
     pub request_id: Option<String>,
 }
 
+/// Graph node kinds. Stored and sent as plain strings; this type names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeKind {
+    /// A stored document (raw, wiki, ...).
+    Document,
+    /// A `#tag` hub.
+    Tag,
+    /// An unresolved `[[link]]` target.
+    Stub,
+    /// A named entity from the knowledge graph.
+    Entity,
+}
+
+impl NodeKind {
+    /// Accepted wire strings (`GRAPH_DESIGN.md` §1.1).
+    pub const WIRE: &'static [&'static str] = &["document", "tag", "stub", "entity"];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Tag => "tag",
+            Self::Stub => "stub",
+            Self::Entity => "entity",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [Self::Document, Self::Tag, Self::Stub, Self::Entity]
+            .into_iter()
+            .find(|kind| kind.as_str() == value)
+    }
+
+    /// True when `value` is exactly this kind's wire string.
+    pub fn is(self, value: &str) -> bool {
+        self.as_str() == value
+    }
+}
+
 /// Object-graph node (document, tag, stub, or entity).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
@@ -252,5 +290,19 @@ mod tests {
         }
         assert_eq!(Layer::parse("Wiki"), None);
         assert!(Layer::Raw.is("raw"));
+    }
+
+    #[test]
+    fn node_kind_round_trips_wire_strings() {
+        use super::NodeKind;
+        for kind in [
+            NodeKind::Document,
+            NodeKind::Tag,
+            NodeKind::Stub,
+            NodeKind::Entity,
+        ] {
+            assert_eq!(NodeKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(NodeKind::parse("wiki"), None);
     }
 }

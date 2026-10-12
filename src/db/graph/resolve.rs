@@ -16,7 +16,7 @@ use crate::error::Result;
 use crate::graph::extract::{
     extract_links_with, ExtractOptions, ExtractedLink, DEFAULT_MAX_LINKS_PER_DOC,
 };
-use crate::models::{Document, GraphEdge, GraphNode};
+use crate::models::{Document, GraphEdge, GraphNode, NodeKind};
 use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 
 /// Rebuild the object-graph slice for `doc`.
@@ -368,7 +368,7 @@ fn owned_by_other_document(node: &GraphNode, document_id: &str) -> bool {
 /// must not be stolen by title match.
 fn promotable_as_document(node: &GraphNode, document_id: &str) -> bool {
     !matches!(node.kind.as_str(), "tag" | "entity")
-        && (node.kind == "stub" || !node.resolved)
+        && (NodeKind::Stub.is(&node.kind) || !node.resolved)
         && !owned_by_other_document(node, document_id)
 }
 
@@ -424,7 +424,7 @@ pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> 
     // normalized label instead of minting a second hub for the same tag.
     if let Some(node) = find_nodes_by_label(conn, label)?
         .into_iter()
-        .find(|n| n.kind == "tag")
+        .find(|n| NodeKind::Tag.is(&n.kind))
     {
         return Ok(node.id);
     }
@@ -514,7 +514,7 @@ fn pick_wikilink_node(matches: &[GraphNode]) -> Option<&GraphNode> {
     // look like a note.
     let mut documents = matches
         .iter()
-        .filter(|n| n.kind == "document" && n.resolved);
+        .filter(|n| NodeKind::Document.is(&n.kind) && n.resolved);
     let document = documents.next()?;
     if documents.next().is_some() {
         // Two documents share one label_key: that is ambiguity, not a match. Stay
@@ -527,7 +527,7 @@ fn pick_wikilink_node(matches: &[GraphNode]) -> Option<&GraphNode> {
 /// Existing promotion target for a wikilink: an unresolved stub-like node. Both
 /// tag and structural-entity nodes carry `resolved = true`, so they never match.
 fn pick_stub_node(matches: &[GraphNode]) -> Option<&GraphNode> {
-    matches.iter().find(|n| n.kind == "stub" || !n.resolved)
+    matches.iter().find(|n| NodeKind::Stub.is(&n.kind) || !n.resolved)
 }
 
 fn upsert_stub(conn: &Connection, label: &str) -> Result<String> {

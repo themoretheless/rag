@@ -168,11 +168,11 @@ impl Store {
             }
             if let Some(pos) = nodes
                 .iter()
-                .position(|n| n.kind == "document" && n.resolved)
+                .position(|n| NodeKind::Document.is(&n.kind) && n.resolved)
             {
                 return Ok(Some(nodes.swap_remove(pos)));
             }
-            if let Some(pos) = nodes.iter().position(|n| n.kind == "document") {
+            if let Some(pos) = nodes.iter().position(|n| NodeKind::Document.is(&n.kind)) {
                 return Ok(Some(nodes.swap_remove(pos)));
             }
             return Ok(Some(nodes.swap_remove(0)));
@@ -319,11 +319,11 @@ impl Store {
         }
         if let Some(pos) = nodes
             .iter()
-            .position(|n| n.kind == "document" && n.resolved)
+            .position(|n| NodeKind::Document.is(&n.kind) && n.resolved)
         {
             return Ok(Some(nodes.swap_remove(pos)));
         }
-        if let Some(pos) = nodes.iter().position(|n| n.kind == "document") {
+        if let Some(pos) = nodes.iter().position(|n| NodeKind::Document.is(&n.kind)) {
             return Ok(Some(nodes.swap_remove(pos)));
         }
         Ok(Some(nodes.swap_remove(0)))
@@ -1682,7 +1682,7 @@ pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNo
     };
     // §1.1: unknown kinds are rejected where the row is written, not silently
     // stored for a projection filter to miss later.
-    NodeKind::parse(&node.kind)?;
+    crate::models::parse_node_kind(&node.kind)?;
     conn.execute(
         r#"
         INSERT OR REPLACE INTO graph_nodes
