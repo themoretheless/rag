@@ -18,9 +18,10 @@ pub use crate::db::analytics::{
 };
 use crate::db::Store;
 use crate::diagnostics::DiagnosticsService;
+use crate::diagnostics::DoctorReport;
 use crate::embeddings::cosine_similarity;
 use crate::error::Result;
-use crate::models::{DoctorReport, OpsLogEntry};
+use crate::models::OpsLogEntry;
 
 /// Default age (days) after which an unresolved stub is "aging".
 const DEFAULT_STUB_AGE_DAYS: u32 = 14;
@@ -455,9 +456,9 @@ fn file_size_bytes(path: &Path) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};
     use crate::util::content_hash;
+    use chrono::Duration;
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf) -> Config {

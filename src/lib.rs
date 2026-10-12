@@ -62,14 +62,13 @@ pub use memory_lifecycle::{
     LifecycleMutationResult, STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_CONSOLIDATED,
 };
 pub use models::{
-    Chunk, DiaryEntry, DoctorReport, Document, DocumentFilter, DocumentMetaApplyResult,
-    DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult, DuplicateMatch, EdgeCutRow,
-    EmbeddingManifest, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, IndexQueryMatch, IndexQueryPage,
-    IndexQueryResult, IngestResult, KgFact, KgStats, LlmStatusReport, OpsLogEntry, PlacementUpdate,
-    RoomCount, SearchHit, SearchMode, Stats, StatusReport, Taxonomy, TaxonomyNode, TaxonomyRoom,
-    TaxonomyWing, VacuumStoreReport, WakeUpReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
-    pkb_node_kinds, pkb_rel_types, PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES,
-    WIKI_SEMANTIC_REL_TYPES,
+    pkb_node_kinds, pkb_rel_types, Chunk, DiaryEntry, Document, DocumentFilter,
+    DocumentMetaApplyResult, DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult,
+    DuplicateMatch, EdgeCutRow, EmbeddingManifest, GraphEdge, GraphFilter, GraphNode, GraphStats,
+    GraphView, IndexQueryMatch, IndexQueryPage, IndexQueryResult, IngestResult, KgFact, KgStats,
+    OpsLogEntry, PlacementUpdate, RoomCount, SearchHit, SearchMode, Stats, Taxonomy, TaxonomyNode,
+    TaxonomyRoom, TaxonomyWing, VacuumStoreReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
+    PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
 pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
 
@@ -111,6 +110,8 @@ pub use search_pack::{
 };
 
 // --- Maintenance (analyze / plan / apply / organize / compress / refresh) ---
+pub use diagnostics::{DoctorReport, LlmStatusReport, StatusReport};
+pub use diary::WakeUpReport;
 pub use maintain::{
     action_from_parts, analyze_corpus, apply_maintenance_plan, filter_plan, heuristic_plan,
     is_allowed_action, log_plan, maintain_compress, maintain_organize, maintain_refresh,

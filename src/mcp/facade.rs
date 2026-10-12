@@ -22,6 +22,7 @@ use super::tools::{CollectionEntryParams, SyncSourcesParams, UpdateDocumentMetaP
 use crate::config::Config;
 use crate::db::store::CorpusMutationGuard;
 use crate::db::Store;
+use crate::diagnostics::LlmStatusReport;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::ingest::{
@@ -29,7 +30,7 @@ use crate::ingest::{
     UpdateDocumentResult,
 };
 use crate::llm::ChatClient;
-use crate::models::{CollectionEntry, DocumentMetaUpdate, IngestResult, LlmStatusReport};
+use crate::models::{CollectionEntry, DocumentMetaUpdate, IngestResult};
 use crate::util::non_blank;
 
 /// RAG MCP server holding store, embedder, optional chat client, and config.
@@ -49,7 +50,6 @@ pub(super) struct FtsFinalizationOutcome {
     pub(super) guard: Option<CorpusMutationGuard>,
     pub(super) error: Option<String>,
 }
-
 
 /// Keep the exclusive corpus lane owned by detached blocking work.
 ///
@@ -213,7 +213,11 @@ impl RagServer {
     ///
     /// Use it for corpus-scale reads and writes (whole-graph views, deletes,
     /// index rebuilds) so a long query never stalls the async executor.
-    pub(super) async fn blocking<T, F>(&self, operation: &'static str, work: F) -> Result<T, AppError>
+    pub(super) async fn blocking<T, F>(
+        &self,
+        operation: &'static str,
+        work: F,
+    ) -> Result<T, AppError>
     where
         T: Send + 'static,
         F: FnOnce(&Store) -> Result<T, AppError> + Send + 'static,

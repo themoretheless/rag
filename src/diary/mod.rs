@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+use crate::diagnostics::StatusReport;
 use uuid::Uuid;
 
 use crate::chunking::{from_config, Chunker};
@@ -16,10 +18,30 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
 use crate::models::{
-    Chunk, DiaryEntry, Document, DrawerListItem, OpsLogEntry, StatusReport, WakeUpReport,
-    WakeUpSchemaSnippet,
+    Chunk, DiaryEntry, Document, DrawerListItem, OpsLogEntry, WakeUpSchemaSnippet,
 };
 use crate::util::content_hash;
+
+/// Session bootstrap payload for `wake_up` (MemPalace parity).
+///
+/// Combines store [`StatusReport`], recent diary notes, pinned documents, and
+/// an optional schema document (only when already present — not auto-seeded).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeUpReport {
+    pub status: StatusReport,
+    /// Recent diary entries for the requested agent (or all agents when unscoped).
+    #[serde(default)]
+    pub diary: Vec<DiaryEntry>,
+    /// Pinned active documents (list order: boost desc, updated_at desc).
+    #[serde(default)]
+    pub pinned: Vec<DrawerListItem>,
+    /// Schema conventions document when `schema://agents` (or layer=schema) exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<WakeUpSchemaSnippet>,
+    /// Agent name used for diary scope (`None` = all diary entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+}
 
 /// Document layer for agent diary notes.
 pub const LAYER_DIARY: &str = "diary";
@@ -394,7 +416,7 @@ async fn embed_and_store_chunks(
 mod tests {
     use super::*;
     use crate::embeddings::MockEmbedder;
-    
+
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf, dims: usize) -> Config {

@@ -13,11 +13,12 @@ use crate::db::recovery::{
 use crate::db::schema::SCHEMA_VERSION;
 use crate::db::search::SearchQuery;
 use crate::diagnostics::DiagnosticsService;
+use crate::diagnostics::{DoctorReport, StatusReport};
 use crate::embeddings::MockEmbedder;
 use crate::mcp::maintain::clamp_maintenance_max_docs;
 use crate::mcp::recovery::{prepare_recovery_bundle_for_import, LEGACY_RECOVERY_BUNDLE_VERSION};
 use crate::mcp::tools::*;
-use crate::models::{Chunk, DoctorReport, Document, SearchMode, StatusReport};
+use crate::models::{Chunk, Document, SearchMode};
 use crate::util::{check_path_allowlist, content_hash, parse_optional_timestamp};
 
 impl RagServer {

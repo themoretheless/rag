@@ -12,8 +12,8 @@ use super::analyze::AnalysisReport;
 use super::prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
 use crate::config::Config;
 use crate::db::Store;
-use crate::llm::json::{parse_embedded, strip_json_fences, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
+use crate::llm::json::{parse_embedded, strip_json_fences, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
 use crate::models::OpsLogEntry;
 
@@ -656,7 +656,6 @@ pub fn action_from_parts(
     .into_validated()
 }
 
-
 // ---------------------------------------------------------------------------
 // Heuristic + LLM planners
 // ---------------------------------------------------------------------------
@@ -997,7 +996,6 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
     Ok(())
 }
 
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1005,11 +1003,11 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::DoctorReport;
     use crate::maintain::analyze::{
         AnalysisIssue, ArchiveCandidate, CorpusCounts, DuplicateGroup, EmbedMismatchInfo,
         NearDuplicatePair, SizeStats, StaleWikiPage,
     };
-    use crate::models::DoctorReport;
 
     /// In-process LLM double: no HTTP server, fixed model output.
     struct ScriptedLlm(&'static str);
@@ -1040,9 +1038,14 @@ mod tests {
             llm_enabled: true,
             ..Config::for_tests()
         };
-        let plan = plan_maintenance(&empty_report(), &config, Some(&llm), &PlanOptions::default())
-            .await
-            .unwrap();
+        let plan = plan_maintenance(
+            &empty_report(),
+            &config,
+            Some(&llm),
+            &PlanOptions::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(plan.model.as_deref(), Some("scripted"));
         assert_eq!(plan.actions.len(), 1);
         assert_eq!(plan.actions[0].action, MaintenanceAction::Vacuum);

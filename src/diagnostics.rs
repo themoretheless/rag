@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, EmbeddingProviderKind};
 use crate::db::schema::SCHEMA_VERSION;
@@ -12,8 +12,150 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::ingest::{IngestCommand, IngestService};
 use crate::llm::{ChatClient, LlmApiDialect};
-use crate::models::{DoctorReport, LlmStatusReport, StatusReport};
+use crate::models::WingCount;
 use crate::source_sync::SourceSyncError;
+
+/// Extended health snapshot for the `status` MCP tool (MemPalace + vision §5.5).
+///
+/// Layer health (not only undifferentiated row counts): raw/wiki counts,
+/// index coverage, uncompiled raw debt, embedding manifest match.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusReport {
+    /// Storage backend kind (`duckdb` today).
+    pub backend: String,
+    #[serde(default)]
+    pub storage_capabilities: Vec<String>,
+    pub schema_version: i32,
+    pub fts_ready: bool,
+    pub document_count: u64,
+    pub chunk_count: u64,
+    pub node_count: u64,
+    pub edge_count: u64,
+    /// Documents with `layer=raw`.
+    #[serde(default)]
+    pub raw_count: u64,
+    /// Documents with `layer=wiki`.
+    #[serde(default)]
+    pub wiki_count: u64,
+    /// Rows in `wiki_index`.
+    #[serde(default)]
+    pub index_entry_count: u64,
+    /// Wiki pages present in `wiki_index` / `wiki_count` (0 when no wiki).
+    #[serde(default)]
+    pub index_coverage: f64,
+    /// Raw sources still treated as compile debt (raw without wiki corpus coverage).
+    /// Currently equals `raw_count` when `wiki_count == 0`, else raw docs not yet
+    /// referenced by any wiki graph edge (soft); falls back to `raw_count` if
+    /// graph walk is empty.
+    #[serde(default)]
+    pub uncompiled_raw_count: u64,
+    /// Live embedding identity matches stored `embedding_manifest`.
+    /// Persisted canonical fingerprints are authoritative; legacy rows without
+    /// one are unverifiable and remain fail-closed until a complete re-embed.
+    #[serde(default)]
+    pub embedding_manifest_match: bool,
+    /// Configured embedding provider name.
+    #[serde(default)]
+    pub embed_provider: String,
+    /// Configured embedding model id.
+    #[serde(default)]
+    pub embed_model: String,
+    /// Distinct non-empty wings with document counts.
+    pub wings: Vec<WingCount>,
+    pub embed_dims: usize,
+    pub ready_for_search: bool,
+    pub ingest_roots_configured: bool,
+    pub db_path: String,
+    /// Gateway process id (single writer).
+    #[serde(default)]
+    pub pid: u32,
+    /// Seconds since process start.
+    #[serde(default)]
+    pub uptime_seconds: u64,
+    /// Main DuckDB file size in bytes when readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_file_bytes: Option<u64>,
+    /// WAL file size in bytes (0 when absent).
+    #[serde(default)]
+    pub wal_bytes: u64,
+    /// WAL warning threshold (`RAG_WAL_WARN_BYTES`).
+    #[serde(default)]
+    pub wal_warn_bytes: u64,
+    /// Automatic snapshot footprint when `RAG_AUTO_BACKUP_DIR` is configured:
+    /// retention, the bytes it holds on disk, and the volume's free space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_backup: Option<crate::ops::AutoBackupInventory>,
+}
+
+/// Local chat LLM + embedding config snapshot for the `llm_status` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmStatusReport {
+    /// Whether chat tools are enabled (`RAG_LLM_ENABLED`).
+    pub llm_enabled: bool,
+    /// Provider preset (`ollama`|`openai`|`codex`|`claude`|`kimi`|`deepseek`|`custom`).
+    #[serde(default)]
+    pub provider: String,
+    /// Wire dialect: `openai_compat` or `anthropic_messages`.
+    #[serde(default)]
+    pub dialect: String,
+    /// Chat API base URL (`RAG_LLM_BASE_URL` or provider default).
+    pub base_url: String,
+    /// Chat model tag (`RAG_LLM_MODEL`).
+    pub model: String,
+    /// True when a short probe against the chat endpoint succeeds.
+    pub reachable: bool,
+    /// Probe error detail when `reachable` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Embedding provider name (`mock` | `openai` | …).
+    pub embed_provider: String,
+    /// Embedding model id.
+    pub embed_model: String,
+    /// Configured embedding dimensionality.
+    pub embed_dims: usize,
+    /// Embedding API base URL when relevant (openai / local compat).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_base_url: Option<String>,
+}
+
+/// Minimal integrity report for the `doctor` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorReport {
+    pub backend: String,
+    #[serde(default)]
+    pub storage_capabilities: Vec<String>,
+    pub schema_version: i32,
+    pub expected_schema_version: i32,
+    pub schema_ok: bool,
+    pub fts_ready: bool,
+    pub document_count: u64,
+    pub chunk_count: u64,
+    pub node_count: u64,
+    pub edge_count: u64,
+    pub embed_dims: usize,
+    /// Dims from `embedding_manifest` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_dims: Option<i32>,
+    /// True when the stored embedding identity matches live config (or when
+    /// both the manifest and corpus chunks are absent).
+    pub embed_ok: bool,
+    pub ready_for_search: bool,
+    pub ingest_roots_configured: bool,
+    pub db_path: String,
+    pub wal_bytes: u64,
+    pub wal_warn_bytes: u64,
+    pub wal_too_large: bool,
+    pub documents_without_chunks: u64,
+    pub orphan_chunks: u64,
+    pub orphan_document_nodes: u64,
+    pub orphan_edges: u64,
+    pub unscoped_documents: u64,
+    pub relational_integrity_ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_hint: Option<String>,
+    /// Critical integrity gate: schema current and embed dims consistent.
+    pub ok: bool,
+}
 
 /// Outcome of `doctor_repair` (MCP) / `POST /v1/doctor/repair` (HTTP).
 #[derive(Debug, Serialize)]
@@ -31,7 +173,6 @@ pub struct DoctorRepairReport {
     pub before: DoctorReport,
     pub after: DoctorReport,
 }
-
 
 /// Probe the configured chat LLM and describe embedding config (no corpus mutation).
 ///

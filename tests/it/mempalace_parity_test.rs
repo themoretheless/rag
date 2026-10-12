@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
-use rag_mcp::models::{Document, GraphNode, StatusReport};
+use rag_mcp::models::{Document, GraphNode};
+use rag_mcp::StatusReport;
 use rag_mcp::{content_hash, diary_read, diary_write, wake_up, Config, Store, REL_TUNNEL};
 use tempfile::TempDir;
 use uuid::Uuid;
