@@ -1050,7 +1050,7 @@ fn build_vector_snapshot_with_filters(
     let mut rows = stmt.query(params_from_iter(bind.iter()))?;
     let mut embeddings = Vec::new();
     let mut chunks = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::visit_rows(&mut rows, |row| {
         let embedding_json: String = row.get(3)?;
         let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
         let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
@@ -1070,7 +1070,8 @@ fn build_vector_snapshot_with_filters(
             embedding_start,
             embedding_len,
         });
-    }
+        Ok(())
+    })?;
     Ok(VectorSnapshot {
         generation,
         embeddings,
@@ -1087,9 +1088,10 @@ fn load_vector_documents(
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(bind.iter()))?;
     let mut documents = HashMap::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::visit_rows(&mut rows, |row| {
         documents.insert(row.get(0)?, (row.get(1)?, row.get(2)?));
-    }
+        Ok(())
+    })?;
     Ok(documents)
 }
 

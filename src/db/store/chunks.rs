@@ -68,7 +68,7 @@ impl Store {
         let mut statement = conn.prepare(&sql)?;
         let mut rows = statement.query(params![limit])?;
         let mut samples = Vec::new();
-        while let Some(row) = rows.next()? {
+        crate::db::rows::visit_rows(&mut rows, |row| {
             let document_id: String = row.get(0)?;
             let raw: String = row.get(4)?;
             let embedding = serde_json::from_str(&raw).map_err(|error| {
@@ -83,7 +83,8 @@ impl Store {
                 room: row.get(3)?,
                 embedding,
             });
-        }
+            Ok(())
+        })?;
         Ok(samples)
     }
 

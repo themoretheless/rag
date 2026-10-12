@@ -369,23 +369,24 @@ impl Store {
                 "#,
             )?;
             let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::try_visit_rows(&mut rows, |row| {
                 let node = row_to_node(row)?;
                 if let Some(ref kinds) = filter.kinds {
                     if !kinds.iter().any(|k| k == &node.kind) {
-                        continue;
+                        return Ok(std::ops::ControlFlow::Continue(()));
                     }
                 }
                 if let Some(ref seeds) = filter.seed_ids {
                     if !seeds.iter().any(|s| s == &node.id) {
-                        continue;
+                        return Ok(std::ops::ControlFlow::Continue(()));
                     }
                 }
                 nodes.push(node);
                 if nodes.len() >= max_nodes {
-                    break;
+                    return Ok(std::ops::ControlFlow::Break(()));
                 }
-            }
+                Ok(std::ops::ControlFlow::Continue(()))
+            })?;
         }
 
         let node_ids: HashSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
@@ -1040,7 +1041,7 @@ fn enrich_document_placements_locked(
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(document_ids.iter()))?;
     let mut placements = HashMap::with_capacity(document_ids.len());
-    while let Some(row) = rows.next()? {
+    crate::db::rows::visit_rows(&mut rows, |row| {
         placements.insert(
             row.get::<_, String>(0)?,
             (
@@ -1051,7 +1052,8 @@ fn enrich_document_placements_locked(
                     .unwrap_or_else(|| "raw".into()),
             ),
         );
-    }
+        Ok(())
+    })?;
 
     for node in nodes {
         let Some(document_id) = node.document_id.as_ref() else {

@@ -25,6 +25,30 @@ pub(crate) fn query_vec<T, P: duckdb::Params>(
     Ok(out)
 }
 
+/// Call `visit` for every remaining row of an open query, in order.
+pub(crate) fn visit_rows(
+    rows: &mut duckdb::Rows<'_>,
+    mut visit: impl FnMut(&duckdb::Row<'_>) -> Result<()>,
+) -> Result<()> {
+    while let Some(row) = rows.next()? {
+        visit(row)?;
+    }
+    Ok(())
+}
+
+/// Like [`visit_rows`], but `visit` can stop early with `ControlFlow::Break`.
+pub(crate) fn try_visit_rows(
+    rows: &mut duckdb::Rows<'_>,
+    mut visit: impl FnMut(&duckdb::Row<'_>) -> Result<std::ops::ControlFlow<()>>,
+) -> Result<()> {
+    while let Some(row) = rows.next()? {
+        if visit(row)?.is_break() {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// Run `stmt` with `params` and call `visit` for every row, in order.
 ///
 /// For loops that filter, fill maps or aggregate; collecting into a `Vec`
@@ -73,4 +97,32 @@ pub(crate) fn embedding_manifest(row: &duckdb::Row<'_>) -> Result<EmbeddingManif
         id: row.get(0)?, provider: row.get(1)?, model: row.get(2)?, dims: row.get(3)?,
         base_url: row.get(4)?, content_fingerprint: row.get(5)?, updated_at: timestamp(&updated_raw)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::ControlFlow;
+
+    #[test]
+    fn row_helpers_visit_in_order_and_stop_on_break() {
+        let conn = duckdb::Connection::open_in_memory().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT * FROM range(5) AS t(n) ORDER BY n")
+            .unwrap();
+        let all = super::query_vec(&mut stmt, [], |row| Ok(row.get::<_, i64>(0)?)).unwrap();
+        assert_eq!(all, vec![0, 1, 2, 3, 4]);
+
+        let mut seen = Vec::new();
+        let mut rows = stmt.query([]).unwrap();
+        super::try_visit_rows(&mut rows, |row| {
+            let n: i64 = row.get(0)?;
+            if n == 1 {
+                return Ok(ControlFlow::Continue(()));
+            }
+            seen.push(n);
+            Ok(if n == 3 { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
+        })
+        .unwrap();
+        assert_eq!(seen, vec![0, 2, 3]);
+    }
 }

@@ -354,6 +354,11 @@ are fixed too:
   rewrite in one provider call.
 - 3.7 done: `AppError::Invalid` for caller-input validation in transports and
   retrieval (same `INVALID_REQUEST` code and HTTP 400).
+- 4.1 done: `db::rows::{query_vec, for_each_row, visit_rows, try_visit_rows}`
+  replace 77 of 78 hand-written row loops (`try_visit_rows` covers `break` /
+  `continue` via `ControlFlow`); `Store::with_tx` replaces 17 transaction
+  blocks. The one explicit loop left (`recovery::publish`) returns a value
+  from the enclosing function mid-scan.
 - 4.3 done: one lexical-hit row decoder for the BM25 and TF paths; the vector
   path builds hits from its snapshot, and the remaining builder is test-only.
 - 4.5: corpus lane, embedding manifest, ops log and wiki index live in
@@ -420,7 +425,6 @@ are fixed too:
 
 | Item | Why it stops here |
 |------|-------------------|
-| 4.1 last 22 row loops | 47 collect loops use `db::rows::query_vec`, 9 visitor loops use `db::rows::for_each_row`, and 17 transaction blocks use `Store::with_tx`. The 22 loops left return early, `break`, or nest another loop; a closure cannot return from the enclosing function, so they keep the explicit `while let`. |
 | 5.8 page `kind` as a closed enum | `rag_mcp_core::PageKind` names the kinds the server writes or special-cases (`wiki`, `source_summary`, `entity`, `concept`, `diary`), and the defaults use it. `Document::kind` stays a string because agents write their own kinds; a closed enum would reject valid pages. |
 | 6.2 last two tolerant pairs | `ActivityEvent` and `SearchHit` (with `SearchExplanation`, `SearchContextChunk`) now live in `rag-mcp-core` and the UI uses them directly. `ProjectHome` would pull `chrono` into the serde-only core crate, and the UI's `JobSnapshot` keeps `status` as a string so an older UI survives a newer server status; both are round-trip tested against the server types in `crates/rag-mcp-ui/src/wire_contract.rs`. |
 

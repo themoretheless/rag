@@ -522,7 +522,7 @@ fn load_batch(conn: &Connection, max_candidates: usize) -> Result<Vec<BatchSelec
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query([sql_limit(max_candidates)])?;
     let mut batch = Vec::<BatchSelection>::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::visit_rows(&mut rows, |row| {
         let metrics = group_metrics_from_row(row)?;
         let candidate_id: String = row.get(16)?;
         if batch
@@ -539,7 +539,8 @@ fn load_batch(conn: &Connection, max_candidates: usize) -> Result<Vec<BatchSelec
             .expect("batch contains current group")
             .candidate_ids
             .push(candidate_id);
-    }
+        Ok(())
+    })?;
     Ok(batch)
 }
 
@@ -760,7 +761,7 @@ fn load_group_members(
         sql_limit(limit)
     ])?;
     let mut members = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::visit_rows(&mut rows, |row| {
         members.push(SourceDuplicateDocument {
             document_id: row.get(0)?,
             uri: row.get(1)?,
@@ -774,7 +775,8 @@ fn load_group_members(
             foreign_source_manifest_references: nonnegative(row.get(9)?),
             revisions: nonnegative(row.get(10)?),
         });
-    }
+        Ok(())
+    })?;
 
     Ok(members)
 }

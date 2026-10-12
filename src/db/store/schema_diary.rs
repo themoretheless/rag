@@ -46,10 +46,11 @@ impl Store {
             );
             let mut stmt = conn.prepare(&sql)?;
             let mut rows = stmt.query(params![name, wing])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::visit_rows(&mut rows, |row| {
                 let doc = rows::document(row)?;
                 out.push(DiaryEntry::from_document(&doc));
-            }
+                Ok(())
+            })?;
         } else {
             let sql = format!(
                 "SELECT {DOCUMENT_SELECT} FROM documents \
@@ -60,10 +61,11 @@ impl Store {
             );
             let mut stmt = conn.prepare(&sql)?;
             let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::visit_rows(&mut rows, |row| {
                 let doc = rows::document(row)?;
                 out.push(DiaryEntry::from_document(&doc));
-            }
+                Ok(())
+            })?;
         }
         Ok(out)
     }

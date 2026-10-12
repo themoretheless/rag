@@ -203,10 +203,11 @@ pub(crate) fn find_exact_duplicates(
         let mut rows = members.query(params![hash.as_str()])?;
         let mut ids = Vec::new();
         let mut titles = Vec::new();
-        while let Some(row) = rows.next()? {
+        crate::db::rows::visit_rows(&mut rows, |row| {
             ids.push(row.get::<_, String>(0)?);
             titles.push(row.get::<_, String>(1)?);
-        }
+            Ok(())
+        })?;
         let count = ids.len();
         if count > 1 {
             groups.push(DuplicateGroup {
@@ -241,7 +242,7 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
     )?;
     let mut rows = stmt.query([])?;
     let mut orphan_nodes = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::try_visit_rows(&mut rows, |row| {
         orphan_nodes.push(OrphanNode {
             id: row.get(0)?,
             document_id: row.get(1)?,
@@ -250,9 +251,10 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
             layer: None,
         });
         if orphan_nodes.len() >= REPORT_LIST_CAP {
-            break;
+            return Ok(std::ops::ControlFlow::Break(()));
         }
-    }
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
     drop(rows);
     drop(stmt);
 
@@ -276,7 +278,7 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
     )?;
     let mut rows = stmt.query([])?;
     let mut orphan_wiki = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::try_visit_rows(&mut rows, |row| {
         let doc_id: String = row.get(0)?;
         let title: String = row.get(1)?;
         let layer: String = row.get(2)?;
@@ -289,9 +291,10 @@ pub(crate) fn find_orphans(store: &Store) -> Result<(Vec<OrphanNode>, Vec<Orphan
             layer: Some(layer),
         });
         if orphan_wiki.len() >= REPORT_LIST_CAP {
-            break;
+            return Ok(std::ops::ControlFlow::Break(()));
         }
-    }
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
     Ok((orphan_nodes, orphan_wiki))
 }
 
@@ -315,7 +318,7 @@ pub(crate) fn find_stubs(
     let mut aging = Vec::new();
     let age_cutoff = now - Duration::days(i64::from(stub_age_days));
 
-    while let Some(row) = rows.next()? {
+    crate::db::rows::try_visit_rows(&mut rows, |row| {
         let node_id: String = row.get(0)?;
         let label: String = row.get(1)?;
         let created_raw: Option<String> = row.get(2)?;
@@ -332,9 +335,10 @@ pub(crate) fn find_stubs(
         }
         unresolved.push(info);
         if unresolved.len() >= REPORT_LIST_CAP {
-            break;
+            return Ok(std::ops::ControlFlow::Break(()));
         }
-    }
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
     Ok((unresolved, aging))
 }
 
@@ -359,18 +363,18 @@ pub(crate) fn find_archive_candidates(
     )?;
     let mut rows = stmt.query([])?;
     let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::try_visit_rows(&mut rows, |row| {
         let id: String = row.get(0)?;
         let title: String = row.get(1)?;
         let layer: String = row.get(2)?;
         let boost: f64 = row.get(3)?;
         let ts: String = row.get(4)?;
         let Some(updated_at) = parse_ts(&ts) else {
-            continue;
+            return Ok(std::ops::ControlFlow::Continue(()));
         };
         if updated_at > cutoff && boost >= 0.5 {
             // Only flag recent docs when boost is clearly suppressed.
-            continue;
+            return Ok(std::ops::ControlFlow::Continue(()));
         }
         let reason = if updated_at <= cutoff && boost < 1.0 {
             format!(
@@ -380,7 +384,7 @@ pub(crate) fn find_archive_candidates(
         } else if boost < 0.5 {
             format!("low boost={boost:.2}")
         } else {
-            continue;
+            return Ok(std::ops::ControlFlow::Continue(()));
         };
         out.push(ArchiveCandidate {
             document_id: id,
@@ -391,9 +395,10 @@ pub(crate) fn find_archive_candidates(
             reason,
         });
         if out.len() >= REPORT_LIST_CAP {
-            break;
+            return Ok(std::ops::ControlFlow::Break(()));
         }
-    }
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
     Ok(out)
 }
 

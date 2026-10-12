@@ -178,7 +178,7 @@ impl Store {
             )?;
             let mut rows = chunks_stmt.query(params![document.id])?;
             let mut chunks = Vec::new();
-            while let Some(row) = rows.next()? {
+            crate::db::rows::visit_rows(&mut rows, |row| {
                 let raw: String = row.get(4)?;
                 let embedding = serde_json::from_str(&raw).map_err(|error| {
                     AppError::db(format!(
@@ -196,7 +196,8 @@ impl Store {
                     char_end: row.get(6)?,
                     metadata_json: row.get(7)?,
                 });
-            }
+                Ok(())
+            })?;
             bundled.push(BundleDocument { document, chunks });
         }
         let embedding_manifest = {

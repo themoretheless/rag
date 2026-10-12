@@ -80,14 +80,15 @@ impl Store {
             None => stmt.query([])?,
         };
         let mut roots = Vec::new();
-        while let Some(row) = rows.next()? {
+        crate::db::rows::visit_rows(&mut rows, |row| {
             roots.push(SourceRootSummary {
                 canonical_root: row.get(0)?,
                 file_count: row.get::<_, i64>(1)?.max(0) as u64,
                 last_seen: row.get(2)?,
                 last_synced: row.get(3)?,
             });
-        }
+            Ok(())
+        })?;
         Ok(roots)
     }
 
@@ -170,7 +171,7 @@ impl Store {
         )?;
         let mut rows = stmt.query(params![root, prefix, root, root, prefix, root])?;
         let mut entries = HashMap::new();
-        while let Some(row) = rows.next()? {
+        crate::db::rows::visit_rows(&mut rows, |row| {
             let canonical_path: String = row.get(0)?;
             let size_bytes = row.get::<_, i64>(2)?.max(0) as u64;
             entries
@@ -193,7 +194,8 @@ impl Store {
                     document_wing: row.get(14)?,
                     document_room: row.get(15)?,
                 });
-        }
+            Ok(())
+        })?;
         Ok(entries)
     }
 

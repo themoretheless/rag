@@ -571,11 +571,12 @@ fn search_duckdb_bm25(
         .map_err(|e| AppError::fts(format!("query match_bm25: {e}")))?;
 
     let mut hits = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::visit_rows(&mut rows, |row| {
         let score: f64 = row.get(8)?;
         let content: String = row.get(5)?;
         hits.push(lexical_hit(row, content, score as f32)?);
-    }
+        Ok(())
+    })?;
     Ok(hits)
 }
 
@@ -641,14 +642,15 @@ fn search_tf(
     };
 
     let mut scored: Vec<(f32, SearchHit)> = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::try_visit_rows(&mut rows, |row| {
         let content: String = row.get(5)?;
         let score = term_frequency_score(&query_terms, &content);
         if score <= 0.0 {
-            continue;
+            return Ok(std::ops::ControlFlow::Continue(()));
         }
         scored.push((score, lexical_hit(row, content, score)?));
-    }
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
 
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(top_k);

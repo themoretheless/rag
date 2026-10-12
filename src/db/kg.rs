@@ -192,7 +192,7 @@ impl Store {
                 "#,
             )?;
             let mut rows = stmt.query(params![subject, predicate, object])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::visit_rows(&mut rows, |row| {
                 let id: String = row.get(0)?;
                 let vf_raw: Option<String> = row.get(1)?;
                 if let Some(raw) = vf_raw {
@@ -204,7 +204,8 @@ impl Store {
                     }
                 }
                 ids.push(id);
-            }
+                Ok(())
+            })?;
         }
 
         if ids.is_empty() {
@@ -277,7 +278,7 @@ impl Store {
                 "#,
             )?;
             let mut rows = stmt.query(params![subject, predicate, old_object])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::visit_rows(&mut rows, |row| {
                 let id: String = row.get(0)?;
                 let vf_raw: Option<String> = row.get(1)?;
                 if let Some(raw) = vf_raw {
@@ -289,7 +290,8 @@ impl Store {
                     }
                 }
                 old_ids.push(id);
-            }
+                Ok(())
+            })?;
         }
 
         // If successor already open and active, return it after closing olds.
