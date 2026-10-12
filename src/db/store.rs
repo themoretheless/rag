@@ -803,10 +803,10 @@ impl Store {
             let mut ids = Vec::new();
             {
                 let mut stmt = tx.prepare("SELECT id FROM documents WHERE source_file = ?")?;
-                let mut rows = stmt.query(params![source])?;
-                while let Some(row) = rows.next()? {
+                crate::db::rows::for_each_row(&mut stmt, params![source], |row| {
                     ids.push(row.get::<_, String>(0)?);
-                }
+                    Ok(())
+                })?;
             }
             for (index, id) in ids.iter().enumerate() {
                 delete_document_locked(tx, id)?;

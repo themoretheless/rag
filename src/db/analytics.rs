@@ -118,16 +118,14 @@ pub(crate) fn collect_counts(
 
 pub(crate) fn group_count_locked(conn: &duckdb::Connection, sql: &str) -> Result<Vec<CountBucket>> {
     let mut stmt = conn.prepare(sql)?;
-    let mut rows = stmt.query([])?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
+    let out = crate::db::rows::query_vec(&mut stmt, [], |row| {
         let key: String = row.get(0)?;
         let count: i64 = row.get(1)?;
-        out.push(CountBucket {
+        Ok(CountBucket {
             key,
             count: count as u64,
-        });
-    }
+        })
+    })?;
     Ok(out)
 }
 

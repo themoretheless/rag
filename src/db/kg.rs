@@ -410,10 +410,10 @@ impl Store {
         {
             let mut stmt =
                 conn.prepare("SELECT DISTINCT predicate FROM kg_facts ORDER BY predicate ASC")?;
-            let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, [], |row| {
                 relationship_types.push(row.get::<_, String>(0)?);
-            }
+                Ok(())
+            })?;
         }
 
         Ok(KgStats {

@@ -399,19 +399,19 @@ impl Store {
                 ORDER BY id ASC
                 "#,
             )?;
-            let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, [], |row| {
                 let edge = row_to_edge(row)?;
                 if let Some(ref rels) = filter.rel_types {
                     if !rels.iter().any(|r| r == &edge.rel_type) {
-                        continue;
+                        return Ok(());
                     }
                 }
                 if !node_ids.contains(&edge.source_id) || !node_ids.contains(&edge.target_id) {
-                    continue;
+                    return Ok(());
                 }
                 edges.push(edge);
-            }
+                Ok(())
+            })?;
         }
 
         Ok(GraphView { nodes, edges })
@@ -499,10 +499,10 @@ impl Store {
                 ORDER BY id ASC
                 "#,
             )?;
-            let mut rows = stmt.query(params![node_id])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, params![node_id], |row| {
                 edges.push(row_to_edge(row)?);
-            }
+                Ok(())
+            })?;
         }
 
         let mut nodes = Vec::new();
@@ -584,12 +584,12 @@ impl Store {
                 ORDER BY kind ASC
                 "#,
             )?;
-            let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, [], |row| {
                 let kind: String = row.get(0)?;
                 let n: i64 = row.get(1)?;
                 nodes_by_kind.insert(kind, n as u64);
-            }
+                Ok(())
+            })?;
         }
 
         let mut edges_by_rel_type = std::collections::BTreeMap::new();
@@ -602,12 +602,12 @@ impl Store {
                 ORDER BY rel_type ASC
                 "#,
             )?;
-            let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, [], |row| {
                 let rel: String = row.get(0)?;
                 let n: i64 = row.get(1)?;
                 edges_by_rel_type.insert(rel, n as u64);
-            }
+                Ok(())
+            })?;
         }
 
         let mut edges_by_cut = Vec::new();
@@ -624,15 +624,15 @@ impl Store {
                 ORDER BY 1, 2, 3
                 "#,
             )?;
-            let mut rows = stmt.query([])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, [], |row| {
                 edges_by_cut.push(EdgeCutRow {
                     rel_type: row.get(0)?,
                     origin: row.get(1)?,
                     context: row.get(2)?,
                     count: row.get::<_, i64>(3)? as u64,
                 });
-            }
+                Ok(())
+            })?;
         }
 
         Ok(GraphStats {
@@ -777,10 +777,10 @@ impl Store {
                 ORDER BY id ASC
                 "#,
             )?;
-            let mut rows = stmt.query(params![REL_TUNNEL, nid, nid])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, params![REL_TUNNEL, nid, nid], |row| {
                 out.push(row_to_edge(row)?);
-            }
+                Ok(())
+            })?;
         } else {
             let mut stmt = conn.prepare(
                 r#"
@@ -790,10 +790,10 @@ impl Store {
                 ORDER BY id ASC
                 "#,
             )?;
-            let mut rows = stmt.query(params![REL_TUNNEL])?;
-            while let Some(row) = rows.next()? {
+            crate::db::rows::for_each_row(&mut stmt, params![REL_TUNNEL], |row| {
                 out.push(row_to_edge(row)?);
-            }
+                Ok(())
+            })?;
         }
         Ok(out)
     }
@@ -1111,11 +1111,9 @@ fn load_bounded_project_nodes_locked(
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params![project])?;
-    let mut nodes = Vec::with_capacity(limit);
-    while let Some(row) = rows.next()? {
-        nodes.push(row_to_node(row)?);
-    }
+    let nodes = crate::db::rows::query_vec(&mut stmt, params![project], |row| {
+        row_to_node(row)
+    })?;
     Ok(nodes)
 }
 
@@ -1157,11 +1155,9 @@ fn load_bounded_project_companions_locked(
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(project_node_ids.iter()))?;
-    let mut nodes = Vec::with_capacity(limit);
-    while let Some(row) = rows.next()? {
-        nodes.push(row_to_node(row)?);
-    }
+    let nodes = crate::db::rows::query_vec(&mut stmt, params_from_iter(project_node_ids.iter()), |row| {
+        row_to_node(row)
+    })?;
     Ok(nodes)
 }
 
@@ -1360,11 +1356,9 @@ fn discover_frontier_neighbors_locked(
         binds.extend(rel_types.iter().map(|rel| (*rel).to_string()));
     }
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
-    let mut neighbors = Vec::with_capacity(limit.min(1024));
-    while let Some(row) = rows.next()? {
-        neighbors.push(row.get(0)?);
-    }
+    let neighbors = crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), |row| {
+        Ok(row.get(0)?)
+    })?;
     Ok(neighbors)
 }
 
@@ -1486,11 +1480,9 @@ fn discover_scoped_neighbors_locked(
         project.to_string(),
     ]);
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
-    let mut neighbors = Vec::with_capacity(limit);
-    while let Some(row) = rows.next()? {
-        neighbors.push(row.get(0)?);
-    }
+    let neighbors = crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), |row| {
+        Ok(row.get(0)?)
+    })?;
     Ok(neighbors)
 }
 
@@ -1544,11 +1536,9 @@ fn discover_ui_neighbors_locked(
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(frontier.iter()))?;
-    let mut neighbors = Vec::with_capacity(limit);
-    while let Some(row) = rows.next()? {
-        neighbors.push(row.get(0)?);
-    }
+    let neighbors = crate::db::rows::query_vec(&mut stmt, params_from_iter(frontier.iter()), |row| {
+        Ok(row.get(0)?)
+    })?;
     Ok(neighbors)
 }
 
@@ -1572,11 +1562,9 @@ fn load_nodes_by_ids_locked(
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(node_ids.iter()))?;
-    let mut nodes = Vec::with_capacity(limit);
-    while let Some(row) = rows.next()? {
-        nodes.push(row_to_node(row)?);
-    }
+    let nodes = crate::db::rows::query_vec(&mut stmt, params_from_iter(node_ids.iter()), |row| {
+        row_to_node(row)
+    })?;
     Ok(nodes)
 }
 
@@ -1617,11 +1605,9 @@ fn load_bounded_scoped_edges_locked(
     let mut binds = node_ids.to_vec();
     binds.extend([project.to_string(), project.to_string()]);
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
-    let mut edges = Vec::with_capacity(max_edges.min(1024));
-    while let Some(row) = rows.next()? {
-        edges.push(row_to_edge(row)?);
-    }
+    let edges = crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), |row| {
+        row_to_edge(row)
+    })?;
     Ok(edges)
 }
 
@@ -1654,11 +1640,9 @@ fn load_bounded_ui_edges_locked(
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(node_ids.iter()))?;
-    let mut edges = Vec::with_capacity(max_edges.min(1024));
-    while let Some(row) = rows.next()? {
-        edges.push(row_to_edge(row)?);
-    }
+    let edges = crate::db::rows::query_vec(&mut stmt, params_from_iter(node_ids.iter()), |row| {
+        row_to_edge(row)
+    })?;
     Ok(edges)
 }
 

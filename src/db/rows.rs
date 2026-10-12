@@ -25,6 +25,22 @@ pub(crate) fn query_vec<T, P: duckdb::Params>(
     Ok(out)
 }
 
+/// Run `stmt` with `params` and call `visit` for every row, in order.
+///
+/// For loops that filter, fill maps or aggregate; collecting into a `Vec`
+/// uses [`query_vec`]. `return Ok(())` inside `visit` skips to the next row.
+pub(crate) fn for_each_row<P: duckdb::Params>(
+    stmt: &mut duckdb::Statement<'_>,
+    params: P,
+    mut visit: impl FnMut(&duckdb::Row<'_>) -> Result<()>,
+) -> Result<()> {
+    let mut rows = stmt.query(params)?;
+    while let Some(row) = rows.next()? {
+        visit(row)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn document(row: &duckdb::Row<'_>) -> Result<Document> {
     let created_raw: String = row.get(11)?;
     let updated_raw: String = row.get(12)?;

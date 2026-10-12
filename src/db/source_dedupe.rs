@@ -610,11 +610,9 @@ fn load_group_metrics_limited(conn: &Connection, limit: usize) -> Result<Vec<Gro
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query([sql_limit(limit)])?;
-    let mut metrics = Vec::with_capacity(limit);
-    while let Some(row) = rows.next()? {
-        metrics.push(group_metrics_from_row(row)?);
-    }
+    let metrics = crate::db::rows::query_vec(&mut stmt, [sql_limit(limit)], |row| {
+        group_metrics_from_row(row)
+    })?;
     Ok(metrics)
 }
 

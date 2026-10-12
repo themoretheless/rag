@@ -531,15 +531,13 @@ impl Store {
             ORDER BY wing ASC
             "#,
         )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
+        let out = crate::db::rows::query_vec(&mut stmt, [], |row| {
             let count: i64 = row.get(1)?;
-            out.push(WingCount {
+            Ok(WingCount {
                 wing: row.get(0)?,
                 document_count: count as u64,
-            });
-        }
+            })
+        })?;
         Ok(out)
     }
 
@@ -575,17 +573,15 @@ impl Store {
                 ORDER BY room ASC
                 "#,
             )?;
-            let mut rows = stmt.query(params![w])?;
-            let mut out = Vec::new();
-            while let Some(row) = rows.next()? {
+            let out = crate::db::rows::query_vec(&mut stmt, params![w], |row| {
                 let count: i64 = row.get(2)?;
                 let wing_name: String = row.get(0)?;
-                out.push(RoomCount {
+                Ok(RoomCount {
                     wing: Some(wing_name),
                     room: row.get(1)?,
                     document_count: count as u64,
-                });
-            }
+                })
+            })?;
             Ok(out)
         } else {
             let mut stmt = conn.prepare(
@@ -597,17 +593,15 @@ impl Store {
                 ORDER BY wing ASC NULLS LAST, room ASC
                 "#,
             )?;
-            let mut rows = stmt.query([])?;
-            let mut out = Vec::new();
-            while let Some(row) = rows.next()? {
+            let out = crate::db::rows::query_vec(&mut stmt, [], |row| {
                 let count: i64 = row.get(2)?;
                 let wing: Option<String> = row.get(0)?;
-                out.push(RoomCount {
+                Ok(RoomCount {
                     wing: wing.filter(|s| !s.is_empty()),
                     room: row.get(1)?,
                     document_count: count as u64,
-                });
-            }
+                })
+            })?;
             Ok(out)
         }
     }
