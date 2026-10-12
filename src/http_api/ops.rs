@@ -70,7 +70,7 @@ const CAPABILITY_FEATURES: &[&str] = &[
     "database_sync_transport",
 ];
 
-const PRODUCT_ROUTES: &[(&str, &str)] = &[
+pub(super) const PRODUCT_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health"),
     ("GET", "/live"),
     ("GET", "/ready"),

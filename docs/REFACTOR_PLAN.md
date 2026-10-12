@@ -291,7 +291,10 @@ are fixed too:
   are one-time start-up settings of their subsystem (backup, sync, PID file).
 - 3.4 done: `bootstrap::{open_offline, init_tracing}`; offline tools now also
   honour `RAG_STORAGE_BACKEND`.
-- 3.5 partial: telemetry groups are explicit for every registered tool, with a
+- 3.5 done: HTTP roles are explicit for every catalogued route
+  (`ADMIN_HTTP_ROUTES` plus read/write classification); a test fails when a
+  route in `/v1/routes` falls through to the fail-closed default. Telemetry
+  groups are explicit for every registered tool, with a
   completeness test. The HTTP route-role table is unchanged.
 - 3.6 done without `ScopeFilter`: `mcp/tools/<domain>.rs` per router, re-exported
   from `mcp::tools`. Flattening shared filter fields would change the generated
@@ -401,7 +404,6 @@ are fixed too:
 | Item | Why it stops here |
 |------|-------------------|
 | 3.2 `RAG_PRIMARY_TOKEN` | The one remaining read outside `config.rs`, kept on purpose: `Config` derives `Debug`, so a credential stored there would reach logs. |
-| 3.5 HTTP route roles | Unknown routes already default to Admin (fail-closed), so a missing entry cannot widen access. |
 | 4.1 query helpers, rest of 4.3 | ~90 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
 | 5.8 typed document `kind` | Graph node kinds are typed (`rag_mcp_core::NodeKind`, shared by server and UI) and `status` has named constants. A document's page `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
 | 6.2 merging the tolerant pairs | `ActivityEvent` moved to core. `JobSnapshot`, `ProjectHome` and `SearchHit` stay separate on purpose (string timestamps, field subsets so the UI survives server drift); `crates/rag-mcp-ui/src/wire_contract.rs` serializes the server type and requires the UI copy to read it. |
