@@ -174,53 +174,50 @@ pub(crate) fn find_exact_duplicates(
         ""
     };
     let conn = store.lock()?;
+    // Top groups and their members in one query (was one members query per group).
     let mut stmt = conn.prepare(&format!(
         r#"
-        SELECT content_hash, COUNT(*)::BIGINT
-        FROM documents
-        WHERE content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-          {status_filter}
-        GROUP BY content_hash
-        HAVING COUNT(*) > 1
-        ORDER BY COUNT(*) DESC
-        LIMIT 50
+        WITH top_groups AS (
+          SELECT content_hash,
+                 row_number() OVER (ORDER BY COUNT(*) DESC, content_hash ASC) AS group_rank
+          FROM documents
+          WHERE content_hash IS NOT NULL AND TRIM(content_hash) <> ''
+            {status_filter}
+          GROUP BY content_hash
+          HAVING COUNT(*) > 1
+          ORDER BY group_rank
+          LIMIT 50
+        )
+        SELECT top_groups.content_hash, documents.id, documents.title
+        FROM top_groups
+        JOIN documents ON documents.content_hash = top_groups.content_hash
+        WHERE TRUE {status_filter}
+        ORDER BY top_groups.group_rank ASC, documents.created_at ASC
         "#
     ))?;
-    let hashes: Vec<String> =
-        crate::db::rows::query_vec(&mut stmt, [], |row| Ok(row.get(0)?))?;
-    drop(stmt);
-
-    let mut members = conn.prepare(&format!(
-        r#"
-        SELECT id, title FROM documents
-        WHERE content_hash = ?
-          {status_filter}
-        ORDER BY created_at ASC
-        "#
-    ))?;
-    let mut groups = Vec::new();
-    for hash in hashes {
-        let mut rows = members.query(params![hash.as_str()])?;
-        let mut ids = Vec::new();
-        let mut titles = Vec::new();
-        crate::db::rows::visit_rows(&mut rows, |row| {
-            ids.push(row.get::<_, String>(0)?);
-            titles.push(row.get::<_, String>(1)?);
-            Ok(())
-        })?;
-        let count = ids.len();
-        if count > 1 {
-            groups.push(DuplicateGroup {
+    let mut rows = stmt.query([])?;
+    let mut groups: Vec<DuplicateGroup> = Vec::new();
+    crate::db::rows::visit_rows(&mut rows, |row| {
+        let hash: String = row.get(0)?;
+        let id: String = row.get(1)?;
+        let title: String = row.get(2)?;
+        match groups.last_mut() {
+            Some(group) if group.content_hash == hash => {
+                group.document_ids.push(id);
+                group.titles.push(title);
+                group.count += 1;
+            }
+            _ => groups.push(DuplicateGroup {
                 content_hash: hash,
-                document_ids: ids,
-                titles,
-                count,
-            });
+                document_ids: vec![id],
+                titles: vec![title],
+                count: 1,
+            }),
         }
-        if groups.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
+        Ok(())
+    })?;
+    groups.retain(|group| group.count > 1);
+    groups.truncate(REPORT_LIST_CAP);
     Ok(groups)
 }
 

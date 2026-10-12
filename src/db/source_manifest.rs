@@ -152,10 +152,13 @@ impl Store {
                 d.wing AS document_wing,
                 d.room AS document_room
               FROM root_documents d
+              -- Two equality anti-joins instead of one OR predicate, which
+              -- DuckDB would run as a documents x manifest nested loop.
               WHERE NOT EXISTS (
-                SELECT 1
-                FROM source_manifest sm
-                WHERE sm.canonical_path = d.source_file OR sm.document_id = d.id
+                SELECT 1 FROM source_manifest sm WHERE sm.canonical_path = d.source_file
+              )
+                AND NOT EXISTS (
+                SELECT 1 FROM source_manifest sm WHERE sm.document_id = d.id
               )
             )
             SELECT * FROM combined

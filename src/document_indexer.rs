@@ -17,11 +17,13 @@ use crate::models::{Chunk, Document};
 /// Keeping this storage-free representation lets source synchronization group
 /// several small documents into one provider request without duplicating the
 /// chunking and annotation policy used by ordinary ingest.
+#[derive(Clone)]
 pub(crate) struct PreparedDocumentChunks {
     document_id: String,
     pieces: Vec<PreparedChunk>,
 }
 
+#[derive(Clone)]
 struct PreparedChunk {
     content: String,
     char_start: i32,

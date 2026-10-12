@@ -13,7 +13,7 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     // Nodes and the raw edge list are each read once; everything else
     // (incident nodes, stub backlinks) is derived in memory.
     let graph_nodes = store.list_graph_nodes()?;
-    let all_edges = store.list_graph_edges()?;
+    let all_edges = store.list_graph_links()?;
     let node_by_id: HashMap<&str, &crate::models::GraphNode> = graph_nodes
         .iter()
         .map(|node| (node.id.as_str(), node))

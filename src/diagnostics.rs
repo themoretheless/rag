@@ -253,8 +253,11 @@ impl<'a> DiagnosticsService<'a> {
         let mut errors = Vec::new();
         if !dry_run {
             let ingest = IngestService::new(self.store, embedder, self.config);
-            for document in &missing {
-                let command = IngestCommand {
+            // Embed the missing documents in shared provider calls; each one
+            // still commits on its own.
+            let commands: Vec<IngestCommand> = missing
+                .iter()
+                .map(|document| IngestCommand {
                     text: document.content.clone(),
                     title: Some(document.title.clone()),
                     uri: Some(document.uri.clone()),
@@ -265,8 +268,10 @@ impl<'a> DiagnosticsService<'a> {
                     layer: document.layer.clone(),
                     kind: document.kind.to_string(),
                     immutable: false,
-                };
-                match ingest.ingest(command).await {
+                })
+                .collect();
+            for (document, result) in missing.iter().zip(ingest.ingest_many(commands).await) {
+                match result {
                     Ok(_) => documents_repaired.push(document.id.clone()),
                     Err(error) => documents_failed.push(SourceSyncError {
                         path: document.uri.clone(),
@@ -826,6 +831,57 @@ mod tests {
             .expect("bounded dry-run repair");
         assert_eq!(report.documents_considered, 2);
         assert!(report.documents_repaired.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repair_embeds_missing_documents_in_one_provider_call() {
+        struct Counting {
+            inner: MockEmbedder,
+            calls: std::sync::atomic::AtomicUsize,
+        }
+        #[async_trait::async_trait]
+        impl EmbeddingProvider for Counting {
+            async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.inner.embed(texts).await
+            }
+            fn dimensions(&self) -> usize {
+                self.inner.dimensions()
+            }
+        }
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("grouped-doctor-repair.duckdb");
+        let store = Store::open(&path).expect("open store");
+        for index in 0..3 {
+            store
+                .upsert_document(&Document {
+                    id: format!("missing-{index}"),
+                    uri: format!("text://missing-{index}"),
+                    title: format!("Missing {index}"),
+                    content: format!("searchable missing body {index}"),
+                    ..Document::default()
+                })
+                .expect("insert missing document");
+        }
+        let config = Config {
+            db_path: path,
+            embedding_dims: 8,
+            ..Config::for_tests()
+        };
+        let counting = Arc::new(Counting {
+            inner: MockEmbedder::new(8),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let embedder: Arc<dyn EmbeddingProvider> = counting.clone();
+        let report = DiagnosticsService::new(&store, &config)
+            .repair(&embedder, false, Some(10))
+            .await
+            .expect("repair");
+
+        assert_eq!(report.documents_repaired.len(), 3);
+        assert_eq!(counting.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(store.list_documents_missing_chunks(10).unwrap().0, 0);
     }
 
     #[tokio::test]

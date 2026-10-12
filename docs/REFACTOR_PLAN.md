@@ -590,13 +590,28 @@ fix.
 - Organize suggestions skip document bodies and read first-chunk embeddings in
   one query.
 
-**Kept, with the reason**
-- `find_exact_duplicates`: at most 50 indexed lookups through one prepared
-  statement, in a maintenance-only path.
-- Doctor repair, one document at a time: a rare repair path.
-- Lint column projections: maintenance only; the queries are already one pass.
-- `compiled_link_exists`: flagged as unconfirmed; it needs `EXPLAIN ANALYZE` on
-  a large corpus before any change.
+**Closing pass:** the items held back above are now fixed too.
+- `compiled_link_exists` was confirmed slow. It is the predicate behind status,
+  lint and catalog `compiled=false` paging. It nested a `LIMIT 1` scalar
+  subquery per raw document: more than 190 s, then spilled until the disk
+  filled, on 15k raw documents / 60k edges. One correlated equality runs as a
+  hash semi-join in 150 ms.
+- Source-manifest root load, run at every sync start: `NOT EXISTS (… OR …)`
+  became two equality anti-joins (exactly equivalent).
+- Doctor repair embeds missing documents through
+  `IngestService::ingest_many`: up to 64 chunks per provider call, each
+  document committed on its own, with a per-document retry when a group fails.
+- `find_exact_duplicates` is one query for the top groups and their members.
+- `lint_wiki` reads nodes without metadata and edges without context text.
+
+**No change needed**
+- FTS rebuild timing is already the cheapest correct policy:
+  - Source sync and doctor repair rebuild once when they finish.
+  - Single ingests are batched into one rebuild at the next search.
+  - Serving stale or TF results would break read-your-writes.
+- Two predicates keep their `OR` because they are bounded: the export
+  companion lookup runs for one node matched by equality, and the
+  source-dedupe member counts run under a `LIMIT`.
 - Behaviour notes from the review that are accepted:
   - Autocommit `insert_chunks` / `insert_graph_edges` now fail per 64-row batch
     rather than per row.

@@ -237,14 +237,26 @@ impl Store {
         Ok(GraphView { nodes, edges })
     }
 
-    /// Every graph node ordered by `(label, id)`, without loading any edge.
+    /// Every graph node ordered by `(label, id)`, with `metadata_json` left as
+    /// `{}`: for whole-graph diagnostics that never read node metadata.
     pub fn list_graph_nodes(&self) -> Result<Vec<GraphNode>> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT id, kind, label, document_id, uri, resolved, metadata_json \
+            "SELECT id, kind, label, document_id, uri, resolved, '{}' \
              FROM graph_nodes ORDER BY label ASC, id ASC",
         )?;
         crate::db::rows::query_vec(&mut stmt, [], row_to_node)
+    }
+
+    /// Every graph edge ordered by `id`, without its `context` text (`None`):
+    /// for whole-graph diagnostics that only need endpoints and relation.
+    pub fn list_graph_links(&self) -> Result<Vec<GraphEdge>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, source_id, target_id, rel_type, weight, NULL \
+             FROM graph_edges ORDER BY id ASC",
+        )?;
+        crate::db::rows::query_vec(&mut stmt, [], row_to_edge)
     }
 
     /// Return every graph edge, including edges whose endpoint node is missing.

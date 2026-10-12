@@ -151,18 +151,21 @@ pub(crate) struct UncompiledShelfQueue {
 /// This is the one definition of "compiled" in the data plane. The health metric, the
 /// lint sample and the catalog `compiled` filter all interpolate it, so a compile batch
 /// cannot be paged by a rule that the `uncompiled_raw_count` metric disagrees with.
+///
+/// Written as one correlated equality (`target.document_id = alias.id`) so DuckDB
+/// decorrelates it into a hash semi-join. The previous form nested a `LIMIT 1`
+/// scalar subquery inside the `EXISTS`, which ran per raw document: >190 s (then
+/// spilled until the disk filled) vs 150 ms on 15k raw documents / 60k edges.
+/// A document with several graph nodes counts as compiled when any of them has
+/// the link, where the old form looked at one arbitrary node.
 pub(crate) fn compiled_link_exists(alias: &str) -> String {
     format!(
         r#"EXISTS (
           SELECT 1
-          FROM graph_edges edge
+          FROM graph_nodes target
+          JOIN graph_edges edge ON edge.target_id = target.id
           JOIN graph_nodes source ON source.id = edge.source_id
-          WHERE edge.target_id = (
-            SELECT target.id
-            FROM graph_nodes target
-            WHERE target.document_id = {alias}.id
-            LIMIT 1
-          )
+          WHERE target.document_id = {alias}.id
             AND source.id <> edge.target_id
             AND source.resolved
             AND starts_with(source.uri, 'wiki://')

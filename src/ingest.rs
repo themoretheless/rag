@@ -42,6 +42,7 @@ pub(crate) struct SourceManifestStamp {
 
 /// An ingest whose document identity and chunks are fixed, but whose vectors
 /// have not been requested yet.
+#[derive(Clone)]
 pub(crate) struct PreparedIngest {
     write: Box<PendingIngestWrite>,
     chunks: PreparedDocumentChunks,
@@ -59,6 +60,7 @@ pub(crate) struct EmbeddedIngest {
     chunks: Vec<Chunk>,
 }
 
+#[derive(Clone)]
 struct PendingIngestWrite {
     document: Document,
     expected_revision: Option<i64>,
@@ -66,6 +68,9 @@ struct PendingIngestWrite {
     content_hash: String,
     manifest: Option<SourceManifestStamp>,
 }
+
+/// Chunks per embedding call in [`IngestService::ingest_many`].
+const INGEST_MANY_BATCH_CHUNKS: usize = 64;
 
 enum IngestPreparation {
     Complete(IngestResult),
@@ -199,6 +204,78 @@ impl<'a> IngestService<'a> {
                     .pop()
                     .expect("one prepared ingest yields one embedded ingest");
                 self.commit_embedded(embedded)
+            }
+        }
+    }
+
+    /// Ingest several documents, embedding up to [`INGEST_MANY_BATCH_CHUNKS`]
+    /// chunks per provider call; results keep `commands` order.
+    ///
+    /// Each document still commits at its own atomic/CAS boundary. When a
+    /// grouped embedding call fails, that group's documents are embedded one
+    /// by one, so a single bad document fails alone, as with [`Self::ingest`].
+    pub(crate) async fn ingest_many(
+        &self,
+        commands: Vec<IngestCommand>,
+    ) -> Vec<Result<IngestResult, AppError>> {
+        let mut results: Vec<Option<Result<IngestResult, AppError>>> =
+            (0..commands.len()).map(|_| None).collect();
+        let mut group: Vec<(usize, PreparedIngest)> = Vec::new();
+        let mut group_chunks = 0usize;
+        for (index, command) in commands.into_iter().enumerate() {
+            match self.prepare_ingest(command, None) {
+                Ok(IngestPreparation::Complete(result)) => results[index] = Some(Ok(result)),
+                Ok(IngestPreparation::Pending(prepared)) => {
+                    let chunks = prepared.chunk_count();
+                    if !group.is_empty() && group_chunks + chunks > INGEST_MANY_BATCH_CHUNKS {
+                        self.embed_and_commit(std::mem::take(&mut group), &mut results)
+                            .await;
+                        group_chunks = 0;
+                    }
+                    group_chunks += chunks;
+                    group.push((index, prepared));
+                }
+                Err(error) => results[index] = Some(Err(error)),
+            }
+        }
+        self.embed_and_commit(group, &mut results).await;
+        results
+            .into_iter()
+            .map(|result| result.expect("every command yields a result"))
+            .collect()
+    }
+
+    async fn embed_and_commit(
+        &self,
+        group: Vec<(usize, PreparedIngest)>,
+        results: &mut [Option<Result<IngestResult, AppError>>],
+    ) {
+        if group.is_empty() {
+            return;
+        }
+        let (indexes, prepared): (Vec<usize>, Vec<PreparedIngest>) = group.into_iter().unzip();
+        if prepared.len() == 1 {
+            let embedded = self.embed_prepared_batch(prepared).await;
+            results[indexes[0]] = Some(embedded.and_then(|mut embedded| {
+                self.commit_embedded(embedded.pop().expect("one prepared ingest"))
+            }));
+            return;
+        }
+        // Keep a copy of each plan so a failed group can be retried per document.
+        let retry: Vec<PreparedIngest> = prepared.clone();
+        match self.embed_prepared_batch(prepared).await {
+            Ok(embedded) => {
+                for (index, embedded) in indexes.into_iter().zip(embedded) {
+                    results[index] = Some(self.commit_embedded(embedded));
+                }
+            }
+            Err(_) => {
+                for (index, prepared) in indexes.into_iter().zip(retry) {
+                    let embedded = self.embed_prepared_batch(vec![prepared]).await;
+                    results[index] = Some(embedded.and_then(|mut embedded| {
+                        self.commit_embedded(embedded.pop().expect("one prepared ingest"))
+                    }));
+                }
             }
         }
     }
