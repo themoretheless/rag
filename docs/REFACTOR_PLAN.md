@@ -318,7 +318,10 @@ are fixed too:
 - 4.2 partial: recovery import writes chunks through `insert_chunks_locked`
   and formats timestamps like every other path (microsecond round-trip test).
   It still restores revision and timestamps verbatim on purpose.
-- 4.5 partial: the 2.5k lines of store tests moved to `db/store/tests.rs`
+- 4.5 done: `Store` methods are grouped in `db/store/{documents,chunks,health,
+  revisions,schema_diary,corpus_lane,manifest,ops_log,wiki_index}.rs`, leaving
+  `store.rs` with the write/transaction core (~1.7k production lines). The
+  2.5k lines of store tests moved to `db/store/tests.rs`
   (same for wiki, recovery, graph, search, source_sync and maintain/apply).
 - 4.6 done: `db/recovery/{bundle,import,publish}.rs`.
 
@@ -427,6 +430,6 @@ are fixed too:
 | Integration-test binaries linking DuckDB | 8 | 1 | 1–2 |
 | `RAG_*` env reads outside `config.rs` | ~30 | 0 | 0 |
 | Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
-| Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~3.3k | < 2k |
+| Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~1.7k | < 2k |
 | Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |
 | UI copies of server DTOs without a contract test | 11 | 0 (4 shared via core, 3 tolerant copies round-trip tested) | 0 |

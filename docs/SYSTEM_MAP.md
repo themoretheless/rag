@@ -109,7 +109,7 @@ database path is published last as the generation commit marker.
 | `graph/` | pure wikilink/tag extraction; resolution persists through `db::graph::resolve` |
 | `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams; `wiki::put_wiki_page` is the slug/uri/id upsert policy used by HTTP |
 | `maintain/`, `memory_lifecycle.rs`, `diary/` | explicit maintenance and memory workflows |
-| `db/store.rs` | compatibility DuckDB façade and transaction boundary; `Store::lock` is private to `db` outside tests |
+| `db/store.rs`, `db/store/*.rs` | DuckDB façade and transaction boundary (`Store::with_tx`); methods grouped by documents, chunks, health, revisions, schema/diary, corpus lane, manifest, ops log and wiki index. `Store::lock` is private to `db` outside tests |
 | `db/{payload_kv,analytics,knowledge,chunk_text,review}.rs`, `db/graph/resolve.rs` | repositories for the former direct-lock callers: JSON payload tables (`with_session` for read-modify-write), corpus analytics, knowledge catalog, chunk text pages, review accept, graph resolution |
 | `db/embedding_identity.rs` | `EmbeddingIdentity` trait so the store checks the manifest without importing `config` |
 | `context.rs` | `AppContext` (store, embedder, config, chat client) built once at start-up and shared by HTTP and MCP |
