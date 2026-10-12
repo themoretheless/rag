@@ -121,7 +121,7 @@ fn update_properties(store: &Store, body: Update) -> Result<Value> {
     let mut doc = store
         .get_document(&body.id)?
         .ok_or_else(|| AppError::not_found("wiki page not found"))?;
-    if doc.layer != "wiki" {
+    if !crate::models::Layer::Wiki.is(&doc.layer) {
         return Err(AppError::invalid("knowledge properties require a wiki page"));
     }
     let mut metadata: Value = serde_json::from_str(&doc.metadata_json)?;

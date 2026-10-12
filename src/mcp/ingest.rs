@@ -333,7 +333,7 @@ impl RagServer {
             } else {
                 unreachable!("validated source key")
             };
-            if doc.layer != "raw" {
+            if !crate::models::Layer::Raw.is(&doc.layer) {
                 return Err(AppError::not_found(format!(
                     "document {} is not a raw source (layer={})",
                     doc.id, doc.layer

@@ -44,7 +44,7 @@ pub struct WakeUpReport {
 }
 
 /// Document layer for agent diary notes.
-pub const LAYER_DIARY: &str = "diary";
+pub const LAYER_DIARY: &str = crate::models::Layer::Diary.as_str();
 /// Document kind for diary entries.
 pub const KIND_DIARY: &str = "diary";
 /// Legacy room name; new writes use `room = agent_name` for list filters.

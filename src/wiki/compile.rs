@@ -15,7 +15,10 @@ pub async fn compile_source(
     agent: Option<&str>,
 ) -> Result<CompileApplyResult> {
     let source = resolve_doc(store, source_id_or_uri)?;
-    if source.layer != "raw" && source.layer != "document" {
+    if !matches!(
+        Layer::parse(&source.layer),
+        Some(Layer::Raw | Layer::Document)
+    ) {
         // Allow compile from any non-wiki if needed, but prefer raw.
         tracing::warn!(layer = %source.layer, "compile_source: source is not layer=raw");
     }
@@ -27,8 +30,7 @@ pub async fn compile_source(
     } else {
         wiki_revision_snapshot(store)?
     };
-    let proposed =
-        compile_wiki(llm, &schema, &source.title, &source.uri, &source.content).await?;
+    let proposed = compile_wiki(llm, &schema, &source.title, &source.uri, &source.content).await?;
 
     if dry_run {
         return Ok(CompileApplyResult {

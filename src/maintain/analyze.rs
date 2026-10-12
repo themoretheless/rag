@@ -482,7 +482,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             layer: layer.into(),
-            kind: if layer == "wiki" {
+            kind: if crate::models::Layer::Wiki.is(layer) {
                 "wiki".into()
             } else {
                 "document".into()

@@ -1,6 +1,7 @@
 //! Paginated revision timeline, lazy snapshots, bounded line diff and CAS restore.
 
 use crate::load::DocumentBody;
+use rag_mcp_core::Layer;
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -267,7 +268,7 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
             }
             columns[2].add_space(10.0);
             let source_controlled =
-                view.document_layer == "raw" || selected.layer.as_str() == "raw";
+                Layer::Raw.is(view.document_layer) || Layer::Raw.is(&selected.layer);
             if source_controlled {
                 egui::Frame::group(columns[2].style())
                     .fill(egui::Color32::from_rgb(190, 125, 55).gamma_multiply(0.10))

@@ -15,17 +15,17 @@ use crate::document_indexer::DocumentIndexer;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::llm::{CompileResult, ConsolidateProposal};
-use crate::models::{Document, OpsLogEntry, WikiIndexEntry};
+use crate::models::{Document, Layer, OpsLogEntry, WikiIndexEntry};
 use crate::util::{content_hash, slugify as shared_slugify, SlugPolicy};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// Document layer for immutable raw sources.
-pub const LAYER_RAW: &str = "raw";
+pub const LAYER_RAW: &str = Layer::Raw.as_str();
 /// Document layer for compiled wiki pages.
-pub const LAYER_WIKI: &str = "wiki";
+pub const LAYER_WIKI: &str = Layer::Wiki.as_str();
 /// Document layer for the agent schema conventions file.
-pub const LAYER_SCHEMA: &str = "schema";
+pub const LAYER_SCHEMA: &str = Layer::Schema.as_str();
 
 /// Stable URI for the agent conventions schema document.
 pub const SCHEMA_URI: &str = "schema://agents";
@@ -111,13 +111,13 @@ Default MCP list is RAG_TOOLS=spine (compile-first). Advanced MemPalace/maintain
 /// Returns true when `layer` is the immutable raw source layer.
 #[inline]
 pub fn is_raw_layer(layer: &str) -> bool {
-    layer == LAYER_RAW
+    Layer::Raw.is(layer)
 }
 
 /// Returns true when `layer` is a compiled wiki page.
 #[inline]
 pub fn is_wiki_layer(layer: &str) -> bool {
-    layer == LAYER_WIKI
+    Layer::Wiki.is(layer)
 }
 
 /// Reject content mutation for immutable raw documents.

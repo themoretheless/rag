@@ -1,6 +1,7 @@
 //! Revision history workspace: list, diff and restore.
 
 use super::*;
+use rag_mcp_core::Layer;
 
 impl GraphApp {
     pub(super) fn open_revisions(&mut self, item: &LibraryItem) {
@@ -104,8 +105,8 @@ impl GraphApp {
             .items
             .iter()
             .find(|item| item.revision == revision)
-            .is_some_and(|item| item.layer == "raw");
-        if self.revision.document_layer == "raw" || selected_is_raw {
+            .is_some_and(|item| Layer::Raw.is(&item.layer));
+        if Layer::Raw.is(&self.revision.document_layer) || selected_is_raw {
             self.revision.error = Some(
                 "Raw-документы управляются исходным файлом. Восстановите файл и синхронизируйте его, чтобы создать новую индексированную версию."
                     .into(),

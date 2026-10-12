@@ -6,6 +6,57 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Known document layers. Stored and sent as plain strings (`raw`, `wiki`, ...);
+/// this type only gives comparisons a name. Unknown stored values parse to `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Layer {
+    /// Immutable ingested source; only same-uri re-ingest replaces content.
+    Raw,
+    /// Compiled wiki page.
+    Wiki,
+    /// Agent conventions document (`schema://agents`).
+    Schema,
+    /// Agent diary entry.
+    Diary,
+    /// Legacy generic document layer, compiled like `raw`.
+    Document,
+}
+
+impl Layer {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Wiki => "wiki",
+            Self::Schema => "schema",
+            Self::Diary => "diary",
+            Self::Document => "document",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Raw,
+            Self::Wiki,
+            Self::Schema,
+            Self::Diary,
+            Self::Document,
+        ]
+        .into_iter()
+        .find(|layer| layer.as_str() == value)
+    }
+
+    /// True when `value` is exactly this layer's wire string.
+    pub fn is(self, value: &str) -> bool {
+        self.as_str() == value
+    }
+}
+
+impl std::fmt::Display for Layer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Object-graph node (document, tag, stub, or entity).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
@@ -165,4 +216,24 @@ pub struct RevisionLineChange {
     pub line: usize,
     pub content: String,
     pub content_truncated: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Layer;
+
+    #[test]
+    fn layer_round_trips_wire_strings() {
+        for layer in [
+            Layer::Raw,
+            Layer::Wiki,
+            Layer::Schema,
+            Layer::Diary,
+            Layer::Document,
+        ] {
+            assert_eq!(Layer::parse(layer.as_str()), Some(layer));
+        }
+        assert_eq!(Layer::parse("Wiki"), None);
+        assert!(Layer::Raw.is("raw"));
+    }
 }

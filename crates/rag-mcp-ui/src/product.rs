@@ -82,7 +82,7 @@ impl LibraryItem {
     }
 
     pub fn is_wiki(&self) -> bool {
-        self.layer == "wiki" || self.uri.starts_with("wiki://")
+        rag_mcp_core::Layer::Wiki.is(&self.layer) || self.uri.starts_with("wiki://")
     }
 }
 
