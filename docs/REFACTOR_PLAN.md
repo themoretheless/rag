@@ -361,10 +361,9 @@ are fixed too:
 - 3.7 done: `AppError::Invalid` for caller-input validation in transports and
   retrieval (same `INVALID_REQUEST` code and HTTP 400).
 - 4.1 done: `db::rows::{query_vec, for_each_row, visit_rows, try_visit_rows}`
-  replace 77 of 78 hand-written row loops (`try_visit_rows` covers `break` /
-  `continue` via `ControlFlow`); `Store::with_tx` replaces 17 transaction
-  blocks. The one explicit loop left (`recovery::publish`) returns a value
-  from the enclosing function mid-scan.
+  replace all 78 hand-written production row loops (`try_visit_rows` covers
+  `break` / `continue` / early results via `ControlFlow`); `Store::with_tx`
+  replaces 17 transaction blocks.
 - 4.3 done: one lexical-hit row decoder for the BM25 and TF paths; the vector
   path builds hits from its snapshot, and the remaining builder is test-only.
 - 4.5: corpus lane, embedding manifest, ops log and wiki index live in
@@ -432,9 +431,7 @@ are fixed too:
 
 **Not done, with the reason**
 
-Nothing: every planned item above is done. The only explicit row loop left
-(`recovery::publish`) returns a value from its function mid-scan, which a
-visitor closure cannot express.
+Nothing: every planned item above is done.
 
 ## Not planned
 

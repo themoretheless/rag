@@ -142,17 +142,18 @@ pub(super) fn verify_embedding_contract(
     let conn = store.lock()?;
     let mut statement = conn.prepare("SELECT embedding_json FROM chunks ORDER BY id")?;
     let mut rows = statement.query([])?;
-    while let Some(row) = rows.next()? {
+    let mut consistent = true;
+    crate::db::rows::try_visit_rows(&mut rows, |row| {
         let raw: String = row.get(0)?;
-        let embedding = match serde_json::from_str::<Vec<f32>>(&raw) {
-            Ok(embedding) => embedding,
-            Err(_) => return Ok(false),
-        };
-        if embedding.len() != expected_dims {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+        consistent = serde_json::from_str::<Vec<f32>>(&raw)
+            .is_ok_and(|embedding| embedding.len() == expected_dims);
+        Ok(if consistent {
+            std::ops::ControlFlow::Continue(())
+        } else {
+            std::ops::ControlFlow::Break(())
+        })
+    })?;
+    Ok(consistent)
 }
 
 pub fn backup_inventory(dir: &Path) -> Result<Vec<BackupInventoryItem>> {
