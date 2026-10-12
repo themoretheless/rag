@@ -25,11 +25,8 @@ impl Store {
             ORDER BY COALESCE(title, label, id) ASC
             "#,
         )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_wiki_index(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, [], row_to_wiki_index)?;
         Ok(out)
     }
 

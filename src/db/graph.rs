@@ -32,37 +32,36 @@ impl Store {
     /// transaction; `replace` first drops its existing `tagged` edges. A
     /// failure part-way leaves the previous tag edges intact.
     pub fn set_document_tags(&self, node_id: &str, labels: &[String], replace: bool) -> Result<()> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        if replace {
-            tx.execute(
-                "DELETE FROM graph_edges WHERE source_id = ? AND rel_type = ?",
-                params![node_id, crate::graph::REL_TAGGED],
-            )?;
-        }
-        for label in labels {
-            let tag_id = resolve::upsert_tag_node(&tx, label)?;
-            let exists: i64 = tx.query_row(
-                "SELECT COUNT(*)::BIGINT FROM graph_edges WHERE source_id = ? AND target_id = ? AND rel_type = ?",
-                params![node_id, tag_id.as_str(), crate::graph::REL_TAGGED],
-                |row| row.get(0),
-            )?;
-            if exists == 0 {
-                insert_graph_edges_locked(
-                    &tx,
-                    &[GraphEdge {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        source_id: node_id.to_string(),
-                        target_id: tag_id,
-                        rel_type: crate::graph::REL_TAGGED.into(),
-                        weight: 1.0,
-                        context: None,
-                    }],
+        self.with_tx(|tx| {
+            if replace {
+                tx.execute(
+                    "DELETE FROM graph_edges WHERE source_id = ? AND rel_type = ?",
+                    params![node_id, crate::graph::REL_TAGGED],
                 )?;
             }
-        }
-        tx.commit()?;
-        Ok(())
+            for label in labels {
+                let tag_id = resolve::upsert_tag_node(tx, label)?;
+                let exists: i64 = tx.query_row(
+                    "SELECT COUNT(*)::BIGINT FROM graph_edges WHERE source_id = ? AND target_id = ? AND rel_type = ?",
+                    params![node_id, tag_id.as_str(), crate::graph::REL_TAGGED],
+                    |row| row.get(0),
+                )?;
+                if exists == 0 {
+                    insert_graph_edges_locked(
+                        tx,
+                        &[GraphEdge {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            source_id: node_id.to_string(),
+                            target_id: tag_id,
+                            rel_type: crate::graph::REL_TAGGED.into(),
+                            weight: 1.0,
+                            context: None,
+                        }],
+                    )?;
+                }
+            }
+            Ok(())
+        })
     }
 
     pub fn insert_graph_edges(&self, edges: &[GraphEdge]) -> Result<()> {
@@ -431,11 +430,8 @@ impl Store {
             ORDER BY id ASC
             "#,
         )?;
-        let mut rows = stmt.query([])?;
-        let mut edges = Vec::new();
-        while let Some(row) = rows.next()? {
-            edges.push(row_to_edge(row)?);
-        }
+        let edges =
+            crate::db::rows::query_vec(&mut stmt, [], row_to_edge)?;
         Ok(edges)
     }
 
@@ -889,12 +885,8 @@ impl Store {
                 ORDER BY id ASC
                 "#,
             )?;
-            let mut rows = stmt.query(params![REL_TUNNEL, a, b, b, a])?;
-            let mut out = Vec::new();
-            while let Some(row) = rows.next()? {
-                out.push(row_to_edge(row)?);
-            }
-            out
+            
+            crate::db::rows::query_vec(&mut stmt, params![REL_TUNNEL, a, b, b, a], row_to_edge)?
         } else {
             self.list_tunnels(node_id)?
         };
@@ -1412,11 +1404,8 @@ fn load_edges_among_locked(
         binds.extend(rel_types.iter().map(|rel| (*rel).to_string()));
     }
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(binds.iter()))?;
-    let mut edges = Vec::new();
-    while let Some(row) = rows.next()? {
-        edges.push(row_to_edge(row)?);
-    }
+    let edges =
+        crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), row_to_edge)?;
     Ok(edges)
 }
 
@@ -1761,12 +1750,8 @@ pub(crate) fn demote_graph_for_document_locked(
     const NODE_IDS_FOR_DOCUMENT: &str = "SELECT id FROM graph_nodes WHERE document_id = ?";
     let node_ids = {
         let mut stmt = conn.prepare(NODE_IDS_FOR_DOCUMENT)?;
-        let mut rows = stmt.query(params![document_id])?;
-        let mut ids = Vec::new();
-        while let Some(row) = rows.next()? {
-            ids.push(row.get::<_, String>(0)?);
-        }
-        ids
+        
+        crate::db::rows::query_vec(&mut stmt, params![document_id], |row| Ok(row.get::<_, String>(0)?))?
     };
     for node_id in &node_ids {
         delete_derived_edges_from_locked(conn, node_id)?;
@@ -1960,11 +1945,8 @@ pub(crate) fn find_nodes_by_label_locked(
         ORDER BY resolved DESC, kind ASC, id ASC
         "#,
     )?;
-    let mut rows = stmt.query(params![key])?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        out.push(row_to_node(row)?);
-    }
+    let out =
+        crate::db::rows::query_vec(&mut stmt, params![key], row_to_node)?;
     Ok(out)
 }
 

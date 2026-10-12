@@ -338,124 +338,123 @@ impl Store {
             ));
         }
 
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let scanned_active_raw_documents = tx.query_row(
-            r#"
-            SELECT COUNT(*)::BIGINT
-            FROM documents
-            WHERE LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) = 'raw'
-              AND LOWER(COALESCE(NULLIF(TRIM(status), ''), 'active')) = 'active'
-              AND source_file IS NOT NULL AND TRIM(source_file) <> ''
-              AND content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-            "#,
-            [],
-            |row| row.get::<_, i64>(0),
-        )?;
-        let totals = load_cleanup_totals(&tx)?;
-        let batch = load_batch(&tx, max_candidates)?;
-        let batch_candidates = batch
-            .iter()
-            .map(|selection| selection.candidate_ids.len() as u64)
-            .sum::<u64>();
-        let fully_drained_groups = batch
-            .iter()
-            .filter(|selection| {
-                selection.candidate_ids.len() as u64 >= selection.metrics.candidate_count
-            })
-            .count();
-        let remaining_candidates = totals.candidate_count.saturating_sub(batch_candidates);
-        let remaining_groups = totals
-            .actionable_groups
-            .saturating_sub(fully_drained_groups);
-        let cap_exceeded = remaining_candidates > 0;
-
-        let groups = load_report_groups(&tx, &batch, totals.matched_groups)?;
-        let reported_groups = groups.len();
-        let groups_truncated = reported_groups < totals.matched_groups;
-        let reported_members = groups.iter().map(|group| group.members.len()).sum();
-        let members_truncated =
-            groups_truncated || groups.iter().any(|group| group.members_truncated);
-
-        let mut report = SourceDuplicateCleanupReport {
-            success: true,
-            errors: Vec::new(),
-            dry_run,
-            confirmed: confirm,
-            max_candidates,
-            scanned_active_raw_documents: scanned_active_raw_documents.max(0) as u64,
-            matched_groups: totals.matched_groups,
-            actionable_groups: totals.actionable_groups,
-            skipped_groups: totals
-                .matched_groups
-                .saturating_sub(totals.actionable_groups),
-            candidate_count: totals.candidate_count,
-            batch_groups: batch.len(),
-            batch_candidates,
-            remaining_groups,
-            remaining_candidates,
-            cap_exceeded,
-            applied: false,
-            deleted_documents: 0,
-            rewired_graph_edge_endpoints: 0,
-            deduplicated_graph_edges: 0,
-            removed_graph_self_edges: 0,
-            rewired_kg_facts: 0,
-            rebound_source_manifests: 0,
-            reported_groups,
-            groups_truncated,
-            reported_members,
-            members_truncated,
-            groups,
-        };
-
-        for selection in if dry_run { &[][..] } else { batch.as_slice() } {
-            let survivor_id = selection
-                .metrics
-                .survivor_document_id
-                .as_deref()
-                .expect("actionable group has one survivor");
-            let survivor = load_document_locked(&tx, survivor_id)?.ok_or_else(|| {
-                AppError::conflict(format!(
-                    "canonical source document disappeared during cleanup: {survivor_id}"
-                ))
-            })?;
-            let candidate_ids = selection
-                .candidate_ids
+        self.with_tx(|tx| {
+            let scanned_active_raw_documents = tx.query_row(
+                r#"
+                SELECT COUNT(*)::BIGINT
+                FROM documents
+                WHERE LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) = 'raw'
+                  AND LOWER(COALESCE(NULLIF(TRIM(status), ''), 'active')) = 'active'
+                  AND source_file IS NOT NULL AND TRIM(source_file) <> ''
+                  AND content_hash IS NOT NULL AND TRIM(content_hash) <> ''
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let totals = load_cleanup_totals(tx)?;
+            let batch = load_batch(tx, max_candidates)?;
+            let batch_candidates = batch
                 .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>();
+                .map(|selection| selection.candidate_ids.len() as u64)
+                .sum::<u64>();
+            let fully_drained_groups = batch
+                .iter()
+                .filter(|selection| {
+                    selection.candidate_ids.len() as u64 >= selection.metrics.candidate_count
+                })
+                .count();
+            let remaining_candidates = totals.candidate_count.saturating_sub(batch_candidates);
+            let remaining_groups = totals
+                .actionable_groups
+                .saturating_sub(fully_drained_groups);
+            let cap_exceeded = remaining_candidates > 0;
 
-            let graph = rewire_graph_to_survivor(&tx, &survivor, &candidate_ids)?;
-            report.rewired_graph_edge_endpoints += graph.rewired_endpoints;
-            report.deduplicated_graph_edges += graph.deduplicated_edges;
-            report.removed_graph_self_edges += graph.removed_self_edges;
+            let groups = load_report_groups(tx, &batch, totals.matched_groups)?;
+            let reported_groups = groups.len();
+            let groups_truncated = reported_groups < totals.matched_groups;
+            let reported_members = groups.iter().map(|group| group.members.len()).sum();
+            let members_truncated =
+                groups_truncated || groups.iter().any(|group| group.members_truncated);
 
-            for candidate_id in &candidate_ids {
-                report.rewired_kg_facts += tx.execute(
-                    "UPDATE kg_facts SET source_document_id = ?, updated_at = now() WHERE source_document_id = ?",
-                    params![survivor_id, candidate_id],
+            let mut report = SourceDuplicateCleanupReport {
+                success: true,
+                errors: Vec::new(),
+                dry_run,
+                confirmed: confirm,
+                max_candidates,
+                scanned_active_raw_documents: scanned_active_raw_documents.max(0) as u64,
+                matched_groups: totals.matched_groups,
+                actionable_groups: totals.actionable_groups,
+                skipped_groups: totals
+                    .matched_groups
+                    .saturating_sub(totals.actionable_groups),
+                candidate_count: totals.candidate_count,
+                batch_groups: batch.len(),
+                batch_candidates,
+                remaining_groups,
+                remaining_candidates,
+                cap_exceeded,
+                applied: false,
+                deleted_documents: 0,
+                rewired_graph_edge_endpoints: 0,
+                deduplicated_graph_edges: 0,
+                removed_graph_self_edges: 0,
+                rewired_kg_facts: 0,
+                rebound_source_manifests: 0,
+                reported_groups,
+                groups_truncated,
+                reported_members,
+                members_truncated,
+                groups,
+            };
+
+            for selection in if dry_run { &[][..] } else { batch.as_slice() } {
+                let survivor_id = selection
+                    .metrics
+                    .survivor_document_id
+                    .as_deref()
+                    .expect("actionable group has one survivor");
+                let survivor = load_document_locked(tx, survivor_id)?.ok_or_else(|| {
+                    AppError::conflict(format!(
+                        "canonical source document disappeared during cleanup: {survivor_id}"
+                    ))
+                })?;
+                let candidate_ids = selection
+                    .candidate_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>();
+
+                let graph = rewire_graph_to_survivor(tx, &survivor, &candidate_ids)?;
+                report.rewired_graph_edge_endpoints += graph.rewired_endpoints;
+                report.deduplicated_graph_edges += graph.deduplicated_edges;
+                report.removed_graph_self_edges += graph.removed_self_edges;
+
+                for candidate_id in &candidate_ids {
+                    report.rewired_kg_facts += tx.execute(
+                        "UPDATE kg_facts SET source_document_id = ?, updated_at = now() WHERE source_document_id = ?",
+                        params![survivor_id, candidate_id],
+                    )? as u64;
+                }
+                report.rebound_source_manifests += tx.execute(
+                    "UPDATE source_manifest SET document_id = ? WHERE canonical_path = ? AND document_id <> ?",
+                    params![survivor_id, selection.metrics.key.source_file, survivor_id],
                 )? as u64;
-            }
-            report.rebound_source_manifests += tx.execute(
-                "UPDATE source_manifest SET document_id = ? WHERE canonical_path = ? AND document_id <> ?",
-                params![survivor_id, selection.metrics.key.source_file, survivor_id],
-            )? as u64;
 
-            for candidate_id in candidate_ids {
-                if delete_document_locked(&tx, candidate_id)? {
-                    report.deleted_documents += 1;
-                } else {
-                    return Err(AppError::conflict(format!(
-                        "duplicate candidate disappeared during cleanup: {candidate_id}"
-                    )));
+                for candidate_id in candidate_ids {
+                    if delete_document_locked(tx, candidate_id)? {
+                        report.deleted_documents += 1;
+                    } else {
+                        return Err(AppError::conflict(format!(
+                            "duplicate candidate disappeared during cleanup: {candidate_id}"
+                        )));
+                    }
                 }
             }
-        }
 
-        report.applied = !dry_run && report.deleted_documents > 0;
-        tx.commit()?;
-        Ok(report)
+            report.applied = !dry_run && report.deleted_documents > 0;
+            Ok(report)
+        })
     }
 }
 
@@ -959,11 +958,8 @@ fn promote_node_to_survivor(conn: &Connection, node_id: &str, survivor: &Documen
 fn graph_node_ids(conn: &Connection, document_id: &str) -> Result<Vec<String>> {
     let mut stmt =
         conn.prepare("SELECT id FROM graph_nodes WHERE document_id = ? ORDER BY id ASC")?;
-    let mut rows = stmt.query(params![document_id])?;
-    let mut ids = Vec::new();
-    while let Some(row) = rows.next()? {
-        ids.push(row.get(0)?);
-    }
+    let ids =
+        crate::db::rows::query_vec(&mut stmt, params![document_id], |row| Ok(row.get(0)?))?;
     Ok(ids)
 }
 

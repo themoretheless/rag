@@ -157,11 +157,8 @@ impl Store {
         let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn duckdb::ToSql> =
             binds.iter().map(|s| s as &dyn duckdb::ToSql).collect();
-        let mut rows = stmt.query(param_refs.as_slice())?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_kg_fact(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, param_refs.as_slice(), row_to_kg_fact)?;
         Ok(out)
     }
 
@@ -375,11 +372,8 @@ impl Store {
             ORDER BY valid_from ASC NULLS FIRST, created_at ASC, id ASC
             "#
         ))?;
-        let mut rows = stmt.query(params![subject])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_kg_fact(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![subject], row_to_kg_fact)?;
         Ok(out)
     }
 

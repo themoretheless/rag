@@ -188,12 +188,8 @@ pub(crate) fn find_exact_duplicates(
         LIMIT 50
         "#
     ))?;
-    let mut rows = stmt.query([])?;
-    let mut hashes: Vec<String> = Vec::new();
-    while let Some(row) = rows.next()? {
-        hashes.push(row.get(0)?);
-    }
-    drop(rows);
+    let hashes: Vec<String> =
+        crate::db::rows::query_vec(&mut stmt, [], |row| Ok(row.get(0)?))?;
     drop(stmt);
 
     let mut members = conn.prepare(&format!(

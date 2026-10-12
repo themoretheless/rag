@@ -9,6 +9,22 @@ fn timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
         .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", value.trim())))
 }
 
+/// Run `stmt` with `params` and map every row with `map`.
+///
+/// Replaces the hand-written `while let Some(row) = rows.next()?` push loops.
+pub(crate) fn query_vec<T, P: duckdb::Params>(
+    stmt: &mut duckdb::Statement<'_>,
+    params: P,
+    mut map: impl FnMut(&duckdb::Row<'_>) -> Result<T>,
+) -> Result<Vec<T>> {
+    let mut rows = stmt.query(params)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(map(row)?);
+    }
+    Ok(out)
+}
+
 pub(crate) fn document(row: &duckdb::Row<'_>) -> Result<Document> {
     let created_raw: String = row.get(11)?;
     let updated_raw: String = row.get(12)?;

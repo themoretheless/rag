@@ -102,15 +102,13 @@ fn load_chunk_spans(conn: &Connection, document_id: &str) -> Result<Vec<(String,
         ORDER BY chunk_index ASC
         "#,
     )?;
-    let mut rows = stmt.query(params![document_id])?;
-    let mut spans = Vec::new();
-    while let Some(row) = rows.next()? {
-        spans.push((
+    let spans = crate::db::rows::query_vec(&mut stmt, params![document_id], |row| {
+        Ok((
             row.get::<_, String>(0)?,
             row.get::<_, i64>(1)?,
             row.get::<_, i64>(2)?,
-        ));
-    }
+        ))
+    })?;
     Ok(spans)
 }
 

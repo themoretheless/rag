@@ -46,11 +46,8 @@ impl Store {
                       CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR)
                FROM collections ORDER BY updated_at DESC, name ASC"#,
         )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_collection(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, [], |row| Ok(row_to_collection(row)?))?;
         Ok(out)
     }
 

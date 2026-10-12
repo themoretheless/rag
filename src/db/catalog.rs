@@ -90,10 +90,8 @@ impl Store {
             filter.offset
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query(dynamic_params(&binds).as_slice())?;
-        let mut items = Vec::new();
-        while let Some(row) = rows.next()? {
-            items.push(DrawerListItem {
+        let items = crate::db::rows::query_vec(&mut stmt, dynamic_params(&binds).as_slice(), |row| {
+            Ok(DrawerListItem {
                 id: row.get(0)?,
                 uri: row.get(1)?,
                 title: row.get(2)?,
@@ -108,8 +106,8 @@ impl Store {
                 status: row.get(11)?,
                 created_at: timestamp(row.get(12)?)?,
                 updated_at: timestamp(row.get(13)?)?,
-            });
-        }
+            })
+        })?;
         Ok(DocumentCatalogPage {
             items,
             total: total.max(0) as u64,

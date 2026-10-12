@@ -284,6 +284,19 @@ impl Store {
         self.lock_connection()
     }
 
+    /// Run `work` in one transaction under the Store lock. Commits on `Ok`;
+    /// an `Err` (or panic) drops the transaction, which rolls it back.
+    pub(in crate::db) fn with_tx<T>(
+        &self,
+        work: impl FnOnce(&duckdb::Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let value = work(&tx)?;
+        tx.commit()?;
+        Ok(value)
+    }
+
     fn lock_connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()
@@ -308,11 +321,10 @@ impl Store {
         doc: &Document,
         if_match_revision: Option<i64>,
     ) -> Result<i64> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let new_rev = upsert_document_cas_locked(&tx, doc, if_match_revision)?;
-        tx.commit()?;
-        Ok(new_rev)
+        self.with_tx(|tx| {
+            let new_rev = upsert_document_cas_locked(tx, doc, if_match_revision)?;
+            Ok(new_rev)
+        })
     }
 
     /// Persist a document and its derived state under one DuckDB transaction.
@@ -339,17 +351,16 @@ impl Store {
         doc: &Document,
         audit: &OpsLogEntry,
     ) -> Result<AtomicDocumentWriteResult> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let revision = upsert_document_cas_locked(&tx, doc, None)?;
-        let (node_id, edge_count) =
-            crate::graph::resolve::rebuild_document_graph_locked(&tx, doc)?;
-        append_ops_log_locked(&tx, audit)?;
-        tx.commit()?;
-        Ok(AtomicDocumentWriteResult {
-            revision,
-            node_id: Some(node_id),
-            edge_count,
+        self.with_tx(|tx| {
+            let revision = upsert_document_cas_locked(tx, doc, None)?;
+            let (node_id, edge_count) =
+                crate::graph::resolve::rebuild_document_graph_locked(tx, doc)?;
+            append_ops_log_locked(tx, audit)?;
+            Ok(AtomicDocumentWriteResult {
+                revision,
+                node_id: Some(node_id),
+                edge_count,
+            })
         })
     }
 
@@ -412,24 +423,23 @@ impl Store {
             DocumentDerivedWrite::Preserve | DocumentDerivedWrite::RefreshGraphLabel => None,
         };
 
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let previous = if canonical_wiki_slug(&doc.uri).is_some() {
-            get_document_locked(&tx, &doc.id)?
-        } else {
-            None
-        };
-        let result = write_document_locked(
-            &tx,
-            doc,
-            if_match_revision,
-            derived,
-            prepared_embeddings.as_deref(),
-            manifest,
-        )?;
-        journal_generic_wiki_change_locked(&tx, previous.as_ref(), doc, sync_identity)?;
-        tx.commit()?;
-        Ok(result)
+        self.with_tx(|tx| {
+            let previous = if canonical_wiki_slug(&doc.uri).is_some() {
+                get_document_locked(tx, &doc.id)?
+            } else {
+                None
+            };
+            let result = write_document_locked(
+                tx,
+                doc,
+                if_match_revision,
+                derived,
+                prepared_embeddings.as_deref(),
+                manifest,
+            )?;
+            journal_generic_wiki_change_locked(tx, previous.as_ref(), doc, sync_identity)?;
+            Ok(result)
+        })
     }
 
     /// Persist a wiki document and its chunks, graph, catalog row, and audit
@@ -556,11 +566,8 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), revision FROM document_revisions WHERE document_id = ? ORDER BY revision DESC"
         )?;
-        let mut rows = stmt.query(params![document_id.trim()])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::document(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![document_id.trim()], rows::document)?;
         Ok(out)
     }
 
@@ -600,10 +607,8 @@ impl Store {
             "#
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query(params![document_id])?;
-        let mut items = Vec::new();
-        while let Some(row) = rows.next()? {
-            items.push(DocumentRevisionSummary {
+        let items = crate::db::rows::query_vec(&mut stmt, params![document_id], |row| {
+            Ok(DocumentRevisionSummary {
                 document_id: row.get(0)?,
                 uri: row.get(1)?,
                 title: row.get(2)?,
@@ -617,8 +622,8 @@ impl Store {
                 revision: row.get(10)?,
                 content_chars: row.get::<_, i64>(11)?.max(0) as u64,
                 content_lines: row.get::<_, i64>(12)?.max(0) as u64,
-            });
-        }
+            })
+        })?;
         Ok(DocumentRevisionPage {
             items,
             total: total.max(0) as u64,
@@ -664,11 +669,10 @@ impl Store {
     ///
     /// Returns `true` if a document row was removed.
     pub fn delete_document(&self, id: &str) -> Result<bool> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let deleted = delete_document_locked(&tx, id)?;
-        tx.commit()?;
-        Ok(deleted)
+        self.with_tx(|tx| {
+            let deleted = delete_document_locked(tx, id)?;
+            Ok(deleted)
+        })
     }
 
     /// Apply a maintenance batch of hard deletes and tombstones atomically.
@@ -690,48 +694,46 @@ impl Store {
             }
         }
 
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let mut deleted = 0u64;
-        let mut tombstoned = 0u64;
-        let mut chunks_deleted = 0u64;
+        self.with_tx(|tx| {
+            let mut deleted = 0u64;
+            let mut tombstoned = 0u64;
+            let mut chunks_deleted = 0u64;
 
-        for id in tombstone_ids {
-            let Some(document) = get_document_locked(&tx, id)? else {
-                return Err(AppError::not_found(format!(
-                    "document not found for tombstone: {id}"
-                )));
-            };
-            let expected_revision = document.revision;
-            let mut applied = apply_document_meta_update(
-                document,
-                &DocumentMetaUpdate {
-                    status: Some("tombstone".into()),
-                    ..Default::default()
-                },
-            )?;
-            applied.document.revision =
-                upsert_document_cas_locked(&tx, &applied.document, Some(expected_revision))?;
-            tombstoned += 1;
-        }
-
-        for id in delete_ids {
-            let chunk_count: i64 = tx.query_row(
-                "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
-                params![id],
-                |row| row.get(0),
-            )?;
-            if !delete_document_locked(&tx, id)? {
-                return Err(AppError::not_found(format!(
-                    "document not found for delete: {id}"
-                )));
+            for id in tombstone_ids {
+                let Some(document) = get_document_locked(tx, id)? else {
+                    return Err(AppError::not_found(format!(
+                        "document not found for tombstone: {id}"
+                    )));
+                };
+                let expected_revision = document.revision;
+                let mut applied = apply_document_meta_update(
+                    document,
+                    &DocumentMetaUpdate {
+                        status: Some("tombstone".into()),
+                        ..Default::default()
+                    },
+                )?;
+                applied.document.revision =
+                    upsert_document_cas_locked(tx, &applied.document, Some(expected_revision))?;
+                tombstoned += 1;
             }
-            deleted += 1;
-            chunks_deleted = chunks_deleted.saturating_add(chunk_count.max(0) as u64);
-        }
 
-        tx.commit()?;
-        Ok((deleted, tombstoned, chunks_deleted))
+            for id in delete_ids {
+                let chunk_count: i64 = tx.query_row(
+                    "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
+                    params![id],
+                    |row| row.get(0),
+                )?;
+                if !delete_document_locked(tx, id)? {
+                    return Err(AppError::not_found(format!(
+                        "document not found for delete: {id}"
+                    )));
+                }
+                deleted += 1;
+                chunks_deleted = chunks_deleted.saturating_add(chunk_count.max(0) as u64);
+            }
+            Ok((deleted, tombstoned, chunks_deleted))
+        })
     }
 
     /// Validate and apply one exact-content duplicate group atomically.
@@ -792,63 +794,61 @@ impl Store {
             }
         }
 
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let keep = get_document_locked(&tx, keep_id)?
-            .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
-        let expected_hash = content_hash(&keep.content);
-        if declared_hash.is_some_and(|declared| declared != expected_hash) {
-            return Err(AppError::conflict(format!(
-                "merge_exact_dup declared content_hash does not match canonical document {keep_id}"
-            )));
-        }
-
-        let mut sources = Vec::with_capacity(source_ids.len());
-        for source_id in source_ids {
-            let source = get_document_locked(&tx, source_id)?
-                .ok_or_else(|| AppError::not_found(format!("document not found: {source_id}")))?;
-            if content_hash(&source.content) != expected_hash {
+        self.with_tx(|tx| {
+            let keep = get_document_locked(tx, keep_id)?
+                .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
+            let expected_hash = content_hash(&keep.content);
+            if declared_hash.is_some_and(|declared| declared != expected_hash) {
                 return Err(AppError::conflict(format!(
-                    "merge_exact_dup source {source_id} is not an exact content duplicate of {keep_id}"
+                    "merge_exact_dup declared content_hash does not match canonical document {keep_id}"
                 )));
             }
-            sources.push(source);
-        }
 
-        let mut merged = Vec::with_capacity(sources.len());
-        let mut raw_protected = Vec::new();
-        for (index, source) in sources.into_iter().enumerate() {
-            if hard_delete && (!source.layer.eq_ignore_ascii_case("raw") || allow_raw_delete) {
-                if !delete_document_locked(&tx, &source.id)? {
-                    return Err(AppError::not_found(format!(
-                        "document disappeared during merge_exact_dup: {}",
-                        source.id
+            let mut sources = Vec::with_capacity(source_ids.len());
+            for source_id in source_ids {
+                let source = get_document_locked(tx, source_id)?
+                    .ok_or_else(|| AppError::not_found(format!("document not found: {source_id}")))?;
+                if content_hash(&source.content) != expected_hash {
+                    return Err(AppError::conflict(format!(
+                        "merge_exact_dup source {source_id} is not an exact content duplicate of {keep_id}"
                     )));
                 }
-            } else {
-                let expected_revision = source.revision;
-                let mut applied = apply_document_meta_update(
-                    source,
-                    &DocumentMetaUpdate {
-                        status: Some("archived".into()),
-                        ..Default::default()
-                    },
-                )?;
-                let source_id = applied.document.id.clone();
-                applied.document.revision =
-                    upsert_document_cas_locked(&tx, &applied.document, Some(expected_revision))?;
-                if hard_delete {
-                    raw_protected.push(source_id);
-                }
+                sources.push(source);
             }
-            merged.push(source_ids[index].clone());
-            after_mutation(index + 1)?;
-        }
 
-        tx.commit()?;
-        Ok(ExactDuplicateMergeResult {
-            merged,
-            raw_protected,
+            let mut merged = Vec::with_capacity(sources.len());
+            let mut raw_protected = Vec::new();
+            for (index, source) in sources.into_iter().enumerate() {
+                if hard_delete && (!source.layer.eq_ignore_ascii_case("raw") || allow_raw_delete) {
+                    if !delete_document_locked(tx, &source.id)? {
+                        return Err(AppError::not_found(format!(
+                            "document disappeared during merge_exact_dup: {}",
+                            source.id
+                        )));
+                    }
+                } else {
+                    let expected_revision = source.revision;
+                    let mut applied = apply_document_meta_update(
+                        source,
+                        &DocumentMetaUpdate {
+                            status: Some("archived".into()),
+                            ..Default::default()
+                        },
+                    )?;
+                    let source_id = applied.document.id.clone();
+                    applied.document.revision =
+                        upsert_document_cas_locked(tx, &applied.document, Some(expected_revision))?;
+                    if hard_delete {
+                        raw_protected.push(source_id);
+                    }
+                }
+                merged.push(source_ids[index].clone());
+                after_mutation(index + 1)?;
+            }
+            Ok(ExactDuplicateMergeResult {
+                merged,
+                raw_protected,
+            })
         })
     }
 
@@ -909,31 +909,30 @@ impl Store {
         source: &str,
         mut after_document: impl FnMut(usize) -> Result<()>,
     ) -> Result<(Vec<String>, bool)> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let manifest_present: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM source_manifest WHERE canonical_path = ?)",
-            params![source],
-            |row| row.get(0),
-        )?;
-        let mut ids = Vec::new();
-        {
-            let mut stmt = tx.prepare("SELECT id FROM documents WHERE source_file = ?")?;
-            let mut rows = stmt.query(params![source])?;
-            while let Some(row) = rows.next()? {
-                ids.push(row.get::<_, String>(0)?);
+        self.with_tx(|tx| {
+            let manifest_present: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM source_manifest WHERE canonical_path = ?)",
+                params![source],
+                |row| row.get(0),
+            )?;
+            let mut ids = Vec::new();
+            {
+                let mut stmt = tx.prepare("SELECT id FROM documents WHERE source_file = ?")?;
+                let mut rows = stmt.query(params![source])?;
+                while let Some(row) = rows.next()? {
+                    ids.push(row.get::<_, String>(0)?);
+                }
             }
-        }
-        for (index, id) in ids.iter().enumerate() {
-            delete_document_locked(&tx, id)?;
-            after_document(index + 1)?;
-        }
-        tx.execute(
-            "DELETE FROM source_manifest WHERE canonical_path = ?",
-            params![source],
-        )?;
-        tx.commit()?;
-        Ok((ids, manifest_present))
+            for (index, id) in ids.iter().enumerate() {
+                delete_document_locked(tx, id)?;
+                after_document(index + 1)?;
+            }
+            tx.execute(
+                "DELETE FROM source_manifest WHERE canonical_path = ?",
+                params![source],
+            )?;
+            Ok((ids, manifest_present))
+        })
     }
 
     /// Fetch a document by id.
@@ -968,11 +967,8 @@ impl Store {
         );
         let mut stmt = conn.prepare(&sql)?;
 
-        let mut rows = stmt.query(params![hash])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::document(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![hash], rows::document)?;
         Ok(out)
     }
 
@@ -1069,11 +1065,8 @@ impl Store {
         let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents ORDER BY created_at ASC");
         let mut stmt = conn.prepare(&sql)?;
 
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::document(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, [], rows::document)?;
         Ok(out)
     }
 
@@ -1133,11 +1126,8 @@ impl Store {
         );
         let mut statement = conn.prepare(&sql)?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let mut rows = statement.query(params![dirty_only, after_id.unwrap_or(""), limit])?;
-        let mut documents = Vec::new();
-        while let Some(row) = rows.next()? {
-            documents.push(rows::document(row)?);
-        }
+        let documents =
+            crate::db::rows::query_vec(&mut statement, params![dirty_only, after_id.unwrap_or(""), limit], rows::document)?;
         Ok(documents)
     }
 
@@ -1154,11 +1144,8 @@ impl Store {
         let mut statement =
             conn.prepare("SELECT id FROM documents WHERE id > ? ORDER BY id ASC LIMIT ?")?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let mut rows = statement.query(params![after_id.unwrap_or(""), limit])?;
-        let mut ids = Vec::new();
-        while let Some(row) = rows.next()? {
-            ids.push(row.get(0)?);
-        }
+        let ids =
+            crate::db::rows::query_vec(&mut statement, params![after_id.unwrap_or(""), limit], |row| Ok(row.get(0)?))?;
         Ok(ids)
     }
 
@@ -1209,11 +1196,8 @@ impl Store {
              ORDER BY created_at ASC, id ASC LIMIT ?",
         )?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let mut rows = statement.query(params![hash, keep_id, limit])?;
-        let mut ids = Vec::new();
-        while let Some(row) = rows.next()? {
-            ids.push(row.get(0)?);
-        }
+        let ids =
+            crate::db::rows::query_vec(&mut statement, params![hash, keep_id, limit], |row| Ok(row.get(0)?))?;
         Ok((count, ids))
     }
 
@@ -1241,11 +1225,8 @@ impl Store {
         );
         let mut statement = conn.prepare(&sql)?;
         let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
-        let mut rows = statement.query(params![limit])?;
-        let mut documents = Vec::new();
-        while let Some(row) = rows.next()? {
-            documents.push(rows::document(row)?);
-        }
+        let documents =
+            crate::db::rows::query_vec(&mut statement, params![limit], rows::document)?;
         Ok((count.max(0) as usize, documents))
     }
 
@@ -1277,11 +1258,8 @@ impl Store {
         );
         let mut statement = conn.prepare(&sql)?;
         let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
-        let mut rows = statement.query(params![limit])?;
-        let mut documents = Vec::new();
-        while let Some(row) = rows.next()? {
-            documents.push(rows::document(row)?);
-        }
+        let documents =
+            crate::db::rows::query_vec(&mut statement, params![limit], rows::document)?;
         Ok((count.max(0) as usize, documents))
     }
 
@@ -1293,11 +1271,8 @@ impl Store {
         );
         let mut stmt = conn.prepare(&sql)?;
 
-        let mut rows = stmt.query(params![layer])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::document(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![layer], rows::document)?;
         Ok(out)
     }
 
@@ -1388,11 +1363,8 @@ impl Store {
             ORDER BY MIN(source_node.label), source_node.document_id
             "#,
         )?;
-        let mut rows = stmt.query(params![document_id, wing, wing])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push((row.get(0)?, row.get(1)?));
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![document_id, wing, wing], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(out)
     }
 
@@ -1404,11 +1376,8 @@ impl Store {
         );
         let mut stmt = conn.prepare(&sql)?;
 
-        let mut rows = stmt.query(params![wing])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::document(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![wing], rows::document)?;
         Ok(out)
     }
 
@@ -1475,11 +1444,8 @@ impl Store {
             .iter()
             .map(|s| s as &dyn duckdb::types::ToSql)
             .collect();
-        let mut rows = stmt.query(params_dyn.as_slice())?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::document(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params_dyn.as_slice(), rows::document)?;
         Ok(out)
     }
 
@@ -1813,11 +1779,8 @@ impl Store {
             "#,
         )?;
 
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::chunk(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, [], rows::chunk)?;
         Ok(out)
     }
 
@@ -2165,16 +2128,15 @@ impl Store {
             .iter()
             .map(|chunk| serde_json::to_string(&chunk.embedding))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        super::fts::mark_fts_dirty(&tx)?;
-        tx.execute(
-            "DELETE FROM chunks WHERE document_id = ?",
-            params![document_id],
-        )?;
-        insert_chunks_locked(&tx, chunks, &embedding_json)?;
-        tx.commit()?;
-        Ok(())
+        self.with_tx(|tx| {
+            super::fts::mark_fts_dirty(tx)?;
+            tx.execute(
+                "DELETE FROM chunks WHERE document_id = ?",
+                params![document_id],
+            )?;
+            insert_chunks_locked(tx, chunks, &embedding_json)?;
+            Ok(())
+        })
     }
 
     /// Atomically replace only the embeddings of an unchanged chunk set.
@@ -2279,63 +2241,62 @@ impl Store {
             .map(serde_json::to_string)
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let current_revision = match tx.query_row(
-            "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
-            params![document_id],
-            |row| row.get::<_, i64>(0),
-        ) {
-            Ok(revision) => revision,
-            Err(duckdb::Error::QueryReturnedNoRows) => {
-                return Err(AppError::not_found(format!(
-                    "document not found: {document_id}"
-                )))
-            }
-            Err(error) => return Err(error.into()),
-        };
-        if current_revision != if_match_revision {
-            return Err(AppError::conflict(format!(
-                "etag mismatch for document {document_id}: expected revision {} ({}), current revision {} ({})",
-                if_match_revision,
-                crate::models::format_document_etag(if_match_revision),
-                current_revision,
-                crate::models::format_document_etag(current_revision),
-            )));
-        }
-
-        let current_chunks = list_chunks_for_document_locked(&tx, document_id)?;
-        if !same_chunk_snapshot(&current_chunks, expected_chunks) {
-            return Err(AppError::conflict(format!(
-                "chunk snapshot changed while re-embedding document {document_id}; retry from a fresh read"
-            )));
-        }
-
-        // A migration marker (or replacement manifest) becomes part of the
-        // transaction before the first vector write. The transaction boundary
-        // keeps it invisible until the vectors commit and rolls it back on any
-        // later failure.
-        if let Some(manifest) = manifest {
-            set_embedding_manifest_locked(&tx, manifest)?;
-        }
-        if !expected_chunks.is_empty() {
-            super::fts::mark_embeddings_changed(&tx)?;
-            let mut stmt = tx.prepare("UPDATE chunks SET embedding_json = ? WHERE id = ?")?;
-            for (index, (chunk, embedding_json)) in
-                expected_chunks.iter().zip(&embedding_json).enumerate()
-            {
-                let updated = stmt.execute(params![embedding_json, chunk.id])?;
-                if updated != 1 {
-                    return Err(AppError::conflict(format!(
-                        "chunk {} changed while re-embedding document {document_id}",
-                        chunk.id
-                    )));
+        self.with_tx(|tx| {
+            let current_revision = match tx.query_row(
+                "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
+                params![document_id],
+                |row| row.get::<_, i64>(0),
+            ) {
+                Ok(revision) => revision,
+                Err(duckdb::Error::QueryReturnedNoRows) => {
+                    return Err(AppError::not_found(format!(
+                        "document not found: {document_id}"
+                    )))
                 }
-                after_chunk_update(index + 1)?;
+                Err(error) => return Err(error.into()),
+            };
+            if current_revision != if_match_revision {
+                return Err(AppError::conflict(format!(
+                    "etag mismatch for document {document_id}: expected revision {} ({}), current revision {} ({})",
+                    if_match_revision,
+                    crate::models::format_document_etag(if_match_revision),
+                    current_revision,
+                    crate::models::format_document_etag(current_revision),
+                )));
             }
-        }
-        tx.commit()?;
-        Ok(expected_chunks.len())
+
+            let current_chunks = list_chunks_for_document_locked(tx, document_id)?;
+            if !same_chunk_snapshot(&current_chunks, expected_chunks) {
+                return Err(AppError::conflict(format!(
+                    "chunk snapshot changed while re-embedding document {document_id}; retry from a fresh read"
+                )));
+            }
+
+            // A migration marker (or replacement manifest) becomes part of the
+            // transaction before the first vector write. The transaction boundary
+            // keeps it invisible until the vectors commit and rolls it back on any
+            // later failure.
+            if let Some(manifest) = manifest {
+                set_embedding_manifest_locked(tx, manifest)?;
+            }
+            if !expected_chunks.is_empty() {
+                super::fts::mark_embeddings_changed(tx)?;
+                let mut stmt = tx.prepare("UPDATE chunks SET embedding_json = ? WHERE id = ?")?;
+                for (index, (chunk, embedding_json)) in
+                    expected_chunks.iter().zip(&embedding_json).enumerate()
+                {
+                    let updated = stmt.execute(params![embedding_json, chunk.id])?;
+                    if updated != 1 {
+                        return Err(AppError::conflict(format!(
+                            "chunk {} changed while re-embedding document {document_id}",
+                            chunk.id
+                        )));
+                    }
+                    after_chunk_update(index + 1)?;
+                }
+            }
+            Ok(expected_chunks.len())
+        })
     }
 
     // --- Karpathy wiki: ops_log + wiki_index + layer helpers ---
@@ -2419,11 +2380,8 @@ impl Store {
              LIMIT {limit}"
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(rows::document(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, [], rows::document)?;
         Ok(out)
     }
 
@@ -2971,11 +2929,8 @@ fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Resu
         ORDER BY chunk_index ASC, id ASC
         "#,
     )?;
-    let mut rows = stmt.query(params![document_id])?;
-    let mut chunks = Vec::new();
-    while let Some(row) = rows.next()? {
-        chunks.push(rows::chunk(row)?);
-    }
+    let chunks =
+        crate::db::rows::query_vec(&mut stmt, params![document_id], rows::chunk)?;
     Ok(chunks)
 }
 
@@ -3256,11 +3211,8 @@ fn fetch_wiki_page_meta_items(
     }
 
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_dyn.as_slice())?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        out.push(map_wiki_page_meta_row(row)?);
-    }
+    let out =
+        crate::db::rows::query_vec(&mut stmt, params_dyn.as_slice(), map_wiki_page_meta_row)?;
     Ok((out, total.max(0) as usize))
 }
 

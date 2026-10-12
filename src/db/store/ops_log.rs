@@ -50,11 +50,8 @@ impl Store {
             LIMIT ?
             "#,
         )?;
-        let mut rows = stmt.query(params![limit])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_ops_log(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
         Ok(out)
     }
 
@@ -87,11 +84,8 @@ impl Store {
             LIMIT ?
             "#,
         )?;
-        let mut rows = stmt.query(params![limit])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_ops_log(row)?);
-        }
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
         Ok(out)
     }
 
