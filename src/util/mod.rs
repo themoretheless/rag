@@ -14,7 +14,7 @@ pub use path::{
     validate_backup_output_paths,
 };
 pub use slug::{slugify, SlugPolicy};
-pub use text::{first_line, first_prose_line, non_blank, trimmed_non_blank};
+pub use text::{first_line, first_prose_line, non_blank, trimmed_non_blank, truncate_chars};
 pub use time::{
     format_db_timestamp, parse_db_timestamp, parse_flexible_timestamp, parse_optional_timestamp,
 };

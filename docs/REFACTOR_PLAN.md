@@ -482,6 +482,18 @@ locks and file sizes clean, and found the following; all are fixed:
   rings, depth limit with availability filter) share only the BFS skeleton;
   a common walker would need hooks for each variant and different key types.
 
+**Third audit**
+
+A third independent audit confirmed the earlier fixes and found, all fixed:
+the stale-wiki source-version loop now resolves sources from the raw/wiki
+pages already in memory (store lookup only on a miss); the UI's four URL
+encoders are one `gateway::percent_encode`; `util::truncate_chars` replaces
+the telemetry and search-pack copies and the UI excerpt/timestamp helpers
+reuse `ui::text`; recovery import parses timestamps through
+`util::parse_db_timestamp` (still falling back to now); the `graph_stats` doc
+comment is back on its function. `llm::json` keeps its own excerpt rule
+(max characters plus `…`) on purpose for error messages.
+
 **Not done, with the reason**
 
 Nothing: every planned item above is done.

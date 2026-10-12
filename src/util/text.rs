@@ -16,7 +16,7 @@ pub fn trimmed_non_blank(value: Option<String>) -> Option<String> {
 /// First non-blank line, trimmed and cut to `max` characters with `…`.
 pub fn first_line(content: &str, max: usize) -> String {
     let line = content.lines().map(str::trim).find(|l| !l.is_empty());
-    ellipsize(line.unwrap_or(""), max)
+    truncate_chars(line.unwrap_or(""), max)
 }
 
 /// Like [`first_line`], but prefers the first line that is not a Markdown
@@ -25,10 +25,14 @@ pub fn first_prose_line(content: &str, max: usize) -> String {
     let mut lines = content.lines().map(str::trim).filter(|l| !l.is_empty());
     let first = lines.clone().next().unwrap_or("");
     let prose = lines.find(|l| !l.starts_with('#')).unwrap_or(first);
-    ellipsize(prose, max)
+    truncate_chars(prose, max)
 }
 
-fn ellipsize(line: &str, max: usize) -> String {
+/// At most `max` characters, ending in `…` when cut (the ellipsis counts).
+pub fn truncate_chars(line: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if line.chars().count() <= max {
         line.to_string()
     } else {

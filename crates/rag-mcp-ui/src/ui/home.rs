@@ -685,9 +685,7 @@ fn compact_count(value: u64) -> String {
     }
 }
 
-fn readable_timestamp(value: &str) -> String {
-    value.strip_suffix('Z').unwrap_or(value).replace('T', " ")
-}
+use crate::ui::text::short_timestamp as readable_timestamp;
 
 fn short_time(value: &str) -> String {
     value

@@ -109,7 +109,16 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     for wiki in &wiki_docs {
         if let Some(versions) = wiki_source_versions(wiki) {
             for version in versions {
-                let source = store.find_by_id_or_uri(&version.document_id, &version.uri)?;
+                // Sources are almost always raw or wiki pages already in memory by
+                // id; a miss falls back to the store (id, then uri), as before.
+                let in_memory = raw_by_id
+                    .get(&version.document_id)
+                    .or_else(|| wiki_by_id.get(version.document_id.as_str()).copied())
+                    .cloned();
+                let source = match in_memory {
+                    Some(source) => Some(source),
+                    None => store.find_by_id_or_uri(&version.document_id, &version.uri)?,
+                };
                 if let Some(source) = source {
                     if content_hash(&source.content) != version.content_hash {
                         insert_stale_pair(&mut pairs, wiki, &source, "source_version");

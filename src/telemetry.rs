@@ -158,14 +158,7 @@ fn normalize_agent(raw: &str) -> String {
     }
 }
 
-fn truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push('…');
-    out
-}
+use crate::util::truncate_chars as truncate;
 
 fn sanitize_args(value: &serde_json::Value) -> String {
     let summary = match value {

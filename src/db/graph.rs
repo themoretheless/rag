@@ -382,10 +382,6 @@ impl Store {
         Ok(edge)
     }
 
-    /// Aggregate node counts by kind and edge counts by `rel_type`.
-    ///
-    /// Empty graph yields zeros and empty maps. Includes all kinds/rel_types
-    /// present in the store (including `tunnel`).
     /// Document id pairs joined by a `rel_type` edge, as `(source, target)`.
     /// Both endpoints must be document-backed nodes.
     pub fn document_pairs_by_relation(&self, rel_type: &str) -> Result<Vec<(String, String)>> {
@@ -401,6 +397,10 @@ impl Store {
         })
     }
 
+    /// Aggregate node counts by kind and edge counts by `rel_type`.
+    ///
+    /// Empty graph yields zeros and empty maps. Includes all kinds/rel_types
+    /// present in the store (including `tunnel`).
     pub fn graph_stats(&self) -> Result<GraphStats> {
         let conn = self.lock()?;
 

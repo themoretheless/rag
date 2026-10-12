@@ -241,18 +241,7 @@ fn join_url(base: &str, path: &str) -> Result<String, String> {
     Ok(format!("{}/{}", base, path.trim_start_matches('/')))
 }
 
-fn encode_query(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            other => encoded.push_str(&format!("%{other:02X}")),
-        }
-    }
-    encoded
-}
+use crate::gateway::percent_encode as encode_query;
 
 #[cfg(test)]
 mod tests {

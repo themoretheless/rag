@@ -292,17 +292,7 @@ fn operation_context(path: &str) -> &'static str {
     }
 }
 
-fn encode_segment(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
-            }
-            other => format!("%{other:02X}"),
-        })
-        .collect()
-}
+use crate::gateway::percent_encode as encode_segment;
 
 #[cfg(test)]
 mod tests {

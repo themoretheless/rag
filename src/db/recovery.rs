@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::SystemTime;
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use duckdb::params;
 use serde::{Deserialize, Serialize};
 
@@ -208,13 +208,10 @@ pub use self::bundle::*;
 use self::import::*;
 pub use self::publish::*;
 
+/// Bundle timestamps through the shared parser; an unreadable value falls back
+/// to now, since an import must not fail on one malformed legacy row.
 fn parse_ts(value: String) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(&value)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            NaiveDateTime::parse_from_str(&value, "%Y-%m-%d %H:%M:%S%.f").map(|dt| dt.and_utc())
-        })
-        .unwrap_or_else(|_| Utc::now())
+    crate::util::parse_db_timestamp(&value).unwrap_or_else(Utc::now)
 }
 
 #[cfg(test)]

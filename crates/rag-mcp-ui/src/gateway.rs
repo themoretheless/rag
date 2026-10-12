@@ -43,6 +43,21 @@ pub fn execute_request(client: &dyn GatewayClient, request: Request) -> Result<R
         .map_err(|error| format_transport_error(&error))
 }
 
+/// Percent-encode everything except RFC 3986 unreserved characters
+/// (`A-Z a-z 0-9 - _ . ~`); safe for both path segments and query values.
+pub fn percent_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 /// Production gateway client with a request timeout.
 pub fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
     ReqwestGatewayClient::new(Duration::from_secs(timeout_secs))

@@ -173,19 +173,7 @@ fn format_citation_header(index: usize, hit: &SearchHit) -> String {
     )
 }
 
-/// Unicode-safe truncation; the ellipsis itself consumes one character.
-fn truncate_to_chars(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    let mut chars = text.chars();
-    let mut out: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        out.pop();
-        out.push('…');
-    }
-    out
-}
+use crate::util::truncate_chars as truncate_to_chars;
 
 #[cfg(test)]
 mod tests {

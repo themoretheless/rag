@@ -778,26 +778,7 @@ fn put_wiki_http_with_client(
 }
 
 /// Minimal query-string escape for path-ish ids/uris (no full url crate).
-fn urlencoding_minimal(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 2);
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            b' ' => out.push_str("%20"),
-            b':' => out.push_str("%3A"),
-            b'/' => out.push_str("%2F"),
-            b'?' => out.push_str("%3F"),
-            b'#' => out.push_str("%23"),
-            b'&' => out.push_str("%26"),
-            b'=' => out.push_str("%3D"),
-            b'+' => out.push_str("%2B"),
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
-}
+use crate::gateway::percent_encode as urlencoding_minimal;
 
 /// Load GraphView from rag-mcp HTTP API (same process holds DuckDB; no second open).
 ///
