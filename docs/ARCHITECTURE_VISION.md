@@ -446,7 +446,7 @@ public raw-source contract.
 | `mcp/facade.rs` + `mcp/{domain}.rs` | ~0.8k core, 0.2–1k per domain | `server.rs` composes per-domain `#[tool_router]`s; the facade owns shared state, service adapters and dispatch |
 | `db/store.rs` | ~4.1k LOC | compatibility façade and transaction owner; focused repositories own search/FTS/graph/catalog/manifest algorithms |
 | `wiki/mod.rs` | ~3.1k LOC | L3 behavior plus legacy raw compatibility entry points |
-| `crates/rag-mcp-ui/src/app.rs` | ~3.7k LOC | workspace/navigation coordinator; gateway DTOs and rendering are split |
+| `crates/rag-mcp-ui/src/app/` | ~4.7k LOC in 6 files (largest `frame.rs` ~1.7k) | workspace/navigation coordinator split into state, events, frame, graph, wiki and revisions |
 | `Storage` | document lifecycle slice | DuckDB remains the only full application backend |
 
 Refactor order is now **freeze behavior → route through an application seam →
