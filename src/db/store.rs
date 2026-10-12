@@ -471,7 +471,7 @@ impl Store {
                 content: doc.content.clone(),
                 wing: doc.wing.clone(),
                 room: doc.room.clone(),
-                kind: Some(doc.kind.clone()),
+                kind: Some(doc.kind.to_string()),
                 category: index_entry.category.clone(),
                 summary: index_entry.summary.clone(),
                 metadata_json: Some(doc.metadata_json.clone()),
@@ -897,7 +897,7 @@ fn journal_generic_wiki_change_locked(
             content: doc.content.clone(),
             wing: doc.wing.clone(),
             room: doc.room.clone(),
-            kind: Some(doc.kind.clone()),
+            kind: Some(doc.kind.to_string()),
             category: category.clone(),
             summary: Some(summary.clone()),
             metadata_json: Some(doc.metadata_json.clone()),
@@ -924,7 +924,7 @@ fn journal_generic_wiki_change_locked(
                 .unwrap_or_else(|| format!("idx-{}", doc.id)),
             slug: slug.into(),
             title: doc.title.clone(),
-            kind: doc.kind.clone(),
+            kind: doc.kind.to_string(),
             category,
             summary: Some(summary),
             page_id: Some(doc.id.clone()),
@@ -1028,7 +1028,7 @@ fn apply_document_meta_update(
     if let Some(ref kind) = update.kind {
         let kind = kind.trim();
         if !kind.is_empty() {
-            doc.kind = kind.to_string();
+            doc.kind = kind.into();
         }
     }
     if let Some(ref source_file) = update.source_file {
@@ -1583,7 +1583,7 @@ fn fetch_wiki_page_meta_items(
         let kind = kind.trim();
         if !kind.is_empty() {
             // Match stored kind; empty DB kind is projected as "wiki" in the DTO map.
-            if crate::models::PageKind::Wiki.is(kind) {
+            if crate::models::DocumentKind::Wiki == kind {
                 predicates.push("(COALESCE(kind, '') = '' OR kind = ?)".into());
             } else {
                 predicates.push("kind = ?".into());
@@ -1679,7 +1679,7 @@ fn map_wiki_page_meta_row(row: &duckdb::Row<'_>) -> Result<crate::models::WikiPa
     let kind: String = row
         .get::<_, Option<String>>(3)?
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| crate::models::PageKind::Wiki.as_str().into());
+        .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into());
     let metadata_json: String = row.get(4)?;
     let revision: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(1);
     let updated_raw: String = row.get(6)?;

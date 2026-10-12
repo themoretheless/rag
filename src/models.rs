@@ -11,8 +11,12 @@ fn default_layer() -> String {
     "raw".into()
 }
 
-fn default_kind() -> String {
+fn default_kind_string() -> String {
     "document".into()
+}
+
+fn default_kind() -> DocumentKind {
+    DocumentKind::Document
 }
 
 fn default_doc_status() -> String {
@@ -128,7 +132,7 @@ pub struct Document {
     pub layer: String,
     /// `document` | `wiki` | `entity` | `concept` | `source_summary` | `diary` | `schema`
     #[serde(default = "default_kind")]
-    pub kind: String,
+    pub kind: DocumentKind,
     /// Content fingerprint for idempotent ingest / dedupe.
     #[serde(default)]
     pub content_hash: Option<String>,
@@ -543,7 +547,7 @@ pub struct VacuumStoreReport {
 }
 
 pub use rag_mcp_core::{
-    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind, PageKind, SearchContextChunk,
+    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind, SearchContextChunk,
     SearchExplanation, SearchHit,
     PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
@@ -573,6 +577,31 @@ pub struct EdgeCutRow {
     /// Edge context, or an empty string when NULL.
     pub context: String,
     pub count: u64,
+}
+
+finding_codes! {
+    /// A document's page kind: the kinds the server writes or special-cases,
+    /// plus `Other` for agent-written kinds. Stored and sent as the plain string.
+    DocumentKind {
+        Wiki => "wiki",
+        SourceSummary => "source_summary",
+        Entity => "entity",
+        Concept => "concept",
+        Diary => "diary",
+        Document => "document",
+    }
+}
+
+impl duckdb::ToSql for DocumentKind {
+    fn to_sql(&self) -> duckdb::Result<duckdb::types::ToSqlOutput<'_>> {
+        Ok(duckdb::types::ToSqlOutput::from(self.as_str()))
+    }
+}
+
+impl duckdb::types::FromSql for DocumentKind {
+    fn column_result(value: duckdb::types::ValueRef<'_>) -> duckdb::types::FromSqlResult<Self> {
+        String::column_result(value).map(Self::from)
+    }
 }
 
 /// Parse a node kind at the MCP/store boundary, rejecting unknown values
@@ -1080,7 +1109,7 @@ pub struct DrawerListItem {
     pub source_file: Option<String>,
     #[serde(default = "default_layer")]
     pub layer: String,
-    #[serde(default = "default_kind")]
+    #[serde(default = "default_kind_string")]
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
@@ -1104,7 +1133,7 @@ impl From<&Document> for DrawerListItem {
             room: d.room.clone(),
             source_file: d.source_file.clone(),
             layer: d.layer.clone(),
-            kind: d.kind.clone(),
+            kind: d.kind.to_string(),
             content_hash: d.content_hash.clone(),
             pinned: d.pinned,
             boost: d.boost,
@@ -1188,6 +1217,31 @@ macro_rules! finding_codes {
             }
         }
 
+        impl PartialEq<str> for $name {
+            fn eq(&self, other: &str) -> bool {
+                self.as_str() == other
+            }
+        }
+
+        impl PartialEq<String> for $name {
+            fn eq(&self, other: &String) -> bool {
+                self.as_str() == other
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(code: String) -> Self {
+                Self::from(code.as_str())
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = str;
+            fn deref(&self) -> &str {
+                self.as_str()
+            }
+        }
+
         impl serde::Serialize for $name {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
                 serializer.serialize_str(self.as_str())
@@ -1210,6 +1264,23 @@ mod tests {
         format_document_etag, parse_document_etag, Document, ProjectId, WikiPageListItem,
         UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
     };
+
+    #[test]
+    fn document_kind_keeps_agent_kinds_and_wire_strings() {
+        use super::DocumentKind;
+        let doc = Document {
+            kind: "runbook".into(),
+            ..Document::default()
+        };
+        let mut wire = serde_json::to_value(&doc).unwrap();
+        assert_eq!(wire["kind"], "runbook");
+        let back: Document = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(back.kind, DocumentKind::Other("runbook".into()));
+        wire.as_object_mut().unwrap().remove("kind");
+        let defaulted: Document = serde_json::from_value(wire).unwrap();
+        assert_eq!(defaulted.kind, DocumentKind::Document);
+        assert!(DocumentKind::Wiki == "wiki");
+    }
 
     #[test]
     fn ui_graph_export_limit_is_one_hundred_thousand() {

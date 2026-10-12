@@ -121,7 +121,7 @@ impl From<DocumentWithChunks> for SourceDetail {
             source_file: document.source_file,
             source_download_path,
             layer: document.layer,
-            kind: document.kind,
+            kind: document.kind.to_string(),
             created_at: document.created_at.to_rfc3339(),
             updated_at: document.updated_at.to_rfc3339(),
             chunks_total: value.chunks_total,

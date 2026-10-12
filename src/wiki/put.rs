@@ -94,7 +94,7 @@ pub async fn put_wiki_page(
         content: command.content,
         wing: command.wing,
         room: command.room,
-        kind: command.kind.unwrap_or_else(|| crate::models::PageKind::Wiki.as_str().into()),
+        kind: command.kind.unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
         category: command.category,
         summary: command.summary,
         agent: command.agent,

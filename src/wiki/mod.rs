@@ -159,7 +159,7 @@ impl SchemaDocumentView {
             title: doc.title.clone(),
             content: doc.content.clone(),
             layer: doc.layer.clone(),
-            kind: doc.kind.clone(),
+            kind: doc.kind.to_string(),
             content_hash: doc.content_hash.clone(),
             created_at: doc.created_at.to_rfc3339(),
             updated_at: doc.updated_at.to_rfc3339(),

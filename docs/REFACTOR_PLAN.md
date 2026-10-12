@@ -399,7 +399,10 @@ are fixed too:
   graph::resolve}` or `Store` methods (`reindex_fts`, `chunks_generation`,
   `set_document_tags`, `checkpoint`). `payload_kv::with_session` gives
   read-modify-write callers one lock without exposing the connection.
-- 5.8: `rag_mcp_core::Layer` and `rag_mcp_core::NodeKind` name the layer and
+- 5.8 done: `Document::kind` is `models::DocumentKind` (named kinds plus
+  `Other` for agent-written kinds, stored and sent as the same string, with
+  DuckDB `ToSql`/`FromSql`), so no valid page is rejected.
+  `rag_mcp_core::Layer` and `rag_mcp_core::NodeKind` name the layer and
   graph-node values; production comparisons in server and UI use them, and the
   server's former `models::NodeKind` copy is gone. Stored values and JSON stay
   strings.
@@ -425,7 +428,6 @@ are fixed too:
 
 | Item | Why it stops here |
 |------|-------------------|
-| 5.8 page `kind` as a closed enum | `rag_mcp_core::PageKind` names the kinds the server writes or special-cases (`wiki`, `source_summary`, `entity`, `concept`, `diary`), and the defaults use it. `Document::kind` stays a string because agents write their own kinds; a closed enum would reject valid pages. |
 | 6.2 last two tolerant pairs | `ActivityEvent` and `SearchHit` (with `SearchExplanation`, `SearchContextChunk`) now live in `rag-mcp-core` and the UI uses them directly. `ProjectHome` would pull `chrono` into the serde-only core crate, and the UI's `JobSnapshot` keeps `status` as a string so an older UI survives a newer server status; both are round-trip tested against the server types in `crates/rag-mcp-ui/src/wire_contract.rs`. |
 
 ## Not planned

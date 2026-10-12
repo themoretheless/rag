@@ -74,7 +74,7 @@ pub fn fetch_document_db(
         uri: doc.uri,
         title: doc.title,
         layer: doc.layer,
-        kind: doc.kind,
+        kind: doc.kind.to_string(),
         content: doc.content,
         content_hash: doc.content_hash,
         updated_at: Some(doc.updated_at.to_rfc3339()),

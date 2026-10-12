@@ -263,7 +263,7 @@ impl<'a> DiagnosticsService<'a> {
                     room: document.room.clone(),
                     source_file: document.source_file.clone(),
                     layer: document.layer.clone(),
-                    kind: document.kind.clone(),
+                    kind: document.kind.to_string(),
                     immutable: false,
                 };
                 match ingest.ingest(command).await {

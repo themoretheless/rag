@@ -1308,7 +1308,7 @@ async fn apply_consolidate(
         }
     };
     let slug = param_str(params, "slug").unwrap_or_else(|| title.clone());
-    let kind = param_str(params, "kind").unwrap_or_else(|| crate::models::PageKind::Concept.as_str().into());
+    let kind = param_str(params, "kind").unwrap_or_else(|| crate::models::DocumentKind::Concept.as_str().into());
     let category = param_str(params, "category");
     let summary = param_str(params, "summary");
 

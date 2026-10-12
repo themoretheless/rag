@@ -142,7 +142,7 @@ async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, Ap
                 content: payload.content.clone(),
                 wing: payload.wing.clone(),
                 room: payload.room.clone(),
-                kind: payload.kind.clone().unwrap_or_else(|| crate::models::PageKind::Wiki.as_str().into()),
+                kind: payload.kind.clone().unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
                 category: payload.category.clone(),
                 summary: payload.summary.clone(),
                 agent: Some(format!("sync:{origin_node}")),

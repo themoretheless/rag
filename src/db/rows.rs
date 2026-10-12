@@ -73,7 +73,7 @@ pub(crate) fn document(row: &duckdb::Row<'_>) -> Result<Document> {
         metadata_json: row.get(4)?, content_hash: row.get(5)?, wing: row.get(6)?,
         room: row.get(7)?, source_file: row.get(8)?,
         layer: row.get::<_, Option<String>>(9)?.filter(|value| !value.is_empty()).unwrap_or_else(|| "raw".into()),
-        kind: row.get::<_, Option<String>>(10)?.filter(|value| !value.is_empty()).unwrap_or_else(|| "document".into()),
+        kind: row.get::<_, Option<String>>(10)?.filter(|value| !value.is_empty()).unwrap_or_else(|| "document".into()).into(),
         created_at: timestamp(&created_raw)?, updated_at: timestamp(&updated_raw)?,
         status: row.get::<_, Option<String>>(13)?.filter(|value| !value.is_empty()).unwrap_or_else(|| "active".into()),
         pinned: row.get::<_, Option<bool>>(14)?.unwrap_or(false),

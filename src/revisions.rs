@@ -151,7 +151,7 @@ impl<'a> RevisionService<'a> {
                     .unwrap_or_else(|| format!("idx-{}", restored.id)),
                 slug: slug.into(),
                 title: restored.title.clone(),
-                kind: restored.kind.clone(),
+                kind: restored.kind.to_string(),
                 category: metadata
                     .get("category")
                     .and_then(|value| value.as_str())

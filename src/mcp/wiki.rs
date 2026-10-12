@@ -58,7 +58,7 @@ impl RagServer {
                 title: doc.title,
                 content: doc.content,
                 layer: doc.layer,
-                kind: doc.kind,
+                kind: doc.kind.to_string(),
                 content_hash: doc.content_hash,
                 created_at: doc.created_at.to_rfc3339(),
                 updated_at: doc.updated_at.to_rfc3339(),
@@ -337,7 +337,7 @@ impl RagServer {
                         uri: doc.uri,
                         title: doc.title,
                         layer: doc.layer,
-                        kind: doc.kind,
+                        kind: doc.kind.to_string(),
                         content: doc.content,
                     });
                 }
@@ -588,7 +588,7 @@ impl RagServer {
                 content: params.content,
                 wing: params.wing,
                 room: params.room,
-                kind: params.kind.unwrap_or_else(|| crate::models::PageKind::Wiki.as_str().into()),
+                kind: params.kind.unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
                 category: params.category,
                 summary: params.summary,
                 agent: params.agent,

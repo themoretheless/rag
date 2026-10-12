@@ -44,7 +44,7 @@ pub fn list_candidates(store: &Store, status: Option<&str>, layer: Option<&str>,
     })?;
     Ok(docs.into_iter().map(|doc| LifecycleCandidate {
         id: doc.id, uri: doc.uri, title: doc.title, layer: doc.layer,
-        kind: doc.kind, status: doc.status, updated_at: doc.updated_at,
+        kind: doc.kind.to_string(), status: doc.status, updated_at: doc.updated_at,
     }).collect())
 }
 

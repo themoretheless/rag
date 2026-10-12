@@ -85,7 +85,7 @@ impl Store {
                 kind: if doc.kind.is_empty() {
                     "wiki".into()
                 } else {
-                    doc.kind.clone()
+                    doc.kind.to_string()
                 },
                 category: meta_category,
                 summary: Some(summary),

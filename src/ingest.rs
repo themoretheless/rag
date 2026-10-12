@@ -381,7 +381,7 @@ impl<'a> IngestService<'a> {
                 .source_file
                 .or_else(|| existing.as_ref().and_then(|doc| doc.source_file.clone())),
             layer: command.layer,
-            kind: command.kind,
+            kind: command.kind.into(),
             content_hash: Some(new_hash.clone()),
             ..existing.unwrap_or_default()
         };
@@ -515,7 +515,7 @@ impl<'a> IngestService<'a> {
             boost: document.boost,
             metadata_json: document.metadata_json,
             layer: document.layer,
-            kind: document.kind,
+            kind: document.kind.to_string(),
             source_file: document.source_file,
             content_changed: applied.content_changed,
             reembedded,

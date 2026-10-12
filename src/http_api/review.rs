@@ -91,7 +91,7 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
             content: p.content.clone(),
             wing: p.base.wing.clone(),
             room: p.base.room.clone(),
-            kind: p.base.kind.clone(),
+            kind: p.base.kind.to_string(),
             category: None,
             summary: None,
             agent: Some("knowledge-review".into()),

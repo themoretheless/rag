@@ -46,7 +46,8 @@ pub struct WakeUpReport {
 /// Document layer for agent diary notes.
 pub const LAYER_DIARY: &str = crate::models::Layer::Diary.as_str();
 /// Document kind for diary entries.
-pub const KIND_DIARY: &str = crate::models::PageKind::Diary.as_str();
+/// Must equal `DocumentKind::Diary` (checked by a test); a `const` needs the literal.
+pub const KIND_DIARY: &str = "diary";
 /// Legacy room name; new writes use `room = agent_name` for list filters.
 pub const ROOM_DIARY: &str = "diary";
 
@@ -414,6 +415,11 @@ async fn embed_and_store_chunks(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diary_kind_constant_matches_document_kind() {
+        assert_eq!(super::KIND_DIARY, crate::models::DocumentKind::Diary.as_str());
+    }
+
     use super::*;
     use crate::embeddings::MockEmbedder;
 

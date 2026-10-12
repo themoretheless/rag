@@ -301,7 +301,7 @@ pub(crate) async fn write_wiki_page_synced_command(
     doc.created_at = created_at;
     doc.updated_at = now;
     doc.layer = LAYER_WIKI.into();
-    doc.kind = kind.to_string();
+    doc.kind = kind.into();
     doc.content_hash = Some(content_hash(&content));
     let chunks = DocumentIndexer::new(embedder.as_ref(), config)
         .build_plain_chunks(&doc)
