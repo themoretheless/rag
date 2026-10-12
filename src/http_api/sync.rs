@@ -30,7 +30,7 @@ pub(super) fn routes() -> Router<HttpState> {
 }
 
 fn identity() -> Result<(String, String, Option<String>), AppError> {
-    let identity = SyncIdentity::from_env()?;
+    let identity = SyncIdentity::current()?;
     Ok((
         identity.role().into(),
         identity.node_id,

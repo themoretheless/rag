@@ -1,9 +1,8 @@
 //! Content hashing and ingest path allowlist helpers.
 //!
 //! - [`content_hash`]: stable blake3 hex digest of text (for dedupe / embed cache).
-//! - [`check_path_allowlist`]: gate filesystem paths against `RAG_INGEST_ROOTS`.
+//! - [`check_path_allowlist`]: gate filesystem paths against the configured ingest roots.
 
-use std::env;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{AppError, Result};
@@ -13,17 +12,6 @@ use crate::error::{AppError, Result};
 /// Same input always yields the same 64-character lowercase hex string.
 pub fn content_hash(text: &str) -> String {
     blake3::hash(text.as_bytes()).to_hex().to_string()
-}
-
-/// Parse `RAG_INGEST_ROOTS` from the process environment.
-///
-/// Comma-separated paths (trimmed). Empty or unset env yields an empty list
-/// (all file paths refused by the allowlist).
-pub fn ingest_roots_from_env() -> Vec<PathBuf> {
-    match env::var_os("RAG_INGEST_ROOTS") {
-        Some(raw) if !raw.is_empty() => parse_ingest_roots(&raw),
-        _ => Vec::new(),
-    }
 }
 
 /// Parse a roots string the same way as `RAG_INGEST_ROOTS` (comma-separated).
@@ -76,7 +64,7 @@ fn resolve_for_allowlist(path: &Path) -> Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        let cwd = env::current_dir().map_err(AppError::from)?;
+        let cwd = std::env::current_dir().map_err(AppError::from)?;
         cwd.join(path)
     };
 

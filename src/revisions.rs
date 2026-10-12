@@ -177,7 +177,7 @@ impl<'a> RevisionService<'a> {
                 updated_at: now,
             };
             let mode =
-                crate::db::sync::WikiSyncWrite::Local(crate::db::sync::SyncIdentity::from_env()?);
+                crate::db::sync::WikiSyncWrite::Local(crate::db::sync::SyncIdentity::current()?);
             self.store
                 .write_wiki_document_atomic(
                     &restored,

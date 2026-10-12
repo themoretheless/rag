@@ -86,7 +86,7 @@ pub use db::{
 };
 
 // --- Util (hash + ingest path allowlist) ---
-pub use util::{check_path_allowlist, content_hash, ingest_roots_from_env, parse_ingest_roots};
+pub use util::{check_path_allowlist, content_hash, parse_ingest_roots};
 
 // --- Wiki compile layer ---
 pub use wiki::{

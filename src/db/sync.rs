@@ -60,14 +60,24 @@ pub(crate) struct SyncIdentity {
     pub primary_url: Option<String>,
 }
 
+/// `(node_id, primary_url)` from `Config`, set once at start-up.
+static CONFIGURED_IDENTITY: std::sync::OnceLock<(Option<String>, Option<String>)> =
+    std::sync::OnceLock::new();
+
+/// Record this process's sync identity from `Config::{sync_node_id, sync_primary_url}`.
+/// The first value wins.
+pub fn configure_identity(node_id: Option<String>, primary_url: Option<String>) {
+    let _ = CONFIGURED_IDENTITY.set((node_id, primary_url));
+}
+
 impl SyncIdentity {
-    pub(crate) fn from_env() -> Result<Self> {
-        let primary_url = std::env::var("RAG_PRIMARY_URL")
-            .ok()
+    pub(crate) fn current() -> Result<Self> {
+        let (configured_node, configured_primary) =
+            CONFIGURED_IDENTITY.get_or_init(|| (None, None)).clone();
+        let primary_url = configured_primary
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let node_id = std::env::var("RAG_NODE_ID")
-            .ok()
+        let node_id = configured_node
             .filter(|value| !value.trim().is_empty())
             .or_else(|| {
                 std::env::var("HOSTNAME")
@@ -474,7 +484,7 @@ impl Store {
             content_hash,
         );
         validate_wiki_change(&prototype)?;
-        let identity = SyncIdentity::from_env()?;
+        let identity = SyncIdentity::current()?;
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let assigned = local_change_locked(&tx, &identity, &prototype)?;

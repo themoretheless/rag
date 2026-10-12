@@ -110,7 +110,7 @@ pub async fn write_wiki_page_command(
     config: &Config,
     command: WikiWriteCommand,
 ) -> Result<WikiWriteResult> {
-    let identity = crate::db::sync::SyncIdentity::from_env()?;
+    let identity = crate::db::sync::SyncIdentity::current()?;
     let (write, _) = write_wiki_page_synced_command(
         store,
         embedder,
@@ -131,7 +131,7 @@ pub(crate) async fn create_wiki_page_command(
     config: &Config,
     command: WikiWriteCommand,
 ) -> Result<WikiWriteResult> {
-    let identity = crate::db::sync::SyncIdentity::from_env()?;
+    let identity = crate::db::sync::SyncIdentity::current()?;
     let (write, _) = write_wiki_page_synced_command(
         store,
         embedder,

@@ -2519,7 +2519,7 @@ fn journal_generic_wiki_change_locked(
     let identity = match identity {
         Some(identity) => identity,
         None => {
-            environment_identity = super::sync::SyncIdentity::from_env()?;
+            environment_identity = super::sync::SyncIdentity::current()?;
             &environment_identity
         }
     };

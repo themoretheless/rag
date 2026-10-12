@@ -134,6 +134,10 @@ pub struct Config {
     pub max_links_per_doc: usize,
     /// In-memory call-log ring size. Env: `RAG_CALL_LOG_CAPACITY`.
     pub call_log_capacity: usize,
+    /// Sync node id. Env: `RAG_NODE_ID` (default `HOSTNAME`, then `primary`/`local`).
+    pub sync_node_id: Option<String>,
+    /// Primary to replicate from; `None` makes this node the primary. Env: `RAG_PRIMARY_URL`.
+    pub sync_primary_url: Option<String>,
 }
 
 /// Which tools are advertised and callable.
@@ -245,6 +249,8 @@ impl Default for Config {
             auto_backup_min_free_bytes: DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES,
             max_links_per_doc: crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
             call_log_capacity: crate::telemetry::DEFAULT_CAPACITY,
+            sync_node_id: None,
+            sync_primary_url: None,
         }
     }
 }
@@ -264,11 +270,15 @@ fn parse_auto_sync_roots(raw: &str) -> Vec<String> {
 }
 
 impl Config {
-    /// Push process-global limits (graph link ceiling, call-log size) into the
+    /// Push process-global settings (graph link ceiling, call-log size, sync identity) into the
     /// subsystems that hold them. Call once at start-up, before first use.
     pub fn apply_process_limits(&self) {
         crate::db::graph::resolve::configure_max_links(self.max_links_per_doc);
         crate::telemetry::configure_capacity(self.call_log_capacity);
+        crate::db::sync::configure_identity(
+            self.sync_node_id.clone(),
+            self.sync_primary_url.clone(),
+        );
     }
 
     /// Shared baseline for unit and integration tests.
@@ -321,7 +331,11 @@ impl Config {
         let chunk_overlap = parse_usize("RAG_CHUNK_OVERLAP", "120")?;
         let default_top_k = parse_usize("RAG_DEFAULT_TOP_K", "5")?;
 
-        let ingest_roots = crate::util::ingest_roots_from_env();
+        // Comma-separated; empty or unset refuses every file path.
+        let ingest_roots = env::var_os("RAG_INGEST_ROOTS")
+            .filter(|raw| !raw.is_empty())
+            .map(|raw| crate::util::parse_ingest_roots(&raw))
+            .unwrap_or_default();
 
         let max_context_tokens = parse_usize("RAG_MAX_CONTEXT_TOKENS", "4096")?;
         let max_chunks_per_doc = parse_usize("RAG_MAX_CHUNKS_PER_DOC", "3")?;
@@ -420,6 +434,8 @@ impl Config {
         );
         let call_log_capacity =
             positive_usize("RAG_CALL_LOG_CAPACITY", crate::telemetry::DEFAULT_CAPACITY);
+        let sync_node_id = env::var("RAG_NODE_ID").ok();
+        let sync_primary_url = env::var("RAG_PRIMARY_URL").ok();
 
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
@@ -476,6 +492,8 @@ impl Config {
             auto_backup_min_free_bytes,
             max_links_per_doc,
             call_log_capacity,
+            sync_node_id,
+            sync_primary_url,
         };
         config.validate()?;
         Ok(config)
