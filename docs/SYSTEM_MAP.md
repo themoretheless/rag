@@ -105,11 +105,15 @@ database path is published last as the generation commit marker.
 | `source_scan.rs`, `source_sync.rs` | source discovery, manifest-aware bounded batching, ordered progress and cancellation |
 | `retrieval.rs`, `search_pack.rs` | validated search use cases, multi-get/expand/similar and token packing |
 | `revisions.rs` | revision diff and CAS-protected restore use cases |
-| `diagnostics.rs`, `ops.rs` | shared HTTP/MCP health/status/doctor policy, aggregate layer health and scheduled operational state |
-| `graph/` | pure wikilink/tag extraction and resolution |
-| `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams |
+| `diagnostics.rs`, `ops.rs` | shared HTTP/MCP health/status/doctor policy and report DTOs, aggregate layer health and scheduled operational state |
+| `graph/` | pure wikilink/tag extraction; resolution persists through `db::graph::resolve` |
+| `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams; `wiki::put_wiki_page` is the slug/uri/id upsert policy used by HTTP |
 | `maintain/`, `memory_lifecycle.rs`, `diary/` | explicit maintenance and memory workflows |
-| `db/store.rs` | compatibility DuckDB façade and transaction boundary |
+| `db/store.rs` | compatibility DuckDB façade and transaction boundary; `Store::lock` is private to `db` outside tests |
+| `db/{payload_kv,analytics,knowledge,chunk_text,review}.rs`, `db/graph/resolve.rs` | repositories for the former direct-lock callers: JSON payload tables (`with_session` for read-modify-write), corpus analytics, knowledge catalog, chunk text pages, review accept, graph resolution |
+| `db/embedding_identity.rs` | `EmbeddingIdentity` trait so the store checks the manifest without importing `config` |
+| `context.rs` | `AppContext` (store, embedder, config, chat client) built once at start-up and shared by HTTP and MCP |
+| `jobs.rs` | background job registry, lifecycle and persistence; `http_api/jobs.rs` only routes |
 | `db/{rows,fts,search,graph,kg,catalog,source_manifest,recovery,vault}.rs` | persistence repositories, scoped/global retrieval snapshots, aggregate health, atomic single-artifact recovery publication and coordinated backup-group publication |
 | `storage/` | small backend-neutral document contract; DuckDB and Markdown implementations |
 | `access.rs`, `http_api/auth.rs` | explicit MCP roles, shared HTTP/MCP Bearer authentication, HTTP operation permissions and remote startup guard |
@@ -122,10 +126,13 @@ database path is published last as the generation commit marker.
 | `bootstrap.rs` | shared start-up for `main` and the offline tools (tracing, configured store, manifest check, embedder) |
 | `llm/json.rs`, `maintain/audit.rs` | one parser for JSON in model output; one terminal `MAINT` audit row per maintenance run |
 | `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters (`activity.rs` only serves `/v1/activity`) |
-| `crates/rag-mcp-core` | serde-only wire types shared by the server and clients (graph view, PKB defaults) |
+| `crates/rag-mcp-core` | serde-only wire types shared by the server and clients (graph view, PKB defaults, `Layer`) |
+| `web-svelte/src/api/types.ts` | web client wire types; the graph and search shapes are checked against Rust by `tests/it/web_types_contract_test.rs` |
 | `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
 | `crates/rag-mcp-ui/src/direct_db.rs` | read-only `--db` mode behind the default `direct-db` feature; the only UI code that links the server crate |
-| `crates/rag-mcp-ui/src/ui/` | workspace rendering; `app.rs` coordinates navigation and worker state |
+| `crates/rag-mcp-ui/src/ui/` | workspace rendering |
+| `crates/rag-mcp-ui/src/app/` | `GraphApp` state (`mod.rs`), worker events, per-frame layout, graph, wiki and revision behaviour |
+| `crates/rag-mcp-ui/src/worker.rs` | worker thread; `LoadSource` methods pick the HTTP or direct-db path once per operation |
 
 ## 4. Structural seams
 

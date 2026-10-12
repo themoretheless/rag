@@ -277,7 +277,8 @@ are fixed too:
 - Corpus-scale MCP calls run on the blocking pool via `RagServer::blocking`.
   A dispatcher-wide `block_in_place` was rejected: it would make every tool
   call uncancellable.
-- Open: `AppContext` (2.2), list-documents/list-wiki and wiki-upsert policy,
+- Items still open at this point were finished later; see "Final round".
+  Originally open: `AppContext` (2.2), list-documents/list-wiki and wiki-upsert policy,
   `multi_query_search` into `retrieval`, moving `JobRegistry` (2.5), parity
   tests for `admin.rs`/`graph.rs` (2.1).
 
@@ -295,7 +296,7 @@ are fixed too:
 - 3.6 done without `ScopeFilter`: `mcp/tools/<domain>.rs` per router, re-exported
   from `mcp::tools`. Flattening shared filter fields would change the generated
   JSON schemas, so it waits for a wire-schema review.
-- Open: 3.3, 3.7.
+- 3.3 and 3.7 were finished later; see below.
 
 **Phase 5**
 
@@ -353,22 +354,51 @@ are fixed too:
 - Tests no longer leak a DuckDB directory per call (`testkit::{scratch_dir,
   temp_store}`); a full run left about 110 directories and filled the disk.
 
+**Final round**
+
+- 2.2 done: `context::AppContext` (store, embedder, config, chat client) is
+  built once in `main`; `RagServer::from_context`, `HttpState::from_context`
+  and `http_api::serve` take it, so start-up no longer re-parses `Config` or
+  builds a second embedder.
+- 2.5 done: `JobRegistry`, lifecycle and persistence live in `src/jobs.rs`;
+  `http_api/jobs.rs` keeps routes and handlers.
+- 2.x wiki upsert done: `wiki::put_wiki_page` owns slug/uri/id resolution,
+  the id-vs-URI check, create-only guards and the create-or-CAS choice; the
+  HTTP handler is a thin adapter. MCP keeps its separate create/update tools.
+- 3.3 done: `db::EmbeddingIdentity` replaces `Config` in the store's manifest
+  functions; `db` no longer imports `config`.
+- 3.2: `RAG_HTTP_ALLOWED_HOSTS` and `RAG_AUTO_SYNC_*` are read by
+  `Config::from_env`.
+- 4.4 done: `Store::lock` is `pub(in crate::db)` outside tests. Former callers
+  use `db::{payload_kv, analytics, knowledge, chunk_text, review,
+  graph::resolve}` or `Store` methods (`reindex_fts`, `chunks_generation`,
+  `set_document_tags`, `checkpoint`). `payload_kv::with_session` gives
+  read-modify-write callers one lock without exposing the connection.
+- 5.8 partial: `rag_mcp_core::Layer` names the layer values; constants and
+  production comparisons use it. Stored values and JSON stay strings.
+- 5.9 done: status/doctor/LLM-status reports live in `diagnostics`,
+  `WakeUpReport` in `diary`; the crate root still re-exports them.
+- 6.3 done as inherent methods: `LoadSource::{wiki_catalog, document,
+  backlinks, save_wiki}` hold the HTTP-vs-direct-db choice once. A trait was
+  not needed because there are exactly two closed variants.
+- 6.4 done: `GraphApp` is split into `app/{mod,events,frame,graph,revisions,
+  wiki}.rs`.
+- 6.5 done as a contract test: `tests/it/web_types_contract_test.rs` round-trips
+  every field of the TS `GraphNode`, `GraphEdge`, `SearchHit` and
+  `SearchExplanation` through the Rust types. It found three `GraphNode` fields
+  the server never sends and a dead `layer === 'wiki'` check in the inspector;
+  both are fixed. No codegen dependency was added.
+
 **Not done, with the reason**
 
 | Item | Why it stops here |
 |------|-------------------|
-| 2.2 `AppContext` | The concrete duplication (chat client built per request, MCP server built per request) is gone. Merging `HttpState` and `RagServer` fields now means either `Deref` composition, which hides ownership, or renaming several hundred field accesses for no behaviour change. |
-| 2.5 move `JobRegistry` | MCP `sync_sources` is synchronous by design; with no second consumer the move is pure relocation. Do it together with MCP job support. |
-| 2.x wiki upsert policy, list documents | HTTP `PUT /v1/wiki` (resolve slug/uri/id, then create or update) and the MCP write/update tools expose different wire semantics; the catalog page and the filtered list are different queries, not copies. |
-| 3.3 `EmbeddingIdentity` | `Store` reads four `Config` fields only through the manifest functions, now isolated in `db/store/manifest.rs`; retyping ~20 call sites changes no behaviour. |
+| 3.2 remaining env reads | Backup, PID file, WAL warning, sync node identity and call-log size are read once by the subsystem that owns them at start-up, several before `Config` exists. |
 | 3.5 HTTP route roles | Unknown routes already default to Admin (fail-closed), so a missing entry cannot widen access. |
-| 4.1 query helpers, rest of 4.3 | ~94 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
-| 4.4 narrow `Store::lock` | Needs a repository per remaining caller (analyze, apply, compress, refresh, review, knowledge, feedback, labels, jobs, retrieval, `graph::resolve`). Each is its own reviewable change. |
-| 5.8 typed `layer`/`kind`/`status` | Touches persisted values and wire shapes; needs a migration and compatibility decision. |
-| 5.9 move report DTOs | They stay re-exported from `models` for every caller, so the move is cosmetic. |
-| 6.2 remaining DTO pairs | They differ on purpose (client tolerance); merging them is a wire-compatibility decision. |
-| 6.3 `UiBackend` | `--db` reopens DuckDB per request on purpose so the UI never holds the file lock; a trait would trade five `match`es for the same amount of code. |
-| 6.4 `GraphApp`, 6.5 generated TS types, 6.6 more crates | Large changes that need manual UI verification or a build-tooling decision (ts-rs vs schema export); each should be its own PR. |
+| 4.1 query helpers, rest of 4.3 | ~90 row loops would be rewritten mechanically with no behaviour gain; adopt a helper when a loop is touched for another reason. |
+| 5.8 typed `kind`/`status` | `status` already has named constants; `kind` is an open vocabulary written by agents, so an enum would reject valid pages. |
+| 6.2 remaining DTO pairs | They differ on purpose (the UI tolerates server drift and reads timestamps as strings); merging them is a wire-compatibility decision. |
+| 6.6 more crates | `rag-mcp-core` already lets clients avoid the server crate. Splitting `db` or `wiki` into crates would need their `Config`/LLM seams to be crate-public first, and no second consumer exists. |
 
 ## Not planned
 
@@ -379,13 +409,14 @@ are fixed too:
 
 ## Baseline to track
 
-| Measure | Now | Target |
-|---------|-----|--------|
-| `Store::lock()` call sites outside `db` | ~41 | `payload_kv` only |
-| Operations implemented in both transports without a shared service | ~8 | 0 |
-| `fn test_config` copies | 11 | 0 |
-| Integration-test binaries linking DuckDB | 8 | 1–2 |
-| `RAG_*` env reads outside `config.rs` | ~30 | 0 |
-| Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 |
-| Largest production file (`db/store.rs` without tests) | ~4.2k lines | < 2k |
-| UI copies of server DTOs | 11 | 0 |
+| Measure | Start | Now | Target |
+|---------|-------|-----|--------|
+| `Store::lock()` call sites outside `db` (production) | ~41 | 0 | `payload_kv` only |
+| Operations implemented in both transports without a shared service | ~8 | 0 | 0 |
+| `fn test_config` bodies not built on `Config::for_tests()` | 11 | 0 | 0 |
+| Integration-test binaries linking DuckDB | 8 | 1 | 1–2 |
+| `RAG_*` env reads outside `config.rs` | ~30 | 18 | 0 |
+| Upward imports from `config`/domain into `mcp`/`http_api` | 5 | 0 | 0 |
+| Largest production file (`db/store.rs` without tests) | ~4.2k lines | ~3.3k | < 2k |
+| Largest UI file (`app.rs`) | 4.6k lines | 1.7k (`app/frame.rs`) | — |
+| UI copies of server DTOs | 11 | 8 | 0 |
