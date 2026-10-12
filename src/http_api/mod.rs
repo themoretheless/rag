@@ -168,10 +168,8 @@ pub fn mcp_http_service_for(
     context: crate::context::AppContext,
     cancellation_token: CancellationToken,
 ) -> StreamableHttpService<RagServer, LocalSessionManager> {
-    let allowed_hosts = configured_http_allowed_hosts(
-        &context.config,
-        std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
-    );
+    let allowed_hosts =
+        configured_http_allowed_hosts(&context.config, context.config.http_allowed_hosts.as_deref());
     // Build once: the context already holds the checked manifest and the chat
     // client; each stateless request gets a cheap clone of this server.
     let prototype = RagServer::from_context(context).with_transport("http-mcp");
@@ -250,10 +248,8 @@ pub async fn serve(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
         })?;
     let mcp_http = mcp.is_some();
-    let allowed_hosts = configured_http_allowed_hosts(
-        &context.config,
-        std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
-    );
+    let allowed_hosts =
+        configured_http_allowed_hosts(&context.config, context.config.http_allowed_hosts.as_deref());
     let posture = auth.posture();
     if !posture.tokens_required {
         tracing::warn!(

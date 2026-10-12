@@ -178,32 +178,12 @@ fn update_schema_rejects_empty_content() {
 
 fn sample_config(dims: usize) -> Config {
     Config {
-        db_path: std::path::PathBuf::from("./rag.duckdb"),
-        embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-        embedding_base_url: "https://api.openai.com/v1".into(),
-        embedding_api_key: String::new(),
         embedding_model: "mock".into(),
         embedding_dims: dims,
         chunk_size: 200,
         chunk_overlap: 20,
-        default_top_k: 5,
-        ingest_roots: Vec::new(),
-        max_context_tokens: 4096,
-        max_chunks_per_doc: 3,
-        fts_stemmer: "porter".into(),
-        default_search_mode: crate::models::SearchMode::Vec,
-        llm_base_url: "http://127.0.0.1:11434/v1".into(),
-        llm_provider: crate::llm::LlmProviderKind::Ollama,
-        llm_model: "llama3.2".into(),
-        llm_api_key: "ollama".into(),
         llm_enabled: false,
-        llm_timeout_secs: 120,
-        llm_max_tokens: 4096,
-        maint_max_docs: 50,
-        maint_near_dup_threshold: 0.92,
-        tool_surface: crate::mcp::ToolSurface::Full,
-        http_bind: None,
-        wiki_require_if_match: false,
+        ..Config::for_tests()
     }
 }
 

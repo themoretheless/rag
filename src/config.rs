@@ -97,6 +97,14 @@ pub struct Config {
     /// Env: `RAG_WIKI_REQUIRE_IF_MATCH` (default **false**). Creates may still omit it.
     /// Omit-if-match = last-write-wins when this flag is false.
     pub wiki_require_if_match: bool,
+    /// Extra allowed `Host` values for the HTTP gateway and MCP-over-HTTP.
+    /// Env: `RAG_HTTP_ALLOWED_HOSTS` (comma-separated), unset = loopback only.
+    pub http_allowed_hosts: Option<String>,
+    /// Directories synced periodically by the MCP server.
+    /// Env: `RAG_AUTO_SYNC_ROOTS` (`;`-separated); empty disables auto-sync.
+    pub auto_sync_roots: Vec<String>,
+    /// Seconds between auto-sync cycles. Env: `RAG_AUTO_SYNC_INTERVAL_SECS` (default 3600).
+    pub auto_sync_interval_secs: u64,
 }
 
 /// Which tools are advertised and callable.
@@ -191,8 +199,20 @@ impl Default for Config {
             tool_surface: ToolSurface::Spine,
             http_bind: None,
             wiki_require_if_match: false,
+            http_allowed_hosts: None,
+            auto_sync_roots: Vec::new(),
+            auto_sync_interval_secs: 3600,
         }
     }
+}
+
+/// `;`-separated directory list, trimmed, blanks dropped.
+fn parse_auto_sync_roots(raw: &str) -> Vec<String> {
+    raw.split(';')
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 impl Config {
@@ -287,6 +307,15 @@ impl Config {
             parse_bind(b)?;
         }
         let wiki_require_if_match = parse_bool_env("RAG_WIKI_REQUIRE_IF_MATCH", false)?;
+        let http_allowed_hosts = env::var("RAG_HTTP_ALLOWED_HOSTS").ok();
+        let auto_sync_roots = env::var("RAG_AUTO_SYNC_ROOTS")
+            .map(|raw| parse_auto_sync_roots(&raw))
+            .unwrap_or_default();
+        let auto_sync_interval_secs = env::var("RAG_AUTO_SYNC_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(3600);
 
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
@@ -326,6 +355,9 @@ impl Config {
             tool_surface,
             http_bind,
             wiki_require_if_match,
+            http_allowed_hosts,
+            auto_sync_roots,
+            auto_sync_interval_secs,
         };
         config.validate()?;
         Ok(config)
@@ -670,5 +702,14 @@ mod tests {
         assert_eq!(cfg.tool_surface, ToolSurface::Spine);
         assert!(!cfg.wiki_require_if_match);
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn auto_sync_roots_split_on_semicolons_and_drop_blanks() {
+        assert_eq!(
+            super::parse_auto_sync_roots(" /a ; ;/b;"),
+            vec!["/a".to_string(), "/b".to_string()]
+        );
+        assert!(super::parse_auto_sync_roots("  ").is_empty());
     }
 }

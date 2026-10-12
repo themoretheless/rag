@@ -105,23 +105,11 @@ impl RagServer {
     /// Start optional incremental source synchronization. Disabled unless
     /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
     pub fn spawn_auto_sync(self) {
-        let Ok(raw_roots) = std::env::var("RAG_AUTO_SYNC_ROOTS") else {
-            return;
-        };
-        let roots: Vec<String> = raw_roots
-            .split(';')
-            .map(str::trim)
-            .filter(|root| !root.is_empty())
-            .map(str::to_string)
-            .collect();
+        let roots = self.config.auto_sync_roots.clone();
         if roots.is_empty() {
             return;
         }
-        let interval = std::env::var("RAG_AUTO_SYNC_INTERVAL_SECS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(3600);
+        let interval = self.config.auto_sync_interval_secs;
         let interval_duration = std::time::Duration::from_secs(interval);
         crate::ops::configure_autosync(interval_duration);
         tokio::spawn(async move {
