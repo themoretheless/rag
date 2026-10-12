@@ -202,7 +202,7 @@ fn merge_search(base: &Value, overlay: &Value) -> Result<SearchBody> {
 async fn search_with_body(st: HttpState, body: SearchBody) -> Result<(Value, Vec<Value>)> {
     let response = search_http(State(st), Json(body)).await.into_response();
     if !response.status().is_success() {
-        return Err(response_error(response).await);
+        return Err(super::error::search_response_error(response).await);
     }
     let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
         .await
@@ -415,17 +415,6 @@ fn persist_feedback_run(store: &Store, question_id: &str, settings: &Value, resu
         "settings": settings,
     });
     persist_eval_run(store, &payload)
-}
-async fn response_error(response: Response) -> AppError {
-    let status = response.status();
-    let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
-        Ok(bytes) => bytes,
-        Err(e) => return AppError::invalid(e.to_string()),
-    };
-    AppError::invalid(format!(
-        "search failed ({status}): {}",
-        String::from_utf8_lossy(&bytes)
-    ))
 }
 
 #[cfg(test)]

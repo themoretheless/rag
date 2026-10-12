@@ -318,7 +318,7 @@ pub async fn checkpoint(
                     content: body.to_string(),
                     wing: None,
                     topic: Some("session-checkpoint".into()),
-                    title: Some(format!("checkpoint: {}", first_line(summary, 80))),
+                    title: Some(format!("checkpoint: {}", crate::util::first_line(summary, 80))),
                     log_ops: true,
                 },
             )
@@ -363,15 +363,6 @@ pub async fn checkpoint(
     })
 }
 
-fn first_line(s: &str, max: usize) -> String {
-    let line = s.lines().next().unwrap_or(s).trim();
-    if line.chars().count() <= max {
-        line.to_string()
-    } else {
-        let truncated: String = line.chars().take(max.saturating_sub(1)).collect();
-        format!("{truncated}…")
-    }
-}
 
 async fn embed_and_store_chunks(
     store: &Store,
@@ -385,14 +376,7 @@ async fn embed_and_store_chunks(
         return Ok(0);
     }
     let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
-    let embeddings = embedder.embed(&texts).await?;
-    if embeddings.len() != pieces.len() {
-        return Err(AppError::embeddings(format!(
-            "embedder returned {} vectors for {} chunks",
-            embeddings.len(),
-            pieces.len()
-        )));
-    }
+    let embeddings = crate::embeddings::embed_exact(embedder.as_ref(), &texts).await?;
     let mut chunks = Vec::with_capacity(pieces.len());
     for (i, ((content, char_start, char_end), embedding)) in
         pieces.into_iter().zip(embeddings).enumerate()

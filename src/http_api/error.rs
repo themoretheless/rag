@@ -41,3 +41,18 @@ pub(super) fn api_err(err: AppError) -> Response {
     }
     response
 }
+
+/// Error for an internal `/v1/search` call that returned a non-success status,
+/// carrying the status and (bounded) response body.
+pub(super) async fn search_response_error(response: axum::response::Response) -> AppError {
+    let status = response.status();
+    let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
+        Ok(bytes) => bytes,
+        Err(e) => return AppError::invalid(e.to_string()),
+    };
+    AppError::invalid(format!(
+        "search failed ({status}): {}",
+        String::from_utf8_lossy(&bytes)
+    ))
+}
+

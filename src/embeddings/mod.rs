@@ -51,6 +51,23 @@ pub trait EmbeddingProvider: Send + Sync {
     fn dimensions(&self) -> usize;
 }
 
+/// [`EmbeddingProvider::embed`] that fails unless exactly one vector comes back
+/// per input, so callers can zip results with their inputs safely.
+pub async fn embed_exact(
+    embedder: &dyn EmbeddingProvider,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>> {
+    let vectors = embedder.embed(texts).await?;
+    if vectors.len() != texts.len() {
+        return Err(crate::error::AppError::embeddings(format!(
+            "embedder returned {} vectors for {} inputs",
+            vectors.len(),
+            texts.len()
+        )));
+    }
+    Ok(vectors)
+}
+
 /// Sole kind→ctor switch for production embedders.
 ///
 /// Matches [`Config::embedding_provider`] once and returns a trait object.

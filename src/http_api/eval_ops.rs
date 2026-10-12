@@ -226,7 +226,7 @@ async fn online_one(st: HttpState, body: OnlineBody) -> Result<Value> {
         .await
         .into_response();
     if !response.status().is_success() {
-        return Err(search_failed(response).await);
+        return Err(super::error::search_response_error(response).await);
     }
     let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
         .await
@@ -396,17 +396,6 @@ fn list_table_payloads(store: &Store, table: &str, limit: usize) -> Result<Vec<V
     Ok(items)
 }
 
-async fn search_failed(response: axum::response::Response) -> AppError {
-    let status = response.status();
-    let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
-        Ok(bytes) => bytes,
-        Err(e) => return AppError::invalid(e.to_string()),
-    };
-    AppError::invalid(format!(
-        "search failed ({status}): {}",
-        String::from_utf8_lossy(&bytes)
-    ))
-}
 
 #[cfg(test)]
 mod tests {

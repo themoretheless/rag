@@ -161,20 +161,7 @@ impl Store {
             return self.find_node_by_document_id(doc_id);
         }
         if let Some(lab) = label.map(str::trim).filter(|s| !s.is_empty()) {
-            let mut nodes = self.find_nodes_by_label(lab)?;
-            if nodes.is_empty() {
-                return Ok(None);
-            }
-            if let Some(pos) = nodes
-                .iter()
-                .position(|n| NodeKind::Document.is(&n.kind) && n.resolved)
-            {
-                return Ok(Some(nodes.swap_remove(pos)));
-            }
-            if let Some(pos) = nodes.iter().position(|n| NodeKind::Document.is(&n.kind)) {
-                return Ok(Some(nodes.swap_remove(pos)));
-            }
-            return Ok(Some(nodes.swap_remove(0)));
+            return Ok(prefer_document_node(self.find_nodes_by_label(lab)?));
         }
         Ok(None)
     }
@@ -312,20 +299,7 @@ impl Store {
         if let Some(n) = self.find_node_by_document_id(q)? {
             return Ok(Some(n));
         }
-        let mut nodes = self.find_nodes_by_label(q)?;
-        if nodes.is_empty() {
-            return Ok(None);
-        }
-        if let Some(pos) = nodes
-            .iter()
-            .position(|n| NodeKind::Document.is(&n.kind) && n.resolved)
-        {
-            return Ok(Some(nodes.swap_remove(pos)));
-        }
-        if let Some(pos) = nodes.iter().position(|n| NodeKind::Document.is(&n.kind)) {
-            return Ok(Some(nodes.swap_remove(pos)));
-        }
-        Ok(Some(nodes.swap_remove(0)))
+        Ok(prefer_document_node(self.find_nodes_by_label(q)?))
     }
 
     /// Local undirected neighborhood for UI: resolve seed, then BFS via
@@ -1936,8 +1910,19 @@ pub(crate) fn find_nodes_by_label_locked(
     Ok(out)
 }
 
+/// Among nodes sharing a label, prefer a resolved document node, then any
+/// document node, then the first match.
+fn prefer_document_node(mut nodes: Vec<GraphNode>) -> Option<GraphNode> {
+    let pos = nodes
+        .iter()
+        .position(|n| NodeKind::Document.is(&n.kind) && n.resolved)
+        .or_else(|| nodes.iter().position(|n| NodeKind::Document.is(&n.kind)))
+        .or((!nodes.is_empty()).then_some(0))?;
+    Some(nodes.swap_remove(pos))
+}
+
 fn format_ts_now() -> String {
-    Utc::now().format("%Y-%m-%d %H:%M:%S%.6f").to_string()
+    crate::util::format_db_timestamp(Utc::now())
 }
 
 fn row_to_node(row: &duckdb::Row<'_>) -> Result<GraphNode> {

@@ -664,14 +664,7 @@ async fn reembed_one_document(
     }
 
     let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-    let embeddings = embedder.embed(&texts).await?;
-    if embeddings.len() != chunks.len() {
-        return Err(AppError::embeddings(format!(
-            "embedder returned {} vectors for {} chunks",
-            embeddings.len(),
-            chunks.len()
-        )));
-    }
+    let embeddings = crate::embeddings::embed_exact(embedder.as_ref(), &texts).await?;
     if let Some((index, embedding)) = embeddings
         .iter()
         .enumerate()

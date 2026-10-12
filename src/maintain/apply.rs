@@ -1094,14 +1094,7 @@ async fn apply_reembed_one(
 
     if !chunks.is_empty() {
         let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-        let embeddings = embedder.embed(&texts).await?;
-        if embeddings.len() != chunks.len() {
-            return Err(AppError::embeddings(format!(
-                "embedder returned {} vectors for {} chunks",
-                embeddings.len(),
-                chunks.len()
-            )));
-        }
+        let embeddings = crate::embeddings::embed_exact(embedder.as_ref(), &texts).await?;
         store.update_chunk_embeddings_atomic(&doc.id, doc.revision, &chunks, &embeddings, None)?;
     }
     Ok(StepResult {

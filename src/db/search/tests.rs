@@ -1035,7 +1035,8 @@ fn field_boosts_explain_title_uri_heading_pin_and_document_boost() {
         heading_path: Some(vec!["Exact Topic".into()]),
         ..Default::default()
     }];
-    apply_field_boosts(&store, &mut hits, Some("Exact Topic")).unwrap();
+    let ranking = ranking_fields(&store, &hits).unwrap();
+    apply_field_boosts(&ranking, &mut hits, Some("Exact Topic"));
     let reasons = &hits[0].explanation.as_ref().unwrap().reasons;
     for expected in [
         "exact_title_boost",

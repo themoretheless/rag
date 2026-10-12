@@ -77,7 +77,7 @@ impl Store {
         for doc in docs {
             let slug = wiki_slug_from_uri(&doc.uri).unwrap_or_else(|| slugify(&doc.title));
             let (meta_summary, meta_category) = meta_summary_category(&doc.metadata_json);
-            let summary = meta_summary.unwrap_or_else(|| first_line_summary(&doc.content, 240));
+            let summary = meta_summary.unwrap_or_else(|| crate::util::first_prose_line(&doc.content, 240));
             let entry = WikiIndexEntry {
                 id: format!("idx-{}", doc.id),
                 slug: slug.clone(),

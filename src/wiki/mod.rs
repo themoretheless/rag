@@ -316,7 +316,7 @@ pub use self::consolidate::*;
 pub use self::stale::*;
 pub use self::file_answer::*;
 pub use self::lint::*;
-pub use self::index::*;
+use self::index::*;
 pub use self::put::*;
 
 #[cfg(test)]

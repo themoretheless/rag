@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Projection decoded by `row_to_ops_log`.
+const OPS_LOG_COLUMNS: &str = "id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op, prefix, \
+     COALESCE(message, ''), entity_id, entity_kind, COALESCE(payload_json, '{}'), agent_name";
+
 impl Store {
     /// Next ops_log sequence number (max+1, starting at 1).
     ///
@@ -40,16 +44,14 @@ impl Store {
         if !table_exists_locked(&conn, "ops_log") {
             return Ok(Vec::new());
         }
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             r#"
-            SELECT id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op,
-                   prefix, COALESCE(message, ''), entity_id, entity_kind,
-                   COALESCE(payload_json, '{}'), agent_name
+            SELECT {OPS_LOG_COLUMNS}
             FROM ops_log
             ORDER BY COALESCE(seq, 0) DESC, ts DESC
             LIMIT ?
-            "#,
-        )?;
+            "#
+        ))?;
         let out =
             crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
         Ok(out)
@@ -66,11 +68,9 @@ impl Store {
             return Ok(Vec::new());
         }
         // Filing-related ops: ingest family, drawers, wiki compile, diary, checkpoint.
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             r#"
-            SELECT id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op,
-                   prefix, COALESCE(message, ''), entity_id, entity_kind,
-                   COALESCE(payload_json, '{}'), agent_name
+            SELECT {OPS_LOG_COLUMNS}
             FROM ops_log
             WHERE lower(op) IN (
                 'ingest', 'ingest_text', 'ingest_file', 'ingest_raw', 'add_drawer',
@@ -82,8 +82,8 @@ impl Store {
             )
             ORDER BY COALESCE(seq, 0) DESC, ts DESC
             LIMIT ?
-            "#,
-        )?;
+            "#
+        ))?;
         let out =
             crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
         Ok(out)
@@ -92,14 +92,12 @@ impl Store {
     /// Read one ops_log row by primary key `id`.
     pub fn get_ops_log(&self, id: &str) -> Result<Option<OpsLogEntry>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             r#"
-            SELECT id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op,
-                   prefix, COALESCE(message, ''), entity_id, entity_kind,
-                   COALESCE(payload_json, '{}'), agent_name
+            SELECT {OPS_LOG_COLUMNS}
             FROM ops_log WHERE id = ?
-            "#,
-        )?;
+            "#
+        ))?;
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
             Some(row) => Ok(Some(row_to_ops_log(row)?)),
@@ -110,15 +108,13 @@ impl Store {
     /// Read one ops_log row by monotonic `seq`.
     pub fn get_ops_log_by_seq(&self, seq: i64) -> Result<Option<OpsLogEntry>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             r#"
-            SELECT id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op,
-                   prefix, COALESCE(message, ''), entity_id, entity_kind,
-                   COALESCE(payload_json, '{}'), agent_name
+            SELECT {OPS_LOG_COLUMNS}
             FROM ops_log WHERE seq = ?
             LIMIT 1
-            "#,
-        )?;
+            "#
+        ))?;
         let mut rows = stmt.query(params![seq])?;
         match rows.next()? {
             Some(row) => Ok(Some(row_to_ops_log(row)?)),

@@ -885,7 +885,7 @@ fn journal_generic_wiki_change_locked(
             .and_then(|entry| entry.summary.clone())
             .or(summary)
     }
-    .unwrap_or_else(|| first_line_summary(&doc.content, 240));
+    .unwrap_or_else(|| crate::util::first_prose_line(&doc.content, 240));
     let event = super::sync::SyncChangeInput {
         origin_seq: 1,
         entity_kind: "wiki".into(),
@@ -1548,21 +1548,6 @@ fn slugify(s: &str) -> String {
     shared_slugify(s, SlugPolicy::IndexLookup)
 }
 
-fn first_line_summary(content: &str, max: usize) -> String {
-    let line = content
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty() && !l.starts_with('#'))
-        .or_else(|| content.lines().map(str::trim).find(|l| !l.is_empty()))
-        .unwrap_or("");
-    if line.chars().count() <= max {
-        line.to_string()
-    } else {
-        let mut s: String = line.chars().take(max.saturating_sub(1)).collect();
-        s.push('…');
-        s
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Wiki catalog listing: SQL filter/count/page + lean DTO map

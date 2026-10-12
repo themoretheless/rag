@@ -189,14 +189,7 @@ pub async fn multi_query_search(
     let embeddings = if mode.needs_embedding() {
         store.ensure_embedding_manifest(config)?;
         store.require_embedding_manifest_match(config)?;
-        let vectors = embedder.embed(&command.queries).await?;
-        if vectors.len() != command.queries.len() {
-            return Err(AppError::embeddings(format!(
-                "embedder returned {} vectors for {} queries",
-                vectors.len(),
-                command.queries.len()
-            )));
-        }
+        let vectors = crate::embeddings::embed_exact(embedder, &command.queries).await?;
         vectors.into_iter().map(Some).collect()
     } else {
         vec![None; command.queries.len()]

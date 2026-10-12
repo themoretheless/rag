@@ -494,13 +494,26 @@ fn finalize_hits(
         hits = apply_min_score(hits, min);
     }
 
-    if let Some(half_life_days) = query
+    let recency = query
         .recency_half_life_days
-        .filter(|days| days.is_finite() && *days > 0.0)
-    {
+        .filter(|days| days.is_finite() && *days > 0.0);
+    let boost_query = query
+        .query_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty());
+    // One lightweight batch read serves both recency and field boosts; this
+    // used to be two full `get_document` loads per hit.
+    let ranking = if recency.is_some() || boost_query.is_some() {
+        ranking_fields(store, &hits)?
+    } else {
+        HashMap::new()
+    };
+
+    if let Some(half_life_days) = recency {
         let now = query.now.unwrap_or_else(chrono::Utc::now);
         for hit in &mut hits {
-            if let Some(document) = store.get_document(&hit.document_id)? {
+            if let Some(document) = ranking.get(&hit.document_id) {
                 let age_days = now
                     .signed_duration_since(document.updated_at)
                     .num_seconds()
@@ -513,7 +526,7 @@ fn finalize_hits(
         hits.sort_by(stable_score_order);
     }
 
-    apply_field_boosts(store, &mut hits, query.query_text.as_deref())?;
+    apply_field_boosts(&ranking, &mut hits, boost_query);
     hits.sort_by(stable_score_order);
 
     let mut seen = HashSet::new();
@@ -588,14 +601,63 @@ fn stable_score_order(a: &SearchHit, b: &SearchHit) -> std::cmp::Ordering {
         .then_with(|| a.chunk_id.cmp(&b.chunk_id))
 }
 
-fn apply_field_boosts(store: &Store, hits: &mut [SearchHit], query: Option<&str>) -> Result<()> {
-    let Some(raw) = query.map(str::trim).filter(|q| !q.is_empty()) else {
-        return Ok(());
+/// Document fields used for ranking, without the document body.
+struct RankingFields {
+    title: String,
+    uri: String,
+    pinned: bool,
+    boost: f64,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Ranking fields for every distinct document among `hits`, in one query.
+fn ranking_fields(store: &Store, hits: &[SearchHit]) -> Result<HashMap<String, RankingFields>> {
+    let ids: Vec<&str> = hits
+        .iter()
+        .map(|hit| hit.document_id.as_str())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let conn = store.lock()?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, title, uri, COALESCE(pinned, false), COALESCE(boost, 1.0), \
+         CAST(updated_at AS VARCHAR) FROM documents WHERE id IN ({placeholders})"
+    ))?;
+    let rows = crate::db::rows::query_vec(&mut stmt, params_from_iter(ids.iter()), |row| {
+        let updated_raw: String = row.get(5)?;
+        let updated_at = crate::util::parse_db_timestamp(&updated_raw).ok_or_else(|| {
+            AppError::db(format!("invalid timestamp value: {}", updated_raw.trim()))
+        })?;
+        Ok((
+            row.get::<_, String>(0)?,
+            RankingFields {
+                title: row.get(1)?,
+                uri: row.get(2)?,
+                pinned: row.get(3)?,
+                boost: row.get(4)?,
+                updated_at,
+            },
+        ))
+    })?;
+    Ok(rows.into_iter().collect())
+}
+
+fn apply_field_boosts(
+    ranking: &HashMap<String, RankingFields>,
+    hits: &mut [SearchHit],
+    query: Option<&str>,
+) {
+    let Some(raw) = query else {
+        return;
     };
     let needle = raw.to_lowercase();
     for hit in hits {
         let mut reasons = Vec::new();
-        if let Some(document) = store.get_document(&hit.document_id)? {
+        if let Some(document) = ranking.get(&hit.document_id) {
             if document.title.trim().eq_ignore_ascii_case(raw) {
                 hit.score *= 1.35;
                 reasons.push("exact_title_boost".into());
@@ -630,7 +692,6 @@ fn apply_field_boosts(store: &Store, hits: &mut [SearchHit], query: Option<&str>
             .get_or_insert_with(SearchExplanation::default);
         explanation.reasons.extend(reasons);
     }
-    Ok(())
 }
 
 /// Fuse any number of independently ranked query result lists with RRF.
@@ -663,8 +724,14 @@ pub fn attach_context(
     expansion: Option<ContextExpansion>,
     neighbor_chunks: usize,
 ) -> Result<()> {
+    // Several hits often come from one document: load its chunks once.
+    let mut chunks_by_document: HashMap<String, Vec<Chunk>> = HashMap::new();
     for hit in hits {
-        let chunks = store.list_chunks_for_document(&hit.document_id)?;
+        if !chunks_by_document.contains_key(&hit.document_id) {
+            let loaded = store.list_chunks_for_document(&hit.document_id)?;
+            chunks_by_document.insert(hit.document_id.clone(), loaded);
+        }
+        let chunks = &chunks_by_document[&hit.document_id];
         let Some(current) = chunks.iter().find(|c| c.id == hit.chunk_id) else {
             continue;
         };
