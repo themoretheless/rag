@@ -56,7 +56,7 @@ impl Store {
         };
         let sql = format!(
             "SELECT id, room, wing, \
-                    CASE WHEN COALESCE(trim(room), '') = '' THEN metadata_json END, \
+                    CASE WHEN room IS NULL OR regexp_matches(room, '^\\s*$') THEN metadata_json END, \
                     CAST(created_at AS VARCHAR) \
              FROM documents \
              WHERE kind = 'diary' {agent_filter} \

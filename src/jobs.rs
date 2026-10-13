@@ -173,7 +173,11 @@ impl JobRegistry {
             .jobs()
             .get(&snapshot.id)
             .map(|entry| entry.snapshot.clone());
-        let snapshot = latest.as_ref().unwrap_or(snapshot);
+        // A job pruned from the map was deleted from the store too; writing
+        // the caller's clone would bring the row back.
+        let Some(snapshot) = latest.as_ref() else {
+            return Ok(());
+        };
         crate::util::blocking_section(|| {
             crate::db::payload_kv::upsert_payload(
                 store,
