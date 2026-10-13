@@ -647,8 +647,8 @@ costs. All are fixed:
   cloning.
 - **Native UI wiki view.** Link keys are cached per catalog change, and
   resolving a link is one hash probe instead of a per-frame
-  O(links × pages) scan. Per-frame `[[link]]` segmentation stays: it is
-  linear in the visible text, like egui's own layout of that text.
+  O(links × pages) scan. Parsed `[[link]]` segments are cached per line in
+  egui's frame cache, so a line is parsed once while it stays on screen.
 
 ## Not planned
 

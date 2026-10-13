@@ -3,6 +3,7 @@
 
 use crate::ui::text::truncate;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use egui::{RichText, Sense, Ui};
 
@@ -679,6 +680,34 @@ enum InlineSegment<'a> {
     Link { key: String, display: String },
 }
 
+/// Owned form of [`InlineSegment`] for the per-line egui cache: plain runs
+/// are byte ranges into the cached line.
+enum CachedSegment {
+    Plain(std::ops::Range<usize>),
+    Link { key: String, display: String },
+}
+
+#[derive(Default)]
+struct SegmentParser;
+
+impl egui::cache::ComputerMut<&str, Arc<Vec<CachedSegment>>> for SegmentParser {
+    fn compute(&mut self, text: &str) -> Arc<Vec<CachedSegment>> {
+        let base = text.as_ptr() as usize;
+        Arc::new(
+            wikilink_segments(text)
+                .into_iter()
+                .map(|segment| match segment {
+                    InlineSegment::Plain(plain) => {
+                        let start = plain.as_ptr() as usize - base;
+                        CachedSegment::Plain(start..start + plain.len())
+                    }
+                    InlineSegment::Link { key, display } => CachedSegment::Link { key, display },
+                })
+                .collect(),
+        )
+    }
+}
+
 fn wikilink_segments(text: &str) -> Vec<InlineSegment<'_>> {
     let mut byte_of_char: Vec<usize> = text.char_indices().map(|(byte, _)| byte).collect();
     byte_of_char.push(text.len());
@@ -719,13 +748,24 @@ fn draw_inline_with_wikilinks(
     known_keys: &WikiKnownKeys,
 ) -> Option<String> {
     let mut clicked: Option<String> = None;
-    for segment in wikilink_segments(text) {
+    // Parsed once per distinct line and reused while it stays on screen
+    // (egui evicts entries unused for a frame), not re-parsed every frame.
+    let segments = ui.ctx().memory_mut(|memory| {
+        memory
+            .caches
+            .cache::<egui::cache::FrameCache<Arc<Vec<CachedSegment>>, SegmentParser>>()
+            .get(text)
+            .clone()
+    });
+    for segment in segments.iter() {
         let (link_key, display) = match segment {
-            InlineSegment::Plain(plain) => {
-                emit_rich_plain(ui, plain);
+            CachedSegment::Plain(range) => {
+                // The cache is keyed by a 64-bit hash of the line; never
+                // slice out of bounds even on a collision.
+                emit_rich_plain(ui, text.get(range.clone()).unwrap_or(text));
                 continue;
             }
-            InlineSegment::Link { key, display } => (key, display),
+            CachedSegment::Link { key, display } => (key.clone(), display.clone()),
         };
         let resolved = known_keys.resolves(&link_key);
         let color = if resolved {
@@ -829,6 +869,32 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri, WikiKnownKeys};
+
+    #[test]
+    fn cached_segments_cover_the_line_in_order() {
+        use egui::cache::ComputerMut;
+        let text = "Read [[Alpha|the alpha]] then `[[Code]]` and [[Beta#Setup]] end";
+        let segments = super::SegmentParser.compute(text);
+        let mut rebuilt = String::new();
+        let mut links = Vec::new();
+        for segment in segments.iter() {
+            match segment {
+                super::CachedSegment::Plain(range) => rebuilt.push_str(&text[range.clone()]),
+                super::CachedSegment::Link { key, display } => {
+                    links.push((key.clone(), display.clone()));
+                    rebuilt.push('|');
+                }
+            }
+        }
+        assert_eq!(rebuilt, "Read | then `[[Code]]` and | end");
+        assert_eq!(
+            links,
+            vec![
+                ("Alpha".to_string(), "the alpha".to_string()),
+                ("Beta".to_string(), "Beta".to_string())
+            ]
+        );
+    }
 
     #[test]
     fn known_keys_resolve_titles_and_slugs_case_insensitively() {
