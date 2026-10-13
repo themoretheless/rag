@@ -1328,6 +1328,13 @@ mod tests {
         assert_eq!(summary["chunk_count"], body["chunk_count"]);
         assert_eq!(summary["db_path"], body["db_path"]);
         assert!(summary.get("uncompiled_raw_count").is_none());
+        let (status, health) = get_json(&app, "/health").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(health["orphan_chunks"], 0);
+        let (status, light) = get_json(&app, "/health?summary=true").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(light["documents"], health["documents"]);
+        assert!(light.get("orphan_chunks").is_none());
         let (status, _) = get_json(&app, "/v1/ops-log?seq=999999").await;
         assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
         let (status, _) = send_json(

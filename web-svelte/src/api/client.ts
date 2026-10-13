@@ -107,7 +107,8 @@ export const api = {
   proposals: () => request<{ items: WikiProposal[] }>('/v1/wiki-proposals'),
   changeProposal: (body: { action: 'create'; document_id: string } | { action: 'save'; id: string; revision: number; content: string } | { action: 'accept' | 'reject'; id: string; revision: number }) => request<WikiProposal>('/v1/wiki-proposals', { method: 'POST', body: JSON.stringify(body) }),
   wikiReview: () => request<{ items: ReviewEvidence[] }>('/v1/wiki-review'),
-  health: () => request<HealthResponse>('/health'),
+  // The shell polls this: skip the server's integrity scans (see /v1/doctor).
+  health: () => request<HealthResponse>('/health?summary=true'),
 
   /** Ordinary browser links cannot attach Bearer credentials. */
   sourceFile: async (documentId: string) => {

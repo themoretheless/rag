@@ -798,6 +798,28 @@ costs, all fixed:
   schema version and database path, and the Sync view uses it. Without
   `summary` the response is unchanged.
 
+A last independent check of those fixes found no correctness bugs. It did
+find one more polled cost, now fixed, and a refinement:
+
+- **`/health` polling.** The web shell polls `/health` every 15 s per tab.
+  Each poll ran the integrity anti-joins under the store lock: chunks,
+  documents, nodes and edges, about 30–60 ms in a release build at 80k
+  documents. The shell never reads those numbers.
+  - `GET /health?summary=true` skips them, and the shell uses it.
+  - Plain `/health`, external monitors and `/v1/doctor` still report
+    integrity.
+- **Orphan chunks** no longer enter any vector snapshot, because the global
+  build and refresh join `documents` as the scoped ones already did. The
+  re-rank now covers only a document row removed after a snapshot was built,
+  and the test covers both cases.
+
+Verdict: no correctness bugs, and no remaining significant cost on hot or
+polled paths. Two costs remain, both bounded:
+
+- The live per-query read of a vector search's scope, measured above.
+- egui laying out the open document each frame, which grows with one
+  document's length and was kept on purpose.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit

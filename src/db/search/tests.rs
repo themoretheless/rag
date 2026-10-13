@@ -1544,10 +1544,30 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
         }])
         .unwrap();
 
+    let ids = |hits: &[SearchHit]| {
+        hits.iter()
+            .map(|hit| hit.document_id.clone())
+            .collect::<Vec<_>>()
+    };
     let hits = search_vec(&store, &[1.0, 0.0], 2, &LexFilters::default()).unwrap();
-    let ids = hits.iter().map(|hit| hit.document_id.as_str()).collect::<Vec<_>>();
-    assert_eq!(ids, vec!["near", "far"]);
+    assert_eq!(ids(&hits), vec!["near", "far"]);
     assert_eq!(hits[0].document_title, "Title near");
+
+    // A document row removed after the snapshot was built, with its chunk
+    // left behind and no chunk write: the cached snapshot still holds it.
+    vector_test_document(&store, "late", "raw", vec![1.0, 0.0]);
+    vector_test_document(&store, "tail", "raw", vec![0.0, 1.0]);
+    let warm = search_vec(&store, &[1.0, 0.0], 1, &LexFilters::default()).unwrap();
+    assert_eq!(ids(&warm), vec!["late"]);
+    {
+        let conn = store.lock().unwrap();
+        conn.execute("DELETE FROM documents WHERE id = 'late'", [])
+            .unwrap();
+    }
+    let hits = search_vec(&store, &[1.0, 0.0], 3, &LexFilters::default()).unwrap();
+    assert_eq!(ids(&hits)[..2], ["near".to_string(), "far".to_string()]);
+    assert_eq!(hits.len(), 3);
+    assert!(!ids(&hits).contains(&"late".to_string()));
 }
 
 #[test]

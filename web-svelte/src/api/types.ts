@@ -13,7 +13,6 @@ export interface HealthResponse {
   chunks?: number
   nodes?: number
   edges?: number
-  unscoped_documents?: number
   mcp_http?: boolean
   db_path?: string
   runtime?: {
