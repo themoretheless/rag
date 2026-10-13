@@ -692,6 +692,36 @@ still ran on the executor. It and every finding are now fixed:
   - Without summaries, rows are uniform and only visible rows are laid out.
   - Categories fold with a header row.
 
+### Second verification audit
+
+A second independent audit confirmed the incremental BM25 patch, the
+embedding digests, the `/health` and `/v1/agents` changes and the sidebar
+index. It found one UI bug and one remaining gap; both are fixed, along with
+its smaller items:
+
+- **Bug, native UI.** Saving a wiki page re-sorted `wiki_pages` without
+  bumping its revision, so the sidebar index and link keys went stale after a
+  rename. The save path now bumps it; every mutation site does.
+- **Scoped vector search after a write.** Project-scoped searches used to
+  re-parse every embedding in scope. They now refresh incrementally, reusing
+  vectors by chunk id and digest. Sources are tried in this order: the same
+  scope's last snapshot, the global snapshot, then another scope's.
+  - A test checks the scoped refresh from both a scoped and a global
+    snapshot against a scoped rebuild.
+- **No buffer copy on refresh.** Snapshot vectors are shared per chunk
+  (`Arc<[f32]>`), so a refresh never copies unchanged vectors: 327 → 234 ms on
+  20k × 768 (debug), against 4.4 s for a full build.
+- **Vector reuse everywhere a page is rewritten.**
+  `document_indexer::reusing_document_vectors` covers wiki writes,
+  `ingest_raw`, `update_document` and revision restore, as well as the ingest
+  path.
+- **BM25 query.** It scores chunk ids first and reads content and titles only
+  for the top k rows.
+
+Still left on purpose: the egui document and wiki readers lay out the open
+document each repainted frame. That cost grows with one document's length,
+not with the corpus, and is egui's normal immediate-mode cost.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit

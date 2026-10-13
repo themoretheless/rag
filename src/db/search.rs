@@ -956,7 +956,6 @@ static VECTOR_SNAPSHOTS: OnceLock<Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>>> 
 #[derive(Debug)]
 struct VectorSnapshot {
     generation: u64,
-    embeddings: Vec<f32>,
     chunks: Vec<VectorSnapshotChunk>,
 }
 
@@ -971,8 +970,9 @@ struct VectorSnapshotChunk {
     /// `chunks.embedding_digest`: lets a refresh reuse this parsed vector
     /// when the stored embedding is unchanged.
     embedding_hash: i64,
-    embedding_start: usize,
-    embedding_len: usize,
+    /// Normalized vector, shared by reference across snapshot refreshes so an
+    /// unchanged chunk is never copied.
+    vector: Arc<[f32]>,
 }
 
 type VectorDocumentLookup = HashMap<String, (String, String)>;
@@ -997,17 +997,14 @@ fn search_vec(
 
     for (ordinal, chunk) in snapshot.chunks.iter().enumerate() {
         if !documents.contains_key(&chunk.document_id)
-            || chunk.embedding_len != normalized_query.len()
+            || chunk.vector.len() != normalized_query.len()
         {
             continue;
         }
-        let end = chunk.embedding_start.saturating_add(chunk.embedding_len);
-        let Some(embedding) = snapshot.embeddings.get(chunk.embedding_start..end) else {
-            continue;
-        };
+        let embedding = &chunk.vector;
         let score = normalized_query
             .iter()
-            .zip(embedding)
+            .zip(embedding.iter())
             .map(|(left, right)| left * right)
             .sum::<f32>()
             .clamp(-1.0, 1.0);
@@ -1098,11 +1095,40 @@ fn vector_search_inputs(
             match scoped {
                 Some(snapshot) => snapshot,
                 None => {
-                    let snapshot = Arc::new(build_vector_snapshot_with_filters(
-                        &conn,
-                        generation,
-                        Some(filters),
-                    )?);
+                    // Reuse parsed vectors (by chunk id + digest) from the last
+                    // snapshot of this scope, else from any global snapshot,
+                    // and parse only new or changed chunks; a cold store parses
+                    // the scope once.
+                    // Preference: same scope, then global, then another scope
+                    // (alternating rooms still share most vectors' parse work).
+                    let previous_scoped = scoped_vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .get(&key)
+                        .map(|entry| (entry.scope == scope, entry.snapshot.clone()));
+                    let global_previous = vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .get(&key)
+                        .cloned();
+                    let previous = match (previous_scoped, global_previous) {
+                        (Some((true, same_scope)), _) => Some(same_scope),
+                        (_, Some(global)) => Some(global),
+                        (Some((false, other_scope)), None) => Some(other_scope),
+                        (None, None) => None,
+                    };
+                    let snapshot = Arc::new(match previous {
+                        Some(previous) => {
+                            refresh_vector_snapshot(&conn, &previous, generation, Some(filters))?
+                        }
+                        None => {
+                            build_vector_snapshot_with_filters(&conn, generation, Some(filters))?
+                        }
+                    });
                     scoped_vector_snapshots()
                         .lock()
                         .map_err(|error| {
@@ -1129,7 +1155,7 @@ fn vector_search_inputs(
                 .get(&key)
                 .cloned();
             let snapshot = Arc::new(match previous {
-                Some(previous) => refresh_vector_snapshot(&conn, &previous, generation)?,
+                Some(previous) => refresh_vector_snapshot(&conn, &previous, generation, None)?,
                 None => build_vector_snapshot(&conn, generation)?,
             });
             vector_snapshots()
@@ -1218,15 +1244,11 @@ fn build_vector_snapshot_with_filters(
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(bind.iter()))?;
-    let mut embeddings = Vec::new();
     let mut chunks = Vec::new();
     crate::db::rows::visit_rows(&mut rows, |row| {
         let embedding_json: String = row.get(3)?;
         let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
         let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
-        let embedding_start = embeddings.len();
-        let embedding_len = embedding.len();
-        embeddings.extend(embedding);
         chunks.push(VectorSnapshotChunk {
             id: row.get(0)?,
             document_id: row.get(1)?,
@@ -1238,16 +1260,11 @@ fn build_vector_snapshot_with_filters(
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "{}".into()),
             embedding_hash: row.get(7)?,
-            embedding_start,
-            embedding_len,
+            vector: embedding.into(),
         });
         Ok(())
     })?;
-    Ok(VectorSnapshot {
-        generation,
-        embeddings,
-        chunks,
-    })
+    Ok(VectorSnapshot { generation, chunks })
 }
 
 /// Bring a database-wide snapshot up to `generation` without re-parsing
@@ -1264,6 +1281,7 @@ fn refresh_vector_snapshot(
     conn: &duckdb::Connection,
     previous: &VectorSnapshot,
     generation: u64,
+    filters: Option<&LexFilters>,
 ) -> Result<VectorSnapshot> {
     struct Listed {
         id: String,
@@ -1274,15 +1292,28 @@ fn refresh_vector_snapshot(
         metadata_json: String,
         embedding_hash: i64,
     }
-    let mut stmt = conn.prepare(
+    let (join_sql, where_sql, bind) = match filters {
+        Some(filters) => {
+            let (where_sql, bind) = filters.scope_where_clause("d.id");
+            (
+                "INNER JOIN documents d ON d.id = c.document_id",
+                where_sql,
+                bind,
+            )
+        }
+        None => ("", String::new(), Vec::new()),
+    };
+    let mut stmt = conn.prepare(&format!(
         r#"
         SELECT c.id, c.document_id, c.chunk_index, c.char_start, c.char_end, c.metadata_json,
                COALESCE(c.embedding_digest, CAST(hash(c.embedding_json) >> 1 AS BIGINT))
         FROM chunks c
+        {join_sql}
+        {where_sql}
         ORDER BY c.document_id ASC, c.chunk_index ASC, c.id ASC
-        "#,
-    )?;
-    let listed = crate::db::rows::query_vec(&mut stmt, [], |row| {
+        "#
+    ))?;
+    let listed = crate::db::rows::query_vec(&mut stmt, params_from_iter(bind.iter()), |row| {
         Ok(Listed {
             id: row.get(0)?,
             document_id: row.get(1)?,
@@ -1313,12 +1344,12 @@ fn refresh_vector_snapshot(
         .map(|row| row.id.as_str())
         .collect();
     if changed.len() * 2 > listed.len() {
-        return build_vector_snapshot(conn, generation);
+        return build_vector_snapshot_with_filters(conn, generation, filters);
     }
 
     // Parse only the new or changed vectors.
     const PARSE_BATCH: usize = 512;
-    let mut parsed: HashMap<String, Vec<f32>> = HashMap::with_capacity(changed.len());
+    let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(changed.len());
     for batch in changed.chunks(PARSE_BATCH) {
         let placeholders = vec!["?"; batch.len()].join(",");
         let mut stmt = conn.prepare(&format!(
@@ -1329,27 +1360,22 @@ fn refresh_vector_snapshot(
             let embedding_json: String = row.get(1)?;
             let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
             let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
-            parsed.insert(id, embedding);
+            parsed.insert(id, embedding.into());
             Ok(())
         })?;
     }
 
-    let mut embeddings = Vec::with_capacity(previous.embeddings.len());
     let mut chunks = Vec::with_capacity(listed.len());
     for row in listed {
-        let vector: &[f32] = match parsed.get(&row.id) {
-            Some(vector) => vector,
+        let vector = match parsed.get(&row.id) {
+            Some(vector) => vector.clone(),
+            // Unchanged: share the previous snapshot's vector, no copy.
             None => match reusable.get(row.id.as_str()) {
-                Some(old) => {
-                    &previous.embeddings
-                        [old.embedding_start..old.embedding_start + old.embedding_len]
-                }
+                Some(old) => old.vector.clone(),
                 // Deleted between the listing and the parse: skip it.
                 None => continue,
             },
         };
-        let embedding_start = embeddings.len();
-        embeddings.extend_from_slice(vector);
         chunks.push(VectorSnapshotChunk {
             id: row.id,
             document_id: row.document_id,
@@ -1358,15 +1384,10 @@ fn refresh_vector_snapshot(
             char_end: row.char_end,
             metadata_json: row.metadata_json,
             embedding_hash: row.embedding_hash,
-            embedding_start,
-            embedding_len: vector.len(),
+            vector,
         });
     }
-    Ok(VectorSnapshot {
-        generation,
-        embeddings,
-        chunks,
-    })
+    Ok(VectorSnapshot { generation, chunks })
 }
 
 fn load_vector_documents(

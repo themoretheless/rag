@@ -656,36 +656,28 @@ fn search_duckdb_bm25(
     all_binds.push(query.to_string());
     all_binds.append(&mut bind);
 
+    // Score chunk ids only, keep the top k, then read content and titles for
+    // those rows: chunk bodies are never scanned for the rest of the corpus.
     let sql = format!(
         r#"
-        SELECT
-          chunk_id,
-          document_id,
-          document_title,
-          document_uri,
-          chunk_index,
-          content,
-          char_start,
-          char_end,
-          score
-        FROM (
-          SELECT
-            c.id AS chunk_id,
-            c.document_id AS document_id,
-            d.title AS document_title,
-            d.uri AS document_uri,
-            c.chunk_index AS chunk_index,
-            c.content AS content,
-            c.char_start AS char_start,
-            c.char_end AS char_end,
-            fts_main_chunks.match_bm25(c.id, ?) AS score
+        WITH ranked AS (
+          SELECT c.id AS chunk_id, fts_main_chunks.match_bm25(c.id, ?) AS score
           FROM chunks c
           INNER JOIN documents d ON d.id = c.document_id
           {where_sql}
-        ) ranked
-        WHERE score IS NOT NULL
-        ORDER BY score DESC
-        LIMIT {top_k}
+        ),
+        top AS (
+          SELECT chunk_id, score FROM ranked
+          WHERE score IS NOT NULL
+          ORDER BY score DESC
+          LIMIT {top_k}
+        )
+        SELECT c.id, c.document_id, d.title, d.uri, c.chunk_index, c.content,
+               c.char_start, c.char_end, top.score
+        FROM top
+        INNER JOIN chunks c ON c.id = top.chunk_id
+        INNER JOIN documents d ON d.id = c.document_id
+        ORDER BY top.score DESC
         "#
     );
 

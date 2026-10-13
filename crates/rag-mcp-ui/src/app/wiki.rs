@@ -345,6 +345,8 @@ impl GraphApp {
                     }
                 }
                 sort_wiki_pages(&mut self.wiki_pages);
+                // Title/summary/order changed: invalidate the catalog caches.
+                self.wiki_pages_rev += 1;
                 self.refresh_backlinks(&body.id);
                 let rev_note = body
                     .revision

@@ -630,7 +630,14 @@ impl<'a> IngestService<'a> {
 
         let (write, chunk_count, reembedded) = if applied.content_changed {
             self.ensure_vector_compatibility()?;
-            let chunks = self.indexer.build_plain_chunks(&applied.document).await?;
+            let chunk_embedder = crate::document_indexer::reusing_document_vectors(
+                self.store,
+                self.embedder,
+                &applied.document.id,
+            )?;
+            let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), self.config)
+                .build_plain_chunks(&applied.document)
+                .await?;
             let chunk_count = chunks.len();
             let write = self.store.write_document_atomic(
                 &applied.document,
@@ -639,9 +646,7 @@ impl<'a> IngestService<'a> {
             )?;
             (write, chunk_count, true)
         } else {
-            let chunk_count = self
-                .store
-                .count_chunks_for_document(&applied.document.id)? as usize;
+            let chunk_count = self.store.count_chunks_for_document(&applied.document.id)? as usize;
             let derived = if applied.title_changed {
                 DocumentDerivedWrite::RefreshGraphLabel
             } else {

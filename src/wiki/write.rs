@@ -311,7 +311,9 @@ pub(crate) async fn write_wiki_page_synced_command(
     doc.layer = LAYER_WIKI.into();
     doc.kind = kind.into();
     doc.content_hash = Some(content_hash(&content));
-    let chunks = DocumentIndexer::new(embedder.as_ref(), config)
+    let chunk_embedder =
+        crate::document_indexer::reusing_document_vectors(store, embedder, &document_id)?;
+    let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), config)
         .build_plain_chunks(&doc)
         .await?;
     for chunk in &chunks {
@@ -710,7 +712,9 @@ pub async fn ingest_raw(
         content_hash: None,
         ..Default::default()
     };
-    let chunks = DocumentIndexer::new(embedder.as_ref(), config)
+    let chunk_embedder =
+        crate::document_indexer::reusing_document_vectors(store, embedder, &document_id)?;
+    let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), config)
         .build_plain_chunks(&doc)
         .await?;
     let chunk_count = chunks.len();

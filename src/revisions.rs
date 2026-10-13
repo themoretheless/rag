@@ -112,7 +112,13 @@ impl<'a> RevisionService<'a> {
         let _embedding_guard = self
             .store
             .try_embedding_write_guard(self.config, "revision restore")?;
-        let chunks = DocumentIndexer::new(self.embedder.as_ref(), self.config)
+        // Restoring usually brings back text the document had: reuse vectors.
+        let chunk_embedder = crate::document_indexer::reusing_document_vectors(
+            self.store,
+            self.embedder,
+            &restored.id,
+        )?;
+        let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), self.config)
             .build_chunks(&restored)
             .await?;
         let now = Utc::now();
