@@ -582,12 +582,15 @@ impl<'a> IngestService<'a> {
         if document_id.is_empty() {
             return Err(AppError::config("document_id must be non-empty"));
         }
-        let document = self
-            .store
-            .get_document(document_id)?
-            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-        self.store.require_embedding_manifest_match(self.config)?;
-        let expected_chunks = self.store.list_chunks_for_document(&document.id)?;
+        let (document, expected_chunks) = crate::util::blocking_section(|| {
+            let document = self
+                .store
+                .get_document(document_id)?
+                .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
+            self.store.require_embedding_manifest_match(self.config)?;
+            let chunks = self.store.list_chunks_for_document(&document.id)?;
+            Ok::<_, AppError>((document, chunks))
+        })?;
         let mut chunks = expected_chunks.clone();
         let chunk_count = chunks.len();
         if !chunks.is_empty() {
@@ -598,13 +601,15 @@ impl<'a> IngestService<'a> {
             .map(|chunk| chunk.embedding)
             .collect::<Vec<_>>();
         let manifest = embedding_manifest_from_config(self.config);
-        self.store.update_chunk_embeddings_atomic(
-            &document.id,
-            document.revision,
-            &expected_chunks,
-            &embeddings,
-            Some(&manifest),
-        )?;
+        crate::util::blocking_section(|| {
+            self.store.update_chunk_embeddings_atomic(
+                &document.id,
+                document.revision,
+                &expected_chunks,
+                &embeddings,
+                Some(&manifest),
+            )
+        })?;
         Ok(ReembedDocumentResult {
             document_id: document.id,
             chunk_count,
@@ -622,47 +627,55 @@ impl<'a> IngestService<'a> {
         if document_id.is_empty() {
             return Err(AppError::config("document_id must be non-empty"));
         }
-        let mut applied = self
-            .store
-            .prepare_document_meta_update(document_id, &command.update)?
-            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
+        let mut applied = crate::util::blocking_section(|| {
+            self.store
+                .prepare_document_meta_update(document_id, &command.update)
+        })?
+        .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
         let expected_revision = applied.document.revision;
 
         let (write, chunk_count, reembedded) = if applied.content_changed {
             self.ensure_vector_compatibility()?;
-            let chunk_embedder = crate::document_indexer::reusing_document_vectors(
-                self.store,
-                self.embedder,
-                &applied.document.id,
-            )?;
+            let chunk_embedder = crate::util::blocking_section(|| {
+                crate::document_indexer::reusing_document_vectors(
+                    self.store,
+                    self.embedder,
+                    &applied.document.id,
+                )
+            })?;
             let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), self.config)
                 .build_plain_chunks(&applied.document)
                 .await?;
             let chunk_count = chunks.len();
-            let write = self.store.write_document_atomic(
-                &applied.document,
-                Some(expected_revision),
-                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-            )?;
+            let write = crate::util::blocking_section(|| {
+                self.store.write_document_atomic(
+                    &applied.document,
+                    Some(expected_revision),
+                    DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+                )
+            })?;
             (write, chunk_count, true)
         } else {
-            let chunk_count = self.store.count_chunks_for_document(&applied.document.id)? as usize;
             let derived = if applied.title_changed {
                 DocumentDerivedWrite::RefreshGraphLabel
             } else {
                 DocumentDerivedWrite::Preserve
             };
-            let write = self.store.write_document_atomic(
-                &applied.document,
-                Some(expected_revision),
-                derived,
-            )?;
+            let (write, chunk_count) = crate::util::blocking_section(|| {
+                let chunk_count = self.store.count_chunks_for_document(&applied.document.id)?;
+                let write = self.store.write_document_atomic(
+                    &applied.document,
+                    Some(expected_revision),
+                    derived,
+                )?;
+                Ok::<_, AppError>((write, chunk_count as usize))
+            })?;
             (write, chunk_count, false)
         };
         applied.document.revision = write.revision;
 
         let document = applied.document;
-        let _ = self.store.append_ops_log(&OpsLogEntry {
+        let _ = crate::util::blocking_section(|| self.store.append_ops_log(&OpsLogEntry {
             id: String::new(),
             seq: 0,
             ts: Utc::now(),
@@ -683,7 +696,7 @@ impl<'a> IngestService<'a> {
             })
             .to_string(),
             agent_name: None,
-        });
+        }));
         Ok(UpdateDocumentResult {
             document_id: document.id,
             uri: document.uri,

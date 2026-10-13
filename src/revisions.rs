@@ -76,9 +76,7 @@ impl<'a> RevisionService<'a> {
             ));
         }
 
-        let current = self
-            .store
-            .get_document(document_id)?
+        let current = crate::util::blocking_section(|| self.store.get_document(document_id))?
             .ok_or_else(|| AppError::not_found(format!("document '{document_id}'")))?;
         if is_source_controlled(&current) {
             return Err(AppError::forbidden(format!(
@@ -91,9 +89,8 @@ impl<'a> RevisionService<'a> {
                 command.if_match_revision, current.revision
             )));
         }
-        let mut restored = self
-            .store
-            .get_document_revision(document_id, command.revision)?
+        let mut restored =
+            crate::util::blocking_section(|| self.store.get_document_revision(document_id, command.revision))?
             .ok_or_else(|| {
                 AppError::not_found(format!(
                     "revision {} for document '{document_id}'",
@@ -113,11 +110,13 @@ impl<'a> RevisionService<'a> {
             .store
             .try_embedding_write_guard(self.config, "revision restore")?;
         // Restoring usually brings back text the document had: reuse vectors.
-        let chunk_embedder = crate::document_indexer::reusing_document_vectors(
-            self.store,
-            self.embedder,
-            &restored.id,
-        )?;
+        let chunk_embedder = crate::util::blocking_section(|| {
+            crate::document_indexer::reusing_document_vectors(
+                self.store,
+                self.embedder,
+                &restored.id,
+            )
+        })?;
         let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), self.config)
             .build_chunks(&restored)
             .await?;
@@ -143,7 +142,9 @@ impl<'a> RevisionService<'a> {
             .to_string(),
             agent_name: None,
         };
-        let write = if crate::models::Layer::Wiki.is(&restored.layer) {
+        // Index lookup and the atomic commit run off the async workers.
+        let write = crate::util::blocking_section(|| -> Result<_> {
+            Ok(if crate::models::Layer::Wiki.is(&restored.layer) {
             let slug = restored
                 .uri
                 .strip_prefix("wiki://")
@@ -206,7 +207,8 @@ impl<'a> RevisionService<'a> {
                 tracing::warn!(%error, document_id, revision = write.revision, "revision restored but audit log append failed");
             }
             write
-        };
+        })
+        })?;
 
         Ok(RestoreRevisionResult {
             document_id: document_id.to_string(),

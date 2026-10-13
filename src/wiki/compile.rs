@@ -14,7 +14,7 @@ pub async fn compile_source(
     dry_run: bool,
     agent: Option<&str>,
 ) -> Result<CompileApplyResult> {
-    let source = resolve_doc(store, source_id_or_uri)?;
+    let source = crate::util::blocking_section(|| resolve_doc(store, source_id_or_uri))?;
     if !matches!(
         Layer::parse(&source.layer),
         Some(Layer::Raw | Layer::Document)
@@ -22,13 +22,13 @@ pub async fn compile_source(
         // Allow compile from any non-wiki if needed, but prefer raw.
         tracing::warn!(layer = %source.layer, "compile_source: source is not layer=raw");
     }
-    let schema = schema_text(store)?;
+    let schema = crate::util::blocking_section(|| schema_text(store))?;
     // Output slugs are chosen by the model, so capture the lean catalog before
     // generation rather than reading the chosen page's revision after the LLM.
     let revisions = if dry_run {
         HashMap::new()
     } else {
-        wiki_revision_snapshot(store)?
+        crate::util::blocking_section(|| wiki_revision_snapshot(store))?
     };
     let proposed = compile_wiki(llm, &schema, &source.title, &source.uri, &source.content).await?;
 
@@ -88,19 +88,20 @@ pub async fn compile_source(
         page_ids.push(wr.document_id);
     }
 
-    // Link source -> summaries via graph related edges when possible
-    if let (Ok(Some(src_node)), true) = (
-        store.find_node_by_document_id(&source.id),
-        !page_ids.is_empty(),
-    ) {
-        for pid in &page_ids {
-            if let Ok(Some(dst)) = store.find_node_by_document_id(pid) {
-                let _ = store.link_nodes(&src_node.id, &dst.id, "related", 1.0);
+    crate::util::blocking_section(|| {
+        // Link source -> summaries via graph related edges when possible
+        if let (Ok(Some(src_node)), true) = (
+            store.find_node_by_document_id(&source.id),
+            !page_ids.is_empty(),
+        ) {
+            for pid in &page_ids {
+                if let Ok(Some(dst)) = store.find_node_by_document_id(pid) {
+                    let _ = store.link_nodes(&src_node.id, &dst.id, "related", 1.0);
+                }
             }
         }
-    }
 
-    let _ = store.append_ops_log(&OpsLogEntry {
+        store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: Utc::now(),
@@ -111,6 +112,7 @@ pub async fn compile_source(
         entity_kind: Some("raw".into()),
         payload_json: serde_json::json!({ "page_ids": page_ids }).to_string(),
         agent_name: agent.map(|s| s.to_string()),
+    })
     })?;
 
     Ok(CompileApplyResult {

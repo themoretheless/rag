@@ -987,9 +987,7 @@ pub async fn maintain_refresh(
 }
 
 fn fts_finalization_failure(store: &Store, operation: &str, error: &AppError) -> String {
-    store
-        .record_fts_finalization_failure(operation, true, &error.to_string())
-        .message
+    crate::util::blocking_section(|| store.record_fts_finalization_failure(operation, true, &error.to_string())).message
 }
 
 #[cfg(test)]

@@ -833,9 +833,10 @@ is fixed:
   listing.
 - The same class on demand: `GET /v1/diary` and the MCP tools
   `collection_get`, `link_nodes`, `follow_tunnels` and `read_log`.
-- A mechanical sweep of every async MCP tool and HTTP handler now finds no
+- A mechanical sweep of every async MCP tool and HTTP handler body found no
   store call outside a blocking section, except the non-blocking `try_write`
-  corpus guards.
+  corpus guards. That sweep did not follow helper functions; see "Helper
+  functions" below.
 
 Kept: `query_with_index` reads and scores the whole `wiki_index` catalog on
 each call. That cost grows with the number of wiki pages, not with the raw
@@ -863,6 +864,30 @@ admin paths. All are fixed:
   `blocking_section`. That covers the graph and wiki-index rebuilds, paged
   loads and commits, heuristic suggestions, refiles and status changes.
   Only embedding and LLM calls await.
+
+**Helper functions.** The next audit followed handlers into the helpers they
+call and found store work still running on the async workers. All of it now
+runs in `blocking_section`, leaving only embedding and LLM awaits outside:
+
+- `IngestService::update_document`, behind MCP `update_document_meta`, and
+  `reembed_document`.
+- `RevisionService::restore`, behind `POST /v1/revisions/restore`.
+- The wiki CAS path:
+  - `get_wiki_page` wraps its own lookups, so every caller is covered,
+    including `update_wiki_page_cas`.
+  - The `put_wiki_page` lookup.
+  - The manifest checks in `ingest_raw`.
+- `refresh_stale_wiki`: the corpus-wide `find_stale_wiki` read and its
+  ops-log write.
+- `compile_source` and `consolidate`: document resolution, schema, revision
+  snapshot, source linking and ops-log writes.
+- Maintenance plans:
+  - the `MergeExactDup`, `DropTombstones` and `Vacuum`/`Checkpoint` steps;
+  - the per-step `log_action` write;
+  - `record_run`, which every maintenance workflow shares;
+  - the generation reads and the FTS failure record.
+- `DiagnosticsService::repair`: doctor snapshots, the missing-chunk listing,
+  `prune_orphans` and `checkpoint`.
 - `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
   sending those forms does not get a 400.
 

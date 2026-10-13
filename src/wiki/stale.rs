@@ -264,7 +264,7 @@ pub async fn refresh_stale_wiki(
         .max(1)
         .min(config.maint_max_docs.max(1));
 
-    let stale = find_stale_wiki(store)?;
+    let stale = crate::util::blocking_section(|| find_stale_wiki(store))?;
     let mut raw_sources = group_raw_targets(&stale);
     let total_raws = raw_sources.len();
     let capped = total_raws > max_docs;
@@ -338,7 +338,7 @@ pub async fn refresh_stale_wiki(
         });
     }
 
-    let _ = store.append_ops_log(&OpsLogEntry {
+    let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: Utc::now(),
@@ -363,7 +363,7 @@ pub async fn refresh_stale_wiki(
         })
         .to_string(),
         agent_name: agent.map(|s| s.to_string()),
-    })?;
+    }))?;
 
     Ok(RefreshStaleWikiResult {
         stale_count: stale.len(),

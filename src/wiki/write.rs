@@ -582,7 +582,14 @@ pub async fn update_wiki_page_cas(
 ///
 /// Returns [`AppError::NotFound`] when missing; [`AppError::Forbidden`] when
 /// the document exists but is not `layer=wiki` (including raw sources).
+///
+/// Up to four point reads: they run off the async workers when called from
+/// async code (a no-op when the caller already runs on a blocking thread).
 pub fn get_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
+    crate::util::blocking_section(|| find_wiki_page(store, id_or_uri_or_slug))
+}
+
+fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
     let s = id_or_uri_or_slug.trim();
     if s.is_empty() {
         return Err(AppError::config(
@@ -672,8 +679,10 @@ pub async fn ingest_raw(
     room: Option<String>,
     source_file: Option<String>,
 ) -> Result<crate::models::IngestResult> {
-    store.ensure_embedding_manifest(config)?;
-    store.require_embedding_manifest_match(config)?;
+    crate::util::blocking_section(|| {
+        store.ensure_embedding_manifest(config)?;
+        store.require_embedding_manifest_match(config)
+    })?;
     let now = Utc::now();
     let uri = uri
         .filter(|u| !u.trim().is_empty())

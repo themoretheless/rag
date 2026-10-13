@@ -121,7 +121,7 @@ pub async fn apply_maintenance_plan(
     let chunks_generation_before = if dry_run {
         None
     } else {
-        Some(store.chunks_generation()?)
+        Some(blocking_section(|| store.chunks_generation())?)
     };
 
     for (index, raw) in actions.into_iter().enumerate() {
@@ -196,7 +196,7 @@ pub async fn apply_maintenance_plan(
     }
 
     if let Some(chunks_generation_before) = chunks_generation_before {
-        let chunks_generation_after = store.chunks_generation()?;
+        let chunks_generation_after = blocking_section(|| store.chunks_generation())?;
         if chunks_generation_after != chunks_generation_before {
             // A plan may combine reindex with later delete/re-embed/write
             // actions. Reconcile once at the plan boundary, independent of
@@ -209,11 +209,13 @@ pub async fn apply_maintenance_plan(
                 // Same safety record as every other corpus workflow: dirty
                 // marker for the next lexical read plus the canonical
                 // `fts_finalization_failed` audit row.
-                let failure = store.record_fts_finalization_failure(
-                    "apply_maintenance_plan",
-                    true,
-                    &error_message,
-                );
+                let failure = blocking_section(|| {
+                    store.record_fts_finalization_failure(
+                        "apply_maintenance_plan",
+                        true,
+                        &error_message,
+                    )
+                });
                 let mut outcome = ActionOutcome {
                     index: total_actions,
                     action: "finalize_fts".into(),
@@ -397,7 +399,7 @@ async fn execute_one(
             ),
             docs_delta: 0,
         }),
-        MaintenanceAction::MergeExactDup => {
+        MaintenanceAction::MergeExactDup => blocking_section(|| {
             apply_merge_exact_dup(
                 store,
                 index,
@@ -407,7 +409,7 @@ async fn execute_one(
                 dry_run,
                 context.remaining_docs,
             )
-        }
+        }),
         MaintenanceAction::MergeNearDup => Ok(StepResult {
             outcome: skip_outcome(
                 index,
@@ -417,11 +419,11 @@ async fn execute_one(
             ),
             docs_delta: 0,
         }),
-        MaintenanceAction::DropTombstones => {
+        MaintenanceAction::DropTombstones => blocking_section(|| {
             apply_drop_tombstones(store, index, name, params, config, dry_run)
-        }
+        }),
         MaintenanceAction::Vacuum | MaintenanceAction::Checkpoint => {
-            apply_vacuum(store, index, name, dry_run)
+            blocking_section(|| apply_vacuum(store, index, name, dry_run))
         }
     };
 
@@ -537,7 +539,8 @@ fn log_action(
         }
     );
     let payload = serde_json::to_string(outcome).unwrap_or_else(|_| "{}".into());
-    match store.append_ops_log(&OpsLogEntry {
+    // One autocommit per plan step, called from the async plan loop.
+    match blocking_section(|| store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: Utc::now(),
@@ -563,7 +566,7 @@ fn log_action(
         entity_kind: Some("maintenance_action".into()),
         payload_json: payload,
         agent_name: agent.map(|s| s.to_string()),
-    }) {
+    })) {
         Ok(e) => Some(e.id),
         Err(e) => {
             tracing::warn!(error = %e, "failed to append ops_log for maintenance action");

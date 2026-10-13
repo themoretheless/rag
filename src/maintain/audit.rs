@@ -27,10 +27,13 @@ pub(crate) fn record_run<R: Serialize>(
         base_op.to_string()
     };
     let payload = serde_json::to_string(report).unwrap_or_else(|_| "{}".into());
-    store.append_ops_log(
-        &OpsLogEntry::new(op, "MAINT", message)
-            .entity(None, entity_kind)
-            .payload(payload)
-            .agent(agent),
-    )
+    // Workflows call this from async code: keep the write off the workers.
+    crate::util::blocking_section(|| {
+        store.append_ops_log(
+            &OpsLogEntry::new(op, "MAINT", message)
+                .entity(None, entity_kind)
+                .payload(payload)
+                .agent(agent),
+        )
+    })
 }

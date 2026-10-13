@@ -255,12 +255,13 @@ impl<'a> DiagnosticsService<'a> {
         };
         let cap = self.config.maint_max_docs.max(1);
         let max_docs = max_docs.unwrap_or(cap).clamp(1, cap);
-        let before = self.doctor()?;
+        let before = crate::util::blocking_section(|| self.doctor())?;
         // Intentionally empty source placeholders are valid manifest entries,
         // not corrupt searchable documents. Keep this aligned with
         // Store::integrity_counts so doctor and doctor_repair agree. The SQL
         // anti-join applies the cap before document bodies enter Rust.
-        let (_missing_total, missing) = self.store.list_documents_missing_chunks(max_docs)?;
+        let (_missing_total, missing) =
+            crate::util::blocking_section(|| self.store.list_documents_missing_chunks(max_docs))?;
 
         let mut documents_repaired = Vec::new();
         let mut documents_failed = Vec::new();
@@ -295,7 +296,7 @@ impl<'a> DiagnosticsService<'a> {
             }
         }
         let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) =
-            self.store.prune_orphans(dry_run)?;
+            crate::util::blocking_section(|| self.store.prune_orphans(dry_run))?;
         if !dry_run {
             if !documents_repaired.is_empty() || orphan_chunks_pruned > 0 {
                 // Repair is a bounded corpus operation. Publish its derived
@@ -348,12 +349,12 @@ impl<'a> DiagnosticsService<'a> {
                     }
                 }
             }
-            self.store.checkpoint()?;
+            crate::util::blocking_section(|| self.store.checkpoint())?;
         }
         let after = if dry_run {
             before.clone()
         } else {
-            self.doctor()?
+            crate::util::blocking_section(|| self.doctor())?
         };
         let report = DoctorRepairReport {
             dry_run,

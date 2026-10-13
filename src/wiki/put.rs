@@ -67,7 +67,7 @@ pub async fn put_wiki_page(
             }
             Some(document)
         }
-        None => store.find_by_uri(&canonical_uri)?,
+        None => crate::util::blocking_section(|| store.find_by_uri(&canonical_uri))?,
     };
     if command.create_only && existing.is_some() {
         return Err(AppError::conflict("wiki page URI is already in use"));

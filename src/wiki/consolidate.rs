@@ -53,7 +53,7 @@ pub async fn consolidate(
         if key.is_empty() {
             continue;
         }
-        let doc = resolve_doc(store, key)?;
+        let doc = crate::util::blocking_section(|| resolve_doc(store, key))?;
         if seen.insert(doc.id.clone()) {
             resolved.push(doc);
         }
@@ -69,13 +69,13 @@ pub async fn consolidate(
     let capped = document_ids.iter().filter(|s| !s.trim().is_empty()).count() > resolved.len()
         || document_ids.len() > max_docs && resolved.len() >= max_docs;
 
-    let schema = schema_text(store)?;
+    let schema = crate::util::blocking_section(|| schema_text(store))?;
     let sources: Vec<(String, String, String)> = resolved
         .iter()
         .map(|d| (d.title.clone(), d.uri.clone(), d.content.clone()))
         .collect();
     let revisions = if apply {
-        wiki_revision_snapshot(store)?
+        crate::util::blocking_section(|| wiki_revision_snapshot(store))?
     } else {
         HashMap::new()
     };
@@ -120,7 +120,7 @@ pub async fn consolidate(
     let source_count = resolved.len();
 
     if !apply {
-        let _ = store.append_ops_log(&OpsLogEntry {
+        let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
             id: Uuid::new_v4().to_string(),
             seq: 0,
             ts: Utc::now(),
@@ -145,7 +145,7 @@ pub async fn consolidate(
             })
             .to_string(),
             agent_name: agent.map(|s| s.to_string()),
-        })?;
+        }))?;
 
         return Ok(ConsolidateResult {
             source_ids,
@@ -175,7 +175,7 @@ pub async fn consolidate(
     )
     .await?;
 
-    let _ = store.append_ops_log(&OpsLogEntry {
+    let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: Utc::now(),
@@ -201,7 +201,7 @@ pub async fn consolidate(
         })
         .to_string(),
         agent_name: agent.map(|s| s.to_string()),
-    })?;
+    }))?;
 
     Ok(ConsolidateResult {
         source_ids,
@@ -310,13 +310,15 @@ pub(super) async fn apply_consolidate_proposal_at_revision(
     .await?;
 
     // Link each source document → consolidated wiki (related), when nodes exist.
-    if let Ok(Some(wiki_node)) = store.find_node_by_document_id(&wr.document_id) {
-        for src in sources {
-            if let Ok(Some(src_node)) = store.find_node_by_document_id(&src.id) {
-                let _ = store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0);
+    crate::util::blocking_section(|| {
+        if let Ok(Some(wiki_node)) = store.find_node_by_document_id(&wr.document_id) {
+            for src in sources {
+                if let Ok(Some(src_node)) = store.find_node_by_document_id(&src.id) {
+                    let _ = store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0);
+                }
             }
         }
-    }
+    });
 
     Ok(wr)
 }
