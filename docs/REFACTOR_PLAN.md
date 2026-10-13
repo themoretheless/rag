@@ -982,7 +982,7 @@ polled paths. These costs remain, each bounded and kept on purpose:
     - BM25 patch: 0.31 s, against a 0.79 s full build of this
       short-text corpus.
     - The earlier figures came from a different corpus and run. The vector
-      refresh stays about 20–25x cheaper than a full build. The BM25 full
+      refresh stays about 19–25x cheaper than a full build. The BM25 full
       build depends on the corpus (19 s earlier, 0.79 s for these short
       texts), while the patch stays near 0.3 s in both.
   - A chunk change log keyed by generation would make them delta-only, but
