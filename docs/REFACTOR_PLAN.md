@@ -617,6 +617,39 @@ fix.
     rather than per row.
   - Compress plans from the strongest duplicate pairs.
 
+### Final audit
+
+A last independent audit of HEAD found no remaining per-item query loops,
+problem subqueries or per-row commits in the SQL layer. It did find
+synchronous DuckDB work running on the async executor, plus three smaller
+costs. All are fixed:
+
+- **Executor stalls.**
+  - Search and multi-query retrieval, including lazy BM25 and vector
+    rebuilds, run on the blocking pool. The corpus read guard moves into the
+    task.
+  - `IngestService` extracts, prepares and commits off the executor; only
+    embedding stays async.
+  - Local wiki writes and `ingest_raw` read and commit on the blocking pool.
+  - The remaining handler-level store calls go through
+    `util::blocking_section` (`block_in_place` on the multi-thread runtime,
+    inline elsewhere). That covers HTTP status, doctor, health, ready,
+    checkpoint, admin, sync, feedback and review, the synchronous MCP tools,
+    and the store calls inside async MCP tools and diary writes.
+- **Vector snapshot after a write.** The global snapshot is refreshed
+  incrementally. A DuckDB-side `hash(embedding_json)` listing decides which
+  vectors to reuse, and only new or changed rows are parsed: 4.39 s → 379 ms
+  on 20k chunks × 768 dims after adding one document (debug build). A test
+  checks it against a full rebuild.
+- **Replication** embeds every page of a push or pull batch in one provider
+  call (`PrecomputedEmbedder`) and still commits per event.
+- **Stale detection** hashes each cited source once and borrows instead of
+  cloning.
+- **Native UI wiki view.** Link keys are cached per catalog change, and
+  resolving a link is one hash probe instead of a per-frame
+  O(links × pages) scan. Per-frame `[[link]]` segmentation stays: it is
+  linear in the visible text, like egui's own layout of that text.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit
