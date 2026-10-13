@@ -830,7 +830,7 @@ is fixed:
 - On the primary, `POST /v1/sync/register` and `GET /v1/sync/pull` run in
   `blocking_section`.
 - The replica's `sync_once` reads only its own pull cursor, through the new
-  `Store::sync_pull_cursor`, on the blocking pool. It used to call the full
+  `Store::sync_pull_cursor`, in `blocking_section`. It used to call the full
   `sync_status`: a `MAX` over `sync_changes`, an outbox count and a node
   listing.
 - The same class on demand: `GET /v1/diary` and the MCP tools
@@ -854,7 +854,7 @@ admin paths. All are fixed:
   - The in-memory snapshot still updates on every callback.
   - The persisted copy, read only after a restart, is written at most once
     per second. Every status change is still written at once.
-  - Job writes and deletes run on the blocking pool. A test covers both
+  - Job writes and deletes run in `blocking_section`. A test covers both
     rules.
 - **Manifest checks in search.** Vector and hybrid search, and the MCP and
   ingest write paths, ran the embedding-manifest checks on the async
@@ -917,16 +917,31 @@ purpose:
 - `/v1/sync/status` runs a `MAX` over `sync_changes`, a count of unsent
   outbox rows and a small node listing.
 
-The web Sync view polls both every 10 s. Both run in `blocking_section`, off
+The web Sync view polls both every 10 s, and the web shell also polls
+`/v1/agents` every 15 s in each tab. Both run in `blocking_section`, off
 the async workers. Their cost is bounded by the `LIMIT` and grows with
 operation, diary and replication history, not with corpus content.
 
 Verdict: no correctness bugs, and no remaining significant cost on hot or
-polled paths. Two costs remain, both bounded:
+polled paths. These costs remain, each bounded and kept on purpose:
 
 - The live per-query read of a vector search's scope, measured above.
-- egui laying out the open document each frame, which grows with one
-  document's length and was kept on purpose.
+- The first search after a write burst pays the incremental refreshes, on
+  the blocking pool:
+  - The vector snapshot lists every chunk's identity and digest: 234 ms on
+    20k chunks.
+  - The BM25 patch anti-joins `chunks` against the index: 0.35 s on 20k
+    chunks.
+  - Both are measured above in a debug build, against 4.4 s and 19 s for
+    the full rebuilds they replace. A chunk change log keyed by generation
+    would make them delta-only, but that would add a write to every chunk
+    commit.
+- Native UI per-frame work, which does not grow with the corpus:
+  - egui lays out the open document, which grows with one document's
+    length.
+  - The activity grid draws up to 200 rows.
+  - The Sync workspace repaints at about 30 fps while it is open.
+  - The graph seed picker scans the loaded graph, capped at 300 nodes.
 
 ## Not planned
 
