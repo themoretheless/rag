@@ -2520,6 +2520,7 @@ fn diary_activity_resolves_agent_names_like_full_entries() {
         diary("by-wing", 3, Some("  "), Some("agents/carol"), "{}"),
         diary("unknown", 4, None, None, "not json"),
         diary("tab-room", 5, Some("\t\n"), None, r#"{"agent_name":"dave"}"#),
+        diary("nbsp-room", 6, Some("\u{00A0}"), None, r#"{"agent_name":"erin"}"#),
     ] {
         store.upsert_document(&doc).unwrap();
     }
@@ -2535,7 +2536,7 @@ fn diary_activity_resolves_agent_names_like_full_entries() {
     assert_eq!(names(&activity), names(&full));
     assert_eq!(
         activity.iter().map(|entry| entry.agent_name.as_str()).collect::<Vec<_>>(),
-        vec!["alice", "bob", "carol", "unknown", "dave"]
+        vec!["alice", "bob", "carol", "unknown", "dave", "erin"]
     );
     let alice = store.list_diary_activity(Some("alice"), 10).unwrap();
     assert_eq!(names(&alice), names(&store.list_diary_entries(Some("alice"), 10).unwrap()));

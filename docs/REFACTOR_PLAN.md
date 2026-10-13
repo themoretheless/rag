@@ -860,7 +860,8 @@ admin paths. All are fixed:
     progress write cloned before a concurrent cancel could land after it.
     That race predates this branch. Writes are now serialized, and each
     stores the job's newest in-memory state, so the persisted row never goes
-    back. A test persists a stale clone after a cancel.
+    back. A test persists a stale clone after a cancel. A write for a job already
+    pruned from the map is skipped, so a deleted row is not brought back.
 - **Manifest checks in search.** Vector and hybrid search, and the MCP and
   ingest write paths, ran the embedding-manifest checks on the async
   executor before handing off to the blocking pool. A lazy BM25 rebuild
@@ -931,8 +932,8 @@ The diary read filters `documents` on `kind` without an index, so it scans
 the kind, status and creation-time columns of every document. It used to
 load the full row projection for the 500 newest entries: 115–155 ms on 83k
 documents with about 2,000 diary entries (debug build). It now reads only
-`id`, room, wing and creation time, and reads `metadata_json` only for rows
-whose room does not name the agent. That takes 55–62 ms. A test checks that
+`id`, room, wing, `metadata_json` and creation time, and resolves the agent
+name with the same Rust code as the full entries. That takes 54–62 ms. A test checks that
 it resolves agent names exactly as the full entries do. The `LIMIT` bounds
 the rows returned. The Agents view also polls `/v1/calls` every 5 s; that endpoint is
 an in-memory ring and does not touch the store.

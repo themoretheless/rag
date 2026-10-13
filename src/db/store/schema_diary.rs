@@ -36,9 +36,9 @@ impl Store {
     /// only `id`, `agent_name`, `wing` and `created_at` are filled; `title`
     /// and `content` are empty and `updated_at` equals `created_at`.
     ///
-    /// Reads just the placement and creation-time columns, plus
-    /// `metadata_json` only for rows whose room does not name the agent, so
-    /// the agent name resolves exactly as [`DiaryEntry::from_document`] does.
+    /// Reads just the placement, metadata and creation-time columns, and
+    /// resolves the agent name with [`DiaryEntry::from_document`] itself, so
+    /// it matches the full entries exactly (including Unicode whitespace).
     /// About 3x cheaper than loading the full row projection.
     pub(crate) fn list_diary_activity(
         &self,
@@ -56,7 +56,7 @@ impl Store {
         };
         let sql = format!(
             "SELECT id, room, wing, \
-                    CASE WHEN room IS NULL OR regexp_matches(room, '^\\s*$') THEN metadata_json END, \
+                    metadata_json, \
                     CAST(created_at AS VARCHAR) \
              FROM documents \
              WHERE kind = 'diary' {agent_filter} \
