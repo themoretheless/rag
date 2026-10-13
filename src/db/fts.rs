@@ -495,7 +495,7 @@ fn publish_refreshed_state(
     // If the process fails between these writes, the missing/mismatched
     // generation remains dirty and the next refresh safely retries.
     persist_state(conn, state)?;
-    if read_meta(conn, META_FORCE_REBUILD)?.is_some() {
+    if read_meta(conn, META_FORCE_REBUILD)?.as_deref() == Some("1") {
         // Only a full rebuild may clear the flag; the incremental path is
         // never taken while it is set.
         upsert_meta(conn, META_FORCE_REBUILD, "0")?;

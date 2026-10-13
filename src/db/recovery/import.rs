@@ -171,13 +171,15 @@ impl Store {
         let documents = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         drop(stmt);
 
-        let mut bundled = Vec::with_capacity(documents.len());
-        for document in documents {
+        // All chunks in one ordered scan, grouped by document in Rust (was
+        // one prepare + query per document).
+        let mut chunks_by_document: std::collections::HashMap<String, Vec<Chunk>> =
+            std::collections::HashMap::with_capacity(documents.len());
+        {
             let mut chunks_stmt = conn.prepare(
-                "SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, COALESCE(metadata_json, '{}') FROM chunks WHERE document_id = ? ORDER BY chunk_index",
+                "SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, COALESCE(metadata_json, '{}') FROM chunks ORDER BY document_id, chunk_index",
             )?;
-            let mut rows = chunks_stmt.query(params![document.id])?;
-            let mut chunks = Vec::new();
+            let mut rows = chunks_stmt.query([])?;
             crate::db::rows::visit_rows(&mut rows, |row| {
                 let raw: String = row.get(4)?;
                 let embedding = serde_json::from_str(&raw).map_err(|error| {
@@ -186,7 +188,7 @@ impl Store {
                         row.get::<_, String>(0).unwrap_or_else(|_| "unknown".into())
                     ))
                 })?;
-                chunks.push(Chunk {
+                let chunk = Chunk {
                     id: row.get(0)?,
                     document_id: row.get(1)?,
                     chunk_index: row.get(2)?,
@@ -195,11 +197,21 @@ impl Store {
                     char_start: row.get(5)?,
                     char_end: row.get(6)?,
                     metadata_json: row.get(7)?,
-                });
+                };
+                chunks_by_document
+                    .entry(chunk.document_id.clone())
+                    .or_default()
+                    .push(chunk);
                 Ok(())
             })?;
-            bundled.push(BundleDocument { document, chunks });
         }
+        let bundled: Vec<BundleDocument> = documents
+            .into_iter()
+            .map(|document| {
+                let chunks = chunks_by_document.remove(&document.id).unwrap_or_default();
+                BundleDocument { document, chunks }
+            })
+            .collect();
         let embedding_manifest = {
             let mut manifest_stmt = conn.prepare(
                 r#"
@@ -314,14 +326,23 @@ impl Store {
         }
         let mut fts_marked_dirty = false;
         let mut fts_full_rebuild_marked = false;
+        // Two equality lookups prepared once (an `id = ? OR uri = ?`
+        // predicate can use neither index and was re-prepared per item).
+        let mut by_id = tx.prepare("SELECT id FROM documents WHERE id = ?")?;
+        let mut by_uri = tx.prepare("SELECT id FROM documents WHERE uri = ?")?;
         for item in &bundle.documents {
             let matching_document_ids = {
-                let mut stmt =
-                    tx.prepare("SELECT id FROM documents WHERE id = ? OR uri = ? ORDER BY id ASC")?;
-                let rows = stmt.query_map(params![item.document.id, item.document.uri], |row| {
-                    row.get::<_, String>(0)
-                })?;
-                rows.collect::<std::result::Result<Vec<_>, _>>()?
+                let mut ids: Vec<String> = by_id
+                    .query_map(params![item.document.id], |row| row.get::<_, String>(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                ids.extend(
+                    by_uri
+                        .query_map(params![item.document.uri], |row| row.get::<_, String>(0))?
+                        .collect::<std::result::Result<Vec<_>, _>>()?,
+                );
+                ids.sort();
+                ids.dedup();
+                ids
             };
             if matching_document_ids.len() > 1 {
                 return Err(AppError::conflict(format!(

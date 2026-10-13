@@ -741,6 +741,22 @@ remaining item and its smaller notes are handled:
 - A misplaced doc comment in `document_indexer` is restored to
   `PreparedDocumentChunks`.
 
+### Closing verification
+
+The last independent check confirmed that the first-chunk SQL and the FTS
+force-rebuild flag are correct, and that no significant optimization remains
+on hot or steady-state paths. It named one corpus-scaled admin path, now
+fixed:
+
+- **Recovery bundle export** reads all chunks in one ordered scan grouped in
+  Rust. It used to run a query per document, up to the 10k-document cap.
+- **Recovery import** looks up documents by id and by uri through two
+  statements prepared once. It used to re-prepare an `id = ? OR uri = ?`
+  query per item.
+- The FTS force-rebuild flag is written back only while it is set.
+
+Verdict of the independent verification: no significant optimization remains.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit
