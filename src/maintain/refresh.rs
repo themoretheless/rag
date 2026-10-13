@@ -490,11 +490,17 @@ pub async fn reembed_all(
     let scoped_store = store.try_corpus_mutation_scope("reembed_all")?;
     let store = &scoped_store;
     let max_docs = max_docs.max(1);
-    let documents_considered = store.count_documents()?;
+    // Store reads and writes run off the async workers; only embedding awaits.
+    let (documents_considered, previous_manifest, inventory_before) = crate::util::blocking_section(|| {
+        let documents_considered = store.count_documents()?;
+        refuse_capped_embedding_migration(store, config, documents_considered, max_docs)?;
+        Ok::<_, AppError>((
+            documents_considered,
+            store.get_embedding_manifest()?,
+            reembed_chunk_inventory(store)?,
+        ))
+    })?;
     let skipped_cap = documents_considered.saturating_sub(max_docs);
-    refuse_capped_embedding_migration(store, config, documents_considered, max_docs)?;
-    let previous_manifest = store.get_embedding_manifest()?;
-    let inventory_before = reembed_chunk_inventory(store)?;
     if inventory_before.orphan > 0 {
         let error = format!(
             "{REEMBED_ALL_INCOMPLETE_CODE}: refuse reembed_all because {} orphan chunk(s) are not attached to any document; no vectors were changed and no target embedding manifest was published. Run doctor and repair corpus integrity explicitly before retrying",
@@ -535,7 +541,7 @@ pub async fn reembed_all(
 
     while documents_processed < target_count {
         let page_limit = (target_count - documents_processed).min(MAINTENANCE_PAGE_SIZE);
-        let page = store.list_document_ids_after(after_id.as_deref(), page_limit)?;
+        let page = crate::util::blocking_section(|| store.list_document_ids_after(after_id.as_deref(), page_limit))?;
         if page.is_empty() {
             errors.push(format!(
                 "{REEMBED_ALL_INCOMPLETE_CODE}: document inventory changed during reembed_all (expected to process {target_count}, reached {documents_processed})"
@@ -546,13 +552,16 @@ pub async fn reembed_all(
         // Load the page, then embed its chunks in cross-document groups: a
         // corpus of small documents costs ~chunks/REEMBED_GROUP_CHUNKS
         // provider calls instead of one call per document.
-        let mut loaded = Vec::with_capacity(page.len());
-        for document_id in page {
-            let pending = load_reembed_document(store, &document_id);
-            loaded.push((document_id, pending));
-        }
+        let loaded = crate::util::blocking_section(|| {
+            page.into_iter()
+                .map(|document_id| {
+                    let pending = load_reembed_document(store, &document_id);
+                    (document_id, pending)
+                })
+                .collect::<Vec<_>>()
+        });
         let mut embedded = embed_reembed_groups(embedder, &loaded).await.into_iter();
-        for (document_id, pending) in loaded {
+        crate::util::blocking_section(|| for (document_id, pending) in loaded {
             documents_processed += 1;
             let manifest = migration_marker.as_ref().filter(|_| !migration_started);
             let outcome = match pending {
@@ -598,10 +607,10 @@ pub async fn reembed_all(
             } else {
                 document_results_truncated += 1;
             }
-        }
+        });
     }
 
-    let inventory_after = reembed_chunk_inventory(store)?;
+    let inventory_after = crate::util::blocking_section(|| reembed_chunk_inventory(store))?;
     if inventory_after.orphan > 0 {
         errors.push(format!(
             "{REEMBED_ALL_INCOMPLETE_CODE}: {} orphan chunk(s) were observed after document re-embedding",
@@ -631,14 +640,17 @@ pub async fn reembed_all(
         && documents_processed == documents_considered
         && documents_succeeded == documents_considered
         && errors.is_empty();
-    let manifest = if complete_success {
-        Some(store.write_embedding_manifest_from_config(config)?)
-    } else {
-        // The first successful vector mutation publishes an incompatible
-        // marker atomically with those vectors. A partial migration therefore
-        // remains fail-closed for both the old and target runtime configs.
-        store.get_embedding_manifest()?
-    };
+    let manifest = crate::util::blocking_section(|| {
+        if complete_success {
+            store.write_embedding_manifest_from_config(config).map(Some)
+        } else {
+            // The first successful vector mutation publishes an incompatible
+            // marker atomically with those vectors. A partial migration
+            // therefore remains fail-closed for both the old and target
+            // runtime configs.
+            store.get_embedding_manifest()
+        }
+    })?;
 
     Ok(ReembedAllReport {
         documents_considered,
@@ -788,8 +800,10 @@ pub async fn maintain_refresh(
     flags.max_docs = flags.max_docs.max(1).min(config.maint_max_docs.max(1));
 
     if flags.reembed_all && !flags.dry_run {
-        let document_count = store.count_documents()?;
-        refuse_capped_embedding_migration(store, config, document_count, flags.max_docs)?;
+        crate::util::blocking_section(|| {
+            let document_count = store.count_documents()?;
+            refuse_capped_embedding_migration(store, config, document_count, flags.max_docs)
+        })?;
     }
 
     // Safety: only whitelist action names appear in the report.
@@ -854,11 +868,9 @@ pub async fn maintain_refresh(
                 documents: Vec::new(),
             });
         } else {
-            report.rebuild_graph = Some(rebuild_graph_for_all_or_dirty(
-                store,
-                flags.graph_dirty_only,
-                flags.max_docs,
-            )?);
+            report.rebuild_graph = Some(crate::util::blocking_section(|| {
+                rebuild_graph_for_all_or_dirty(store, flags.graph_dirty_only, flags.max_docs)
+            })?);
         }
     }
 
@@ -870,7 +882,7 @@ pub async fn maintain_refresh(
                 dry_run: true,
             });
         } else {
-            report.rebuild_wiki_index = Some(rebuild_wiki_index(store)?);
+            report.rebuild_wiki_index = Some(crate::util::blocking_section(|| rebuild_wiki_index(store))?);
         }
     }
 

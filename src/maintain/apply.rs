@@ -25,6 +25,7 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
 use crate::models::{DocumentMetaUpdate, OpsLogEntry};
+use crate::util::blocking_section;
 use crate::wiki::{self, FileAnswerCitation};
 
 /// Options for [`apply_maintenance_plan`].
@@ -328,17 +329,33 @@ async fn execute_one(
             ),
             docs_delta: 0,
         }),
-        MaintenanceAction::Refile => apply_refile(store, index, name, target, params, dry_run),
-        MaintenanceAction::Pin => apply_pin(store, index, name, target, true, dry_run),
-        MaintenanceAction::Unpin => apply_pin(store, index, name, target, false, dry_run),
-        MaintenanceAction::SetBoost => apply_set_boost(store, index, name, target, params, dry_run),
-        MaintenanceAction::SetTags => apply_set_tags(store, index, name, target, params, dry_run),
-        MaintenanceAction::Archive => apply_status(store, index, name, target, "archived", dry_run),
-        MaintenanceAction::Unarchive => apply_status(store, index, name, target, "active", dry_run),
-        MaintenanceAction::RebuildIndex => apply_rebuild_index(store, index, name, dry_run),
-        MaintenanceAction::RebuildGraph => {
-            apply_rebuild_graph(store, index, name, params, config, dry_run)
+        MaintenanceAction::Refile => {
+            blocking_section(|| apply_refile(store, index, name, target, params, dry_run))
         }
+        MaintenanceAction::Pin => {
+            blocking_section(|| apply_pin(store, index, name, target, true, dry_run))
+        }
+        MaintenanceAction::Unpin => {
+            blocking_section(|| apply_pin(store, index, name, target, false, dry_run))
+        }
+        MaintenanceAction::SetBoost => {
+            blocking_section(|| apply_set_boost(store, index, name, target, params, dry_run))
+        }
+        MaintenanceAction::SetTags => {
+            blocking_section(|| apply_set_tags(store, index, name, target, params, dry_run))
+        }
+        MaintenanceAction::Archive => {
+            blocking_section(|| apply_status(store, index, name, target, "archived", dry_run))
+        }
+        MaintenanceAction::Unarchive => {
+            blocking_section(|| apply_status(store, index, name, target, "active", dry_run))
+        }
+        MaintenanceAction::RebuildIndex => {
+            blocking_section(|| apply_rebuild_index(store, index, name, dry_run))
+        }
+        MaintenanceAction::RebuildGraph => blocking_section(|| {
+            apply_rebuild_graph(store, index, name, params, config, dry_run)
+        }),
         MaintenanceAction::ReindexFts => {
             apply_reindex_fts(store, index, name, config, dry_run).await
         }

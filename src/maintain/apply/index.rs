@@ -138,11 +138,14 @@ pub(super) async fn apply_reembed_one(
     dry_run: bool,
 ) -> Result<StepResult> {
     let id = require_target(target, name)?;
-    let doc = store
-        .get_document(id)?
-        .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
-    store.require_embedding_manifest_match(config)?;
-    let chunks = store.list_chunks_for_document(&doc.id)?;
+    let (doc, chunks) = crate::util::blocking_section(|| {
+        let doc = store
+            .get_document(id)?
+            .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
+        store.require_embedding_manifest_match(config)?;
+        let chunks = store.list_chunks_for_document(&doc.id)?;
+        Ok::<_, AppError>((doc, chunks))
+    })?;
     if dry_run {
         return Ok(StepResult {
             outcome: ok_outcome(
@@ -160,7 +163,9 @@ pub(super) async fn apply_reembed_one(
     if !chunks.is_empty() {
         let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
         let embeddings = crate::embeddings::embed_exact(embedder.as_ref(), &texts).await?;
-        store.update_chunk_embeddings_atomic(&doc.id, doc.revision, &chunks, &embeddings, None)?;
+        crate::util::blocking_section(|| {
+            store.update_chunk_embeddings_atomic(&doc.id, doc.revision, &chunks, &embeddings, None)
+        })?;
     }
     Ok(StepResult {
         outcome: ok_outcome(

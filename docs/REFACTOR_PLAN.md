@@ -840,6 +840,29 @@ is fixed:
 Kept: `query_with_index` reads and scores the whole `wiki_index` catalog on
 each call. That cost grows with the number of wiki pages, not with the raw
 corpus, and the rows are short.
+
+A further completeness audit found two more costs, plus executor gaps on the
+admin paths. All are fixed:
+
+- **Source-sync job progress.** Background sync jobs (`POST /v1/jobs/sync`)
+  wrote their progress snapshot to DuckDB on every callback, about 2–3
+  autocommits per file. That is 20–30k commits on an incremental re-sync of
+  10k mostly unchanged files, and it undid the batching for skipped files.
+  - The in-memory snapshot still updates on every callback.
+  - The persisted copy, read only after a restart, is written at most once
+    per second. Every status change is still written at once.
+  - Job writes and deletes run on the blocking pool. A test covers both
+    rules.
+- **Manifest checks in search.** Vector and hybrid search, and the MCP and
+  ingest write paths, ran the embedding-manifest checks on the async
+  executor before handing off to the blocking pool. A lazy BM25 rebuild
+  holding the store lock could therefore park every concurrent vector search
+  on a worker. The checks now run in `blocking_section`.
+- **Maintenance workflows.** `maintain_refresh`, `reembed_all`,
+  `maintain_organize` and the synchronous plan steps run their store work in
+  `blocking_section`. That covers the graph and wiki-index rebuilds, paged
+  loads and commits, heuristic suggestions, refiles and status changes.
+  Only embedding and LLM calls await.
 - `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
   sending those forms does not get a 400.
 

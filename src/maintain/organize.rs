@@ -195,15 +195,19 @@ pub async fn maintain_organize(
     } else {
         None
     };
-    let taxonomy = store.get_taxonomy()?;
-    let (unscoped_total, considered) = store.list_active_unscoped_documents(max_docs)?;
+    let (taxonomy, (unscoped_total, considered)) = crate::util::blocking_section(|| {
+        Ok::<_, AppError>((
+            store.get_taxonomy()?,
+            store.list_active_unscoped_documents(max_docs)?,
+        ))
+    })?;
     let skipped_cap = unscoped_total.saturating_sub(considered.len());
     let unscoped_considered = considered.len();
 
     let mut embedding_heuristics_enabled = false;
     let mut suggestions = match opts.mode {
         OrganizeMode::Heuristic => {
-            let (suggestions, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+            let (suggestions, enabled) = crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
             embedding_heuristics_enabled = enabled;
             suggestions
         }
@@ -214,7 +218,7 @@ pub async fn maintain_organize(
                     Err(e) => {
                         tracing::warn!(error = %e, "organize LLM failed; falling back to heuristic");
                         let (mut s, enabled) =
-                            suggest_heuristic(store, config, &taxonomy, &considered)?;
+                            crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
                         embedding_heuristics_enabled = enabled;
                         for item in &mut s {
                             item.reason = format!("llm_fallback: {}; {}", e, item.reason);
@@ -223,7 +227,7 @@ pub async fn maintain_organize(
                     }
                 }
             } else {
-                let (mut s, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+                let (mut s, enabled) = crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
                 embedding_heuristics_enabled = enabled;
                 for item in &mut s {
                     item.reason = format!(
@@ -237,7 +241,7 @@ pub async fn maintain_organize(
             }
         }
         OrganizeMode::Auto => {
-            let (mut s, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+            let (mut s, enabled) = crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
             embedding_heuristics_enabled = enabled;
             let need_llm: Vec<Document> = considered
                 .iter()
@@ -398,7 +402,7 @@ pub async fn maintain_organize(
             room: room.clone(),
             ..Default::default()
         };
-        match store.update_document_meta(doc_id, &update) {
+        match crate::util::blocking_section(|| store.update_document_meta(doc_id, &update)) {
             Ok(Some(_)) => {
                 applied_ok += 1;
                 applied.push(RefileApplyResult {
@@ -441,7 +445,7 @@ pub async fn maintain_organize(
             let n = store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())?;
             rebuild_index_entries = Some(n);
         } else if applied_ok > 0 || suggestions.is_empty() {
-            let n = store.rebuild_wiki_index_from_docs()?;
+            let n = crate::util::blocking_section(|| store.rebuild_wiki_index_from_docs())?;
             rebuild_index_entries = Some(n);
         }
     }

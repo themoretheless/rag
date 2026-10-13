@@ -127,8 +127,10 @@ pub async fn execute_search(
     // retrieval.
     let corpus_guard = acquire_corpus_search_guard(store, mode)?;
     if mode.needs_embedding() {
-        store.ensure_embedding_manifest(config)?;
-        store.require_embedding_manifest_match(config)?;
+        crate::util::blocking_section(|| {
+            store.ensure_embedding_manifest(config)?;
+            store.require_embedding_manifest_match(config)
+        })?;
     }
     let mut query = tokio::time::timeout(budget, prepare_search_with_mode(embedder, command, mode))
         .await
@@ -194,8 +196,10 @@ pub async fn multi_query_search(
     let mode = resolve_search_mode(command.mode.as_deref(), config.default_search_mode)?;
     let corpus_guard = acquire_corpus_search_guard(store, mode)?;
     let embeddings = if mode.needs_embedding() {
-        store.ensure_embedding_manifest(config)?;
-        store.require_embedding_manifest_match(config)?;
+        crate::util::blocking_section(|| {
+            store.ensure_embedding_manifest(config)?;
+            store.require_embedding_manifest_match(config)
+        })?;
         let vectors = crate::embeddings::embed_exact(embedder, &command.queries).await?;
         vectors.into_iter().map(Some).collect()
     } else {

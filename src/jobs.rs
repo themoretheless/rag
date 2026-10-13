@@ -67,7 +67,15 @@ pub(crate) struct JobEntry {
     pub(crate) sequence: u64,
     pub(crate) snapshot: JobSnapshot,
     pub(crate) cancellation: CancellationToken,
+    /// Last time a progress update was written to the store; see
+    /// [`PROGRESS_PERSIST_INTERVAL`].
+    pub(crate) progress_persisted_at: Option<std::time::Instant>,
 }
+
+/// Progress callbacks fire several times per file. The in-memory snapshot
+/// always updates; the persisted copy (read back only after a restart) is
+/// refreshed at most this often, and every status change is written at once.
+const PROGRESS_PERSIST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub(crate) struct JobRegistryInner {
     pub(crate) jobs: Mutex<HashMap<String, JobEntry>>,
@@ -136,6 +144,7 @@ impl JobRegistry {
                         sequence,
                         snapshot,
                         cancellation: CancellationToken::new(),
+                        progress_persisted_at: None,
                     },
                 );
             }
@@ -147,12 +156,14 @@ impl JobRegistry {
         let Some(store) = &self.inner.store else {
             return Ok(());
         };
-        crate::db::payload_kv::upsert_payload(
-            store,
-            crate::db::payload_kv::PayloadTable::BackgroundJobs,
-            &snapshot.id,
-            snapshot,
-        )?;
+        crate::util::blocking_section(|| {
+            crate::db::payload_kv::upsert_payload(
+                store,
+                crate::db::payload_kv::PayloadTable::BackgroundJobs,
+                &snapshot.id,
+                snapshot,
+            )
+        })?;
         Ok(())
     }
 
@@ -160,11 +171,13 @@ impl JobRegistry {
         let Some(store) = &self.inner.store else {
             return Ok(());
         };
-        crate::db::payload_kv::delete_payload(
-            store,
-            crate::db::payload_kv::PayloadTable::BackgroundJobs,
-            id,
-        )
+        crate::util::blocking_section(|| {
+            crate::db::payload_kv::delete_payload(
+                store,
+                crate::db::payload_kv::PayloadTable::BackgroundJobs,
+                id,
+            )
+        })
     }
 
     /// Requeue a terminal `source_sync` job that is marked `requeue_safe`.
@@ -254,6 +267,7 @@ impl JobRegistry {
                         sequence,
                         snapshot: snapshot.clone(),
                         cancellation: cancellation.clone(),
+                        progress_persisted_at: None,
                     },
                 );
                 (removed, true)
@@ -383,7 +397,17 @@ impl JobRegistry {
             let Some(entry) = jobs.get_mut(id) else {
                 return;
             };
+            let status = entry.snapshot.status;
             update(&mut entry.snapshot);
+            let now = std::time::Instant::now();
+            let due = entry.snapshot.status != status
+                || entry
+                    .progress_persisted_at
+                    .is_none_or(|at| now.duration_since(at) >= PROGRESS_PERSIST_INTERVAL);
+            if !due {
+                return;
+            }
+            entry.progress_persisted_at = Some(now);
             entry.snapshot.clone()
         };
         let _ = self.persist(&snapshot);

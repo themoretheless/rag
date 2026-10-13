@@ -235,8 +235,10 @@ impl RagServer {
 
     /// Ensure corpus manifest exists; refuse when its full identity differs.
     pub(super) fn require_vec_compatible(&self) -> Result<(), AppError> {
-        self.store.ensure_embedding_manifest(&self.config)?;
-        self.store.require_embedding_manifest_match(&self.config)
+        crate::util::blocking_section(|| {
+            self.store.ensure_embedding_manifest(&self.config)?;
+            self.store.require_embedding_manifest_match(&self.config)
+        })
     }
 
     pub(super) fn json_result<T: Serialize>(value: &T) -> Result<CallToolResult, McpError> {

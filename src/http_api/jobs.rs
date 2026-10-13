@@ -165,6 +165,7 @@ mod tests {
                 finished_at: status.is_terminal().then(Utc::now),
             },
             cancellation: CancellationToken::new(),
+            progress_persisted_at: None,
         }
     }
 
@@ -507,6 +508,39 @@ mod tests {
     }
 
     #[test]
+    fn progress_updates_persist_at_most_once_per_interval_but_status_at_once() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&root.path().join("progress.duckdb")).unwrap());
+        let registry = JobRegistry::new(Some(store.clone()));
+        registry
+            .jobs()
+            .insert("job-1".into(), entry(1, JobStatus::Running));
+        let persisted = || -> JobSnapshot {
+            let payload: String = store
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT payload FROM background_jobs WHERE id=?",
+                    ["job-1"],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            serde_json::from_str(&payload).unwrap()
+        };
+
+        for step in 0..50 {
+            registry.update("job-1", |job| job.error = Some(format!("step {step}")));
+        }
+        assert_eq!(registry.get("job-1").unwrap().error.as_deref(), Some("step 49"));
+        assert_eq!(persisted().error.as_deref(), Some("step 0"));
+
+        registry.update("job-1", |job| job.status = JobStatus::Succeeded);
+        let stored = persisted();
+        assert_eq!(stored.status, JobStatus::Succeeded);
+        assert_eq!(stored.error.as_deref(), Some("step 49"));
+    }
+
+    #[test]
     fn restore_marks_running_jobs_interrupted_and_persists() {
         let root = tempfile::tempdir().unwrap();
         let config = Config {
@@ -625,6 +659,7 @@ mod tests {
                     sequence: 1,
                     snapshot: interrupted.clone(),
                     cancellation: CancellationToken::new(),
+                    progress_persisted_at: None,
                 },
             );
         }
