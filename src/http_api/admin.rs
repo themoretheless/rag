@@ -182,13 +182,15 @@ struct DiaryQuery {
 
 async fn diary(State(st): State<HttpState>, Query(q): Query<DiaryQuery>) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
-    match st
-        .store
-        .list_diary_entries(non_blank(q.agent).as_deref(), limit)
-    {
-        Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match st
+            .store
+            .list_diary_entries(non_blank(q.agent).as_deref(), limit)
+        {
+            Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[derive(Deserialize)]

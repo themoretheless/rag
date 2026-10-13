@@ -817,6 +817,29 @@ find one more polled cost, now fixed, and a refinement:
   results reach one pays one anti-join over chunks and a second ranking pass.
   Normal deletes remove chunks, so orphans come only from integrity damage,
   which `/health` and the doctor report and repair.
+
+### Completeness audit at the final head
+
+An independent audit of the whole branch found no correctness bugs and one
+gap in the executor work: the replication cycle still ran DuckDB on async
+workers. That cycle runs every `RAG_SYNC_INTERVAL_SECS`, 5 s by default. It
+is fixed:
+
+- On the primary, `POST /v1/sync/register` and `GET /v1/sync/pull` run in
+  `blocking_section`.
+- The replica's `sync_once` reads only its own pull cursor, through the new
+  `Store::sync_pull_cursor`, on the blocking pool. It used to call the full
+  `sync_status`: a `MAX` over `sync_changes`, an outbox count and a node
+  listing.
+- The same class on demand: `GET /v1/diary` and the MCP tools
+  `collection_get`, `link_nodes`, `follow_tunnels` and `read_log`.
+- A mechanical sweep of every async MCP tool and HTTP handler now finds no
+  store call outside a blocking section, except the non-blocking `try_write`
+  corpus guards.
+
+Kept: `query_with_index` reads and scores the whole `wiki_index` catalog on
+each call. That cost grows with the number of wiki pages, not with the raw
+corpus, and the rows are short.
 - `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
   sending those forms does not get a 400.
 

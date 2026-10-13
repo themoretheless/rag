@@ -219,25 +219,27 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ReadLogParams>,
     ) -> Result<CallToolResult, McpError> {
-        let id = params
-            .id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let has_key = id.is_some() || params.seq.is_some();
-        let rows = self
-            .store
-            .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))?;
-        if has_key {
-            let entry = rows.into_iter().next().ok_or_else(|| {
-                McpError::from(AppError::not_found(format!(
-                    "ops_log entry not found (id={:?}, seq={:?})",
-                    params.id, params.seq
-                )))
-            })?;
-            return Self::json_result(&entry);
-        }
-        Self::json_result(&rows)
+        crate::util::blocking_section(|| {
+            let id = params
+                .id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let has_key = id.is_some() || params.seq.is_some();
+            let rows = self
+                .store
+                .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))?;
+            if has_key {
+                let entry = rows.into_iter().next().ok_or_else(|| {
+                    McpError::from(AppError::not_found(format!(
+                        "ops_log entry not found (id={:?}, seq={:?})",
+                        params.id, params.seq
+                    )))
+                })?;
+                return Self::json_result(&entry);
+            }
+            Self::json_result(&rows)
+        })
     }
 
     #[tool(

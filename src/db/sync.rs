@@ -636,6 +636,13 @@ impl Store {
         }
         Ok(())
     }
+    /// This node's pull cursor: what a replica's sync cycle needs, without
+    /// the counts and node listing of [`Store::sync_status`].
+    pub fn sync_pull_cursor(&self, node_id: &str) -> Result<i64> {
+        let conn = self.lock()?;
+        cursor_locked(&conn, node_id)
+    }
+
     pub fn sync_status(
         &self,
         role: &str,

@@ -210,12 +210,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<LinkNodesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let rel = params.rel_type.as_deref().unwrap_or("related");
-        let weight = params.weight.unwrap_or(1.0);
-        let edge = self
-            .store
-            .link_nodes(&params.source_id, &params.target_id, rel, weight)?;
-        Self::json_result(&edge)
+        crate::util::blocking_section(|| {
+            let rel = params.rel_type.as_deref().unwrap_or("related");
+            let weight = params.weight.unwrap_or(1.0);
+            let edge = self
+                .store
+                .link_nodes(&params.source_id, &params.target_id, rel, weight)?;
+            Self::json_result(&edge)
+        })
     }
 
     #[tool(
@@ -289,12 +291,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FollowTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let depth = params.depth.unwrap_or(2);
-        let max_nodes = params.max_nodes.unwrap_or(100);
-        let view = self
-            .store
-            .follow_tunnels(&params.node_id, depth, max_nodes)?;
-        Self::json_result(&view)
+        crate::util::blocking_section(|| {
+            let depth = params.depth.unwrap_or(2);
+            let max_nodes = params.max_nodes.unwrap_or(100);
+            let view = self
+                .store
+                .follow_tunnels(&params.node_id, depth, max_nodes)?;
+            Self::json_result(&view)
+        })
     }
 
     #[tool(

@@ -71,16 +71,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionGetParams>,
     ) -> Result<CallToolResult, McpError> {
-        let detail = self
-            .store
-            .get_collection(params.collection_id.trim())?
-            .ok_or_else(|| {
-                McpError::from(AppError::not_found(format!(
-                    "collection not found: {}",
-                    params.collection_id
-                )))
-            })?;
-        Self::json_result(&detail)
+        crate::util::blocking_section(|| {
+            let detail = self
+                .store
+                .get_collection(params.collection_id.trim())?
+                .ok_or_else(|| {
+                    McpError::from(AppError::not_found(format!(
+                        "collection not found: {}",
+                        params.collection_id
+                    )))
+                })?;
+            Self::json_result(&detail)
+        })
     }
 
     #[tool(

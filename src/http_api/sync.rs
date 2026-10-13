@@ -69,13 +69,15 @@ async fn register(
     State(st): State<HttpState>,
     Json(body): Json<RegisterBody>,
 ) -> impl IntoResponse {
-    match st
-        .store
-        .register_sync_node(&body.node_id, &body.hostname, &body.role)
-    {
-        Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match st
+            .store
+            .register_sync_node(&body.node_id, &body.hostname, &body.role)
+        {
+            Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -349,15 +351,7 @@ async fn sync_once(
         crate::util::blocking_section(|| st.store.mark_sync_outbox_sent(&assignments))?;
     }
 
-    let local = st
-        .store
-        .sync_status("replica", node_id, Some(base.into()))?;
-    let cursor = local
-        .nodes
-        .iter()
-        .find(|node| node.node_id == node_id)
-        .map(|node| node.pull_cursor)
-        .unwrap_or(0);
+    let cursor = crate::util::blocking_section(|| st.store.sync_pull_cursor(node_id))?;
     let reply = client
         .get(format!("{base}/v1/sync/pull"))
         .query(&[
@@ -428,21 +422,23 @@ fn default_limit() -> usize {
 }
 
 async fn pull(State(st): State<HttpState>, Query(query): Query<PullQuery>) -> impl IntoResponse {
-    match st
-        .store
-        .pull_sync_changes(&query.node_id, query.after, query.limit)
-    {
-        Ok(items) => {
-            let next_cursor = items
-                .last()
-                .map(|item| item.primary_seq)
-                .unwrap_or(query.after);
-            api_ok(
-                json!({"ok": true, "count": items.len(), "items": items, "next_cursor": next_cursor}),
-            )
+    crate::util::blocking_section(|| {
+        match st
+            .store
+            .pull_sync_changes(&query.node_id, query.after, query.limit)
+        {
+            Ok(items) => {
+                let next_cursor = items
+                    .last()
+                    .map(|item| item.primary_seq)
+                    .unwrap_or(query.after);
+                api_ok(
+                    json!({"ok": true, "count": items.len(), "items": items, "next_cursor": next_cursor}),
+                )
+            }
+            Err(error) => api_err(error),
         }
-        Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]
@@ -530,14 +526,17 @@ mod tests {
             .revision
     }
     fn cursor(st: &HttpState, node: &str) -> i64 {
-        st.store
+        let listed = st
+            .store
             .sync_status("replica", node, None)
             .unwrap()
             .nodes
             .into_iter()
             .find(|item| item.node_id == node)
             .map(|item| item.pull_cursor)
-            .unwrap_or(0)
+            .unwrap_or(0);
+        assert_eq!(st.store.sync_pull_cursor(node).unwrap(), listed);
+        listed
     }
 
     fn event(seq: i64, body: &str) -> SyncChangeInput {
