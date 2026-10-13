@@ -981,8 +981,10 @@ polled paths. These costs remain, each bounded and kept on purpose:
     - vector refresh: 325 ms, against an 8.1 s full build;
     - BM25 patch: 0.31 s, against a 0.79 s full build of this
       short-text corpus.
-    - The earlier figures came from different corpora and a different run,
-      so the absolute numbers shift between runs; the ratios hold.
+    - The earlier figures came from a different corpus and run. The vector
+      refresh stays about 20–25x cheaper than a full build. The BM25 full
+      build depends on the corpus (19 s earlier, 0.79 s for these short
+      texts), while the patch stays near 0.3 s in both.
   - A chunk change log keyed by generation would make them delta-only, but
     that would add a write to every chunk commit.
 - Native UI per-frame work:
