@@ -193,6 +193,13 @@ impl JobRegistry {
         let Some(store) = &self.inner.store else {
             return Ok(());
         };
+        // Same order lock as `persist`: a write that already checked the map
+        // cannot land after this delete and bring the row back.
+        let _order = self
+            .inner
+            .persist_order
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         crate::util::blocking_section(|| {
             crate::db::payload_kv::delete_payload(
                 store,
