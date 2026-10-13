@@ -817,6 +817,8 @@ find one more polled cost, now fixed, and a refinement:
   results reach one pays one anti-join over chunks and a second ranking pass.
   Normal deletes remove chunks, so orphans come only from integrity damage,
   which `/health` and the doctor report and repair.
+- `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
+  sending those forms does not get a 400.
 
 ### Completeness audit at the final head
 
@@ -904,8 +906,17 @@ The same pass closed the rare paths it listed as minor:
 
 What stays on async workers is in-memory work, non-blocking `try_*` lane
 guards, and microsecond path canonicalization.
-- `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
-  sending those forms does not get a 400.
+
+The final call-graph audit at this head found no bugs and no significant
+remaining item (verdict: complete). It noted two things that are kept on
+purpose:
+
+- `/v1/agents` runs a `LIMIT 500` top-N over `ops_log`.
+- `/v1/sync/status` runs a `MAX` and a count over replication history.
+
+The web Sync view polls both every 10 s. Both run off the async workers.
+Each is a one-column scan whose cost grows with the operation or wiki-change
+history, not with corpus content.
 
 Verdict: no correctness bugs, and no remaining significant cost on hot or
 polled paths. Two costs remain, both bounded:
