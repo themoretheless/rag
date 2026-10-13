@@ -61,7 +61,7 @@ impl Store {
              FROM documents \
              WHERE kind = 'diary' {agent_filter} \
                AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
-             ORDER BY created_at DESC \
+             ORDER BY created_at DESC, id DESC \
              LIMIT {limit}"
         );
         let conn = self.lock()?;
@@ -103,7 +103,7 @@ impl Store {
                  WHERE kind = 'diary' \
                    AND (room = ? OR wing = ?) \
                    AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
-                 ORDER BY created_at DESC \
+                 ORDER BY created_at DESC, id DESC \
                  LIMIT {limit}"
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -118,7 +118,7 @@ impl Store {
                 "SELECT {select} FROM documents \
                  WHERE kind = 'diary' \
                    AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
-                 ORDER BY created_at DESC \
+                 ORDER BY created_at DESC, id DESC \
                  LIMIT {limit}"
             );
             let mut stmt = conn.prepare(&sql)?;

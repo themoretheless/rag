@@ -926,7 +926,8 @@ purpose:
 - `/v1/sync/status` runs a `MAX` over `sync_changes`, a count of unsent
   outbox rows and a small node listing.
 
-The web Sync view polls both every 10 s, and the web shell also polls
+The web Sync view polls both every 10 s (with `/v1/status?summary=true` and
+the in-memory `/v1/activity`), and the web shell also polls
 `/v1/agents` every 15 s in each tab. Both run in `blocking_section`, off
 the async workers. The ops-log and replication reads grow with operation and
 replication history.
@@ -938,7 +939,9 @@ documents with about 2,000 diary entries (debug build). It now reads only
 `id`, room, wing, `metadata_json` and creation time, and resolves the agent
 name with the same Rust code as the full entries. That takes 54–62 ms. A test checks that
 it resolves agent names exactly as the full entries do. The `LIMIT` bounds
-the rows returned. The Agents view also polls `/v1/calls` every 5 s; that endpoint is
+the rows returned, and `id` breaks ties in the newest-first order so the
+cutoff is stable. The desktop graph load requests full `/health` on purpose:
+it shows the integrity fields. It runs once per graph load, not on a timer. The Agents view also polls `/v1/calls` every 5 s; that endpoint is
 an in-memory ring and does not touch the store.
 
 A check of the final doc found one per-frame cost that does grow with the
@@ -972,9 +975,16 @@ polled paths. These costs remain, each bounded and kept on purpose:
   - The BM25 patch anti-joins `chunks` against the index: 0.35 s on 20k
     chunks.
   - Both are measured above in a debug build, against 4.4 s and 19 s for
-    the full rebuilds they replace. A chunk change log keyed by generation
-    would make them delta-only, but that would add a write to every chunk
-    commit.
+    the full rebuilds they replace.
+  - Re-measured at the final head (debug build, 1000 documents × 20 chunks
+    × 768 dims, replacing 15 chunks of one document):
+    - vector refresh: 325 ms, against an 8.1 s full build;
+    - BM25 patch: 0.31 s, against a 0.79 s full build of this
+      short-text corpus.
+    - The earlier figures came from different corpora and a different run,
+      so the absolute numbers shift between runs; the ratios hold.
+  - A chunk change log keyed by generation would make them delta-only, but
+    that would add a write to every chunk commit.
 - Native UI per-frame work:
   - egui lays out the open document, which grows with one document's
     length.
