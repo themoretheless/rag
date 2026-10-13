@@ -519,7 +519,7 @@ fn search_vec_respects_wing_room_source_and_archived() {
             .map(|chunk| chunk.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(chunk_ids, expected);
-        assert_eq!(documents.len(), expected.len());
+        assert_eq!(documents.only_ids().unwrap().len(), expected.len());
     }
     assert!(
         !vector_snapshots().lock().unwrap().contains_key(&path),
@@ -552,6 +552,24 @@ fn search_vec_respects_wing_room_source_and_archived() {
         3,
         "the implicit active-status filter alone must retain the global cache path"
     );
+    // Unscoped reads list only the hidden documents, not the active corpus.
+    let (_, unscoped) = vector_search_inputs(&store, &LexFilters::default()).unwrap();
+    match &unscoped {
+        VectorDocumentScope::Excluding(ids) => {
+            assert_eq!(ids.iter().map(String::as_str).collect::<Vec<_>>(), vec!["arch"]);
+        }
+        VectorDocumentScope::Only(_) => panic!("unscoped search must use an exclusion set"),
+    }
+    assert!(unscoped.contains("active") && !unscoped.contains("arch"));
+    let (_, with_archived) = vector_search_inputs(
+        &store,
+        &LexFilters {
+            include_archived: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(with_archived.contains("arch"));
 
     // With a current global snapshot in memory a scoped read reuses it
     // instead of re-parsing embeddings; the document lookup still scopes it.
@@ -565,7 +583,12 @@ fn search_vec_respects_wing_room_source_and_archived() {
     .unwrap();
     assert_eq!(scoped_after_global.chunks.len(), 3);
     assert_eq!(
-        scoped_documents.keys().map(String::as_str).collect::<Vec<_>>(),
+        scoped_documents
+            .only_ids()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         vec!["active"]
     );
     assert_eq!(

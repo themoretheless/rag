@@ -559,9 +559,9 @@ for the old and new binaries; recall and MRR are identical):
   execution dominates. It is applied only to the per-link resolution lookups.
 - Stored `content_hash` in stale detection: writers may supply their own hash
   (see `merge_exact_dup`), so the check keeps hashing the body.
-- `load_vector_documents`: one id/title/uri projection per query, which is cheap
-  next to the removed per-candidate queries. It also has to reflect live
-  title/status changes that do not advance the chunk generation.
+- `load_vector_documents` is read live on each query, because title, status
+  and placement changes do not advance the chunk generation. The cost of
+  that read was later cut; see "Last item".
 
 ### Performance re-audit
 
@@ -756,6 +756,25 @@ fixed:
 - The FTS force-rebuild flag is written back only while it is set.
 
 Verdict of the independent verification: no significant optimization remains.
+
+### Last item
+
+A final independent audit checked every item kept on purpose against the
+code, and found each one justified. It also flagged a cost the earlier
+reasoning had not measured: an unscoped vector search listed the id, title and
+uri of every active document on each query. That happens again on each refill
+round and for each multi-query sub-query. It is fixed:
+
+- Vector scoring checks scope by id only:
+  - Searches filtered by a field (wing, room, layer, kind, uri, source file or
+    document) read the ids in scope.
+  - Unscoped searches read only the archived and tombstoned ids, and exclude
+    them.
+  - Searches that include archived documents read nothing.
+- Titles and uris are read only for the returned hits, in the same batched
+  `IN` lookup as their content.
+- Measured on 83k documents, 10% of them archived (debug build): 390–520 ms →
+  33–36 ms per query. A test covers the exclusion set and `include_archived`.
 
 ## Not planned
 

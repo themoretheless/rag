@@ -122,6 +122,11 @@ pub struct LexFilters {
     pub include_archived: bool,
 }
 
+/// Retrieval's status predicate on the `d` documents alias: archived and
+/// tombstoned documents are hidden unless `include_archived` is set.
+pub(crate) const ACTIVE_DOCUMENT_SQL: &str =
+    "COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')";
+
 impl LexFilters {
     /// The one scope predicate shared by the lexical and vector retrieval legs.
     ///
@@ -147,7 +152,7 @@ impl LexFilters {
             }
         }
         if !self.include_archived {
-            parts.push("COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')".into());
+            parts.push(ACTIVE_DOCUMENT_SQL.into());
         }
         let where_sql = if parts.is_empty() {
             String::new()

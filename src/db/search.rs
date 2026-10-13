@@ -975,7 +975,33 @@ struct VectorSnapshotChunk {
     vector: Arc<[f32]>,
 }
 
-type VectorDocumentLookup = HashMap<String, (String, String)>;
+/// Documents a vector search may return. Titles and uris are read only for
+/// the hits that are returned.
+enum VectorDocumentScope {
+    /// Only the status filter applies: every document except these (the
+    /// archived and tombstoned ones, or none with `include_archived`). Usually
+    /// far smaller than the active corpus, which unscoped searches would
+    /// otherwise list on every query.
+    Excluding(HashSet<String>),
+    /// A field filter applies: exactly these documents.
+    Only(HashSet<String>),
+}
+
+impl VectorDocumentScope {
+    fn contains(&self, document_id: &str) -> bool {
+        match self {
+            Self::Excluding(ids) => !ids.contains(document_id),
+            Self::Only(ids) => ids.contains(document_id),
+        }
+    }
+
+    fn only_ids(&self) -> Option<&HashSet<String>> {
+        match self {
+            Self::Excluding(_) => None,
+            Self::Only(ids) => Some(ids),
+        }
+    }
+}
 
 fn search_vec(
     store: &Store,
@@ -996,7 +1022,7 @@ fn search_vec(
         BinaryHeap::with_capacity(top_k.saturating_add(1));
 
     for (ordinal, chunk) in snapshot.chunks.iter().enumerate() {
-        if !documents.contains_key(&chunk.document_id)
+        if !documents.contains(&chunk.document_id)
             || chunk.vector.len() != normalized_query.len()
         {
             continue;
@@ -1025,7 +1051,7 @@ fn search_vec(
         .map(|candidate| candidate.0)
         .collect::<Vec<_>>();
     ranked.sort_by(|left, right| right.cmp(left));
-    hydrate_vector_hits(store, &snapshot, &documents, ranked)
+    hydrate_vector_hits(store, &snapshot, ranked)
 }
 
 #[derive(Debug)]
@@ -1061,7 +1087,7 @@ impl Ord for RankedVectorCandidate {
 fn vector_search_inputs(
     store: &Store,
     filters: &LexFilters,
-) -> Result<(Arc<VectorSnapshot>, VectorDocumentLookup)> {
+) -> Result<(Arc<VectorSnapshot>, VectorDocumentScope)> {
     let conn = store.lock()?;
     let generation = fts::chunks_generation(&conn)?;
     // Read live: metadata-only writes (placement, archive, restore) change the
@@ -1089,7 +1115,9 @@ fn vector_search_inputs(
                 .filter(|entry| {
                     entry.scope == scope
                         && entry.snapshot.generation == generation
-                        && documents.keys().all(|id| entry.documents.contains(id))
+                        && documents
+                            .only_ids()
+                            .is_some_and(|ids| ids.iter().all(|id| entry.documents.contains(id)))
                 })
                 .map(|entry| entry.snapshot.clone());
             match scoped {
@@ -1138,7 +1166,7 @@ fn vector_search_inputs(
                             key,
                             ScopedVectorSnapshot {
                                 scope,
-                                documents: documents.keys().cloned().collect(),
+                                documents: documents.only_ids().cloned().unwrap_or_default(),
                                 snapshot: snapshot.clone(),
                             },
                         );
@@ -1393,17 +1421,30 @@ fn refresh_vector_snapshot(
 fn load_vector_documents(
     conn: &duckdb::Connection,
     filters: &LexFilters,
-) -> Result<VectorDocumentLookup> {
+) -> Result<VectorDocumentScope> {
     let (where_sql, bind) = filters.scope_where_clause("d.id");
-    let sql = format!("SELECT d.id, d.title, d.uri FROM documents d {where_sql}");
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(bind.iter()))?;
-    let mut documents = HashMap::new();
-    crate::db::rows::visit_rows(&mut rows, |row| {
-        documents.insert(row.get(0)?, (row.get(1)?, row.get(2)?));
-        Ok(())
-    })?;
-    Ok(documents)
+    let read_ids = |sql: &str| -> Result<HashSet<String>> {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(params_from_iter(bind.iter()))?;
+        let mut ids = HashSet::new();
+        crate::db::rows::visit_rows(&mut rows, |row| {
+            ids.insert(row.get(0)?);
+            Ok(())
+        })?;
+        Ok(ids)
+    };
+    if !bind.is_empty() {
+        return Ok(VectorDocumentScope::Only(read_ids(&format!(
+            "SELECT d.id FROM documents d {where_sql}"
+        ))?));
+    }
+    if filters.include_archived {
+        return Ok(VectorDocumentScope::Excluding(HashSet::new()));
+    }
+    Ok(VectorDocumentScope::Excluding(read_ids(&format!(
+        "SELECT d.id FROM documents d WHERE NOT ({})",
+        fts::ACTIVE_DOCUMENT_SQL
+    ))?))
 }
 
 fn normalized_vector(vector: &[f32]) -> Option<Vec<f32>> {
@@ -1414,7 +1455,6 @@ fn normalized_vector(vector: &[f32]) -> Option<Vec<f32>> {
 fn hydrate_vector_hits(
     store: &Store,
     snapshot: &VectorSnapshot,
-    documents: &VectorDocumentLookup,
     ranked: Vec<RankedVectorCandidate>,
 ) -> Result<Vec<SearchHit>> {
     // Candidate pools reach thousands during refill: read contents in a few
@@ -1424,7 +1464,15 @@ fn hydrate_vector_hits(
         .iter()
         .map(|candidate| snapshot.chunks[candidate.snapshot_index].id.as_str())
         .collect();
+    let document_ids: Vec<&str> = ranked
+        .iter()
+        .map(|candidate| snapshot.chunks[candidate.snapshot_index].document_id.as_str())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
     let mut contents: HashMap<String, String> = HashMap::with_capacity(ids.len());
+    let mut documents: HashMap<String, (String, String)> =
+        HashMap::with_capacity(document_ids.len());
     {
         let conn = store.lock()?;
         for batch in ids.chunks(CONTENT_BATCH) {
@@ -1434,6 +1482,16 @@ fn hydrate_vector_hits(
             ))?;
             crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
                 contents.insert(row.get(0)?, row.get(1)?);
+                Ok(())
+            })?;
+        }
+        for batch in document_ids.chunks(CONTENT_BATCH) {
+            let placeholders = vec!["?"; batch.len()].join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, title, uri FROM documents WHERE id IN ({placeholders})"
+            ))?;
+            crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+                documents.insert(row.get(0)?, (row.get(1)?, row.get(2)?));
                 Ok(())
             })?;
         }
