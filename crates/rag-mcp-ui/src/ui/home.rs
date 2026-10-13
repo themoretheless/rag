@@ -526,7 +526,8 @@ pub fn draw_project_home(
                 theme::card().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Исходные каталоги · свежесть");
-                        if let Some(updated) = home.last_updated_at.as_deref() {
+                        let updated = home.last_updated_at.map(|at| at.to_rfc3339());
+                        if let Some(updated) = updated.as_deref() {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "последнее изменение {}",
@@ -684,9 +685,7 @@ fn compact_count(value: u64) -> String {
     }
 }
 
-fn readable_timestamp(value: &str) -> String {
-    value.strip_suffix('Z').unwrap_or(value).replace('T', " ")
-}
+use crate::ui::text::short_timestamp as readable_timestamp;
 
 fn short_time(value: &str) -> String {
     value

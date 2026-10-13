@@ -45,7 +45,7 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['статус БД', async () => { status = await api.get<Status>('/v1/status') }],
+      ['статус БД', async () => { status = await api.get<Status>('/v1/status?summary=true') }],
       ['клиенты', async () => { agents = (await api.get<{ items?: Agent[] }>('/v1/agents')).items ?? [] }],
       ['активность', async () => { activity = (await api.get<{ items?: Activity[] }>('/v1/activity?limit=80')).items ?? [] }],
       ['sync', async () => { sync = (await api.get<{ sync: SyncState }>('/v1/sync/status')).sync }],

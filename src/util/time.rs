@@ -1,5 +1,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 
+use crate::error::AppError;
+
 const DATE_TIME_FORMATS: &[&str] = &[
     "%Y-%m-%d %H:%M:%S%.f",
     "%Y-%m-%d %H:%M:%S",
@@ -35,9 +37,41 @@ pub fn parse_flexible_timestamp(raw: &str) -> Option<DateTime<Utc>> {
     })
 }
 
+/// Parse an optional caller-supplied timestamp; blank input is `None`.
+///
+/// Accepts RFC3339, `YYYY-MM-DD[T ]HH:MM:SS[.f]` and date-only (midnight UTC).
+/// Anything else is an [`AppError::Config`] so transports report it as a bad
+/// request / invalid params.
+pub fn parse_optional_timestamp(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, AppError> {
+    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    parse_flexible_timestamp(value).map(Some).ok_or_else(|| {
+        AppError::config(format!(
+            "invalid timestamp (use RFC3339 or YYYY-MM-DD[ HH:MM:SS]): {value}"
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_timestamp_accepts_common_forms() {
+        assert!(parse_optional_timestamp(None).unwrap().is_none());
+        assert!(parse_optional_timestamp(Some("  ")).unwrap().is_none());
+        let date = parse_optional_timestamp(Some("2024-03-15"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(date.date_naive().to_string(), "2024-03-15");
+        let rfc = parse_optional_timestamp(Some("2024-03-15T12:00:00Z"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rfc.timestamp(), 1_710_504_000);
+        let err = parse_optional_timestamp(Some("not-a-date")).unwrap_err();
+        assert!(matches!(err, AppError::Config(_)));
+    }
 
     #[test]
     fn accepts_rfc3339_and_duckdb_forms() {

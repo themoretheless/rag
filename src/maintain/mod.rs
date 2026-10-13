@@ -11,6 +11,7 @@
 //! - Mutations must append `ops_log` and never silently delete `layer=raw`.
 //! - Compile/improve: `crate::wiki::consolidate` (LLM merge N docs → one wiki page).
 
+mod audit;
 pub mod analyze;
 pub mod apply;
 pub mod compress;

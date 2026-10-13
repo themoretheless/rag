@@ -2,10 +2,9 @@
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
 
 use crate::gateway::{
-    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
+    GatewayClient, Method,
     ReqwestGatewayClient,
 };
 
@@ -123,83 +122,16 @@ struct ActivityEnvelope {
     items: Vec<ObservedActivity>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-pub struct JobCounters {
-    pub preflight: u64,
-    pub extracted: u64,
-    pub embedded: u64,
+pub use rag_mcp_core::{JobSnapshot, JobStatus, SyncJobRequest};
+
+/// UI-side job helpers; the snapshot type is shared with the server.
+pub trait JobSnapshotExt {
+    fn can_cancel(&self) -> bool;
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobProgress {
-    pub phase: String,
-    pub total_files: usize,
-    pub processed_files: usize,
-    #[serde(default)]
-    pub current_path: Option<String>,
-    pub added: usize,
-    pub updated: usize,
-    pub skipped: usize,
-    pub deleted: usize,
-    pub errors: usize,
-    #[serde(default)]
-    pub counters: JobCounters,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobErrorSample {
-    pub path: String,
-    pub error: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobReport {
-    pub added_count: usize,
-    pub updated_count: usize,
-    pub skipped_count: usize,
-    pub deleted_count: usize,
-    pub error_count: usize,
-    #[serde(default)]
-    pub error_samples: Vec<JobErrorSample>,
-    #[serde(default)]
-    pub counters: JobCounters,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub struct SyncJobRequest {
-    pub path: String,
-    pub remove_deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wing: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub room: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_file_bytes: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct JobSnapshot {
-    pub id: String,
-    pub kind: String,
-    pub status: String,
-    pub request: SyncJobRequest,
-    #[serde(default)]
-    pub progress: Option<JobProgress>,
-    #[serde(default)]
-    pub report: Option<JobReport>,
-    #[serde(default)]
-    pub error: Option<String>,
-    pub cancel_requested: bool,
-    pub created_at: String,
-    #[serde(default)]
-    pub started_at: Option<String>,
-    #[serde(default)]
-    pub finished_at: Option<String>,
-}
-
-impl JobSnapshot {
-    pub fn can_cancel(&self) -> bool {
-        matches!(self.status.as_str(), "queued" | "running") && !self.cancel_requested
+impl JobSnapshotExt for JobSnapshot {
+    fn can_cancel(&self) -> bool {
+        matches!(self.status, JobStatus::Queued | JobStatus::Running) && !self.cancel_requested
     }
 }
 
@@ -325,7 +257,7 @@ pub fn backup_http(base: &str, request: &BackupRequest) -> Result<MaintenanceRes
 }
 
 fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
-    ReqwestGatewayClient::new(Duration::from_secs(timeout_secs))
+    crate::gateway::client(timeout_secs)
 }
 
 fn get_json<T: DeserializeOwned>(
@@ -343,29 +275,7 @@ fn send_json<T: DeserializeOwned>(
     method: Method,
     body: Option<String>,
 ) -> Result<T, String> {
-    let url = join(base, path)?;
-    let response = execute_request(
-        client,
-        Request {
-            method,
-            url: url.clone(),
-            body,
-            headers: Vec::new(),
-        },
-    )?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, operation_context(path)));
-    }
-    serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error(operation_context(path), &error))
-}
-
-fn join(base: &str, path: &str) -> Result<String, String> {
-    let base = base.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("http base URL is empty".to_string());
-    }
-    Ok(format!("{base}/{}", path.trim_start_matches('/')))
+    crate::gateway::send_json(client, base, path, method, body, operation_context(path))
 }
 
 fn operation_context(path: &str) -> &'static str {
@@ -382,21 +292,12 @@ fn operation_context(path: &str) -> &'static str {
     }
 }
 
-fn encode_segment(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
-            }
-            other => format!("%{other:02X}"),
-        })
-        .collect()
-}
+use crate::gateway::percent_encode as encode_segment;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Request;
     use crate::gateway::Response;
     use std::collections::VecDeque;
     use std::sync::Mutex;

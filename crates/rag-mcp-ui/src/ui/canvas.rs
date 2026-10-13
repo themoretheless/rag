@@ -243,7 +243,7 @@ pub fn draw_canvas(
         let radius = sn.radius;
         let selected_here = selected == Some(node.id.as_str());
         let focused_here = focused_id.as_deref() == Some(node.id.as_str());
-        let is_stub = node.kind == "stub" || !node.resolved;
+        let is_stub = rag_mcp_core::NodeKind::Stub.is(&node.kind) || !node.resolved;
 
         // Fill color comes from adapter kind_color (document/tag/stub/entity).
         painter.circle_filled(center, radius, node.color);
@@ -456,7 +456,7 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
     use std::collections::{BTreeMap, BTreeSet};
     let mut kinds = BTreeMap::new();
     for node in &graph.nodes {
-        let label = if node.kind == "document" {
+        let label = if rag_mcp_core::NodeKind::Document.is(&node.kind) {
             localized_layer(node.layer.as_deref().unwrap_or("document"))
         } else {
             localized_kind(&node.kind)

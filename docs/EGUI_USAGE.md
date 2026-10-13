@@ -39,6 +39,17 @@ cargo run -p rag-mcp-ui -- \
 Optional graph flags are `--seed`, `--depth` (default 1, clamped 1–3) and
 `--max-nodes` (default 100, hard layout cap 300). Logs stay on stderr.
 
+`--db` and `export` need the default `direct-db` feature, which links the
+server crate and bundled DuckDB. A gateway-only client (`--http`,
+`--snapshot`) builds without them:
+
+```bash
+cargo build -p rag-mcp-ui --no-default-features
+```
+
+Shared wire types (`GraphView`, `GraphNode`, `GraphEdge`, PKB defaults) come
+from the serde-only `rag-mcp-core` crate in both builds.
+
 ## Product workspaces
 
 The top navigation is project-aware. In HTTP mode the authoritative project

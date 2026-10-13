@@ -30,8 +30,13 @@ jobs:
         # --profile, so nothing below it - tests, eval, and the clippy/fmt gates - ever ran.
         # Minimal profile has to name the two components the gates call.
         run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+      - name: Cache cargo registry and target
+        # Bundled DuckDB is rebuilt from C++ sources on every cold run.
+        uses: Swatinem/rust-cache@v2
       - name: Clippy without warnings
         run: cargo +stable clippy --workspace --all-targets --locked -- -D warnings
+      - name: Native client builds without the server crate (no DuckDB)
+        run: cargo +stable clippy -p rag-mcp-ui --no-default-features --all-targets --locked -- -D warnings
       - name: Formatting of changed lines
         run: RUSTFMT_CMD="rustup run stable rustfmt" scripts/check-fmt-changed.sh
       - name: Test server, transports, CLI and native client

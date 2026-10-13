@@ -43,6 +43,60 @@ pub fn execute_request(client: &dyn GatewayClient, request: Request) -> Result<R
         .map_err(|error| format_transport_error(&error))
 }
 
+/// Percent-encode everything except RFC 3986 unreserved characters
+/// (`A-Z a-z 0-9 - _ . ~`); safe for both path segments and query values.
+pub fn percent_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+/// Production gateway client with a request timeout.
+pub fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
+    ReqwestGatewayClient::new(Duration::from_secs(timeout_secs))
+}
+
+/// `base` + `path`, rejecting an empty base URL.
+pub fn join_url(base: &str, path: &str) -> Result<String, String> {
+    let base = base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("http base URL is empty".to_string());
+    }
+    Ok(format!("{base}/{}", path.trim_start_matches('/')))
+}
+
+/// Send a request and decode a JSON reply; `context` names the operation in
+/// error messages.
+pub fn send_json<T: serde::de::DeserializeOwned>(
+    client: &dyn GatewayClient,
+    base: &str,
+    path: &str,
+    method: Method,
+    body: Option<String>,
+    context: &str,
+) -> Result<T, String> {
+    let response = execute_request(
+        client,
+        Request {
+            method,
+            url: join_url(base, path)?,
+            body,
+            headers: Vec::new(),
+        },
+    )?;
+    if !response.is_success() {
+        return Err(format_http_error(&response, context));
+    }
+    serde_json::from_str(&response.body).map_err(|error| format_json_parse_error(context, &error))
+}
+
 /// Convert an opaque transport error into a stable, user-facing message.
 ///
 /// Never echo the original value: reqwest errors may contain the HTTP method,

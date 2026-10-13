@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use rag_mcp::db::search::{search, SearchQuery};
-use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
+use rag_mcp::embeddings::EmbeddingProvider;
 use rag_mcp::eval::{
     apply_settings_profile, compare_query_metrics, dataset_content_hash, load_checkpoint,
     load_export_bundle, replay_bundle, save_checkpoint, Checkpoint, QueryErrorLabel,
@@ -167,13 +167,7 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
+    rag_mcp::bootstrap::init_tracing("warn");
     let args = parse_args()?;
     tokio::runtime::Runtime::new()?.block_on(run(args))
 }
@@ -569,11 +563,11 @@ fn synthetic_content(document_index: usize, len: usize) -> String {
 }
 
 async fn evaluate(args: &Args, dataset: Dataset, dataset_hash: &str, db_path: &Path) -> Result<Report> {
-    let mut config = Config::from_env()?;
-    config.db_path = db_path.to_path_buf();
-    let store = Store::open(&config.db_path)?;
-    store.ensure_embedding_manifest(&config)?;
-    let embedder: Arc<dyn EmbeddingProvider> = build_provider(&config)?;
+    let rag_mcp::bootstrap::OfflineRuntime {
+        config,
+        store,
+        embedder,
+    } = rag_mcp::bootstrap::open_offline(db_path.to_path_buf())?;
     let started = Instant::now();
     for relative in &dataset.corpus {
         let path = args.root.join(relative);
@@ -758,11 +752,11 @@ async fn evaluate_compare(
         }
     };
 
-    let mut config = Config::from_env()?;
-    config.db_path = db_path.to_path_buf();
-    let store = Store::open(&config.db_path)?;
-    store.ensure_embedding_manifest(&config)?;
-    let embedder: Arc<dyn EmbeddingProvider> = build_provider(&config)?;
+    let rag_mcp::bootstrap::OfflineRuntime {
+        config,
+        store,
+        embedder,
+    } = rag_mcp::bootstrap::open_offline(db_path.to_path_buf())?;
     for relative in &dataset.corpus {
         let path = args.root.join(relative);
         let text =

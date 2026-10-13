@@ -10,7 +10,7 @@ use serde_json::json;
 use super::judges::{judge_citations, CitationJudgeInput, CitationJudgeResult};
 use super::prompts::{builtin_answer_judge, PromptVersion};
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, ChatMessage};
+use crate::llm::ChatMessage;
 
 /// Inputs for an answer judge (heuristic and/or LLM).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -162,7 +162,7 @@ pub fn merge_llm_scores(
 
 /// Call the local chat model with a versioned judge prompt.
 pub async fn judge_answer_llm(
-    client: &ChatClient,
+    client: &dyn crate::llm::ChatCompleter,
     prompt: &PromptVersion,
     input: &AnswerJudgeInput,
 ) -> Result<LlmJudgeScores> {

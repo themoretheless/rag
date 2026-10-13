@@ -18,13 +18,13 @@ use duckdb::params_from_iter;
 use tracing::{debug, warn};
 
 use crate::error::{AppError, Result};
-use crate::models::{Chunk, SearchContextChunk, SearchExplanation, SearchHit, SearchMode};
+use crate::models::{SearchContextChunk, SearchExplanation, SearchHit, SearchMode};
 
 #[cfg(test)]
 use crate::embeddings::cosine_similarity;
 
 use super::fts::{self, LexFilters};
-use super::store::Store;
+use super::store::{ChunkBody, Store};
 
 /// Default RRF rank constant (Cormack / common IR practice).
 pub const DEFAULT_RRF_K: f32 = 60.0;
@@ -476,31 +476,36 @@ fn run_hybrid(
     )))
 }
 
-/// Post-process ranked hits: snippets, min_score, diversity, top_k, token pack.
+/// Post-process ranked hits: min_score, boosts, diversity, top_k, snippets, token pack.
 fn finalize_hits(
     store: &Store,
     mut hits: Vec<SearchHit>,
     query: &SearchQuery,
 ) -> Result<Vec<SearchHit>> {
-    // Attach snippets (modes that already set score_* leave those intact).
-    let qtext = query.query_text.as_deref();
-    for hit in &mut hits {
-        if query.snippet_max_chars > 0 && hit.snippet.is_none() {
-            hit.snippet = make_snippet(&hit.content, qtext, query.snippet_max_chars);
-        }
-    }
-
     if let Some(min) = query.min_score {
         hits = apply_min_score(hits, min);
     }
 
-    if let Some(half_life_days) = query
+    let recency = query
         .recency_half_life_days
-        .filter(|days| days.is_finite() && *days > 0.0)
-    {
+        .filter(|days| days.is_finite() && *days > 0.0);
+    let boost_query = query
+        .query_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty());
+    // One lightweight batch read serves both recency and field boosts; this
+    // used to be two full `get_document` loads per hit.
+    let ranking = if recency.is_some() || boost_query.is_some() {
+        ranking_fields(store, &hits)?
+    } else {
+        HashMap::new()
+    };
+
+    if let Some(half_life_days) = recency {
         let now = query.now.unwrap_or_else(chrono::Utc::now);
         for hit in &mut hits {
-            if let Some(document) = store.get_document(&hit.document_id)? {
+            if let Some(document) = ranking.get(&hit.document_id) {
                 let age_days = now
                     .signed_duration_since(document.updated_at)
                     .num_seconds()
@@ -513,7 +518,7 @@ fn finalize_hits(
         hits.sort_by(stable_score_order);
     }
 
-    apply_field_boosts(store, &mut hits, query.query_text.as_deref())?;
+    apply_field_boosts(&ranking, &mut hits, boost_query);
     hits.sort_by(stable_score_order);
 
     let mut seen = HashSet::new();
@@ -565,6 +570,14 @@ fn finalize_hits(
 
     hits.truncate(query.top_k);
 
+    // Snippets only for the returned hits; the refill pool can be thousands.
+    let qtext = query.query_text.as_deref();
+    for hit in &mut hits {
+        if query.snippet_max_chars > 0 && hit.snippet.is_none() {
+            hit.snippet = make_snippet(&hit.content, qtext, query.snippet_max_chars);
+        }
+    }
+
     attach_context(
         store,
         &mut hits,
@@ -588,23 +601,75 @@ fn stable_score_order(a: &SearchHit, b: &SearchHit) -> std::cmp::Ordering {
         .then_with(|| a.chunk_id.cmp(&b.chunk_id))
 }
 
-fn apply_field_boosts(store: &Store, hits: &mut [SearchHit], query: Option<&str>) -> Result<()> {
-    let Some(raw) = query.map(str::trim).filter(|q| !q.is_empty()) else {
-        return Ok(());
+/// Document fields used for ranking, without the document body.
+struct RankingFields {
+    title: String,
+    uri: String,
+    pinned: bool,
+    boost: f64,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Ranking fields for every distinct document among `hits`, in one query.
+fn ranking_fields(store: &Store, hits: &[SearchHit]) -> Result<HashMap<String, RankingFields>> {
+    let ids: Vec<&str> = hits
+        .iter()
+        .map(|hit| hit.document_id.as_str())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let conn = store.lock()?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, title, uri, COALESCE(pinned, false), COALESCE(boost, 1.0), \
+         CAST(updated_at AS VARCHAR) FROM documents WHERE id IN ({placeholders})"
+    ))?;
+    let rows = crate::db::rows::query_vec(&mut stmt, params_from_iter(ids.iter()), |row| {
+        let updated_raw: String = row.get(5)?;
+        let updated_at = crate::util::parse_db_timestamp(&updated_raw).ok_or_else(|| {
+            AppError::db(format!("invalid timestamp value: {}", updated_raw.trim()))
+        })?;
+        Ok((
+            row.get::<_, String>(0)?,
+            RankingFields {
+                title: row.get(1)?,
+                uri: row.get(2)?,
+                pinned: row.get(3)?,
+                boost: row.get(4)?,
+                updated_at,
+            },
+        ))
+    })?;
+    Ok(rows.into_iter().collect())
+}
+
+fn apply_field_boosts(
+    ranking: &HashMap<String, RankingFields>,
+    hits: &mut [SearchHit],
+    query: Option<&str>,
+) {
+    let Some(raw) = query else {
+        return;
     };
     let needle = raw.to_lowercase();
+    let terms = tokenize(&needle);
+    // Per-document checks repeat for every hit of that document: memoize.
+    let mut uri_matches: HashMap<&str, bool> = HashMap::new();
     for hit in hits {
         let mut reasons = Vec::new();
-        if let Some(document) = store.get_document(&hit.document_id)? {
+        if let Some(document) = ranking.get(&hit.document_id) {
             if document.title.trim().eq_ignore_ascii_case(raw) {
                 hit.score *= 1.35;
                 reasons.push("exact_title_boost".into());
             }
-            let uri = document.uri.to_lowercase();
-            if tokenize(&needle)
-                .into_iter()
-                .all(|term| uri.contains(&term))
-            {
+            let uri_match = *uri_matches.entry(document.uri.as_str()).or_insert_with(|| {
+                let uri = document.uri.to_lowercase();
+                terms.iter().all(|term| uri.contains(term.as_str()))
+            });
+            if uri_match {
                 hit.score *= 1.15;
                 reasons.push("uri_match_boost".into());
             }
@@ -630,7 +695,6 @@ fn apply_field_boosts(store: &Store, hits: &mut [SearchHit], query: Option<&str>
             .get_or_insert_with(SearchExplanation::default);
         explanation.reasons.extend(reasons);
     }
-    Ok(())
 }
 
 /// Fuse any number of independently ranked query result lists with RRF.
@@ -663,62 +727,100 @@ pub fn attach_context(
     expansion: Option<ContextExpansion>,
     neighbor_chunks: usize,
 ) -> Result<()> {
+    let Some(expansion) = expansion else {
+        // Section labels only: one metadata read for all hits, no chunk bodies.
+        let ids: Vec<&str> = hits.iter().map(|hit| hit.chunk_id.as_str()).collect();
+        let metadata = store.chunk_metadata_by_ids(&ids)?;
+        for hit in hits {
+            if let Some(json) = metadata.get(&hit.chunk_id) {
+                (hit.heading_path, hit.section) = section_metadata(json);
+            }
+        }
+        return Ok(());
+    };
+
+    // Parent sections can span a whole document, so those load every chunk
+    // body once per document; neighbor windows read only `index ± radius`.
+    // Bodies never include embeddings, and section metadata is parsed once.
+    type Sectioned = (ChunkBody, Option<Vec<String>>, Option<String>);
+    let sectioned = |bodies: Vec<ChunkBody>| -> Vec<Sectioned> {
+        bodies
+            .into_iter()
+            .map(|chunk| {
+                let (path, section) = section_metadata(&chunk.metadata_json);
+                (chunk, path, section)
+            })
+            .collect()
+    };
+    let radius = neighbor_chunks.max(1) as i32;
+    let mut chunks_by_document: HashMap<String, Vec<Sectioned>> = HashMap::new();
+    let mut window: Vec<Sectioned>;
     for hit in hits {
-        let chunks = store.list_chunks_for_document(&hit.document_id)?;
-        let Some(current) = chunks.iter().find(|c| c.id == hit.chunk_id) else {
+        let chunks: &Vec<Sectioned> = match expansion {
+            ContextExpansion::ParentSection => {
+                if !chunks_by_document.contains_key(&hit.document_id) {
+                    let loaded = sectioned(store.list_chunk_bodies_for_document(&hit.document_id)?);
+                    chunks_by_document.insert(hit.document_id.clone(), loaded);
+                }
+                &chunks_by_document[&hit.document_id]
+            }
+            ContextExpansion::Neighbors => {
+                window = sectioned(store.list_chunk_bodies_in_range(
+                    &hit.document_id,
+                    hit.chunk_index.saturating_sub(radius),
+                    hit.chunk_index.saturating_add(radius),
+                )?);
+                &window
+            }
+        };
+        let Some((current, heading_path, section)) =
+            chunks.iter().find(|(c, _, _)| c.id == hit.chunk_id)
+        else {
             continue;
         };
-        let (heading_path, section) = chunk_section_metadata(current);
         hit.heading_path = heading_path.clone();
         hit.section = section.clone();
 
-        let Some(expansion) = expansion else { continue };
-        let selected: Vec<&Chunk> = match expansion {
+        let selected: Vec<&Sectioned> = match expansion {
             ContextExpansion::Neighbors => {
-                let radius = neighbor_chunks.max(1) as i32;
                 chunks
                     .iter()
-                    .filter(|c| (c.chunk_index - current.chunk_index).abs() <= radius)
+                    .filter(|(c, _, _)| (c.chunk_index - current.chunk_index).abs() <= radius)
                     .collect()
             }
             ContextExpansion::ParentSection => chunks
                 .iter()
-                .filter(|c| {
-                    let (path, _) = chunk_section_metadata(c);
-                    heading_path.is_some() && path == heading_path
-                })
+                .filter(|(_, path, _)| heading_path.is_some() && path == heading_path)
                 .collect(),
         };
-        let selected = if selected.is_empty() {
-            vec![current]
+        let selected: Vec<&Sectioned> = if selected.is_empty() {
+            chunks.iter().filter(|(c, _, _)| c.id == current.id).collect()
         } else {
             selected
         };
         hit.context = Some(
             selected
                 .iter()
-                .map(|chunk| {
-                    let (heading_path, section) = chunk_section_metadata(chunk);
-                    SearchContextChunk {
-                        chunk_id: chunk.id.clone(),
-                        chunk_index: chunk.chunk_index,
-                        content: chunk.content.clone(),
-                        heading_path,
-                        section,
-                    }
+                .map(|(chunk, heading_path, section)| SearchContextChunk {
+                    chunk_id: chunk.id.clone(),
+                    chunk_index: chunk.chunk_index,
+                    content: chunk.content.clone(),
+                    heading_path: heading_path.clone(),
+                    section: section.clone(),
                 })
                 .collect(),
         );
         hit.content = selected
             .iter()
-            .map(|c| c.content.as_str())
+            .map(|(c, _, _)| c.content.as_str())
             .collect::<Vec<_>>()
             .join("\n");
     }
     Ok(())
 }
 
-fn chunk_section_metadata(chunk: &Chunk) -> (Option<Vec<String>>, Option<String>) {
+#[cfg(test)]
+fn chunk_section_metadata(chunk: &crate::models::Chunk) -> (Option<Vec<String>>, Option<String>) {
     section_metadata(&chunk.metadata_json)
 }
 
@@ -763,54 +865,51 @@ fn mmr_select(hits: Vec<SearchHit>, max_per_doc: usize, limit: usize) -> Vec<Sea
         .map(|h| tokenize(&h.content).into_iter().collect())
         .collect();
 
+    // `max_sim[i]` is hit i's highest similarity to anything selected so far;
+    // each round folds in only the newest pick: O(limit * pool), not
+    // O(limit^2 * pool). Candidates are scanned in rank order so score ties
+    // resolve deterministically to the better-ranked hit.
+    let mut max_sim = vec![0.0f32; hits.len()];
+    let mut available = vec![true; hits.len()];
     let mut selected: Vec<usize> = Vec::new();
-    let mut remaining: HashSet<usize> = (0..hits.len()).collect();
-    let mut per_doc: HashMap<String, usize> = HashMap::new();
+    let mut per_doc: HashMap<&str, usize> = HashMap::new();
 
-    while selected.len() < limit && !remaining.is_empty() {
-        let mut best_i: Option<usize> = None;
-        let mut best_score = f32::NEG_INFINITY;
-
-        for &i in &remaining {
-            let count = per_doc.get(&hits[i].document_id).copied().unwrap_or(0);
+    while selected.len() < limit {
+        let mut best: Option<(usize, f32)> = None;
+        for i in (0..hits.len()).filter(|&i| available[i]) {
+            let count = per_doc.get(hits[i].document_id.as_str()).copied().unwrap_or(0);
             if count >= max_per_doc {
                 continue;
             }
-            let rel = hits[i].score;
-            let max_sim = selected
-                .iter()
-                .map(|&j| jaccard(&token_sets[i], &token_sets[j]))
-                .fold(0.0f32, f32::max);
-            let mmr = lambda * rel - (1.0 - lambda) * max_sim;
-            if mmr > best_score {
-                best_score = mmr;
-                best_i = Some(i);
+            let mmr = lambda * hits[i].score - (1.0 - lambda) * max_sim[i];
+            if best.is_none_or(|(_, best_score)| mmr > best_score) {
+                best = Some((i, mmr));
             }
         }
-
-        match best_i {
-            Some(i) => {
-                remaining.remove(&i);
-                *per_doc.entry(hits[i].document_id.clone()).or_insert(0) += 1;
-                selected.push(i);
-            }
-            None => break,
+        let Some((pick, _)) = best else { break };
+        available[pick] = false;
+        *per_doc.entry(hits[pick].document_id.as_str()).or_insert(0) += 1;
+        selected.push(pick);
+        for i in (0..hits.len()).filter(|&i| available[i]) {
+            max_sim[i] = max_sim[i].max(jaccard(&token_sets[i], &token_sets[pick]));
         }
     }
 
-    selected.into_iter().map(|i| hits[i].clone()).collect()
+    let mut slots: Vec<Option<SearchHit>> = hits.into_iter().map(Some).collect();
+    selected
+        .into_iter()
+        .filter_map(|i| slots[i].take())
+        .collect()
 }
 
 fn jaccard(a: &std::collections::HashSet<String>, b: &std::collections::HashSet<String>) -> f32 {
-    if a.is_empty() && b.is_empty() {
-        return 0.0;
-    }
-    let inter = a.intersection(b).count() as f32;
-    let union = a.union(b).count() as f32;
-    if union == 0.0 {
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let inter = small.iter().filter(|token| large.contains(*token)).count();
+    let union = a.len() + b.len() - inter;
+    if union == 0 {
         0.0
     } else {
-        inter / union
+        inter as f32 / union as f32
     }
 }
 
@@ -857,7 +956,6 @@ static VECTOR_SNAPSHOTS: OnceLock<Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>>> 
 #[derive(Debug)]
 struct VectorSnapshot {
     generation: u64,
-    embeddings: Vec<f32>,
     chunks: Vec<VectorSnapshotChunk>,
 }
 
@@ -869,11 +967,60 @@ struct VectorSnapshotChunk {
     char_start: i32,
     char_end: i32,
     metadata_json: String,
-    embedding_start: usize,
-    embedding_len: usize,
+    /// `chunks.embedding_digest`: lets a refresh reuse this parsed vector
+    /// when the stored embedding is unchanged.
+    embedding_hash: i64,
+    /// Normalized vector, shared by reference across snapshot refreshes so an
+    /// unchanged chunk is never copied.
+    vector: Arc<[f32]>,
 }
 
-type VectorDocumentLookup = HashMap<String, (String, String)>;
+/// Documents a vector search may return. Titles and uris are read only for
+/// the hits that are returned.
+enum VectorDocumentScope {
+    /// Every document except these. Used when the scope is only low-cardinality
+    /// filters (status, layer, kind) that match most of the corpus, so the
+    /// complement is the small side (typically the archived and tombstoned
+    /// documents); listing the matching side would read most of the corpus on
+    /// every query.
+    Excluding(HashSet<String>),
+    /// Exactly these documents: a selective filter applies, or the scope
+    /// matches at most half the corpus.
+    Only(HashSet<String>),
+}
+
+impl VectorDocumentScope {
+    fn contains(&self, document_id: &str) -> bool {
+        match self {
+            Self::Excluding(ids) => !ids.contains(document_id),
+            Self::Only(ids) => ids.contains(document_id),
+        }
+    }
+
+    /// Add the documents of chunks without a document row to an exclusion
+    /// set (no-op for `Only`, which lists existing documents).
+    fn exclude_orphan_documents(&mut self, store: &Store) -> Result<()> {
+        if let Self::Excluding(ids) = self {
+            let conn = store.lock()?;
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT c.document_id FROM chunks c \
+                 WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = c.document_id)",
+            )?;
+            crate::db::rows::for_each_row(&mut stmt, [], |row| {
+                ids.insert(row.get(0)?);
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn only_ids(&self) -> Option<&HashSet<String>> {
+        match self {
+            Self::Excluding(_) => None,
+            Self::Only(ids) => Some(ids),
+        }
+    }
+}
 
 fn search_vec(
     store: &Store,
@@ -889,23 +1036,40 @@ fn search_vec(
         return Ok(Vec::new());
     };
 
-    let (snapshot, documents) = vector_search_inputs(store, filters)?;
+    let (snapshot, mut documents) = vector_search_inputs(store, filters)?;
+    let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
+    let (hits, missing_document) = hydrate_vector_hits(store, &snapshot, ranked)?;
+    if !missing_document || documents.only_ids().is_some() {
+        return Ok(hits);
+    }
+    // The database-wide snapshot keeps chunks whose document row is missing
+    // (orphans). An exclusion set admits them; they hold ranking slots and are
+    // dropped at hydration. Exclude them and rank again so `top_k` real hits
+    // remain.
+    documents.exclude_orphan_documents(store)?;
+    let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
+    Ok(hydrate_vector_hits(store, &snapshot, ranked)?.0)
+}
+
+fn rank_vector_candidates(
+    snapshot: &VectorSnapshot,
+    documents: &VectorDocumentScope,
+    normalized_query: &[f32],
+    top_k: usize,
+) -> Vec<RankedVectorCandidate> {
     let mut heap: BinaryHeap<Reverse<RankedVectorCandidate>> =
         BinaryHeap::with_capacity(top_k.saturating_add(1));
 
     for (ordinal, chunk) in snapshot.chunks.iter().enumerate() {
-        if !documents.contains_key(&chunk.document_id)
-            || chunk.embedding_len != normalized_query.len()
+        if !documents.contains(&chunk.document_id)
+            || chunk.vector.len() != normalized_query.len()
         {
             continue;
         }
-        let end = chunk.embedding_start.saturating_add(chunk.embedding_len);
-        let Some(embedding) = snapshot.embeddings.get(chunk.embedding_start..end) else {
-            continue;
-        };
+        let embedding = &chunk.vector;
         let score = normalized_query
             .iter()
-            .zip(embedding)
+            .zip(embedding.iter())
             .map(|(left, right)| left * right)
             .sum::<f32>()
             .clamp(-1.0, 1.0);
@@ -926,7 +1090,7 @@ fn search_vec(
         .map(|candidate| candidate.0)
         .collect::<Vec<_>>();
     ranked.sort_by(|left, right| right.cmp(left));
-    hydrate_vector_hits(store, &snapshot, &documents, ranked)
+    ranked
 }
 
 #[derive(Debug)]
@@ -962,41 +1126,112 @@ impl Ord for RankedVectorCandidate {
 fn vector_search_inputs(
     store: &Store,
     filters: &LexFilters,
-) -> Result<(Arc<VectorSnapshot>, VectorDocumentLookup)> {
+) -> Result<(Arc<VectorSnapshot>, VectorDocumentScope)> {
     let conn = store.lock()?;
     let generation = fts::chunks_generation(&conn)?;
-    let snapshot = if has_selective_vector_scope(filters) {
-        // Exact project/document searches should pay only for their matching
-        // chunks. Do not populate or consult the database-wide cache: unrelated
-        // source-sync commits advance the global generation continuously.
-        Arc::new(build_vector_snapshot_with_filters(
-            &conn,
-            generation,
-            Some(filters),
-        )?)
-    } else {
-        let key = store.path().to_path_buf();
-        let cached = vector_snapshots()
-            .lock()
-            .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
-            .get(&key)
-            .filter(|snapshot| snapshot.generation == generation)
-            .cloned();
-        match cached {
-            Some(snapshot) => snapshot,
-            None => {
-                let snapshot = Arc::new(build_vector_snapshot(&conn, generation)?);
-                vector_snapshots()
-                    .lock()
-                    .map_err(|error| {
-                        AppError::db(format!("vector snapshot lock poisoned: {error}"))
-                    })?
-                    .insert(key, snapshot.clone());
-                snapshot
+    // Read live: metadata-only writes (placement, archive, restore) change the
+    // scope membership without advancing the chunk generation.
+    let documents = load_vector_documents(&conn, filters)?;
+    let key = store.path().to_path_buf();
+    // A database-wide snapshot already built for this generation serves any
+    // scope: `search_vec` skips chunks whose document is outside the scope.
+    let global = cached_snapshot(vector_snapshots(), &key, generation)?;
+    let snapshot = match global {
+        Some(snapshot) => snapshot,
+        None if has_selective_vector_scope(filters) => {
+            // Exact project/document searches should pay only for their
+            // matching chunks. Do not populate the database-wide cache:
+            // unrelated source-sync commits advance the global generation
+            // continuously. The last scope per store is cached instead, so
+            // candidate refill rounds and multi-query fan-out reuse it. It is
+            // reused only while every document now in scope was in scope when
+            // it was built; a document moved into the scope forces a rebuild.
+            let scope = filters.scope_where_clause("d.id");
+            let scoped = scoped_vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .get(&key)
+                .filter(|entry| {
+                    entry.scope == scope
+                        && entry.snapshot.generation == generation
+                        && documents
+                            .only_ids()
+                            .is_some_and(|ids| ids.iter().all(|id| entry.documents.contains(id)))
+                })
+                .map(|entry| entry.snapshot.clone());
+            match scoped {
+                Some(snapshot) => snapshot,
+                None => {
+                    // Reuse parsed vectors (by chunk id + digest) from the last
+                    // snapshot of this scope, else from any global snapshot,
+                    // and parse only new or changed chunks; a cold store parses
+                    // the scope once.
+                    // Preference: same scope, then global, then another scope
+                    // (alternating rooms still share most vectors' parse work).
+                    let previous_scoped = scoped_vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .get(&key)
+                        .map(|entry| (entry.scope == scope, entry.snapshot.clone()));
+                    let global_previous = vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .get(&key)
+                        .cloned();
+                    let previous = match (previous_scoped, global_previous) {
+                        (Some((true, same_scope)), _) => Some(same_scope),
+                        (_, Some(global)) => Some(global),
+                        (Some((false, other_scope)), None) => Some(other_scope),
+                        (None, None) => None,
+                    };
+                    let snapshot = Arc::new(match previous {
+                        Some(previous) => {
+                            refresh_vector_snapshot(&conn, &previous, generation, Some(filters))?
+                        }
+                        None => {
+                            build_vector_snapshot_with_filters(&conn, generation, Some(filters))?
+                        }
+                    });
+                    scoped_vector_snapshots()
+                        .lock()
+                        .map_err(|error| {
+                            AppError::db(format!("vector snapshot lock poisoned: {error}"))
+                        })?
+                        .insert(
+                            key,
+                            ScopedVectorSnapshot {
+                                scope,
+                                documents: documents.only_ids().cloned().unwrap_or_default(),
+                                snapshot: snapshot.clone(),
+                            },
+                        );
+                    snapshot
+                }
             }
         }
+        None => {
+            // Refresh from the previous generation's snapshot when there is
+            // one; parse the whole corpus only on the first build.
+            let previous = vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .get(&key)
+                .cloned();
+            let snapshot = Arc::new(match previous {
+                Some(previous) => refresh_vector_snapshot(&conn, &previous, generation, None)?,
+                None => build_vector_snapshot(&conn, generation)?,
+            });
+            vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .insert(key, snapshot.clone());
+            snapshot
+        }
     };
-    let documents = load_vector_documents(&conn, filters)?;
     Ok((snapshot, documents))
 }
 
@@ -1016,6 +1251,33 @@ fn vector_snapshots() -> &'static Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>> {
     VECTOR_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// The last scoped search's snapshot, with the scope it was built for.
+struct ScopedVectorSnapshot {
+    /// Scope SQL clause plus binds.
+    scope: (String, Vec<String>),
+    /// Documents in scope when the snapshot was built.
+    documents: HashSet<String>,
+    snapshot: Arc<VectorSnapshot>,
+}
+
+fn scoped_vector_snapshots() -> &'static Mutex<HashMap<PathBuf, ScopedVectorSnapshot>> {
+    static SCOPED: OnceLock<Mutex<HashMap<PathBuf, ScopedVectorSnapshot>>> = OnceLock::new();
+    SCOPED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_snapshot(
+    cache: &Mutex<HashMap<PathBuf, Arc<VectorSnapshot>>>,
+    key: &std::path::Path,
+    generation: u64,
+) -> Result<Option<Arc<VectorSnapshot>>> {
+    Ok(cache
+        .lock()
+        .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+        .get(key)
+        .filter(|snapshot| snapshot.generation == generation)
+        .cloned())
+}
+
 fn build_vector_snapshot(conn: &duckdb::Connection, generation: u64) -> Result<VectorSnapshot> {
     build_vector_snapshot_with_filters(conn, generation, None)
 }
@@ -1027,19 +1289,23 @@ fn build_vector_snapshot_with_filters(
 ) -> Result<VectorSnapshot> {
     let (join_sql, where_sql, bind) = match filters {
         Some(filters) => {
-            let (where_sql, bind) = vector_document_where_clause(filters);
+            let (where_sql, bind) = filters.scope_where_clause("d.id");
             (
                 "INNER JOIN documents d ON d.id = c.document_id",
                 where_sql,
                 bind,
             )
         }
+        // No join: the database-wide snapshot must stay a function of the
+        // chunk generation alone, and creating a document row does not bump
+        // it. Orphan chunks are filtered at query time instead.
         None => ("", String::new(), Vec::new()),
     };
     let sql = format!(
         r#"
         SELECT c.id, c.document_id, c.chunk_index, c.embedding_json,
-               c.char_start, c.char_end, c.metadata_json
+               c.char_start, c.char_end, c.metadata_json,
+               COALESCE(c.embedding_digest, CAST(hash(c.embedding_json) >> 1 AS BIGINT))
         FROM chunks c
         {join_sql}
         {where_sql}
@@ -1048,15 +1314,11 @@ fn build_vector_snapshot_with_filters(
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params_from_iter(bind.iter()))?;
-    let mut embeddings = Vec::new();
     let mut chunks = Vec::new();
-    while let Some(row) = rows.next()? {
+    crate::db::rows::visit_rows(&mut rows, |row| {
         let embedding_json: String = row.get(3)?;
         let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
         let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
-        let embedding_start = embeddings.len();
-        let embedding_len = embedding.len();
-        embeddings.extend(embedding);
         chunks.push(VectorSnapshotChunk {
             id: row.get(0)?,
             document_id: row.get(1)?,
@@ -1067,58 +1329,179 @@ fn build_vector_snapshot_with_filters(
                 .get::<_, Option<String>>(6)?
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "{}".into()),
-            embedding_start,
-            embedding_len,
+            embedding_hash: row.get(7)?,
+            vector: embedding.into(),
+        });
+        Ok(())
+    })?;
+    Ok(VectorSnapshot { generation, chunks })
+}
+
+/// Bring a database-wide snapshot up to `generation` without re-parsing
+/// unchanged vectors.
+///
+/// Lists every chunk's identity, order, spans and stored `embedding_digest`
+/// (the embedding JSON is never read for unchanged rows), reuses the parsed
+/// vector of each chunk whose id and digest match `previous`, and parses only
+/// new or changed rows. A typical
+/// ingest touches one document, so this replaces a full-corpus JSON parse
+/// with a cheap listing plus that document's chunks. When most rows changed
+/// a full build is cheaper and is used instead.
+fn refresh_vector_snapshot(
+    conn: &duckdb::Connection,
+    previous: &VectorSnapshot,
+    generation: u64,
+    filters: Option<&LexFilters>,
+) -> Result<VectorSnapshot> {
+    struct Listed {
+        id: String,
+        document_id: String,
+        chunk_index: i32,
+        char_start: i32,
+        char_end: i32,
+        metadata_json: String,
+        embedding_hash: i64,
+    }
+    let (join_sql, where_sql, bind) = match filters {
+        Some(filters) => {
+            let (where_sql, bind) = filters.scope_where_clause("d.id");
+            (
+                "INNER JOIN documents d ON d.id = c.document_id",
+                where_sql,
+                bind,
+            )
+        }
+        // No join: the database-wide snapshot must stay a function of the
+        // chunk generation alone, and creating a document row does not bump
+        // it. Orphan chunks are filtered at query time instead.
+        None => ("", String::new(), Vec::new()),
+    };
+    let mut stmt = conn.prepare(&format!(
+        r#"
+        SELECT c.id, c.document_id, c.chunk_index, c.char_start, c.char_end, c.metadata_json,
+               COALESCE(c.embedding_digest, CAST(hash(c.embedding_json) >> 1 AS BIGINT))
+        FROM chunks c
+        {join_sql}
+        {where_sql}
+        ORDER BY c.document_id ASC, c.chunk_index ASC, c.id ASC
+        "#
+    ))?;
+    let listed = crate::db::rows::query_vec(&mut stmt, params_from_iter(bind.iter()), |row| {
+        Ok(Listed {
+            id: row.get(0)?,
+            document_id: row.get(1)?,
+            chunk_index: row.get(2)?,
+            char_start: row.get(3)?,
+            char_end: row.get(4)?,
+            metadata_json: row
+                .get::<_, Option<String>>(5)?
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "{}".into()),
+            embedding_hash: row.get(6)?,
+        })
+    })?;
+    drop(stmt);
+
+    let reusable: HashMap<&str, &VectorSnapshotChunk> = previous
+        .chunks
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect();
+    let changed: Vec<&str> = listed
+        .iter()
+        .filter(|row| {
+            reusable
+                .get(row.id.as_str())
+                .is_none_or(|old| old.embedding_hash != row.embedding_hash)
+        })
+        .map(|row| row.id.as_str())
+        .collect();
+    if changed.len() * 2 > listed.len() {
+        return build_vector_snapshot_with_filters(conn, generation, filters);
+    }
+
+    // Parse only the new or changed vectors.
+    const PARSE_BATCH: usize = 512;
+    let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(changed.len());
+    for batch in changed.chunks(PARSE_BATCH) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
+        ))?;
+        crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+            let id: String = row.get(0)?;
+            let embedding_json: String = row.get(1)?;
+            let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
+            let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
+            parsed.insert(id, embedding.into());
+            Ok(())
+        })?;
+    }
+
+    let mut chunks = Vec::with_capacity(listed.len());
+    for row in listed {
+        let vector = match parsed.get(&row.id) {
+            Some(vector) => vector.clone(),
+            // Unchanged: share the previous snapshot's vector, no copy.
+            None => match reusable.get(row.id.as_str()) {
+                Some(old) => old.vector.clone(),
+                // Deleted between the listing and the parse: skip it.
+                None => continue,
+            },
+        };
+        chunks.push(VectorSnapshotChunk {
+            id: row.id,
+            document_id: row.document_id,
+            chunk_index: row.chunk_index,
+            char_start: row.char_start,
+            char_end: row.char_end,
+            metadata_json: row.metadata_json,
+            embedding_hash: row.embedding_hash,
+            vector,
         });
     }
-    Ok(VectorSnapshot {
-        generation,
-        embeddings,
-        chunks,
-    })
+    Ok(VectorSnapshot { generation, chunks })
 }
 
 fn load_vector_documents(
     conn: &duckdb::Connection,
     filters: &LexFilters,
-) -> Result<VectorDocumentLookup> {
-    let (where_sql, bind) = vector_document_where_clause(filters);
-    let sql = format!("SELECT d.id, d.title, d.uri FROM documents d {where_sql}");
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params_from_iter(bind.iter()))?;
-    let mut documents = HashMap::new();
-    while let Some(row) = rows.next()? {
-        documents.insert(row.get(0)?, (row.get(1)?, row.get(2)?));
-    }
-    Ok(documents)
-}
-
-fn vector_document_where_clause(filters: &LexFilters) -> (String, Vec<String>) {
-    let mut parts = Vec::new();
-    let mut bind = Vec::new();
-    for (column, value) in [
-        ("d.id", filters.document_id.as_deref()),
-        ("d.wing", filters.wing.as_deref()),
-        ("d.room", filters.room.as_deref()),
-        ("d.layer", filters.layer.as_deref()),
-        ("d.kind", filters.kind.as_deref()),
-        ("d.uri", filters.uri.as_deref()),
-        ("d.source_file", filters.source_file.as_deref()),
-    ] {
-        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-            parts.push(format!("{column} = ?"));
-            bind.push(value.to_string());
-        }
-    }
-    if !filters.include_archived {
-        parts.push("COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')".into());
-    }
-    let where_sql = if parts.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", parts.join(" AND "))
+) -> Result<VectorDocumentScope> {
+    let (where_sql, bind) = filters.scope_where_clause("d.id");
+    let read_ids = |sql: &str| -> Result<HashSet<String>> {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(params_from_iter(bind.iter()))?;
+        let mut ids = HashSet::new();
+        crate::db::rows::visit_rows(&mut rows, |row| {
+            ids.insert(row.get(0)?);
+            Ok(())
+        })?;
+        Ok(ids)
     };
-    (where_sql, bind)
+    if has_selective_vector_scope(filters) {
+        return Ok(VectorDocumentScope::Only(read_ids(&format!(
+            "SELECT d.id FROM documents d {where_sql}"
+        ))?));
+    }
+    let Some(predicate) = where_sql.strip_prefix("WHERE ") else {
+        return Ok(VectorDocumentScope::Excluding(HashSet::new()));
+    };
+    // Only status/layer/kind filters remain: list whichever side is smaller.
+    // A NULL column fails the predicate, so it counts as outside the scope.
+    let predicate = format!("COALESCE({predicate}, false)");
+    let (matching, total): (i64, i64) = conn.query_row(
+        &format!("SELECT count(*) FILTER (WHERE {predicate}), count(*) FROM documents d"),
+        params_from_iter(bind.iter()),
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if matching * 2 <= total {
+        return Ok(VectorDocumentScope::Only(read_ids(&format!(
+            "SELECT d.id FROM documents d WHERE {predicate}"
+        ))?));
+    }
+    Ok(VectorDocumentScope::Excluding(read_ids(&format!(
+        "SELECT d.id FROM documents d WHERE NOT {predicate}"
+    ))?))
 }
 
 fn normalized_vector(vector: &[f32]) -> Option<Vec<f32>> {
@@ -1129,18 +1512,59 @@ fn normalized_vector(vector: &[f32]) -> Option<Vec<f32>> {
 fn hydrate_vector_hits(
     store: &Store,
     snapshot: &VectorSnapshot,
-    documents: &VectorDocumentLookup,
     ranked: Vec<RankedVectorCandidate>,
-) -> Result<Vec<SearchHit>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare("SELECT content FROM chunks WHERE id = ?")?;
+) -> Result<(Vec<SearchHit>, bool)> {
+    // Candidate pools reach thousands during refill: read contents in a few
+    // `IN (...)` batches instead of one point query per candidate.
+    const CONTENT_BATCH: usize = 512;
+    let ids: Vec<&str> = ranked
+        .iter()
+        .map(|candidate| snapshot.chunks[candidate.snapshot_index].id.as_str())
+        .collect();
+    let document_ids: Vec<&str> = ranked
+        .iter()
+        .map(|candidate| snapshot.chunks[candidate.snapshot_index].document_id.as_str())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut contents: HashMap<String, String> = HashMap::with_capacity(ids.len());
+    let mut documents: HashMap<String, (String, String)> =
+        HashMap::with_capacity(document_ids.len());
+    {
+        let conn = store.lock()?;
+        for batch in ids.chunks(CONTENT_BATCH) {
+            let placeholders = vec!["?"; batch.len()].join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, content FROM chunks WHERE id IN ({placeholders})"
+            ))?;
+            crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+                contents.insert(row.get(0)?, row.get(1)?);
+                Ok(())
+            })?;
+        }
+        for batch in document_ids.chunks(CONTENT_BATCH) {
+            let placeholders = vec!["?"; batch.len()].join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, title, uri FROM documents WHERE id IN ({placeholders})"
+            ))?;
+            crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+                documents.insert(row.get(0)?, (row.get(1)?, row.get(2)?));
+                Ok(())
+            })?;
+        }
+    }
     let mut hits = Vec::with_capacity(ranked.len());
+    let mut missing_document = false;
     for candidate in ranked {
         let chunk = &snapshot.chunks[candidate.snapshot_index];
         let Some((title, uri)) = documents.get(&chunk.document_id) else {
+            missing_document = true;
             continue;
         };
-        let content = stmt.query_row([chunk.id.as_str()], |row| row.get(0))?;
+        // A chunk replaced after the snapshot was taken has no row left.
+        let Some(content) = contents.remove(&chunk.id) else {
+            continue;
+        };
         let (heading_path, section) = section_metadata(&chunk.metadata_json);
         hits.push(SearchHit {
             chunk_id: chunk.id.clone(),
@@ -1164,7 +1588,7 @@ fn hydrate_vector_hits(
             rank_lex: None,
         });
     }
-    Ok(hits)
+    Ok((hits, missing_document))
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,22 +1612,6 @@ fn search_lex(
         "lex search via db::fts (BM25 or TF fallback)"
     );
     Ok(hits)
-}
-
-/// Allow only safe stemmer identifiers (unit tests).
-#[cfg(test)]
-fn sanitize_stemmer(raw: &str) -> String {
-    let s = raw.trim().to_ascii_lowercase();
-    if s.is_empty() {
-        return "porter".into();
-    }
-    if s.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        s
-    } else {
-        "porter".into()
-    }
 }
 
 /// Simple term-frequency lexical ranking (direct TF path for unit tests).
@@ -1245,6 +1653,7 @@ fn search_lex_tf(
     for (score, idx) in scored {
         let chunk = &chunks[idx];
         let (title, uri) = resolve_doc(store, &chunk.document_id, &mut doc_cache)?;
+        let (heading_path, section) = chunk_section_metadata(chunk);
         hits.push(SearchHit {
             chunk_id: chunk.id.clone(),
             document_id: chunk.document_id.clone(),
@@ -1259,8 +1668,8 @@ fn search_lex_tf(
             snippet: None,
             char_start: Some(chunk.char_start),
             char_end: Some(chunk.char_end),
-            heading_path: chunk_section_metadata(chunk).0,
-            section: chunk_section_metadata(chunk).1,
+            heading_path,
+            section,
             context: None,
             explanation: None,
             rank_vec: None,
@@ -1396,37 +1805,48 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
         return None;
     }
 
-    let chars: Vec<char> = content.chars().collect();
-    if chars.is_empty() {
-        return None;
-    }
-
     let mut anchor = 0usize;
     if let Some(q) = query {
-        let lower_content: String = content.to_lowercase();
+        // Lowercasing can change byte lengths (`İ` → `i̇`), so offsets found in
+        // the lowered text are mapped back through each char's lowered start.
+        let mut lower_content = String::with_capacity(content.len());
+        let mut lower_starts = Vec::new();
+        for ch in content.chars() {
+            lower_starts.push(lower_content.len());
+            lower_content.extend(ch.to_lowercase());
+        }
         for term in tokenize(q) {
             if term.is_empty() {
                 continue;
             }
             if let Some(byte_pos) = lower_content.find(&term) {
-                // Map byte offset to char index.
-                anchor = content[..byte_pos].chars().count();
+                anchor = lower_starts
+                    .partition_point(|&start| start <= byte_pos)
+                    .saturating_sub(1);
                 break;
             }
         }
     }
 
     // Center a window of max_chars around the anchor when possible.
+    let total = content.chars().count();
     let half = max_chars / 2;
     let start = anchor.saturating_sub(half);
-    let end = (start + max_chars).min(chars.len());
+    let end = (start + max_chars).min(total);
     let start = end.saturating_sub(max_chars);
 
-    let mut snippet: String = chars[start..end].iter().collect();
+    let byte_at = |char_index: usize| {
+        content
+            .char_indices()
+            .nth(char_index)
+            .map_or(content.len(), |(byte, _)| byte)
+    };
+    let mut snippet = String::with_capacity(max_chars * 4 + 6);
     if start > 0 {
-        snippet.insert(0, '…');
+        snippet.push('…');
     }
-    if end < chars.len() {
+    snippet.push_str(&content[byte_at(start)..byte_at(end)]);
+    if end < total {
         snippet.push('…');
     }
     if snippet.is_empty() {
@@ -1441,7 +1861,7 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-fn load_chunks(store: &Store, document_id: Option<&str>) -> Result<Vec<Chunk>> {
+fn load_chunks(store: &Store, document_id: Option<&str>) -> Result<Vec<crate::models::Chunk>> {
     match document_id {
         Some(doc_id) => store.list_chunks_for_document(doc_id),
         None => store.all_chunks_with_embeddings(),
@@ -1466,1247 +1886,4 @@ fn resolve_doc(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::Chunk;
-    use crate::models::Document;
-    use chrono::Utc;
-
-    fn sample_hit(chunk_id: &str, doc_id: &str, score: f32) -> SearchHit {
-        SearchHit {
-            chunk_id: chunk_id.into(),
-            document_id: doc_id.into(),
-            document_title: format!("title-{doc_id}"),
-            document_uri: format!("uri://{doc_id}"),
-            chunk_index: 0,
-            content: format!("content of {chunk_id}"),
-            score,
-            score_vec: Some(score),
-            score_lex: None,
-            score_rrf: None,
-            snippet: None,
-            char_start: Some(0),
-            char_end: Some(10),
-            heading_path: None,
-            section: None,
-            context: None,
-            explanation: None,
-            rank_vec: None,
-            rank_lex: None,
-        }
-    }
-
-    fn hit_from_chunk(chunk: &Chunk, score: f32, title: &str, uri: &str) -> SearchHit {
-        SearchHit {
-            chunk_id: chunk.id.clone(),
-            document_id: chunk.document_id.clone(),
-            document_title: title.to_string(),
-            document_uri: uri.to_string(),
-            chunk_index: chunk.chunk_index,
-            content: chunk.content.clone(),
-            score,
-            score_vec: Some(score),
-            char_start: Some(chunk.char_start),
-            char_end: Some(chunk.char_end),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn ranking_order_matches_cosine() {
-        let q = [1.0f32, 0.0, 0.0];
-        let a = [1.0f32, 0.0, 0.0];
-        let b = [0.0f32, 1.0, 0.0];
-        let c = [-1.0f32, 0.0, 0.0];
-
-        let mut scores = [
-            (cosine_similarity(&q, &b), "b"),
-            (cosine_similarity(&q, &c), "c"),
-            (cosine_similarity(&q, &a), "a"),
-        ];
-        scores.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        assert_eq!(scores[0].1, "a");
-        assert_eq!(scores[1].1, "b");
-        assert_eq!(scores[2].1, "c");
-        assert!((scores[0].0 - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn search_hit_fields_populated() {
-        let chunk = Chunk {
-            id: "c1".into(),
-            document_id: "d1".into(),
-            chunk_index: 2,
-            content: "hello".into(),
-            embedding: vec![1.0, 0.0],
-            char_start: 0,
-            char_end: 5,
-            metadata_json: "{}".into(),
-        };
-        let hit = hit_from_chunk(&chunk, 0.9, "Title", "uri://x");
-        assert_eq!(hit.chunk_id, "c1");
-        assert_eq!(hit.document_title, "Title");
-        assert_eq!(hit.chunk_index, 2);
-        assert!((hit.score - 0.9).abs() < 1e-6);
-    }
-
-    #[test]
-    fn rrf_prefers_items_high_in_both_lists() {
-        // a ranks 1 in both lists → highest RRF
-        // b ranks 1 vec / 3 lex
-        // c ranks 2 vec / 2 lex
-        let vec_list = vec![
-            sample_hit("a", "d1", 0.9),
-            sample_hit("c", "d2", 0.8),
-            sample_hit("b", "d3", 0.7),
-        ];
-        let mut lex_a = sample_hit("a", "d1", 5.0);
-        lex_a.score_vec = None;
-        lex_a.score_lex = Some(5.0);
-        let mut lex_c = sample_hit("c", "d2", 4.0);
-        lex_c.score_vec = None;
-        lex_c.score_lex = Some(4.0);
-        let mut lex_b = sample_hit("b", "d3", 3.0);
-        lex_b.score_vec = None;
-        lex_b.score_lex = Some(3.0);
-        let lex_list = vec![lex_a, lex_c, lex_b];
-
-        let fused = fuse_rrf(&vec_list, &lex_list, 60.0);
-        assert_eq!(fused[0].chunk_id, "a");
-        assert!(fused[0].score_rrf.is_some());
-        assert!(fused[0].score_vec.is_some());
-        assert!(fused[0].score_lex.is_some());
-        // RRF(a) = 1/(60+1) + 1/(60+1)
-        let expected_a = 2.0 / 61.0;
-        assert!((fused[0].score_rrf.unwrap() - expected_a).abs() < 1e-6);
-        assert!((fused[0].score - expected_a).abs() < 1e-6);
-    }
-
-    #[test]
-    fn rrf_includes_items_present_in_only_one_list() {
-        let vec_list = vec![sample_hit("only_vec", "d1", 0.99)];
-        let mut lex = sample_hit("only_lex", "d2", 10.0);
-        lex.score_vec = None;
-        lex.score_lex = Some(10.0);
-        let lex_list = vec![lex];
-
-        let fused = fuse_rrf(&vec_list, &lex_list, 60.0);
-        assert_eq!(fused.len(), 2);
-        let ids: Vec<&str> = fused.iter().map(|h| h.chunk_id.as_str()).collect();
-        assert!(ids.contains(&"only_vec"));
-        assert!(ids.contains(&"only_lex"));
-    }
-
-    #[test]
-    fn collapse_limits_per_document() {
-        let hits = vec![
-            sample_hit("c1", "d1", 1.0),
-            sample_hit("c2", "d1", 0.9),
-            sample_hit("c3", "d1", 0.8),
-            sample_hit("c4", "d2", 0.7),
-            sample_hit("c5", "d2", 0.6),
-        ];
-        let out = collapse_by_document(hits, 2);
-        assert_eq!(out.len(), 4);
-        assert_eq!(out.iter().filter(|h| h.document_id == "d1").count(), 2);
-        assert_eq!(out.iter().filter(|h| h.document_id == "d2").count(), 2);
-        // Order preserved for kept items
-        assert_eq!(out[0].chunk_id, "c1");
-        assert_eq!(out[1].chunk_id, "c2");
-        assert_eq!(out[2].chunk_id, "c4");
-    }
-
-    #[test]
-    fn min_score_filters() {
-        let hits = vec![
-            sample_hit("a", "d1", 0.9),
-            sample_hit("b", "d1", 0.4),
-            sample_hit("c", "d1", 0.1),
-        ];
-        let out = apply_min_score(hits, 0.5);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].chunk_id, "a");
-    }
-
-    #[test]
-    fn snippet_around_query_term() {
-        let content = "alpha beta gamma delta epsilon zeta eta theta";
-        let snip = make_snippet(content, Some("gamma"), 20).expect("snippet");
-        assert!(snip.to_lowercase().contains("gamma"));
-        // Should not be longer than max_chars + ellipsis markers.
-        assert!(snip.chars().count() <= 20 + 2);
-    }
-
-    #[test]
-    fn snippet_prefix_without_query() {
-        let content = "hello world this is a long piece of text for testing";
-        let snip = make_snippet(content, None, 11).expect("snippet");
-        assert!(snip.starts_with("hello world") || snip.starts_with("hello"));
-    }
-
-    #[test]
-    fn tokenize_and_tf_score() {
-        let terms = tokenize("Hello, WORLD! hello");
-        assert_eq!(terms, vec!["hello", "world", "hello"]);
-        let q = tokenize("hello world");
-        let s = tf_score(&q, "hello hello world foo");
-        assert!((s - 3.0).abs() < 1e-6); // hello x2 + world x1
-    }
-
-    #[test]
-    fn sanitize_stemmer_rejects_injection() {
-        assert_eq!(sanitize_stemmer("porter"), "porter");
-        assert_eq!(sanitize_stemmer("none"), "none");
-        assert_eq!(sanitize_stemmer("  German "), "german");
-        assert_eq!(sanitize_stemmer("x'; DROP TABLE"), "porter");
-    }
-
-    #[test]
-    fn search_lex_tf_and_hybrid_with_store() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("search_test.duckdb");
-        let store = Store::open(&path).expect("open");
-
-        let now = Utc::now();
-        let doc1 = Document {
-            id: "d1".into(),
-            uri: "uri://d1".into(),
-            title: "Cats".into(),
-            content: "cats and kittens play".into(),
-            metadata_json: "{}".into(),
-            created_at: now,
-            updated_at: now,
-            ..Default::default()
-        };
-        let doc2 = Document {
-            id: "d2".into(),
-            uri: "uri://d2".into(),
-            title: "Dogs".into(),
-            content: "dogs and puppies run".into(),
-            metadata_json: "{}".into(),
-            created_at: now,
-            updated_at: now,
-            ..Default::default()
-        };
-        store.upsert_document(&doc1).unwrap();
-        store.upsert_document(&doc2).unwrap();
-
-        let chunks = vec![
-            Chunk {
-                id: "c1".into(),
-                document_id: "d1".into(),
-                chunk_index: 0,
-                content: "unique xylophone cats meow loudly".into(),
-                embedding: vec![1.0, 0.0, 0.0],
-                char_start: 0,
-                char_end: 32,
-                metadata_json: "{}".into(),
-            },
-            Chunk {
-                id: "c2".into(),
-                document_id: "d1".into(),
-                chunk_index: 1,
-                content: "more cats again cats cats".into(),
-                embedding: vec![0.9, 0.1, 0.0],
-                char_start: 33,
-                char_end: 58,
-                metadata_json: "{}".into(),
-            },
-            Chunk {
-                id: "c3".into(),
-                document_id: "d2".into(),
-                chunk_index: 0,
-                content: "dogs bark at the moon".into(),
-                embedding: vec![0.0, 1.0, 0.0],
-                char_start: 0,
-                char_end: 21,
-                metadata_json: "{}".into(),
-            },
-        ];
-        store.insert_chunks(&chunks).unwrap();
-
-        // Pure TF path (bypass FTS by calling search_lex_tf).
-        let lex = search_lex_tf(&store, "cats xylophone", 10, None).unwrap();
-        assert!(!lex.is_empty());
-        assert!(lex[0].score_lex.is_some());
-        // c1 has both cats + xylophone; c2 has many cats only
-        assert!(lex.iter().any(|h| h.chunk_id == "c1"));
-
-        // Vec mode via public search.
-        let vec_hits = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 5,
-                query_embedding: Some(vec![1.0, 0.0, 0.0]),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert!(!vec_hits.is_empty());
-        assert!(vec_hits[0].score_vec.is_some());
-        assert_eq!(vec_hits[0].chunk_id, "c1");
-
-        // Hybrid: needs both embedding and text.
-        let hybrid = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Hybrid,
-                top_k: 5,
-                query_text: Some("cats xylophone".into()),
-                query_embedding: Some(vec![1.0, 0.0, 0.0]),
-                max_chunks_per_document: Some(1),
-                min_score: None,
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert!(!hybrid.is_empty());
-        assert!(hybrid[0].score_rrf.is_some());
-        // Diversity: at most one hit per document
-        let mut seen = std::collections::HashSet::new();
-        for h in &hybrid {
-            assert!(seen.insert(h.document_id.clone()));
-            assert!(h.snippet.is_some());
-        }
-
-        // min_score filters high threshold on vec scores (~1.0 max)
-        let filtered = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 5,
-                query_embedding: Some(vec![1.0, 0.0, 0.0]),
-                min_score: Some(0.99),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        for h in &filtered {
-            assert!(h.score >= 0.99);
-        }
-
-        // Backward-compatible search_chunks still works.
-        let legacy = search_chunks(&store, &[1.0, 0.0, 0.0], 3, None).unwrap();
-        assert!(!legacy.is_empty());
-        assert!(legacy[0].score_vec.is_some());
-    }
-
-    #[test]
-    fn recency_half_life_boosts_newer_document() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let store = Store::open(&dir.path().join("recency.duckdb")).unwrap();
-        let now = Utc::now();
-        for (id, age_days) in [("old", 120), ("new", 0)] {
-            store
-                .upsert_document(&Document {
-                    id: id.into(),
-                    uri: format!("uri://{id}"),
-                    title: id.into(),
-                    content: "same relevance".into(),
-                    metadata_json: "{}".into(),
-                    created_at: now - chrono::Duration::days(age_days),
-                    updated_at: now - chrono::Duration::days(age_days),
-                    ..Default::default()
-                })
-                .unwrap();
-            store
-                .insert_chunks(&[Chunk {
-                    id: format!("chunk-{id}"),
-                    document_id: id.into(),
-                    chunk_index: 0,
-                    content: "same relevance".into(),
-                    embedding: vec![1.0, 0.0],
-                    char_start: 0,
-                    char_end: 14,
-                    metadata_json: "{}".into(),
-                }])
-                .unwrap();
-        }
-        let hits = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 2,
-                query_embedding: Some(vec![1.0, 0.0]),
-                recency_half_life_days: Some(30.0),
-                now: Some(now),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(hits[0].document_id, "new");
-        assert!(hits[0].score > hits[1].score);
-    }
-
-    #[test]
-    fn search_vec_respects_wing_room_source_and_archived() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("search_scope.duckdb");
-        let store = Store::open(&path).expect("open");
-        let now = Utc::now();
-
-        let active = Document {
-            id: "active".into(),
-            uri: "uri://active".into(),
-            title: "Active".into(),
-            content: "scoped active body".into(),
-            metadata_json: "{}".into(),
-            created_at: now,
-            updated_at: now,
-            wing: Some("research".into()),
-            room: Some("rag".into()),
-            source_file: Some("/vault/active.md".into()),
-            layer: "raw".into(),
-            status: "active".into(),
-            ..Default::default()
-        };
-        let other_wing = Document {
-            id: "other".into(),
-            uri: "uri://other".into(),
-            title: "Other".into(),
-            content: "other wing body".into(),
-            metadata_json: "{}".into(),
-            created_at: now,
-            updated_at: now,
-            wing: Some("ops".into()),
-            room: Some("runbooks".into()),
-            source_file: Some("/vault/other.md".into()),
-            layer: "wiki".into(),
-            status: "active".into(),
-            ..Default::default()
-        };
-        let archived = Document {
-            id: "arch".into(),
-            uri: "uri://arch".into(),
-            title: "Archived".into(),
-            content: "archived body".into(),
-            metadata_json: "{}".into(),
-            created_at: now,
-            updated_at: now,
-            wing: Some("research".into()),
-            room: Some("rag".into()),
-            source_file: Some("/vault/arch.md".into()),
-            status: "archived".into(),
-            ..Default::default()
-        };
-        store.upsert_document(&active).unwrap();
-        store.upsert_document(&other_wing).unwrap();
-        store.upsert_document(&archived).unwrap();
-
-        let emb = vec![1.0f32, 0.0, 0.0];
-        store
-            .insert_chunks(&[
-                Chunk {
-                    id: "c-active".into(),
-                    document_id: "active".into(),
-                    chunk_index: 0,
-                    content: "scoped active body".into(),
-                    embedding: emb.clone(),
-                    char_start: 0,
-                    char_end: 18,
-                    metadata_json: "{}".into(),
-                },
-                Chunk {
-                    id: "c-other".into(),
-                    document_id: "other".into(),
-                    chunk_index: 0,
-                    content: "other wing body".into(),
-                    embedding: emb.clone(),
-                    char_start: 0,
-                    char_end: 15,
-                    metadata_json: "{}".into(),
-                },
-                Chunk {
-                    id: "c-arch".into(),
-                    document_id: "arch".into(),
-                    chunk_index: 0,
-                    content: "archived body".into(),
-                    embedding: emb.clone(),
-                    char_start: 0,
-                    char_end: 13,
-                    metadata_json: "{}".into(),
-                },
-            ])
-            .unwrap();
-
-        // Selective scopes materialize only their matching chunks and never
-        // populate the database-wide snapshot cache. This is stronger than
-        // merely filtering a global ranking after it has been built.
-        let scoped_cases = [
-            (
-                LexFilters {
-                    document_id: Some("active".into()),
-                    ..Default::default()
-                },
-                vec!["c-active"],
-            ),
-            (
-                LexFilters {
-                    wing: Some("research".into()),
-                    ..Default::default()
-                },
-                vec!["c-active"],
-            ),
-            (
-                LexFilters {
-                    room: Some("rag".into()),
-                    ..Default::default()
-                },
-                vec!["c-active"],
-            ),
-            (
-                LexFilters {
-                    uri: Some("uri://other".into()),
-                    ..Default::default()
-                },
-                vec!["c-other"],
-            ),
-            (
-                LexFilters {
-                    source_file: Some("/vault/other.md".into()),
-                    ..Default::default()
-                },
-                vec!["c-other"],
-            ),
-        ];
-        for (filters, expected) in scoped_cases {
-            let (snapshot, documents) = vector_search_inputs(&store, &filters).unwrap();
-            let chunk_ids = snapshot
-                .chunks
-                .iter()
-                .map(|chunk| chunk.id.as_str())
-                .collect::<Vec<_>>();
-            assert_eq!(chunk_ids, expected);
-            assert_eq!(documents.len(), expected.len());
-        }
-        assert!(
-            !vector_snapshots().lock().unwrap().contains_key(&path),
-            "scoped searches must not populate the global snapshot cache"
-        );
-
-        // Default: exclude archived; no wing filter → active + other.
-        let open = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 10,
-                query_embedding: Some(emb.clone()),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        let ids: Vec<_> = open.iter().map(|h| h.document_id.as_str()).collect();
-        assert!(ids.contains(&"active"));
-        assert!(ids.contains(&"other"));
-        assert!(!ids.contains(&"arch"));
-        assert_eq!(
-            vector_snapshots()
-                .lock()
-                .unwrap()
-                .get(&path)
-                .unwrap()
-                .chunks
-                .len(),
-            3,
-            "the implicit active-status filter alone must retain the global cache path"
-        );
-
-        let (scoped_after_global, _) = vector_search_inputs(
-            &store,
-            &LexFilters {
-                wing: Some("research".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(scoped_after_global.chunks.len(), 1);
-        assert_eq!(
-            vector_snapshots()
-                .lock()
-                .unwrap()
-                .get(&path)
-                .unwrap()
-                .chunks
-                .len(),
-            3,
-            "a scoped read must neither consult nor replace the global snapshot"
-        );
-
-        // Wing filter.
-        let wing = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 10,
-                query_embedding: Some(emb.clone()),
-                wing: Some("research".into()),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(wing.len(), 1);
-        assert_eq!(wing[0].document_id, "active");
-
-        // source_file filter.
-        let by_src = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 10,
-                query_embedding: Some(emb.clone()),
-                source_file: Some("/vault/other.md".into()),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(by_src.len(), 1);
-        assert_eq!(by_src[0].document_id, "other");
-
-        let by_layer = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 10,
-                query_embedding: Some(emb.clone()),
-                layer: Some("raw".into()),
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(by_layer.len(), 1);
-        assert_eq!(by_layer[0].document_id, "active");
-
-        // include_archived + wing.
-        let with_arch = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 10,
-                query_embedding: Some(emb),
-                wing: Some("research".into()),
-                room: Some("rag".into()),
-                include_archived: true,
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        let arch_ids: std::collections::HashSet<_> =
-            with_arch.iter().map(|h| h.document_id.as_str()).collect();
-        assert!(arch_ids.contains("active"));
-        assert!(arch_ids.contains("arch"));
-        assert!(!arch_ids.contains("other"));
-    }
-
-    #[test]
-    fn scoped_vector_search_ranks_inside_scope_before_top_k() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let store = Store::open(&dir.path().join("scoped_top_k.duckdb")).expect("open");
-        let now = Utc::now();
-
-        let target = Document {
-            id: "target".into(),
-            uri: "uri://target".into(),
-            title: "Target".into(),
-            content: "project result".into(),
-            wing: Some("wanted".into()),
-            created_at: now,
-            updated_at: now,
-            ..Default::default()
-        };
-        store.upsert_document(&target).unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: "chunk-target".into(),
-                document_id: target.id.clone(),
-                chunk_index: 0,
-                content: target.content.clone(),
-                embedding: vec![0.0, 1.0],
-                char_start: 0,
-                char_end: 14,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
-
-        // More out-of-scope perfect matches than the candidate pool. The old
-        // global-top-k-then-filter path returned no result for wing="wanted".
-        for index in 0..55 {
-            let id = format!("other-{index:02}");
-            let document = Document {
-                id: id.clone(),
-                uri: format!("uri://{id}"),
-                title: id.clone(),
-                content: "global result".into(),
-                wing: Some("other".into()),
-                created_at: now,
-                updated_at: now,
-                ..Default::default()
-            };
-            store.upsert_document(&document).unwrap();
-            store
-                .insert_chunks(&[Chunk {
-                    id: format!("chunk-{id}"),
-                    document_id: id,
-                    chunk_index: 0,
-                    content: document.content,
-                    embedding: vec![1.0, 0.0],
-                    char_start: 0,
-                    char_end: 13,
-                    metadata_json: "{}".into(),
-                }])
-                .unwrap();
-        }
-
-        let hits = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Vec,
-                top_k: 1,
-                query_embedding: Some(vec![1.0, 0.0]),
-                wing: Some("wanted".into()),
-                timeout_ms: None,
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].document_id, "target");
-        assert_eq!(hits[0].rank_vec, Some(1));
-
-        // Hybrid must use the same scoped vector path, then retain both source
-        // ranks and expose its stage diagnostics on the fused hit.
-        let hybrid = search(
-            &store,
-            &SearchQuery {
-                mode: SearchMode::Hybrid,
-                top_k: 1,
-                query_text: Some("project result".into()),
-                query_embedding: Some(vec![1.0, 0.0]),
-                wing: Some("wanted".into()),
-                rrf_k: 37.0,
-                timeout_ms: None,
-                ..SearchQuery::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(hybrid.len(), 1);
-        assert_eq!(hybrid[0].document_id, "target");
-        assert_eq!(hybrid[0].rank_vec, Some(1));
-        assert_eq!(hybrid[0].rank_lex, Some(1));
-        let explanation = hybrid[0].explanation.as_ref().unwrap();
-        assert!(explanation.vec_ms.is_some());
-        assert!(explanation.lex_ms.is_some());
-        assert_eq!(explanation.rrf_k, Some(37.0));
-    }
-
-    #[test]
-    fn vector_snapshot_refreshes_after_chunk_generation_changes() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("vector-generation.duckdb");
-        let store = Store::open(&path).expect("open");
-        let document = Document {
-            id: "doc".into(),
-            uri: "uri://doc".into(),
-            title: "Document".into(),
-            content: "first".into(),
-            ..Default::default()
-        };
-        store.upsert_document(&document).unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: "before".into(),
-                document_id: document.id.clone(),
-                chunk_index: 0,
-                content: "before content".into(),
-                embedding: vec![1.0, 0.0],
-                char_start: 0,
-                char_end: 14,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
-
-        let first = search_chunks(&store, &[1.0, 0.0], 1, None).unwrap();
-        assert_eq!(first[0].chunk_id, "before");
-        let first_generation = {
-            let conn = store.lock().unwrap();
-            fts::chunks_generation(&conn).unwrap()
-        };
-
-        store
-            .replace_chunks_for_document(
-                &document.id,
-                &[Chunk {
-                    id: "after".into(),
-                    document_id: document.id.clone(),
-                    chunk_index: 0,
-                    content: "after content".into(),
-                    embedding: vec![0.0, 1.0],
-                    char_start: 0,
-                    char_end: 13,
-                    metadata_json: "{}".into(),
-                }],
-            )
-            .unwrap();
-        let second_generation = {
-            let conn = store.lock().unwrap();
-            fts::chunks_generation(&conn).unwrap()
-        };
-        assert!(second_generation > first_generation);
-
-        let second = search_chunks(&store, &[0.0, 1.0], 1, None).unwrap();
-        assert_eq!(second[0].chunk_id, "after");
-        assert_eq!(second[0].content, "after content");
-        let cached_generation = vector_snapshots()
-            .lock()
-            .unwrap()
-            .get(&path)
-            .unwrap()
-            .generation;
-        assert_eq!(cached_generation, second_generation);
-    }
-
-    #[test]
-    fn vector_snapshot_refreshes_after_embedding_only_update() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("vector-embedding-only-generation.duckdb");
-        let store = Store::open(&path).expect("open");
-        for (document_id, chunk_id, embedding) in [
-            ("a-target", "chunk-target", vec![1.0, 0.0]),
-            ("z-rival", "chunk-rival", vec![0.0, 1.0]),
-        ] {
-            store
-                .upsert_document(&Document {
-                    id: document_id.into(),
-                    uri: format!("uri://{document_id}"),
-                    title: document_id.into(),
-                    content: "unchanged searchable text".into(),
-                    ..Default::default()
-                })
-                .unwrap();
-            store
-                .insert_chunks(&[Chunk {
-                    id: chunk_id.into(),
-                    document_id: document_id.into(),
-                    chunk_index: 0,
-                    content: "unchanged searchable text".into(),
-                    embedding,
-                    char_start: 0,
-                    char_end: 25,
-                    metadata_json: "{}".into(),
-                }])
-                .unwrap();
-        }
-
-        let before = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
-        assert_eq!(before[0].document_id, "z-rival");
-        let cached_before = vector_snapshots()
-            .lock()
-            .unwrap()
-            .get(&path)
-            .unwrap()
-            .generation;
-
-        let document = store.get_document("a-target").unwrap().unwrap();
-        let chunks = store.list_chunks_for_document(&document.id).unwrap();
-        store
-            .update_chunk_embeddings_atomic(
-                &document.id,
-                document.revision,
-                &chunks,
-                &[vec![0.0, 1.0]],
-                None,
-            )
-            .unwrap();
-
-        let after = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
-        assert_eq!(after[0].document_id, "a-target");
-        let cached_after = vector_snapshots()
-            .lock()
-            .unwrap()
-            .get(&path)
-            .unwrap()
-            .generation;
-        assert!(cached_after > cached_before);
-    }
-
-    #[tokio::test]
-    async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("hybrid-source-sync-busy.duckdb");
-        let store = Store::open(&path).expect("open");
-        let document = Document {
-            id: "project-doc".into(),
-            uri: "uri://project-doc".into(),
-            title: "Project document".into(),
-            content: "needle".into(),
-            wing: Some("project".into()),
-            ..Default::default()
-        };
-        store.upsert_document(&document).unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: "project-chunk".into(),
-                document_id: document.id.clone(),
-                chunk_index: 0,
-                content: document.content.clone(),
-                embedding: vec![1.0, 0.0],
-                char_start: 0,
-                char_end: 6,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
-        store.ensure_fts("porter").unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: "project-chunk-new".into(),
-                document_id: document.id.clone(),
-                chunk_index: 1,
-                content: "fresh needle".into(),
-                embedding: vec![1.0, 0.0],
-                char_start: 7,
-                char_end: 19,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
-
-        let lifecycle_before = {
-            let conn = store.lock().unwrap();
-            fts::fts_generation_state(&conn).unwrap()
-        };
-        assert!(lifecycle_before.dirty);
-
-        let sync_guard = store.corpus_mutation_lane().write_owned().await;
-        let hybrid_query = SearchQuery {
-            mode: SearchMode::Hybrid,
-            top_k: 5,
-            query_text: Some("needle".into()),
-            query_embedding: Some(vec![1.0, 0.0]),
-            wing: Some("project".into()),
-            ..SearchQuery::default()
-        };
-        let lex_query = SearchQuery {
-            mode: SearchMode::Lex,
-            query_text: Some("needle".into()),
-            wing: Some("project".into()),
-            ..SearchQuery::default()
-        };
-        let vec_query = SearchQuery {
-            mode: SearchMode::Vec,
-            top_k: 5,
-            query_embedding: Some(vec![1.0, 0.0]),
-            wing: Some("project".into()),
-            ..SearchQuery::default()
-        };
-        for query in [&lex_query, &vec_query, &hybrid_query] {
-            let error = search(&store, query).unwrap_err();
-            let AppError::Busy(message) = error else {
-                panic!("expected retryable busy error, got {error}");
-            };
-            assert_eq!(
-                message,
-                "exclusive corpus mutation is active; retry search after it completes"
-            );
-            assert!(!message.contains("http"));
-            assert!(!message.contains(&path.display().to_string()));
-        }
-        let lifecycle_while_busy = {
-            let conn = store.lock().unwrap();
-            fts::fts_generation_state(&conn).unwrap()
-        };
-        assert_eq!(lifecycle_while_busy, lifecycle_before);
-        assert!(!vector_snapshots().lock().unwrap().contains_key(&path));
-
-        drop(sync_guard);
-        let hits = search(&store, &hybrid_query).unwrap();
-        assert!(hits.iter().any(|hit| hit.chunk_id == "project-chunk-new"));
-        let lifecycle_after = {
-            let conn = store.lock().unwrap();
-            fts::fts_generation_state(&conn).unwrap()
-        };
-        assert!(!lifecycle_after.dirty);
-        assert_eq!(
-            lifecycle_after.rebuild_count,
-            lifecycle_before.rebuild_count + 1
-        );
-    }
-
-    #[test]
-    fn query_guards_and_multi_rrf_are_deterministic() {
-        let empty = SearchQuery {
-            mode: SearchMode::Lex,
-            query_text: Some("  ".into()),
-            ..SearchQuery::default()
-        };
-        assert!(validate_query(&empty)
-            .unwrap_err()
-            .to_string()
-            .contains("must not be empty"));
-        let too_long = SearchQuery {
-            mode: SearchMode::Lex,
-            query_text: Some("x".repeat(MAX_QUERY_CHARS + 1)),
-            ..SearchQuery::default()
-        };
-        assert!(validate_query(&too_long).is_err());
-        let too_many = SearchQuery {
-            top_k: MAX_TOP_K + 1,
-            ..SearchQuery::default()
-        };
-        assert!(validate_query(&too_many)
-            .unwrap_err()
-            .to_string()
-            .contains("hard cap"));
-
-        let lists = vec![
-            vec![sample_hit("b", "d2", 1.0), sample_hit("a", "d1", 1.0)],
-            vec![sample_hit("a", "d1", 1.0), sample_hit("b", "d2", 1.0)],
-        ];
-        let first = fuse_rrf_many(&lists, DEFAULT_RRF_K, 10);
-        let second = fuse_rrf_many(&lists, DEFAULT_RRF_K, 10);
-        assert_eq!(
-            first.iter().map(|h| &h.chunk_id).collect::<Vec<_>>(),
-            second.iter().map(|h| &h.chunk_id).collect::<Vec<_>>()
-        );
-        assert_eq!(first[0].chunk_id, "a");
-        assert!(first[0]
-            .explanation
-            .as_ref()
-            .unwrap()
-            .reasons
-            .contains(&"multi_query_rrf".into()));
-    }
-
-    #[test]
-    fn field_boosts_explain_title_uri_heading_pin_and_document_boost() {
-        let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("boosts.duckdb")).unwrap();
-        let document = Document {
-            id: "d".into(),
-            uri: "rag://exact-topic".into(),
-            title: "Exact Topic".into(),
-            content: "body".into(),
-            metadata_json: "{}".into(),
-            pinned: true,
-            boost: 2.0,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            ..Default::default()
-        };
-        store.upsert_document(&document).unwrap();
-        let mut hits = vec![SearchHit {
-            chunk_id: "c".into(),
-            document_id: "d".into(),
-            document_title: document.title.clone(),
-            document_uri: document.uri.clone(),
-            chunk_index: 0,
-            content: "body".into(),
-            score: 1.0,
-            heading_path: Some(vec!["Exact Topic".into()]),
-            ..Default::default()
-        }];
-        apply_field_boosts(&store, &mut hits, Some("Exact Topic")).unwrap();
-        let reasons = &hits[0].explanation.as_ref().unwrap().reasons;
-        for expected in [
-            "exact_title_boost",
-            "uri_match_boost",
-            "heading_match_boost",
-            "pinned_document_boost",
-            "document_boost",
-        ] {
-            assert!(
-                reasons.iter().any(|reason| reason == expected),
-                "missing {expected}"
-            );
-        }
-        assert!(hits[0].score > 3.0);
-    }
-
-    #[test]
-    fn search_context_budget_includes_expansion_and_zero_returns_no_hits() {
-        let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("context-budget.duckdb")).unwrap();
-        let doc = Document {
-            id: "budget-doc".into(),
-            uri: "wiki://budget".into(),
-            title: "Budget document".into(),
-            content: "expanded context".into(),
-            ..Default::default()
-        };
-        store.upsert_document(&doc).unwrap();
-        let chunks: Vec<Chunk> = (0..3)
-            .map(|i| Chunk {
-                id: format!("budget-chunk-{i}"),
-                document_id: doc.id.clone(),
-                chunk_index: i,
-                content: "Русский expanded context 🦀 ".repeat(1_000),
-                embedding: vec![1.0, 0.0],
-                char_start: 0,
-                char_end: 100,
-                metadata_json: r#"{"heading_path":["Budget"]}"#.into(),
-            })
-            .collect();
-        store.insert_chunks(&chunks).unwrap();
-        for budget in [0, 1, 32] {
-            let query = SearchQuery {
-                top_k: 1,
-                query_embedding: Some(vec![1.0, 0.0]),
-                mode: SearchMode::Vec,
-                max_context_tokens: Some(budget),
-                context_expansion: Some(ContextExpansion::ParentSection),
-                ..Default::default()
-            };
-            let hits = search(&store, &query).unwrap();
-            let block = crate::search_pack::format_context_block(&hits);
-            assert!(crate::search_pack::estimate_tokens(&block) <= budget);
-            if budget < 32 {
-                assert!(hits.is_empty());
-            } else {
-                assert_eq!(hits.len(), 1);
-                assert!(hits[0].context.is_none());
-                assert!(hits[0].snippet.is_none());
-            }
-        }
-    }
-
-    #[test]
-    fn diversity_refill_recovers_second_document_in_every_mode_without_scope_leaks() {
-        let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("diversity-refill.duckdb")).unwrap();
-        for (id, wing, count) in [
-            ("dominant", "project", 60),
-            ("second", "project", 1),
-            ("foreign", "other", 80),
-        ] {
-            store
-                .upsert_document(&Document {
-                    id: id.into(),
-                    uri: format!("doc://{id}"),
-                    title: id.into(),
-                    wing: Some(wing.into()),
-                    content: "needle".into(),
-                    ..Default::default()
-                })
-                .unwrap();
-            let chunks: Vec<Chunk> = (0..count)
-                .map(|index| Chunk {
-                    id: format!("{id}-{index}"),
-                    document_id: id.into(),
-                    chunk_index: index,
-                    content: if id == "second" {
-                        "needle distant unrelated body".into()
-                    } else {
-                        "needle needle needle needle".into()
-                    },
-                    embedding: if id == "second" {
-                        vec![0.8, 0.6]
-                    } else {
-                        vec![1.0, 0.0]
-                    },
-                    char_start: 0,
-                    char_end: 26,
-                    metadata_json: "{}".into(),
-                })
-                .collect();
-            store.insert_chunks(&chunks).unwrap();
-        }
-        for mode in [SearchMode::Vec, SearchMode::Lex, SearchMode::Hybrid] {
-            let query = SearchQuery {
-                mode,
-                top_k: 2,
-                query_text: Some("needle".into()),
-                query_embedding: Some(vec![1.0, 0.0]),
-                wing: Some("project".into()),
-                max_chunks_per_document: Some(1),
-                timeout_ms: Some(10_000),
-                ..Default::default()
-            };
-            let hits = search(&store, &query).unwrap();
-            assert_eq!(hits.len(), 2, "mode={mode:?}");
-            let ids: HashSet<_> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
-            assert_eq!(ids, HashSet::from(["dominant", "second"]), "mode={mode:?}");
-            assert!(
-                hits.iter().all(|hit| hit
-                    .explanation
-                    .as_ref()
-                    .unwrap()
-                    .reasons
-                    .contains(&"diversity_candidate_refill".into())),
-                "mode={mode:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn diversity_refill_capacity_ignores_duplicate_chunks_and_min_score_rejections() {
-        let hits = vec![
-            sample_hit("a", "one", 1.0),
-            sample_hit("a", "one", 1.0),
-            sample_hit("b", "one", 0.9),
-            sample_hit("c", "two", 0.1),
-        ];
-        let query = SearchQuery {
-            max_chunks_per_document: Some(1),
-            min_score: Some(0.5),
-            ..Default::default()
-        };
-        assert_eq!(diversity_capacity(&hits, &query), Some(1));
-        assert_eq!(diversity_capacity(&hits, &SearchQuery::default()), None);
-    }
-
-    #[test]
-    fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
-        let root = tempfile::tempdir().unwrap();
-        let store = Store::open(&root.path().join("diversity-cap.duckdb")).unwrap();
-        store
-            .upsert_document(&Document {
-                id: "dominant".into(),
-                uri: "doc://dominant".into(),
-                title: "Dominant".into(),
-                content: "needle".into(),
-                ..Default::default()
-            })
-            .unwrap();
-        let chunks: Vec<Chunk> = (0..MAX_DIVERSITY_CANDIDATES + 1)
-            .map(|i| Chunk {
-                id: format!("cap-{i}"),
-                document_id: "dominant".into(),
-                chunk_index: i as i32,
-                content: "needle".into(),
-                embedding: vec![1.0, 0.0],
-                char_start: 0,
-                char_end: 6,
-                metadata_json: "{}".into(),
-            })
-            .collect();
-        store.insert_chunks(&chunks).unwrap();
-        let query = SearchQuery {
-            top_k: 2,
-            query_embedding: Some(vec![1.0, 0.0]),
-            max_chunks_per_document: Some(1),
-            // Not a promptness test: the 4 097-chunk scan outgrows any fixed wall on CI hardware.
-            timeout_ms: None,
-            ..Default::default()
-        };
-        let hits = search(&store, &query).unwrap();
-        assert_eq!(hits.len(), 1);
-        let explanation = hits[0].explanation.as_ref().unwrap();
-        assert!(explanation
-            .reasons
-            .contains(&"diversity_candidate_cap_reached".into()));
-        assert!(explanation.vec_ms.unwrap() > 0.0);
-        let scoped = search(
-            &store,
-            &SearchQuery {
-                document_id: Some("dominant".into()),
-                ..query
-            },
-        )
-        .unwrap();
-        assert!(!scoped[0]
-            .explanation
-            .as_ref()
-            .unwrap()
-            .reasons
-            .contains(&"diversity_candidate_refill".into()));
-    }
-}
+mod tests;

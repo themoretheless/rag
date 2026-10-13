@@ -2,7 +2,7 @@
 
 **Product:** `rag-mcp`
 
-**Updated:** 2026-09-03
+**Updated:** 2026-10-08
 
 **North star:** [`ARCHITECTURE_VISION.md`](ARCHITECTURE_VISION.md)
 
@@ -105,18 +105,35 @@ database path is published last as the generation commit marker.
 | `source_scan.rs`, `source_sync.rs` | source discovery, manifest-aware bounded batching, ordered progress and cancellation |
 | `retrieval.rs`, `search_pack.rs` | validated search use cases, multi-get/expand/similar and token packing |
 | `revisions.rs` | revision diff and CAS-protected restore use cases |
-| `diagnostics.rs`, `ops.rs` | shared HTTP/MCP health/status/doctor policy, aggregate layer health and scheduled operational state |
-| `graph/` | pure wikilink/tag extraction and resolution |
-| `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams |
+| `diagnostics.rs`, `ops.rs` | shared HTTP/MCP health/status/doctor policy and report DTOs, aggregate layer health and scheduled operational state |
+| `graph/` | re-exports `rag-mcp-markup` extraction; resolution persists through `db::graph::resolve` |
+| `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams; `wiki::put_wiki_page` is the slug/uri/id upsert policy used by HTTP |
 | `maintain/`, `memory_lifecycle.rs`, `diary/` | explicit maintenance and memory workflows |
-| `db/store.rs` | compatibility DuckDB façade and transaction boundary |
+| `db/store.rs`, `db/store/*.rs` | DuckDB façade and transaction boundary (`Store::with_tx`); methods grouped by documents, chunks, health, revisions, schema/diary, corpus lane, manifest, ops log and wiki index. `Store::lock` is private to `db` outside tests |
+| `db/{payload_kv,analytics,knowledge,chunk_text,review}.rs`, `db/graph/resolve.rs` | repositories for the former direct-lock callers: JSON payload tables (`with_session` for read-modify-write), corpus analytics, knowledge catalog, chunk text pages, review accept, graph resolution |
+| `db/embedding_identity.rs` | `EmbeddingIdentity` trait so the store checks the manifest without importing `config` |
+| `context.rs` | `AppContext` (store, embedder, config, chat client) built once at start-up and shared by HTTP and MCP |
+| `jobs.rs` | background job registry, lifecycle and persistence; `http_api/jobs.rs` only routes |
 | `db/{rows,fts,search,graph,kg,catalog,source_manifest,recovery,vault}.rs` | persistence repositories, scoped/global retrieval snapshots, aggregate health, atomic single-artifact recovery publication and coordinated backup-group publication |
 | `storage/` | small backend-neutral document contract; DuckDB and Markdown implementations |
 | `access.rs`, `http_api/auth.rs` | explicit MCP roles, shared HTTP/MCP Bearer authentication, HTTP operation permissions and remote startup guard |
-| `mcp/facade.rs`, `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs` | macro composition root and bounded MCP tool routers; per-request role checks and filtered tool discovery |
-| `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters |
+| `mcp/facade.rs` | shared `RagServer` state, application-service adapters, per-request role checks, filtered tool discovery and audited dispatch |
+| `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs`, `mcp/server.rs`, `mcp/views.rs` | domain-owned MCP tool implementations (one `#[tool_router]` each) added together in `server.rs`; shared document/chunk response views |
+| `mcp/error.rs`, `http_api/error.rs`, `AppError::code` | one wire error vocabulary; JSON-RPC and HTTP envelopes only classify |
+| `util/{blocking,text,time}.rs` | shared blocking/detached task helpers, optional-string normalization and timestamp parsing used by both transports |
+| `config.rs` | environment parsing and validation, including `ToolSurface` and the `RAG_HTTP_BIND` gate; imports no transport |
+| `activity.rs`, `telemetry.rs` | process-local activity feed and call log written by both transports; `http_api` only serves them |
+| `bootstrap.rs` | shared start-up for `main` and the offline tools (tracing, configured store, manifest check, embedder) |
+| `llm/json.rs`, `maintain/audit.rs` | one parser for JSON in model output; one terminal `MAINT` audit row per maintenance run |
+| `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters (`activity.rs` only serves `/v1/activity`) |
+| `crates/rag-mcp-markup` | pure `[[wikilink]]`/`#tag` parsing and label normalization; the server graph and the native UI renderer share it |
+| `crates/rag-mcp-core` | wire types shared by the server and clients: graph view, search hits, project home, background jobs, activity events, `Layer`/`NodeKind` (serde + chrono only) |
+| `web-svelte/src/api/types.ts` | web client wire types; the graph and search shapes are checked against Rust by `tests/it/web_types_contract_test.rs` |
 | `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
-| `crates/rag-mcp-ui/src/ui/` | workspace rendering; `app.rs` coordinates navigation and worker state |
+| `crates/rag-mcp-ui/src/direct_db.rs` | read-only `--db` mode behind the default `direct-db` feature; the only UI code that links the server crate |
+| `crates/rag-mcp-ui/src/ui/` | workspace rendering |
+| `crates/rag-mcp-ui/src/app/` | `GraphApp` state (`mod.rs`), worker events, per-frame layout, graph, wiki and revision behaviour |
+| `crates/rag-mcp-ui/src/worker.rs` | worker thread; `LoadSource` methods pick the HTTP or direct-db path once per operation |
 
 ## 4. Structural seams
 
@@ -134,9 +151,9 @@ database path is published last as the generation commit marker.
 | Native client → gateway | product workspaces consume lean APIs through one sanitized transport boundary; `/v1/projects` is authoritative independently from graph topology | graph failure is isolated to Connections; catalog failure retains the last authoritative list and has a targeted retry; Search responses retain submitted-request provenance; Library cursors reuse applied filters only; backlinks are project-scoped and failures stay visible; no second live DuckDB reader/writer is required; direct `--db` Wiki is read-only; project changes cannot drop in-flight wiki, restore or Operations mutations; verified backup gets a 30-minute timeout |
 | `Storage` | backend identity, capabilities and document lifecycle | unsupported backends/capabilities fail explicitly; no silent DuckDB alias |
 
-Compatibility boundaries are intentional: `mcp/facade.rs` remains the rmcp
-macro composition root, `Store` remains the public DuckDB façade, and `wing`
-remains the v1 wire/storage alias for project.
+Compatibility boundaries are intentional: `mcp/server.rs` is the rmcp router
+composition root while domain modules own their tools, `Store` remains the
+public DuckDB façade, and `wing` remains the v1 wire/storage alias for project.
 
 ## 5. Main workflows
 
@@ -227,7 +244,7 @@ Markdown application backend requires the conformance gate in the roadmap.
 
 | Concentration | Current risk | Gate |
 |---------------|--------------|------|
-| `Store`, `wiki`, `mcp/facade` and native `app` remain large compatibility/orchestration roots | Mechanical splitting could duplicate policy or break wire behavior | New workflows must enter through existing application seams; extract only with behavior tests |
+| `Store`, `wiki` and native `app` remain large compatibility/orchestration roots | Mechanical splitting could duplicate policy or break wire behavior | New workflows must enter through existing application seams; extract only with behavior tests |
 | Markdown implements only the document slice | Capability names can be mistaken for full parity | Shared search/graph/recovery conformance before it is marketed as a full backend |
 | Exact vector search is O(n) | Future corpora may exceed latency/RSS targets | ANN only after the roadmap's repeated 300 ms or resource gate fails |
 | Native layout has unit tests but no deterministic screenshot suite | Visual regressions can pass compilation | Add screenshot baselines only under the roadmap's visual-regression entry condition |

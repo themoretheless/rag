@@ -51,6 +51,92 @@ pub trait EmbeddingProvider: Send + Sync {
     fn dimensions(&self) -> usize;
 }
 
+/// [`EmbeddingProvider::embed`] that fails unless exactly one vector comes back
+/// per input, so callers can zip results with their inputs safely.
+pub async fn embed_exact(
+    embedder: &dyn EmbeddingProvider,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>> {
+    let vectors = embedder.embed(texts).await?;
+    if vectors.len() != texts.len() {
+        return Err(crate::error::AppError::embeddings(format!(
+            "embedder returned {} vectors for {} inputs",
+            vectors.len(),
+            texts.len()
+        )));
+    }
+    Ok(vectors)
+}
+
+/// Serves vectors computed ahead of time by one batched call, and forwards
+/// anything else to the wrapped provider.
+///
+/// Callers that write many documents one at a time (replication applies one
+/// page per event) prepare all chunk texts first, embed them in a single
+/// request, then run the unchanged per-document write with this wrapper. A
+/// text the prediction missed still embeds correctly through `inner`.
+pub(crate) struct PrecomputedEmbedder {
+    inner: Arc<dyn EmbeddingProvider>,
+    vectors: std::collections::HashMap<String, Vec<f32>>,
+}
+
+impl PrecomputedEmbedder {
+    /// Wrap `inner` with vectors already known for some texts.
+    pub(crate) fn with_vectors(
+        inner: Arc<dyn EmbeddingProvider>,
+        vectors: std::collections::HashMap<String, Vec<f32>>,
+    ) -> Self {
+        Self { inner, vectors }
+    }
+
+    /// Embed `texts` once (deduplicated) and wrap `inner` with the results.
+    pub(crate) async fn prepare(
+        inner: Arc<dyn EmbeddingProvider>,
+        texts: Vec<String>,
+    ) -> Result<Self> {
+        let mut unique = texts;
+        unique.sort();
+        unique.dedup();
+        let vectors = if unique.is_empty() {
+            Vec::new()
+        } else {
+            embed_exact(inner.as_ref(), &unique).await?
+        };
+        Ok(Self {
+            inner,
+            vectors: unique.into_iter().zip(vectors).collect(),
+        })
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for PrecomputedEmbedder {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let missing: Vec<String> = texts
+            .iter()
+            .filter(|text| !self.vectors.contains_key(*text))
+            .cloned()
+            .collect();
+        let mut fetched = if missing.is_empty() {
+            Vec::new()
+        } else {
+            embed_exact(self.inner.as_ref(), &missing).await?
+        }
+        .into_iter();
+        Ok(texts
+            .iter()
+            .map(|text| match self.vectors.get(text) {
+                Some(vector) => vector.clone(),
+                None => fetched.next().expect("one vector per missing text"),
+            })
+            .collect())
+    }
+
+    fn dimensions(&self) -> usize {
+        self.inner.dimensions()
+    }
+}
+
 /// Sole kind→ctor switch for production embedders.
 ///
 /// Matches [`Config::embedding_provider`] once and returns a trait object.
@@ -64,7 +150,7 @@ pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
         EmbeddingProviderKind::OpenAi => {
             let provider = OpenAiEmbedder::new(
                 config.embedding_base_url.clone(),
-                config.embedding_api_key.clone(),
+                config.embedding_api_key.expose().to_string(),
                 config.embedding_model.clone(),
                 config.embedding_dims,
             )?;
@@ -76,7 +162,7 @@ pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
             if ollama::prefers_openai_compat_path(&config.embedding_base_url) {
                 let provider = OpenAiEmbedder::new(
                     config.embedding_base_url.clone(),
-                    config.embedding_api_key.clone(),
+                    config.embedding_api_key.expose().to_string(),
                     config.embedding_model.clone(),
                     config.embedding_dims,
                 )?;
@@ -137,6 +223,53 @@ pub fn l2_normalize(v: &mut [f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn precomputed_embedder_serves_prepared_texts_and_forwards_the_rest() {
+        struct Counting {
+            inner: mock::MockEmbedder,
+            calls: std::sync::atomic::AtomicUsize,
+        }
+        #[async_trait::async_trait]
+        impl EmbeddingProvider for Counting {
+            async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.inner.embed(texts).await
+            }
+            fn dimensions(&self) -> usize {
+                self.inner.dimensions()
+            }
+        }
+        let counting = Arc::new(Counting {
+            inner: mock::MockEmbedder::new(8),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let inner: Arc<dyn EmbeddingProvider> = counting.clone();
+        let texts = vec!["alpha".to_string(), "beta".to_string(), "alpha".to_string()];
+        let precomputed = PrecomputedEmbedder::prepare(inner.clone(), texts)
+            .await
+            .unwrap();
+        assert_eq!(counting.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        let served = precomputed
+            .embed(&["beta".to_string(), "alpha".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(counting.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        let direct = inner
+            .embed(&["beta".to_string(), "alpha".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(served, direct);
+
+        let mixed = precomputed
+            .embed(&["gamma".to_string(), "alpha".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(mixed.len(), 2);
+        assert_eq!(mixed[1], direct[1]);
+    }
 
     #[test]
     fn cosine_identical_unit_vectors() {

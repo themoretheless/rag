@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::path::{Path, MAIN_SEPARATOR};
 
 use duckdb::{params, params_from_iter};
-use serde::{Deserialize, Serialize};
 
 use super::store::Store;
 use crate::error::{AppError, Result};
+
+pub use rag_mcp_core::SourceRootSummary;
 
 /// Manifest state plus the joined document/chunk health needed by source sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,14 +42,6 @@ pub struct SourceManifestWrite<'a> {
     pub document_id: &'a str,
 }
 
-/// Lean source-root aggregate for project registry / status surfaces.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceRootSummary {
-    pub canonical_root: String,
-    pub file_count: u64,
-    pub last_seen: Option<String>,
-    pub last_synced: Option<String>,
-}
 
 impl Store {
     /// List synchronized roots, optionally restricted to one project (`wing`).
@@ -80,14 +73,15 @@ impl Store {
             None => stmt.query([])?,
         };
         let mut roots = Vec::new();
-        while let Some(row) = rows.next()? {
+        crate::db::rows::visit_rows(&mut rows, |row| {
             roots.push(SourceRootSummary {
                 canonical_root: row.get(0)?,
                 file_count: row.get::<_, i64>(1)?.max(0) as u64,
                 last_seen: row.get(2)?,
                 last_synced: row.get(3)?,
             });
-        }
+            Ok(())
+        })?;
         Ok(roots)
     }
 
@@ -158,10 +152,13 @@ impl Store {
                 d.wing AS document_wing,
                 d.room AS document_room
               FROM root_documents d
+              -- Two equality anti-joins instead of one OR predicate, which
+              -- DuckDB would run as a documents x manifest nested loop.
               WHERE NOT EXISTS (
-                SELECT 1
-                FROM source_manifest sm
-                WHERE sm.canonical_path = d.source_file OR sm.document_id = d.id
+                SELECT 1 FROM source_manifest sm WHERE sm.canonical_path = d.source_file
+              )
+                AND NOT EXISTS (
+                SELECT 1 FROM source_manifest sm WHERE sm.document_id = d.id
               )
             )
             SELECT * FROM combined
@@ -170,7 +167,7 @@ impl Store {
         )?;
         let mut rows = stmt.query(params![root, prefix, root, root, prefix, root])?;
         let mut entries = HashMap::new();
-        while let Some(row) = rows.next()? {
+        crate::db::rows::visit_rows(&mut rows, |row| {
             let canonical_path: String = row.get(0)?;
             let size_bytes = row.get::<_, i64>(2)?.max(0) as u64;
             entries
@@ -193,7 +190,8 @@ impl Store {
                     document_wing: row.get(14)?,
                     document_room: row.get(15)?,
                 });
-        }
+            Ok(())
+        })?;
         Ok(entries)
     }
 
@@ -201,6 +199,19 @@ impl Store {
     pub fn upsert_source_manifest(&self, entry: SourceManifestWrite<'_>) -> Result<()> {
         let conn = self.lock()?;
         upsert_source_manifest_locked(&conn, entry)
+    }
+
+    /// Upsert several manifest rows in one transaction (all or nothing).
+    pub fn upsert_source_manifests(&self, entries: &[SourceManifestWrite<'_>]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.with_tx(|tx| {
+            for entry in entries {
+                upsert_source_manifest_locked(tx, *entry)?;
+            }
+            Ok(())
+        })
     }
 
     /// Update `last_seen` for a scanned root in bounded batches, without one

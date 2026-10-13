@@ -9,6 +9,11 @@ pub enum AppError {
     #[error("config error: {0}")]
     Config(String),
 
+    /// Caller input that fails validation (missing field, bad value, bad range).
+    /// Same wire code as `Config`; the message no longer claims a config fault.
+    #[error("invalid request: {0}")]
+    Invalid(String),
+
     /// DuckDB / storage failures.
     #[error("database error: {0}")]
     Db(String),
@@ -63,12 +68,8 @@ impl From<duckdb::Error> for AppError {
     }
 }
 
-impl From<reqwest::Error> for AppError {
-    fn from(err: reqwest::Error) -> Self {
-        // Chat and embeddings share reqwest; callers usually wrap context.
-        AppError::Embeddings(err.to_string())
-    }
-}
+// No blanket `From<reqwest::Error>`: chat, embeddings and replication share
+// reqwest, so each call site names its own variant (`Llm`, `Embeddings`, …).
 
 impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {
@@ -77,9 +78,40 @@ impl From<serde_json::Error> for AppError {
 }
 
 impl AppError {
+    /// Stable machine-readable code shared by the HTTP envelope and MCP error data.
+    ///
+    /// Single owner of the wire vocabulary: add a variant here and both
+    /// transports pick it up without touching their mappers.
+    pub fn code(&self) -> &'static str {
+        match self {
+            AppError::Config(_) | AppError::Invalid(_) => "INVALID_REQUEST",
+            AppError::Db(_) => "DATABASE_ERROR",
+            AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
+            AppError::Llm(_) => "LLM_ERROR",
+            AppError::Io(_) => "IO_ERROR",
+            AppError::Chunking(_) => "CHUNKING_ERROR",
+            AppError::NotFound(_) => "NOT_FOUND",
+            AppError::Fts(_) => "FTS_ERROR",
+            AppError::Conflict(_) => "CONFLICT",
+            AppError::Forbidden(_) => "FORBIDDEN",
+            AppError::Busy(_) => "STORE_BUSY",
+            AppError::Other(_) => "INTERNAL_ERROR",
+        }
+    }
+
+    /// Whether a client may retry the identical request after a short delay.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, AppError::Busy(_))
+    }
+
     /// Convenience constructor for LLM chat errors.
     pub fn llm(msg: impl Into<String>) -> Self {
         AppError::Llm(msg.into())
+    }
+
+    /// Convenience constructor for caller-input validation errors.
+    pub fn invalid(msg: impl Into<String>) -> Self {
+        AppError::Invalid(msg.into())
     }
 
     /// Convenience constructor for config errors.
@@ -125,5 +157,22 @@ impl AppError {
     /// Convenience constructor for store-busy / write-lock errors.
     pub fn busy(msg: impl Into<String>) -> Self {
         AppError::Busy(msg.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+
+    #[test]
+    fn only_busy_is_retryable_and_codes_are_stable() {
+        assert_eq!(AppError::busy("lane").code(), "STORE_BUSY");
+        assert!(AppError::busy("lane").is_retryable());
+        assert_eq!(AppError::config("x").code(), "INVALID_REQUEST");
+        assert!(!AppError::config("x").is_retryable());
+        assert_eq!(
+            AppError::Other(anyhow::anyhow!("boom")).code(),
+            "INTERNAL_ERROR"
+        );
     }
 }

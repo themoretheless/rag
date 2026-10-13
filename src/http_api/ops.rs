@@ -70,7 +70,7 @@ const CAPABILITY_FEATURES: &[&str] = &[
     "database_sync_transport",
 ];
 
-const PRODUCT_ROUTES: &[(&str, &str)] = &[
+pub(super) const PRODUCT_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health"),
     ("GET", "/live"),
     ("GET", "/ready"),
@@ -177,20 +177,34 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/operations/backup", post(backup))
 }
 
-fn server(st: &HttpState) -> RagServer {
-    RagServer::new((*st.store).clone(), st.embedder.clone(), st.config.clone())
+#[derive(Deserialize)]
+struct StatusQuery {
+    /// Counts only, for pollers; see `DiagnosticsService::status_summary`.
+    #[serde(default, deserialize_with = "super::query_flag")]
+    summary: bool,
 }
-async fn status(State(st): State<HttpState>) -> impl IntoResponse {
-    match DiagnosticsService::new(&st.store, &st.config).status() {
-        Ok(value) => api_ok(value),
-        Err(error) => api_err(error),
-    }
+
+async fn status(
+    State(st): State<HttpState>,
+    Query(query): Query<StatusQuery>,
+) -> impl IntoResponse {
+    crate::util::blocking_section(|| {
+        let service = DiagnosticsService::new(&st.store, &st.config);
+        let result = if query.summary {
+            service.status_summary().map(api_ok)
+        } else {
+            service.status().map(api_ok)
+        };
+        result.unwrap_or_else(api_err)
+    })
 }
 async fn doctor(State(st): State<HttpState>) -> impl IntoResponse {
-    match DiagnosticsService::new(&st.store, &st.config).doctor() {
-        Ok(value) => api_ok(value),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match DiagnosticsService::new(&st.store, &st.config).doctor() {
+            Ok(value) => api_ok(value),
+            Err(error) => api_err(error),
+        }
+    })
 }
 async fn version() -> impl IntoResponse {
     api_ok(
@@ -198,10 +212,10 @@ async fn version() -> impl IntoResponse {
     )
 }
 async fn projects(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.list_projects() {
+    crate::util::blocking_section(|| match st.store.list_projects() {
         Ok(items) => api_ok(json!({"ok":true, "items":items})),
         Err(error) => api_err(error),
-    }
+    })
 }
 #[derive(Deserialize)]
 struct ProjectHomeQuery {
@@ -212,17 +226,17 @@ async fn project_home(
     State(st): State<HttpState>,
     Query(query): Query<ProjectHomeQuery>,
 ) -> impl IntoResponse {
-    match st.store.project_home(&query.project) {
+    crate::util::blocking_section(|| match st.store.project_home(&query.project) {
         Ok(value) => api_ok(json!({"ok": true, "project": value})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 async fn checkpoint(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.vacuum_store() {
+    crate::util::blocking_section(|| match st.store.vacuum_store() {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]
@@ -261,7 +275,7 @@ const fn default_true() -> bool {
 async fn capabilities(State(st): State<HttpState>) -> impl IntoResponse {
     api_ok(json!({
         "api_version":"v1", "mcp_http":st.mcp_http, "tool_surface":st.config.tool_surface.as_str(),
-        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { server(&st).tool_count() },
+        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { RagServer::registered_tool_count() },
         "features":CAPABILITY_FEATURES,
         "deprecated_tools":[],
         "auth":st.auth
@@ -289,7 +303,7 @@ mod tests {
     use crate::embeddings::MockEmbedder;
 
     fn state(mcp_http: bool) -> HttpState {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("ops-http.duckdb"),
             embedding_dims: 16,
@@ -575,7 +589,7 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         entry.last_tool = Some(activity.last_tool);
         entry.p95_ms = activity.p95_ms;
     }
-    let ops = match st.store.list_recent_ops(AGENT_SCAN_ROWS) {
+    let ops = match crate::util::blocking_section(|| st.store.list_recent_ops(AGENT_SCAN_ROWS)) {
         Ok(value) => value,
         Err(error) => return api_err(error),
     };
@@ -590,10 +604,13 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
             entry.last_op = Some(op.prefix.clone().unwrap_or_else(|| op.op.clone()));
         }
     }
-    let diary = match st.store.list_diary_entries(None, AGENT_SCAN_ROWS) {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
+    // Counts and timestamps only: read diary rows without their bodies.
+    let diary =
+        match crate::util::blocking_section(|| st.store.list_diary_activity(None, AGENT_SCAN_ROWS))
+        {
+            Ok(value) => value,
+            Err(error) => return api_err(error),
+        };
     for entry in diary {
         let agent = row(&mut rows, &entry.agent_name);
         agent.diary_count += 1;

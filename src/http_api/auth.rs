@@ -36,11 +36,11 @@ impl HttpAuth {
     pub(super) fn local_for_tests() -> Self {
         Self::from_tokens(None, None, None).unwrap()
     }
-    pub(crate) fn from_env() -> Result<Self, AppError> {
+    pub(crate) fn from_config(config: &crate::config::Config) -> Result<Self, AppError> {
         Self::from_tokens(
-            token_env(AccessRole::Read.env_name())?.as_deref(),
-            token_env(AccessRole::Write.env_name())?.as_deref(),
-            token_env(AccessRole::Admin.env_name())?.as_deref(),
+            config.http_read_token.as_ref().map(|t| t.expose()),
+            config.http_write_token.as_ref().map(|t| t.expose()),
+            config.http_admin_token.as_ref().map(|t| t.expose()),
         )
     }
 
@@ -65,7 +65,7 @@ impl HttpAuth {
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || b"-._~+/".contains(&c))
                 {
-                    return Err(AppError::config(format!(
+                    return Err(AppError::invalid(format!(
                         "{name} must contain 32..4096 valid Bearer token characters"
                     )));
                 }
@@ -74,7 +74,7 @@ impl HttpAuth {
                     .iter()
                     .any(|(_, existing)| existing.as_ref() == tag.as_ref())
                 {
-                    return Err(AppError::config(
+                    return Err(AppError::invalid(
                         "HTTP tokens for different roles must be distinct",
                     ));
                 }
@@ -124,25 +124,58 @@ impl HttpAuth {
     }
 }
 
-fn token_env(name: &str) -> Result<Option<String>, AppError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(_) => Err(AppError::config(format!("{name} must be valid UTF-8"))),
-    }
-}
+
+/// Routes that require admin on purpose (operations, sync transport, jobs).
+/// Listed so the route-catalog test can tell them from unclassified routes.
+const ADMIN_HTTP_ROUTES: &[(&str, &str)] = &[
+    ("POST", "/v1/sync/register"),
+    ("POST", "/v1/sync/push"),
+    ("GET", "/v1/sync/pull"),
+    ("POST", "/v1/sync/ack"),
+    ("POST", "/v1/jobs/sync"),
+    ("DELETE", "/v1/jobs/{id}"),
+    ("POST", "/v1/jobs/{id}/requeue"),
+    ("POST", "/v1/operations/checkpoint"),
+    ("POST", "/v1/operations/backup"),
+];
 
 /// Unknown/new routes require admin until explicitly classified.
 fn required_http_role(method: &Method, path: &str) -> AccessRole {
+    classified_http_role(method, path).unwrap_or(AccessRole::Admin)
+}
+
+/// Role for a route that is explicitly classified; `None` means "unknown".
+fn classified_http_role(method: &Method, path: &str) -> Option<AccessRole> {
+    if ADMIN_HTTP_ROUTES
+        .iter()
+        .any(|(m, pattern)| *m == method.as_str() && route_matches(pattern, path))
+    {
+        return Some(AccessRole::Admin);
+    }
+    non_admin_http_role(method, path)
+}
+
+/// `{id}` matches one non-empty path segment.
+fn route_matches(pattern: &str, path: &str) -> bool {
+    let mut want = pattern.split('/');
+    let mut got = path.split('/');
+    loop {
+        match (want.next(), got.next()) {
+            (None, None) => return true,
+            (Some("{id}"), Some(segment)) if !segment.is_empty() => {}
+            (Some(a), Some(b)) if a == b => {}
+            _ => return false,
+        }
+    }
+}
+
+fn non_admin_http_role(method: &Method, path: &str) -> Option<AccessRole> {
     if path == "/mcp" || path.starts_with("/mcp/") {
         // The MCP dispatcher checks the actual tool using this authenticated role.
-        return AccessRole::Read;
+        return Some(AccessRole::Read);
     }
-    if matches!(*method, Method::GET | Method::HEAD) {
-        if path == "/v1/sync/pull" {
-            return AccessRole::Admin;
-        }
-        if matches!(
+    if matches!(*method, Method::GET | Method::HEAD)
+        && (matches!(
             path,
             "/health"
                 | "/live"
@@ -207,33 +240,32 @@ fn required_http_role(method: &Method, path: &str) -> AccessRole {
                 .is_some_and(|id| !id.is_empty())
             || path
                 .strip_prefix("/v1/eval/prompts/")
-                .is_some_and(|id| !id.is_empty())
-        {
-            return AccessRole::Read;
-        }
+                .is_some_and(|id| !id.is_empty()))
+    {
+        return Some(AccessRole::Read);
     }
-    match (method.as_str(), path) {
+    Some(match (method.as_str(), path) {
         ("POST", "/v1/search" | "/v1/pack-context" | "/v1/multi-get") => AccessRole::Read,
         ("PUT" | "POST", "/v1/wiki")
         | (
             "POST",
             "/v1/revisions/restore"
-                | "/v1/wiki-proposals"
-                | "/v1/eval/feedback"
-                | "/v1/eval/feedback/run"
-                | "/v1/eval/runs/compare"
-                | "/v1/eval/labels"
-                | "/v1/eval/labels/claim"
-                | "/v1/eval/traces"
-                | "/v1/eval/judge"
-                | "/v1/eval/online"
-                | "/v1/eval/replay"
-                | "/v1/eval/prompts",
+            | "/v1/wiki-proposals"
+            | "/v1/eval/feedback"
+            | "/v1/eval/feedback/run"
+            | "/v1/eval/runs/compare"
+            | "/v1/eval/labels"
+            | "/v1/eval/labels/claim"
+            | "/v1/eval/traces"
+            | "/v1/eval/judge"
+            | "/v1/eval/online"
+            | "/v1/eval/replay"
+            | "/v1/eval/prompts",
         ) => AccessRole::Write,
         ("PUT", path) if path.starts_with("/v1/eval/labels/") => AccessRole::Write,
         ("PUT", "/v1/knowledge") | ("POST", "/v1/knowledge/views") => AccessRole::Write,
-        _ => AccessRole::Admin,
-    }
+        _ => return None,
+    })
 }
 
 pub(super) async fn enforce_auth(
@@ -297,12 +329,42 @@ fn denied(request: &Request, status: StatusCode, code: &str, message: &str) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use axum::{
         body::{to_bytes, Body},
         routing::get,
         Router,
     };
     use tower::ServiceExt;
+
+    #[test]
+    fn every_catalogued_route_has_an_explicit_role() {
+        let unclassified: Vec<String> = crate::http_api::ops::PRODUCT_ROUTES
+            .iter()
+            .chain([("POST", "/v1/wiki")].iter())
+            .filter_map(|(method, pattern)| {
+                let method = Method::from_bytes(method.as_bytes()).unwrap();
+                let path = pattern.replace("{id}", "x");
+                classified_http_role(&method, &path)
+                    .is_none()
+                    .then(|| format!("{method} {pattern}"))
+            })
+            .collect();
+        assert!(
+            unclassified.is_empty(),
+            "classify these routes in http_api/auth.rs: {unclassified:?}"
+        );
+    }
+
+    #[test]
+    fn route_patterns_match_one_segment_per_id() {
+        assert!(route_matches(
+            "/v1/jobs/{id}/requeue",
+            "/v1/jobs/abc/requeue"
+        ));
+        assert!(!route_matches("/v1/jobs/{id}/requeue", "/v1/jobs//requeue"));
+        assert!(!route_matches("/v1/jobs/{id}", "/v1/jobs/a/b"));
+    }
 
     const READ: &str = "read-credential-for-tests-000000000";
     const WRITE: &str = "write-credential-for-tests-00000000";
@@ -347,9 +409,18 @@ mod tests {
 
     #[test]
     fn proposal_routes_require_read_or_write_roles() {
-        assert_eq!(required_http_role(&Method::GET, "/v1/wiki-proposals"), AccessRole::Read);
-        assert_eq!(required_http_role(&Method::POST, "/v1/wiki-proposals"), AccessRole::Write);
-        assert_eq!(required_http_role(&Method::GET, "/v1/wiki-review"), AccessRole::Read);
+        assert_eq!(
+            required_http_role(&Method::GET, "/v1/wiki-proposals"),
+            AccessRole::Read
+        );
+        assert_eq!(
+            required_http_role(&Method::POST, "/v1/wiki-proposals"),
+            AccessRole::Write
+        );
+        assert_eq!(
+            required_http_role(&Method::GET, "/v1/wiki-review"),
+            AccessRole::Read
+        );
     }
 
     #[test]
@@ -385,7 +456,10 @@ mod tests {
             required_http_role(&Method::PUT, "/v1/eval/labels/abc"),
             AccessRole::Write
         );
-        assert_eq!(required_http_role(&Method::PUT, "/v1/knowledge"), AccessRole::Write);
+        assert_eq!(
+            required_http_role(&Method::PUT, "/v1/knowledge"),
+            AccessRole::Write
+        );
     }
 
     #[tokio::test]

@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+use crate::diagnostics::StatusReport;
 use uuid::Uuid;
 
 use crate::chunking::{from_config, Chunker};
@@ -16,14 +18,35 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
 use crate::models::{
-    Chunk, DiaryEntry, Document, DrawerListItem, OpsLogEntry, StatusReport, WakeUpReport,
-    WakeUpSchemaSnippet,
+    Chunk, DiaryEntry, Document, DrawerListItem, OpsLogEntry, WakeUpSchemaSnippet,
 };
 use crate::util::content_hash;
 
+/// Session bootstrap payload for `wake_up` (MemPalace parity).
+///
+/// Combines store [`StatusReport`], recent diary notes, pinned documents, and
+/// an optional schema document (only when already present — not auto-seeded).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WakeUpReport {
+    pub status: StatusReport,
+    /// Recent diary entries for the requested agent (or all agents when unscoped).
+    #[serde(default)]
+    pub diary: Vec<DiaryEntry>,
+    /// Pinned active documents (list order: boost desc, updated_at desc).
+    #[serde(default)]
+    pub pinned: Vec<DrawerListItem>,
+    /// Schema conventions document when `schema://agents` (or layer=schema) exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<WakeUpSchemaSnippet>,
+    /// Agent name used for diary scope (`None` = all diary entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+}
+
 /// Document layer for agent diary notes.
-pub const LAYER_DIARY: &str = "diary";
+pub const LAYER_DIARY: &str = crate::models::Layer::Diary.as_str();
 /// Document kind for diary entries.
+/// Must equal `DocumentKind::Diary` (checked by a test); a `const` needs the literal.
 pub const KIND_DIARY: &str = "diary";
 /// Legacy room name; new writes use `room = agent_name` for list filters.
 pub const ROOM_DIARY: &str = "diary";
@@ -170,30 +193,33 @@ pub async fn diary_write(
         ..Default::default()
     };
 
-    store.upsert_document(&doc)?;
+    crate::util::blocking_section(|| store.upsert_document(&doc))?;
 
     let chunk_count = embed_and_store_chunks(store, embedder, config, &doc).await?;
-    let (node_id, edge_count) = rebuild_document_graph(store, &doc)?;
+    let (node_id, edge_count) =
+        crate::util::blocking_section(|| rebuild_document_graph(store, &doc))?;
 
     let mut ops_log_id = None;
     if command.log_ops {
-        let written = store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: now,
-            op: "diary_write".into(),
-            prefix: Some("DIARY".into()),
-            message: format!("diary entry for agent '{agent}' topic={topic}"),
-            entity_id: Some(document_id.clone()),
-            entity_kind: Some(KIND_DIARY.into()),
-            payload_json: serde_json::json!({
-                "agent_name": agent,
-                "topic": topic,
-                "uri": uri,
-                "wing": wing,
+        let written = crate::util::blocking_section(|| {
+            store.append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: now,
+                op: "diary_write".into(),
+                prefix: Some("DIARY".into()),
+                message: format!("diary entry for agent '{agent}' topic={topic}"),
+                entity_id: Some(document_id.clone()),
+                entity_kind: Some(KIND_DIARY.into()),
+                payload_json: serde_json::json!({
+                    "agent_name": agent,
+                    "topic": topic,
+                    "uri": uri,
+                    "wing": wing,
+                })
+                .to_string(),
+                agent_name: Some(agent.clone()),
             })
-            .to_string(),
-            agent_name: Some(agent.clone()),
         })?;
         ops_log_id = Some(written.id);
     }
@@ -295,7 +321,10 @@ pub async fn checkpoint(
                     content: body.to_string(),
                     wing: None,
                     topic: Some("session-checkpoint".into()),
-                    title: Some(format!("checkpoint: {}", first_line(summary, 80))),
+                    title: Some(format!(
+                        "checkpoint: {}",
+                        crate::util::first_line(summary, 80)
+                    )),
                     log_ops: true,
                 },
             )
@@ -319,17 +348,19 @@ pub async fn checkpoint(
             serde_json::Value::String(format!("diary://{}/{}", d.entry.agent_name, d.entry.id));
     }
 
-    let ops_log = store.append_ops_log(&OpsLogEntry {
-        id: String::new(),
-        seq: 0,
-        ts: Utc::now(),
-        op: "checkpoint".into(),
-        prefix: Some("CKPT".into()),
-        message: summary.to_string(),
-        entity_id: diary_result.as_ref().map(|d| d.entry.id.clone()),
-        entity_kind: diary_result.as_ref().map(|_| KIND_DIARY.to_string()),
-        payload_json: payload.to_string(),
-        agent_name: agent_for_log.clone(),
+    let ops_log = crate::util::blocking_section(|| {
+        store.append_ops_log(&OpsLogEntry {
+            id: String::new(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "checkpoint".into(),
+            prefix: Some("CKPT".into()),
+            message: summary.to_string(),
+            entity_id: diary_result.as_ref().map(|d| d.entry.id.clone()),
+            entity_kind: diary_result.as_ref().map(|_| KIND_DIARY.to_string()),
+            payload_json: payload.to_string(),
+            agent_name: agent_for_log.clone(),
+        })
     })?;
 
     Ok(CheckpointResult {
@@ -340,15 +371,6 @@ pub async fn checkpoint(
     })
 }
 
-fn first_line(s: &str, max: usize) -> String {
-    let line = s.lines().next().unwrap_or(s).trim();
-    if line.chars().count() <= max {
-        line.to_string()
-    } else {
-        let truncated: String = line.chars().take(max.saturating_sub(1)).collect();
-        format!("{truncated}…")
-    }
-}
 
 async fn embed_and_store_chunks(
     store: &Store,
@@ -362,14 +384,7 @@ async fn embed_and_store_chunks(
         return Ok(0);
     }
     let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
-    let embeddings = embedder.embed(&texts).await?;
-    if embeddings.len() != pieces.len() {
-        return Err(AppError::embeddings(format!(
-            "embedder returned {} vectors for {} chunks",
-            embeddings.len(),
-            pieces.len()
-        )));
-    }
+    let embeddings = crate::embeddings::embed_exact(embedder.as_ref(), &texts).await?;
     let mut chunks = Vec::with_capacity(pieces.len());
     for (i, ((content, char_start, char_end), embedding)) in
         pieces.into_iter().zip(embeddings).enumerate()
@@ -386,45 +401,29 @@ async fn embed_and_store_chunks(
         });
     }
     let n = chunks.len();
-    store.insert_chunks(&chunks)?;
+    crate::util::blocking_section(|| store.insert_chunks(&chunks))?;
     Ok(n)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diary_kind_constant_matches_document_kind() {
+        assert_eq!(super::KIND_DIARY, crate::models::DocumentKind::Diary.as_str());
+    }
+
     use super::*;
     use crate::embeddings::MockEmbedder;
-    use crate::models::SearchMode;
+
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf, dims: usize) -> Config {
         Config {
             db_path,
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".to_string(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".to_string(),
             embedding_dims: dims,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            default_top_k: 5,
-            ingest_roots: Vec::new(),
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".to_string(),
-            default_search_mode: SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".to_string(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".to_string(),
-            llm_api_key: "ollama".to_string(),
             llm_enabled: false,
-            llm_timeout_secs: 120,
-            llm_max_tokens: 4096,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
+            ..Config::for_tests()
         }
     }
 

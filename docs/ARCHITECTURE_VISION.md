@@ -2,7 +2,7 @@
 
 **Status:** product architecture core and evidence gates; binding for design and refactor priority.
 
-**Updated:** 2026-09-11
+**Updated:** 2026-10-08
 
 **Does not replace:** [`SPEC.md`](../SPEC.md) (v1 wire contract), [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) (layer mechanics and diagrams).
 
@@ -52,8 +52,10 @@ Parity checklists and “feature laundry” do **not** gate shipping. Coverage o
 4. **Deterministic L2.** `[[wikilink]]`, `#tag`, stubs, promote-on-title. No mandatory LLM NER / cognify for core graph. No server-side layout positions in graph API.
 5. **DuckDB single-file is the hero path.** README identity, default `RAG_DB_PATH`, co-located `embedding_json` + meta until measured full-scan pain. Adapters are portability, not co-equal products.
 6. **Thin MCP port.** Business rules live in domain services and persistence
-   seams. `mcp/server.rs` only composes bounded routers; the rmcp macro root in
-   `mcp/facade.rs` is parse → service → JSON. No new business-rule growth there.
+   seams. `mcp/server.rs` only adds the per-domain `#[tool_router]`s together;
+   each `mcp/{domain}.rs` tool method is parse → service → JSON and
+   `mcp/facade.rs` holds shared state and dispatch. No new business-rule
+   growth there.
 7. **Bounded public surface.** The default spine is currently 33 tools and is
    protected by a 15–33 count test. Compatibility depth is available only
    through explicit `RAG_TOOLS=full`; new defaults must strengthen the cascade
@@ -333,9 +335,11 @@ Report at least:
 
 ### 5.6 Dispatch shape
 
-Shipped shape: `mcp/server.rs` composes **routers by layer cluster** (corpus /
-retrieval / graph / compile / control). `mcp/facade.rs` remains the macro-owned
-compatibility root; no new business rules belong beyond parse → service → JSON.
+Shipped shape: `mcp/server.rs` adds **domain-owned routers** together
+(ingest / collections / search / graph / wiki / kg / maintain / recovery), each
+declared with its own `#[tool_router]` next to the `#[tool]` methods it serves.
+`mcp/facade.rs` holds only the shared `RagServer` core; no new business rules
+belong beyond parse → service → JSON.
 
 ---
 
@@ -439,10 +443,10 @@ public raw-source contract.
 
 | Area | Today (approx.) | Boundary |
 |------|-----------------|----------|
-| `mcp/facade.rs` | ~4.6k LOC | rmcp macro composition root; bounded tool routers own surface groups |
+| `mcp/facade.rs` + `mcp/{domain}.rs` | ~0.8k core, 0.2–1k per domain | `server.rs` composes per-domain `#[tool_router]`s; the facade owns shared state, service adapters and dispatch |
 | `db/store.rs` | ~4.1k LOC | compatibility façade and transaction owner; focused repositories own search/FTS/graph/catalog/manifest algorithms |
 | `wiki/mod.rs` | ~3.1k LOC | L3 behavior plus legacy raw compatibility entry points |
-| `crates/rag-mcp-ui/src/app.rs` | ~3.7k LOC | workspace/navigation coordinator; gateway DTOs and rendering are split |
+| `crates/rag-mcp-ui/src/app/` | ~4.7k LOC in 6 files (largest `frame.rs` ~1.7k) | workspace/navigation coordinator split into state, events, frame, graph, wiki and revisions |
 | `Storage` | document lifecycle slice | DuckDB remains the only full application backend |
 
 Refactor order is now **freeze behavior → route through an application seam →

@@ -1,6 +1,8 @@
 //! Operations workspace: observable jobs and safe one-writer maintenance.
 
+use crate::ui::text::short_timestamp;
 use crate::operations::{
+    JobSnapshotExt,
     BackupRequest, JobSnapshot, MaintenanceResult, OperationsSnapshot, SyncJobRequest,
 };
 
@@ -394,7 +396,7 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
         .inner_margin(14.0)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                status_badge(ui, &job.status);
+                status_badge(ui, job.status.as_str());
                 ui.strong(&job.request.path);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -410,14 +412,14 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                 });
             });
             ui.horizontal_wrapped(|ui| {
-                ui.weak(format!("{} · создана {}", job.kind, short_timestamp(&job.created_at)));
-                if let Some(started) = job.started_at.as_deref() {
+                ui.weak(format!("{} · создана {}", job.kind, short_timestamp(&job.created_at.to_rfc3339())));
+                if let Some(started) = job.started_at {
                     ui.separator();
-                    ui.weak(format!("запущена {}", short_timestamp(started)));
+                    ui.weak(format!("запущена {}", short_timestamp(&started.to_rfc3339())));
                 }
-                if let Some(finished) = job.finished_at.as_deref() {
+                if let Some(finished) = job.finished_at {
                     ui.separator();
-                    ui.weak(format!("завершена {}", short_timestamp(finished)));
+                    ui.weak(format!("завершена {}", short_timestamp(&finished.to_rfc3339())));
                 }
             });
             if let Some(progress) = &job.progress {
@@ -427,7 +429,7 @@ fn job_card(ui: &mut egui::Ui, job: &JobSnapshot, loading: bool, action: &mut Op
                         .show_percentage()
                         .text(format!(
                             "{} · файлов: {}/{}",
-                            phase_label(&progress.phase),
+                            phase_label(progress.phase.as_str()),
                             progress.processed_files,
                             progress.total_files
                         )),
@@ -530,9 +532,6 @@ fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
-fn short_timestamp(value: &str) -> String {
-    value.get(..19).unwrap_or(value).replace('T', " ")
-}
 
 fn health_metric(ui: &mut egui::Ui, label: &str, value: &str, healthy: bool) {
     egui::Frame::group(ui.style())

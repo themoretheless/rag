@@ -1,10 +1,11 @@
 //! Health / readiness route for the HTTP gateway.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
+use serde::Deserialize;
 use serde_json::json;
 
 use super::error::{api_err, api_ok};
@@ -28,33 +29,43 @@ async fn live() -> impl IntoResponse {
 }
 
 async fn ready(State(st): State<HttpState>) -> impl IntoResponse {
-    let runtime = crate::ops::runtime_snapshot();
-    let store_ok = st.store.stats().is_ok() && st.store.fts_ready().unwrap_or(false);
-    let ok = runtime.ready && store_ok;
-    let status = if ok {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-    (
-        status,
-        axum::Json(json!({"ok": ok, "phase": runtime.startup_phase, "store_ok": store_ok})),
-    )
+    crate::util::blocking_section(|| {
+        let runtime = crate::ops::runtime_snapshot();
+        let store_ok = st.store.stats().is_ok() && st.store.fts_ready().unwrap_or(false);
+        let ok = runtime.ready && store_ok;
+        let status = if ok {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        (
+            status,
+            axum::Json(json!({"ok": ok, "phase": runtime.startup_phase, "store_ok": store_ok})),
+        )
+    })
 }
 
-async fn health(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.stats() {
+#[derive(Deserialize)]
+struct HealthQuery {
+    /// Skip the relational integrity scans (anti-joins over chunks,
+    /// documents, nodes and edges). For pollers that only show liveness and
+    /// counts; `/v1/doctor` and plain `/health` still report integrity.
+    #[serde(default, deserialize_with = "super::query_flag")]
+    summary: bool,
+}
+
+async fn health(
+    State(st): State<HttpState>,
+    Query(query): Query<HealthQuery>,
+) -> impl IntoResponse {
+    crate::util::blocking_section(|| match st.store.stats() {
         Ok((docs, chunks, nodes, edges)) => {
             let schema_version = st.store.schema_version().ok().flatten().unwrap_or(0);
             let fts_ready = st.store.fts_ready().unwrap_or(false);
-            let (missing_chunks, orphan_chunks, orphan_nodes, orphan_edges, unscoped) =
-                st.store.integrity_counts().unwrap_or((0, 0, 0, 0, 0));
-            let relational_integrity_ok =
-                orphan_chunks == 0 && orphan_nodes == 0 && orphan_edges == 0;
             let wal_bytes = st.store.wal_file_size_bytes();
-            let wal_warn_bytes = crate::ops::wal_warn_bytes();
+            let wal_warn_bytes = st.config.wal_warn_bytes;
             let runtime = crate::ops::runtime_snapshot();
-            api_ok(json!({
+            let mut body = json!({
                 "ok": true,
                 "backend": "duckdb",
                 "storage_capabilities": crate::storage::duckdb_capability_names(),
@@ -65,20 +76,33 @@ async fn health(State(st): State<HttpState>) -> impl IntoResponse {
                 "chunks": chunks,
                 "nodes": nodes,
                 "edges": edges,
-                "documents_without_chunks": missing_chunks,
-                "orphan_chunks": orphan_chunks,
-                "orphan_document_nodes": orphan_nodes,
-                "orphan_edges": orphan_edges,
-                "unscoped_documents": unscoped,
-                "relational_integrity_ok": relational_integrity_ok,
                 "wal_bytes": wal_bytes,
                 "wal_warn_bytes": wal_warn_bytes,
                 "wal_too_large": wal_bytes >= wal_warn_bytes,
                 "runtime": runtime,
                 "mcp_http": st.mcp_http,
                 "mcp_path": if st.mcp_http { Some("/mcp") } else { None::<&str> },
-            }))
+            });
+            if !query.summary {
+                let (missing_chunks, orphan_chunks, orphan_nodes, orphan_edges, unscoped) =
+                    st.store.integrity_counts().unwrap_or((0, 0, 0, 0, 0));
+                let integrity = json!({
+                    "documents_without_chunks": missing_chunks,
+                    "orphan_chunks": orphan_chunks,
+                    "orphan_document_nodes": orphan_nodes,
+                    "orphan_edges": orphan_edges,
+                    "unscoped_documents": unscoped,
+                    "relational_integrity_ok":
+                        orphan_chunks == 0 && orphan_nodes == 0 && orphan_edges == 0,
+                });
+                if let (Some(body), serde_json::Value::Object(integrity)) =
+                    (body.as_object_mut(), integrity)
+                {
+                    body.extend(integrity);
+                }
+            }
+            api_ok(body)
         }
         Err(e) => api_err(e),
-    }
+    })
 }

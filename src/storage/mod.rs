@@ -4,7 +4,7 @@
 //! small document slice lets callers migrate behind [`Storage`] gradually
 //! without changing the existing `db::Store` API.
 
-use std::path::{Path, PathBuf};
+use crate::config::Config;
 
 use serde::{Deserialize, Serialize};
 
@@ -96,16 +96,16 @@ pub trait Storage: Send + Sync {
     fn delete_document(&self, id: &str) -> Result<bool, AppError>;
 }
 
-pub fn configured_backend() -> Result<BackendKind, AppError> {
-    BackendKind::parse(&std::env::var("RAG_STORAGE_BACKEND").unwrap_or_else(|_| "duckdb".into()))
+pub fn configured_backend(config: &Config) -> Result<BackendKind, AppError> {
+    BackendKind::parse(&config.storage_backend)
 }
 
 /// Open the configured adapter. Unsupported adapters fail at startup rather
 /// than silently pointing another backend name at DuckDB.
-pub fn open_configured(path: &Path) -> Result<Store, AppError> {
-    let backend = configured_backend()?;
+pub fn open_configured(config: &Config) -> Result<Store, AppError> {
+    let backend = configured_backend(config)?;
     match backend {
-        BackendKind::DuckDb => Store::open(path),
+        BackendKind::DuckDb => Store::open(&config.db_path),
         other => Err(AppError::config(format!(
             "storage backend '{}' is recognized but not implemented; export_bundle/export_vault before migrating",
             other.as_str()
@@ -117,13 +117,13 @@ pub fn open_configured(path: &Path) -> Result<Store, AppError> {
 ///
 /// The Markdown adapter is deliberately opt-in and requires an explicit
 /// `RAG_VAULT_PATH`; `RAG_DB_PATH` is never reinterpreted as a vault root.
-pub fn open_configured_storage(path: &Path) -> Result<Box<dyn Storage>, AppError> {
-    match configured_backend()? {
-        BackendKind::DuckDb => Ok(Box::new(Store::open(path)?)),
+pub fn open_configured_storage(config: &Config) -> Result<Box<dyn Storage>, AppError> {
+    match configured_backend(config)? {
+        BackendKind::DuckDb => Ok(Box::new(Store::open(&config.db_path)?)),
         BackendKind::Markdown => {
-            let root = std::env::var_os("RAG_VAULT_PATH")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
+            let root = config
+                .vault_path
+                .clone()
                 .ok_or_else(|| {
                     AppError::config(
                         "RAG_VAULT_PATH is required when RAG_STORAGE_BACKEND=markdown",
@@ -149,6 +149,43 @@ pub fn duckdb_capability_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One lifecycle contract, run against every backend that implements it.
+    fn assert_document_lifecycle(storage: &dyn Storage) {
+        let mut doc = Document {
+            id: "conformance-doc".into(),
+            uri: "file:///conformance.md".into(),
+            title: "Conformance".into(),
+            content: "first body".into(),
+            metadata_json: "{}".into(),
+            ..Default::default()
+        };
+        storage.upsert_document(&doc).unwrap();
+        assert_eq!(
+            storage.get_document(&doc.id).unwrap().unwrap().content,
+            "first body"
+        );
+        doc.content = "second body".into();
+        storage.upsert_document(&doc).unwrap();
+        let listed = storage.list_documents().unwrap();
+        assert_eq!(listed.iter().filter(|d| d.id == doc.id).count(), 1);
+        assert_eq!(
+            storage.get_document(&doc.id).unwrap().unwrap().content,
+            "second body"
+        );
+        assert!(storage.delete_document(&doc.id).unwrap());
+        assert!(storage.get_document(&doc.id).unwrap().is_none());
+        assert!(!storage.delete_document(&doc.id).unwrap());
+    }
+
+    #[test]
+    fn document_lifecycle_conforms_on_every_backend() {
+        let root = tempfile::tempdir().unwrap();
+        let duck = crate::db::Store::open(&root.path().join("conformance.duckdb")).unwrap();
+        assert_document_lifecycle(&duck);
+        let vault = markdown::MarkdownVaultStorage::open(root.path().join("vault")).unwrap();
+        assert_document_lifecycle(&vault);
+    }
 
     #[test]
     fn backend_parser_is_explicit_and_capabilities_are_stable() {

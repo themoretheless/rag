@@ -456,7 +456,7 @@ mod tests {
             ActivityEvent {
                 seq: 1,
                 at: "2026-09-03T00:00:00Z".into(),
-                kind: kind.into(),
+                kind: kind.to_string().into(),
                 client: None,
                 action: action.into(),
                 status,

@@ -10,9 +10,19 @@ publish = false
 name = "rag-mcp-ui"
 path = "src/main.rs"
 
+[features]
+# `--db`: open a DuckDB file read-only through `rag_mcp::Store`. Build with
+# `--no-default-features` for a gateway-only client without DuckDB.
+default = ["direct-db"]
+direct-db = ["dep:rag-mcp"]
+
 [dependencies]
-# Shared domain models (GraphView / GraphNode / GraphEdge); no GUI deps on rag-mcp
-rag-mcp = { path = "../.." }
+# Serde-only wire types (GraphView / GraphNode / GraphEdge, PKB defaults).
+rag-mcp-core = { path = "../rag-mcp-core" }
+# Same [[wikilink]] parser the server uses to build graph edges.
+rag-mcp-markup = { path = "../rag-mcp-markup" }
+# Full server crate (bundled DuckDB) only for the read-only `--db` mode.
+rag-mcp = { path = "../..", optional = true }
 
 # Window + immediate mode (matched pair; plain Painter, no egui_graphs).
 # Keep native accessibility while staying on the lightweight glow renderer.

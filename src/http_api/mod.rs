@@ -47,7 +47,7 @@ mod feedback;
 mod knowledge;
 mod traces;
 mod eval_ops;
-mod payload_kv;
+use crate::db::payload_kv;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -62,15 +62,19 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::db::Store;
-use crate::embeddings::{build_provider, EmbeddingProvider};
+use crate::embeddings::EmbeddingProvider;
 use crate::mcp::RagServer;
 use crate::models::GraphView;
+use crate::util::run_blocking;
 
 pub use bind::parse_bind;
 
 /// Validate security before opening the store or starting background writers.
-pub fn validate_security(bind: SocketAddr) -> Result<(), crate::AppError> {
-    auth::HttpAuth::from_env()?.validate_bind(bind)
+pub fn validate_security(
+    bind: SocketAddr,
+    config: &crate::config::Config,
+) -> Result<(), crate::AppError> {
+    auth::HttpAuth::from_config(config)?.validate_bind(bind)
 }
 
 /// Shared state for graph/wiki HTTP handlers (clone of MCP store).
@@ -85,6 +89,8 @@ pub struct HttpState {
     pub embedder: Arc<dyn EmbeddingProvider>,
     /// Process-local background job registry and single writer lane.
     pub(super) jobs: jobs::JobRegistry,
+    /// Chat client built once from `RAG_LLM_*` (None when it cannot be built).
+    pub(super) llm: Option<crate::llm::ChatClient>,
     /// Non-secret listener auth posture, reported by `/v1/capabilities`. Only
     /// [`serve`] can know it; state built without it stays in the default
     /// loopback-trusted description rather than claiming tokens it never read.
@@ -101,6 +107,21 @@ impl HttpState {
         config: Config,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Self {
+        let llm = crate::llm::ChatClient::from_config(&config).ok();
+        Self::from_context(
+            crate::context::AppContext {
+                store,
+                embedder,
+                config,
+                llm,
+            },
+            mcp_http,
+        )
+    }
+
+    /// HTTP state over the process-wide [`crate::context::AppContext`].
+    pub fn from_context(context: crate::context::AppContext, mcp_http: bool) -> Self {
+        let store = context.store;
         let jobs = jobs::JobRegistry::restore_from_store(store.clone()).unwrap_or_else(|error| {
             tracing::warn!(%error, "failed to restore background jobs; starting empty registry");
             jobs::JobRegistry::with_store(store.clone())
@@ -108,9 +129,10 @@ impl HttpState {
         Self {
             store,
             mcp_http,
-            config,
-            embedder,
+            config: context.config,
+            embedder: context.embedder,
             jobs,
+            llm: context.llm,
             auth: auth::AuthPosture::default(),
         }
     }
@@ -138,17 +160,32 @@ pub fn mcp_http_service(
     config: Config,
     cancellation_token: CancellationToken,
 ) -> StreamableHttpService<RagServer, LocalSessionManager> {
-    let allowed_hosts = configured_http_allowed_hosts(
-        &config,
-        std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
-    );
+    mcp_http_service_for(
+        crate::context::AppContext::new(store, embedder, config),
+        cancellation_token,
+    )
+}
+
+/// Streamable-HTTP MCP over the shared [`crate::context::AppContext`].
+pub fn mcp_http_service_for(
+    context: crate::context::AppContext,
+    cancellation_token: CancellationToken,
+) -> StreamableHttpService<RagServer, LocalSessionManager> {
+    let allowed_hosts =
+        configured_http_allowed_hosts(&context.config, context.config.http_allowed_hosts.as_deref());
+    // Build once: the context already holds the checked manifest and the chat
+    // client; each stateless request gets a cheap clone of this server.
+    let prototype = RagServer::from_context(context).with_transport("http-mcp");
+    mcp_service_from(prototype, allowed_hosts, cancellation_token)
+}
+
+fn mcp_service_from(
+    prototype: RagServer,
+    allowed_hosts: Vec<String>,
+    cancellation_token: CancellationToken,
+) -> StreamableHttpService<RagServer, LocalSessionManager> {
     StreamableHttpService::new(
-        move || {
-            Ok(
-                RagServer::new(store.clone(), embedder.clone(), config.clone())
-                    .with_transport("http-mcp"),
-            )
-        },
+        move || Ok(prototype.clone()),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
             .with_stateful_mode(false)
@@ -156,6 +193,16 @@ pub fn mcp_http_service(
             .with_cancellation_token(cancellation_token)
             .with_allowed_hosts(allowed_hosts),
     )
+}
+
+/// Lenient boolean query flag: `0`, `false`, `no` and `off` (any case)
+/// disable it; any other value, including a bare `?flag`, enables it.
+fn query_flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(!matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off"
+    ))
 }
 
 /// Exact Host authorities accepted by rmcp's DNS-rebinding guard.
@@ -197,15 +244,15 @@ fn configured_http_allowed_hosts(config: &Config, explicit: Option<&str>) -> Vec
 
 /// Start HTTP server (graph API + MCP `/mcp`); runs until process exit.
 ///
-/// Builds embedder/config from env for `PUT /v1/wiki` (same process env as MCP).
+/// Uses the process [`crate::context::AppContext`] (config, embedder, chat client).
 /// Route tables come from the private `health`, `graph`, and `wiki` route
 /// builders and are combined here without duplicating handlers.
 pub async fn serve(
     bind: SocketAddr,
-    store: Arc<Store>,
+    context: crate::context::AppContext,
     mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
 ) -> Result<(), std::io::Error> {
-    let auth = auth::HttpAuth::from_env()
+    let auth = auth::HttpAuth::from_config(&context.config)
         .and_then(|auth| {
             auth.validate_bind(bind)?;
             Ok(auth)
@@ -214,18 +261,8 @@ pub async fn serve(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
         })?;
     let mcp_http = mcp.is_some();
-    let config = Config::from_env().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("HTTP wiki write config: {e}"),
-        )
-    })?;
-    let embedder = build_provider(&config)
-        .map_err(|e| std::io::Error::other(format!("HTTP wiki write embedder: {e}")))?;
-    let allowed_hosts = configured_http_allowed_hosts(
-        &config,
-        std::env::var("RAG_HTTP_ALLOWED_HOSTS").ok().as_deref(),
-    );
+    let allowed_hosts =
+        configured_http_allowed_hosts(&context.config, context.config.http_allowed_hosts.as_deref());
     let posture = auth.posture();
     if !posture.tokens_required {
         tracing::warn!(
@@ -234,7 +271,7 @@ pub async fn serve(
              listener is admin; set a role token before exposing the gateway beyond loopback"
         );
     }
-    let state = HttpState::new(store, mcp_http, config, embedder).with_auth_posture(posture);
+    let state = HttpState::from_context(context, mcp_http).with_auth_posture(posture);
     sync::spawn_worker(state.clone());
     let api = api_router(state);
 
@@ -426,16 +463,6 @@ fn api_router(state: HttpState) -> Router {
 
 const MAX_HTTP_BODY_BYTES: usize = 1_048_576;
 
-async fn run_blocking<T, F>(operation: &'static str, work: F) -> Result<T, crate::error::AppError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
-{
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|error| crate::error::AppError::db(format!("{operation} task failed: {error}")))?
-}
-
 #[derive(Clone)]
 struct RequestId(String);
 
@@ -543,7 +570,7 @@ async fn http_metadata(
         // `x-request-id` is caller-controlled. Keep it for the response header
         // and process log correlation, but never copy it into the cross-client
         // activity feed where it could smuggle paths, queries, or document ids.
-        activity::record(
+        crate::activity::record(
             "http",
             client.clone(),
             format!("{method} {activity_path}"),
@@ -610,28 +637,6 @@ fn sanitize_client_host(value: &str) -> Option<String> {
     Some(value.to_ascii_lowercase())
 }
 
-pub(crate) fn record_mcp_tool(action: &str, status: u16, elapsed_ms: f64) {
-    activity::record(
-        "mcp_tool",
-        None,
-        action,
-        Some(status),
-        Some(elapsed_ms),
-        None,
-    );
-}
-
-#[cfg(test)]
-pub(crate) fn latest_mcp_activity_for_test(action: &str) -> Option<activity::ActivityEvent> {
-    activity::latest_matching("mcp_tool", action)
-}
-
-#[cfg(test)]
-pub(crate) use activity::TEST_LOCK as ACTIVITY_TEST_LOCK;
-
-pub(crate) fn record_rag_action(action: &str) {
-    activity::record("rag", None, action, Some(200), None, None);
-}
 
 fn loopback_origin(origin: &str) -> bool {
     [
@@ -657,6 +662,7 @@ pub type GraphJson = GraphView;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embeddings::build_provider;
     use axum::{
         body::{to_bytes, Body},
         http::Request,
@@ -693,7 +699,7 @@ mod tests {
     }
 
     fn app() -> Router {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("http.duckdb"),
             ..Config::default()
@@ -708,6 +714,7 @@ mod tests {
                 config,
                 embedder,
                 jobs: jobs::JobRegistry::default(),
+                llm: None,
                 auth: crate::http_api::auth::AuthPosture::default(),
             }),
             allowed_hosts,
@@ -934,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn mounted_mcp_rejects_streamed_oversized_bodies() {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("mcp-http.duckdb"),
             ..Config::default()
@@ -954,6 +961,7 @@ mod tests {
             config,
             embedder,
             jobs: jobs::JobRegistry::default(),
+            llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),
         });
         let response = gateway_layers(
@@ -977,7 +985,7 @@ mod tests {
 
     #[tokio::test]
     async fn mounted_mcp_enforces_dns_rebinding_host_allowlist() {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("mcp-host-guard.duckdb"),
             http_bind: Some("192.168.50.205:7432".into()),
@@ -1028,7 +1036,7 @@ mod tests {
 
     #[tokio::test]
     async fn revision_timeline_is_lean_paginated_and_snapshot_is_lazy() {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("revisions-http.duckdb"),
             ..Config::default()
@@ -1061,6 +1069,7 @@ mod tests {
                 config,
                 embedder,
                 jobs: jobs::JobRegistry::default(),
+                llm: None,
                 auth: crate::http_api::auth::AuthPosture::default(),
             }),
             allowed_hosts,
@@ -1323,6 +1332,26 @@ mod tests {
         assert_eq!(status, axum::http::StatusCode::OK);
         assert_eq!(body["pid"], std::process::id());
         assert!(body["wal_warn_bytes"].as_u64().unwrap() > 0);
+        let (status, summary) = get_json(&app, "/v1/status?summary=true").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(summary["document_count"], body["document_count"]);
+        assert_eq!(summary["chunk_count"], body["chunk_count"]);
+        assert_eq!(summary["db_path"], body["db_path"]);
+        assert!(summary.get("uncompiled_raw_count").is_none());
+        let (status, health) = get_json(&app, "/health").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(health["orphan_chunks"], 0);
+        let (status, light) = get_json(&app, "/health?summary=true").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(light["documents"], health["documents"]);
+        assert!(light.get("orphan_chunks").is_none());
+        for flag in ["/health?summary", "/health?summary=1"] {
+            let (status, light) = get_json(&app, flag).await;
+            assert_eq!(status, axum::http::StatusCode::OK, "{flag}");
+            assert!(light.get("orphan_chunks").is_none(), "{flag}");
+        }
+        let (_, full) = get_json(&app, "/health?summary=false").await;
+        assert_eq!(full["orphan_chunks"], 0);
         let (status, _) = get_json(&app, "/v1/ops-log?seq=999999").await;
         assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
         let (status, _) = send_json(

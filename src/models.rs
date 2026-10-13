@@ -11,8 +11,12 @@ fn default_layer() -> String {
     "raw".into()
 }
 
-fn default_kind() -> String {
+fn default_kind_string() -> String {
     "document".into()
+}
+
+fn default_kind() -> DocumentKind {
+    DocumentKind::Document
 }
 
 fn default_doc_status() -> String {
@@ -128,7 +132,7 @@ pub struct Document {
     pub layer: String,
     /// `document` | `wiki` | `entity` | `concept` | `source_summary` | `diary` | `schema`
     #[serde(default = "default_kind")]
-    pub kind: String,
+    pub kind: DocumentKind,
     /// Content fingerprint for idempotent ingest / dedupe.
     #[serde(default)]
     pub content_hash: Option<String>,
@@ -147,6 +151,27 @@ pub struct Document {
 }
 
 impl Document {
+    /// Parsed `metadata_json`. Errors when it is not valid JSON; writers use
+    /// this so malformed metadata is reported instead of silently replaced.
+    pub fn metadata(&self) -> crate::error::Result<serde_json::Value> {
+        Ok(serde_json::from_str(&self.metadata_json)?)
+    }
+
+    /// Parsed `metadata_json`, or `None` when it is malformed. For lenient reads.
+    pub fn metadata_lenient(&self) -> Option<serde_json::Value> {
+        serde_json::from_str(&self.metadata_json).ok()
+    }
+
+    /// One top-level field of `metadata_json`, or `None` when the JSON is
+    /// malformed, not an object, or lacks `key`. For lenient reads only;
+    /// writers that must reject bad metadata parse it themselves.
+    pub fn metadata_field(&self, key: &str) -> Option<serde_json::Value> {
+        match self.metadata_lenient()? {
+            serde_json::Value::Object(mut map) => map.remove(key),
+            _ => None,
+        }
+    }
+
     /// Weak entity-tag for multi-LLM writers: `W/"<revision>"`.
     pub fn etag(&self) -> String {
         format_document_etag(self.revision)
@@ -445,88 +470,8 @@ pub struct Chunk {
     pub metadata_json: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchContextChunk {
-    pub chunk_id: String,
-    pub chunk_index: i32,
-    pub content: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub heading_path: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub section: Option<String>,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SearchExplanation {
-    #[serde(default)]
-    pub reasons: Vec<String>,
-    pub retrieval_ms: f64,
-    pub postprocess_ms: f64,
-    pub total_ms: f64,
-    /// Query embedding time (vec / hybrid only; measured by the adapter).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embed_ms: Option<f64>,
-    /// Dense candidate retrieval time (vec / hybrid).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vec_ms: Option<f64>,
-    /// Lexical candidate retrieval time (lex / hybrid).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lex_ms: Option<f64>,
-    /// RRF constant used for fusion (hybrid only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rrf_k: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deduplication: Option<String>,
-}
 
-/// One hit from semantic / hybrid search.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SearchHit {
-    pub chunk_id: String,
-    pub document_id: String,
-    pub document_title: String,
-    pub document_uri: String,
-    pub chunk_index: i32,
-    pub content: String,
-    /// Primary ranking score (cosine for vec; fused for hybrid; lex for lex-only).
-    pub score: f32,
-    /// Dense vector cosine when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub score_vec: Option<f32>,
-    /// Lexical / BM25 (or TF fallback) score when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub score_lex: Option<f32>,
-    /// Reciprocal rank fusion score when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub score_rrf: Option<f32>,
-    /// 1-based rank in the dense candidate list before fusion (vec / hybrid).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rank_vec: Option<u32>,
-    /// 1-based rank in the lexical candidate list before fusion (lex / hybrid).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rank_lex: Option<u32>,
-    /// Optional short excerpt for citations.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snippet: Option<String>,
-    /// Character offset of the hit span in the source document (start).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub char_start: Option<i32>,
-    /// Character offset of the hit span in the source document (end).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub char_end: Option<i32>,
-    /// Markdown heading ancestry for this chunk.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub heading_path: Option<Vec<String>>,
-    /// Leaf Markdown heading for this chunk.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub section: Option<String>,
-    /// Opt-in neighboring or same-section chunks, kept in source order.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<Vec<SearchContextChunk>>,
-    /// Ranking factors and stage timings for audit/debugging.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub explanation: Option<SearchExplanation>,
-}
 
 /// Lean wiki catalog row for list/sidebar surfaces (`GET /v1/wiki`, UI).
 ///
@@ -601,179 +546,11 @@ pub struct VacuumStoreReport {
     pub checkpointed: bool,
 }
 
-/// Extended health snapshot for the `status` MCP tool (MemPalace + vision §5.5).
-///
-/// Layer health (not only undifferentiated row counts): raw/wiki counts,
-/// index coverage, uncompiled raw debt, embedding manifest match.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatusReport {
-    /// Storage backend kind (`duckdb` today).
-    pub backend: String,
-    #[serde(default)]
-    pub storage_capabilities: Vec<String>,
-    pub schema_version: i32,
-    pub fts_ready: bool,
-    pub document_count: u64,
-    pub chunk_count: u64,
-    pub node_count: u64,
-    pub edge_count: u64,
-    /// Documents with `layer=raw`.
-    #[serde(default)]
-    pub raw_count: u64,
-    /// Documents with `layer=wiki`.
-    #[serde(default)]
-    pub wiki_count: u64,
-    /// Rows in `wiki_index`.
-    #[serde(default)]
-    pub index_entry_count: u64,
-    /// Wiki pages present in `wiki_index` / `wiki_count` (0 when no wiki).
-    #[serde(default)]
-    pub index_coverage: f64,
-    /// Raw sources still treated as compile debt (raw without wiki corpus coverage).
-    /// Currently equals `raw_count` when `wiki_count == 0`, else raw docs not yet
-    /// referenced by any wiki graph edge (soft); falls back to `raw_count` if
-    /// graph walk is empty.
-    #[serde(default)]
-    pub uncompiled_raw_count: u64,
-    /// Live embedding identity matches stored `embedding_manifest`.
-    /// Persisted canonical fingerprints are authoritative; legacy rows without
-    /// one are unverifiable and remain fail-closed until a complete re-embed.
-    #[serde(default)]
-    pub embedding_manifest_match: bool,
-    /// Configured embedding provider name.
-    #[serde(default)]
-    pub embed_provider: String,
-    /// Configured embedding model id.
-    #[serde(default)]
-    pub embed_model: String,
-    /// Distinct non-empty wings with document counts.
-    pub wings: Vec<WingCount>,
-    pub embed_dims: usize,
-    pub ready_for_search: bool,
-    pub ingest_roots_configured: bool,
-    pub db_path: String,
-    /// Gateway process id (single writer).
-    #[serde(default)]
-    pub pid: u32,
-    /// Seconds since process start.
-    #[serde(default)]
-    pub uptime_seconds: u64,
-    /// Main DuckDB file size in bytes when readable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub db_file_bytes: Option<u64>,
-    /// WAL file size in bytes (0 when absent).
-    #[serde(default)]
-    pub wal_bytes: u64,
-    /// WAL warning threshold (`RAG_WAL_WARN_BYTES`).
-    #[serde(default)]
-    pub wal_warn_bytes: u64,
-    /// Automatic snapshot footprint when `RAG_AUTO_BACKUP_DIR` is configured:
-    /// retention, the bytes it holds on disk, and the volume's free space.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_backup: Option<crate::ops::AutoBackupInventory>,
-}
-
-/// Local chat LLM + embedding config snapshot for the `llm_status` MCP tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmStatusReport {
-    /// Whether chat tools are enabled (`RAG_LLM_ENABLED`).
-    pub llm_enabled: bool,
-    /// Provider preset (`ollama`|`openai`|`codex`|`claude`|`kimi`|`deepseek`|`custom`).
-    #[serde(default)]
-    pub provider: String,
-    /// Wire dialect: `openai_compat` or `anthropic_messages`.
-    #[serde(default)]
-    pub dialect: String,
-    /// Chat API base URL (`RAG_LLM_BASE_URL` or provider default).
-    pub base_url: String,
-    /// Chat model tag (`RAG_LLM_MODEL`).
-    pub model: String,
-    /// True when a short probe against the chat endpoint succeeds.
-    pub reachable: bool,
-    /// Probe error detail when `reachable` is false.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Embedding provider name (`mock` | `openai` | …).
-    pub embed_provider: String,
-    /// Embedding model id.
-    pub embed_model: String,
-    /// Configured embedding dimensionality.
-    pub embed_dims: usize,
-    /// Embedding API base URL when relevant (openai / local compat).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embed_base_url: Option<String>,
-}
-
-/// Minimal integrity report for the `doctor` MCP tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoctorReport {
-    pub backend: String,
-    #[serde(default)]
-    pub storage_capabilities: Vec<String>,
-    pub schema_version: i32,
-    pub expected_schema_version: i32,
-    pub schema_ok: bool,
-    pub fts_ready: bool,
-    pub document_count: u64,
-    pub chunk_count: u64,
-    pub node_count: u64,
-    pub edge_count: u64,
-    pub embed_dims: usize,
-    /// Dims from `embedding_manifest` when present.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_dims: Option<i32>,
-    /// True when the stored embedding identity matches live config (or when
-    /// both the manifest and corpus chunks are absent).
-    pub embed_ok: bool,
-    pub ready_for_search: bool,
-    pub ingest_roots_configured: bool,
-    pub db_path: String,
-    pub wal_bytes: u64,
-    pub wal_warn_bytes: u64,
-    pub wal_too_large: bool,
-    pub documents_without_chunks: u64,
-    pub orphan_chunks: u64,
-    pub orphan_document_nodes: u64,
-    pub orphan_edges: u64,
-    pub unscoped_documents: u64,
-    pub relational_integrity_ok: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repair_hint: Option<String>,
-    /// Critical integrity gate: schema current and embed dims consistent.
-    pub ok: bool,
-}
-
-/// Object-graph node (document, tag, stub, or entity).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphNode {
-    pub id: String,
-    /// `document` | `tag` | `stub` | `entity`
-    pub kind: String,
-    pub label: String,
-    pub document_id: Option<String>,
-    pub uri: Option<String>,
-    pub resolved: bool,
-    pub metadata_json: String,
-}
-
-/// Directed edge between graph nodes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphEdge {
-    pub id: String,
-    pub source_id: String,
-    pub target_id: String,
-    /// `wikilink` | `tagged` | `related` | `mentions` | `tunnel`
-    pub rel_type: String,
-    pub weight: f64,
-    pub context: Option<String>,
-}
-
-/// Topology payload for graph UI / LLM consumption.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct GraphView {
-    pub nodes: Vec<GraphNode>,
-    pub edges: Vec<GraphEdge>,
-}
+pub use rag_mcp_core::{
+    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind, SearchContextChunk,
+    SearchExplanation, SearchHit,
+    PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
+};
 
 /// Aggregate counts for the object graph (`graph_stats` tool).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -802,55 +579,40 @@ pub struct EdgeCutRow {
     pub count: u64,
 }
 
-/// Node kinds — see `GRAPH_DESIGN.md` §1.1.
-///
-/// Store columns stay `VARCHAR` for adapter portability, so the wire form is a
-/// string and these enums are the validation/parse boundary (§1.1: reject
-/// unknown at the MCP/store boundary).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeKind {
-    /// Backed by a live `documents` row.
-    Document,
-    /// Classification hub; never a wikilink target.
-    Tag,
-    /// Unresolved wikilink target.
-    Stub,
-    /// Reserved for compiled entity pages.
-    Entity,
+finding_codes! {
+    /// A document's page kind: the kinds the server writes or special-cases,
+    /// plus `Other` for agent-written kinds. Stored and sent as the plain string.
+    DocumentKind {
+        Wiki => "wiki",
+        SourceSummary => "source_summary",
+        Entity => "entity",
+        Concept => "concept",
+        Diary => "diary",
+        Document => "document",
+    }
 }
 
-impl NodeKind {
-    /// Accepted wire strings.
-    pub const WIRE: &'static [&'static str] = &["document", "tag", "stub", "entity"];
-
-    /// Wire string for this kind.
-    pub fn as_wire(self) -> &'static str {
-        match self {
-            Self::Document => "document",
-            Self::Tag => "tag",
-            Self::Stub => "stub",
-            Self::Entity => "entity",
-        }
+impl duckdb::ToSql for DocumentKind {
+    fn to_sql(&self) -> duckdb::Result<duckdb::types::ToSqlOutput<'_>> {
+        Ok(duckdb::types::ToSqlOutput::from(self.as_str()))
     }
+}
 
-    /// True when `raw` is a known wire string.
-    pub fn is_wire(raw: &str) -> bool {
-        Self::WIRE.contains(&raw)
+impl duckdb::types::FromSql for DocumentKind {
+    fn column_result(value: duckdb::types::ValueRef<'_>) -> duckdb::types::FromSqlResult<Self> {
+        String::column_result(value).map(Self::from)
     }
+}
 
-    /// Parse a wire string, rejecting unknown kinds.
-    pub fn parse(raw: &str) -> crate::error::Result<Self> {
-        match raw {
-            "document" => Ok(Self::Document),
-            "tag" => Ok(Self::Tag),
-            "stub" => Ok(Self::Stub),
-            "entity" => Ok(Self::Entity),
-            other => Err(crate::error::AppError::config(format!(
-                "invalid node kind '{other}': expected one of {}",
-                Self::WIRE.join(", ")
-            ))),
-        }
-    }
+/// Parse a node kind at the MCP/store boundary, rejecting unknown values
+/// (`GRAPH_DESIGN.md` §1.1). The enum itself lives in `rag_mcp_core`.
+pub fn parse_node_kind(raw: &str) -> crate::error::Result<NodeKind> {
+    NodeKind::parse(raw).ok_or_else(|| {
+        crate::error::AppError::config(format!(
+            "invalid node kind '{raw}': expected one of {}",
+            NodeKind::WIRE.join(", ")
+        ))
+    })
 }
 
 /// Edge relation types — see `GRAPH_DESIGN.md` §1.1/§2.
@@ -873,28 +635,6 @@ pub enum RelType {
     /// Source replaces target.
     Supersedes,
 }
-
-/// Relations a person authors by hand with `link_nodes`, mostly in wiki maps:
-/// `детализирует`, `реализует`, `проверяет`, …
-///
-/// They are part of the §1.1 vocabulary but no extractor can produce them, so
-/// they are always `origin = explicit` (§1.6) and are always document → document.
-/// They exist in live graphs (118 edges measured 2026-09-25 on an auto-backup of
-/// the gateway database), so the store boundary must accept them and §7.1 must
-/// read them; a client that wants only the structural set names it explicitly.
-pub const WIKI_SEMANTIC_REL_TYPES: &[&str] = &[
-    "детализирует",
-    "зависит от",
-    "компенсируется",
-    "вызывает",
-    "публикует",
-    "обновляет",
-    "хранит",
-    "проверяет",
-    "использует",
-    "изменяет схему",
-    "реализует",
-];
 
 /// Relations that body-text extraction owns (§1.6).
 ///
@@ -1028,77 +768,6 @@ impl EdgeOrigin {
     }
 }
 
-/// Optional filters for full/partial graph export.
-#[derive(Debug, Clone, Default)]
-pub struct GraphFilter {
-    pub kinds: Option<Vec<String>>,
-    pub rel_types: Option<Vec<String>>,
-    pub seed_ids: Option<Vec<String>>,
-    pub max_nodes: Option<u32>,
-}
-
-/// Maximum number of nodes returned by a UI-oriented graph export.
-///
-/// Rendering applies its own, much smaller viewport cap; this limit only keeps
-/// the server/query boundary finite while allowing the complete current corpus
-/// to be searched for a useful local focus.
-pub const UI_GRAPH_EXPORT_MAX_NODES: u32 = 100_000;
-
-/// Structural relations the PKB default read set walks (§7.1).
-pub const PKB_CORE_REL_TYPES: &[&str] = &["wikilink", "related"];
-
-/// Default node kinds for UI export (tags off unless explicitly included).
-pub const PKB_NODE_KINDS: &[&str] = &["document", "stub", "entity"];
-
-/// The PKB literary relation set (§7.1), shared by every PKB-defaulted read path.
-///
-/// `include_tags` adds the `tagged` edge, the only way tag hubs stay reachable.
-/// This is the single source of that choice: the UI projections, the MCP
-/// `get_neighbors` walk and `get_graph` all default through here, and the store
-/// boundary accepts exactly this set plus the rest of [`RelType::WIRE`].
-pub fn pkb_rel_types(include_tags: bool) -> Vec<String> {
-    let mut rel_types: Vec<String> = PKB_CORE_REL_TYPES
-        .iter()
-        .chain(WIKI_SEMANTIC_REL_TYPES.iter())
-        .map(|rel| (*rel).to_string())
-        .collect();
-    if include_tags {
-        rel_types.push("tagged".into());
-    }
-    rel_types
-}
-
-/// PKB node kinds (§7.1): tags are opt-in everywhere.
-pub fn pkb_node_kinds(include_tags: bool) -> Vec<String> {
-    let mut kinds: Vec<String> = PKB_NODE_KINDS
-        .iter()
-        .map(|kind| (*kind).to_string())
-        .collect();
-    if include_tags {
-        kinds.push("tag".into());
-    }
-    kinds
-}
-
-impl GraphFilter {
-    /// PKB defaults for exclusive `--db` inspector and Mode C snapshot dumps.
-    ///
-    /// - `rel_types`: [`pkb_rel_types`] — wikilink + related + the §1.1 wiki
-    ///   semantic set (`include_tags` adds `tagged`)
-    /// - kinds: document + stub + entity (`include_tags` adds `tag`)
-    /// - `max_nodes`: `max_nodes` or [`UI_GRAPH_EXPORT_MAX_NODES`] (100,000)
-    ///
-    /// Topology only; no layout positions.
-    pub fn pkb_ui_export(max_nodes: Option<u32>, include_tags: bool) -> Self {
-        Self {
-            kinds: Some(pkb_node_kinds(include_tags)),
-            rel_types: Some(pkb_rel_types(include_tags)),
-            seed_ids: None,
-            max_nodes: Some(max_nodes.unwrap_or(UI_GRAPH_EXPORT_MAX_NODES)),
-        }
-    }
-}
-
 /// Append-only ops / wiki log row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpsLogEntry {
@@ -1120,6 +789,64 @@ pub struct OpsLogEntry {
     pub payload_json: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
+}
+
+/// Severity of a lint or corpus-analysis finding (wire: `info`/`warn`/`error`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueSeverity {
+    #[default]
+    Info,
+    Warn,
+    Error,
+}
+
+impl Default for OpsLogEntry {
+    /// Blank entry: `append_ops_log` assigns `id`, `seq` and `ts` when unset.
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            seq: 0,
+            ts: DateTime::<Utc>::UNIX_EPOCH,
+            op: String::new(),
+            prefix: None,
+            message: String::new(),
+            entity_id: None,
+            entity_kind: None,
+            payload_json: default_empty_object_json(),
+            agent_name: None,
+        }
+    }
+}
+
+impl OpsLogEntry {
+    /// Audit row for `op` under `prefix` (e.g. `MAINT`, `WIKI`), stamped now.
+    pub fn new(op: impl Into<String>, prefix: &str, message: impl Into<String>) -> Self {
+        Self {
+            ts: Utc::now(),
+            op: op.into(),
+            prefix: Some(prefix.to_string()),
+            message: message.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn entity(mut self, id: Option<String>, kind: &str) -> Self {
+        self.entity_id = id;
+        self.entity_kind = Some(kind.to_string());
+        self
+    }
+
+    /// Serialized JSON payload (callers keep their own serialization errors).
+    pub fn payload(mut self, payload_json: String) -> Self {
+        self.payload_json = payload_json;
+        self
+    }
+
+    pub fn agent(mut self, agent_name: Option<String>) -> Self {
+        self.agent_name = agent_name;
+        self
+    }
 }
 
 /// Named ordered set of documents, optionally shaped as an outline and dependency graph.
@@ -1296,15 +1023,12 @@ impl DiaryEntry {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .or_else(|| {
-                serde_json::from_str::<serde_json::Value>(&doc.metadata_json)
-                    .ok()
-                    .and_then(|v| {
-                        v.get("agent_name")
-                            .and_then(|x| x.as_str())
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                    })
+                doc.metadata_field("agent_name")
+                    .as_ref()
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
             })
             .or_else(|| {
                 doc.wing.as_deref().and_then(|w| {
@@ -1330,27 +1054,6 @@ impl DiaryEntry {
             updated_at: doc.updated_at,
         }
     }
-}
-
-/// Session bootstrap payload for `wake_up` (MemPalace parity).
-///
-/// Combines store [`StatusReport`], recent diary notes, pinned documents, and
-/// an optional schema document (only when already present — not auto-seeded).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WakeUpReport {
-    pub status: StatusReport,
-    /// Recent diary entries for the requested agent (or all agents when unscoped).
-    #[serde(default)]
-    pub diary: Vec<DiaryEntry>,
-    /// Pinned active documents (list order: boost desc, updated_at desc).
-    #[serde(default)]
-    pub pinned: Vec<DrawerListItem>,
-    /// Schema conventions document when `schema://agents` (or layer=schema) exists.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schema: Option<WakeUpSchemaSnippet>,
-    /// Agent name used for diary scope (`None` = all diary entries).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
 }
 
 /// Compact schema view embedded in [`WakeUpReport`] (no auto-create).
@@ -1406,7 +1109,7 @@ pub struct DrawerListItem {
     pub source_file: Option<String>,
     #[serde(default = "default_layer")]
     pub layer: String,
-    #[serde(default = "default_kind")]
+    #[serde(default = "default_kind_string")]
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
@@ -1430,7 +1133,7 @@ impl From<&Document> for DrawerListItem {
             room: d.room.clone(),
             source_file: d.source_file.clone(),
             layer: d.layer.clone(),
-            kind: d.kind.clone(),
+            kind: d.kind.to_string(),
             content_hash: d.content_hash.clone(),
             pinned: d.pinned,
             boost: d.boost,
@@ -1464,12 +1167,120 @@ impl Default for KgFact {
     }
 }
 
+/// Define a finding-code vocabulary: named known codes plus `Other(String)`.
+///
+/// Serialized as the plain code string, so the wire format is unchanged and
+/// unknown codes (for example from a client-supplied report) still round-trip.
+macro_rules! finding_codes {
+    ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $wire:literal,)+ }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub enum $name {
+            $($(#[$vmeta])* $variant,)+
+            /// A code this build does not name.
+            Other(String),
+        }
+
+        impl $name {
+            pub fn as_str(&self) -> &str {
+                match self {
+                    $(Self::$variant => $wire,)+
+                    Self::Other(code) => code,
+                }
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(code: &str) -> Self {
+                match code {
+                    $($wire => Self::$variant,)+
+                    other => Self::Other(other.to_string()),
+                }
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::Other(String::new())
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool {
+                self.as_str() == *other
+            }
+        }
+
+        impl PartialEq<str> for $name {
+            fn eq(&self, other: &str) -> bool {
+                self.as_str() == other
+            }
+        }
+
+        impl PartialEq<String> for $name {
+            fn eq(&self, other: &String) -> bool {
+                self.as_str() == other
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(code: String) -> Self {
+                Self::from(code.as_str())
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = str;
+            fn deref(&self) -> &str {
+                self.as_str()
+            }
+        }
+
+        impl serde::Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+                serializer.serialize_str(self.as_str())
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+                let code = String::deserialize(deserializer)?;
+                Ok(Self::from(code.as_str()))
+            }
+        }
+    };
+}
+pub(crate) use finding_codes;
+
 #[cfg(test)]
 mod tests {
     use super::{
         format_document_etag, parse_document_etag, Document, ProjectId, WikiPageListItem,
         UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
     };
+
+    #[test]
+    fn document_kind_keeps_agent_kinds_and_wire_strings() {
+        use super::DocumentKind;
+        let doc = Document {
+            kind: "runbook".into(),
+            ..Document::default()
+        };
+        let mut wire = serde_json::to_value(&doc).unwrap();
+        assert_eq!(wire["kind"], "runbook");
+        let back: Document = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(back.kind, DocumentKind::Other("runbook".into()));
+        wire.as_object_mut().unwrap().remove("kind");
+        let defaulted: Document = serde_json::from_value(wire).unwrap();
+        assert_eq!(defaulted.kind, DocumentKind::Document);
+        assert!(DocumentKind::Wiki == "wiki");
+    }
 
     #[test]
     fn ui_graph_export_limit_is_one_hundred_thousand() {

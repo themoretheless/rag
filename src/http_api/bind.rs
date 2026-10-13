@@ -1,35 +1,9 @@
 //! `RAG_HTTP_BIND` parse + loopback gate (`RAG_HTTP_ALLOW_REMOTE`).
+//!
+//! The parser lives in [`crate::config`] (configuration validates the bind at
+//! load time); this module keeps the transport-facing name and its tests.
 
-use std::net::SocketAddr;
-
-use crate::error::AppError;
-
-/// Parse `RAG_HTTP_BIND` like `127.0.0.1:7432`. Empty / unset → None.
-///
-/// Non-loopback binds require `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on`.
-/// Startup additionally validates bearer credentials via `validate_security`.
-pub fn parse_bind(raw: &str) -> Result<Option<SocketAddr>, AppError> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return Ok(None);
-    }
-    let addr = s
-        .parse::<SocketAddr>()
-        .map_err(|e| AppError::config(format!("invalid RAG_HTTP_BIND '{s}': {e}")))?;
-    if !addr.ip().is_loopback() {
-        let allow = std::env::var("RAG_HTTP_ALLOW_REMOTE")
-            .ok()
-            .and_then(|v| crate::config::parse_env_truthy(&v))
-            .unwrap_or(false);
-        if !allow {
-            return Err(AppError::config(format!(
-                "RAG_HTTP_BIND '{s}' is not loopback; set RAG_HTTP_ALLOW_REMOTE=true to expose \
-                 authenticated HTTP/MCP on the network"
-            )));
-        }
-    }
-    Ok(Some(addr))
-}
+pub use crate::config::parse_bind;
 
 #[cfg(test)]
 mod tests {

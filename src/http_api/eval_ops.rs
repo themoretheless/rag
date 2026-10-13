@@ -22,7 +22,6 @@ use crate::eval::{
     replay_bundle, replay_run_payload, validate_prompt, AnswerJudgeInput, AnswerJudgeResult,
     EvalExportBundle, PromptVersion,
 };
-use crate::llm::ChatClient;
 
 const PAGE_SIZE: i64 = 50;
 const EXPORT_CAP: usize = 200;
@@ -174,7 +173,7 @@ async fn judge(State(st): State<HttpState>, Json(body): Json<JudgeBody>) -> Resp
 
 async fn judge_one(st: HttpState, body: JudgeBody) -> Result<Value> {
     if body.question.trim().is_empty() && body.answer_text.trim().is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "judge requires a question or answer_text",
         ));
     }
@@ -221,17 +220,17 @@ async fn online(State(st): State<HttpState>, Json(body): Json<OnlineBody>) -> Re
 async fn online_one(st: HttpState, body: OnlineBody) -> Result<Value> {
     let question = body.search.query.clone();
     if question.trim().is_empty() {
-        return Err(AppError::config("online eval requires a search query"));
+        return Err(AppError::invalid("online eval requires a search query"));
     }
     let response = search_http(State(st.clone()), Json(body.search.clone()))
         .await
         .into_response();
     if !response.status().is_success() {
-        return Err(search_failed(response).await);
+        return Err(super::error::search_response_error(response).await);
     }
     let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
         .await
-        .map_err(|e| AppError::config(e.to_string()))?;
+        .map_err(|e| AppError::invalid(e.to_string()))?;
     let search_result: Value = serde_json::from_slice(&bytes)?;
     let hits = search_result["items"]
         .as_array()
@@ -321,11 +320,13 @@ async fn replay(State(st): State<HttpState>, Json(body): Json<ReplayBody>) -> Re
 }
 
 async fn replay_one(st: HttpState, body: ReplayBody) -> Result<Value> {
-    let report = replay_bundle(&body.bundle)?;
-    if body.persist {
-        persist_eval_run(&st.store, &replay_run_payload(&report))?;
-    }
-    Ok(json!({"ok": true, "persisted": body.persist, "report": report}))
+    crate::util::blocking_section(|| {
+        let report = replay_bundle(&body.bundle)?;
+        if body.persist {
+            persist_eval_run(&st.store, &replay_run_payload(&report))?;
+        }
+        Ok(json!({"ok": true, "persisted": body.persist, "report": report}))
+    })
 }
 
 /// Optional LLM enrichment. Returns `None` when disabled or the client cannot be built.
@@ -344,8 +345,10 @@ pub(super) async fn maybe_llm_judge(
         seed_builtin_prompt(&st.store)?;
         builtin_answer_judge()
     };
-    let client = ChatClient::from_config(&st.config)?;
-    let llm = judge_answer_llm(&client, &prompt, &input).await?;
+    let client = st.llm.as_ref().ok_or_else(|| {
+        AppError::llm("ChatClient is not configured; check RAG_LLM_BASE_URL and RAG_LLM_MODEL")
+    })?;
+    let llm = judge_answer_llm(client, &prompt, &input).await?;
     let heuristic = judge_answer_heuristic(&input);
     Ok(Some(merge_llm_scores(heuristic, llm, &prompt)))
 }
@@ -386,7 +389,7 @@ fn list_table_payloads(store: &Store, table: &str, limit: usize) -> Result<Vec<V
         "eval_traces" => super::payload_kv::PayloadTable::EvalTraces,
         "search_feedback" => super::payload_kv::PayloadTable::SearchFeedback,
         other => {
-            return Err(AppError::config(format!("unsupported export table: {other}")))
+            return Err(AppError::invalid(format!("unsupported export table: {other}")))
         }
     };
     let mut items = super::payload_kv::list_payload_values(store, table)?;
@@ -395,17 +398,6 @@ fn list_table_payloads(store: &Store, table: &str, limit: usize) -> Result<Vec<V
     Ok(items)
 }
 
-async fn search_failed(response: axum::response::Response) -> AppError {
-    let status = response.status();
-    let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
-        Ok(bytes) => bytes,
-        Err(e) => return AppError::config(e.to_string()),
-    };
-    AppError::config(format!(
-        "search failed ({status}): {}",
-        String::from_utf8_lossy(&bytes)
-    ))
-}
 
 #[cfg(test)]
 mod tests {
@@ -431,6 +423,7 @@ mod tests {
             embedder: Arc::new(MockEmbedder::new(16)),
             config,
             jobs: JobRegistry::default(),
+            llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),
         }
     }

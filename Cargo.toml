@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rag-mcp-ui"]
+members = [".", "crates/rag-mcp-core", "crates/rag-mcp-markup", "crates/rag-mcp-ui"]
 default-members = ["."]
 resolver = "2"
 
@@ -24,6 +24,8 @@ name = "ingest_file"
 path = "src/bin/ingest_file.rs"
 
 [dependencies]
+rag-mcp-core = { path = "crates/rag-mcp-core" }
+rag-mcp-markup = { path = "crates/rag-mcp-markup" }
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
@@ -56,3 +58,23 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
+
+# Debug info dominates build output: every test and binary target statically
+# links bundled DuckDB. Line tables keep panic backtraces readable for our code;
+# dependencies need none.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
+# Production builds (`cargo build --release`, see docs/PROD_RUN.md): one codegen
+# unit plus thin LTO lets rustc inline across crates (serde, duckdb glue, axum)
+# at a modest link-time cost; debug info is dropped from shipped binaries.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

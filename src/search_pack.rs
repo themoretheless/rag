@@ -4,7 +4,61 @@
 //! (`max_context_tokens`) and the optional `pack_context` MCP tool so ranked
 //! hits cannot overflow a model window.
 
+use rmcp::schemars::{self, JsonSchema};
+use serde::{Deserialize, Serialize};
+
 use crate::models::SearchHit;
+
+/// One hit passed into `pack_context` (same shape as `search` results).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct PackHitParams {
+    pub chunk_id: String,
+    pub document_id: String,
+    pub document_title: String,
+    pub document_uri: String,
+    pub chunk_index: i32,
+    pub content: String,
+    pub score: f32,
+    #[serde(default)]
+    pub score_vec: Option<f32>,
+    #[serde(default)]
+    pub score_lex: Option<f32>,
+    #[serde(default)]
+    pub score_rrf: Option<f32>,
+    #[serde(default)]
+    pub snippet: Option<String>,
+    #[serde(default)]
+    pub char_start: Option<i32>,
+    #[serde(default)]
+    pub char_end: Option<i32>,
+    #[serde(default)]
+    pub heading_path: Option<Vec<String>>,
+    #[serde(default)]
+    pub section: Option<String>,
+}
+
+impl From<PackHitParams> for SearchHit {
+    fn from(h: PackHitParams) -> Self {
+        Self {
+            chunk_id: h.chunk_id,
+            document_id: h.document_id,
+            document_title: h.document_title,
+            document_uri: h.document_uri,
+            chunk_index: h.chunk_index,
+            content: h.content,
+            score: h.score,
+            score_vec: h.score_vec,
+            score_lex: h.score_lex,
+            score_rrf: h.score_rrf,
+            snippet: h.snippet,
+            char_start: h.char_start,
+            char_end: h.char_end,
+            heading_path: h.heading_path,
+            section: h.section,
+            ..Self::default()
+        }
+    }
+}
 
 /// Rough characters-per-token estimate (common English heuristic).
 pub const CHARS_PER_TOKEN: usize = 4;
@@ -119,19 +173,7 @@ fn format_citation_header(index: usize, hit: &SearchHit) -> String {
     )
 }
 
-/// Unicode-safe truncation; the ellipsis itself consumes one character.
-fn truncate_to_chars(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    let mut chars = text.chars();
-    let mut out: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        out.pop();
-        out.push('…');
-    }
-    out
-}
+use crate::util::truncate_chars as truncate_to_chars;
 
 #[cfg(test)]
 mod tests {

@@ -12,35 +12,8 @@ use crate::gateway::{
     ReqwestGatewayClient, Response,
 };
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ProjectHome {
-    pub project_id: String,
-    pub documents: u64,
-    pub chunks: u64,
-    pub raw_documents: u64,
-    pub wiki_documents: u64,
-    pub diary_documents: u64,
-    pub archived_documents: u64,
-    pub rooms: u64,
-    pub source_files: u64,
-    pub graph_nodes: u64,
-    pub graph_edges: u64,
-    pub unresolved_links: u64,
-    #[serde(default)]
-    pub last_updated_at: Option<String>,
-    #[serde(default)]
-    pub source_roots: Vec<ProjectSourceRoot>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ProjectSourceRoot {
-    pub canonical_root: String,
-    pub file_count: u64,
-    #[serde(default)]
-    pub last_seen: Option<String>,
-    #[serde(default)]
-    pub last_synced: Option<String>,
-}
+/// Shared with the server; `last_updated_at` is a UTC timestamp.
+pub use rag_mcp_core::ProjectHome;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LibraryItem {
@@ -82,7 +55,7 @@ impl LibraryItem {
     }
 
     pub fn is_wiki(&self) -> bool {
-        self.layer == "wiki" || self.uri.starts_with("wiki://")
+        rag_mcp_core::Layer::Wiki.is(&self.layer) || self.uri.starts_with("wiki://")
     }
 }
 
@@ -268,18 +241,7 @@ fn join_url(base: &str, path: &str) -> Result<String, String> {
     Ok(format!("{}/{}", base, path.trim_start_matches('/')))
 }
 
-fn encode_query(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            other => encoded.push_str(&format!("%{other:02X}")),
-        }
-    }
-    encoded
-}
+use crate::gateway::percent_encode as encode_query;
 
 #[cfg(test)]
 mod tests {

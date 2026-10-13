@@ -13,19 +13,17 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
-use crate::db::search::{attach_context, ContextExpansion};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
 use crate::eval::{
     source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder,
 };
-use crate::mcp::tools::PackHitParams;
+use crate::search_pack::PackHitParams;
 use crate::models::SearchHit;
-use crate::retrieval::{self, SearchCommand, SimilarDocumentsQuery};
+use crate::retrieval::{self, SimilarDocumentsQuery};
 use crate::revisions::{RestoreRevisionCommand, RevisionService};
-use crate::search_pack::pack_hits;
 use crate::telemetry;
-use crate::util::check_path_allowlist;
+use crate::util::{check_path_allowlist, non_blank};
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -114,7 +112,7 @@ async fn source_file(
             .headers_mut()
             .insert(header::CONTENT_DISPOSITION, value);
     }
-    super::record_rag_action(source_download_audit_action());
+    crate::activity::record_rag_action(source_download_audit_action());
     response
 }
 
@@ -308,39 +306,33 @@ pub(super) async fn search_http(
     let include_trace = body.include_trace;
     let persist_trace = body.persist_trace;
     let call = telemetry::begin("http", "http", "search", Some(&audit_args));
-    let command = SearchCommand {
+    let command = retrieval::SearchRequest {
         query: body.query,
         mode: body.mode,
-        default_mode: state.config.default_search_mode,
         top_k: body.top_k,
-        default_top_k: state.config.default_top_k,
-        document_id: clean(body.document_id),
-        wing: clean(body.wing),
-        room: clean(body.room),
-        layer: clean(body.layer),
-        source_file: clean(body.source_file),
+        document_id: body.document_id,
+        wing: body.wing,
+        room: body.room,
+        layer: body.layer,
+        source_file: body.source_file,
         include_archived: body.include_archived,
         min_score: body.min_score,
-        diversity: clean(body.diversity),
-        group_by: clean(body.group_by),
+        diversity: body.diversity,
+        group_by: body.group_by,
         recency_half_life_days: body.recency_half_life_days,
-        max_context_tokens: body
-            .max_context_tokens
-            .or(Some(state.config.max_context_tokens)),
-        max_chunks_per_document: body
-            .max_chunks_per_document
-            .or(Some(state.config.max_chunks_per_doc)),
-        context_expansion: clean(body.context_expansion),
+        max_context_tokens: body.max_context_tokens,
+        max_chunks_per_document: body.max_chunks_per_document,
+        context_expansion: body.context_expansion,
         neighbor_chunks: body.neighbor_chunks,
-        timeout_ms: body.timeout_ms.or(Some(5_000)),
-        fts_stemmer: state.config.fts_stemmer.clone(),
+        timeout_ms: body.timeout_ms,
         rrf_k: body.rrf_k,
-    };
+    }
+    .into_command(&state.config);
     let resolved_mode =
         match retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode) {
             Ok(mode) => mode,
             Err(error) => {
-                call.finish(false, Some(search_error_kind(&error).into()), None);
+                call.finish(false, Some(error.code().into()), None);
                 return api_err(error);
             }
         };
@@ -383,7 +375,7 @@ pub(super) async fn search_http(
             api_ok(response)
         }
         Err(error) => {
-            call.finish(false, Some(search_error_kind(&error).into()), None);
+            call.finish(false, Some(error.code().into()), None);
             api_err(error)
         }
     }
@@ -393,23 +385,6 @@ fn search_audit_args(body: &SearchBody) -> serde_json::Value {
     // Calls are visible to every client in the operations feed. Keep useful
     // shape diagnostics but never persist query text or resource identifiers.
     json!({"mode": body.mode, "top_k": body.top_k})
-}
-
-fn search_error_kind(error: &AppError) -> &'static str {
-    match error {
-        AppError::Config(_) => "INVALID_REQUEST",
-        AppError::Db(_) => "DATABASE_ERROR",
-        AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
-        AppError::Llm(_) => "LLM_ERROR",
-        AppError::Io(_) => "IO_ERROR",
-        AppError::Chunking(_) => "CHUNKING_ERROR",
-        AppError::NotFound(_) => "NOT_FOUND",
-        AppError::Fts(_) => "FTS_ERROR",
-        AppError::Conflict(_) => "CONFLICT",
-        AppError::Forbidden(_) => "FORBIDDEN",
-        AppError::Busy(_) => "STORE_BUSY",
-        AppError::Other(_) => "INTERNAL_ERROR",
-    }
 }
 
 /// `pack_context` mirror: full citation-block budget, including headers and expansion.
@@ -439,32 +414,25 @@ async fn pack_context_http(
     let include_trace = body.include_trace || body.prior_trace.is_some();
     let persist_trace = body.persist_trace;
     let prior_trace = body.prior_trace;
-    let expansion = match clean(body.context_expansion)
-        .as_deref()
-        .map(ContextExpansion::parse)
-    {
-        Some(Ok(value)) => Some(value),
-        Some(Err(error)) => return api_err(error),
-        None => None,
+    let command = retrieval::PackContextCommand {
+        hits: body.hits.into_iter().map(SearchHit::from).collect(),
+        max_tokens: body.max_tokens,
+        context_expansion: body.context_expansion,
+        neighbor_chunks: body.neighbor_chunks,
     };
-    let hits: Vec<SearchHit> = body.hits.into_iter().map(SearchHit::from).collect();
     let store = state.store.clone();
-    let neighbor_chunks = body.neighbor_chunks.unwrap_or(1);
+    let config = state.config.clone();
     let pack_span = include_trace.then(|| SpanBuilder::start("pack_context"));
-    let hits = match super::run_blocking("pack-context expansion", move || {
-        let mut hits = hits;
-        attach_context(&store, &mut hits, expansion, neighbor_chunks)?;
-        Ok(hits)
+    let outcome = match super::run_blocking("pack-context expansion", move || {
+        retrieval::pack_context(&store, &config, command)
     })
     .await
     {
-        Ok(hits) => hits,
+        Ok(outcome) => outcome,
         Err(error) => return api_err(error),
     };
-    let packed = pack_hits(
-        &hits,
-        body.max_tokens.unwrap_or(state.config.max_context_tokens),
-    );
+    let hits = outcome.expanded_hits;
+    let packed = outcome.packed;
     let mut response = json!({
         "ok": true,
         "total_tokens": packed.total_tokens,
@@ -500,17 +468,16 @@ fn source_versions_for_hits(
     store: &crate::db::Store,
     hits: &[SearchHit],
 ) -> Vec<SourceVersion> {
+    let ids: Vec<&str> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
+    // One query for every hit's stored hash (was one full document load per hit).
+    let hashes = crate::util::blocking_section(|| store.content_hashes(&ids)).unwrap_or_default();
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for hit in hits {
         if !seen.insert(hit.document_id.clone()) {
             continue;
         }
-        let content_hash = store
-            .get_document(&hit.document_id)
-            .ok()
-            .flatten()
-            .and_then(|doc| doc.content_hash);
+        let content_hash = hashes.get(&hit.document_id).cloned().flatten();
         out.push(SourceVersion {
             document_id: hit.document_id.clone(),
             uri: Some(hit.document_uri.clone()),
@@ -599,19 +566,30 @@ struct SimilarQuery {
     document_id: String,
     #[serde(default)]
     top_k: Option<usize>,
+    #[serde(default)]
+    wing: Option<String>,
+    #[serde(default)]
+    room: Option<String>,
+}
+
+impl SimilarQuery {
+    /// Same scope as MCP `find_similar`; blank values are dropped by the service.
+    fn into_command(self, config: &crate::config::Config) -> SimilarDocumentsQuery {
+        SimilarDocumentsQuery {
+            document_id: self.document_id,
+            top_k: self.top_k.unwrap_or(config.default_top_k),
+            wing: self.wing,
+            room: self.room,
+            fts_stemmer: config.fts_stemmer.clone(),
+        }
+    }
 }
 
 async fn find_similar(
     State(state): State<HttpState>,
     Query(query): Query<SimilarQuery>,
 ) -> impl IntoResponse {
-    let query = SimilarDocumentsQuery {
-        document_id: query.document_id,
-        top_k: query.top_k.unwrap_or(state.config.default_top_k),
-        wing: None,
-        room: None,
-        fts_stemmer: state.config.fts_stemmer.clone(),
-    };
+    let query = query.into_command(&state.config);
     let store = state.store.clone();
     let config = state.config.clone();
     let result = super::run_blocking("find similar", move || {
@@ -663,14 +641,14 @@ async fn documents(
         Err(error) => return api_err(error),
     };
     let filter = DocumentCatalogFilter {
-        q: clean(query.q),
-        wing: clean(query.wing),
-        room: clean(query.room),
+        q: non_blank(query.q),
+        wing: non_blank(query.wing),
+        room: non_blank(query.room),
         source_file: None,
-        layer: clean(query.layer),
-        kind: clean(query.kind),
+        layer: non_blank(query.layer),
+        kind: non_blank(query.kind),
         compiled: query.compiled,
-        status: clean(query.status),
+        status: non_blank(query.status),
         include_archived: query.include_archived,
         limit,
         offset,
@@ -704,12 +682,8 @@ pub(super) fn decode_cursor(cursor: Option<&str>) -> Result<usize, AppError> {
         Some(value) => value
             .strip_prefix("v1:")
             .and_then(|offset| offset.parse().ok())
-            .ok_or_else(|| AppError::config("invalid cursor")),
+            .ok_or_else(|| AppError::invalid("invalid cursor")),
     }
-}
-
-fn clean(value: Option<String>) -> Option<String> {
-    value.filter(|item| !item.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -761,6 +735,16 @@ mod tests {
     }
 
     #[test]
+    fn find_similar_http_keeps_the_project_scope() {
+        let query: SimilarQuery =
+            serde_json::from_value(json!({"document_id": "d", "wing": "rag", "room": "src"}))
+                .unwrap();
+        let command = query.into_command(&crate::config::Config::for_tests());
+        assert_eq!(command.wing.as_deref(), Some("rag"));
+        assert_eq!(command.room.as_deref(), Some("src"));
+    }
+
+    #[test]
     fn source_download_activity_does_not_expose_resource_identifiers() {
         let action = source_download_audit_action();
         assert_eq!(action, "download_source_file");
@@ -804,8 +788,8 @@ mod tests {
             assert!(!serialized.contains(secret));
         }
 
-        let error = AppError::config("private acquisition plan");
-        assert_eq!(search_error_kind(&error), "INVALID_REQUEST");
-        assert!(!search_error_kind(&error).contains("private"));
+        let error = AppError::invalid("private acquisition plan");
+        assert_eq!(error.code(), "INVALID_REQUEST");
+        assert!(!error.code().contains("private"));
     }
 }

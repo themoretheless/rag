@@ -50,10 +50,10 @@ async fn list(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
 async fn create(State(st): State<HttpState>, Json(body): Json<RetrievalTrace>) -> Response {
     let result = super::run_blocking("persist eval trace", move || {
         if body.spans.is_empty() {
-            return Err(AppError::config("trace must include at least one span"));
+            return Err(AppError::invalid("trace must include at least one span"));
         }
         if body.id.trim().is_empty() {
-            return Err(AppError::config("trace id must not be empty"));
+            return Err(AppError::invalid("trace id must not be empty"));
         }
         super::payload_kv::upsert_payload(
             &st.store,
@@ -116,6 +116,7 @@ mod tests {
             embedder: Arc::new(MockEmbedder::new(16)),
             config,
             jobs: JobRegistry::default(),
+            llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),
         }
     }

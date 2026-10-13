@@ -6,6 +6,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use super::json::{parse_model_object, truncate_chars as truncate, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
 use crate::llm::provider::{LlmApiDialect, LlmProviderKind};
 
@@ -76,7 +77,7 @@ pub struct ConsolidateProposal {
 }
 
 fn default_consolidate_kind() -> String {
-    "concept".into()
+    crate::models::DocumentKind::Concept.as_str().into()
 }
 
 /// Result of [`ChatClient::llm_status`] (rich health probe).
@@ -122,8 +123,9 @@ pub struct ChatClient {
 impl ChatClient {
     /// Build a client. `base_url` is API root (e.g. `http://127.0.0.1:11434/v1`).
     ///
-    /// Timeout: `RAG_LLM_TIMEOUT_SECS` (default 600).  
-    /// Completion budget: `RAG_LLM_MAX_TOKENS` (default 2048).
+    /// Uses fixed defaults (600 s timeout, 2048 completion tokens) and does not
+    /// read the environment; production code builds clients with
+    /// [`Self::from_config`] so `RAG_LLM_*` is parsed once by `Config`.
     pub fn new(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -134,8 +136,8 @@ impl ChatClient {
             base_url,
             api_key,
             model,
-            timeout_secs_from_env(),
-            max_tokens_from_env(),
+            DEFAULT_TIMEOUT_SECS,
+            DEFAULT_MAX_TOKENS,
         )
     }
 
@@ -149,7 +151,7 @@ impl ChatClient {
         Self::with_provider(
             config.llm_provider,
             config.llm_base_url.as_str(),
-            config.llm_api_key.as_str(),
+            config.llm_api_key.expose(),
             config.llm_model.as_str(),
             config.llm_timeout_secs,
             max_tokens,
@@ -581,138 +583,6 @@ impl ChatClient {
             .map_err(|e| e.to_string())
     }
 
-    /// Compile a raw source into wiki pages (JSON object in model output).
-    pub async fn compile_wiki(
-        &self,
-        schema_md: &str,
-        source_title: &str,
-        source_uri: &str,
-        source_body: &str,
-    ) -> Result<CompileResult> {
-        let system = r#"You are a knowledge compiler for a local LLM wiki (Karpathy-style).
-Given an immutable raw source, produce structured wiki pages.
-
-Rules:
-- Never invent facts not grounded in the source; mark gaps as TODO.
-- Use markdown. Cross-link with [[Page Title]] and tags as #tag.
-- Prefer few high-quality pages over many stubs.
-- Return ONLY valid JSON (no markdown fences) matching:
-{
-  "pages": [
-    {
-      "slug": "kebab-case",
-      "title": "Human Title",
-      "kind": "source_summary|entity|concept|wiki",
-      "category": "optional",
-      "content": "markdown body",
-      "summary": "one-line"
-    }
-  ],
-  "notes": "optional compiler notes"
-}
-"#;
-        let user = format!(
-            "## Wiki schema / conventions\n\n{schema}\n\n## Source\n- title: {title}\n- uri: {uri}\n\n```\n{body}\n```\n",
-            schema = truncate(schema_md, 6000),
-            title = source_title,
-            uri = source_uri,
-            body = truncate(source_body, 24_000),
-        );
-        let messages = [
-            ChatMessage {
-                role: "system".into(),
-                content: system.into(),
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: user,
-            },
-        ];
-        let raw = self.complete(&messages).await?;
-        parse_compile_json(&raw)
-    }
-
-    /// Merge N document texts into one consolidated wiki page proposal (JSON).
-    ///
-    /// Used by the `consolidate` maintenance tool: propose first; callers write
-    /// only when `apply=true`. Never invents facts beyond the provided sources.
-    pub async fn consolidate_wiki(
-        &self,
-        schema_md: &str,
-        sources: &[(String, String, String)],
-    ) -> Result<ConsolidateProposal> {
-        if sources.is_empty() {
-            return Err(AppError::llm(
-                "consolidate_wiki requires at least one source document",
-            ));
-        }
-        let system = r#"You are a knowledge consolidator for a local LLM wiki (Karpathy-style).
-Merge the given source documents into ONE durable wiki page (concept or entity).
-
-Rules:
-- Never invent facts not grounded in the sources; mark gaps as TODO.
-- Deduplicate overlapping claims; prefer precise wording over length.
-- Use markdown. Cross-link with [[Page Title]] and tags as #tag.
-- List provenance under a ## Sources section (titles / uris).
-- Return ONLY valid JSON (no markdown fences) matching:
-{
-  "slug": "kebab-case",
-  "title": "Human Title",
-  "kind": "concept|entity|wiki",
-  "category": "optional",
-  "content": "markdown body",
-  "summary": "one-line",
-  "suggested_links": ["Other Page", "[[Yet Another]]"],
-  "notes": "optional consolidator notes"
-}
-"#;
-        // Budget: schema + N sources within a reasonable prompt size.
-        let per_body = (20_000usize / sources.len().max(1)).clamp(1_500, 8_000);
-        let mut blocks = String::new();
-        for (i, (title, uri, body)) in sources.iter().enumerate() {
-            blocks.push_str(&format!(
-                "### Source {}\n- title: {}\n- uri: {}\n\n```\n{}\n```\n\n",
-                i + 1,
-                title,
-                uri,
-                truncate(body, per_body)
-            ));
-        }
-        let user = format!(
-            "## Wiki schema / conventions\n\n{schema}\n\n## Sources to consolidate ({n})\n\n{blocks}",
-            schema = truncate(schema_md, 4_000),
-            n = sources.len(),
-            blocks = blocks,
-        );
-        let messages = [
-            ChatMessage {
-                role: "system".into(),
-                content: system.into(),
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: user,
-            },
-        ];
-        let raw = self.complete(&messages).await?;
-        parse_consolidate_json(&raw)
-    }
-}
-
-fn timeout_secs_from_env() -> u64 {
-    std::env::var("RAG_LLM_TIMEOUT_SECS")
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_TIMEOUT_SECS)
-}
-
-fn max_tokens_from_env() -> u32 {
-    std::env::var("RAG_LLM_MAX_TOKENS")
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_MAX_TOKENS)
 }
 
 fn elapsed_ms(start: Instant) -> u64 {
@@ -740,52 +610,18 @@ fn model_id_matches(listed: &str, configured: &str) -> bool {
     false
 }
 
-fn strip_json_fences(raw: &str) -> &str {
-    let trimmed = raw.trim();
-    if let Some(rest) = trimmed.strip_prefix("```") {
-        let rest = rest
-            .strip_prefix("json")
-            .or_else(|| rest.strip_prefix("JSON"))
-            .unwrap_or(rest);
-        let rest = rest.trim_start_matches('\n');
-        rest.strip_suffix("```").unwrap_or(rest).trim()
-    } else {
-        trimmed
-    }
+pub(crate) fn parse_compile_json(raw: &str) -> Result<CompileResult> {
+    parse_model_object::<CompileResult>(raw).ok_or_else(|| {
+        AppError::llm(format!(
+            "failed to parse compile JSON from model output: {}",
+            truncate(raw, ERROR_EXCERPT_CHARS)
+        ))
+    })
 }
 
-fn parse_compile_json(raw: &str) -> Result<CompileResult> {
-    let unfenced = strip_json_fences(raw);
-    // Try full parse, then first {...} slice.
-    if let Ok(v) = serde_json::from_str::<CompileResult>(unfenced) {
-        return Ok(v);
-    }
-    if let (Some(start), Some(end)) = (unfenced.find('{'), unfenced.rfind('}')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(v) = serde_json::from_str::<CompileResult>(slice) {
-                return Ok(v);
-            }
-        }
-    }
-    Err(AppError::llm(format!(
-        "failed to parse compile JSON from model output: {}",
-        truncate(raw, 400)
-    )))
-}
-
-fn parse_consolidate_json(raw: &str) -> Result<ConsolidateProposal> {
-    let unfenced = strip_json_fences(raw);
-    if let Ok(v) = serde_json::from_str::<ConsolidateProposal>(unfenced) {
-        return validate_consolidate_proposal(v);
-    }
-    if let (Some(start), Some(end)) = (unfenced.find('{'), unfenced.rfind('}')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(v) = serde_json::from_str::<ConsolidateProposal>(slice) {
-                return validate_consolidate_proposal(v);
-            }
-        }
+pub(crate) fn parse_consolidate_json(raw: &str) -> Result<ConsolidateProposal> {
+    if let Some(proposal) = parse_model_object::<ConsolidateProposal>(raw) {
+        return validate_consolidate_proposal(proposal);
     }
     // Fallback: model returned compile-style `{ "pages": [ ... ] }` with one page.
     if let Ok(compile) = parse_compile_json(raw) {
@@ -804,7 +640,7 @@ fn parse_consolidate_json(raw: &str) -> Result<ConsolidateProposal> {
     }
     Err(AppError::llm(format!(
         "failed to parse consolidate JSON from model output: {}",
-        truncate(raw, 400)
+        truncate(raw, ERROR_EXCERPT_CHARS)
     )))
 }
 
@@ -852,15 +688,6 @@ fn validate_consolidate_proposal(mut p: ConsolidateProposal) -> Result<Consolida
     Ok(p)
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(max).collect();
-        t.push('…');
-        t
-    }
-}
 
 #[derive(Serialize)]
 struct ChatRequest<'a> {
@@ -1050,31 +877,12 @@ mod tests {
     fn from_config_uses_timeout_and_max_tokens() {
         let cfg = Config {
             db_path: std::path::PathBuf::from("./x.duckdb"),
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".into(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".into(),
             embedding_dims: 8,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            default_top_k: 5,
-            ingest_roots: vec![],
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".into(),
-            default_search_mode: crate::models::SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".into(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".into(),
-            llm_api_key: "ollama".into(),
             llm_enabled: false,
             llm_timeout_secs: 90,
             llm_max_tokens: 777,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
+            ..Config::for_tests()
         };
         let c = ChatClient::from_config(&cfg).unwrap();
         assert_eq!(c.timeout_secs(), 90);

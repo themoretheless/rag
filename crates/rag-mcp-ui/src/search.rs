@@ -38,34 +38,8 @@ impl Default for SearchRequest {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct SearchHit {
-    pub chunk_id: String,
-    pub document_id: String,
-    pub document_title: String,
-    pub document_uri: String,
-    pub chunk_index: i32,
-    pub content: String,
-    pub score: f32,
-    #[serde(default)]
-    pub score_vec: Option<f32>,
-    #[serde(default)]
-    pub score_lex: Option<f32>,
-    #[serde(default)]
-    pub score_rrf: Option<f32>,
-    #[serde(default)]
-    pub snippet: Option<String>,
-    #[serde(default)]
-    pub heading_path: Option<Vec<String>>,
-    #[serde(default)]
-    pub section: Option<String>,
-}
-
-impl SearchHit {
-    pub fn visible_excerpt(&self) -> &str {
-        self.snippet.as_deref().unwrap_or(&self.content)
-    }
-}
+/// Shared with the server; optional fields default when absent.
+pub use rag_mcp_core::SearchHit;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResults {

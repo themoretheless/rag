@@ -13,20 +13,11 @@
 //! ```
 
 use anyhow::{bail, Context, Result};
-use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
 use rag_mcp::ingest::{IngestFileCommand, IngestService};
-use rag_mcp::{Config, Store};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    rag_mcp::bootstrap::init_tracing("info");
 
     let args = parse_args()?;
     let rt = tokio::runtime::Runtime::new()?;
@@ -98,15 +89,11 @@ fn parse_args() -> Result<Args> {
 }
 
 async fn run(args: Args) -> Result<()> {
-    let mut config = Config::from_env().context("Config::from_env")?;
-    config.db_path = args.db;
-
-    let store = Store::open(&config.db_path).context("open DuckDB")?;
-    store
-        .ensure_embedding_manifest(&config)
-        .context("validate embedding manifest")?;
-    let embedder: Arc<dyn EmbeddingProvider> =
-        build_provider(&config).context("embedding provider")?;
+    let rag_mcp::bootstrap::OfflineRuntime {
+        config,
+        store,
+        embedder,
+    } = rag_mcp::bootstrap::open_offline(args.db)?;
 
     eprintln!(
         "ingest_file: path={} wing={:?} room={:?} db={}",

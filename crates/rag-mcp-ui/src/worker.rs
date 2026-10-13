@@ -14,7 +14,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use rag_mcp::GraphView;
+use rag_mcp_core::GraphView;
 
 use crate::load::{
     expand_neighbors_http, expand_neighbors_local, expand_neighbors_store, fetch_activity_http,
@@ -51,6 +51,51 @@ impl LoadSource {
             GraphSourceKind::HttpService { base } => Some(Self::Http(base.clone())),
             GraphSourceKind::LiveStore { path } => Some(Self::Db(path.clone())),
             GraphSourceKind::SnapshotFile { .. } | GraphSourceKind::VaultGraphJson { .. } => None,
+        }
+    }
+
+    /// Wiki catalog for the browser list.
+    pub fn wiki_catalog(&self, project: Option<&str>) -> Result<Vec<WikiPageMeta>, String> {
+        match self {
+            Self::Http(base) => fetch_wiki_list_http(base, project),
+            Self::Db(path) => fetch_wiki_list_db(path, project),
+        }
+    }
+
+    /// One document body by id and/or uri. `label` only helps the HTTP resolver.
+    pub fn document(
+        &self,
+        doc_id: Option<&str>,
+        uri: Option<&str>,
+        label: Option<&str>,
+    ) -> Result<DocumentBody, String> {
+        match self {
+            Self::Http(base) => fetch_document_http(base, doc_id, uri, label),
+            Self::Db(path) => fetch_document_db(path, doc_id, uri),
+        }
+    }
+
+    /// Backlinks for a document id. Transport/store errors remain explicit so the
+    /// UI cannot misreport an unavailable query as "No incoming links".
+    pub fn backlinks(
+        &self,
+        document_id: &str,
+        project: Option<&str>,
+    ) -> Result<Vec<BacklinkItem>, String> {
+        match self {
+            Self::Http(base) => fetch_backlinks_http(base, document_id, project),
+            Self::Db(path) => crate::direct_db::fetch_backlinks_db(path, document_id, project),
+        }
+    }
+
+    /// Save a wiki page. Direct `--db` mode is read-only by design.
+    pub fn save_wiki(&self, req: &WikiPutRequest) -> Result<DocumentBody, String> {
+        match self {
+            Self::Http(base) => put_wiki_http(base, req),
+            Self::Db(_) => Err(
+                "direct --db mode is read-only; use the HTTP gateway to rebuild derived state"
+                    .into(),
+            ),
         }
     }
 }
@@ -712,10 +757,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             project,
         } => WorkerEvt::WikiCatalog {
             seq,
-            result: match &source {
-                LoadSource::Http(base) => fetch_wiki_list_http(base, project.as_deref()),
-                LoadSource::Db(path) => fetch_wiki_list_db(path, project.as_deref()),
-            },
+            result: source.wiki_catalog(project.as_deref()),
         },
         WorkerCmd::OpenPage {
             seq,
@@ -741,7 +783,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             project,
         } => WorkerEvt::Backlinks {
             seq,
-            result: fetch_backlinks(&document_id, project.as_deref(), &source),
+            result: source.backlinks(&document_id, project.as_deref()),
             document_id,
         },
         WorkerCmd::ReadContent {
@@ -752,12 +794,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             label,
             source,
         } => {
-            let result = match &source {
-                LoadSource::Http(base) => {
-                    fetch_document_http(base, doc_id.as_deref(), uri.as_deref(), Some(&label))
-                }
-                LoadSource::Db(path) => fetch_document_db(path, doc_id.as_deref(), uri.as_deref()),
-            };
+            let result = source.document(doc_id.as_deref(), uri.as_deref(), Some(&label));
             WorkerEvt::Content {
                 seq,
                 node_id,
@@ -809,13 +846,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
             }
         }
         WorkerCmd::SavePage { seq, req, source } => {
-            let result = match &source {
-                LoadSource::Http(base) => put_wiki_http(base, &req),
-                LoadSource::Db(_) => Err(
-                    "direct --db mode is read-only; use the HTTP gateway to rebuild derived state"
-                        .into(),
-                ),
-            };
+            let result = source.save_wiki(&req);
             WorkerEvt::SavedPage { seq, result }
         }
         WorkerCmd::LoadActivity { seq, base } => WorkerEvt::Activity {
@@ -979,46 +1010,13 @@ fn fetch_page(
     q: Option<&str>,
     source: &LoadSource,
 ) -> Result<DocumentBody, String> {
-    match (meta, source) {
-        (Some(m), LoadSource::Http(base)) => {
-            fetch_document_http(base, Some(&m.id), Some(&m.uri), Some(&m.title))
-        }
-        (Some(m), LoadSource::Db(path)) => fetch_document_db(path, Some(&m.id), Some(&m.uri)),
-        (None, LoadSource::Http(base)) => {
+    match meta {
+        Some(m) => source.document(Some(&m.id), Some(&m.uri), Some(&m.title)),
+        None => {
             let q = q.unwrap_or_default();
-            fetch_document_http(base, None, Some(&format!("wiki://{q}")), None)
-                .or_else(|_| fetch_document_http(base, None, Some(q), None))
-        }
-        (None, LoadSource::Db(path)) => {
-            let q = q.unwrap_or_default();
-            fetch_document_db(path, None, Some(&format!("wiki://{q}")))
-                .or_else(|_| fetch_document_db(path, None, Some(q)))
-        }
-    }
-}
-
-/// Backlinks for a document id. Transport/store errors remain explicit so the
-/// UI cannot misreport an unavailable query as "No incoming links".
-fn fetch_backlinks(
-    document_id: &str,
-    project: Option<&str>,
-    source: &LoadSource,
-) -> Result<Vec<BacklinkItem>, String> {
-    match source {
-        LoadSource::Http(base) => fetch_backlinks_http(base, document_id, project),
-        LoadSource::Db(path) => {
-            let store = rag_mcp::Store::open_read_only(path).map_err(|error| {
-                format!("open {} read-only for backlinks: {error}", path.display())
-            })?;
-            let rows = match project.map(str::trim).filter(|project| !project.is_empty()) {
-                Some(project) => store.wiki_backlinks_for_document_in_wing(document_id, project),
-                None => store.wiki_backlinks_for_document(document_id),
-            }
-            .map_err(|error| format!("load backlinks from {}: {error}", path.display()))?;
-            Ok(rows
-                .into_iter()
-                .map(|(label, id)| BacklinkItem { label, id })
-                .collect())
+            source
+                .document(None, Some(&format!("wiki://{q}")), None)
+                .or_else(|_| source.document(None, Some(q), None))
         }
     }
 }
@@ -1085,12 +1083,9 @@ mod tests {
     #[test]
     fn backlink_store_errors_are_not_converted_to_empty_results() {
         let directory_is_not_a_database = std::env::temp_dir();
-        let error = fetch_backlinks(
-            "document",
-            Some("alpha"),
-            &LoadSource::Db(directory_is_not_a_database),
-        )
-        .expect_err("opening a directory as DuckDB must stay visible");
+        let error = LoadSource::Db(directory_is_not_a_database)
+            .backlinks("document", Some("alpha"))
+            .expect_err("opening a directory as DuckDB must stay visible");
         assert!(error.contains("backlinks"));
     }
 

@@ -235,7 +235,7 @@ impl MarkdownVaultStorage {
             room: frontmatter.room,
             source_file: frontmatter.source_file,
             layer: frontmatter.layer,
-            kind: frontmatter.kind,
+            kind: frontmatter.kind.into(),
             content_hash: frontmatter.content_hash,
             status: frontmatter.status,
             pinned: frontmatter.pinned,
@@ -283,7 +283,7 @@ impl VaultIndexEntry {
             content_hash: crate::util::content_hash(&document.content),
             title: document.title.clone(),
             layer: document.layer.clone(),
-            kind: document.kind.clone(),
+            kind: document.kind.to_string(),
             word_count: document.content.split_whitespace().count(),
             heading_count: document
                 .content
@@ -343,7 +343,7 @@ impl Storage for MarkdownVaultStorage {
             room: document.room.clone(),
             source_file: document.source_file.clone(),
             layer: document.layer.clone(),
-            kind: document.kind.clone(),
+            kind: document.kind.to_string(),
             content_hash: document.content_hash.clone(),
             status: document.status.clone(),
             pinned: document.pinned,
