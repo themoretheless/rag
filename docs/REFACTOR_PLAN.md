@@ -922,6 +922,13 @@ The web Sync view polls both every 10 s, and the web shell also polls
 the async workers. Their cost is bounded by the `LIMIT` and grows with
 operation, diary and replication history, not with corpus content.
 
+A check of the final doc found one per-frame cost that does grow with the
+data, now fixed. The native graph seed picker scanned the whole loaded graph
+every frame while its field had focus. That graph holds up to
+`UI_GRAPH_EXPORT_MAX_NODES` (100,000) nodes, or is uncapped for a snapshot
+file; only the drawn graph is capped at 300. Its matches are now cached per
+graph revision and query, so the scan runs once per keystroke.
+
 Verdict: no correctness bugs, and no remaining significant cost on hot or
 polled paths. These costs remain, each bounded and kept on purpose:
 
@@ -941,7 +948,6 @@ polled paths. These costs remain, each bounded and kept on purpose:
     length.
   - The activity grid draws up to 200 rows.
   - The Sync workspace repaints at about 30 fps while it is open.
-  - The graph seed picker scans the loaded graph, capped at 300 nodes.
 
 ## Not planned
 

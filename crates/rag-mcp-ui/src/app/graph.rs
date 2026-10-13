@@ -3,6 +3,38 @@
 use super::*;
 
 impl GraphApp {
+    /// Seed picker suggestions over `full_view` (label / id / document_id
+    /// substring, case-insensitive, first 10), cached per graph revision and
+    /// query.
+    pub(super) fn seed_suggestions(&mut self, query: &str) -> Vec<(String, String)> {
+        if let Some(cached) = &self.seed_suggestions_cache {
+            if cached.rev == self.full_view_rev && cached.query == query {
+                return cached.items.clone();
+            }
+        }
+        let mut suggestions = Vec::new();
+        if let Some(full) = self.full_view.as_ref() {
+            for n in &full.nodes {
+                let doc = n.document_id.as_deref().unwrap_or("");
+                if n.label.to_lowercase().contains(query)
+                    || n.id.to_lowercase().contains(query)
+                    || doc.to_lowercase().contains(query)
+                {
+                    suggestions.push((n.id.clone(), n.label.clone()));
+                    if suggestions.len() >= 10 {
+                        break;
+                    }
+                }
+            }
+        }
+        self.seed_suggestions_cache = Some(SeedSuggestions {
+            rev: self.full_view_rev,
+            query: query.to_string(),
+            items: suggestions.clone(),
+        });
+        suggestions
+    }
+
     pub(super) fn apply_seed_from_input(&mut self) {
         self.seed_error = None;
         let seed = self.seed_input.trim();

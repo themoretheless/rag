@@ -393,24 +393,15 @@ impl GraphApp {
                         );
                         // Seed picker: suggestions over full_view (label / id /
                         // document_id substring, case-insensitive, first 10).
+                        // Cached per (graph revision, query): the scan reruns
+                        // only when either changes.
                         let q = self.seed_input.trim().to_lowercase();
-                        let mut suggestions: Vec<(String, String)> = Vec::new();
-                        if seed_resp.has_focus() && !q.is_empty() {
-                            if let Some(full) = self.full_view.as_ref() {
-                                for n in &full.nodes {
-                                    let doc = n.document_id.as_deref().unwrap_or("");
-                                    if n.label.to_lowercase().contains(&q)
-                                        || n.id.to_lowercase().contains(&q)
-                                        || doc.to_lowercase().contains(&q)
-                                    {
-                                        suggestions.push((n.id.clone(), n.label.clone()));
-                                        if suggestions.len() >= 10 {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        let suggestions: Vec<(String, String)> =
+                            if seed_resp.has_focus() && !q.is_empty() {
+                                self.seed_suggestions(&q)
+                            } else {
+                                Vec::new()
+                            };
                         let mut picked: Option<String> = None;
                         if seed_resp.has_focus() && !suggestions.is_empty() {
                             egui::Popup::from_response(&seed_resp)

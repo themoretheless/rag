@@ -232,6 +232,14 @@ impl RevisionWorkspace {
     }
 }
 
+/// Cached seed-picker matches: `(node id, label)` pairs for one query over
+/// one `full_view` revision.
+pub(super) struct SeedSuggestions {
+    pub(super) rev: u64,
+    pub(super) query: String,
+    pub(super) items: Vec<(String, String)>,
+}
+
 pub struct GraphApp {
     open: OpenArgs,
     worker: WorkerHandle,
@@ -264,6 +272,12 @@ pub struct GraphApp {
     force_close: bool,
 
     full_view: Option<GraphView>,
+    /// Bumped whenever `full_view` is replaced; keys the seed-picker cache.
+    full_view_rev: u64,
+    /// Seed picker suggestions for (`full_view_rev`, lowercased query): the
+    /// scan over the loaded graph (up to `UI_GRAPH_EXPORT_MAX_NODES`) runs
+    /// once per query change, not every frame while the field has focus.
+    seed_suggestions_cache: Option<SeedSuggestions>,
     project_catalog: Vec<String>,
     project_catalog_error: Option<String>,
     /// True after the first successful source bootstrap. This distinguishes an
@@ -433,6 +447,8 @@ impl GraphApp {
             close_confirmation_open: false,
             force_close: false,
             full_view: None,
+            full_view_rev: 0,
+            seed_suggestions_cache: None,
             project_catalog: Vec::new(),
             project_catalog_error: None,
             source: None,
@@ -1012,6 +1028,7 @@ impl GraphApp {
         self.pending_expand = None;
         self.pending_content = None;
         self.full_view = None;
+        self.full_view_rev += 1;
         self.local_view = None;
         self.local_truncated = false;
         self.ui_graph = None;
@@ -1093,6 +1110,7 @@ impl GraphApp {
         }
         self.source = Some(loaded.source);
         self.full_view = Some(loaded.view);
+        self.full_view_rev += 1;
         if !self.seed_input.is_empty() {
             self.apply_seed_from_input();
         } else {
