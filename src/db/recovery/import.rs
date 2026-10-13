@@ -313,6 +313,7 @@ impl Store {
             }
         }
         let mut fts_marked_dirty = false;
+        let mut fts_full_rebuild_marked = false;
         for item in &bundle.documents {
             let matching_document_ids = {
                 let mut stmt =
@@ -361,6 +362,12 @@ impl Store {
             } else if !fts_marked_dirty && !item.chunks.is_empty() {
                 crate::db::fts::mark_fts_dirty(&tx)?;
                 fts_marked_dirty = true;
+            }
+            if !item.chunks.is_empty() && !fts_full_rebuild_marked {
+                // Bundle chunk ids may equal ids already indexed with other
+                // text; an id-diff patch would miss that.
+                crate::db::fts::mark_fts_needs_rebuild(&tx)?;
+                fts_full_rebuild_marked = true;
             }
             let d = &item.document;
             tx.execute(

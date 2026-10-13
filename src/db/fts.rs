@@ -45,6 +45,9 @@ const META_STEMMER: &str = "fts_stemmer";
 const META_CHUNKS_GENERATION: &str = "fts_chunks_generation";
 const META_INDEX_GENERATION: &str = "fts_index_generation";
 const META_REBUILD_COUNT: &str = "fts_rebuild_count";
+/// Set when chunk ids may have been reused with different text (recovery
+/// import keeps bundle ids): the next refresh must rebuild, not patch by id.
+const META_FORCE_REBUILD: &str = "fts_force_rebuild";
 const DEFAULT_STEMMER: &str = "porter";
 const SNIPPET_CHARS: usize = 240;
 
@@ -197,6 +200,15 @@ pub fn mark_fts_dirty(conn: &Connection) -> Result<u64> {
     Ok(next)
 }
 
+/// Mark the index dirty and require the next refresh to be a full rebuild.
+///
+/// For writers that may re-insert existing chunk ids with different text
+/// (recovery import), where the incremental id diff would miss the change.
+pub(crate) fn mark_fts_needs_rebuild(conn: &Connection) -> Result<u64> {
+    upsert_meta(conn, META_FORCE_REBUILD, "1")?;
+    mark_fts_dirty(conn)
+}
+
 /// Advance the chunk generation after changing only `embedding_json` values.
 ///
 /// Vector snapshots key off the chunk generation, so it must advance even
@@ -308,7 +320,11 @@ fn refresh_fts(conn: &Connection, stemmer: &str, mode: RefreshMode) -> Result<Ft
             publish_refreshed_state(conn, state, generations.chunks_generation)?;
             return Ok(state.clone());
         }
-        if let Some(state) = current.filter(|state| state.backend == FtsBackend::DuckDbBm25) {
+        let force_rebuild = read_meta(conn, META_FORCE_REBUILD)?.is_some_and(|flag| flag == "1");
+        if let Some(state) = current
+            .filter(|state| state.backend == FtsBackend::DuckDbBm25)
+            .filter(|_| !force_rebuild)
+        {
             // A write burst usually touches a few documents: patch the BM25
             // tables for the changed chunks instead of re-tokenizing the corpus.
             match incremental_fts_update(conn, &stemmer) {
@@ -479,6 +495,11 @@ fn publish_refreshed_state(
     // If the process fails between these writes, the missing/mismatched
     // generation remains dirty and the next refresh safely retries.
     persist_state(conn, state)?;
+    if read_meta(conn, META_FORCE_REBUILD)?.is_some() {
+        // Only a full rebuild may clear the flag; the incremental path is
+        // never taken while it is set.
+        upsert_meta(conn, META_FORCE_REBUILD, "0")?;
+    }
     upsert_meta(conn, META_CHUNKS_GENERATION, &chunks_generation.to_string())?;
     upsert_meta(conn, META_INDEX_GENERATION, &chunks_generation.to_string())?;
     increment_rebuild_count(conn)?;
@@ -1037,6 +1058,51 @@ mod tests {
             .unwrap();
         crate::db::rows::query_vec(&mut stmt, [query], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
+    }
+
+    #[test]
+    fn forced_rebuild_flag_bypasses_the_incremental_patch_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("fts-forced.duckdb")).unwrap();
+        let conn = store.lock().unwrap();
+        if !load_fts_extension(&conn) {
+            eprintln!("skipping: DuckDB FTS extension unavailable");
+            return;
+        }
+        conn.execute_batch(
+            "INSERT INTO documents (id, uri, title, content, metadata_json, created_at, \
+               updated_at, layer, kind, status) \
+             VALUES ('d', 'uri://d', 't', 'b', '{}', now(), now(), 'raw', 'document', 'active'); \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+               char_start, char_end, created_at, metadata_json, embedding_digest) \
+             SELECT 'c' || lpad(i::VARCHAR, 3, '0'), 'd', i, 'alpha beta ' || i, '[0.1]', \
+               0, 1, now(), '{}', i FROM range(20) t(i);",
+        )
+        .unwrap();
+        reindex(&conn).unwrap();
+        // Same id, different text: invisible to an id diff.
+        conn.execute_batch(
+            "DELETE FROM chunks WHERE id = 'c005'; \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+               char_start, char_end, created_at, metadata_json, embedding_digest) \
+             VALUES ('c005', 'd', 5, 'zebra quokka', '[0.1]', 0, 1, now(), '{}', 5);",
+        )
+        .unwrap();
+        mark_fts_needs_rebuild(&conn).unwrap();
+        refresh_fts_if_stale(&conn).unwrap();
+        let hits: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks \
+                 WHERE fts_main_chunks.match_bm25(id, 'quokka') IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "the rebuilt index sees the replaced text");
+        assert_eq!(
+            read_meta(&conn, META_FORCE_REBUILD).unwrap().as_deref(),
+            Some("0")
+        );
     }
 
     #[test]

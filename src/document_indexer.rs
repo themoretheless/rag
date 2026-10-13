@@ -12,11 +12,6 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::models::{Chunk, Document};
 
-/// Chunk contents and metadata prepared before the fallible embedding call.
-///
-/// Keeping this storage-free representation lets source synchronization group
-/// several small documents into one provider request without duplicating the
-/// chunking and annotation policy used by ordinary ingest.
 /// `embedder`, wrapped to reuse `document_id`'s stored vector for every chunk
 /// text the document already has (exact: the embedding input is the chunk
 /// text under one manifest). Rewriting a page then embeds only changed chunks.
@@ -36,6 +31,11 @@ pub(crate) fn reusing_document_vectors(
     })
 }
 
+/// Chunk contents and metadata prepared before the fallible embedding call.
+///
+/// Keeping this storage-free representation lets source synchronization group
+/// several small documents into one provider request without duplicating the
+/// chunking and annotation policy used by ordinary ingest.
 #[derive(Clone)]
 pub(crate) struct PreparedDocumentChunks {
     document_id: String,

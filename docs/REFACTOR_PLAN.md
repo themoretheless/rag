@@ -715,12 +715,31 @@ its smaller items:
   `document_indexer::reusing_document_vectors` covers wiki writes,
   `ingest_raw`, `update_document` and revision restore, as well as the ingest
   path.
-- **BM25 query.** It scores chunk ids first and reads content and titles only
-  for the top k rows.
+- **BM25 query.** It scores chunk ids first and reads content and titles for
+  the top k rows. A third audit questioned whether this saves anything; a
+  benchmark found fetching the top rows by join and by `IN` cost the same
+  (about 12 ms for 50 rows of 20k). DuckDB already avoids scanning every body
+  here, so this is a clarity change, not a measured speedup.
 
 Still left on purpose: the egui document and wiki readers lay out the open
 document each repainted frame. That cost grows with one document's length,
 not with the corpus, and is egui's normal immediate-mode cost.
+
+### Third verification audit
+
+A third independent audit found no correctness bugs in the new code. Its one
+remaining item and its smaller notes are handled:
+
+- **Representative and first-chunk embeddings** (organize, near-duplicate
+  pairs). Each document's first chunk is now picked from narrow columns with
+  `arg_min(id, {chunk_index, id})`, and only those chunks' `embedding_json` is
+  joined in. Measured 123 → 63 ms for 1000 documents. The old correlated
+  `ORDER BY … LIMIT 1` was decorrelated by DuckDB, not pathological as feared.
+- **Recovery import** keeps bundle chunk ids. It now sets a force-rebuild
+  flag, so the next FTS refresh rebuilds fully instead of patching by id. A
+  test checks the flag on a same-id, new-text chunk and that it clears.
+- A misplaced doc comment in `document_indexer` is restored to
+  `PreparedDocumentChunks`.
 
 ## Not planned
 
