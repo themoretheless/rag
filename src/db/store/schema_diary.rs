@@ -29,30 +29,68 @@ impl Store {
         agent_name: Option<&str>,
         limit: usize,
     ) -> Result<Vec<DiaryEntry>> {
-        self.list_diary_entries_with(agent_name, limit, true)
+        self.list_diary_entries_with(agent_name, limit)
     }
 
-    /// [`Self::list_diary_entries`] without entry bodies (empty `content`),
-    /// for activity summaries that only count entries and read timestamps.
+    /// Newest diary entries for activity summaries (`/v1/agents`, polled):
+    /// only `id`, `agent_name`, `wing` and `created_at` are filled; `title`
+    /// and `content` are empty and `updated_at` equals `created_at`.
+    ///
+    /// Reads just the placement and creation-time columns, plus
+    /// `metadata_json` only for rows whose room does not name the agent, so
+    /// the agent name resolves exactly as [`DiaryEntry::from_document`] does.
+    /// About 3x cheaper than loading the full row projection.
     pub(crate) fn list_diary_activity(
         &self,
         agent_name: Option<&str>,
         limit: usize,
     ) -> Result<Vec<DiaryEntry>> {
-        self.list_diary_entries_with(agent_name, limit, false)
+        let limit = limit.max(1);
+        let agent = agent_name.map(str::trim).filter(|s| !s.is_empty());
+        let (agent_filter, binds) = match agent {
+            Some(name) => (
+                "AND (room = ? OR wing = ?)",
+                vec![name.to_string(), Self::diary_wing_for_agent(name)],
+            ),
+            None => ("", Vec::new()),
+        };
+        let sql = format!(
+            "SELECT id, room, wing, \
+                    CASE WHEN COALESCE(trim(room), '') = '' THEN metadata_json END, \
+                    CAST(created_at AS VARCHAR) \
+             FROM documents \
+             WHERE kind = 'diary' {agent_filter} \
+               AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
+             ORDER BY created_at DESC \
+             LIMIT {limit}"
+        );
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(duckdb::params_from_iter(binds.iter()))?;
+        let mut out = Vec::new();
+        crate::db::rows::visit_rows(&mut rows, |row| {
+            let created_at = crate::db::rows::timestamp(&row.get::<_, String>(4)?)?;
+            let doc = Document {
+                id: row.get(0)?,
+                room: row.get(1)?,
+                wing: row.get(2)?,
+                metadata_json: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                created_at,
+                updated_at: created_at,
+                ..Default::default()
+            };
+            out.push(DiaryEntry::from_document(&doc));
+            Ok(())
+        })?;
+        Ok(out)
     }
 
     fn list_diary_entries_with(
         &self,
         agent_name: Option<&str>,
         limit: usize,
-        with_body: bool,
     ) -> Result<Vec<DiaryEntry>> {
-        let select = if with_body {
-            DOCUMENT_SELECT.to_string()
-        } else {
-            super::documents::document_select_without_body()
-        };
+        let select = DOCUMENT_SELECT;
         let limit = limit.max(1);
         let agent = agent_name.map(str::trim).filter(|s| !s.is_empty());
 

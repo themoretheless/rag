@@ -82,6 +82,9 @@ pub(crate) struct JobRegistryInner {
     pub(crate) writer_lane: tokio::sync::Mutex<()>,
     pub(crate) next_sequence: AtomicU64,
     pub(crate) store: Option<Arc<Store>>,
+    /// Serializes snapshot writes so each one stores the newest in-memory
+    /// state (see [`JobRegistry::persist`]).
+    pub(crate) persist_order: Mutex<()>,
 }
 
 /// Process-local job state with optional DuckDB snapshots. All write-side jobs
@@ -105,6 +108,7 @@ impl JobRegistry {
                 writer_lane: tokio::sync::Mutex::new(()),
                 next_sequence: AtomicU64::new(1),
                 store,
+                persist_order: Mutex::new(()),
             }),
         }
     }
@@ -156,6 +160,20 @@ impl JobRegistry {
         let Some(store) = &self.inner.store else {
             return Ok(());
         };
+        // Callers clone a snapshot, drop the jobs lock, then persist, so a
+        // progress write cloned before a concurrent cancel or status change
+        // could land after it. Writes are serialized here and each stores the
+        // job's newest in-memory state, so the persisted row never goes back.
+        let _order = self
+            .inner
+            .persist_order
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let latest = self
+            .jobs()
+            .get(&snapshot.id)
+            .map(|entry| entry.snapshot.clone());
+        let snapshot = latest.as_ref().unwrap_or(snapshot);
         crate::util::blocking_section(|| {
             crate::db::payload_kv::upsert_payload(
                 store,

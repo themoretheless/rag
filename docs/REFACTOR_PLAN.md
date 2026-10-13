@@ -856,6 +856,11 @@ admin paths. All are fixed:
     per second. Every status change is still written at once.
   - Job writes and deletes run in `blocking_section`. A test covers both
     rules.
+  - Writers clone a snapshot, release the jobs lock, then persist, so a
+    progress write cloned before a concurrent cancel could land after it.
+    That race predates this branch. Writes are now serialized, and each
+    stores the job's newest in-memory state, so the persisted row never goes
+    back. A test persists a stale clone after a cancel.
 - **Manifest checks in search.** Vector and hybrid search, and the MCP and
   ingest write paths, ran the embedding-manifest checks on the async
   executor before handing off to the blocking pool. A lazy BM25 rebuild
@@ -920,11 +925,16 @@ purpose:
 The web Sync view polls both every 10 s, and the web shell also polls
 `/v1/agents` every 15 s in each tab. Both run in `blocking_section`, off
 the async workers. The ops-log and replication reads grow with operation and
-replication history. The diary read filters `documents` on `kind` without an
-index, so it scans the kind, status and creation-time columns of every
-document. That cost grows with document count but reads no bodies or
-embeddings, and takes a few milliseconds. The `LIMIT` bounds the rows
-returned. The Agents view also polls `/v1/calls` every 5 s; that endpoint is
+replication history.
+
+The diary read filters `documents` on `kind` without an index, so it scans
+the kind, status and creation-time columns of every document. It used to
+load the full row projection for the 500 newest entries: 115–155 ms on 83k
+documents with about 2,000 diary entries (debug build). It now reads only
+`id`, room, wing and creation time, and reads `metadata_json` only for rows
+whose room does not name the agent. That takes 55–62 ms. A test checks that
+it resolves agent names exactly as the full entries do. The `LIMIT` bounds
+the rows returned. The Agents view also polls `/v1/calls` every 5 s; that endpoint is
 an in-memory ring and does not touch the store.
 
 A check of the final doc found one per-frame cost that does grow with the
@@ -941,8 +951,8 @@ cached:
   over the whole loaded graph each frame. They are now computed once per
   graph load.
 - The graph toolbar's "open wiki page" check scanned the wiki catalog each
-  frame while a node was selected. It is now memoized per node document and
-  catalog revision.
+  frame while a node was selected. It is now memoized per node document id,
+  node uri and catalog revision.
 
 Graph size by lens: Neighborhood and seeded views draw at most 300 nodes and
 2000 edges. Without a seed, the other five lenses draw the whole loaded graph.

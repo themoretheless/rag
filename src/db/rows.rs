@@ -4,7 +4,7 @@ use crate::error::{AppError, Result};
 use crate::models::{Chunk, Document, EmbeddingManifest};
 use crate::util::parse_db_timestamp;
 
-fn timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     parse_db_timestamp(value)
         .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", value.trim())))
 }

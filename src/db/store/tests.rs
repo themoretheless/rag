@@ -2492,3 +2492,50 @@ fn known_layers_are_stored_lowercase_so_sql_filters_see_them() {
     assert_eq!(store.get_document("mixed-case").unwrap().unwrap().layer, "wiki");
     assert_eq!(store.count_documents_by_layer("wiki").unwrap(), 1);
 }
+
+#[test]
+fn diary_activity_resolves_agent_names_like_full_entries() {
+    let store = open_temp();
+    let base = Utc::now();
+    let diary = |id: &str, minutes: i64, room: Option<&str>, wing: Option<&str>, meta: &str| {
+        let at = base - chrono::Duration::minutes(minutes);
+        Document {
+            id: id.into(),
+            uri: format!("diary://{id}"),
+            title: format!("note {id}"),
+            content: "body".into(),
+            metadata_json: meta.into(),
+            created_at: at,
+            updated_at: at,
+            wing: wing.map(str::to_string),
+            room: room.map(str::to_string),
+            layer: "diary".into(),
+            kind: "diary".into(),
+            ..Default::default()
+        }
+    };
+    for doc in [
+        diary("by-room", 1, Some("alice"), Some("agents/alice"), r#"{"agent_name":"other"}"#),
+        diary("by-meta", 2, None, None, r#"{"agent_name":"bob"}"#),
+        diary("by-wing", 3, Some("  "), Some("agents/carol"), "{}"),
+        diary("unknown", 4, None, None, "not json"),
+    ] {
+        store.upsert_document(&doc).unwrap();
+    }
+
+    let full = store.list_diary_entries(None, 10).unwrap();
+    let activity = store.list_diary_activity(None, 10).unwrap();
+    let names = |entries: &[DiaryEntry]| {
+        entries
+            .iter()
+            .map(|entry| (entry.id.clone(), entry.agent_name.clone(), entry.wing.clone(), entry.created_at))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&activity), names(&full));
+    assert_eq!(
+        activity.iter().map(|entry| entry.agent_name.as_str()).collect::<Vec<_>>(),
+        vec!["alice", "bob", "carol", "unknown"]
+    );
+    let alice = store.list_diary_activity(Some("alice"), 10).unwrap();
+    assert_eq!(names(&alice), names(&store.list_diary_entries(Some("alice"), 10).unwrap()));
+}

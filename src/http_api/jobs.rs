@@ -508,6 +508,31 @@ mod tests {
     }
 
     #[test]
+    fn a_stale_snapshot_never_overwrites_a_newer_persisted_state() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&root.path().join("order.duckdb")).unwrap());
+        let registry = JobRegistry::new(Some(store.clone()));
+        registry
+            .jobs()
+            .insert("job-1".into(), entry(1, JobStatus::Running));
+        // A progress writer cloned this before a concurrent cancel landed.
+        let stale = registry.get("job-1").unwrap();
+        registry.cancel("job-1").unwrap();
+        registry.persist(&stale).unwrap();
+        let payload: String = store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT payload FROM background_jobs WHERE id=?",
+                ["job-1"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let stored: JobSnapshot = serde_json::from_str(&payload).unwrap();
+        assert!(stored.cancel_requested);
+    }
+
+    #[test]
     fn progress_updates_persist_at_most_once_per_interval_but_status_at_once() {
         let root = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(&root.path().join("progress.duckdb")).unwrap());
