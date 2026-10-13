@@ -508,6 +508,34 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_job_row_waits_for_an_in_flight_persist() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&root.path().join("overlap.duckdb")).unwrap());
+        let registry = JobRegistry::new(Some(store));
+        // Stand in for a persist that has checked the map and not yet written.
+        let in_flight = registry.inner.persist_order.lock().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let deleter = {
+            let registry = registry.clone();
+            std::thread::spawn(move || {
+                registry.delete_persisted("job-1").unwrap();
+                done_tx.send(()).unwrap();
+            })
+        };
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
+            "delete must wait for the in-flight persist"
+        );
+        drop(in_flight);
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("delete proceeds once the persist finishes");
+        deleter.join().unwrap();
+    }
+
+    #[test]
     fn persisting_a_pruned_job_does_not_bring_its_row_back() {
         let root = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(&root.path().join("pruned.duckdb")).unwrap());

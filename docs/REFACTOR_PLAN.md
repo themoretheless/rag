@@ -861,7 +861,10 @@ admin paths. All are fixed:
     That race predates this branch. Writes are now serialized, and each
     stores the job's newest in-memory state, so the persisted row never goes
     back. A test persists a stale clone after a cancel. A write for a job already
-    pruned from the map is skipped, so a deleted row is not brought back.
+    pruned from the map is skipped, so a deleted row is not brought back. Row
+    deletes take the same ordering lock, so a write that checked the map
+    before a concurrent prune finishes before the prune's delete. A test
+    shows a delete waiting for an in-flight write.
 - **Manifest checks in search.** Vector and hybrid search, and the MCP and
   ingest write paths, ran the embedding-manifest checks on the async
   executor before handing off to the blocking pool. A lazy BM25 rebuild
