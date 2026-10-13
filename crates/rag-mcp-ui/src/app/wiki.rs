@@ -499,11 +499,25 @@ impl GraphApp {
             .nodes
             .iter()
             .find(|node| node.id == selected)?;
-        graph_wiki_target(
-            node.document_id.as_deref(),
-            node.uri.as_deref(),
-            &self.wiki_pages,
-        )
+        let document_id = node.document_id.as_deref();
+        let uri = node.uri.as_deref();
+        let mut cache = self.graph_wiki_target_cache.borrow_mut();
+        if let Some(memo) = cache.as_ref() {
+            if memo.wiki_pages_rev == self.wiki_pages_rev
+                && memo.document_id.as_deref() == document_id
+                && memo.uri.as_deref() == uri
+            {
+                return memo.target.clone();
+            }
+        }
+        let target = graph_wiki_target(document_id, uri, &self.wiki_pages);
+        *cache = Some(GraphWikiTargetMemo {
+            wiki_pages_rev: self.wiki_pages_rev,
+            document_id: document_id.map(str::to_string),
+            uri: uri.map(str::to_string),
+            target: target.clone(),
+        });
+        target
     }
 
     pub(super) fn open_selected_graph_node_in_wiki(&mut self) {

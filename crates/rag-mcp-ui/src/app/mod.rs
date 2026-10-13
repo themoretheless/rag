@@ -240,6 +240,13 @@ pub(super) struct SeedSuggestions {
     pub(super) items: Vec<(String, String)>,
 }
 
+struct GraphWikiTargetMemo {
+    wiki_pages_rev: u64,
+    document_id: Option<String>,
+    uri: Option<String>,
+    target: Option<GraphWikiTarget>,
+}
+
 pub struct GraphApp {
     open: OpenArgs,
     worker: WorkerHandle,
@@ -278,6 +285,14 @@ pub struct GraphApp {
     /// scan over the loaded graph (up to `UI_GRAPH_EXPORT_MAX_NODES`) runs
     /// once per query change, not every frame while the field has focus.
     seed_suggestions_cache: Option<SeedSuggestions>,
+    /// Empty-banner topology stats for `full_view_rev`: counting kinds and
+    /// relation types walks every loaded node and edge, so it runs once per
+    /// load instead of every frame the banner shows.
+    empty_stats_cache: std::cell::RefCell<Option<(u64, EmptyGraphStats)>>,
+    /// Wiki target of the selected graph node, memoized per (document id,
+    /// uri, `wiki_pages_rev`): resolving it scans the wiki catalog, and the
+    /// toolbar asks every frame while a node is selected.
+    graph_wiki_target_cache: std::cell::RefCell<Option<GraphWikiTargetMemo>>,
     project_catalog: Vec<String>,
     project_catalog_error: Option<String>,
     /// True after the first successful source bootstrap. This distinguishes an
@@ -449,6 +464,8 @@ impl GraphApp {
             full_view: None,
             full_view_rev: 0,
             seed_suggestions_cache: None,
+            empty_stats_cache: std::cell::RefCell::new(None),
+            graph_wiki_target_cache: std::cell::RefCell::new(None),
             project_catalog: Vec::new(),
             project_catalog_error: None,
             source: None,
@@ -1161,11 +1178,15 @@ impl GraphApp {
     /// Topology stats for empty banners when a source is loaded.
     fn empty_stats(&self) -> Option<EmptyGraphStats> {
         let full = self.full_view.as_ref()?;
-        Some(EmptyGraphStats::from_view(
-            full,
-            self.raw_node_count,
-            self.raw_truncated,
-        ))
+        let mut cache = self.empty_stats_cache.borrow_mut();
+        if let Some((rev, stats)) = cache.as_ref() {
+            if *rev == self.full_view_rev {
+                return Some(stats.clone());
+            }
+        }
+        let stats = EmptyGraphStats::from_view(full, self.raw_node_count, self.raw_truncated);
+        *cache = Some((self.full_view_rev, stats.clone()));
+        Some(stats)
     }
 
     fn status_banner(&self) -> Option<String> {

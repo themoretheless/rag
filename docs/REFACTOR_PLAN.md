@@ -926,8 +926,21 @@ A check of the final doc found one per-frame cost that does grow with the
 data, now fixed. The native graph seed picker scanned the whole loaded graph
 every frame while its field had focus. That graph holds up to
 `UI_GRAPH_EXPORT_MAX_NODES` (100,000) nodes, or is uncapped for a snapshot
-file; only the drawn graph is capped at 300. Its matches are now cached per
-graph revision and query, so the scan runs once per keystroke.
+file. Its matches are now cached per graph revision and query, so the scan
+runs once per keystroke.
+
+The audit of that fix found two more per-frame scans of the same kind, now
+cached:
+
+- The empty-graph banner's topology stats counted node kinds and edge types
+  over the whole loaded graph each frame. They are now computed once per
+  graph load.
+- The graph toolbar's "open wiki page" check scanned the wiki catalog each
+  frame while a node was selected. It is now memoized per node document and
+  catalog revision.
+
+Graph size by lens: Neighborhood and seeded views draw at most 300 nodes and
+2000 edges. Without a seed, the other five lenses draw the whole loaded graph.
 
 Verdict: no correctness bugs, and no remaining significant cost on hot or
 polled paths. These costs remain, each bounded and kept on purpose:
@@ -943,11 +956,17 @@ polled paths. These costs remain, each bounded and kept on purpose:
     the full rebuilds they replace. A chunk change log keyed by generation
     would make them delta-only, but that would add a write to every chunk
     commit.
-- Native UI per-frame work, which does not grow with the corpus:
+- Native UI per-frame work:
   - egui lays out the open document, which grows with one document's
     length.
   - The activity grid draws up to 200 rows.
   - The Sync workspace repaints at about 30 fps while it is open.
+  - Graph painting, and the selected node's detail panel (incident edges,
+    sorted), visit every drawn node and edge. In the unseeded overview
+    lenses that is the whole loaded graph, up to `UI_GRAPH_EXPORT_MAX_NODES`.
+    Painting culls off-screen items and switches to a simpler mode above
+    5,000 nodes. The detail panel's scan is the same order as painting, so
+    caching it would save only a constant factor.
 
 ## Not planned
 
