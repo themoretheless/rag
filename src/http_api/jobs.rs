@@ -508,6 +508,32 @@ mod tests {
     }
 
     #[test]
+    fn persisting_a_pruned_job_does_not_bring_its_row_back() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&root.path().join("pruned.duckdb")).unwrap());
+        let registry = JobRegistry::new(Some(store.clone()));
+        registry
+            .jobs()
+            .insert("job-1".into(), entry(1, JobStatus::Succeeded));
+        let stale = registry.get("job-1").unwrap();
+        registry.persist(&stale).unwrap();
+        // Pruned: removed from the map and its row deleted.
+        registry.jobs().remove("job-1");
+        registry.delete_persisted("job-1").unwrap();
+        registry.persist(&stale).unwrap();
+        let rows: i64 = store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM background_jobs WHERE id=?",
+                ["job-1"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
     fn a_stale_snapshot_never_overwrites_a_newer_persisted_state() {
         let root = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(&root.path().join("order.duckdb")).unwrap());
