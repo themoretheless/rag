@@ -62,8 +62,7 @@ pub struct WikiNavAction {
 
 /// Read-pane dependencies grouped separately from navigation results.
 pub struct WikiReadContext<'a> {
-    pub known_titles: &'a HashSet<String>,
-    pub known_slugs: &'a HashSet<String>,
+    pub known_keys: &'a WikiKnownKeys,
     pub can_write: bool,
     pub salt_prefix: &'a str,
     pub loading: bool,
@@ -406,13 +405,8 @@ pub fn draw_wiki_read_view(
                 ui.add_space(padding);
                 ui.vertical(|ui| {
                     ui.set_max_width(780.0);
-                    action.open_link = render_wiki_markdown(
-                        ui,
-                        &page.content,
-                        &page.title,
-                        context.known_titles,
-                        context.known_slugs,
-                    );
+                    action.open_link =
+                        render_wiki_markdown(ui, &page.content, &page.title, context.known_keys);
                     ui.add_space(24.0);
                 });
             });
@@ -519,8 +513,7 @@ fn render_wiki_markdown(
     ui: &mut Ui,
     content: &str,
     page_title: &str,
-    known_titles: &HashSet<String>,
-    known_slugs: &HashSet<String>,
+    known_keys: &WikiKnownKeys,
 ) -> Option<String> {
     let mut open_link: Option<String> = None;
     let mut in_code = false;
@@ -579,9 +572,7 @@ fn render_wiki_markdown(
                 .inner_margin(egui::Margin::symmetric(13, 10))
                 .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        if let Some(link) =
-                            draw_inline_with_wikilinks(ui, rest, known_titles, known_slugs)
-                        {
+                        if let Some(link) = draw_inline_with_wikilinks(ui, rest, known_keys) {
                             open_link = Some(link);
                         }
                     });
@@ -619,7 +610,7 @@ fn render_wiki_markdown(
                 ui.label(RichText::new(format!("{n}.")).strong().color(theme::L3));
             }
             let text = bullet.or(numbered.map(|(_, r)| r)).unwrap_or(trimmed);
-            if let Some(link) = draw_inline_with_wikilinks(ui, text, known_titles, known_slugs) {
+            if let Some(link) = draw_inline_with_wikilinks(ui, text, known_keys) {
                 open_link = Some(link);
             }
         });
@@ -654,12 +645,29 @@ fn draw_wiki_code_block(ui: &mut Ui, code: &str) {
     ui.add_space(5.0);
 }
 
-fn link_resolved(key: &str, titles: &HashSet<String>, slugs: &HashSet<String>) -> bool {
-    let k = key.trim();
-    titles.contains(k)
-        || slugs.contains(k)
-        || titles.iter().any(|t| t.eq_ignore_ascii_case(k))
-        || slugs.iter().any(|s| s.eq_ignore_ascii_case(k))
+/// Page titles and slugs a `[[link]]` can resolve to, ASCII-lowercased once
+/// per catalog so a lookup is one hash probe instead of a scan of every page.
+#[derive(Debug, Default)]
+pub struct WikiKnownKeys {
+    keys: HashSet<String>,
+}
+
+impl WikiKnownKeys {
+    /// Keys from `(title, slug)` pairs.
+    pub fn new<'a>(pages: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let mut keys = HashSet::new();
+        for (title, slug) in pages {
+            keys.insert(title.to_ascii_lowercase());
+            keys.insert(slug.to_ascii_lowercase());
+        }
+        Self { keys }
+    }
+
+    /// Whether `key` names a known page: exact or ASCII case-insensitive
+    /// match against a title or slug.
+    pub fn resolves(&self, key: &str) -> bool {
+        self.keys.contains(&key.trim().to_ascii_lowercase())
+    }
 }
 
 /// Text split into plain runs and wikilinks, using the server's parser so
@@ -708,8 +716,7 @@ fn wikilink_segments(text: &str) -> Vec<InlineSegment<'_>> {
 fn draw_inline_with_wikilinks(
     ui: &mut Ui,
     text: &str,
-    known_titles: &HashSet<String>,
-    known_slugs: &HashSet<String>,
+    known_keys: &WikiKnownKeys,
 ) -> Option<String> {
     let mut clicked: Option<String> = None;
     for segment in wikilink_segments(text) {
@@ -720,7 +727,7 @@ fn draw_inline_with_wikilinks(
             }
             InlineSegment::Link { key, display } => (key, display),
         };
-        let resolved = link_resolved(&link_key, known_titles, known_slugs);
+        let resolved = known_keys.resolves(&link_key);
         let color = if resolved {
             egui::Color32::from_rgb(100, 160, 255)
         } else {
@@ -821,7 +828,19 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri};
+    use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri, WikiKnownKeys};
+
+    #[test]
+    fn known_keys_resolve_titles_and_slugs_case_insensitively() {
+        let keys = WikiKnownKeys::new([("Getting Started", "getting-started"), ("Ёлка", "yolka")]);
+        assert!(keys.resolves("Getting Started"));
+        assert!(keys.resolves("  getting started "));
+        assert!(keys.resolves("GETTING-STARTED"));
+        assert!(keys.resolves("Ёлка"));
+        // ASCII-only folding, as before: non-ASCII case must match exactly.
+        assert!(!keys.resolves("ёлка"));
+        assert!(!keys.resolves("missing"));
+    }
 
     #[test]
     fn wikilink_segments_follow_the_server_parser() {

@@ -345,6 +345,7 @@ impl GraphApp {
                         Ok(mut pages) => {
                             sort_wiki_pages(&mut pages);
                             self.wiki_pages = pages;
+                            self.wiki_pages_rev += 1;
                             if let Some(id) = self.wiki_open_after_catalog.take() {
                                 if self.wiki_pages.iter().any(|page| page.id == id) {
                                     self.open_wiki_page_id(&id);

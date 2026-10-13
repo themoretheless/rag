@@ -524,14 +524,13 @@ impl GraphApp {
                                 );
                             });
                             ui.separator();
-                            let (titles, slugs) = self.wiki_known_keys();
+                            let known_keys = self.wiki_known_keys();
                             let action = draw_wiki_read_view(
                                 ui,
                                 self.wiki_article_b.as_ref(),
                                 self.wiki_error_b.as_deref(),
                                 WikiReadContext {
-                                    known_titles: &titles,
-                                    known_slugs: &slugs,
+                                    known_keys: &known_keys,
                                     can_write: false,
                                     salt_prefix: "b",
                                     loading: self.pending_page_b.is_some(),
@@ -664,14 +663,13 @@ impl GraphApp {
                             self.cancel_wiki_edit();
                         }
                     } else {
-                        let (titles, slugs) = self.wiki_known_keys();
+                        let known_keys = self.wiki_known_keys();
                         let action = draw_wiki_read_view(
                             ui,
                             self.wiki_article.as_ref(),
                             self.wiki_error.as_deref(),
                             WikiReadContext {
-                                known_titles: &titles,
-                                known_slugs: &slugs,
+                                known_keys: &known_keys,
                                 can_write,
                                 salt_prefix: "a",
                                 loading: self.pending_page_a.is_some(),

@@ -152,6 +152,7 @@ impl GraphApp {
         self.pending_page_b = None;
         self.pending_backlinks = None;
         self.wiki_pages.clear();
+        self.wiki_pages_rev += 1;
         self.wiki_selected_id = None;
         self.wiki_article = None;
         self.wiki_backlinks.clear();
@@ -182,6 +183,7 @@ impl GraphApp {
                 // catalog yet; add a row so the sidebar stays consistent.
                 if !self.wiki_pages.iter().any(|p| p.id == body.id) {
                     let slug = slug_from_wiki_uri(&body.uri);
+                    self.wiki_pages_rev += 1;
                     self.wiki_pages.push(WikiPageMeta {
                         id: body.id.clone(),
                         uri: body.uri.clone(),
@@ -375,14 +377,21 @@ impl GraphApp {
         });
     }
 
-    pub(super) fn wiki_known_keys(&self) -> (HashSet<String>, HashSet<String>) {
-        let mut titles = HashSet::new();
-        let mut slugs = HashSet::new();
-        for p in &self.wiki_pages {
-            titles.insert(p.title.clone());
-            slugs.insert(p.slug.clone());
+    /// Link-resolution keys for the current catalog, rebuilt only when
+    /// `wiki_pages` changed (the read view asks for them every frame).
+    pub(super) fn wiki_known_keys(&mut self) -> std::rc::Rc<WikiKnownKeys> {
+        if let Some((rev, keys)) = &self.wiki_known_keys_cache {
+            if *rev == self.wiki_pages_rev {
+                return keys.clone();
+            }
         }
-        (titles, slugs)
+        let keys = std::rc::Rc::new(WikiKnownKeys::new(
+            self.wiki_pages
+                .iter()
+                .map(|page| (page.title.as_str(), page.slug.as_str())),
+        ));
+        self.wiki_known_keys_cache = Some((self.wiki_pages_rev, keys.clone()));
+        keys
     }
 
     pub(super) fn wiki_go_back(&mut self) {

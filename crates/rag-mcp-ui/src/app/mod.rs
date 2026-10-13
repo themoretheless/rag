@@ -10,7 +10,6 @@ use rag_mcp_core::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 
 use crate::adapter::{adapt, topology_generation, AdaptOptions, GraphLens, UiGraph};
 use crate::layout::{overview_grid_place, place_missing_near_neighbors, radial_place, PosCache};
-use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::load::{
@@ -46,7 +45,7 @@ use crate::ui::theme;
 use crate::ui::wiki::{
     can_cancel_edit, content_summary_line, draw_wiki_edit_view, draw_wiki_info_panel,
     draw_wiki_read_view, draw_wiki_sidebar, slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
-    WikiReadContext,
+    WikiKnownKeys, WikiReadContext,
 };
 use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 
@@ -360,6 +359,11 @@ pub struct GraphApp {
 
     // --- Wiki browser state ---
     wiki_pages: Vec<WikiPageMeta>,
+    /// Bumped on every `wiki_pages` change; keys the link-resolution cache.
+    wiki_pages_rev: u64,
+    /// ASCII-lowercased titles and slugs for `wiki_pages_rev`, built once per
+    /// catalog change instead of on every frame.
+    wiki_known_keys_cache: Option<(u64, std::rc::Rc<WikiKnownKeys>)>,
     wiki_filter: String,
     wiki_show_summaries: bool,
     wiki_sidebar_visible: bool,
@@ -501,6 +505,8 @@ impl GraphApp {
             pan: Vec2::ZERO,
             zoom: 1.0,
             wiki_pages: Vec::new(),
+            wiki_pages_rev: 0,
+            wiki_known_keys_cache: None,
             wiki_filter: String::new(),
             wiki_show_summaries: false,
             wiki_sidebar_visible: true,
