@@ -808,10 +808,14 @@ find one more polled cost, now fixed, and a refinement:
   - `GET /health?summary=true` skips them, and the shell uses it.
   - Plain `/health`, external monitors and `/v1/doctor` still report
     integrity.
-- **Orphan chunks** no longer enter any vector snapshot, because the global
-  build and refresh join `documents` as the scoped ones already did. The
-  re-rank now covers only a document row removed after a snapshot was built,
-  and the test covers both cases.
+- **Orphan chunks** stay in the database-wide vector snapshot, and query-time
+  filtering handles them. An attempt to drop them by joining `documents` at
+  build time was reverted after review. That snapshot is cached by chunk
+  generation, and creating a document row does not bump the generation, so
+  chunks that gained a document later would have stayed invisible. A test
+  covers that case.
+- `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
+  sending those forms does not get a 400.
 
 Verdict: no correctness bugs, and no remaining significant cost on hot or
 polled paths. Two costs remain, both bounded:

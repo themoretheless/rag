@@ -1568,6 +1568,20 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
     assert_eq!(ids(&hits)[..2], ["near".to_string(), "far".to_string()]);
     assert_eq!(hits.len(), 3);
     assert!(!ids(&hits).contains(&"late".to_string()));
+
+    // Creating the missing document row does not bump the chunk generation;
+    // the cached snapshot must still serve the orphan's chunk once it has one.
+    store
+        .upsert_document(&Document {
+            id: "missing".into(),
+            uri: "uri://missing".into(),
+            title: "Title missing".into(),
+            content: "missing".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let hits = search_vec(&store, &[1.0, 0.0], 1, &LexFilters::default()).unwrap();
+    assert_eq!(ids(&hits), vec!["missing"]);
 }
 
 #[test]

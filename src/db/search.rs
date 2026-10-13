@@ -1042,10 +1042,10 @@ fn search_vec(
     if !missing_document || documents.only_ids().is_some() {
         return Ok(hits);
     }
-    // Snapshots skip orphan chunks, but a document row removed after the
-    // snapshot was built (without a chunk write) leaves its chunks in it. An
-    // exclusion set admits them; they hold ranking slots and are dropped at
-    // hydration. Exclude them and rank again so `top_k` real hits remain.
+    // The database-wide snapshot keeps chunks whose document row is missing
+    // (orphans). An exclusion set admits them; they hold ranking slots and are
+    // dropped at hydration. Exclude them and rank again so `top_k` real hits
+    // remain.
     documents.exclude_orphan_documents(store)?;
     let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
     Ok(hydrate_vector_hits(store, &snapshot, ranked)?.0)
@@ -1296,12 +1296,10 @@ fn build_vector_snapshot_with_filters(
                 bind,
             )
         }
-        // Chunks without a document row (orphans) never enter a snapshot.
-        None => (
-            "INNER JOIN documents d ON d.id = c.document_id",
-            String::new(),
-            Vec::new(),
-        ),
+        // No join: the database-wide snapshot must stay a function of the
+        // chunk generation alone, and creating a document row does not bump
+        // it. Orphan chunks are filtered at query time instead.
+        None => ("", String::new(), Vec::new()),
     };
     let sql = format!(
         r#"
@@ -1373,12 +1371,10 @@ fn refresh_vector_snapshot(
                 bind,
             )
         }
-        // Chunks without a document row (orphans) never enter a snapshot.
-        None => (
-            "INNER JOIN documents d ON d.id = c.document_id",
-            String::new(),
-            Vec::new(),
-        ),
+        // No join: the database-wide snapshot must stay a function of the
+        // chunk generation alone, and creating a document row does not bump
+        // it. Orphan chunks are filtered at query time instead.
+        None => ("", String::new(), Vec::new()),
     };
     let mut stmt = conn.prepare(&format!(
         r#"

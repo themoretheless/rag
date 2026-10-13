@@ -200,6 +200,16 @@ fn mcp_service_from(
 /// Loopback is always available. A concrete bind address is safe to add
 /// automatically; wildcard binds (`0.0.0.0` / `[::]`) require explicit remote
 /// names or addresses in `RAG_HTTP_ALLOWED_HOSTS` (comma-separated).
+/// Lenient boolean query flag: a bare `?flag`, `1`, `true`, `yes` or `on`
+/// enable it; `0`, `false`, `no` and `off` disable it.
+fn query_flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(!matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off"
+    ))
+}
+
 fn configured_http_allowed_hosts(config: &Config, explicit: Option<&str>) -> Vec<String> {
     let mut hosts = BTreeSet::from([
         "localhost".to_string(),
@@ -1335,6 +1345,13 @@ mod tests {
         assert_eq!(status, axum::http::StatusCode::OK);
         assert_eq!(light["documents"], health["documents"]);
         assert!(light.get("orphan_chunks").is_none());
+        for flag in ["/health?summary", "/health?summary=1"] {
+            let (status, light) = get_json(&app, flag).await;
+            assert_eq!(status, axum::http::StatusCode::OK, "{flag}");
+            assert!(light.get("orphan_chunks").is_none(), "{flag}");
+        }
+        let (_, full) = get_json(&app, "/health?summary=false").await;
+        assert_eq!(full["orphan_chunks"], 0);
         let (status, _) = get_json(&app, "/v1/ops-log?seq=999999").await;
         assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
         let (status, _) = send_json(

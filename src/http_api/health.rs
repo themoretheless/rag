@@ -50,7 +50,7 @@ struct HealthQuery {
     /// Skip the relational integrity scans (anti-joins over chunks,
     /// documents, nodes and edges). For pollers that only show liveness and
     /// counts; `/v1/doctor` and plain `/health` still report integrity.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::query_flag")]
     summary: bool,
 }
 

@@ -180,7 +180,7 @@ pub(super) fn routes() -> Router<HttpState> {
 #[derive(Deserialize)]
 struct StatusQuery {
     /// Counts only, for pollers; see `DiagnosticsService::status_summary`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::query_flag")]
     summary: bool,
 }
 
