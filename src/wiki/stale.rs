@@ -80,13 +80,16 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     // 1) Graph `related` edges between a raw source and a wiki page, either
     // direction: one edge query instead of a neighborhood walk per raw.
     let wiki_docs = store.list_documents_by_layer(LAYER_WIKI)?;
-    let wiki_by_id: HashMap<&str, &Document> =
-        wiki_docs.iter().map(|wiki| (wiki.id.as_str(), wiki)).collect();
+    let wiki_by_id: HashMap<&str, &Document> = wiki_docs
+        .iter()
+        .map(|wiki| (wiki.id.as_str(), wiki))
+        .collect();
     for (a, b) in store.document_pairs_by_relation("related")? {
         for (raw_id, wiki_id) in [(&a, &b), (&b, &a)] {
-            let (Some(raw), Some(wiki)) =
-                (raw_by_id.get(raw_id.as_str()), wiki_by_id.get(wiki_id.as_str()))
-            else {
+            let (Some(raw), Some(wiki)) = (
+                raw_by_id.get(raw_id.as_str()),
+                wiki_by_id.get(wiki_id.as_str()),
+            ) else {
                 continue;
             };
             if wiki.updated_at < raw.updated_at && wiki_source_versions(wiki).is_none() {
@@ -98,6 +101,7 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     // Snapshot parents are authoritative, including an explicitly empty set.
     // Legacy metadata/content references may survive a later compilation and
     // must not add parents outside that snapshot.
+    let mut source_hashes: HashMap<String, String> = HashMap::new();
     for wiki in &wiki_docs {
         if let Some(versions) = wiki_source_versions(wiki) {
             for version in versions {
@@ -106,14 +110,22 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
                 let in_memory = raw_by_id
                     .get(version.document_id.as_str())
                     .or_else(|| wiki_by_id.get(version.document_id.as_str()))
-                    .map(|source| (*source).clone());
+                    .copied();
+                let fetched;
                 let source = match in_memory {
                     Some(source) => Some(source),
-                    None => store.find_by_id_or_uri(&version.document_id, &version.uri)?,
+                    None => {
+                        fetched = store.find_by_id_or_uri(&version.document_id, &version.uri)?;
+                        fetched.as_ref()
+                    }
                 };
                 if let Some(source) = source {
-                    if content_hash(&source.content) != version.content_hash {
-                        insert_stale_pair(&mut pairs, wiki, &source, "source_version");
+                    // A source cited by many pages is hashed once.
+                    let hash = source_hashes
+                        .entry(source.id.clone())
+                        .or_insert_with(|| content_hash(&source.content));
+                    if *hash != version.content_hash {
+                        insert_stale_pair(&mut pairs, wiki, source, "source_version");
                     }
                 } else {
                     pairs.insert(

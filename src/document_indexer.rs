@@ -90,6 +90,14 @@ impl<'a> DocumentIndexer<'a> {
             .await
     }
 
+    /// The texts [`Self::build_plain_chunks`] would embed for `document`.
+    pub(crate) fn plain_chunk_texts(&self, document: &Document) -> Vec<String> {
+        self.normalized_pieces(document, ChunkingProfile::Plain)
+            .into_iter()
+            .map(|(content, _, _)| content)
+            .collect()
+    }
+
     /// Prepare one document synchronously for a later shared embedding call.
     pub(crate) fn prepare_chunks(&self, document: &Document) -> PreparedDocumentChunks {
         self.prepare_chunks_with_profile(document, ChunkingProfile::Auto)

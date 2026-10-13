@@ -968,6 +968,9 @@ struct VectorSnapshotChunk {
     char_start: i32,
     char_end: i32,
     metadata_json: String,
+    /// DuckDB `hash(embedding_json)`: lets a refresh reuse this parsed vector
+    /// when the stored text is unchanged.
+    embedding_hash: u64,
     embedding_start: usize,
     embedding_len: usize,
 }
@@ -1118,7 +1121,17 @@ fn vector_search_inputs(
             }
         }
         None => {
-            let snapshot = Arc::new(build_vector_snapshot(&conn, generation)?);
+            // Refresh from the previous generation's snapshot when there is
+            // one; parse the whole corpus only on the first build.
+            let previous = vector_snapshots()
+                .lock()
+                .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
+                .get(&key)
+                .cloned();
+            let snapshot = Arc::new(match previous {
+                Some(previous) => refresh_vector_snapshot(&conn, &previous, generation)?,
+                None => build_vector_snapshot(&conn, generation)?,
+            });
             vector_snapshots()
                 .lock()
                 .map_err(|error| AppError::db(format!("vector snapshot lock poisoned: {error}")))?
@@ -1195,7 +1208,7 @@ fn build_vector_snapshot_with_filters(
     let sql = format!(
         r#"
         SELECT c.id, c.document_id, c.chunk_index, c.embedding_json,
-               c.char_start, c.char_end, c.metadata_json
+               c.char_start, c.char_end, c.metadata_json, hash(c.embedding_json)
         FROM chunks c
         {join_sql}
         {where_sql}
@@ -1223,11 +1236,130 @@ fn build_vector_snapshot_with_filters(
                 .get::<_, Option<String>>(6)?
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "{}".into()),
+            embedding_hash: row.get(7)?,
             embedding_start,
             embedding_len,
         });
         Ok(())
     })?;
+    Ok(VectorSnapshot {
+        generation,
+        embeddings,
+        chunks,
+    })
+}
+
+/// Bring a database-wide snapshot up to `generation` without re-parsing
+/// unchanged vectors.
+///
+/// Lists every chunk's identity, order, spans and `hash(embedding_json)` (no
+/// JSON leaves DuckDB), reuses the parsed vector of each chunk whose id and
+/// hash match `previous`, and parses only new or changed rows. A typical
+/// ingest touches one document, so this replaces a full-corpus JSON parse
+/// with a cheap listing plus that document's chunks. When most rows changed
+/// a full build is cheaper and is used instead.
+fn refresh_vector_snapshot(
+    conn: &duckdb::Connection,
+    previous: &VectorSnapshot,
+    generation: u64,
+) -> Result<VectorSnapshot> {
+    struct Listed {
+        id: String,
+        document_id: String,
+        chunk_index: i32,
+        char_start: i32,
+        char_end: i32,
+        metadata_json: String,
+        embedding_hash: u64,
+    }
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT id, document_id, chunk_index, char_start, char_end, metadata_json,
+               hash(embedding_json)
+        FROM chunks
+        ORDER BY document_id ASC, chunk_index ASC, id ASC
+        "#,
+    )?;
+    let listed = crate::db::rows::query_vec(&mut stmt, [], |row| {
+        Ok(Listed {
+            id: row.get(0)?,
+            document_id: row.get(1)?,
+            chunk_index: row.get(2)?,
+            char_start: row.get(3)?,
+            char_end: row.get(4)?,
+            metadata_json: row
+                .get::<_, Option<String>>(5)?
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "{}".into()),
+            embedding_hash: row.get(6)?,
+        })
+    })?;
+    drop(stmt);
+
+    let reusable: HashMap<&str, &VectorSnapshotChunk> = previous
+        .chunks
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect();
+    let changed: Vec<&str> = listed
+        .iter()
+        .filter(|row| {
+            reusable
+                .get(row.id.as_str())
+                .is_none_or(|old| old.embedding_hash != row.embedding_hash)
+        })
+        .map(|row| row.id.as_str())
+        .collect();
+    if changed.len() * 2 > listed.len() {
+        return build_vector_snapshot(conn, generation);
+    }
+
+    // Parse only the new or changed vectors.
+    const PARSE_BATCH: usize = 512;
+    let mut parsed: HashMap<String, Vec<f32>> = HashMap::with_capacity(changed.len());
+    for batch in changed.chunks(PARSE_BATCH) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
+        ))?;
+        crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+            let id: String = row.get(0)?;
+            let embedding_json: String = row.get(1)?;
+            let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
+            let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
+            parsed.insert(id, embedding);
+            Ok(())
+        })?;
+    }
+
+    let mut embeddings = Vec::with_capacity(previous.embeddings.len());
+    let mut chunks = Vec::with_capacity(listed.len());
+    for row in listed {
+        let vector: &[f32] = match parsed.get(&row.id) {
+            Some(vector) => vector,
+            None => match reusable.get(row.id.as_str()) {
+                Some(old) => {
+                    &previous.embeddings
+                        [old.embedding_start..old.embedding_start + old.embedding_len]
+                }
+                // Deleted between the listing and the parse: skip it.
+                None => continue,
+            },
+        };
+        let embedding_start = embeddings.len();
+        embeddings.extend_from_slice(vector);
+        chunks.push(VectorSnapshotChunk {
+            id: row.id,
+            document_id: row.document_id,
+            chunk_index: row.chunk_index,
+            char_start: row.char_start,
+            char_end: row.char_end,
+            metadata_json: row.metadata_json,
+            embedding_hash: row.embedding_hash,
+            embedding_start,
+            embedding_len: vector.len(),
+        });
+    }
     Ok(VectorSnapshot {
         generation,
         embeddings,

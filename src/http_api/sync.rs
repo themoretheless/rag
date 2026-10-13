@@ -1,5 +1,7 @@
 //! Durable multi-machine synchronization transport.
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Query, State},
     response::IntoResponse,
@@ -12,6 +14,7 @@ use serde_json::json;
 use crate::db::sync::{
     validate_wiki_change, SyncChange, SyncChangeInput, SyncIdentity, WikiSyncWrite,
 };
+use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::wiki::{self, WikiWriteCommand, WriteWikiOpts};
 
@@ -98,10 +101,12 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
     }) {
         return api_err(error);
     }
+    let embedder = batch_embedder(&st, body.changes.iter()).await;
     let mut primary_sequences = Vec::with_capacity(body.changes.len());
     for change in &body.changes {
-        match apply_change(
+        match apply_change_with(
             &st,
+            &embedder,
             WikiSyncWrite::Push {
                 origin_node: &body.node_id,
                 change,
@@ -118,7 +123,39 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
     )
 }
 
+#[cfg(test)]
 async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, AppError> {
+    apply_change_with(st, &st.embedder, mode).await
+}
+
+/// Embed the chunk texts of every page in a replication batch with one
+/// provider call; the per-event writes then read those vectors. Falls back to
+/// the plain embedder when the batch call fails (each write retries alone).
+async fn batch_embedder<'a>(
+    st: &HttpState,
+    changes: impl Iterator<Item = &'a SyncChangeInput>,
+) -> Arc<dyn EmbeddingProvider> {
+    let indexer = crate::document_indexer::DocumentIndexer::new(st.embedder.as_ref(), &st.config);
+    let texts: Vec<String> = changes
+        .filter_map(|change| validate_wiki_change(change).ok())
+        .flat_map(|payload| {
+            indexer.plain_chunk_texts(&crate::models::Document {
+                content: payload.content,
+                ..Default::default()
+            })
+        })
+        .collect();
+    match crate::embeddings::PrecomputedEmbedder::prepare(st.embedder.clone(), texts).await {
+        Ok(embedder) => Arc::new(embedder),
+        Err(_) => st.embedder.clone(),
+    }
+}
+
+async fn apply_change_with(
+    st: &HttpState,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    mode: WikiSyncWrite<'_>,
+) -> Result<i64, AppError> {
     let (origin_node, change) = match &mode {
         WikiSyncWrite::Push {
             origin_node,
@@ -140,7 +177,7 @@ async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, Ap
         }
         let result = wiki::write_wiki_page_synced_command(
             &st.store,
-            &st.embedder,
+            embedder,
             &st.config,
             WikiWriteCommand {
                 slug: payload.slug.clone(),
@@ -353,9 +390,11 @@ async fn sync_once(
             "sync reply cursor does not match its events",
         ));
     }
+    let embedder = batch_embedder(st, reply.items.iter().map(|item| &item.change)).await;
     for item in &reply.items {
-        apply_change(
+        apply_change_with(
             st,
+            &embedder,
             WikiSyncWrite::Pull {
                 node_id,
                 event: item,

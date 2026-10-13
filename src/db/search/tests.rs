@@ -1323,3 +1323,83 @@ fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
 
     assert_eq!(scoped(&store), vec!["inside", "outside"]);
 }
+
+#[test]
+fn refreshed_vector_snapshot_matches_a_full_rebuild() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("snapshot-refresh.duckdb")).unwrap();
+    let now = Utc::now();
+    let add = |id: &str, vectors: &[[f32; 2]]| {
+        store
+            .upsert_document(&Document {
+                id: id.into(),
+                uri: format!("uri://{id}"),
+                title: id.into(),
+                content: format!("{id} body"),
+                metadata_json: "{}".into(),
+                created_at: now,
+                updated_at: now,
+                ..Default::default()
+            })
+            .unwrap();
+        let chunks: Vec<Chunk> = vectors
+            .iter()
+            .enumerate()
+            .map(|(index, vector)| Chunk {
+                id: format!("{id}-{index}"),
+                document_id: id.into(),
+                chunk_index: index as i32,
+                content: format!("{id} chunk {index}"),
+                embedding: vector.to_vec(),
+                char_start: 0,
+                char_end: 5,
+                metadata_json: "{}".into(),
+            })
+            .collect();
+        store.replace_chunks_for_document(id, &chunks).unwrap();
+    };
+    for index in 0..6 {
+        add(
+            &format!("doc{index}"),
+            &[[1.0, index as f32], [index as f32, 1.0]],
+        );
+    }
+    let previous = {
+        let conn = store.lock().unwrap();
+        build_vector_snapshot(&conn, 1).unwrap()
+    };
+
+    // New document, replaced chunks, and an in-place embedding change.
+    add("doc-new", &[[0.5, 0.5]]);
+    add("doc2", &[[3.0, 4.0]]);
+    {
+        let conn = store.lock().unwrap();
+        conn.execute(
+            "UPDATE chunks SET embedding_json = '[0.0,2.0]' WHERE id = 'doc4-1'",
+            [],
+        )
+        .unwrap();
+    }
+
+    let conn = store.lock().unwrap();
+    let refreshed = refresh_vector_snapshot(&conn, &previous, 2).unwrap();
+    let rebuilt = build_vector_snapshot(&conn, 2).unwrap();
+    let view = |snapshot: &VectorSnapshot| {
+        snapshot
+            .chunks
+            .iter()
+            .map(|chunk| {
+                (
+                    chunk.id.clone(),
+                    chunk.document_id.clone(),
+                    chunk.chunk_index,
+                    snapshot.embeddings
+                        [chunk.embedding_start..chunk.embedding_start + chunk.embedding_len]
+                        .to_vec(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(view(&refreshed), view(&rebuilt));
+    assert_eq!(refreshed.generation, 2);
+}
