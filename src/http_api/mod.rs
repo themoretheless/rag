@@ -1322,6 +1322,12 @@ mod tests {
         assert_eq!(status, axum::http::StatusCode::OK);
         assert_eq!(body["pid"], std::process::id());
         assert!(body["wal_warn_bytes"].as_u64().unwrap() > 0);
+        let (status, summary) = get_json(&app, "/v1/status?summary=true").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(summary["document_count"], body["document_count"]);
+        assert_eq!(summary["chunk_count"], body["chunk_count"]);
+        assert_eq!(summary["db_path"], body["db_path"]);
+        assert!(summary.get("uncompiled_raw_count").is_none());
         let (status, _) = get_json(&app, "/v1/ops-log?seq=999999").await;
         assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
         let (status, _) = send_json(

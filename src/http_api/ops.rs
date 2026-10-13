@@ -177,12 +177,25 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/operations/backup", post(backup))
 }
 
-async fn status(State(st): State<HttpState>) -> impl IntoResponse {
+#[derive(Deserialize)]
+struct StatusQuery {
+    /// Counts only, for pollers; see `DiagnosticsService::status_summary`.
+    #[serde(default)]
+    summary: bool,
+}
+
+async fn status(
+    State(st): State<HttpState>,
+    Query(query): Query<StatusQuery>,
+) -> impl IntoResponse {
     crate::util::blocking_section(|| {
-        match DiagnosticsService::new(&st.store, &st.config).status() {
-            Ok(value) => api_ok(value),
-            Err(error) => api_err(error),
-        }
+        let service = DiagnosticsService::new(&st.store, &st.config);
+        let result = if query.summary {
+            service.status_summary().map(api_ok)
+        } else {
+            service.status().map(api_ok)
+        };
+        result.unwrap_or_else(api_err)
     })
 }
 async fn doctor(State(st): State<HttpState>) -> impl IntoResponse {

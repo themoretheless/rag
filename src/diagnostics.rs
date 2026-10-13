@@ -87,6 +87,20 @@ pub struct StatusReport {
     pub auto_backup: Option<crate::ops::AutoBackupInventory>,
 }
 
+/// Row counts and identity only: the cheap view of [`StatusReport`] for
+/// clients that poll (`GET /v1/status?summary=true`). Skips the layer-health
+/// and wing scans, whose cost grows with the corpus and graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusSummary {
+    pub backend: String,
+    pub schema_version: i32,
+    pub document_count: u64,
+    pub chunk_count: u64,
+    pub node_count: u64,
+    pub edge_count: u64,
+    pub db_path: String,
+}
+
 /// Local chat LLM + embedding config snapshot for the `llm_status` MCP tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmStatusReport {
@@ -410,6 +424,20 @@ impl<'a> DiagnosticsService<'a> {
             wal_bytes: self.store.wal_file_size_bytes(),
             wal_warn_bytes: self.config.wal_warn_bytes,
             auto_backup: crate::ops::auto_backup_inventory(self.config),
+        })
+    }
+
+    pub fn status_summary(&self) -> Result<StatusSummary, AppError> {
+        let schema_version = self.store.schema_version()?.unwrap_or(0);
+        let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
+        Ok(StatusSummary {
+            backend: "duckdb".into(),
+            schema_version,
+            document_count,
+            chunk_count,
+            node_count,
+            edge_count,
+            db_path: self.store.path().display().to_string(),
         })
     }
 

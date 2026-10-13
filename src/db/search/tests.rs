@@ -1498,3 +1498,103 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
         assert_eq!(view(&refreshed), view(&rebuilt));
     }
 }
+
+fn vector_test_document(store: &Store, id: &str, layer: &str, embedding: Vec<f32>) {
+    store
+        .upsert_document(&Document {
+            id: id.into(),
+            uri: format!("uri://{id}"),
+            title: format!("Title {id}"),
+            content: id.into(),
+            layer: layer.into(),
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .insert_chunks(&[Chunk {
+            id: format!("c-{id}"),
+            document_id: id.into(),
+            chunk_index: 0,
+            content: format!("content {id}"),
+            embedding,
+            char_start: 0,
+            char_end: 1,
+            metadata_json: "{}".into(),
+        }])
+        .unwrap();
+}
+
+#[test]
+fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("orphans.duckdb")).expect("open");
+    vector_test_document(&store, "near", "raw", vec![1.0, 0.1]);
+    vector_test_document(&store, "far", "raw", vec![0.0, 1.0]);
+    // A chunk whose document row is gone, scoring above every real chunk.
+    store
+        .insert_chunks(&[Chunk {
+            id: "c-orphan".into(),
+            document_id: "missing".into(),
+            chunk_index: 0,
+            content: "orphan".into(),
+            embedding: vec![1.0, 0.0],
+            char_start: 0,
+            char_end: 1,
+            metadata_json: "{}".into(),
+        }])
+        .unwrap();
+
+    let hits = search_vec(&store, &[1.0, 0.0], 2, &LexFilters::default()).unwrap();
+    let ids = hits.iter().map(|hit| hit.document_id.as_str()).collect::<Vec<_>>();
+    assert_eq!(ids, vec!["near", "far"]);
+    assert_eq!(hits[0].document_title, "Title near");
+}
+
+#[test]
+fn layer_only_vector_scope_lists_the_smaller_side() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("layers.duckdb")).expect("open");
+    for index in 0..3 {
+        vector_test_document(&store, &format!("raw{index}"), "raw", vec![1.0, index as f32]);
+    }
+    vector_test_document(&store, "wiki0", "wiki", vec![1.0, 0.0]);
+    vector_test_document(&store, "nolayer", "raw", vec![1.0, 0.0]);
+    {
+        let conn = store.lock().unwrap();
+        conn.execute("UPDATE documents SET layer = NULL WHERE id = 'nolayer'", [])
+            .unwrap();
+    }
+    let layer = |value: &str| LexFilters {
+        layer: Some(value.into()),
+        ..Default::default()
+    };
+
+    // raw matches 3 of 5: listed as the complement (wiki0 and the NULL layer).
+    let (_, raw) = vector_search_inputs(&store, &layer("raw")).unwrap();
+    match &raw {
+        VectorDocumentScope::Excluding(ids) => {
+            let mut ids = ids.iter().map(String::as_str).collect::<Vec<_>>();
+            ids.sort_unstable();
+            assert_eq!(ids, vec!["nolayer", "wiki0"]);
+        }
+        VectorDocumentScope::Only(_) => panic!("a majority layer must use an exclusion set"),
+    }
+    // wiki matches 1 of 5: listed directly.
+    let (_, wiki) = vector_search_inputs(&store, &layer("wiki")).unwrap();
+    assert_eq!(
+        wiki.only_ids().unwrap().iter().map(String::as_str).collect::<Vec<_>>(),
+        vec!["wiki0"]
+    );
+
+    let hits = |filters: &LexFilters| {
+        let mut ids = search_vec(&store, &[1.0, 0.0], 10, filters)
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.document_id)
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(hits(&layer("raw")), vec!["raw0", "raw1", "raw2"]);
+    assert_eq!(hits(&layer("wiki")), vec!["wiki0"]);
+}

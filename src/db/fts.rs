@@ -124,7 +124,7 @@ pub struct LexFilters {
 
 /// Retrieval's status predicate on the `d` documents alias: archived and
 /// tombstoned documents are hidden unless `include_archived` is set.
-pub(crate) const ACTIVE_DOCUMENT_SQL: &str =
+const ACTIVE_DOCUMENT_SQL: &str =
     "COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')";
 
 impl LexFilters {

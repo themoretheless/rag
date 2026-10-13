@@ -776,6 +776,28 @@ round and for each multi-query sub-query. It is fixed:
 - Measured on 83k documents, 10% of them archived (debug build): 390–520 ms →
   33–36 ms per query. A test covers the exclusion set and `include_archived`.
 
+A further independent check of that change found one regression and two more
+costs, all fixed:
+
+- **Regression: orphan chunks.** An exclusion set admits chunks whose
+  document row is missing. Such a chunk could take a top-k slot, and was then
+  dropped at hydration, so the search returned fewer hits. Now, when a hit's
+  document is missing, the search adds the orphan chunks' document ids to the
+  exclusion set and ranks again. A test puts an orphan chunk above every real
+  one.
+- **Layer or kind filters only** (for example `layer=raw`) still listed every
+  matching id. One count over the filtered columns now chooses the smaller
+  side, the matching ids or their complement. A NULL column counts as outside
+  the scope, as it does in SQL.
+  - Measured on 83k documents: `layer=raw` 335–412 ms → 106–110 ms.
+  - `layer=wiki` (5% of documents) stays about the same, at 90–110 ms.
+  - A test covers both sides and a NULL layer.
+- **`/v1/status` polling.** The web Sync view polls it every 10 s, and each
+  poll ran the layer-health scan, including the compile-debt predicate, under
+  the store lock. `GET /v1/status?summary=true` returns only the row counts,
+  schema version and database path, and the Sync view uses it. Without
+  `summary` the response is unchanged.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit

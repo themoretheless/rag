@@ -978,12 +978,14 @@ struct VectorSnapshotChunk {
 /// Documents a vector search may return. Titles and uris are read only for
 /// the hits that are returned.
 enum VectorDocumentScope {
-    /// Only the status filter applies: every document except these (the
-    /// archived and tombstoned ones, or none with `include_archived`). Usually
-    /// far smaller than the active corpus, which unscoped searches would
-    /// otherwise list on every query.
+    /// Every document except these. Used when the scope is only low-cardinality
+    /// filters (status, layer, kind) that match most of the corpus, so the
+    /// complement is the small side (typically the archived and tombstoned
+    /// documents); listing the matching side would read most of the corpus on
+    /// every query.
     Excluding(HashSet<String>),
-    /// A field filter applies: exactly these documents.
+    /// Exactly these documents: a selective filter applies, or the scope
+    /// matches at most half the corpus.
     Only(HashSet<String>),
 }
 
@@ -993,6 +995,23 @@ impl VectorDocumentScope {
             Self::Excluding(ids) => !ids.contains(document_id),
             Self::Only(ids) => ids.contains(document_id),
         }
+    }
+
+    /// Add the documents of chunks without a document row to an exclusion
+    /// set (no-op for `Only`, which lists existing documents).
+    fn exclude_orphan_documents(&mut self, store: &Store) -> Result<()> {
+        if let Self::Excluding(ids) = self {
+            let conn = store.lock()?;
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT c.document_id FROM chunks c \
+                 WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = c.document_id)",
+            )?;
+            crate::db::rows::for_each_row(&mut stmt, [], |row| {
+                ids.insert(row.get(0)?);
+                Ok(())
+            })?;
+        }
+        Ok(())
     }
 
     fn only_ids(&self) -> Option<&HashSet<String>> {
@@ -1017,7 +1036,26 @@ fn search_vec(
         return Ok(Vec::new());
     };
 
-    let (snapshot, documents) = vector_search_inputs(store, filters)?;
+    let (snapshot, mut documents) = vector_search_inputs(store, filters)?;
+    let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
+    let (hits, missing_document) = hydrate_vector_hits(store, &snapshot, ranked)?;
+    if !missing_document || documents.only_ids().is_some() {
+        return Ok(hits);
+    }
+    // An exclusion set admits chunks whose document row is gone (orphans);
+    // they hold ranking slots and are dropped at hydration. Exclude them and
+    // rank again so the result keeps `top_k` real hits.
+    documents.exclude_orphan_documents(store)?;
+    let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
+    Ok(hydrate_vector_hits(store, &snapshot, ranked)?.0)
+}
+
+fn rank_vector_candidates(
+    snapshot: &VectorSnapshot,
+    documents: &VectorDocumentScope,
+    normalized_query: &[f32],
+    top_k: usize,
+) -> Vec<RankedVectorCandidate> {
     let mut heap: BinaryHeap<Reverse<RankedVectorCandidate>> =
         BinaryHeap::with_capacity(top_k.saturating_add(1));
 
@@ -1051,7 +1089,7 @@ fn search_vec(
         .map(|candidate| candidate.0)
         .collect::<Vec<_>>();
     ranked.sort_by(|left, right| right.cmp(left));
-    hydrate_vector_hits(store, &snapshot, ranked)
+    ranked
 }
 
 #[derive(Debug)]
@@ -1433,17 +1471,29 @@ fn load_vector_documents(
         })?;
         Ok(ids)
     };
-    if !bind.is_empty() {
+    if has_selective_vector_scope(filters) {
         return Ok(VectorDocumentScope::Only(read_ids(&format!(
             "SELECT d.id FROM documents d {where_sql}"
         ))?));
     }
-    if filters.include_archived {
+    let Some(predicate) = where_sql.strip_prefix("WHERE ") else {
         return Ok(VectorDocumentScope::Excluding(HashSet::new()));
+    };
+    // Only status/layer/kind filters remain: list whichever side is smaller.
+    // A NULL column fails the predicate, so it counts as outside the scope.
+    let predicate = format!("COALESCE({predicate}, false)");
+    let (matching, total): (i64, i64) = conn.query_row(
+        &format!("SELECT count(*) FILTER (WHERE {predicate}), count(*) FROM documents d"),
+        params_from_iter(bind.iter()),
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if matching * 2 <= total {
+        return Ok(VectorDocumentScope::Only(read_ids(&format!(
+            "SELECT d.id FROM documents d WHERE {predicate}"
+        ))?));
     }
     Ok(VectorDocumentScope::Excluding(read_ids(&format!(
-        "SELECT d.id FROM documents d WHERE NOT ({})",
-        fts::ACTIVE_DOCUMENT_SQL
+        "SELECT d.id FROM documents d WHERE NOT {predicate}"
     ))?))
 }
 
@@ -1456,7 +1506,7 @@ fn hydrate_vector_hits(
     store: &Store,
     snapshot: &VectorSnapshot,
     ranked: Vec<RankedVectorCandidate>,
-) -> Result<Vec<SearchHit>> {
+) -> Result<(Vec<SearchHit>, bool)> {
     // Candidate pools reach thousands during refill: read contents in a few
     // `IN (...)` batches instead of one point query per candidate.
     const CONTENT_BATCH: usize = 512;
@@ -1497,9 +1547,11 @@ fn hydrate_vector_hits(
         }
     }
     let mut hits = Vec::with_capacity(ranked.len());
+    let mut missing_document = false;
     for candidate in ranked {
         let chunk = &snapshot.chunks[candidate.snapshot_index];
         let Some((title, uri)) = documents.get(&chunk.document_id) else {
+            missing_document = true;
             continue;
         };
         // A chunk replaced after the snapshot was taken has no row left.
@@ -1529,7 +1581,7 @@ fn hydrate_vector_hits(
             rank_lex: None,
         });
     }
-    Ok(hits)
+    Ok((hits, missing_document))
 }
 
 // ---------------------------------------------------------------------------
