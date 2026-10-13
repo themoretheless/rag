@@ -813,7 +813,10 @@ find one more polled cost, now fixed, and a refinement:
   build time was reverted after review. That snapshot is cached by chunk
   generation, and creating a document row does not bump the generation, so
   chunks that gained a document later would have stayed invisible. A test
-  covers that case.
+  covers that case. While orphan chunks persist, an unscoped search whose top
+  results reach one pays one anti-join over chunks and a second ranking pass.
+  Normal deletes remove chunks, so orphans come only from integrity damage,
+  which `/health` and the doctor report and repair.
 - `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
   sending those forms does not get a 400.
 

@@ -195,13 +195,8 @@ fn mcp_service_from(
     )
 }
 
-/// Exact Host authorities accepted by rmcp's DNS-rebinding guard.
-///
-/// Loopback is always available. A concrete bind address is safe to add
-/// automatically; wildcard binds (`0.0.0.0` / `[::]`) require explicit remote
-/// names or addresses in `RAG_HTTP_ALLOWED_HOSTS` (comma-separated).
-/// Lenient boolean query flag: a bare `?flag`, `1`, `true`, `yes` or `on`
-/// enable it; `0`, `false`, `no` and `off` disable it.
+/// Lenient boolean query flag: `0`, `false`, `no` and `off` (any case)
+/// disable it; any other value, including a bare `?flag`, enables it.
 fn query_flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
     let value = <String as serde::Deserialize>::deserialize(deserializer)?;
     Ok(!matches!(
@@ -210,6 +205,11 @@ fn query_flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool,
     ))
 }
 
+/// Exact Host authorities accepted by rmcp's DNS-rebinding guard.
+///
+/// Loopback is always available. A concrete bind address is safe to add
+/// automatically; wildcard binds (`0.0.0.0` / `[::]`) require explicit remote
+/// names or addresses in `RAG_HTTP_ALLOWED_HOSTS` (comma-separated).
 fn configured_http_allowed_hosts(config: &Config, explicit: Option<&str>) -> Vec<String> {
     let mut hosts = BTreeSet::from([
         "localhost".to_string(),
