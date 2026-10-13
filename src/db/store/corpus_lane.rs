@@ -86,8 +86,11 @@ impl Store {
                 _exclusive: None,
             }
         };
-        self.ensure_embedding_manifest(config)?;
-        self.require_embedding_manifest_match(config)?;
+        // Wiki writes and revision restore take this guard on async workers.
+        crate::util::blocking_section(|| {
+            self.ensure_embedding_manifest(config)?;
+            self.require_embedding_manifest_match(config)
+        })?;
         Ok(guard)
     }
 
@@ -111,6 +114,22 @@ impl Store {
     /// even if the transport waiter disappears, operators can still distinguish
     /// committed corpus work, a no-op failure, and a clean terminal success.
     pub(crate) fn record_fts_finalization_failure(
+        &self,
+        operation: &str,
+        durable_mutation_committed: bool,
+        error: &str,
+    ) -> FtsFinalizationFailure {
+        // Called from async workflows after a failed finalization task.
+        crate::util::blocking_section(|| {
+            self.record_fts_finalization_failure_inner(
+                operation,
+                durable_mutation_committed,
+                error,
+            )
+        })
+    }
+
+    fn record_fts_finalization_failure_inner(
         &self,
         operation: &str,
         durable_mutation_committed: bool,

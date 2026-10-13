@@ -888,6 +888,22 @@ runs in `blocking_section`, leaving only embedding and LLM awaits outside:
   - the generation reads and the FTS failure record.
 - `DiagnosticsService::repair`: doctor snapshots, the missing-chunk listing,
   `prune_orphans` and `checkpoint`.
+
+A call-graph-following audit of that head found no bugs, and one remaining
+helper on a regular path: `Store::try_embedding_write_guard` read the
+embedding manifest on the async worker. Every wiki write and revision
+restore takes that guard. Its manifest reads now run in `blocking_section`.
+The same pass closed the rare paths it listed as minor:
+
+- The `db::payload_kv` store helpers run in `blocking_section`. These cover
+  retrieval traces, eval runs, eval prompts and background jobs.
+- The trace path's content-hash lookup.
+- `record_fts_finalization_failure`, which wraps itself.
+- The maintenance dry-run counts and inventory.
+- The library-only `apply_consolidate_proposal` lookup.
+
+What stays on async workers is in-memory work, non-blocking `try_*` lane
+guards, and microsecond path canonicalization.
 - `summary` accepts `1`, `true`, `yes`, `on` or a bare `?summary`, so a probe
   sending those forms does not get a 400.
 

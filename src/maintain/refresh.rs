@@ -829,7 +829,7 @@ pub async fn maintain_refresh(
 
     if flags.reindex_fts {
         if dry_run {
-            let status = store.fts_status()?;
+            let status = crate::util::blocking_section(|| store.fts_status())?;
             report.reindex_fts = Some(ReindexFtsReport {
                 backend: status
                     .as_ref()
@@ -852,7 +852,9 @@ pub async fn maintain_refresh(
 
     if flags.rebuild_graph {
         if dry_run {
-            let candidate_count = store.count_graph_rebuild_candidates(flags.graph_dirty_only)?;
+            let candidate_count = crate::util::blocking_section(|| {
+                store.count_graph_rebuild_candidates(flags.graph_dirty_only)
+            })?;
             let processed = candidate_count.min(flags.max_docs);
             report.rebuild_graph = Some(GraphRebuildReport {
                 dirty_only: flags.graph_dirty_only,
@@ -876,7 +878,9 @@ pub async fn maintain_refresh(
 
     if flags.rebuild_wiki_index {
         if dry_run {
-            let n = store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())?;
+            let n = crate::util::blocking_section(|| {
+                store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())
+            })?;
             report.rebuild_wiki_index = Some(WikiIndexRebuildReport {
                 entry_count: n,
                 dry_run: true,
@@ -888,9 +892,14 @@ pub async fn maintain_refresh(
 
     if flags.reembed_all {
         if dry_run {
-            let n = store.count_documents()?;
-            let chunk_est = store.count_chunks_for_document_limit(flags.max_docs)?;
-            let inventory = reembed_chunk_inventory(store)?;
+            let (n, chunk_est, inventory, manifest) = crate::util::blocking_section(|| {
+                Ok::<_, AppError>((
+                    store.count_documents()?,
+                    store.count_chunks_for_document_limit(flags.max_docs)?,
+                    reembed_chunk_inventory(store)?,
+                    store.get_embedding_manifest()?,
+                ))
+            })?;
             let errors = (inventory.orphan > 0)
                 .then(|| {
                     format!(
@@ -912,7 +921,7 @@ pub async fn maintain_refresh(
                 chunks_reembedded: chunk_est,
                 dry_run: true,
                 document_results_truncated: 0,
-                manifest: store.get_embedding_manifest()?,
+                manifest,
                 errors,
                 documents: Vec::new(),
             });

@@ -470,7 +470,7 @@ fn source_versions_for_hits(
 ) -> Vec<SourceVersion> {
     let ids: Vec<&str> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
     // One query for every hit's stored hash (was one full document load per hit).
-    let hashes = store.content_hashes(&ids).unwrap_or_default();
+    let hashes = crate::util::blocking_section(|| store.content_hashes(&ids)).unwrap_or_default();
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for hit in hits {

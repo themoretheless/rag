@@ -196,7 +196,7 @@ pub(super) async fn apply_reembed_all(
         .min(config.maint_max_docs.max(1));
 
     if dry_run {
-        let n = store.count_documents()?;
+        let n = crate::util::blocking_section(|| store.count_documents())?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,

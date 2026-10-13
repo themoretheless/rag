@@ -228,9 +228,9 @@ pub async fn apply_consolidate_proposal(
     sources: &[Document],
     agent: Option<&str>,
 ) -> Result<WikiWriteResult> {
-    let expected_revision = store
-        .find_by_uri(&format!("wiki://{}", slugify(&proposal.slug)))?
-        .map(|page| page.revision);
+    let uri = format!("wiki://{}", slugify(&proposal.slug));
+    let expected_revision =
+        crate::util::blocking_section(|| store.find_by_uri(&uri))?.map(|page| page.revision);
     apply_consolidate_proposal_at_revision(
         store,
         embedder,

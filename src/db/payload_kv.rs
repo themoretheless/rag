@@ -39,8 +39,12 @@ impl PayloadTable {
 
 /// Insert or replace a JSON payload row.
 pub fn upsert_payload(store: &Store, table: PayloadTable, id: &str, payload: &impl Serialize) -> Result<()> {
-    let conn = store.lock()?;
-    upsert_payload_conn(&conn, table, id, payload)
+    // Store-level helpers here are called from async handlers and workflows;
+    // keep the lock wait and query off the async workers.
+    crate::util::blocking_section(|| {
+        let conn = store.lock()?;
+        upsert_payload_conn(&conn, table, id, payload)
+    })
 }
 
 /// Connection-scoped upsert for RMW that already holds the Store lock.
@@ -58,8 +62,10 @@ pub fn upsert_payload_conn(
 
 /// Load raw payload JSON text by id.
 pub fn get_payload_raw(store: &Store, table: PayloadTable, id: &str) -> Result<Option<String>> {
-    let conn = store.lock()?;
-    get_payload_raw_conn(&conn, table, id)
+    crate::util::blocking_section(|| {
+        let conn = store.lock()?;
+        get_payload_raw_conn(&conn, table, id)
+    })
 }
 
 /// Connection-scoped get for RMW that already holds the Store lock.
@@ -75,15 +81,19 @@ pub fn get_payload_raw_conn(
 
 /// Count rows in a payload table.
 pub fn count_payloads(store: &Store, table: PayloadTable) -> Result<i64> {
-    let conn = store.lock()?;
-    let sql = format!("SELECT COUNT(*) FROM {}", table.as_str());
-    Ok(conn.query_row(&sql, [], |r| r.get(0))?)
+    crate::util::blocking_section(|| {
+        let conn = store.lock()?;
+        let sql = format!("SELECT COUNT(*) FROM {}", table.as_str());
+        Ok(conn.query_row(&sql, [], |r| r.get(0))?)
+    })
 }
 
 /// Load every `(id, payload)` pair. Caller owns filtering/sorting of typed rows.
 pub fn list_payload_pairs(store: &Store, table: PayloadTable) -> Result<Vec<(String, String)>> {
-    let conn = store.lock()?;
-    list_payload_pairs_conn(&conn, table)
+    crate::util::blocking_section(|| {
+        let conn = store.lock()?;
+        list_payload_pairs_conn(&conn, table)
+    })
 }
 
 /// Connection-scoped list for RMW that already holds the Store lock.
@@ -203,16 +213,20 @@ impl PayloadSession<'_> {
 
 /// Run `work` with one [`PayloadSession`] under the Store lock.
 pub fn with_session<R>(store: &Store, work: impl FnOnce(&PayloadSession<'_>) -> Result<R>) -> Result<R> {
-    let conn = store.lock()?;
-    work(&PayloadSession { conn: &conn })
+    crate::util::blocking_section(|| {
+        let conn = store.lock()?;
+        work(&PayloadSession { conn: &conn })
+    })
 }
 
 /// Delete one payload row by id (no-op when absent).
 pub fn delete_payload(store: &Store, table: PayloadTable, id: &str) -> Result<()> {
-    let conn = store.lock()?;
-    let sql = format!("DELETE FROM {} WHERE id=?", table.as_str());
-    conn.execute(&sql, [id])?;
-    Ok(())
+    crate::util::blocking_section(|| {
+        let conn = store.lock()?;
+        let sql = format!("DELETE FROM {} WHERE id=?", table.as_str());
+        conn.execute(&sql, [id])?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
