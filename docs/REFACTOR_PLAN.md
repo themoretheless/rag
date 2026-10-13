@@ -911,12 +911,15 @@ The final call-graph audit at this head found no bugs and no significant
 remaining item (verdict: complete). It noted two things that are kept on
 purpose:
 
-- `/v1/agents` runs a `LIMIT 500` top-N over `ops_log`.
-- `/v1/sync/status` runs a `MAX` and a count over replication history.
+- `/v1/agents` runs two `LIMIT 500` top-N reads: recent `ops_log` rows,
+  sorted by sequence and time, and recent diary documents without their
+  bodies.
+- `/v1/sync/status` runs a `MAX` over `sync_changes`, a count of unsent
+  outbox rows and a small node listing.
 
-The web Sync view polls both every 10 s. Both run off the async workers.
-Each is a one-column scan whose cost grows with the operation or wiki-change
-history, not with corpus content.
+The web Sync view polls both every 10 s. Both run in `blocking_section`, off
+the async workers. Their cost is bounded by the `LIMIT` and grows with
+operation, diary and replication history, not with corpus content.
 
 Verdict: no correctness bugs, and no remaining significant cost on hot or
 polled paths. Two costs remain, both bounded:
