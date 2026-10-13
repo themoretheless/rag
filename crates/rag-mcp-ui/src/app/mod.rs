@@ -45,7 +45,7 @@ use crate::ui::theme;
 use crate::ui::wiki::{
     can_cancel_edit, content_summary_line, draw_wiki_edit_view, draw_wiki_info_panel,
     draw_wiki_read_view, draw_wiki_sidebar, slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
-    WikiKnownKeys, WikiReadContext,
+    WikiKnownKeys, WikiReadContext, WikiSidebarIndex,
 };
 use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
 
@@ -364,6 +364,8 @@ pub struct GraphApp {
     /// ASCII-lowercased titles and slugs for `wiki_pages_rev`, built once per
     /// catalog change instead of on every frame.
     wiki_known_keys_cache: Option<(u64, std::rc::Rc<WikiKnownKeys>)>,
+    /// Sidebar index for `wiki_pages_rev` (search text, category groups).
+    wiki_sidebar_index_cache: Option<(u64, std::rc::Rc<WikiSidebarIndex>)>,
     wiki_filter: String,
     wiki_show_summaries: bool,
     wiki_sidebar_visible: bool,
@@ -507,6 +509,7 @@ impl GraphApp {
             wiki_pages: Vec::new(),
             wiki_pages_rev: 0,
             wiki_known_keys_cache: None,
+            wiki_sidebar_index_cache: None,
             wiki_filter: String::new(),
             wiki_show_summaries: false,
             wiki_sidebar_visible: true,

@@ -156,7 +156,7 @@
       ['ops_log', async () => { operations = (await api.get<any>('/v1/ops-log?limit=100')).items ?? [] }],
       ['MCP-вызовы', fetchCalls],
       ['KG', async () => {
-        const response = await api.get<any>('/v1/kg')
+        const response = await api.get<any>('/v1/kg?limit=80')
         const items = response.items ?? response.facts ?? []
         factsTotal = response.count ?? response.total ?? items.length
         facts = items.slice(0, 80)

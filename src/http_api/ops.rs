@@ -576,7 +576,7 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         entry.last_tool = Some(activity.last_tool);
         entry.p95_ms = activity.p95_ms;
     }
-    let ops = match st.store.list_recent_ops(AGENT_SCAN_ROWS) {
+    let ops = match crate::util::blocking_section(|| st.store.list_recent_ops(AGENT_SCAN_ROWS)) {
         Ok(value) => value,
         Err(error) => return api_err(error),
     };
@@ -591,10 +591,13 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
             entry.last_op = Some(op.prefix.clone().unwrap_or_else(|| op.op.clone()));
         }
     }
-    let diary = match st.store.list_diary_entries(None, AGENT_SCAN_ROWS) {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
+    // Counts and timestamps only: read diary rows without their bodies.
+    let diary =
+        match crate::util::blocking_section(|| st.store.list_diary_activity(None, AGENT_SCAN_ROWS))
+        {
+            Ok(value) => value,
+            Err(error) => return api_err(error),
+        };
     for entry in diary {
         let agent = row(&mut rows, &entry.agent_name);
         agent.diary_count += 1;

@@ -52,6 +52,37 @@ impl Store {
         })
     }
 
+    /// Stored vector for each distinct chunk text of `document_ids`, keyed by
+    /// the text: a re-ingest reuses them for chunks whose text is unchanged
+    /// (the embedding input is the chunk text alone under one manifest).
+    pub(crate) fn chunk_vectors_by_content(
+        &self,
+        document_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, Vec<f32>>> {
+        let mut out = std::collections::HashMap::new();
+        if document_ids.is_empty() {
+            return Ok(out);
+        }
+        let placeholders = vec!["?"; document_ids.len()].join(",");
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT content, embedding_json FROM chunks WHERE document_id IN ({placeholders})"
+        ))?;
+        crate::db::rows::for_each_row(
+            &mut stmt,
+            duckdb::params_from_iter(document_ids.iter()),
+            |row| {
+                let content: String = row.get(0)?;
+                if let std::collections::hash_map::Entry::Vacant(slot) = out.entry(content) {
+                    let raw: String = row.get(1)?;
+                    slot.insert(serde_json::from_str::<Vec<f32>>(&raw)?);
+                }
+                Ok(())
+            },
+        )?;
+        Ok(out)
+    }
+
     /// `metadata_json` for each of `chunk_ids` that exists, in one query.
     pub(crate) fn chunk_metadata_by_ids(
         &self,
@@ -372,11 +403,14 @@ impl Store {
             }
             if !expected_chunks.is_empty() {
                 crate::db::fts::mark_embeddings_changed(tx)?;
-                let mut stmt = tx.prepare("UPDATE chunks SET embedding_json = ? WHERE id = ?")?;
+                let mut stmt = tx.prepare(
+                    "UPDATE chunks SET embedding_json = ?, embedding_digest = ? WHERE id = ?",
+                )?;
                 for (index, (chunk, embedding_json)) in
                     expected_chunks.iter().zip(&embedding_json).enumerate()
                 {
-                    let updated = stmt.execute(params![embedding_json, chunk.id])?;
+                    let digest = super::embedding_digest(embedding_json);
+                    let updated = stmt.execute(params![embedding_json, digest, chunk.id])?;
                     if updated != 1 {
                         return Err(AppError::conflict(format!(
                             "chunk {} changed while re-embedding document {document_id}",

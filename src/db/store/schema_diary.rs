@@ -29,6 +29,30 @@ impl Store {
         agent_name: Option<&str>,
         limit: usize,
     ) -> Result<Vec<DiaryEntry>> {
+        self.list_diary_entries_with(agent_name, limit, true)
+    }
+
+    /// [`Self::list_diary_entries`] without entry bodies (empty `content`),
+    /// for activity summaries that only count entries and read timestamps.
+    pub(crate) fn list_diary_activity(
+        &self,
+        agent_name: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DiaryEntry>> {
+        self.list_diary_entries_with(agent_name, limit, false)
+    }
+
+    fn list_diary_entries_with(
+        &self,
+        agent_name: Option<&str>,
+        limit: usize,
+        with_body: bool,
+    ) -> Result<Vec<DiaryEntry>> {
+        let select = if with_body {
+            DOCUMENT_SELECT.to_string()
+        } else {
+            super::documents::document_select_without_body()
+        };
         let limit = limit.max(1);
         let agent = agent_name.map(str::trim).filter(|s| !s.is_empty());
 
@@ -37,7 +61,7 @@ impl Store {
         if let Some(name) = agent {
             let wing = Self::diary_wing_for_agent(name);
             let sql = format!(
-                "SELECT {DOCUMENT_SELECT} FROM documents \
+                "SELECT {select} FROM documents \
                  WHERE kind = 'diary' \
                    AND (room = ? OR wing = ?) \
                    AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
@@ -53,7 +77,7 @@ impl Store {
             })?;
         } else {
             let sql = format!(
-                "SELECT {DOCUMENT_SELECT} FROM documents \
+                "SELECT {select} FROM documents \
                  WHERE kind = 'diary' \
                    AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
                  ORDER BY created_at DESC \

@@ -425,6 +425,41 @@ impl Store {
         Ok(out)
     }
 
+    /// Like [`Self::list_documents_by_layer`], with an empty `content`: for
+    /// corpus-wide scans that only need ids, uris, titles and timestamps.
+    pub(crate) fn list_documents_by_layer_without_body(
+        &self,
+        layer: &str,
+    ) -> Result<Vec<Document>> {
+        let conn = self.lock()?;
+        let sql = format!(
+            "SELECT {} FROM documents WHERE layer = ? ORDER BY created_at ASC",
+            document_select_without_body()
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        crate::db::rows::query_vec(&mut stmt, params![layer], rows::document)
+    }
+
+    /// `content` of each of `ids` that exists, in one query.
+    pub(crate) fn document_contents(
+        &self,
+        ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, content FROM documents WHERE id IN ({placeholders})"
+        ))?;
+        let rows =
+            crate::db::rows::query_vec(&mut stmt, duckdb::params_from_iter(ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+        Ok(rows.into_iter().collect())
+    }
+
     /// Wiki/catalog listing **without** loading `content` (sidebar / full catalog).
     ///
     /// Equivalent to [`Self::list_wiki_page_metas_filtered`] with empty filters
@@ -822,6 +857,6 @@ pub fn wiki_backlink_rows(target_id: &str, view: &crate::models::GraphView) -> V
 
 /// [`DOCUMENT_SELECT`] with an empty `content`, for listings that never read
 /// document bodies.
-fn document_select_without_body() -> String {
+pub(super) fn document_select_without_body() -> String {
     DOCUMENT_SELECT.replacen("content,", "'' AS content,", 1)
 }

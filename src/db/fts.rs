@@ -298,16 +298,143 @@ fn refresh_fts(conn: &Connection, stemmer: &str, mode: RefreshMode) -> Result<Ft
                 AppError::fts("FTS generation is clean but backend metadata is missing")
             });
         }
-        if let Some(state) = current.filter(|state| state.backend == FtsBackend::TermFrequency) {
+        if let Some(state) = current
+            .as_ref()
+            .filter(|state| state.backend == FtsBackend::TermFrequency)
+        {
             // TF scores live chunks directly. A chunk mutation only needs to
             // advance the logical generation; retry extension installation
             // only on an explicit reindex or configuration change.
-            publish_refreshed_state(conn, &state, generations.chunks_generation)?;
-            return Ok(state);
+            publish_refreshed_state(conn, state, generations.chunks_generation)?;
+            return Ok(state.clone());
+        }
+        if let Some(state) = current.filter(|state| state.backend == FtsBackend::DuckDbBm25) {
+            // A write burst usually touches a few documents: patch the BM25
+            // tables for the changed chunks instead of re-tokenizing the corpus.
+            match incremental_fts_update(conn, &stemmer) {
+                Ok(true) => {
+                    tracing::debug!(
+                        chunks_generation = generations.chunks_generation,
+                        "FTS index updated incrementally"
+                    );
+                    publish_refreshed_state(conn, &state, generations.chunks_generation)?;
+                    return Ok(state);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(error = %error, "incremental FTS update failed; rebuilding");
+                }
+            }
         }
     }
 
     rebuild_fts(conn, stemmer, generations.chunks_generation)
+}
+
+/// Patch the DuckDB BM25 index (`fts_main_chunks.{docs,terms,dict,stats}`) for
+/// chunks added or removed since it was built, using the extension's own
+/// `tokenize` macro, stopword table and stemmer, so scores match a rebuild.
+///
+/// Chunk text is immutable (writes replace chunks under new ids), so the id
+/// diff between `chunks` and `docs` is the complete change set. Returns
+/// `Ok(false)` without changing anything when a rebuild is the better plan:
+/// no physical index, the extension cannot load, an outer transaction is open,
+/// or at least half of the indexed documents changed.
+fn incremental_fts_update(conn: &Connection, stemmer: &str) -> Result<bool> {
+    if !fts_index_present(conn) || !load_fts_extension(conn) {
+        return Ok(false);
+    }
+    let (indexed, added, removed): (i64, i64, i64) = conn.query_row(
+        r#"
+        SELECT
+          (SELECT COUNT(*) FROM fts_main_chunks.docs),
+          (SELECT COUNT(*) FROM chunks c
+            WHERE NOT EXISTS (SELECT 1 FROM fts_main_chunks.docs d WHERE d.name = c.id)),
+          (SELECT COUNT(*) FROM fts_main_chunks.docs d
+            WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = d.name))
+        "#,
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    if added == 0 && removed == 0 {
+        // Only vectors changed: the lexical index is already current.
+        return Ok(true);
+    }
+    if (added + removed) * 2 >= indexed.max(1) {
+        return Ok(false);
+    }
+    // `stemmer` is sanitized to ASCII letters/underscore by the caller.
+    let stem = if stemmer == "none" {
+        "w".to_string()
+    } else {
+        format!("stem(w, '{stemmer}')")
+    };
+    if conn.execute_batch("BEGIN TRANSACTION").is_err() {
+        return Ok(false);
+    }
+    let patch = format!(
+        r#"
+        CREATE OR REPLACE TEMP TABLE fts_delta_removed AS
+          SELECT d.docid FROM fts_main_chunks.docs d
+          WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.id = d.name);
+        UPDATE fts_main_chunks.dict SET df = dict.df - gone.n
+          FROM (SELECT t.termid, COUNT(DISTINCT t.docid) AS n
+                FROM fts_main_chunks.terms t
+                JOIN fts_delta_removed r ON r.docid = t.docid
+                GROUP BY t.termid) gone
+          WHERE dict.termid = gone.termid;
+        DELETE FROM fts_main_chunks.terms
+          WHERE docid IN (SELECT docid FROM fts_delta_removed);
+        DELETE FROM fts_main_chunks.docs
+          WHERE docid IN (SELECT docid FROM fts_delta_removed);
+        DELETE FROM fts_main_chunks.dict WHERE df <= 0;
+
+        CREATE OR REPLACE TEMP TABLE fts_delta_added AS
+          SELECT c.id AS name, c.content,
+                 (SELECT COALESCE(MAX(docid), -1) FROM fts_main_chunks.docs)
+                   + row_number() OVER (ORDER BY c.id) AS docid
+          FROM chunks c
+          WHERE NOT EXISTS (SELECT 1 FROM fts_main_chunks.docs d WHERE d.name = c.id);
+        CREATE OR REPLACE TEMP TABLE fts_delta_terms AS
+          SELECT docid, {stem} AS term
+          FROM (SELECT docid, unnest(fts_main_chunks.tokenize(content)) AS w
+                FROM fts_delta_added)
+          WHERE w NOT IN (SELECT sw FROM fts_main_chunks.stopwords) AND w <> '';
+        INSERT INTO fts_main_chunks.dict
+          SELECT (SELECT COALESCE(MAX(termid), -1) FROM fts_main_chunks.dict)
+                   + row_number() OVER (ORDER BY term),
+                 term, 0
+          FROM (SELECT DISTINCT term FROM fts_delta_terms
+                WHERE term NOT IN (SELECT term FROM fts_main_chunks.dict));
+        UPDATE fts_main_chunks.dict SET df = dict.df + fresh.n
+          FROM (SELECT term, COUNT(DISTINCT docid) AS n
+                FROM fts_delta_terms GROUP BY term) fresh
+          WHERE dict.term = fresh.term;
+        INSERT INTO fts_main_chunks.terms
+          SELECT t.docid, 0, d.termid
+          FROM fts_delta_terms t JOIN fts_main_chunks.dict d ON d.term = t.term;
+        INSERT INTO fts_main_chunks.docs
+          SELECT a.docid, a.name, COUNT(t.term)
+          FROM fts_delta_added a LEFT JOIN fts_delta_terms t ON t.docid = a.docid
+          GROUP BY a.docid, a.name;
+        UPDATE fts_main_chunks.stats
+          SET num_docs = (SELECT COUNT(*) FROM fts_main_chunks.docs),
+              avgdl = (SELECT AVG(len) FROM fts_main_chunks.docs);
+        DROP TABLE fts_delta_removed;
+        DROP TABLE fts_delta_added;
+        DROP TABLE fts_delta_terms;
+        "#
+    );
+    match conn.execute_batch(&patch) {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(true)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(AppError::fts(format!("incremental FTS update: {error}")))
+        }
+    }
 }
 
 fn rebuild_fts(conn: &Connection, stemmer: String, chunks_generation: u64) -> Result<FtsState> {
@@ -876,6 +1003,125 @@ pub(crate) mod test_fault {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// dict (term, df), docs (name, len), stats (num_docs, avgdl), postings.
+    type Bm25IndexView = (
+        Vec<(String, i64)>,
+        Vec<(String, i64)>,
+        (i64, f64),
+        Vec<(String, i64)>,
+    );
+
+    /// Index contents that determine BM25 scores, independent of id numbering.
+    fn bm25_index_view(conn: &Connection) -> Bm25IndexView {
+        let pairs = |sql: &str| -> Vec<(String, i64)> {
+            let mut stmt = conn.prepare(sql).unwrap();
+            crate::db::rows::query_vec(&mut stmt, [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap()
+        };
+        let dict = pairs("SELECT term, df FROM fts_main_chunks.dict ORDER BY term");
+        let docs = pairs("SELECT name, len FROM fts_main_chunks.docs ORDER BY name");
+        let stats = conn
+            .query_row(
+                "SELECT num_docs, avgdl FROM fts_main_chunks.stats",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let postings = pairs(
+            "SELECT d.name || ':' || dict.term, COUNT(*) FROM fts_main_chunks.terms t \
+             JOIN fts_main_chunks.docs d ON d.docid = t.docid \
+             JOIN fts_main_chunks.dict dict ON dict.termid = t.termid \
+             GROUP BY 1 ORDER BY 1",
+        );
+        (dict, docs, stats, postings)
+    }
+
+    fn bm25_scores(conn: &Connection, query: &str) -> Vec<(String, String)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, CAST(ROUND(fts_main_chunks.match_bm25(id, ?), 9) AS VARCHAR) AS s \
+                 FROM chunks WHERE s IS NOT NULL ORDER BY id",
+            )
+            .unwrap();
+        crate::db::rows::query_vec(&mut stmt, [query], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+    }
+
+    #[test]
+    fn incremental_bm25_update_matches_a_full_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("fts-incremental.duckdb")).unwrap();
+        let conn = store.lock().unwrap();
+        if !load_fts_extension(&conn) {
+            eprintln!("skipping: DuckDB FTS extension unavailable");
+            return;
+        }
+        conn.execute_batch(
+            "INSERT INTO documents (id, uri, title, content, metadata_json, created_at, \
+               updated_at, layer, kind, status) \
+             SELECT 'd' || i, 'uri://' || i, 't', 'b', '{}', now(), now(), 'raw', \
+               'document', 'active' FROM range(8) t(i); \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+               char_start, char_end, created_at, metadata_json, embedding_digest) \
+             SELECT 'c' || lpad(i::VARCHAR, 3, '0'), 'd' || (i % 8), i, \
+               'The runner ' || i || ' was running over ' || (i % 7) || ' hills; café-Résumé \
+               jumping jumps word' || (i % 11) || ' and the end', \
+               '[0.1]', 0, 1, now(), '{}', i FROM range(60) t(i);",
+        )
+        .unwrap();
+        reindex(&conn).unwrap();
+        let docid_of = |conn: &Connection, name: &str| -> i64 {
+            conn.query_row(
+                "SELECT docid FROM fts_main_chunks.docs WHERE name = ?",
+                [name],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        let untouched_docid = docid_of(&conn, "c050");
+
+        // A write burst: remove some chunks, add new ones (incl. empty and
+        // stopword-only text and brand-new terms).
+        conn.execute_batch(
+            "DELETE FROM chunks WHERE id IN ('c003', 'c017', 'c044'); \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+               char_start, char_end, created_at, metadata_json, embedding_digest) VALUES \
+             ('n1', 'd1', 100, 'Zebras galloping across savannas, runners running', '[0.1]', 0, 1, now(), '{}', 1), \
+             ('n2', 'd2', 101, '', '[0.1]', 0, 1, now(), '{}', 2), \
+             ('n3', 'd3', 102, 'the and of to', '[0.1]', 0, 1, now(), '{}', 3), \
+             ('n4', 'd4', 103, 'hills hills hills 42 café', '[0.1]', 0, 1, now(), '{}', 4);",
+        )
+        .unwrap();
+        mark_fts_dirty(&conn).unwrap();
+        let state = refresh_fts_if_stale(&conn).unwrap();
+        assert_eq!(state.backend, FtsBackend::DuckDbBm25);
+        assert!(!fts_generation_state(&conn).unwrap().dirty);
+        // Patched in place: a full rebuild would renumber after the deletions.
+        assert_eq!(docid_of(&conn, "c050"), untouched_docid);
+        let incremental = bm25_index_view(&conn);
+        let queries = [
+            "running hills",
+            "zebra savanna",
+            "cafe resume",
+            "word3 jumping",
+            "42",
+        ];
+        let incremental_scores: Vec<_> = queries.iter().map(|q| bm25_scores(&conn, q)).collect();
+
+        reindex(&conn).unwrap();
+        let rebuilt = bm25_index_view(&conn);
+        let rebuilt_scores: Vec<_> = queries.iter().map(|q| bm25_scores(&conn, q)).collect();
+
+        assert_eq!(
+            incremental.0, rebuilt.0,
+            "dict terms and document frequencies"
+        );
+        assert_eq!(incremental.1, rebuilt.1, "documents and lengths");
+        assert_eq!(incremental.2 .0, rebuilt.2 .0, "num_docs");
+        assert!((incremental.2 .1 - rebuilt.2 .1).abs() < 1e-9, "avgdl");
+        assert_eq!(incremental.3, rebuilt.3, "postings");
+        assert_eq!(incremental_scores, rebuilt_scores, "BM25 scores");
+    }
 
     #[test]
     fn lexical_and_vector_legs_share_one_trimmed_scope() {

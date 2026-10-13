@@ -201,6 +201,9 @@ struct KgQueryParams {
     object: Option<String>,
     #[serde(default)]
     at_time: Option<String>,
+    /// Return at most this many facts; `count` stays the full match count.
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 async fn kg_query(
@@ -212,13 +215,14 @@ async fn kg_query(
             Ok(value) => value,
             Err(error) => return api_err(error),
         };
-        match st.store.kg_query(
+        match st.store.kg_query_page(
             non_blank(q.subject).as_deref(),
             non_blank(q.predicate).as_deref(),
             non_blank(q.object).as_deref(),
             at_time,
+            q.limit,
         ) {
-            Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
+            Ok((items, total)) => api_ok(json!({"ok": true, "count": total, "items": items})),
             Err(error) => api_err(error),
         }
     })

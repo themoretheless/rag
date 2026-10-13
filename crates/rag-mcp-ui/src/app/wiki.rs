@@ -377,6 +377,19 @@ impl GraphApp {
         });
     }
 
+    /// Sidebar search/grouping index for the current catalog, rebuilt only
+    /// when `wiki_pages` changed.
+    pub(super) fn wiki_sidebar_index(&mut self) -> std::rc::Rc<WikiSidebarIndex> {
+        if let Some((rev, index)) = &self.wiki_sidebar_index_cache {
+            if *rev == self.wiki_pages_rev {
+                return index.clone();
+            }
+        }
+        let index = std::rc::Rc::new(WikiSidebarIndex::new(&self.wiki_pages));
+        self.wiki_sidebar_index_cache = Some((self.wiki_pages_rev, index.clone()));
+        index
+    }
+
     /// Link-resolution keys for the current catalog, rebuilt only when
     /// `wiki_pages` changed (the read view asks for them every frame).
     pub(super) fn wiki_known_keys(&mut self) -> std::rc::Rc<WikiKnownKeys> {

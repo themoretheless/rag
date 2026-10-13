@@ -403,6 +403,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     add_column_best_effort(conn, "chunks", "content_hash", "VARCHAR")?;
     // Additive section metadata; old rows read as an empty object.
     add_column_best_effort(conn, "chunks", "metadata_json", "VARCHAR DEFAULT '{}'")?;
+    // 64-bit digest of `embedding_json`, maintained by every chunk writer, so a
+    // vector-snapshot refresh can tell changed vectors apart without reading
+    // the JSON. Rows written before the column existed are backfilled once.
+    add_column_best_effort(conn, "chunks", "embedding_digest", "BIGINT")?;
+    conn.execute_batch(
+        "UPDATE chunks SET embedding_digest = CAST(hash(embedding_json) >> 1 AS BIGINT) \
+         WHERE embedding_digest IS NULL",
+    )?;
 
     // NULL identifies pre-v11 edges whose author was never persisted. New writes
     // explicitly distinguish extracted edges from durable user-authored links.

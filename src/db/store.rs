@@ -1351,14 +1351,23 @@ pub(crate) fn insert_chunks_locked(
     }
 
     let now = format_ts(Utc::now());
-    let rows: Vec<(&Chunk, &String)> = chunks.iter().zip(embedding_json).collect();
+    let digests: Vec<i64> = embedding_json
+        .iter()
+        .map(|json| embedding_digest(json))
+        .collect();
+    let rows: Vec<(&Chunk, &String, &i64)> = chunks
+        .iter()
+        .zip(embedding_json)
+        .zip(&digests)
+        .map(|((chunk, json), digest)| (chunk, json, digest))
+        .collect();
     rows::insert_rows(
         conn,
         "INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
-         char_start, char_end, created_at, metadata_json) VALUES",
-        "(?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)",
+         char_start, char_end, created_at, metadata_json, embedding_digest) VALUES",
+        "(?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?, ?)",
         &rows,
-        |(chunk, embedding_json), values| {
+        |(chunk, embedding_json, digest), values| {
             values.extend([
                 &chunk.id as &dyn duckdb::ToSql,
                 &chunk.document_id,
@@ -1369,9 +1378,19 @@ pub(crate) fn insert_chunks_locked(
                 &chunk.char_end,
                 &now,
                 &chunk.metadata_json,
+                *digest,
             ]);
         },
     )
+}
+
+/// 64-bit digest stored in `chunks.embedding_digest` (first 8 bytes of the
+/// blake3 hash of the stored JSON). Any digest change marks a changed vector.
+pub(crate) fn embedding_digest(embedding_json: &str) -> i64 {
+    let hash = blake3::hash(embedding_json.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hash.as_bytes()[..8]);
+    i64::from_le_bytes(bytes)
 }
 
 fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Result<Vec<Chunk>> {

@@ -968,9 +968,9 @@ struct VectorSnapshotChunk {
     char_start: i32,
     char_end: i32,
     metadata_json: String,
-    /// DuckDB `hash(embedding_json)`: lets a refresh reuse this parsed vector
-    /// when the stored text is unchanged.
-    embedding_hash: u64,
+    /// `chunks.embedding_digest`: lets a refresh reuse this parsed vector
+    /// when the stored embedding is unchanged.
+    embedding_hash: i64,
     embedding_start: usize,
     embedding_len: usize,
 }
@@ -1208,7 +1208,8 @@ fn build_vector_snapshot_with_filters(
     let sql = format!(
         r#"
         SELECT c.id, c.document_id, c.chunk_index, c.embedding_json,
-               c.char_start, c.char_end, c.metadata_json, hash(c.embedding_json)
+               c.char_start, c.char_end, c.metadata_json,
+               COALESCE(c.embedding_digest, CAST(hash(c.embedding_json) >> 1 AS BIGINT))
         FROM chunks c
         {join_sql}
         {where_sql}
@@ -1252,9 +1253,10 @@ fn build_vector_snapshot_with_filters(
 /// Bring a database-wide snapshot up to `generation` without re-parsing
 /// unchanged vectors.
 ///
-/// Lists every chunk's identity, order, spans and `hash(embedding_json)` (no
-/// JSON leaves DuckDB), reuses the parsed vector of each chunk whose id and
-/// hash match `previous`, and parses only new or changed rows. A typical
+/// Lists every chunk's identity, order, spans and stored `embedding_digest`
+/// (the embedding JSON is never read for unchanged rows), reuses the parsed
+/// vector of each chunk whose id and digest match `previous`, and parses only
+/// new or changed rows. A typical
 /// ingest touches one document, so this replaces a full-corpus JSON parse
 /// with a cheap listing plus that document's chunks. When most rows changed
 /// a full build is cheaper and is used instead.
@@ -1270,14 +1272,14 @@ fn refresh_vector_snapshot(
         char_start: i32,
         char_end: i32,
         metadata_json: String,
-        embedding_hash: u64,
+        embedding_hash: i64,
     }
     let mut stmt = conn.prepare(
         r#"
-        SELECT id, document_id, chunk_index, char_start, char_end, metadata_json,
-               hash(embedding_json)
-        FROM chunks
-        ORDER BY document_id ASC, chunk_index ASC, id ASC
+        SELECT c.id, c.document_id, c.chunk_index, c.char_start, c.char_end, c.metadata_json,
+               COALESCE(c.embedding_digest, CAST(hash(c.embedding_json) >> 1 AS BIGINT))
+        FROM chunks c
+        ORDER BY c.document_id ASC, c.chunk_index ASC, c.id ASC
         "#,
     )?;
     let listed = crate::db::rows::query_vec(&mut stmt, [], |row| {

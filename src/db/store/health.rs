@@ -178,11 +178,29 @@ impl Store {
             let count: i64 = conn.query_row(sql, [], |row| row.get(0))?;
             Ok(count.max(0) as u64)
         };
-        let documents_without_chunks = scalar(
-            "SELECT COUNT(*) FROM documents d WHERE COALESCE(d.layer, '') <> 'schema' \
-             AND length(trim(COALESCE(d.content, ''))) > 0 AND NOT EXISTS \
-             (SELECT 1 FROM chunks c WHERE c.document_id = d.id)",
-        )?;
+        // Find chunkless documents by id first (no body read), then check only
+        // those for non-blank content: a healthy corpus never reads a body here,
+        // which matters because `/health` is polled.
+        let chunkless: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT d.id FROM documents d WHERE COALESCE(d.layer, '') <> 'schema' \
+                 AND NOT EXISTS (SELECT 1 FROM chunks c WHERE c.document_id = d.id)",
+            )?;
+            crate::db::rows::query_vec(&mut stmt, [], |row| Ok(row.get(0)?))?
+        };
+        let mut documents_without_chunks = 0u64;
+        for batch in chunkless.chunks(512) {
+            let placeholders = vec!["?"; batch.len()].join(",");
+            let count: i64 = conn.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM documents WHERE id IN ({placeholders}) \
+                     AND length(trim(COALESCE(content, ''))) > 0"
+                ),
+                duckdb::params_from_iter(batch.iter()),
+                |row| row.get(0),
+            )?;
+            documents_without_chunks += count.max(0) as u64;
+        }
         let orphan_chunks = scalar(
             "SELECT COUNT(*) FROM chunks c WHERE NOT EXISTS \
              (SELECT 1 FROM documents d WHERE d.id = c.document_id)",

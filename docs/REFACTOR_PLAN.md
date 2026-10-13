@@ -650,6 +650,48 @@ costs. All are fixed:
   O(links × pages) scan. Parsed `[[link]]` segments are cached per line in
   egui's frame cache, so a line is parsed once while it stays on screen.
 
+### Verification audit
+
+A further independent audit checked documented claims against the code and
+looked for anything significant left. One claim was false: `GET /v1/agents`
+still ran on the executor. It and every finding are now fixed:
+
+- **BM25 refresh is incremental.**
+  - The index (`fts_main_chunks.{docs,terms,dict,stats}`) is patched for the
+    chunks added or removed since it was built, using the extension's own
+    `tokenize` macro, stopword table and stemmer.
+  - Chunk text is immutable, so the id diff between `chunks` and `docs` is
+    the full change set.
+  - It falls back to the full rebuild when half the corpus changed, the
+    stemmer changed, or anything fails.
+  - A test compares dict, document lengths, postings, stats and BM25 scores
+    with a full rebuild, and checks that the patch path actually ran.
+  - Measured 19 s → 0.35 s after a 15-chunk change on 20k chunks (debug
+    build). This supersedes the earlier "FTS timing needs no change" note.
+- **Re-ingest reuses vectors.**
+  - Each chunk whose text is unchanged takes the document's stored vector,
+    which is exact because the embedding input is the chunk text under one
+    manifest.
+  - An identical re-ingest makes no provider call; an edit embeds only the
+    changed chunks.
+- **Snapshot refresh lists digests.** Chunk writers store
+  `chunks.embedding_digest`, existing rows are backfilled at migration, and
+  the refresh lists that column instead of hashing all embedding JSON. The
+  id-only shortcut was rejected because ids can be reused with new vectors.
+- **Wiki review** reads the raw corpus without bodies and fetches only the
+  cited ones.
+- **Polled endpoints.**
+  - `/health` integrity counts read a body only for documents that lack
+    chunks.
+  - `/v1/agents` runs in `blocking_section` and reads diary activity without
+    bodies.
+  - `/v1/kg?limit=` returns a page with the full count; the Agents view asks
+    for 80.
+- **Native UI sidebar.**
+  - Search text and category groups are indexed once per catalog change.
+  - Without summaries, rows are uniform and only visible rows are laid out.
+  - Categories fold with a header row.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit

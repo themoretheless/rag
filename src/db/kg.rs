@@ -104,18 +104,13 @@ impl Store {
         load_fact_locked(&conn, &id)?.ok_or_else(|| AppError::db("kg_add: insert not readable"))
     }
 
-    /// Query facts by optional SPO filters and optional point-in-time.
-    ///
-    /// - Without `at_time`: returns `status = 'active'` rows matching filters.
-    /// - With `at_time`: half-open temporal filter
-    ///   `(valid_from IS NULL OR valid_from <= t) AND (valid_to IS NULL OR valid_to > t)`.
-    pub fn kg_query(
-        &self,
+    /// SQL and binds for the SPO / point-in-time filters of [`Self::kg_query`].
+    fn kg_query_sql(
         subject: Option<&str>,
         predicate: Option<&str>,
         object: Option<&str>,
         at_time: Option<DateTime<Utc>>,
-    ) -> Result<Vec<KgFact>> {
+    ) -> Result<(String, Vec<String>)> {
         let subject = opt_trim(subject);
         let predicate = predicate
             .map(str::trim)
@@ -152,14 +147,54 @@ impl Store {
         }
 
         sql.push_str(" ORDER BY valid_from ASC NULLS FIRST, created_at ASC, id ASC");
+        Ok((sql, binds))
+    }
 
+    /// Query facts by optional SPO filters and optional point-in-time.
+    ///
+    /// - Without `at_time`: returns `status = 'active'` rows matching filters.
+    /// - With `at_time`: half-open temporal filter
+    ///   `(valid_from IS NULL OR valid_from <= t) AND (valid_to IS NULL OR valid_to > t)`.
+    pub fn kg_query(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object: Option<&str>,
+        at_time: Option<DateTime<Utc>>,
+    ) -> Result<Vec<KgFact>> {
+        Ok(self
+            .kg_query_page(subject, predicate, object, at_time, None)?
+            .0)
+    }
+
+    /// Facts matching the filters, at most `limit` of them in query order,
+    /// plus the total number of matches.
+    pub fn kg_query_page(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object: Option<&str>,
+        at_time: Option<DateTime<Utc>>,
+        limit: Option<usize>,
+    ) -> Result<(Vec<KgFact>, usize)> {
+        let (sql, binds) = Self::kg_query_sql(subject, predicate, object, at_time)?;
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(&sql)?;
         let param_refs: Vec<&dyn duckdb::ToSql> =
             binds.iter().map(|s| s as &dyn duckdb::ToSql).collect();
-        let out =
-            crate::db::rows::query_vec(&mut stmt, param_refs.as_slice(), row_to_kg_fact)?;
-        Ok(out)
+        let Some(limit) = limit else {
+            let mut stmt = conn.prepare(&sql)?;
+            let out = crate::db::rows::query_vec(&mut stmt, param_refs.as_slice(), row_to_kg_fact)?;
+            let total = out.len();
+            return Ok((out, total));
+        };
+        let total: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM ({sql}) AS matches"),
+            param_refs.as_slice(),
+            |row| row.get(0),
+        )?;
+        let mut stmt = conn.prepare(&format!("{sql} LIMIT {limit}"))?;
+        let out = crate::db::rows::query_vec(&mut stmt, param_refs.as_slice(), row_to_kg_fact)?;
+        Ok((out, total.max(0) as usize))
     }
 
     /// Mark matching open active fact(s) as invalidated.
@@ -541,6 +576,25 @@ mod tests {
 
     fn ts(y: i32, m: u32, d: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, m, d, 0, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn kg_query_page_limits_items_and_reports_the_total() {
+        let store = open_temp();
+        for object in ["Acme", "Globex", "Initech"] {
+            store
+                .kg_add("Dana", "worked_at", object, None, None, None, None, None)
+                .expect("add");
+        }
+        let (items, total) = store
+            .kg_query_page(Some("Dana"), None, None, None, Some(2))
+            .expect("page");
+        assert_eq!(items.len(), 2);
+        assert_eq!(total, 3);
+        let all = store.kg_query(Some("Dana"), None, None, None).expect("all");
+        assert_eq!(all.len(), 3);
+        let ids = |facts: &[KgFact]| facts.iter().map(|fact| fact.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&items), ids(&all[..2]));
     }
 
     #[test]

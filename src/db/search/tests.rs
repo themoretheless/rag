@@ -1374,9 +1374,11 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
     add("doc2", &[[3.0, 4.0]]);
     {
         let conn = store.lock().unwrap();
+        // Chunk writers maintain the digest alongside the JSON.
         conn.execute(
-            "UPDATE chunks SET embedding_json = '[0.0,2.0]' WHERE id = 'doc4-1'",
-            [],
+            "UPDATE chunks SET embedding_json = '[0.0,2.0]', embedding_digest = ? \
+             WHERE id = 'doc4-1'",
+            [crate::db::store::embedding_digest("[0.0,2.0]")],
         )
         .unwrap();
     }

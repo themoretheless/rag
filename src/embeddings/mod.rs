@@ -81,6 +81,14 @@ pub(crate) struct PrecomputedEmbedder {
 }
 
 impl PrecomputedEmbedder {
+    /// Wrap `inner` with vectors already known for some texts.
+    pub(crate) fn with_vectors(
+        inner: Arc<dyn EmbeddingProvider>,
+        vectors: std::collections::HashMap<String, Vec<f32>>,
+    ) -> Self {
+        Self { inner, vectors }
+    }
+
     /// Embed `texts` once (deduplicated) and wrap `inner` with the results.
     pub(crate) async fn prepare(
         inner: Arc<dyn EmbeddingProvider>,

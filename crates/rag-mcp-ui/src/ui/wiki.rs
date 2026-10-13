@@ -70,9 +70,85 @@ pub struct WikiReadContext<'a> {
 }
 
 /// Left sidebar: searchable list of wiki pages, grouped by `category`.
+/// Per-catalog sidebar data, built once per catalog change instead of on every
+/// frame: lowercased search text per page, pages grouped by category
+/// (uncategorized last), and the last filter's matches.
+pub struct WikiSidebarIndex {
+    haystacks: Vec<String>,
+    /// `(category, page indexes)`; the uncategorized group (empty name) is last.
+    groups: Vec<(String, Vec<usize>)>,
+    last_filter: std::cell::RefCell<Option<(String, std::rc::Rc<Vec<usize>>)>>,
+}
+
+impl WikiSidebarIndex {
+    pub fn new(pages: &[WikiPageMeta]) -> Self {
+        let haystacks = pages
+            .iter()
+            .map(|p| {
+                format!(
+                    "{} {} {} {}",
+                    p.title,
+                    p.slug,
+                    p.summary.as_deref().unwrap_or(""),
+                    p.category.as_deref().unwrap_or("")
+                )
+                .to_lowercase()
+            })
+            .collect();
+        let mut by_category: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (index, page) in pages.iter().enumerate() {
+            by_category
+                .entry(page.category.clone().unwrap_or_default())
+                .or_default()
+                .push(index);
+        }
+        let uncategorized = by_category.remove("");
+        let mut groups: Vec<(String, Vec<usize>)> = by_category.into_iter().collect();
+        if let Some(indexes) = uncategorized {
+            groups.push((String::new(), indexes));
+        }
+        Self {
+            haystacks,
+            groups,
+            last_filter: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// Indexes of pages whose text contains `query` (already lowercased),
+    /// reusing the previous result while the query is unchanged.
+    fn matches(&self, query: &str) -> std::rc::Rc<Vec<usize>> {
+        if let Some((cached, matches)) = self.last_filter.borrow().as_ref() {
+            if cached == query {
+                return matches.clone();
+            }
+        }
+        let matches = std::rc::Rc::new(
+            self.haystacks
+                .iter()
+                .enumerate()
+                .filter(|(_, hay)| hay.contains(query))
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>(),
+        );
+        *self.last_filter.borrow_mut() = Some((query.to_string(), matches.clone()));
+        matches
+    }
+}
+
+/// One uniform-height sidebar row, so long catalogs lay out only visible rows.
+enum SidebarRow<'a> {
+    Header {
+        category: &'a str,
+        count: usize,
+        open: bool,
+    },
+    Page(usize),
+}
+
 pub fn draw_wiki_sidebar(
     ui: &mut Ui,
     pages: &[WikiPageMeta],
+    index: &WikiSidebarIndex,
     filter: &mut String,
     selected_id: Option<&str>,
     show_summaries: &mut bool,
@@ -104,87 +180,111 @@ pub fn draw_wiki_sidebar(
         .on_hover_text("Показывать краткое описание под каждой страницей");
     ui.separator();
 
-    let q = filter.trim().to_lowercase();
-    let matches_filter = |p: &WikiPageMeta| {
-        if q.is_empty() {
-            return true;
-        }
-        let hay = format!(
-            "{} {} {} {}",
-            p.title,
-            p.slug,
-            p.summary.as_deref().unwrap_or(""),
-            p.category.as_deref().unwrap_or("")
-        )
-        .to_lowercase();
-        hay.contains(&q)
-    };
+    if pages.is_empty() {
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| {
+            ui.strong("В этом проекте пока нет страниц");
+            ui.weak("Выберите другой проект или создайте wiki-страницу.");
+        });
+        return None;
+    }
 
-    egui::ScrollArea::vertical()
-        .id_salt("wiki_sidebar_scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            if pages.is_empty() {
-                ui.add_space(24.0);
-                ui.vertical_centered(|ui| {
-                    ui.strong("В этом проекте пока нет страниц");
-                    ui.weak("Выберите другой проект или создайте wiki-страницу.");
+    let q = filter.trim().to_lowercase();
+    let collapsed_id = egui::Id::new("wiki_sidebar_collapsed");
+    let mut collapsed: HashSet<String> = ui
+        .ctx()
+        .data(|data| data.get_temp::<HashSet<String>>(collapsed_id))
+        .unwrap_or_default();
+
+    // Filtered: flat list (grouping would hide matches under closed headers).
+    let filtered = (!q.is_empty()).then(|| index.matches(&q));
+    let mut rows: Vec<SidebarRow<'_>> = Vec::new();
+    match &filtered {
+        Some(matches) => rows.extend(matches.iter().map(|&page| SidebarRow::Page(page))),
+        None => {
+            // A catalog with no categories at all is one flat list, no header.
+            let single_uncategorized = index.groups.len() == 1 && index.groups[0].0.is_empty();
+            for (category, members) in &index.groups {
+                if single_uncategorized {
+                    rows.extend(members.iter().map(|&page| SidebarRow::Page(page)));
+                    continue;
+                }
+                let open = !collapsed.contains(category);
+                rows.push(SidebarRow::Header {
+                    category,
+                    count: members.len(),
+                    open,
                 });
-                return;
-            }
-            if !q.is_empty() {
-                // Filtered: flat list (grouping would hide matches under closed headers).
-                let matches: Vec<_> = pages.iter().filter(|p| matches_filter(p)).collect();
-                if matches.is_empty() {
-                    ui.add_space(20.0);
-                    ui.vertical_centered(|ui| {
-                        ui.strong("Ничего не найдено");
-                        ui.weak("Измените или сократите запрос.");
-                    });
+                if open {
+                    rows.extend(members.iter().map(|&page| SidebarRow::Page(page)));
                 }
-                for p in matches {
-                    draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                }
-                return;
             }
-            // Grouped by category; uncategorized last.
-            let mut groups: BTreeMap<String, Vec<&WikiPageMeta>> = BTreeMap::new();
-            for p in pages {
-                groups
-                    .entry(p.category.clone().unwrap_or_default())
-                    .or_default()
-                    .push(p);
+        }
+    }
+
+    if filtered.as_ref().is_some_and(|matches| matches.is_empty()) {
+        ui.add_space(20.0);
+        ui.vertical_centered(|ui| {
+            ui.strong("Ничего не найдено");
+            ui.weak("Измените или сократите запрос.");
+        });
+        return None;
+    }
+
+    let mut toggle: Option<String> = None;
+    let mut draw_row = |ui: &mut Ui, row: &SidebarRow<'_>, summaries: bool| match row {
+        SidebarRow::Header {
+            category,
+            count,
+            open,
+        } => {
+            let name = if category.is_empty() {
+                "Без категории"
+            } else {
+                category
+            };
+            let marker = if *open { "▼" } else { "▶" };
+            if ui
+                .selectable_label(
+                    false,
+                    RichText::new(format!("{marker} {name}  ({count})")).strong(),
+                )
+                .clicked()
+            {
+                toggle = Some(category.to_string());
             }
-            let uncategorized = groups.remove("");
-            for (cat, group) in &groups {
-                egui::CollapsingHeader::new(cat)
-                    .id_salt(format!("wiki_cat_{cat}"))
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        for p in group {
-                            draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                        }
-                    });
-            }
-            if let Some(group) = uncategorized {
-                if groups.is_empty() {
-                    // No categories at all: flat list without a header.
-                    for p in group {
-                        draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                    }
-                } else {
-                    egui::CollapsingHeader::new("Без категории")
-                        .id_salt("wiki_cat_uncategorized")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            for p in group {
-                                draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                            }
-                        });
-                }
+        }
+        SidebarRow::Page(page) => {
+            draw_page_entry(ui, &pages[*page], selected_id, summaries, &mut clicked);
+        }
+    };
+    let scroll = egui::ScrollArea::vertical()
+        .id_salt("wiki_sidebar_scroll")
+        .auto_shrink([false, false]);
+    if *show_summaries {
+        // Entries have varying heights: lay out every row.
+        scroll.show(ui, |ui| {
+            for row in &rows {
+                draw_row(ui, row, true);
             }
         });
+    } else {
+        // Uniform rows: lay out only the visible ones.
+        let row_height = ui.spacing().interact_size.y;
+        scroll.show_rows(ui, row_height, rows.len(), |ui, range| {
+            for row in &rows[range] {
+                draw_row(ui, row, false);
+            }
+        });
+    }
 
+    if let Some(category) = toggle {
+        if !collapsed.remove(&category) {
+            collapsed.insert(category);
+        }
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(collapsed_id, collapsed));
+    }
     clicked
 }
 
@@ -869,6 +969,36 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri, WikiKnownKeys};
+
+    #[test]
+    fn sidebar_index_groups_by_category_and_filters() {
+        let page = |id: &str, title: &str, category: Option<&str>| crate::load::WikiPageMeta {
+            id: id.into(),
+            title: title.into(),
+            slug: id.into(),
+            category: category.map(str::to_string),
+            ..Default::default()
+        };
+        let pages = vec![
+            page("a", "Alpha", Some("zeta")),
+            page("b", "Beta", None),
+            page("c", "Gamma", Some("eta")),
+            page("d", "Delta", Some("zeta")),
+        ];
+        let index = super::WikiSidebarIndex::new(&pages);
+        let groups: Vec<(&str, Vec<usize>)> = index
+            .groups
+            .iter()
+            .map(|(name, members)| (name.as_str(), members.clone()))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![("eta", vec![2]), ("zeta", vec![0, 3]), ("", vec![1])]
+        );
+        assert_eq!(*index.matches("alpha"), vec![0]);
+        assert_eq!(*index.matches("zeta"), vec![0, 3]);
+        assert_eq!(*index.matches("zeta"), vec![0, 3]);
+    }
 
     #[test]
     fn cached_segments_cover_the_line_in_order() {

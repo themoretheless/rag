@@ -446,7 +446,7 @@ fn document_body_from_json(
 }
 
 /// Wiki catalog entry for sidebar (Obsidian-like page list).
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct WikiPageMeta {
     pub id: String,
     pub uri: String,

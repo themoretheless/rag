@@ -471,6 +471,7 @@ impl GraphApp {
                         .show_separator_line(false)
                         .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
+                            let sidebar_index = self.wiki_sidebar_index();
                             let sel = if self.wiki_dual_pane && self.wiki_focus == WikiPane::B {
                                 self.wiki_selected_id_b.as_deref()
                             } else {
@@ -479,6 +480,7 @@ impl GraphApp {
                             if let Some(id) = draw_wiki_sidebar(
                                 ui,
                                 &self.wiki_pages,
+                                &sidebar_index,
                                 &mut self.wiki_filter,
                                 sel,
                                 &mut self.wiki_show_summaries,

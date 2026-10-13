@@ -70,7 +70,10 @@ pub struct RefreshStaleWikiResult {
 /// 3. wiki metadata `citations[].document_id` / `citations[].uri`
 /// 4. body lines `source: <uri-or-id>`
 pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
-    let raws = store.list_documents_by_layer(LAYER_RAW)?;
+    // The raw corpus is read without bodies: staleness needs ids, uris and
+    // timestamps; only sources cited by a `source_versions` snapshot are hashed,
+    // and their bodies are fetched in one batch below.
+    let raws = store.list_documents_by_layer_without_body(LAYER_RAW)?;
     let (raw_by_id, raw_by_uri) = raw_lookups(&raws);
 
     // (wiki_id, raw_id) -> item (prefer more specific link_kind if already present)
@@ -101,7 +104,26 @@ pub fn find_stale_wiki(store: &Store) -> Result<Vec<StaleWikiItem>> {
     // Snapshot parents are authoritative, including an explicitly empty set.
     // Legacy metadata/content references may survive a later compilation and
     // must not add parents outside that snapshot.
-    let mut source_hashes: HashMap<String, String> = HashMap::new();
+    let cited_raw_ids: Vec<&str> = {
+        let mut ids: Vec<&str> = wiki_docs
+            .iter()
+            .filter_map(wiki_source_versions)
+            .flatten()
+            .filter_map(|version| {
+                raw_by_id
+                    .get_key_value(version.document_id.as_str())
+                    .map(|(id, _)| *id)
+            })
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let mut source_hashes: HashMap<String, String> = store
+        .document_contents(&cited_raw_ids)?
+        .into_iter()
+        .map(|(id, content)| (id, content_hash(&content)))
+        .collect();
     for wiki in &wiki_docs {
         if let Some(versions) = wiki_source_versions(wiki) {
             for version in versions {

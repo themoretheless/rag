@@ -399,7 +399,28 @@ impl<'a> IngestService<'a> {
             .into_iter()
             .map(|prepared| (prepared.write, prepared.chunks))
             .unzip();
-        let chunk_groups = self.indexer.embed_prepared_batch(chunk_plans).await?;
+        // Re-ingest of an existing document: reuse the stored vector of every
+        // chunk whose text is unchanged, so only edited chunks reach the
+        // provider (an identical re-ingest makes no provider call at all).
+        let existing: Vec<&str> = writes
+            .iter()
+            .filter(|write| write.expected_revision.is_some())
+            .map(|write| write.document.id.as_str())
+            .collect();
+        let known = if existing.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            crate::util::blocking_section(|| self.store.chunk_vectors_by_content(&existing))?
+        };
+        let chunk_groups = if known.is_empty() {
+            self.indexer.embed_prepared_batch(chunk_plans).await?
+        } else {
+            let reusing =
+                crate::embeddings::PrecomputedEmbedder::with_vectors(self.embedder.clone(), known);
+            DocumentIndexer::new(&reusing, self.config)
+                .embed_prepared_batch(chunk_plans)
+                .await?
+        };
         Ok(writes
             .into_iter()
             .zip(chunk_groups)
@@ -799,6 +820,90 @@ mod tests {
             kind: "wiki".into(),
             immutable: false,
         }
+    }
+
+    struct RecordingEmbedder {
+        inner: MockEmbedder,
+        texts: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for RecordingEmbedder {
+        async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            self.texts.lock().unwrap().extend(texts.iter().cloned());
+            self.inner.embed(texts).await
+        }
+
+        fn dimensions(&self) -> usize {
+            self.inner.dimensions()
+        }
+    }
+
+    #[tokio::test]
+    async fn reingest_reuses_vectors_of_unchanged_chunks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(temp.path().join("reuse.duckdb"));
+        let store = Store::open(&config.db_path).expect("open");
+        let recording = Arc::new(RecordingEmbedder {
+            inner: MockEmbedder::new(8),
+            texts: std::sync::Mutex::new(Vec::new()),
+        });
+        let embedder: Arc<dyn EmbeddingProvider> = recording.clone();
+        let service = IngestService::new(&store, &embedder, &config);
+        let stable: String = (0..6)
+            .map(|index| format!("Stable paragraph number {index} keeps exactly this text.\n\n"))
+            .collect();
+        let original = format!("{stable}Closing paragraph changes later.");
+        let original = original.as_str();
+        service
+            .ingest(command(original))
+            .await
+            .expect("first ingest");
+        let first_vectors: Vec<Vec<f32>> = {
+            let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+            store
+                .list_chunks_for_document(&document.id)
+                .unwrap()
+                .into_iter()
+                .map(|chunk| chunk.embedding)
+                .collect()
+        };
+        recording.texts.lock().unwrap().clear();
+
+        // Identical content: every vector is reused, no provider call.
+        let same = service
+            .ingest(command(original))
+            .await
+            .expect("identical re-ingest");
+        assert_eq!(same.op, "updated");
+        assert!(recording.texts.lock().unwrap().is_empty());
+        let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+        let reused: Vec<Vec<f32>> = store
+            .list_chunks_for_document(&document.id)
+            .unwrap()
+            .into_iter()
+            .map(|chunk| chunk.embedding)
+            .collect();
+        assert_eq!(reused, first_vectors);
+
+        // An edit embeds only text the document did not already have.
+        let edited = format!("{stable}Closing paragraph is now quite different.");
+        service
+            .ingest(command(&edited))
+            .await
+            .expect("edited re-ingest");
+        let embedded = recording.texts.lock().unwrap().clone();
+        assert!(!embedded.is_empty());
+        let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+        let chunk_texts: Vec<String> = store
+            .list_chunks_for_document(&document.id)
+            .unwrap()
+            .into_iter()
+            .map(|chunk| chunk.content)
+            .collect();
+        assert!(chunk_texts.len() > 2, "{chunk_texts:?}");
+        assert!(embedded.len() < chunk_texts.len(), "{embedded:?}");
+        assert!(embedded.iter().all(|text| chunk_texts.contains(text)));
     }
 
     #[tokio::test]
