@@ -919,8 +919,13 @@ purpose:
 
 The web Sync view polls both every 10 s, and the web shell also polls
 `/v1/agents` every 15 s in each tab. Both run in `blocking_section`, off
-the async workers. Their cost is bounded by the `LIMIT` and grows with
-operation, diary and replication history, not with corpus content.
+the async workers. The ops-log and replication reads grow with operation and
+replication history. The diary read filters `documents` on `kind` without an
+index, so it scans the kind, status and creation-time columns of every
+document. That cost grows with document count but reads no bodies or
+embeddings, and takes a few milliseconds. The `LIMIT` bounds the rows
+returned. The Agents view also polls `/v1/calls` every 5 s; that endpoint is
+an in-memory ring and does not touch the store.
 
 A check of the final doc found one per-frame cost that does grow with the
 data, now fixed. The native graph seed picker scanned the whole loaded graph
