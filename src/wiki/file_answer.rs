@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Characters of the filed question quoted in a citation line (ellipsis included).
+const QUESTION_PREVIEW_MAX_CHARS: usize = 160;
+
 /// One citation attached to a filed answer (metadata + optional body lines).
 #[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
 pub struct FileAnswerCitation {
@@ -35,13 +38,7 @@ impl FileAnswerCitation {
             }
         }
         if let Some(q) = self.quote.as_deref().filter(|s| !s.is_empty()) {
-            let short = if q.chars().count() > 160 {
-                let mut s: String = q.chars().take(159).collect();
-                s.push('…');
-                s
-            } else {
-                q.to_string()
-            };
+            let short = crate::util::truncate_chars(q, QUESTION_PREVIEW_MAX_CHARS);
             line.push_str(&format!(": \"{short}\""));
         }
         if let Some(n) = self.note.as_deref().filter(|s| !s.is_empty()) {

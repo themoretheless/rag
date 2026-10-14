@@ -15,6 +15,11 @@ use crate::error::{AppError, Result};
 
 use super::EmbeddingProvider;
 
+/// TCP/TLS connect timeout for embedding requests.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Whole-request timeout for one embedding batch.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Maximum number of input strings per `/api/embed` batch request.
 const MAX_BATCH_SIZE: usize = 64;
 
@@ -52,8 +57,8 @@ impl OllamaEmbedder {
             return Err(AppError::embeddings("embedding model must not be empty"));
         }
         let client = Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|e| AppError::embeddings(format!("failed to build HTTP client: {e}")))?;
 

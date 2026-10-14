@@ -37,6 +37,9 @@ use crate::util::{non_blank, run_blocking};
 use crate::wiki;
 use crate::wiki::FileAnswerCitation;
 
+/// Diary entries `diary_read` returns when `last_n` is absent.
+const DEFAULT_DIARY_LAST_N: u32 = 10;
+
 /// Upper bound for `wake_up` diary / pinned-memory limits.
 const MAX_WAKE_UP_LIMIT: usize = 200;
 /// Upper bound for `list_memory_lifecycle_candidates` page size.
@@ -108,7 +111,8 @@ impl RagServer {
 
     #[tool(
         name = "diary_write",
-        description = "Append a verbatim per-agent diary note (layer=diary, kind=diary, wing=agents/<name> or wing?). Chunks+embeds for search; logs ops_log diary_write."
+        description = "Append a verbatim per-agent diary note (layer=diary, kind=diary, \
+        wing=agents/<name> or wing?). Chunks+embeds for search; logs ops_log diary_write."
     )]
     pub(super) async fn diary_write(
         &self,
@@ -133,14 +137,15 @@ impl RagServer {
 
     #[tool(
         name = "diary_read",
-        description = "Read recent diary entries for an agent (newest first). Filters kind=diary under wing agents/<name> (or room=agent). last_n/limit default 10."
+        description = "Read recent diary entries for an agent (newest first). Filters kind=diary \
+        under wing agents/<name> (or room=agent). last_n/limit default 10."
     )]
     pub(super) async fn diary_read(
         &self,
         Parameters(params): Parameters<DiaryReadParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let last_n = params.last_n.unwrap_or(10) as usize;
+            let last_n = params.last_n.unwrap_or(DEFAULT_DIARY_LAST_N) as usize;
             let entries = diary::diary_read(&self.store, &params.agent_name, last_n)?;
             Self::json_result(&entries)
         })
@@ -148,7 +153,8 @@ impl RagServer {
 
     #[tool(
         name = "wake_up",
-        description = "Session bootstrap: status + last N diary entries (agent_name?) + pinned docs + schema snippet only if schema document already exists (does not seed default)."
+        description = "Session bootstrap: status + last N diary entries (agent_name?) + pinned \
+        docs + schema snippet only if schema document already exists (does not seed default)."
     )]
     pub(super) async fn wake_up(
         &self,
@@ -171,7 +177,9 @@ impl RagServer {
 
     #[tool(
         name = "checkpoint",
-        description = "Session savepoint: always append ops_log (op=checkpoint, message=summary). Optional diary content writes a diary entry for agent_name (default agent). Prefer this over separate append_log + diary_write at session boundaries."
+        description = "Session savepoint: always append ops_log (op=checkpoint, \
+        message=summary). Optional diary content writes a diary entry for agent_name (default \
+        agent). Prefer this over separate append_log + diary_write at session boundaries."
     )]
     pub(super) async fn checkpoint(
         &self,
@@ -274,7 +282,9 @@ impl RagServer {
 
     #[tool(
         name = "memories_filed_away",
-        description = "Recent memory-filing ops from ops_log (ingest/drawer/wiki/diary/checkpoint), newest first. Empty/quiet when ops_log missing or no matches. Optional limit (default 20)."
+        description = "Recent memory-filing ops from ops_log \
+        (ingest/drawer/wiki/diary/checkpoint), newest first. Empty/quiet when ops_log missing or \
+        no matches. Optional limit (default 20)."
     )]
     pub(super) async fn memories_filed_away(
         &self,
@@ -319,7 +329,8 @@ impl RagServer {
 
     #[tool(
         name = "reconnect",
-        description = "Force reconnect / cache clear after external DB writes. DuckDB single-process has no client cache: always returns ok=true (no-op success)."
+        description = "Force reconnect / cache clear after external DB writes. DuckDB \
+        single-process has no client cache: always returns ok=true (no-op success)."
     )]
     pub(super) async fn reconnect(
         &self,
@@ -469,7 +480,8 @@ impl RagServer {
 
     #[tool(
         name = "file_answer",
-        description = "Persist a cited answer as a wiki page (layer=wiki, category=answers): write body + citations metadata, rebuild graph, append ops_log, touch wiki_index."
+        description = "Persist a cited answer as a wiki page (layer=wiki, category=answers): \
+        write body + citations metadata, rebuild graph, append ops_log, touch wiki_index."
     )]
     pub(super) async fn file_answer(
         &self,
@@ -507,7 +519,8 @@ impl RagServer {
 
     #[tool(
         name = "read_index",
-        description = "Read the wiki content catalog (index.md analogue): one row per page with slug, title, kind, category, one-line summary. format=json|markdown."
+        description = "Read the wiki content catalog (index.md analogue): one row per page with \
+        slug, title, kind, category, one-line summary. format=json|markdown."
     )]
     pub(super) async fn read_index(
         &self,
@@ -647,7 +660,10 @@ impl RagServer {
 
     #[tool(
         name = "update_wiki_page",
-        description = "Update an existing wiki page by slug. Omitted kind/category/summary preserve their current values, as do project placement, status, pin/boost state, source ownership and unrelated metadata. Pass if_match_revision/etag from get_wiki_page to avoid clobbering concurrent writes; use write_wiki_page to create a page."
+        description = "Update an existing wiki page by slug. Omitted kind/category/summary \
+        preserve their current values, as do project placement, status, pin/boost state, source \
+        ownership and unrelated metadata. Pass if_match_revision/etag from get_wiki_page to \
+        avoid clobbering concurrent writes; use write_wiki_page to create a page."
     )]
     pub(super) async fn update_wiki_page(
         &self,
@@ -702,7 +718,8 @@ impl RagServer {
 
     #[tool(
         name = "list_wiki_pages",
-        description = "List lean layer=wiki catalog rows without page bodies. Filters: q?, kind?, category?, wing?, room?; limit defaults 50 (hard cap 200), offset defaults 0."
+        description = "List lean layer=wiki catalog rows without page bodies. Filters: q?, \
+        kind?, category?, wing?, room?; limit defaults 50 (hard cap 200), offset defaults 0."
     )]
     pub(super) async fn list_wiki_pages(
         &self,
@@ -763,7 +780,10 @@ impl RagServer {
 
     #[tool(
         name = "consolidate",
-        description = "Local LLM merges N document texts into one wiki page proposal (concept/entity). apply=false (default) returns proposal only; apply=true writes wiki page, rebuilds graph+index, links sources via related edges, ops_log. Capped by RAG_MAINT_MAX_DOCS / max_docs. Optional slug/title/kind/category overrides."
+        description = "Local LLM merges N document texts into one wiki page proposal \
+        (concept/entity). apply=false (default) returns proposal only; apply=true writes wiki \
+        page, rebuilds graph+index, links sources via related edges, ops_log. Capped by \
+        RAG_MAINT_MAX_DOCS / max_docs. Optional slug/title/kind/category overrides."
     )]
     pub(super) async fn consolidate(
         &self,
@@ -800,7 +820,9 @@ impl RagServer {
 
     #[tool(
         name = "list_memory_lifecycle_candidates",
-        description = "List durable memory lifecycle candidates without content. Defaults to active items; optional status/layer/kind filters and limit. Deterministic and does not require an LLM."
+        description = "List durable memory lifecycle candidates without content. Defaults to \
+        active items; optional status/layer/kind filters and limit. Deterministic and does not \
+        require an LLM."
     )]
     pub(super) async fn list_memory_lifecycle_candidates(
         &self,
@@ -820,7 +842,9 @@ impl RagServer {
 
     #[tool(
         name = "consolidate_memory_items",
-        description = "Idempotently mark selected memory documents consolidated into an existing output document. Adds structured provenance to the output and source metadata; no LLM or content rewrite."
+        description = "Idempotently mark selected memory documents consolidated into an existing \
+        output document. Adds structured provenance to the output and source metadata; no LLM or \
+        content rewrite."
     )]
     pub(super) async fn consolidate_memory_items(
         &self,
@@ -839,7 +863,8 @@ impl RagServer {
 
     #[tool(
         name = "archive_memory_items",
-        description = "Idempotently archive selected memory documents. Already archived ids are reported as skipped; missing ids are structured in the result. No LLM required."
+        description = "Idempotently archive selected memory documents. Already archived ids are \
+        reported as skipped; missing ids are structured in the result. No LLM required."
     )]
     pub(super) async fn archive_memory_items(
         &self,
@@ -857,7 +882,9 @@ impl RagServer {
 
     #[tool(
         name = "lint_wiki",
-        description = "Lint compiled wiki and graph link health: missing/stale index, broken or duplicate wikilinks, unresolved stubs, orphan pages/documents, self-links, uncompiled raw, and aggregate health counts."
+        description = "Lint compiled wiki and graph link health: missing/stale index, broken or \
+        duplicate wikilinks, unresolved stubs, orphan pages/documents, self-links, uncompiled \
+        raw, and aggregate health counts."
     )]
     pub(super) async fn lint_wiki(&self) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
@@ -868,7 +895,10 @@ impl RagServer {
 
     #[tool(
         name = "refresh_stale_wiki",
-        description = "Find wiki pages older than linked raw parents (graph related / metadata source_* / citations / source: lines). dry_run=true (default) lists for the agent; dry_run=false re-runs compile_source per unique raw when LLM is enabled and ChatClient is present (capped by max_docs / RAG_MAINT_MAX_DOCS). Always logs ops_log."
+        description = "Find wiki pages older than linked raw parents (graph related / metadata \
+        source_* / citations / source: lines). dry_run=true (default) lists for the agent; \
+        dry_run=false re-runs compile_source per unique raw when LLM is enabled and ChatClient \
+        is present (capped by max_docs / RAG_MAINT_MAX_DOCS). Always logs ops_log."
     )]
     pub(super) async fn refresh_stale_wiki(
         &self,

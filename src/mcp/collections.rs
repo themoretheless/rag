@@ -18,7 +18,10 @@ use crate::util::non_blank;
 impl RagServer {
     #[tool(
         name = "collection_create",
-        description = "Create a durable named collection. entries array order is the reading order; each entry may name a parent_document_id for outline nesting and depends_on document ids for prerequisites. All ids must reference existing documents in the collection."
+        description = "Create a durable named collection. entries array order is the reading \
+        order; each entry may name a parent_document_id for outline nesting and depends_on \
+        document ids for prerequisites. All ids must reference existing documents in the \
+        collection."
     )]
     pub(super) async fn collection_create(
         &self,
@@ -65,7 +68,9 @@ impl RagServer {
 
     #[tool(
         name = "collection_get",
-        description = "Get a collection with entries in reading order, outline parent_document_id values, optional depends_on prerequisite links, and a derived dependency_order. Dependency cycles are reported in dependency_cycle_members."
+        description = "Get a collection with entries in reading order, outline \
+        parent_document_id values, optional depends_on prerequisite links, and a derived \
+        dependency_order. Dependency cycles are reported in dependency_cycle_members."
     )]
     pub(super) async fn collection_get(
         &self,
@@ -87,7 +92,9 @@ impl RagServer {
 
     #[tool(
         name = "collection_update",
-        description = "Update collection metadata and optionally replace its entries. When entries is present, array order replaces reading order and parent_document_id/depends_on replace the outline and prerequisite links; omit entries to preserve membership."
+        description = "Update collection metadata and optionally replace its entries. When \
+        entries is present, array order replaces reading order and parent_document_id/depends_on \
+        replace the outline and prerequisite links; omit entries to preserve membership."
     )]
     pub(super) async fn collection_update(
         &self,

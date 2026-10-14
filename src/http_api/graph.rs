@@ -14,6 +14,11 @@ use crate::error::AppError;
 use super::error::{api_err, api_ok};
 use super::HttpState;
 
+/// Node cap for a whole-graph export when `max_nodes` is absent.
+const DEFAULT_GRAPH_MAX_NODES: u32 = 500;
+/// Node cap for a seeded neighbourhood when `max_nodes` is absent.
+const DEFAULT_NEIGHBORHOOD_MAX_NODES: u32 = 100;
+
 /// Graph + document UI routes (no `/health`, no wiki).
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -34,7 +39,7 @@ struct GraphQuery {
 }
 
 async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl IntoResponse {
-    let max = q.max_nodes.unwrap_or(500);
+    let max = q.max_nodes.unwrap_or(DEFAULT_GRAPH_MAX_NODES);
     let tags = q.include_tags.unwrap_or(false);
     let project = q.project.and_then(|project| {
         let project = project.trim();
@@ -76,7 +81,7 @@ async fn neighbors(
     let depth = q.depth.unwrap_or(1).clamp(1, 3);
     let max_nodes = q
         .max_nodes
-        .unwrap_or(100)
+        .unwrap_or(DEFAULT_NEIGHBORHOOD_MAX_NODES)
         .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES);
 
     let seed = seed.to_owned();

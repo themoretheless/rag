@@ -23,6 +23,9 @@ use super::{
     HttpState,
 };
 
+/// Whole-request timeout for database sync HTTP calls to peers.
+const SYNC_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
         .route("/v1/sync/status", get(status))
@@ -261,7 +264,7 @@ pub(super) fn spawn_worker(st: HttpState) {
     let client = match reqwest::Client::builder()
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(SYNC_HTTP_TIMEOUT)
         .build()
     {
         Ok(client) => client,
@@ -298,7 +301,10 @@ fn bounded_sync_batch(
         if next > super::MAX_HTTP_BODY_BYTES || event_bytes > crate::db::sync::MAX_SYNC_EVENT_BYTES
         {
             if batch.is_empty() {
-                return Err(AppError::invalid("pending sync event exceeds the HTTP body limit; preserve the legacy outbox and repair the oversized entry before retrying"));
+                return Err(AppError::invalid(
+                    "pending sync event exceeds the HTTP body limit; preserve the legacy outbox \
+                     and repair the oversized entry before retrying",
+                ));
             }
             break;
         }

@@ -32,6 +32,18 @@ use crate::error::AppError;
 use crate::util::{non_blank, parse_optional_timestamp, run_blocking};
 use crate::wiki;
 
+/// ops_log rows returned when `limit` is absent.
+const DEFAULT_OPS_LOG_LIMIT: usize = 50;
+
+/// Diary entries returned when `limit` is absent.
+const DEFAULT_DIARY_LIMIT: usize = 20;
+/// Largest diary page a client may request.
+const MAX_DIARY_LIMIT: usize = 200;
+/// Eval history rows returned when `limit` is absent.
+const DEFAULT_EVAL_HISTORY_LIMIT: usize = 30;
+/// Largest eval history page a client may request.
+const MAX_EVAL_HISTORY_LIMIT: usize = 500;
+
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
         .route("/v1/ops-log", get(ops_log))
@@ -72,7 +84,7 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
         // Page size is bounded by `Store` (MAX_OPS_LOG_PAGE) for every transport.
         let limit = q
             .limit
-            .unwrap_or(50)
+            .unwrap_or(DEFAULT_OPS_LOG_LIMIT)
             .clamp(1, crate::db::store::MAX_OPS_LOG_PAGE);
         let id = non_blank(q.id);
         let has_key = id.is_some() || q.seq.is_some();
@@ -184,7 +196,10 @@ struct DiaryQuery {
 }
 
 async fn diary(State(st): State<HttpState>, Query(q): Query<DiaryQuery>) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(20).clamp(1, 200);
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_DIARY_LIMIT)
+        .clamp(1, MAX_DIARY_LIMIT);
     crate::util::blocking_section(|| {
         match st
             .store
@@ -291,7 +306,10 @@ async fn eval_history(
     State(st): State<HttpState>,
     Query(q): Query<EvalHistoryQuery>,
 ) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(30).clamp(1, 500);
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_EVAL_HISTORY_LIMIT)
+        .clamp(1, MAX_EVAL_HISTORY_LIMIT);
     let Some(path) = st.config.eval_history_path.clone() else {
         return api_ok(json!({
             "ok": true, "configured": false, "path": null, "count": 0, "items": [],

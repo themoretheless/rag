@@ -19,11 +19,19 @@ use crate::models::{pkb_node_kinds, pkb_rel_types};
 use crate::models::{GraphEdge, GraphFilter, GraphNode, GraphView, SearchHit, SearchMode};
 use crate::util::run_blocking;
 
+/// Node cap for a graph snapshot export when `max_nodes` is absent.
+const DEFAULT_EXPORT_MAX_NODES: u32 = 500;
+/// Node cap for neighbour / tunnel / graph-search traversals when
+/// `max_nodes` is absent.
+const DEFAULT_TRAVERSAL_MAX_NODES: u32 = 100;
+
 #[tool_router(router = graph_router, vis = "pub(super)")]
 impl RagServer {
     #[tool(
         name = "get_graph",
-        description = "Export object graph topology {nodes, edges}. Defaults are the PKB set (§7.1): document/stub/entity kinds and the literary relations; pass include_tags=true for tag hubs, or kinds/rel_types/seed_ids to filter explicitly."
+        description = "Export object graph topology {nodes, edges}. Defaults are the PKB set \
+        (§7.1): document/stub/entity kinds and the literary relations; pass include_tags=true \
+        for tag hubs, or kinds/rel_types/seed_ids to filter explicitly."
     )]
     pub(super) async fn get_graph(
         &self,
@@ -52,13 +60,15 @@ impl RagServer {
     /// Concurrent UI must use `--snapshot` (not a second `--db` open).
     #[tool(
         name = "export_graph_snapshot",
-        description = "Write GraphView topology JSON to disk for rag-mcp-ui (Mode C). Use while MCP holds the DB; then run: rag-mcp-ui --snapshot PATH --seed LABEL. Path defaults to <db_dir>/graph.json; must be under DB directory or RAG_INGEST_ROOTS."
+        description = "Write GraphView topology JSON to disk for rag-mcp-ui (Mode C). Use while \
+        MCP holds the DB; then run: rag-mcp-ui --snapshot PATH --seed LABEL. Path defaults to \
+        <db_dir>/graph.json; must be under DB directory or RAG_INGEST_ROOTS."
     )]
     pub(super) async fn export_graph_snapshot(
         &self,
         Parameters(params): Parameters<ExportGraphSnapshotParams>,
     ) -> Result<CallToolResult, McpError> {
-        let max_nodes = params.max_nodes.unwrap_or(500);
+        let max_nodes = params.max_nodes.unwrap_or(DEFAULT_EXPORT_MAX_NODES);
         let include_tags = params.include_tags.unwrap_or(false);
         #[derive(Serialize)]
         struct ExportSnapResult {
@@ -145,7 +155,11 @@ impl RagServer {
 
     #[tool(
         name = "get_neighbors",
-        description = "Local undirected BFS subgraph around a node (Obsidian local graph). Default edges are the PKB literary set (wikilink, related, and the hand-authored wiki relations such as реализует/проверяет); pass include_tags=true to also walk tag hubs, or rel_types to name the relations you want (tunnel, mentions, derived_from, depends_on are opt-in there)."
+        description = "Local undirected BFS subgraph around a node (Obsidian local graph). \
+        Default edges are the PKB literary set (wikilink, related, and the hand-authored wiki \
+        relations such as реализует/проверяет); pass include_tags=true to also walk tag hubs, or \
+        rel_types to name the relations you want (tunnel, mentions, derived_from, depends_on are \
+        opt-in there)."
     )]
     pub(super) async fn get_neighbors(
         &self,
@@ -153,7 +167,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let depth = params.depth.unwrap_or(1);
-            let max_nodes = params.max_nodes.unwrap_or(100);
+            let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
             let rel_types = match params.rel_types.as_deref() {
                 Some(requested) if !requested.is_empty() => requested.to_vec(),
                 _ => pkb_rel_types(params.include_tags.unwrap_or(false)),
@@ -204,7 +218,11 @@ impl RagServer {
 
     #[tool(
         name = "link_nodes",
-        description = "Create an explicit graph edge (default rel_type=related). Accepted rel_type: the structural names (wikilink, tagged, mentions, related, tunnel, depends_on, derived_from, supersedes) or a hand-authored wiki relation (реализует, проверяет, детализирует, зависит от, ...); anything else is rejected. The edge is origin=explicit, so rebuild never owns it."
+        description = "Create an explicit graph edge (default rel_type=related). Accepted \
+        rel_type: the structural names (wikilink, tagged, mentions, related, tunnel, depends_on, \
+        derived_from, supersedes) or a hand-authored wiki relation (реализует, проверяет, \
+        детализирует, зависит от, ...); anything else is rejected. The edge is origin=explicit, \
+        so rebuild never owns it."
     )]
     pub(super) async fn link_nodes(
         &self,
@@ -293,7 +311,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let depth = params.depth.unwrap_or(2);
-            let max_nodes = params.max_nodes.unwrap_or(100);
+            let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
             let view = self
                 .store
                 .follow_tunnels(&params.node_id, depth, max_nodes)?;
@@ -325,7 +343,9 @@ impl RagServer {
 
     #[tool(
         name = "graph_stats",
-        description = "Object graph aggregates: total nodes/edges, node counts by kind, edge counts by rel_type (includes tunnel), and edge counts cut by (rel_type, origin, context) so hand-authored relations stay separate from rebuild-owned membership and tag edges."
+        description = "Object graph aggregates: total nodes/edges, node counts by kind, edge \
+        counts by rel_type (includes tunnel), and edge counts cut by (rel_type, origin, context) \
+        so hand-authored relations stay separate from rebuild-owned membership and tag edges."
     )]
     pub(super) async fn graph_stats(&self) -> Result<CallToolResult, McpError> {
         let body = self
@@ -419,7 +439,7 @@ impl RagServer {
             .map(|k| k as usize)
             .unwrap_or(self.config.default_top_k);
         let depth = params.depth.unwrap_or(1);
-        let max_nodes = params.max_nodes.unwrap_or(100);
+        let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
 
         let query_vecs = self.embedder.embed(&[params.query]).await?;
         let query_emb = query_vecs.into_iter().next().ok_or_else(|| {

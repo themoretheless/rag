@@ -119,7 +119,12 @@ pub async fn execute_search(
     command: SearchCommand,
 ) -> Result<Vec<SearchHit>, AppError> {
     let started = std::time::Instant::now();
-    let budget = std::time::Duration::from_millis(command.timeout_ms.unwrap_or(5_000).max(1));
+    let budget = std::time::Duration::from_millis(
+        command
+            .timeout_ms
+            .unwrap_or(DEFAULT_SEARCH_TIMEOUT_MS)
+            .max(1),
+    );
     let mode = resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
     // Acquire before the potentially slow async embedding request. The read
     // guard both fast-fails an already-running source sync and prevents a new
@@ -483,7 +488,9 @@ fn list_chunk_text_page(
         max_content_bytes,
         |content_bytes| {
             AppError::invalid(format!(
-                "included chunk text needs {content_bytes} bytes, exceeding the {max_content_bytes}-byte response budget; lower chunk_limit or set include_chunks=false"
+                "included chunk text needs {content_bytes} bytes, exceeding the \
+                {max_content_bytes}-byte response budget; lower chunk_limit or set \
+                include_chunks=false"
             ))
         },
     )

@@ -69,6 +69,9 @@ use crate::util::run_blocking;
 
 pub use bind::parse_bind;
 
+/// Keep-alive ping interval on streamable-HTTP MCP SSE responses.
+const MCP_SSE_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Validate security before opening the store or starting background writers.
 pub fn validate_security(
     bind: SocketAddr,
@@ -197,7 +200,7 @@ fn mcp_service_from(
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
             .with_stateful_mode(false)
-            .with_sse_keep_alive(Some(std::time::Duration::from_secs(15)))
+            .with_sse_keep_alive(Some(MCP_SSE_KEEP_ALIVE))
             .with_cancellation_token(cancellation_token)
             .with_allowed_hosts(allowed_hosts),
     )

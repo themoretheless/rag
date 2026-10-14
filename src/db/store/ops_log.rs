@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Recent ops_log rows returned when no id, seq or limit is given.
+const DEFAULT_RECENT_OPS: usize = 50;
+
 /// Projection decoded by `row_to_ops_log`.
 const OPS_LOG_COLUMNS: &str = "id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op, prefix, \
      COALESCE(message, ''), entity_id, entity_kind, COALESCE(payload_json, '{}'), agent_name";
@@ -135,7 +138,7 @@ impl Store {
         if let Some(seq) = seq {
             return Ok(self.get_ops_log_by_seq(seq)?.into_iter().collect());
         }
-        self.list_recent_ops(limit.unwrap_or(50))
+        self.list_recent_ops(limit.unwrap_or(DEFAULT_RECENT_OPS))
     }
 }
 

@@ -14,6 +14,10 @@ use crate::db::Store;
 
 use crate::error::{AppError, Result};
 
+/// Longest sleep between automatic-backup checks: a longer interval is still
+/// checked hourly, and the check only snapshots once the interval has elapsed.
+const AUTO_BACKUP_MAX_SLEEP: Duration = Duration::from_secs(3600);
+
 const BACKUP_PREFIX: &str = "rag-auto-";
 const BACKUP_SUFFIX: &str = ".duckdb";
 
@@ -123,9 +127,14 @@ pub fn set_startup_timing(name: &str, elapsed: Duration, warn_ms: u64) {
 
 pub fn mark_ready() { let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner()); s.phase = "ready".into(); s.ready = true; }
 pub fn mark_shutdown(checkpointed: bool) {
-    let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner()); s.phase = "shutdown_complete".into(); s.ready = false; s.shutdown_checkpointed = checkpointed;
+    let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
+    s.phase = "shutdown_complete".into();
+    s.ready = false;
+    s.shutdown_checkpointed = checkpointed;
     drop(s);
-    if let Some(path) = PID_PATH.read().unwrap_or_else(|p| p.into_inner()).as_ref() { let _ = fs::remove_file(path); }
+    if let Some(path) = PID_PATH.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        let _ = fs::remove_file(path);
+    }
 }
 
 pub fn configure_autosync(interval: Duration) {
@@ -280,13 +289,17 @@ pub fn spawn_auto_backup(store: Store, config: &Config) {
         let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
         state.auto_backup_enabled = true;
         state.auto_backup_last_completed_at = latest_auto_backup_at(&dir).ok().flatten();
-        state.auto_backup_next_run_at = state.auto_backup_last_completed_at
+        state.auto_backup_next_run_at = state
+            .auto_backup_last_completed_at
             .map(|completed| completed + chrono::Duration::from_std(interval).unwrap_or_default())
             .or_else(|| Some(Utc::now()));
     }
     tokio::spawn(async move {
         loop {
-            RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_running = true;
+            RUNTIME
+                .write()
+                .unwrap_or_else(|p| p.into_inner())
+                .auto_backup_running = true;
             let store = store.clone();
             let dir = dir.clone();
             let result = tokio::task::spawn_blocking(move || {
@@ -300,13 +313,37 @@ pub fn spawn_auto_backup(store: Store, config: &Config) {
                     state.auto_backup_last_error = None;
                     tracing::info!(path = %path.display(), "automatic RAG backup created")
                 }
-                Ok(Ok(None)) => { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_last_error = None; }
-                Ok(Err(error)) => { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_last_error = Some(error.to_string()); tracing::error!(error = %error, "automatic RAG backup failed") }
-                Err(error) => { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_last_error = Some(error.to_string()); tracing::error!(error = %error, "automatic RAG backup task panicked") }
+                Ok(Ok(None)) => {
+                    RUNTIME
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .auto_backup_last_error = None;
+                }
+                Ok(Err(error)) => {
+                    RUNTIME
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .auto_backup_last_error = Some(error.to_string());
+                    tracing::error!(error = %error, "automatic RAG backup failed")
+                }
+                Err(error) => {
+                    RUNTIME
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .auto_backup_last_error = Some(error.to_string());
+                    tracing::error!(error = %error, "automatic RAG backup task panicked")
+                }
             }
-            { let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner()); state.auto_backup_running = false;
-              state.auto_backup_next_run_at = Some(Utc::now() + chrono::Duration::from_std(interval.min(Duration::from_secs(3600))).unwrap_or_default()); }
-            tokio::time::sleep(interval.min(Duration::from_secs(3600))).await;
+            {
+                let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
+                state.auto_backup_running = false;
+                state.auto_backup_next_run_at = Some(
+                    Utc::now()
+                        + chrono::Duration::from_std(interval.min(AUTO_BACKUP_MAX_SLEEP))
+                            .unwrap_or_default(),
+                );
+            }
+            tokio::time::sleep(interval.min(AUTO_BACKUP_MAX_SLEEP)).await;
         }
     });
 }

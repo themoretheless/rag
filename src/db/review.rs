@@ -38,7 +38,11 @@ fn read(conn: &Connection, id: &str) -> Result<Proposal> {
     })?)?)
 }
 fn save(conn: &Connection, proposal: &Proposal) -> Result<()> {
-    conn.execute("INSERT INTO wiki_proposals VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload", params![proposal.id, serde_json::to_string(proposal)?])?;
+    conn.execute(
+        "INSERT INTO wiki_proposals VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload \
+    = excluded.payload",
+        params![proposal.id, serde_json::to_string(proposal)?],
+    )?;
     Ok(())
 }
 pub fn get(store: &Store, id: &str) -> Result<Proposal> {

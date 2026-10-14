@@ -493,7 +493,9 @@ pub fn maintain_compress(
             || deleted_chunks != chunks_removed
         {
             return Err(AppError::db(format!(
-                "compression disposition counts changed during atomic apply: planned deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
+                "compression disposition counts changed during atomic apply: planned \
+                deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, \
+                applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
             )));
         }
     }

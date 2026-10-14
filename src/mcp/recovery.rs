@@ -28,7 +28,10 @@ use crate::util::{
 impl RagServer {
     #[tool(
         name = "backup_db",
-        description = "Create and verify an MVCC-consistent DuckDB snapshot. CHECKPOINT and snapshot-connection cloning briefly hold the Store mutex; the potentially long database copy does not block normal Store queries. path must be under RAG_INGEST_ROOTS. dry_run=false writes; overwrite defaults false."
+        description = "Create and verify an MVCC-consistent DuckDB snapshot. CHECKPOINT and \
+        snapshot-connection cloning briefly hold the Store mutex; the potentially long database \
+        copy does not block normal Store queries. path must be under RAG_INGEST_ROOTS. \
+        dry_run=false writes; overwrite defaults false."
     )]
     pub(super) async fn backup_db(
         &self,
@@ -48,7 +51,10 @@ impl RagServer {
 
     #[tool(
         name = "export_bundle",
-        description = "Export a bounded in-memory portable JSON/JSONL recovery bundle (maximum 64 MiB, 10,000 documents, 50,000 chunks). path must be under RAG_INGEST_ROOTS; never overwrites unless overwrite=true. For a larger corpus, use backup_db and verify the DuckDB backup."
+        description = "Export a bounded in-memory portable JSON/JSONL recovery bundle (maximum \
+        64 MiB, 10,000 documents, 50,000 chunks). path must be under RAG_INGEST_ROOTS; never \
+        overwrites unless overwrite=true. For a larger corpus, use backup_db and verify the \
+        DuckDB backup."
     )]
     pub(super) async fn export_bundle(
         &self,
@@ -96,7 +102,10 @@ impl RagServer {
 
     #[tool(
         name = "export_vault",
-        description = "Export a git-friendly Markdown vault partitioned by projects/<wing>/<room>/<layer>, with .rag graph, ops log, and embedding manifest JSON. path must be under RAG_INGEST_ROOTS. dry_run defaults true; overwrite retains the prior vault as a dated sibling."
+        description = "Export a git-friendly Markdown vault partitioned by \
+        projects/<wing>/<room>/<layer>, with .rag graph, ops log, and embedding manifest JSON. \
+        path must be under RAG_INGEST_ROOTS. dry_run defaults true; overwrite retains the prior \
+        vault as a dated sibling."
     )]
     pub(super) async fn export_vault(
         &self,
@@ -116,7 +125,11 @@ impl RagServer {
 
     #[tool(
         name = "import_bundle",
-        description = "Import a bounded in-memory portable JSON/JSONL recovery bundle (maximum 64 MiB, 10,000 documents, 50,000 chunks) from RAG_INGEST_ROOTS. dry_run defaults true. conflict_policy is error (default), skip, or overwrite; overwrite must be explicit. Legacy v1 chunks require reembed_legacy=true. For a larger corpus, use a verified DuckDB backup."
+        description = "Import a bounded in-memory portable JSON/JSONL recovery bundle (maximum \
+        64 MiB, 10,000 documents, 50,000 chunks) from RAG_INGEST_ROOTS. dry_run defaults true. \
+        conflict_policy is error (default), skip, or overwrite; overwrite must be explicit. \
+        Legacy v1 chunks require reembed_legacy=true. For a larger corpus, use a verified DuckDB \
+        backup."
     )]
     pub(super) async fn import_bundle(
         &self,
@@ -272,7 +285,9 @@ pub(super) async fn prepare_recovery_bundle_for_import(
         .map_err(|_| AppError::embeddings("legacy recovery bundle has too many chunks"))?;
     if !locations.is_empty() && !reembed_legacy {
         return Err(AppError::embeddings(format!(
-            "legacy recovery bundle v1 contains {planned} chunks with unverifiable embedding identity; retry import_bundle with reembed_legacy=true to replace every vector with the live embedding provider"
+            "legacy recovery bundle v1 contains {planned} chunks with unverifiable embedding \
+            identity; retry import_bundle with reembed_legacy=true to replace every vector with \
+            the live embedding provider"
         )));
     }
 

@@ -65,7 +65,8 @@ impl Store {
             conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
         if chunk_count > 0 {
             return Err(AppError::embeddings(format!(
-                "embedding manifest is missing for a non-empty corpus ({chunk_count} chunks); run a complete uncapped reembed_all to establish a verified corpus identity"
+                "embedding manifest is missing for a non-empty corpus ({chunk_count} chunks); \
+                run a complete uncapped reembed_all to establish a verified corpus identity"
             )));
         }
         let manifest = embedding_manifest_from_config(config);
@@ -143,7 +144,10 @@ impl Store {
             "legacy provider/model/dims comparison".to_string()
         };
         Err(AppError::embeddings(format!(
-            "embedding manifest mismatch ({comparison}): stored provider='{}', model='{}', dims={}; configured provider='{}', model='{}', dims={}. Run a complete uncapped reembed_all to migrate the corpus; reembed_document cannot migrate embedding identity",
+            "embedding manifest mismatch ({comparison}): stored provider='{}', model='{}', \
+            dims={}; configured provider='{}', model='{}', dims={}. Run a complete uncapped \
+            reembed_all to migrate the corpus; reembed_document cannot migrate embedding \
+            identity",
             manifest.provider,
             manifest.model,
             manifest.dims,

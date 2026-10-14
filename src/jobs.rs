@@ -31,7 +31,8 @@ pub(crate) const MAX_ERROR_SAMPLES: usize = 20;
 /// Requeue is safe because sync skips unchanged committed files (committed-prefix
 /// awareness via source manifests). It does **not** resume an in-flight embedding
 /// batch; any uncommitted batch from the interrupted run was never written.
-pub const SOURCE_SYNC_REQUEUE_LIMITS: &str = "requeue_safe: source_sync skips unchanged committed files; does not resume mid-batch embeds or delete-phase mid-flight";
+pub const SOURCE_SYNC_REQUEUE_LIMITS: &str = "requeue_safe: source_sync skips unchanged \
+committed files; does not resume mid-batch embeds or delete-phase mid-flight";
 
 pub use rag_mcp_core::SyncJobRequest;
 
