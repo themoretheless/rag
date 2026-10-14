@@ -54,11 +54,10 @@ impl Store {
         let mut stmt = conn.prepare(&format!(
             "SELECT id, content_hash FROM documents WHERE id IN ({placeholders})"
         ))?;
-        let rows = crate::db::rows::query_vec(
-            &mut stmt,
-            duckdb::params_from_iter(ids.iter()),
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-        )?;
+        let rows =
+            crate::db::rows::query_vec(&mut stmt, duckdb::params_from_iter(ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?;
         Ok(rows.into_iter().collect())
     }
 
@@ -836,9 +835,15 @@ impl Store {
 
 /// `(label, document key)` of each wikilink source in a backlinks `view` of
 /// `target_id`, sorted by label with adjacent duplicate keys collapsed.
-pub fn wiki_backlink_rows(target_id: &str, view: &crate::models::GraphView) -> Vec<(String, String)> {
-    let nodes: std::collections::HashMap<&str, &crate::models::GraphNode> =
-        view.nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+pub fn wiki_backlink_rows(
+    target_id: &str,
+    view: &crate::models::GraphView,
+) -> Vec<(String, String)> {
+    let nodes: std::collections::HashMap<&str, &crate::models::GraphNode> = view
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
     let mut out = Vec::new();
     for e in &view.edges {
         if e.target_id != target_id || e.rel_type != "wikilink" {

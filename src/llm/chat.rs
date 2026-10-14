@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
 use super::json::{parse_model_object, truncate_chars as truncate, ERROR_EXCERPT_CHARS};
+use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::llm::provider::{LlmApiDialect, LlmProviderKind};
 
@@ -293,12 +293,8 @@ impl ChatClient {
         max_tokens: u32,
     ) -> Result<String> {
         match self.dialect {
-            LlmApiDialect::OpenAiCompat => {
-                self.complete_openai_compat(messages, max_tokens).await
-            }
-            LlmApiDialect::AnthropicMessages => {
-                self.complete_anthropic(messages, max_tokens).await
-            }
+            LlmApiDialect::OpenAiCompat => self.complete_openai_compat(messages, max_tokens).await,
+            LlmApiDialect::AnthropicMessages => self.complete_anthropic(messages, max_tokens).await,
         }
     }
 
@@ -532,10 +528,7 @@ impl ChatClient {
             .await
             .map_err(|e| format!("models read body failed: {e}"))?;
         if !status.is_success() {
-            return Err(format!(
-                "models HTTP {status}: {}",
-                truncate(&text, 200)
-            ));
+            return Err(format!("models HTTP {status}: {}", truncate(&text, 200)));
         }
         let parsed: ModelsResponse = serde_json::from_str(&text).map_err(|e| {
             format!(
@@ -582,7 +575,6 @@ impl ChatClient {
             .await
             .map_err(|e| e.to_string())
     }
-
 }
 
 fn elapsed_ms(start: Instant) -> u64 {
@@ -688,7 +680,6 @@ fn validate_consolidate_proposal(mut p: ConsolidateProposal) -> Result<Consolida
     Ok(p)
 }
 
-
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
@@ -763,7 +754,8 @@ mod tests {
 
     #[test]
     fn parse_plain_json() {
-        let raw = r#"{"pages":[{"slug":"a","title":"A","kind":"wiki","content":"hi"}],"notes":null}"#;
+        let raw =
+            r#"{"pages":[{"slug":"a","title":"A","kind":"wiki","content":"hi"}],"notes":null}"#;
         let r = parse_compile_json(raw).unwrap();
         assert_eq!(r.pages.len(), 1);
         assert_eq!(r.pages[0].slug, "a");
@@ -804,7 +796,8 @@ mod tests {
 
     #[test]
     fn parse_consolidate_from_compile_pages_shape() {
-        let raw = r#"{"pages":[{"slug":"c","title":"C","kind":"entity","content":"hi"}],"notes":"n"}"#;
+        let raw =
+            r#"{"pages":[{"slug":"c","title":"C","kind":"entity","content":"hi"}],"notes":"n"}"#;
         let p = parse_consolidate_json(raw).unwrap();
         assert_eq!(p.slug, "c");
         assert_eq!(p.notes.as_deref(), Some("n"));
@@ -831,9 +824,8 @@ mod tests {
 
     #[test]
     fn with_limits_stores_timeout_and_max_tokens() {
-        let c =
-            ChatClient::with_limits("http://127.0.0.1:11434/v1", "ollama", "llama3.2", 45, 512)
-                .unwrap();
+        let c = ChatClient::with_limits("http://127.0.0.1:11434/v1", "ollama", "llama3.2", 45, 512)
+            .unwrap();
         assert_eq!(c.timeout_secs(), 45);
         assert_eq!(c.max_tokens(), 512);
         assert_eq!(c.model(), "llama3.2");

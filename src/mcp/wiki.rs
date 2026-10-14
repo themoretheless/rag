@@ -631,7 +631,9 @@ impl RagServer {
                 content: params.content,
                 wing: params.wing,
                 room: params.room,
-                kind: params.kind.unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
+                kind: params
+                    .kind
+                    .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
                 category: params.category,
                 summary: params.summary,
                 agent: params.agent,

@@ -489,8 +489,14 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(issue.code, AnalysisCode::Other("custom_client_code".into()));
-        assert_eq!(serde_json::to_value(&issue).unwrap()["code"], "custom_client_code");
-        assert_eq!(serde_json::to_value(AnalysisCode::ExactDup).unwrap(), "exact_dup");
+        assert_eq!(
+            serde_json::to_value(&issue).unwrap()["code"],
+            "custom_client_code"
+        );
+        assert_eq!(
+            serde_json::to_value(AnalysisCode::ExactDup).unwrap(),
+            "exact_dup"
+        );
         assert_eq!(AnalysisCode::from("stale_wiki"), AnalysisCode::StaleWiki);
     }
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};

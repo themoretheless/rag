@@ -722,7 +722,12 @@ pub fn topology_generation(view: &GraphView) -> u64 {
 fn node_layer_is_wiki(metadata_json: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(metadata_json)
         .ok()
-        .and_then(|value| value.get("layer")?.as_str().map(|layer| rag_mcp_core::Layer::Wiki.is(layer)))
+        .and_then(|value| {
+            value
+                .get("layer")?
+                .as_str()
+                .map(|layer| rag_mcp_core::Layer::Wiki.is(layer))
+        })
         .unwrap_or(false)
 }
 

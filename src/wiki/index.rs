@@ -20,4 +20,3 @@ pub(super) fn slugify(s: &str) -> String {
 }
 
 pub(super) use crate::util::first_line;
-

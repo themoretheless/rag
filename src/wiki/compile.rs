@@ -104,17 +104,17 @@ pub async fn compile_source(
         }
 
         store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: "compile_source".into(),
-        prefix: Some("COMPILE".into()),
-        message: format!("compiled {} into {} wiki pages", source.uri, page_ids.len()),
-        entity_id: Some(source.id.clone()),
-        entity_kind: Some("raw".into()),
-        payload_json: serde_json::json!({ "page_ids": page_ids }).to_string(),
-        agent_name: agent.map(|s| s.to_string()),
-    })
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "compile_source".into(),
+            prefix: Some("COMPILE".into()),
+            message: format!("compiled {} into {} wiki pages", source.uri, page_ids.len()),
+            entity_id: Some(source.id.clone()),
+            entity_kind: Some("raw".into()),
+            payload_json: serde_json::json!({ "page_ids": page_ids }).to_string(),
+            agent_name: agent.map(|s| s.to_string()),
+        })
     })?;
 
     Ok(CompileApplyResult {

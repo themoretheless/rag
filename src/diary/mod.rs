@@ -371,7 +371,6 @@ pub async fn checkpoint(
     })
 }
 
-
 async fn embed_and_store_chunks(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -409,7 +408,10 @@ async fn embed_and_store_chunks(
 mod tests {
     #[test]
     fn diary_kind_constant_matches_document_kind() {
-        assert_eq!(super::KIND_DIARY, crate::models::DocumentKind::Diary.as_str());
+        assert_eq!(
+            super::KIND_DIARY,
+            crate::models::DocumentKind::Diary.as_str()
+        );
     }
 
     use super::*;

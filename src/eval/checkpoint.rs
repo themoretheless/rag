@@ -48,9 +48,8 @@ pub fn save_checkpoint(path: &Path, checkpoint: &Checkpoint) -> crate::error::Re
         })?;
     }
     let tmp = path.with_extension("json.tmp");
-    let raw = serde_json::to_string_pretty(checkpoint).map_err(|e| {
-        crate::error::AppError::config(format!("serialize checkpoint: {e}"))
-    })?;
+    let raw = serde_json::to_string_pretty(checkpoint)
+        .map_err(|e| crate::error::AppError::config(format!("serialize checkpoint: {e}")))?;
     std::fs::write(&tmp, raw).map_err(|e| {
         crate::error::AppError::config(format!("write checkpoint {}: {e}", tmp.display()))
     })?;

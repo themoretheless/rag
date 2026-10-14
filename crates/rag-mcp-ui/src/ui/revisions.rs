@@ -1,9 +1,9 @@
 //! Paginated revision timeline, lazy snapshots, bounded line diff and CAS restore.
 
-use crate::ui::text::{short_timestamp, truncate};
 use crate::load::DocumentBody;
-use rag_mcp_core::Layer;
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
+use crate::ui::text::{short_timestamp, truncate};
+use rag_mcp_core::Layer;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RevisionsAction {
@@ -304,8 +304,6 @@ fn summary(item: &RevisionItem) -> String {
         item.layer, item.content_lines, item.content_chars
     )
 }
-
-
 
 #[cfg(test)]
 mod tests {

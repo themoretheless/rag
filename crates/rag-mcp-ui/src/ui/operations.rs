@@ -1,10 +1,10 @@
 //! Operations workspace: observable jobs and safe one-writer maintenance.
 
-use crate::ui::text::short_timestamp;
 use crate::operations::{
-    JobSnapshotExt,
-    BackupRequest, JobSnapshot, MaintenanceResult, OperationsSnapshot, SyncJobRequest,
+    BackupRequest, JobSnapshot, JobSnapshotExt, MaintenanceResult, OperationsSnapshot,
+    SyncJobRequest,
 };
+use crate::ui::text::short_timestamp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OperationsTab {
@@ -531,7 +531,6 @@ fn progress_fraction(processed: usize, total: usize) -> f32 {
 fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
-
 
 fn health_metric(ui: &mut egui::Ui, label: &str, value: &str, healthy: bool) {
     egui::Frame::group(ui.style())

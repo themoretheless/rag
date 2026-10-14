@@ -470,9 +470,6 @@ pub struct Chunk {
     pub metadata_json: String,
 }
 
-
-
-
 /// Lean wiki catalog row for list/sidebar surfaces (`GET /v1/wiki`, UI).
 ///
 /// ISP: deliberately **no** `content` / body / `metadata_json`. Full page text
@@ -547,9 +544,9 @@ pub struct VacuumStoreReport {
 }
 
 pub use rag_mcp_core::{
-    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind, SearchContextChunk,
-    SearchExplanation, SearchHit,
-    PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
+    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind,
+    SearchContextChunk, SearchExplanation, SearchHit, PKB_CORE_REL_TYPES, PKB_NODE_KINDS,
+    UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
 
 /// Aggregate counts for the object graph (`graph_stats` tool).

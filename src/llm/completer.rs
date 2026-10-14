@@ -57,3 +57,27 @@ pub fn system_user(system: &str, user: String) -> [ChatMessage; 2] {
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_user_orders_system_then_user_with_verbatim_content() {
+        let [system, user] = system_user("be terse", "  question?\n".to_string());
+        assert_eq!(system.role, "system");
+        assert_eq!(system.content, "be terse");
+        assert_eq!(user.role, "user");
+        assert_eq!(user.content, "  question?\n");
+    }
+
+    #[test]
+    fn system_user_allows_empty_prompts() {
+        let messages = system_user("", String::new());
+        assert_eq!(
+            messages.iter().map(|m| m.role.as_str()).collect::<Vec<_>>(),
+            vec!["system", "user"]
+        );
+        assert!(messages.iter().all(|m| m.content.is_empty()));
+    }
+}

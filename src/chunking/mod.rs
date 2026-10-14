@@ -23,7 +23,9 @@ pub fn from_config(chunk_size: usize, overlap: usize) -> FixedChunker {
 /// Split source code while preferring line and block boundaries near the end
 /// of each configured window. Offsets retain the existing character semantics.
 pub fn code_chunks(text: &str, chunk_size: usize, overlap: usize) -> Vec<(String, i32, i32)> {
-    if text.is_empty() { return Vec::new(); }
+    if text.is_empty() {
+        return Vec::new();
+    }
     let chars: Vec<char> = text.chars().collect();
     let mut chunks = Vec::new();
     let mut start = 0usize;
@@ -32,16 +34,23 @@ pub fn code_chunks(text: &str, chunk_size: usize, overlap: usize) -> Vec<(String
         let mut end = ideal_end;
         if ideal_end < chars.len() {
             let search_from = start + ((ideal_end - start) * 60 / 100);
-            if let Some(relative) = chars[search_from..ideal_end].windows(2)
-                .rposition(|pair| pair == ['\n', '\n'] || pair == ['}', '\n']) {
+            if let Some(relative) = chars[search_from..ideal_end]
+                .windows(2)
+                .rposition(|pair| pair == ['\n', '\n'] || pair == ['}', '\n'])
+            {
                 end = search_from + relative + 2;
-            } else if let Some(relative) = chars[search_from..ideal_end].iter().rposition(|c| *c == '\n') {
+            } else if let Some(relative) = chars[search_from..ideal_end]
+                .iter()
+                .rposition(|c| *c == '\n')
+            {
                 end = search_from + relative + 1;
             }
         }
         let content = chars[start..end].iter().collect();
         chunks.push((content, start as i32, end as i32));
-        if end == chars.len() { break; }
+        if end == chars.len() {
+            break;
+        }
         let next = end.saturating_sub(overlap.min(end - start - 1));
         start = next.max(start + 1);
     }
@@ -62,7 +71,10 @@ pub fn markdown_sections(
         let trimmed = line.trim_start();
         let hashes = trimmed.bytes().take_while(|b| *b == b'#').count();
         if (1..=6).contains(&hashes)
-            && trimmed.as_bytes().get(hashes).is_some_and(|b| b.is_ascii_whitespace())
+            && trimmed
+                .as_bytes()
+                .get(hashes)
+                .is_some_and(|b| b.is_ascii_whitespace())
         {
             let title = trimmed[hashes..].trim().trim_end_matches('#').trim();
             if !title.is_empty() {
@@ -111,3 +123,6 @@ pub fn markdown_section_metadata(text: &str, chunks: &[(String, i32, i32)]) -> V
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

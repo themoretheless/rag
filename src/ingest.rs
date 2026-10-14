@@ -675,28 +675,30 @@ impl<'a> IngestService<'a> {
         applied.document.revision = write.revision;
 
         let document = applied.document;
-        let _ = crate::util::blocking_section(|| self.store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "update_document_meta".into(),
-            prefix: Some("META".into()),
-            message: format!("updated document meta for {}", document.id),
-            entity_id: Some(document.id.clone()),
-            entity_kind: Some("document".into()),
-            payload_json: serde_json::json!({
-                "content_changed": applied.content_changed,
-                "title_changed": applied.title_changed,
-                "reembedded": reembedded,
-                "wing": document.wing,
-                "room": document.room,
-                "status": document.status,
-                "pinned": document.pinned,
-                "boost": document.boost,
+        let _ = crate::util::blocking_section(|| {
+            self.store.append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: Utc::now(),
+                op: "update_document_meta".into(),
+                prefix: Some("META".into()),
+                message: format!("updated document meta for {}", document.id),
+                entity_id: Some(document.id.clone()),
+                entity_kind: Some("document".into()),
+                payload_json: serde_json::json!({
+                    "content_changed": applied.content_changed,
+                    "title_changed": applied.title_changed,
+                    "reembedded": reembedded,
+                    "wing": document.wing,
+                    "room": document.room,
+                    "status": document.status,
+                    "pinned": document.pinned,
+                    "boost": document.boost,
+                })
+                .to_string(),
+                agent_name: None,
             })
-            .to_string(),
-            agent_name: None,
-        }));
+        });
         Ok(UpdateDocumentResult {
             document_id: document.id,
             uri: document.uri,

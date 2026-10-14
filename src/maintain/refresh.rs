@@ -275,7 +275,6 @@ pub fn reindex_fts(store: &Store, stemmer: Option<&str>) -> Result<ReindexFtsRep
     })
 }
 
-
 /// Run an explicit FTS rebuild on Tokio's blocking pool.
 ///
 /// The caller remains responsible for holding the corpus-mutation lane across
@@ -491,15 +490,16 @@ pub async fn reembed_all(
     let store = &scoped_store;
     let max_docs = max_docs.max(1);
     // Store reads and writes run off the async workers; only embedding awaits.
-    let (documents_considered, previous_manifest, inventory_before) = crate::util::blocking_section(|| {
-        let documents_considered = store.count_documents()?;
-        refuse_capped_embedding_migration(store, config, documents_considered, max_docs)?;
-        Ok::<_, AppError>((
-            documents_considered,
-            store.get_embedding_manifest()?,
-            reembed_chunk_inventory(store)?,
-        ))
-    })?;
+    let (documents_considered, previous_manifest, inventory_before) =
+        crate::util::blocking_section(|| {
+            let documents_considered = store.count_documents()?;
+            refuse_capped_embedding_migration(store, config, documents_considered, max_docs)?;
+            Ok::<_, AppError>((
+                documents_considered,
+                store.get_embedding_manifest()?,
+                reembed_chunk_inventory(store)?,
+            ))
+        })?;
     let skipped_cap = documents_considered.saturating_sub(max_docs);
     if inventory_before.orphan > 0 {
         let error = format!(
@@ -541,7 +541,9 @@ pub async fn reembed_all(
 
     while documents_processed < target_count {
         let page_limit = (target_count - documents_processed).min(MAINTENANCE_PAGE_SIZE);
-        let page = crate::util::blocking_section(|| store.list_document_ids_after(after_id.as_deref(), page_limit))?;
+        let page = crate::util::blocking_section(|| {
+            store.list_document_ids_after(after_id.as_deref(), page_limit)
+        })?;
         if page.is_empty() {
             errors.push(format!(
                 "{REEMBED_ALL_INCOMPLETE_CODE}: document inventory changed during reembed_all (expected to process {target_count}, reached {documents_processed})"
@@ -561,51 +563,59 @@ pub async fn reembed_all(
                 .collect::<Vec<_>>()
         });
         let mut embedded = embed_reembed_groups(embedder, &loaded).await.into_iter();
-        crate::util::blocking_section(|| for (document_id, pending) in loaded {
-            documents_processed += 1;
-            let manifest = migration_marker.as_ref().filter(|_| !migration_started);
-            let outcome = match pending {
-                Err(e) => Err(e),
-                Ok(pending) => {
-                    let vectors = embedded.next().unwrap_or_else(|| {
-                        Err(AppError::embeddings("missing embeddings for document"))
-                    });
-                    vectors.and_then(|vectors| {
-                        apply_reembedding(store, &pending, &vectors, config.embedding_dims, manifest)
-                    })
-                }
-            };
-            let result = match outcome {
-                Ok(chunk_count) => {
-                    if chunk_count > 0 && manifest.is_some() {
-                        migration_started = true;
+        crate::util::blocking_section(|| {
+            for (document_id, pending) in loaded {
+                documents_processed += 1;
+                let manifest = migration_marker.as_ref().filter(|_| !migration_started);
+                let outcome = match pending {
+                    Err(e) => Err(e),
+                    Ok(pending) => {
+                        let vectors = embedded.next().unwrap_or_else(|| {
+                            Err(AppError::embeddings("missing embeddings for document"))
+                        });
+                        vectors.and_then(|vectors| {
+                            apply_reembedding(
+                                store,
+                                &pending,
+                                &vectors,
+                                config.embedding_dims,
+                                manifest,
+                            )
+                        })
                     }
-                    documents_succeeded += 1;
-                    chunks_reembedded += chunk_count;
-                    ReembedDocResult {
-                        document_id,
-                        chunk_count,
-                        error: None,
+                };
+                let result = match outcome {
+                    Ok(chunk_count) => {
+                        if chunk_count > 0 && manifest.is_some() {
+                            migration_started = true;
+                        }
+                        documents_succeeded += 1;
+                        chunks_reembedded += chunk_count;
+                        ReembedDocResult {
+                            document_id,
+                            chunk_count,
+                            error: None,
+                        }
                     }
-                }
-                Err(e) => {
-                    documents_failed += 1;
-                    tracing::warn!(
-                        document_id = %document_id,
-                        error = %e,
-                        "reembed document failed (best effort continue)"
-                    );
-                    ReembedDocResult {
-                        document_id,
-                        chunk_count: 0,
-                        error: Some(e.to_string()),
+                    Err(e) => {
+                        documents_failed += 1;
+                        tracing::warn!(
+                            document_id = %document_id,
+                            error = %e,
+                            "reembed document failed (best effort continue)"
+                        );
+                        ReembedDocResult {
+                            document_id,
+                            chunk_count: 0,
+                            error: Some(e.to_string()),
+                        }
                     }
+                };
+                if documents.len() < REPORT_DOCUMENT_CAP {
+                    documents.push(result);
+                } else {
+                    document_results_truncated += 1;
                 }
-            };
-            if documents.len() < REPORT_DOCUMENT_CAP {
-                documents.push(result);
-            } else {
-                document_results_truncated += 1;
             }
         });
     }
@@ -886,7 +896,8 @@ pub async fn maintain_refresh(
                 dry_run: true,
             });
         } else {
-            report.rebuild_wiki_index = Some(crate::util::blocking_section(|| rebuild_wiki_index(store))?);
+            report.rebuild_wiki_index =
+                Some(crate::util::blocking_section(|| rebuild_wiki_index(store))?);
         }
     }
 
@@ -996,18 +1007,21 @@ pub async fn maintain_refresh(
 }
 
 fn fts_finalization_failure(store: &Store, operation: &str, error: &AppError) -> String {
-    crate::util::blocking_section(|| store.record_fts_finalization_failure(operation, true, &error.to_string())).message
+    crate::util::blocking_section(|| {
+        store.record_fts_finalization_failure(operation, true, &error.to_string())
+    })
+    .message
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::SeedDoc;
-    use chrono::Utc;
     use crate::embeddings::MockEmbedder;
     use crate::models::{Chunk, SearchMode};
+    use crate::testkit::SeedDoc;
     use crate::wiki::write_wiki_page;
     use async_trait::async_trait;
+    use chrono::Utc;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1494,7 +1508,11 @@ mod tests {
         let path = dir.path().join("reembed-grouped.duckdb");
         let store = Store::open(&path).unwrap();
         let config = test_config(path, 16);
-        for (id, body) in [("g1", "alpha body"), ("g2", "beta body"), ("g3", "gamma body")] {
+        for (id, body) in [
+            ("g1", "alpha body"),
+            ("g2", "beta body"),
+            ("g3", "gamma body"),
+        ] {
             seed_doc(&store, id, id, body, "raw");
         }
         let counting = Arc::new(FailOnTextEmbedder {

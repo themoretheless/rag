@@ -1,9 +1,9 @@
 //! Unified Library workspace: lean server-side catalog with deliberate filters.
 
-use crate::ui::text::short_timestamp;
 use crate::load::DocumentBody;
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest};
 use crate::ui::document::draw_document_reader;
+use crate::ui::text::short_timestamp;
 use crate::ui::{closing_selectable_value, theme};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -434,7 +434,6 @@ fn metadata_row(ui: &mut egui::Ui, label: &str, value: &str) {
 fn layer_color(layer: &str) -> egui::Color32 {
     theme::layer_color(layer)
 }
-
 
 fn kind_label(value: &str) -> &str {
     match value {

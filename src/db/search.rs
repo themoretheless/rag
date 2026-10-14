@@ -782,19 +782,20 @@ pub fn attach_context(
         hit.section = section.clone();
 
         let selected: Vec<&Sectioned> = match expansion {
-            ContextExpansion::Neighbors => {
-                chunks
-                    .iter()
-                    .filter(|(c, _, _)| (c.chunk_index - current.chunk_index).abs() <= radius)
-                    .collect()
-            }
+            ContextExpansion::Neighbors => chunks
+                .iter()
+                .filter(|(c, _, _)| (c.chunk_index - current.chunk_index).abs() <= radius)
+                .collect(),
             ContextExpansion::ParentSection => chunks
                 .iter()
                 .filter(|(_, path, _)| heading_path.is_some() && path == heading_path)
                 .collect(),
         };
         let selected: Vec<&Sectioned> = if selected.is_empty() {
-            chunks.iter().filter(|(c, _, _)| c.id == current.id).collect()
+            chunks
+                .iter()
+                .filter(|(c, _, _)| c.id == current.id)
+                .collect()
         } else {
             selected
         };
@@ -877,7 +878,10 @@ fn mmr_select(hits: Vec<SearchHit>, max_per_doc: usize, limit: usize) -> Vec<Sea
     while selected.len() < limit {
         let mut best: Option<(usize, f32)> = None;
         for i in (0..hits.len()).filter(|&i| available[i]) {
-            let count = per_doc.get(hits[i].document_id.as_str()).copied().unwrap_or(0);
+            let count = per_doc
+                .get(hits[i].document_id.as_str())
+                .copied()
+                .unwrap_or(0);
             if count >= max_per_doc {
                 continue;
             }
@@ -1061,9 +1065,7 @@ fn rank_vector_candidates(
         BinaryHeap::with_capacity(top_k.saturating_add(1));
 
     for (ordinal, chunk) in snapshot.chunks.iter().enumerate() {
-        if !documents.contains(&chunk.document_id)
-            || chunk.vector.len() != normalized_query.len()
-        {
+        if !documents.contains(&chunk.document_id) || chunk.vector.len() != normalized_query.len() {
             continue;
         }
         let embedding = &chunk.vector;
@@ -1626,7 +1628,11 @@ fn hydrate_vector_hits(
         .collect();
     let document_ids: Vec<&str> = ranked
         .iter()
-        .map(|candidate| snapshot.chunks[candidate.snapshot_index].document_id.as_str())
+        .map(|candidate| {
+            snapshot.chunks[candidate.snapshot_index]
+                .document_id
+                .as_str()
+        })
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();

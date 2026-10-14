@@ -2,10 +2,7 @@
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::gateway::{
-    GatewayClient, Method,
-    ReqwestGatewayClient,
-};
+use crate::gateway::{GatewayClient, Method, ReqwestGatewayClient};
 use crate::load::DocumentBody;
 
 pub const REVISION_PAGE_SIZE: usize = 50;

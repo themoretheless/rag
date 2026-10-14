@@ -42,7 +42,6 @@ pub struct SourceManifestWrite<'a> {
     pub document_id: &'a str,
 }
 
-
 impl Store {
     /// List synchronized roots, optionally restricted to one project (`wing`).
     pub fn list_source_roots(&self, project: Option<&str>) -> Result<Vec<SourceRootSummary>> {

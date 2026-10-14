@@ -41,8 +41,6 @@ impl SearchSettingsProfile {
     }
 
     pub fn display_name(&self, fallback: &str) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| fallback.to_string())
+        self.name.clone().unwrap_or_else(|| fallback.to_string())
     }
 }

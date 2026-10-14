@@ -2489,7 +2489,10 @@ fn known_layers_are_stored_lowercase_so_sql_filters_see_them() {
         ..Document::default()
     };
     store.upsert_document(&doc).unwrap();
-    assert_eq!(store.get_document("mixed-case").unwrap().unwrap().layer, "wiki");
+    assert_eq!(
+        store.get_document("mixed-case").unwrap().unwrap().layer,
+        "wiki"
+    );
     assert_eq!(store.count_documents_by_layer("wiki").unwrap(), 1);
 }
 
@@ -2515,12 +2518,30 @@ fn diary_activity_resolves_agent_names_like_full_entries() {
         }
     };
     for doc in [
-        diary("by-room", 1, Some("alice"), Some("agents/alice"), r#"{"agent_name":"other"}"#),
+        diary(
+            "by-room",
+            1,
+            Some("alice"),
+            Some("agents/alice"),
+            r#"{"agent_name":"other"}"#,
+        ),
         diary("by-meta", 2, None, None, r#"{"agent_name":"bob"}"#),
         diary("by-wing", 3, Some("  "), Some("agents/carol"), "{}"),
         diary("unknown", 4, None, None, "not json"),
-        diary("tab-room", 5, Some("\t\n"), None, r#"{"agent_name":"dave"}"#),
-        diary("nbsp-room", 6, Some("\u{00A0}"), None, r#"{"agent_name":"erin"}"#),
+        diary(
+            "tab-room",
+            5,
+            Some("\t\n"),
+            None,
+            r#"{"agent_name":"dave"}"#,
+        ),
+        diary(
+            "nbsp-room",
+            6,
+            Some("\u{00A0}"),
+            None,
+            r#"{"agent_name":"erin"}"#,
+        ),
     ] {
         store.upsert_document(&doc).unwrap();
     }
@@ -2530,14 +2551,184 @@ fn diary_activity_resolves_agent_names_like_full_entries() {
     let names = |entries: &[DiaryEntry]| {
         entries
             .iter()
-            .map(|entry| (entry.id.clone(), entry.agent_name.clone(), entry.wing.clone(), entry.created_at))
+            .map(|entry| {
+                (
+                    entry.id.clone(),
+                    entry.agent_name.clone(),
+                    entry.wing.clone(),
+                    entry.created_at,
+                )
+            })
             .collect::<Vec<_>>()
     };
     assert_eq!(names(&activity), names(&full));
     assert_eq!(
-        activity.iter().map(|entry| entry.agent_name.as_str()).collect::<Vec<_>>(),
+        activity
+            .iter()
+            .map(|entry| entry.agent_name.as_str())
+            .collect::<Vec<_>>(),
         vec!["alice", "bob", "carol", "unknown", "dave", "erin"]
     );
     let alice = store.list_diary_activity(Some("alice"), 10).unwrap();
-    assert_eq!(names(&alice), names(&store.list_diary_entries(Some("alice"), 10).unwrap()));
+    assert_eq!(
+        names(&alice),
+        names(&store.list_diary_entries(Some("alice"), 10).unwrap())
+    );
+}
+
+#[test]
+fn delete_source_manifest_removes_only_the_named_path() {
+    let store = open_temp();
+    let hash = content_hash("x");
+    for path in ["/vault/a.md", "/vault/b.md"] {
+        store
+            .upsert_source_manifest(crate::db::SourceManifestWrite {
+                canonical_path: path,
+                canonical_root: "/vault",
+                size_bytes: 1,
+                mtime_ns: 1,
+                content_hash: &hash,
+                document_id: "doc",
+            })
+            .unwrap();
+    }
+    assert!(store.delete_source_manifest("/vault/a.md").unwrap());
+    assert!(!store.delete_source_manifest("/vault/a.md").unwrap());
+    assert!(!store.delete_source_manifest("/vault/missing.md").unwrap());
+    let remaining = store
+        .load_source_manifest_root(Path::new("/vault"))
+        .unwrap();
+    assert!(!remaining.contains_key("/vault/a.md"));
+    assert!(remaining.contains_key("/vault/b.md"));
+}
+
+#[test]
+fn list_by_content_hash_returns_every_match_oldest_first() {
+    let store = open_temp();
+    let t0 = chrono::Utc::now() - chrono::Duration::hours(1);
+    // Insert the newer row first so the assertion proves ORDER BY created_at.
+    crate::testkit::SeedDoc::new("second", "Second", "same body")
+        .hashed()
+        .created_at(t0 + chrono::Duration::minutes(5))
+        .insert(&store);
+    crate::testkit::SeedDoc::new("first", "First", "same body")
+        .hashed()
+        .created_at(t0)
+        .insert(&store);
+    crate::testkit::SeedDoc::new("other", "Other", "different")
+        .hashed()
+        .insert(&store);
+    crate::testkit::SeedDoc::new("unhashed", "Unhashed", "same body").insert(&store);
+
+    let hash = content_hash("same body");
+    let ids = |docs: Vec<Document>| docs.into_iter().map(|d| d.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(store.list_by_content_hash(&hash).unwrap()),
+        vec!["first", "second"]
+    );
+    assert_eq!(
+        ids(store.find_all_by_content_hash(&hash).unwrap()),
+        vec!["first", "second"]
+    );
+    assert!(store
+        .list_by_content_hash(&content_hash("absent"))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn get_embedding_manifest_by_id_reads_the_named_row() {
+    let store = open_temp();
+    assert!(store.get_embedding_manifest_by_id("alt").unwrap().is_none());
+    store
+        .set_embedding_manifest(&EmbeddingManifest {
+            id: "alt".into(),
+            provider: "mock".into(),
+            model: "m".into(),
+            dims: 7,
+            base_url: None,
+            content_fingerprint: Some("fp".into()),
+            updated_at: Utc::now(),
+        })
+        .unwrap();
+    let got = store.get_embedding_manifest_by_id("alt").unwrap().unwrap();
+    assert_eq!(got.id, "alt");
+    assert_eq!(got.provider, "mock");
+    assert_eq!(got.model, "m");
+    assert_eq!(got.dims, 7);
+    assert_eq!(got.base_url, None);
+    assert_eq!(got.content_fingerprint.as_deref(), Some("fp"));
+    // The default lookup is a different primary key.
+    assert!(store.get_embedding_manifest().unwrap().is_none());
+}
+
+#[test]
+fn delete_wiki_index_entry_reports_whether_a_row_was_removed() {
+    let store = open_temp();
+    store
+        .upsert_wiki_index_entry(&WikiIndexEntry {
+            id: "idx-1".into(),
+            slug: "page-one".into(),
+            title: "Page One".into(),
+            kind: "wiki".into(),
+            category: None,
+            summary: None,
+            page_id: None,
+            updated_at: Utc::now(),
+        })
+        .unwrap();
+    assert!(store.get_wiki_index_by_slug("page-one").unwrap().is_some());
+    assert!(
+        !store.delete_wiki_index_entry("page-one").unwrap(),
+        "slug is not the key"
+    );
+    assert!(store.delete_wiki_index_entry("idx-1").unwrap());
+    assert!(store.get_wiki_index_by_slug("page-one").unwrap().is_none());
+    assert!(!store.delete_wiki_index_entry("idx-1").unwrap());
+}
+
+#[test]
+fn list_uncompiled_raw_sample_excludes_raw_linked_from_a_wiki_page() {
+    let store = open_temp();
+    crate::testkit::SeedDoc::new("r-b", "B", "b")
+        .uri("text://b")
+        .scope(Some("w2"), Some("r"), None)
+        .insert(&store);
+    crate::testkit::SeedDoc::new("r-a", "A", "a")
+        .uri("text://a")
+        .scope(Some("w1"), Some("r"), None)
+        .insert(&store);
+    crate::testkit::SeedDoc::new("r-c", "C", "c")
+        .uri("text://c")
+        .scope(Some("w1"), Some("r"), None)
+        .insert(&store);
+
+    // With no wiki layer at all, every raw document is uncompiled, ordered by shelf then uri.
+    let all = store.list_uncompiled_raw_sample(10).unwrap();
+    let ids: Vec<&str> = all.iter().map(|s| s.document_id.as_str()).collect();
+    assert_eq!(ids, vec!["r-a", "r-c", "r-b"]);
+    assert_eq!(all[0].uri, "text://a");
+    assert_eq!(all[0].wing.as_deref(), Some("w1"));
+    assert_eq!(all[0].room.as_deref(), Some("r"));
+    assert_eq!(store.list_uncompiled_raw_sample(0).unwrap().len(), 1);
+
+    crate::testkit::SeedDoc::new("w", "Wiki", "page")
+        .layer("wiki")
+        .uri("wiki://page")
+        .insert(&store);
+    {
+        let conn = store.lock().unwrap();
+        conn.execute("INSERT INTO graph_nodes (id, uri, label, kind, document_id, resolved, created_at, updated_at) VALUES ('n-wiki', 'wiki://page', 'Wiki', 'wiki', 'w', true, current_timestamp, current_timestamp), ('n-raw', 'text://a', 'A', 'document', 'r-a', true, current_timestamp, current_timestamp)", []).unwrap();
+        conn.execute("INSERT INTO graph_edges (id, source_id, target_id, rel_type, weight, created_at) VALUES ('e-compiled', 'n-wiki', 'n-raw', 'derived_from', 1.0, current_timestamp)", []).unwrap();
+    }
+    let remaining = store.list_uncompiled_raw_sample(10).unwrap();
+    let ids: Vec<&str> = remaining.iter().map(|s| s.document_id.as_str()).collect();
+    assert_eq!(ids, vec!["r-c", "r-b"]);
+}
+
+#[test]
+fn diary_wing_for_agent_trims_the_agent_name() {
+    assert_eq!(Store::diary_wing_for_agent("alice"), "agents/alice");
+    assert_eq!(Store::diary_wing_for_agent("  bob \n"), "agents/bob");
+    assert_eq!(Store::diary_wing_for_agent(""), "agents/");
 }

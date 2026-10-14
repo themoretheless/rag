@@ -124,7 +124,6 @@ impl HttpAuth {
     }
 }
 
-
 /// Routes that require admin on purpose (operations, sync transport, jobs).
 /// Listed so the route-catalog test can tell them from unclassified routes.
 const ADMIN_HTTP_ROUTES: &[(&str, &str)] = &[

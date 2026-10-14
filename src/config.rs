@@ -454,7 +454,11 @@ impl Config {
                 .filter(|value| !value.to_string_lossy().trim().is_empty())
                 .map(|value| PathBuf::from(value.to_string_lossy().trim()))
         };
-        let parsed = |name: &str| env::var(name).ok().and_then(|v| v.trim().parse::<u64>().ok());
+        let parsed = |name: &str| {
+            env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+        };
         let storage_backend =
             env::var("RAG_STORAGE_BACKEND").unwrap_or_else(|_| "duckdb".to_string());
         let vault_path = non_blank_path("RAG_VAULT_PATH");
@@ -654,7 +658,9 @@ impl Config {
                     "RAG_LLM_MODEL must be non-empty when RAG_LLM_ENABLED=true",
                 ));
             }
-            if !self.llm_provider.allows_empty_api_key() && self.llm_api_key.expose().trim().is_empty() {
+            if !self.llm_provider.allows_empty_api_key()
+                && self.llm_api_key.expose().trim().is_empty()
+            {
                 return Err(AppError::config(format!(
                     "RAG_LLM_API_KEY (or provider key env) required when RAG_LLM_PROVIDER={}",
                     self.llm_provider.as_str()
@@ -939,7 +945,10 @@ mod tests {
             ..super::Config::for_tests()
         };
         let printed = format!("{config:?}");
-        assert!(!printed.contains("sk-live-123") && !printed.contains("tok-456"), "{printed}");
+        assert!(
+            !printed.contains("sk-live-123") && !printed.contains("tok-456"),
+            "{printed}"
+        );
         assert_eq!(config.llm_api_key.expose(), "sk-live-123");
     }
 }

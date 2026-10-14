@@ -188,7 +188,10 @@ impl Store {
                 if values.is_empty() {
                     return Ok(GraphView::default());
                 }
-                node_where.push(format!("{column} IN ({})", vec!["?"; values.len()].join(",")));
+                node_where.push(format!(
+                    "{column} IN ({})",
+                    vec!["?"; values.len()].join(",")
+                ));
                 node_binds.extend(values.iter().cloned());
             }
         }
@@ -212,7 +215,12 @@ impl Store {
 
         let mut edge_binds = node_binds.clone();
         let rel_where = match &filter.rel_types {
-            Some(rels) if rels.is_empty() => return Ok(GraphView { nodes, edges: Vec::new() }),
+            Some(rels) if rels.is_empty() => {
+                return Ok(GraphView {
+                    nodes,
+                    edges: Vec::new(),
+                })
+            }
             Some(rels) => {
                 edge_binds.extend(rels.iter().cloned());
                 format!("WHERE e.rel_type IN ({})", vec!["?"; rels.len()].join(","))
@@ -272,8 +280,7 @@ impl Store {
             ORDER BY id ASC
             "#,
         )?;
-        let edges =
-            crate::db::rows::query_vec(&mut stmt, [], row_to_edge)?;
+        let edges = crate::db::rows::query_vec(&mut stmt, [], row_to_edge)?;
         Ok(edges)
     }
 
@@ -542,7 +549,6 @@ impl Store {
     }
 
     // --- Tunnels (`rel_type = tunnel`) ---
-
 }
 
 /// Ids of every node with at least one incident edge.
@@ -655,8 +661,10 @@ pub(crate) fn demote_graph_for_document_locked(
     const NODE_IDS_FOR_DOCUMENT: &str = "SELECT id FROM graph_nodes WHERE document_id = ?";
     let node_ids = {
         let mut stmt = conn.prepare(NODE_IDS_FOR_DOCUMENT)?;
-        
-        crate::db::rows::query_vec(&mut stmt, params![document_id], |row| Ok(row.get::<_, String>(0)?))?
+
+        crate::db::rows::query_vec(&mut stmt, params![document_id], |row| {
+            Ok(row.get::<_, String>(0)?)
+        })?
     };
     for node_id in &node_ids {
         delete_derived_edges_from_locked(conn, node_id)?;
@@ -846,8 +854,7 @@ pub(crate) fn find_nodes_by_label_locked(
         ORDER BY resolved DESC, kind ASC, id ASC
         "#,
     )?;
-    let out =
-        crate::db::rows::query_vec(&mut stmt, params![key], row_to_node)?;
+    let out = crate::db::rows::query_vec(&mut stmt, params![key], row_to_node)?;
     Ok(out)
 }
 

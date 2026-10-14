@@ -827,7 +827,6 @@ impl Store {
             Ok((ids, manifest_present))
         })
     }
-
 }
 
 fn canonical_wiki_slug(uri: &str) -> Option<&str> {
@@ -1407,8 +1406,7 @@ fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Resu
         ORDER BY chunk_index ASC, id ASC
         "#,
     )?;
-    let chunks =
-        crate::db::rows::query_vec(&mut stmt, params![document_id], rows::chunk)?;
+    let chunks = crate::db::rows::query_vec(&mut stmt, params![document_id], rows::chunk)?;
     Ok(chunks)
 }
 
@@ -1516,11 +1514,11 @@ mod schema_diary;
 mod wiki_index;
 mod wiki_meta;
 
-use self::{ops_log::*, wiki_index::*, wiki_meta::*};
-pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
 pub(crate) use self::chunks::ChunkBody;
 pub(crate) use self::documents::{wiki_backlink_rows, DocumentRef};
 pub(crate) use self::manifest::{embedding_identity_fingerprint, embedding_migration_manifest};
+pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
+use self::{ops_log::*, wiki_index::*, wiki_meta::*};
 
 #[cfg(test)]
 mod tests;

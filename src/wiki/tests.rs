@@ -2204,3 +2204,88 @@ async fn refresh_stale_wiki_apply_without_llm_lists_only() {
         .unwrap_or("")
         .contains("no ChatClient"));
 }
+
+#[test]
+fn ensure_default_schema_seeds_once_and_is_idempotent() {
+    let store = crate::testkit::temp_store();
+    let schema_inits = |store: &Store| {
+        store
+            .list_ops_log(100)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.op == "schema_init")
+            .count()
+    };
+    assert!(store.get_schema_document().unwrap().is_none());
+
+    let seeded = ensure_default_schema(&store).unwrap();
+    assert_eq!(seeded.uri, SCHEMA_URI);
+    assert_eq!(seeded.title, SCHEMA_TITLE);
+    assert_eq!(seeded.layer, LAYER_SCHEMA);
+    assert_eq!(seeded.content, DEFAULT_SCHEMA);
+    assert_eq!(seeded.content_hash, Some(content_hash(DEFAULT_SCHEMA)));
+    assert_eq!(
+        store.get_document(&seeded.id).unwrap().unwrap().content,
+        DEFAULT_SCHEMA
+    );
+    assert_eq!(schema_inits(&store), 1);
+
+    let again = ensure_default_schema(&store).unwrap();
+    assert_eq!(again.id, seeded.id);
+    assert_eq!(schema_inits(&store), 1, "second call must not reseed");
+    assert_eq!(schema_text(&store).unwrap(), DEFAULT_SCHEMA);
+}
+
+#[test]
+fn schema_text_returns_an_existing_custom_schema_unchanged() {
+    let store = crate::testkit::temp_store();
+    crate::testkit::SeedDoc::new("custom-schema", "Schema", "# Custom rules")
+        .layer(LAYER_SCHEMA)
+        .kind(LAYER_SCHEMA)
+        .uri(SCHEMA_URI)
+        .insert(&store);
+    assert_eq!(schema_text(&store).unwrap(), "# Custom rules");
+    assert_eq!(ensure_default_schema(&store).unwrap().id, "custom-schema");
+}
+
+#[test]
+fn file_answer_citation_display_line_prefers_title_and_formats_extras() {
+    let full = FileAnswerCitation {
+        document_id: Some("doc-1".into()),
+        uri: Some("file:///a.md".into()),
+        title: Some("Guide".into()),
+        quote: Some("short quote".into()),
+        note: Some("checked".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        full.display_line(),
+        "Guide (file:///a.md): \"short quote\" - checked"
+    );
+
+    // Without a title the uri is the label and is not repeated.
+    let uri_only = FileAnswerCitation {
+        uri: Some("file:///b.md".into()),
+        document_id: Some("doc-2".into()),
+        ..Default::default()
+    };
+    assert_eq!(uri_only.display_line(), "file:///b.md");
+
+    let id_only = FileAnswerCitation {
+        document_id: Some("doc-3".into()),
+        quote: Some(String::new()),
+        note: Some(String::new()),
+        ..Default::default()
+    };
+    assert_eq!(id_only.display_line(), "doc-3");
+    assert_eq!(FileAnswerCitation::default().display_line(), "source");
+
+    let long = FileAnswerCitation {
+        title: Some("T".into()),
+        uri: Some(String::new()),
+        quote: Some("é".repeat(200)),
+        ..Default::default()
+    };
+    let expected = format!("T: \"{}…\"", "é".repeat(159));
+    assert_eq!(long.display_line(), expected);
+}

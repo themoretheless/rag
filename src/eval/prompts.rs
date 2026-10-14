@@ -86,7 +86,12 @@ pub fn builtin_answer_judge() -> PromptVersion {
 }
 
 /// Validate a caller-supplied prompt before persist.
-pub fn validate_prompt(name: &str, version: &str, kind: &str, body: &str) -> crate::error::Result<()> {
+pub fn validate_prompt(
+    name: &str,
+    version: &str,
+    kind: &str,
+    body: &str,
+) -> crate::error::Result<()> {
     if name.trim().is_empty() || name.len() > 64 {
         return Err(crate::error::AppError::config(
             "prompt name must be 1..64 bytes",

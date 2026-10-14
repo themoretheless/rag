@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::cosine_similarity;
-use crate::llm::json::{parse_model_object, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
+use crate::llm::json::{parse_model_object, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
@@ -207,7 +207,9 @@ pub async fn maintain_organize(
     let mut embedding_heuristics_enabled = false;
     let mut suggestions = match opts.mode {
         OrganizeMode::Heuristic => {
-            let (suggestions, enabled) = crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
+            let (suggestions, enabled) = crate::util::blocking_section(|| {
+                suggest_heuristic(store, config, &taxonomy, &considered)
+            })?;
             embedding_heuristics_enabled = enabled;
             suggestions
         }
@@ -217,8 +219,9 @@ pub async fn maintain_organize(
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(error = %e, "organize LLM failed; falling back to heuristic");
-                        let (mut s, enabled) =
-                            crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
+                        let (mut s, enabled) = crate::util::blocking_section(|| {
+                            suggest_heuristic(store, config, &taxonomy, &considered)
+                        })?;
                         embedding_heuristics_enabled = enabled;
                         for item in &mut s {
                             item.reason = format!("llm_fallback: {}; {}", e, item.reason);
@@ -227,7 +230,9 @@ pub async fn maintain_organize(
                     }
                 }
             } else {
-                let (mut s, enabled) = crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
+                let (mut s, enabled) = crate::util::blocking_section(|| {
+                    suggest_heuristic(store, config, &taxonomy, &considered)
+                })?;
                 embedding_heuristics_enabled = enabled;
                 for item in &mut s {
                     item.reason = format!(
@@ -241,7 +246,9 @@ pub async fn maintain_organize(
             }
         }
         OrganizeMode::Auto => {
-            let (mut s, enabled) = crate::util::blocking_section(|| suggest_heuristic(store, config, &taxonomy, &considered))?;
+            let (mut s, enabled) = crate::util::blocking_section(|| {
+                suggest_heuristic(store, config, &taxonomy, &considered)
+            })?;
             embedding_heuristics_enabled = enabled;
             let need_llm: Vec<Document> = considered
                 .iter()
@@ -774,7 +781,10 @@ fn first_chunk_embeddings(
     store: &Store,
     documents: &[Document],
 ) -> Result<BTreeMap<String, Vec<f32>>> {
-    let ids: Vec<&str> = documents.iter().map(|document| document.id.as_str()).collect();
+    let ids: Vec<&str> = documents
+        .iter()
+        .map(|document| document.id.as_str())
+        .collect();
     store.first_chunk_embeddings(&ids)
 }
 
@@ -1003,7 +1013,7 @@ fn parse_organize_json(raw: &str) -> Result<LlmOrganizePayload> {
 mod tests {
     use super::*;
     use crate::testkit::SeedDoc;
-    
+
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf) -> Config {

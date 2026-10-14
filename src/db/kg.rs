@@ -409,8 +409,7 @@ impl Store {
             ORDER BY valid_from ASC NULLS FIRST, created_at ASC, id ASC
             "#
         ))?;
-        let out =
-            crate::db::rows::query_vec(&mut stmt, params![subject], row_to_kg_fact)?;
+        let out = crate::db::rows::query_vec(&mut stmt, params![subject], row_to_kg_fact)?;
         Ok(out)
     }
 

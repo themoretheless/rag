@@ -5,7 +5,9 @@ pub use crate::direct_db::{
     expand_neighbors_store, export_graph_snapshot, fetch_document_db, fetch_wiki_list_db,
     load_live_db,
 };
-use rag_mcp_core::{pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, UI_GRAPH_EXPORT_MAX_NODES};
+use rag_mcp_core::{
+    pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, UI_GRAPH_EXPORT_MAX_NODES,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -176,9 +178,7 @@ impl OpenArgs {
 #[derive(Debug, Clone)]
 pub enum GraphSourceKind {
     #[cfg_attr(not(feature = "direct-db"), allow(dead_code))]
-    LiveStore {
-        path: PathBuf,
-    },
+    LiveStore { path: PathBuf },
     SnapshotFile {
         path: PathBuf,
         mtime: Option<SystemTime>,
@@ -188,9 +188,7 @@ pub enum GraphSourceKind {
         mtime: Option<SystemTime>,
     },
     /// Loaded via rag-mcp HTTP API (same process as DuckDB writer).
-    HttpService {
-        base: String,
-    },
+    HttpService { base: String },
 }
 
 /// PKB default edge types for live Store load (EGUI_GRAPH_VIEW §7.1 / GRAPH_DESIGN §7.1).
@@ -646,7 +644,6 @@ fn wiki_catalog_path(project: Option<&str>) -> String {
         .unwrap_or_else(|| "v1/wiki".to_string())
 }
 
-
 /// Fetch full document text via `GET /v1/document` on the rag-mcp HTTP gateway.
 pub fn fetch_document_http(
     base: &str,
@@ -690,7 +687,6 @@ fn fetch_document_http_with_client(
     document_body_from_json(&v, DocumentBodyJsonDefaults::default())
         .ok_or_else(|| "Document response is missing document fields".to_string())
 }
-
 
 /// Body for `PUT /v1/wiki` (must match server `WikiPutBody`: slug-keyed write).
 #[derive(Debug, Clone, Serialize)]
@@ -922,7 +918,6 @@ fn http_neighbors_path(
     path
 }
 
-
 /// Live-load filter: PKB rel types, caller-selected tags, hard UI node cap.
 ///
 /// Prefer [`Store::export_graph_for_ui`]; this mirrors
@@ -995,7 +990,6 @@ pub struct ExportResult {
     pub edge_count: usize,
     pub truncated: bool,
 }
-
 
 /// Load from a resolved CLI source (snapshot XOR read-only db XOR http).
 pub fn load_cli_source(
@@ -1270,7 +1264,6 @@ fn expand_neighbors_http_with_client(
         max_nodes.max(1) as usize,
     ))
 }
-
 
 fn subgraph_from_keep(full: &GraphView, keep: &HashSet<String>) -> GraphView {
     let nodes: Vec<GraphNode> = full

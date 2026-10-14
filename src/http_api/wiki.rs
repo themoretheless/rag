@@ -363,7 +363,9 @@ mod tests {
         let before = state.store.get_document(&doc.id).unwrap().unwrap();
         let response = wiki_review(State(state.clone())).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["items"][0]["link_kind"], "source_missing");
         assert_eq!(value["items"][0]["wiki_id"], doc.id);
@@ -378,7 +380,9 @@ mod tests {
         let state = test_state("review-empty");
         let response = wiki_review(State(state)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["items"], json!([]));
     }

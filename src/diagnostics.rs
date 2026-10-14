@@ -871,7 +871,8 @@ mod tests {
         #[async_trait::async_trait]
         impl EmbeddingProvider for Counting {
             async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
-                self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 self.inner.embed(texts).await
             }
             fn dimensions(&self) -> usize {

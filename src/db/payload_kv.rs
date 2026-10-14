@@ -38,7 +38,12 @@ impl PayloadTable {
 }
 
 /// Insert or replace a JSON payload row.
-pub fn upsert_payload(store: &Store, table: PayloadTable, id: &str, payload: &impl Serialize) -> Result<()> {
+pub fn upsert_payload(
+    store: &Store,
+    table: PayloadTable,
+    id: &str,
+    payload: &impl Serialize,
+) -> Result<()> {
     // Store-level helpers here are called from async handlers and workflows;
     // keep the lock wait and query off the async workers.
     crate::util::blocking_section(|| {
@@ -169,9 +174,11 @@ pub fn page_payloads_by_id(
     limit: usize,
 ) -> Result<(i64, Vec<Value>)> {
     let conn = store.lock()?;
-    let total: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {}", table.as_str()), [], |r| {
-        r.get(0)
-    })?;
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM {}", table.as_str()),
+        [],
+        |r| r.get(0),
+    )?;
     let mut stmt = conn.prepare(&format!(
         "SELECT payload FROM {} ORDER BY id LIMIT ? OFFSET ?",
         table.as_str()
@@ -212,7 +219,10 @@ impl PayloadSession<'_> {
 }
 
 /// Run `work` with one [`PayloadSession`] under the Store lock.
-pub fn with_session<R>(store: &Store, work: impl FnOnce(&PayloadSession<'_>) -> Result<R>) -> Result<R> {
+pub fn with_session<R>(
+    store: &Store,
+    work: impl FnOnce(&PayloadSession<'_>) -> Result<R>,
+) -> Result<R> {
     crate::util::blocking_section(|| {
         let conn = store.lock()?;
         work(&PayloadSession { conn: &conn })
@@ -261,7 +271,9 @@ mod tests {
         assert_eq!(total, 2);
         assert_eq!(page[0]["id"], "b");
         assert_eq!(page[1]["id"], "a");
-        let raw = get_payload_raw(&store, PayloadTable::EvalRuns, "a").unwrap().unwrap();
+        let raw = get_payload_raw(&store, PayloadTable::EvalRuns, "a")
+            .unwrap()
+            .unwrap();
         assert!(raw.contains("\"kind\":\"x\""));
     }
 
