@@ -333,7 +333,7 @@
       <strong>Корень ingest · sync</strong>
       <p>Gateway читает только разрешённые пути из <code>RAG_INGEST_ROOTS</code>.</p>
       {#each projectHome?.source_roots ?? [] as root}<small>{root.canonical_root} · {root.file_count} файлов</small>{/each}
-      <input bind:value={syncPath} placeholder="/разрешённый/путь" />
+      <input bind:value={syncPath} aria-label="Путь для sync_sources" placeholder="/разрешённый/путь" />
       <button class="primary" disabled={syncBusy || !syncPath.trim()} onclick={startSync}>{syncBusy ? 'Запуск…' : 'sync_sources'}</button>
     </section>
   </aside>
@@ -346,10 +346,10 @@
     {#if panelWarning}<div class="panel-warning" role="status">{panelWarning}</div>{/if}
     <section class="ingest-zone"><div><strong>Индексировать разрешённую папку</strong><p><code>sync_sources</code> · дубли по content_hash пропускаются · чанки и граф обновляются одним writer</p></div><div class="connectors"><span class="native">Markdown · Obsidian</span><span class="native">Код · репозитории</span><span class="native">TXT · JSON · TOML</span><span class="external">PDF · pdftotext</span><span class="planned">Notion · экспорт md</span><span class="planned">Картинки · OCR</span></div></section>
     <div class="toolbar">
-      <input bind:value={query} onkeydown={(event) => event.key === 'Enter' && loadDocuments()} placeholder="Фильтр по названию, URI или пути…" />
+      <input bind:value={query} aria-label="Фильтр документов" onkeydown={(event) => event.key === 'Enter' && loadDocuments()} placeholder="Фильтр по названию, URI или пути…" />
       <div class="layer-tabs" aria-label="Слой документа">{#each [['','все'],['raw','raw'],['wiki','wiki']] as option}<button class:active={layer === option[0]} onclick={() => { layer = option[0]; void loadDocuments() }}>{option[1]}</button>{/each}</div>
-      <select bind:value={status} onchange={() => void loadDocuments()}><option value="">активные</option><option>active</option><option>draft</option><option>archived</option></select>
-      <select disabled title="Сервер возвращает каталог в каноническом порядке"><option>обновлён ↓</option></select>
+      <select bind:value={status} aria-label="Статус документа" onchange={() => void loadDocuments()}><option value="">активные</option><option>active</option><option>draft</option><option>archived</option></select>
+      <select disabled aria-label="Сортировка" title="Сервер возвращает каталог в каноническом порядке"><option>обновлён ↓</option></select>
       <button class="secondary" onclick={() => void loadDocuments()}>Найти</button>
     </div>
     <div class="table panel">

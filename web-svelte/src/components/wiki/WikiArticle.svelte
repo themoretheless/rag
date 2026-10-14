@@ -184,7 +184,12 @@
     persistScroll()
   })
 
-  function onClick(e: MouseEvent) {
+  /** Keyboard activation for delegated wikilinks (Enter / Space). */
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') onClick(e)
+  }
+
+  function onClick(e: MouseEvent | KeyboardEvent) {
     const t = e.target as HTMLElement | null
     const a = t?.closest('a[data-wikilink]') as HTMLElement | null
     if (!a) return
@@ -224,9 +229,8 @@
           </div>
         </header>
         <!-- markdown is escaped inside renderWikiHtml; wikilinks route via onClick -->
-        <!-- svelte-ignore a11y_click_events_have_key_events (delegated wikilink routing) -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions (delegated wikilink routing) -->
-        <div class="body prose" onclick={onClick} role="document">
+        <div class="body prose" onclick={onClick} onkeydown={onKeydown} role="document">
           {@html html}
         </div>
       </div>

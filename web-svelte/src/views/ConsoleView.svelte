@@ -91,7 +91,7 @@
     { label: `${count(doctor.documents_without_chunks)} документов без чанков`, ok: zeroState(doctor.documents_without_chunks), action: 'reingest' },
     { label: `${count(doctor.unscoped_documents)} документов без крыла`, ok: zeroState(doctor.unscoped_documents), action: 'refile' },
   ])
-  const maxWing = $derived(Math.max(1, ...((taxonomy.wings ?? []).map((wing:any) => wing.document_count))))
+  const maxWing = $derived(Math.max(1, ...((taxonomy.wings ?? []).map((wing) => wing.document_count))))
   onMount(load)
 </script>
 
@@ -100,7 +100,7 @@
     <div><h1>Пульт</h1><p>один писатель: gateway <span class="mono">pid {status.pid ?? runtime.pid ?? '—'}</span> · аптайм {uptime(status.uptime_seconds ?? runtime.uptime_seconds)} · <span class="mono">{status.db_path ?? '—'}</span> · schema v{status.schema_version ?? '—'}</p></div>
     <div class="actions"><button class="secondary" onclick={load} disabled={busy}>doctor</button><button class="secondary" onclick={() => backupOpen = !backupOpen}>backup_db</button><button class="primary" disabled title="HTTP compile-all в gateway отсутствует">Скомпилировать {count(status.uncompiled_raw_count)} raw → вики</button></div>
   </div>
-  {#if backupOpen}<div class="backup"><input bind:value={backupPath} placeholder="Путь внутри RAG_INGEST_ROOTS, например /…/rag-backup.duckdb" /><button class="primary" onclick={backup} disabled={backupBusy || !backupPath.trim()}>{backupBusy ? 'Копирую…' : 'Создать backup'}</button></div>{/if}
+  {#if backupOpen}<div class="backup"><input bind:value={backupPath} aria-label="Путь резервной копии" placeholder="Путь внутри RAG_INGEST_ROOTS, например /…/rag-backup.duckdb" /><button class="primary" onclick={backup} disabled={backupBusy || !backupPath.trim()}>{backupBusy ? 'Копирую…' : 'Создать backup'}</button></div>{/if}
   {#if error}<div class="notice">{error}</div>{/if}
 
   <section class="kpis">

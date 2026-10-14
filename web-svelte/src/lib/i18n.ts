@@ -315,7 +315,7 @@ export const messages: Record<Locale, Messages> = {
     graphExpand: 'Развернуть узел',
     graphSeedPlaceholder: 'id / label / document_id узла',
     graphDepth: 'глубина',
-    graphMax: 'макс.',
+    graphMax: 'макс',
     graphTags: 'теги',
     graphFit: 'Вписать',
     graphFocus: 'Фокус на соседях',
