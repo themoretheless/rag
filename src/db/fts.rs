@@ -196,13 +196,102 @@ pub fn ensure_fts_with_stemmer(conn: &Connection, stemmer: &str) -> Result<FtsSt
 /// statement that may change chunks: a failed mutation can leave a harmless
 /// dirty marker, whereas marking afterwards could expose stale results if the
 /// marker write itself failed.
+///
+/// The change is logged as touching unknown documents, so delta readers of
+/// [`changed_documents_since`] fall back to a full listing. Writers that know
+/// which documents' chunks they change use [`mark_chunks_changed_for`].
 pub fn mark_fts_dirty(conn: &Connection) -> Result<u64> {
+    let next = advance_chunks_generation(conn)?;
+    conn.execute(
+        "INSERT INTO chunk_change_log (generation, document_id) VALUES (?, NULL)",
+        duckdb::params![next as i64],
+    )?;
+    Ok(next)
+}
+
+/// [`mark_fts_dirty`] for a write that changes only the chunks of
+/// `document_ids`: logs them so the next vector refresh re-reads just those
+/// documents' chunks.
+pub fn mark_chunks_changed_for<S: AsRef<str>>(
+    conn: &Connection,
+    document_ids: &[S],
+) -> Result<u64> {
+    let next = advance_chunks_generation(conn)?;
+    log_changed_documents(conn, next, document_ids)?;
+    Ok(next)
+}
+
+/// Generations kept in `chunk_change_log`; older rows are pruned and a
+/// reader that needs them falls back to a full listing.
+const CHANGE_LOG_WINDOW: u64 = 4096;
+
+fn advance_chunks_generation(conn: &Connection) -> Result<u64> {
     let current = chunks_generation(conn)?;
     let next = current
         .checked_add(1)
         .ok_or_else(|| AppError::fts("FTS chunks generation overflow"))?;
     upsert_meta(conn, META_CHUNKS_GENERATION, &next.to_string())?;
+    if next % 256 == 0 && next > CHANGE_LOG_WINDOW {
+        conn.execute(
+            "DELETE FROM chunk_change_log WHERE generation <= ?",
+            duckdb::params![(next - CHANGE_LOG_WINDOW) as i64],
+        )?;
+    }
     Ok(next)
+}
+
+fn log_changed_documents<S: AsRef<str>>(
+    conn: &Connection,
+    generation: u64,
+    document_ids: &[S],
+) -> Result<()> {
+    if document_ids.is_empty() {
+        // Nothing named: record "unknown" so readers do a full listing.
+        conn.execute(
+            "INSERT INTO chunk_change_log (generation, document_id) VALUES (?, NULL)",
+            duckdb::params![generation as i64],
+        )?;
+        return Ok(());
+    }
+    let mut stmt = conn
+        .prepare_cached("INSERT INTO chunk_change_log (generation, document_id) VALUES (?, ?)")?;
+    for id in document_ids {
+        stmt.execute(duckdb::params![generation as i64, id.as_ref()])?;
+    }
+    Ok(())
+}
+
+/// Documents whose chunks changed after generation `since` up to `until`,
+/// when every generation in that range was logged with known documents.
+/// `None` when any is unknown or missing (pruned, legacy, or a writer that
+/// used plain [`mark_fts_dirty`]): the caller must do a full listing.
+pub(crate) fn changed_documents_since(
+    conn: &Connection,
+    since: u64,
+    until: u64,
+) -> Result<Option<std::collections::HashSet<String>>> {
+    if until <= since {
+        return Ok(Some(std::collections::HashSet::new()));
+    }
+    let mut stmt = conn.prepare_cached(
+        "SELECT generation, document_id FROM chunk_change_log \
+         WHERE generation > ? AND generation <= ?",
+    )?;
+    let mut rows = stmt.query(duckdb::params![since as i64, until as i64])?;
+    let mut generations = std::collections::HashSet::new();
+    let mut documents = std::collections::HashSet::new();
+    while let Some(row) = rows.next()? {
+        let generation: i64 = row.get(0)?;
+        let Some(document_id) = row.get::<_, Option<String>>(1)? else {
+            return Ok(None);
+        };
+        generations.insert(generation);
+        documents.insert(document_id);
+    }
+    if generations.len() as u64 != until - since {
+        return Ok(None);
+    }
+    Ok(Some(documents))
 }
 
 /// Mark the index dirty and require the next refresh to be a full rebuild.
@@ -223,9 +312,18 @@ pub(crate) fn mark_fts_needs_rebuild(conn: &Connection) -> Result<u64> {
 /// unconfigured index stays dirty. Callers must invoke this on the same
 /// transaction that owns the embedding updates so data and both generations
 /// commit or roll back together.
-pub(crate) fn mark_embeddings_changed(conn: &Connection) -> Result<u64> {
+///
+/// `document_ids` names the documents whose vectors changed, for the vector
+/// refresh's change log (`None` logs "unknown", forcing a full listing).
+pub(crate) fn mark_embeddings_changed_for<S: AsRef<str>>(
+    conn: &Connection,
+    document_ids: Option<&[S]>,
+) -> Result<u64> {
     let fts_was_clean = !fts_generation_state(conn)?.dirty;
-    let next = mark_fts_dirty(conn)?;
+    let next = match document_ids {
+        Some(ids) => mark_chunks_changed_for(conn, ids)?,
+        None => mark_fts_dirty(conn)?,
+    };
     if fts_was_clean {
         upsert_meta(conn, META_INDEX_GENERATION, &next.to_string())?;
     }

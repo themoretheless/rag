@@ -548,8 +548,13 @@ impl Store {
         }
 
         let embedding_json = embedding_json(chunks)?;
+        let documents: std::collections::BTreeSet<&str> = chunks
+            .iter()
+            .map(|chunk| chunk.document_id.as_str())
+            .collect();
+        let documents: Vec<&str> = documents.into_iter().collect();
         let conn = self.lock()?;
-        super::fts::mark_fts_dirty(&conn)?;
+        super::fts::mark_chunks_changed_for(&conn, &documents)?;
         insert_chunks_locked(&conn, chunks, &embedding_json)
     }
 
@@ -754,7 +759,7 @@ impl Store {
     /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
     pub fn delete_chunks_for_document(&self, document_id: &str) -> Result<()> {
         let conn = self.lock()?;
-        super::fts::mark_fts_dirty(&conn)?;
+        super::fts::mark_chunks_changed_for(&conn, &[document_id])?;
         conn.execute(
             "DELETE FROM chunks WHERE document_id = ?",
             params![document_id],
@@ -953,7 +958,7 @@ fn write_document_locked(
             (refresh_document_graph_label_locked(conn, doc)?, 0)
         }
         (DocumentDerivedWrite::ReplaceChunksAndGraph(chunks), Some(embedding_json)) => {
-            super::fts::mark_fts_dirty(conn)?;
+            super::fts::mark_chunks_changed_for(conn, &[doc.id.as_str()])?;
             conn.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
             insert_chunks_locked(conn, chunks, embedding_json)?;
             let (node_id, edge_count) =
@@ -1113,7 +1118,7 @@ pub(super) fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Res
     if !exists {
         return Ok(false);
     }
-    super::fts::mark_fts_dirty(conn)?;
+    super::fts::mark_chunks_changed_for(conn, &[id])?;
     // GRAPH_DESIGN.md §6.3: never wipe incident edges here. The node is demoted to
     // an unresolved stub and edges from other notes survive.
     super::graph::demote_graph_for_document_locked(conn, id)?;

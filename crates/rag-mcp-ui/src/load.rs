@@ -20,6 +20,12 @@ use crate::gateway::{
 /// Hard layout caps (EGUI_GRAPH_VIEW §8.1).
 pub const UI_HARD_MAX_NODES: usize = 300;
 pub const UI_MAX_DRAW_EDGES: usize = 2000;
+/// Unseeded overview lenses draw at most this many nodes (the most connected
+/// ones): the canvas switches to its simplified mode above it, and painting,
+/// hit-testing and the detail panel visit every drawn element each frame.
+pub const UI_OVERVIEW_MAX_NODES: usize = 5000;
+/// Draw-edge cap for overview lenses (same priority order as the local cap).
+pub const UI_OVERVIEW_MAX_EDGES: usize = 20_000;
 pub const UI_LOCAL_MAX_NODES: u32 = UI_GRAPH_EXPORT_MAX_NODES;
 pub const UI_DEFAULT_DEPTH: u32 = 1;
 

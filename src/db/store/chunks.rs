@@ -255,7 +255,7 @@ impl Store {
     pub fn replace_chunks_for_document(&self, document_id: &str, chunks: &[Chunk]) -> Result<()> {
         let embedding_json = embedding_json(chunks)?;
         self.with_tx(|tx| {
-            crate::db::fts::mark_fts_dirty(tx)?;
+            crate::db::fts::mark_chunks_changed_for(tx, &[document_id])?;
             tx.execute(
                 "DELETE FROM chunks WHERE document_id = ?",
                 params![document_id],
@@ -406,7 +406,7 @@ impl Store {
                 set_embedding_manifest_locked(tx, manifest)?;
             }
             if !expected_chunks.is_empty() {
-                crate::db::fts::mark_embeddings_changed(tx)?;
+                crate::db::fts::mark_embeddings_changed_for(tx, Some(&[document_id]))?;
                 let mut stmt = tx.prepare(
                     "UPDATE chunks SET embedding_json = ?, embedding_digest = ? WHERE id = ?",
                 )?;

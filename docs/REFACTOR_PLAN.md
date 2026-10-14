@@ -999,6 +999,40 @@ polled paths. These costs remain, each bounded and kept on purpose:
     5,000 nodes. The detail panel's scan is the same order as painting, so
     caching it would save only a constant factor.
 
+## Follow-up: kept costs revisited
+
+Three costs the plan kept on purpose were taken up afterwards. All figures
+are from a debug build.
+
+- **Vector refresh after a write** now reads a chunk change log.
+  - `chunk_change_log` records, for each chunk generation, which documents'
+    chunks changed.
+  - The hot writers log their documents through
+    `fts::mark_chunks_changed_for`: chunk insert and replace, document
+    delete, and embedding updates.
+  - Every other writer still calls plain `mark_fts_dirty`, which logs
+    "unknown".
+  - The database-wide refresh re-reads only the named documents' chunks. It
+    falls back to the full listing when any generation since the cached
+    snapshot is unknown or pruned; the log keeps 4096 generations.
+  - Measured on 20k chunks × 768 dims after replacing 15 chunks of one
+    document: 325 ms → 48 ms. A full build is about 4 s.
+  - A test checks the delta against a full rebuild after replace, delete,
+    insert and re-embed writes, and checks the fallback after an unscoped
+    write.
+- **BM25 patch: kept.** Its two anti-joins take 21 ms of the 222 ms patch.
+  The rest is tokenizing and updating the dict, terms and stats tables,
+  which a change log would not shrink.
+- **`/v1/agents` diary read:** an index on `documents(kind)` brings it from
+  30 ms to 23 ms on 83k documents.
+- **Overview lenses** (no seed) draw at most `UI_OVERVIEW_MAX_NODES` = 5,000
+  nodes and `UI_OVERVIEW_MAX_EDGES` = 20,000 edges.
+  - 5,000 is the canvas's simplified-mode threshold.
+  - The most connected nodes are kept, with ties broken by id.
+  - The truncation note names the cap.
+  - Before, these lenses drew the whole loaded graph, up to 100,000 nodes,
+    so painting, hit-testing and the detail panel scaled with it each frame.
+
 ## Not planned
 
 - A broad trait over `Store`, or full multi-backend `Storage` parity: the audit

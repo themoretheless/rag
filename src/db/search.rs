@@ -959,7 +959,7 @@ struct VectorSnapshot {
     chunks: Vec<VectorSnapshotChunk>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct VectorSnapshotChunk {
     id: String,
     document_id: String,
@@ -1362,6 +1362,15 @@ fn refresh_vector_snapshot(
         metadata_json: String,
         embedding_hash: i64,
     }
+    // Database-wide snapshot: when the change log names every document whose
+    // chunks changed since `previous`, re-read only those documents.
+    if filters.is_none() {
+        if let Some(documents) =
+            fts::changed_documents_since(conn, previous.generation, generation)?
+        {
+            return refresh_changed_documents(conn, previous, generation, &documents);
+        }
+    }
     let (join_sql, where_sql, bind) = match filters {
         Some(filters) => {
             let (where_sql, bind) = filters.scope_where_clause("d.id");
@@ -1421,22 +1430,7 @@ fn refresh_vector_snapshot(
     }
 
     // Parse only the new or changed vectors.
-    const PARSE_BATCH: usize = 512;
-    let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(changed.len());
-    for batch in changed.chunks(PARSE_BATCH) {
-        let placeholders = vec!["?"; batch.len()].join(",");
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
-        ))?;
-        crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
-            let id: String = row.get(0)?;
-            let embedding_json: String = row.get(1)?;
-            let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
-            let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
-            parsed.insert(id, embedding.into());
-            Ok(())
-        })?;
-    }
+    let parsed = parse_vectors(conn, &changed)?;
 
     let mut chunks = Vec::with_capacity(listed.len());
     for row in listed {
@@ -1460,6 +1454,115 @@ fn refresh_vector_snapshot(
             vector,
         });
     }
+    Ok(VectorSnapshot { generation, chunks })
+}
+
+/// Parse and normalize the stored vectors of `ids`, in `IN` batches.
+fn parse_vectors<S: AsRef<str>>(
+    conn: &duckdb::Connection,
+    ids: &[S],
+) -> Result<HashMap<String, Arc<[f32]>>> {
+    const PARSE_BATCH: usize = 512;
+    let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(ids.len());
+    for batch in ids.chunks(PARSE_BATCH) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
+        ))?;
+        let binds: Vec<&str> = batch.iter().map(AsRef::as_ref).collect();
+        crate::db::rows::for_each_row(&mut stmt, params_from_iter(binds.iter()), |row| {
+            let id: String = row.get(0)?;
+            let embedding_json: String = row.get(1)?;
+            let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
+            let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
+            parsed.insert(id, embedding.into());
+            Ok(())
+        })?;
+    }
+    Ok(parsed)
+}
+
+/// Database-wide refresh from the change log: keep every chunk of documents
+/// not in `documents`, and re-read (reusing vectors by id + digest) only the
+/// chunks of `documents`. Cost follows the change, not the corpus.
+fn refresh_changed_documents(
+    conn: &duckdb::Connection,
+    previous: &VectorSnapshot,
+    generation: u64,
+    documents: &HashSet<String>,
+) -> Result<VectorSnapshot> {
+    const DOCUMENT_BATCH: usize = 512;
+    let ids: Vec<&str> = documents.iter().map(String::as_str).collect();
+    let mut listed: Vec<VectorSnapshotChunk> = Vec::new();
+    let mut digests: Vec<(usize, Option<Arc<[f32]>>)> = Vec::new();
+    let reusable: HashMap<&str, &VectorSnapshotChunk> = previous
+        .chunks
+        .iter()
+        .filter(|chunk| documents.contains(&chunk.document_id))
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect();
+    for batch in ids.chunks(DOCUMENT_BATCH) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, document_id, chunk_index, char_start, char_end, metadata_json, \
+                    COALESCE(embedding_digest, CAST(hash(embedding_json) >> 1 AS BIGINT)) \
+             FROM chunks WHERE document_id IN ({placeholders})"
+        ))?;
+        crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+            let chunk = VectorSnapshotChunk {
+                id: row.get(0)?,
+                document_id: row.get(1)?,
+                chunk_index: row.get(2)?,
+                char_start: row.get(3)?,
+                char_end: row.get(4)?,
+                metadata_json: row
+                    .get::<_, Option<String>>(5)?
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "{}".into()),
+                embedding_hash: row.get(6)?,
+                vector: Arc::from([] as [f32; 0]),
+            };
+            let reused = reusable
+                .get(chunk.id.as_str())
+                .filter(|old| old.embedding_hash == chunk.embedding_hash)
+                .map(|old| old.vector.clone());
+            digests.push((listed.len(), reused));
+            listed.push(chunk);
+            Ok(())
+        })?;
+    }
+    let changed: Vec<&str> = digests
+        .iter()
+        .filter(|(_, reused)| reused.is_none())
+        .map(|(index, _)| listed[*index].id.as_str())
+        .collect();
+    let mut parsed = parse_vectors(conn, &changed)?;
+    let mut fresh = Vec::with_capacity(listed.len());
+    for ((_, reused), mut chunk) in digests.into_iter().zip(listed) {
+        chunk.vector = match reused {
+            Some(vector) => vector,
+            None => match parsed.remove(&chunk.id) {
+                Some(vector) => vector,
+                // Deleted between the listing and the parse: skip it.
+                None => continue,
+            },
+        };
+        fresh.push(chunk);
+    }
+    let mut chunks: Vec<VectorSnapshotChunk> = previous
+        .chunks
+        .iter()
+        .filter(|chunk| !documents.contains(&chunk.document_id))
+        .cloned()
+        .chain(fresh)
+        .collect();
+    // Same order as a full listing (document, index, id).
+    chunks.sort_by(|a, b| {
+        a.document_id
+            .cmp(&b.document_id)
+            .then(a.chunk_index.cmp(&b.chunk_index))
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(VectorSnapshot { generation, chunks })
 }
 
