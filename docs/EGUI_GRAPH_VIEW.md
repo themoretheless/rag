@@ -515,7 +515,8 @@ Rules:
   controls; pass the corresponding CLI source explicitly. There is no
   `RAG_UI_MAX_NODES` env var: the caps are compile-time constants in
   `crates/rag-mcp-ui/src/load.rs` (`UI_HARD_MAX_NODES = 300` layout cap,
-  `UI_MAX_DRAW_EDGES = 2000`), and `--max-nodes` selects a value below them.
+  `UI_MAX_DRAW_EDGES = 2000`; overview lenses use `UI_OVERVIEW_MAX_NODES = 5000`
+  and `UI_OVERVIEW_MAX_EDGES = 20000`), and `--max-nodes` selects a value below them.
 
 Shipped MCP tool (server side, topology dump only):
 
