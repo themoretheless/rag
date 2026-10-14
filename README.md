@@ -126,7 +126,7 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_MAX_CHUNKS_PER_DOC` | `3` | Max chunks retained per document under diversity collapse |
 | `RAG_MAX_LINKS_PER_DOC` | `2000` | Max wikilinks/tags extracted from one document before truncation |
 | `RAG_FTS_STEMMER` | `porter` | DuckDB FTS stemmer; use `none` for CJK/code |
-| `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (currently 33 compile-first tools, count-bounded by test) or `full` (all tools). See vision §5. |
+| `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (currently 33 compile-first tools; test bounds the count to 15–40) or `full` (all tools). See vision §5. |
 | `RAG_LLM_PROVIDER` | `ollama` | Chat preset: `ollama` \| `openai` \| `codex` \| `claude` \| `kimi` \| `deepseek` \| `custom` — see [`docs/LLM_PROVIDERS.md`](docs/LLM_PROVIDERS.md) |
 | `RAG_LLM_ENABLED` | `true` | When false, chat/compile tools refuse |
 | `RAG_LLM_BASE_URL` | provider default | Chat API root (override preset) |
