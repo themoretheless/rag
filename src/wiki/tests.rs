@@ -283,14 +283,16 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
             &store,
             &incompatible,
             &changed,
-            "existing",
-            None,
-            "changed content",
-            None,
-            None,
-            None,
-            None,
-            Some(created.revision),
+            WikiPageUpdate {
+                id_or_slug: "existing",
+                title: None,
+                content: "changed content",
+                kind: None,
+                category: None,
+                summary: None,
+                agent: None,
+                if_match_revision: Some(created.revision),
+            },
         )
         .await
         .unwrap_err();
@@ -1160,14 +1162,16 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
         &store,
         &embedder,
         &config,
-        "preserved-page",
-        Some("Edited title"),
-        "edited body",
-        None,
-        None,
-        None,
-        None,
-        Some(persisted.revision),
+        WikiPageUpdate {
+            id_or_slug: "preserved-page",
+            title: Some("Edited title"),
+            content: "edited body",
+            kind: None,
+            category: None,
+            summary: None,
+            agent: None,
+            if_match_revision: Some(persisted.revision),
+        },
     )
     .await
     .expect("update with omitted optional fields");
@@ -1200,14 +1204,16 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
         &store,
         &embedder,
         &config,
-        "preserved-page",
-        None,
-        "edited body again",
-        None,
-        Some("systems"),
-        Some("new summary"),
-        None,
-        Some(after.revision),
+        WikiPageUpdate {
+            id_or_slug: "preserved-page",
+            title: None,
+            content: "edited body again",
+            kind: None,
+            category: Some("systems"),
+            summary: Some("new summary"),
+            agent: None,
+            if_match_revision: Some(after.revision),
+        },
     )
     .await
     .expect("metadata overlay update");
@@ -1269,20 +1275,24 @@ async fn wiki_require_if_match_blocks_update_without_revision() {
         "expected require-if-match error, got {msg}"
     );
 
-    let ok = write_wiki_page_with_opts(
+    let ok = write_wiki_page_command(
         &store,
         &embedder,
         &config,
-        "cas-page",
-        "CAS Page",
-        "second body with if_match",
-        "wiki",
-        None,
-        None,
-        None,
-        WriteWikiOpts {
-            if_match_revision: Some(written.revision),
-            ..Default::default()
+        WikiWriteCommand {
+            slug: "cas-page".to_string(),
+            title: "CAS Page".to_string(),
+            content: "second body with if_match".to_string(),
+            wing: None,
+            room: None,
+            kind: "wiki".to_string(),
+            category: None,
+            summary: None,
+            agent: None,
+            options: WriteWikiOpts {
+                if_match_revision: Some(written.revision),
+                ..Default::default()
+            },
         },
     )
     .await
@@ -1325,21 +1335,25 @@ async fn stale_if_match_preserves_body_and_chunks() {
     );
     let chunk_ids_before: Vec<String> = chunks_before.iter().map(|c| c.id.clone()).collect();
 
-    let err = write_wiki_page_with_opts(
+    let err = write_wiki_page_command(
         &store,
         &embedder,
         &config,
-        "cas-preserve",
-        "CAS Preserve",
-        "should not replace body or wipe chunks",
-        "wiki",
-        None,
-        None,
-        None,
-        WriteWikiOpts {
-            // Stale: page is at revision 1.
-            if_match_revision: Some(0),
-            ..Default::default()
+        WikiWriteCommand {
+            slug: "cas-preserve".to_string(),
+            title: "CAS Preserve".to_string(),
+            content: "should not replace body or wipe chunks".to_string(),
+            wing: None,
+            room: None,
+            kind: "wiki".to_string(),
+            category: None,
+            summary: None,
+            agent: None,
+            options: WriteWikiOpts {
+                // Stale: page is at revision 1.
+                if_match_revision: Some(0),
+                ..Default::default()
+            },
         },
     )
     .await
@@ -1643,14 +1657,16 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
         &store,
         &embedder,
         &config,
-        "atomic-wiki-update",
-        Some("Changed Wiki Title"),
-        "Changed body [[Repeated target]] and [[Repeated target]].",
-        None,
-        None,
-        Some("changed summary"),
-        Some("agent-test"),
-        Some(written.revision),
+        WikiPageUpdate {
+            id_or_slug: "atomic-wiki-update",
+            title: Some("Changed Wiki Title"),
+            content: "Changed body [[Repeated target]] and [[Repeated target]].",
+            kind: None,
+            category: None,
+            summary: Some("changed summary"),
+            agent: Some("agent-test"),
+            if_match_revision: Some(written.revision),
+        },
     )
     .await
     .expect_err("duplicate graph edge must fail the wiki transaction");
@@ -1702,20 +1718,24 @@ async fn late_catalog_fault_rolls_back_new_wiki_page_and_audit() {
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(crate::embeddings::MockEmbedder::new(dims));
     let ops_before = store.list_ops_log(100).unwrap().len();
 
-    let error = write_wiki_page_with_opts(
+    let error = write_wiki_page_command(
         &store,
         &embedder,
         &config,
-        "late-create-rollback",
-        "Late create rollback",
-        "New body links to [[Never committed]].",
-        "wiki",
-        Some("tests"),
-        Some("must roll back"),
-        Some("agent-test"),
-        WriteWikiOpts {
-            op: Some(crate::db::store::TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP.into()),
-            ..Default::default()
+        WikiWriteCommand {
+            slug: "late-create-rollback".to_string(),
+            title: "Late create rollback".to_string(),
+            content: "New body links to [[Never committed]].".to_string(),
+            wing: None,
+            room: None,
+            kind: "wiki".to_string(),
+            category: Some("tests".to_string()),
+            summary: Some("must roll back".to_string()),
+            agent: Some("agent-test".to_string()),
+            options: WriteWikiOpts {
+                op: Some(crate::db::store::TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP.into()),
+                ..Default::default()
+            },
         },
     )
     .await
@@ -1769,18 +1789,21 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
     let original_index = wiki_index_state(&store, "late-update-rollback");
     let original_ops_count = store.list_ops_log(100).unwrap().len();
 
-    let error = write_wiki_page_with_opts(
-            &store,
-            &embedder,
-            &config,
-            "late-update-rollback",
-            "Changed title",
-            "Changed body links to [[New target]].",
-            "concept",
-            Some("changed"),
-            Some("changed summary"),
-            Some("agent-test"),
-            WriteWikiOpts {
+    let error = write_wiki_page_command(
+        &store,
+        &embedder,
+        &config,
+        WikiWriteCommand {
+            slug: "late-update-rollback".to_string(),
+            title: "Changed title".to_string(),
+            content: "Changed body links to [[New target]].".to_string(),
+            wing: None,
+            room: None,
+            kind: "concept".to_string(),
+            category: Some("changed".to_string()),
+            summary: Some("changed summary".to_string()),
+            agent: Some("agent-test".to_string()),
+            options: WriteWikiOpts {
                 op: Some(crate::db::store::TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP.into()),
                 if_match_revision: Some(written.revision),
                 extra_metadata: Some(serde_json::json!({"source_versions":[{
@@ -1788,7 +1811,8 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
                 }]})),
                 ..Default::default()
             },
-        )
+        },
+    )
         .await
         .expect_err("late catalog fault must roll back the existing wiki update");
 
@@ -1857,28 +1881,32 @@ async fn find_stale_wiki_via_metadata_and_graph() {
     raw_doc.updated_at = older;
     store.upsert_document(&raw_doc).unwrap();
 
-    let wiki = write_wiki_page_with_opts(
+    let wiki = write_wiki_page_command(
         &store,
         &embedder,
         &config,
-        "alpha-summary",
-        "Alpha summary",
-        "Summary of Alpha.\nsource: raw://alpha\n",
-        "source_summary",
-        Some("sources"),
-        Some("Alpha summary"),
-        None,
-        WriteWikiOpts {
-            op: Some("wiki_write".into()),
-            prefix: Some("WIKI".into()),
-            message: None,
-            extra_metadata: Some(serde_json::json!({
-                "source_id": raw.document_id,
-                "source_uri": "raw://alpha",
-            })),
-            extra_payload: None,
-            metadata_json_override: None,
-            if_match_revision: None,
+        WikiWriteCommand {
+            slug: "alpha-summary".to_string(),
+            title: "Alpha summary".to_string(),
+            content: "Summary of Alpha.\nsource: raw://alpha\n".to_string(),
+            wing: None,
+            room: None,
+            kind: "source_summary".to_string(),
+            category: Some("sources".to_string()),
+            summary: Some("Alpha summary".to_string()),
+            agent: None,
+            options: WriteWikiOpts {
+                op: Some("wiki_write".into()),
+                prefix: Some("WIKI".into()),
+                message: None,
+                extra_metadata: Some(serde_json::json!({
+                    "source_id": raw.document_id,
+                    "source_uri": "raw://alpha",
+                })),
+                extra_payload: None,
+                metadata_json_override: None,
+                if_match_revision: None,
+            },
         },
     )
     .await
@@ -2163,23 +2191,27 @@ async fn refresh_stale_wiki_apply_without_llm_lists_only() {
     .await
     .unwrap();
 
-    let wiki = write_wiki_page_with_opts(
+    let wiki = write_wiki_page_command(
         &store,
         &embedder,
         &config,
-        "b-sum",
-        "B sum",
-        "source: raw://b",
-        "source_summary",
-        None,
-        None,
-        None,
-        WriteWikiOpts {
-            extra_metadata: Some(serde_json::json!({
-                "source_uri": "raw://b",
-                "source_id": raw.document_id,
-            })),
-            ..Default::default()
+        WikiWriteCommand {
+            slug: "b-sum".to_string(),
+            title: "B sum".to_string(),
+            content: "source: raw://b".to_string(),
+            wing: None,
+            room: None,
+            kind: "source_summary".to_string(),
+            category: None,
+            summary: None,
+            agent: None,
+            options: WriteWikiOpts {
+                extra_metadata: Some(serde_json::json!({
+                    "source_uri": "raw://b",
+                    "source_id": raw.document_id,
+                })),
+                ..Default::default()
+            },
         },
     )
     .await

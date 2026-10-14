@@ -77,14 +77,16 @@ pub async fn put_wiki_page(
             store,
             embedder,
             config,
-            &existing.id,
-            Some(&command.title),
-            &command.content,
-            command.kind.as_deref(),
-            command.category.as_deref(),
-            command.summary.as_deref(),
-            command.agent.as_deref(),
-            command.if_match_revision,
+            WikiPageUpdate {
+                id_or_slug: &existing.id,
+                title: Some(&command.title),
+                content: &command.content,
+                kind: command.kind.as_deref(),
+                category: command.category.as_deref(),
+                summary: command.summary.as_deref(),
+                agent: command.agent.as_deref(),
+                if_match_revision: command.if_match_revision,
+            },
         )
         .await;
     }

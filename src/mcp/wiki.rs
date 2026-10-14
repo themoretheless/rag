@@ -678,14 +678,16 @@ impl RagServer {
             &self.store,
             &self.embedder,
             &self.config,
-            &params.slug,
-            Some(&params.title),
-            &params.content,
-            params.kind.as_deref(),
-            params.category.as_deref(),
-            params.summary.as_deref(),
-            params.agent.as_deref(),
-            if_match,
+            wiki::WikiPageUpdate {
+                id_or_slug: &params.slug,
+                title: Some(&params.title),
+                content: &params.content,
+                kind: params.kind.as_deref(),
+                category: params.category.as_deref(),
+                summary: params.summary.as_deref(),
+                agent: params.agent.as_deref(),
+                if_match_revision: if_match,
+            },
         )
         .await?;
         Self::json_result(&res)

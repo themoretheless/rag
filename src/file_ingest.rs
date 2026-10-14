@@ -34,6 +34,8 @@ pub struct ExtractedFile {
     pub metadata: Map<String, Value>,
 }
 
+/// Whether the extension is one `extract_file` can read (Markdown, text,
+/// HTML, PDF or a known source-code language).
 pub fn is_supported_source(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -42,6 +44,7 @@ pub fn is_supported_source(path: &Path) -> bool {
         ) || source_language(ext).is_some())
 }
 
+/// Read a file and extract its text and format-specific metadata.
 pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
     let extension = path.extension().and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase);
@@ -76,6 +79,7 @@ pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
     Ok(ExtractedFile { text, metadata })
 }
 
+/// Merge `additions` into existing metadata JSON; keys already present win.
 pub fn merge_metadata(existing: Option<String>, additions: Map<String, Value>) -> Result<String, serde_json::Error> {
     let mut value = match existing.filter(|s| !s.trim().is_empty()) {
         Some(raw) => serde_json::from_str::<Value>(&raw)?,

@@ -45,9 +45,11 @@ fn save(conn: &Connection, proposal: &Proposal) -> Result<()> {
     )?;
     Ok(())
 }
+/// Load one wiki review proposal by id.
 pub fn get(store: &Store, id: &str) -> Result<Proposal> {
     read(&*store.lock()?, id)
 }
+/// All wiki review proposals, ordered by id.
 pub fn list(store: &Store) -> Result<Vec<Proposal>> {
     let conn = store.lock()?;
     let mut stmt = conn.prepare("SELECT payload FROM wiki_proposals ORDER BY id")?;
@@ -68,6 +70,8 @@ pub fn insert_new(store: &Store, base: Document, sources: Vec<ReviewSource>) -> 
     save(&*store.lock()?, &proposal)?;
     Ok(proposal)
 }
+/// Replace a pending proposal's content (optionally rejecting it); fails
+/// with a conflict unless it is still pending at `revision`.
 pub fn update(
     store: &Store,
     id: &str,

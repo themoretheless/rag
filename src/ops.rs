@@ -86,6 +86,7 @@ static RUNTIME: LazyLock<RwLock<RuntimeState>> = LazyLock::new(|| RwLock::new(Ru
 }));
 static PID_PATH: LazyLock<RwLock<Option<PathBuf>>> = LazyLock::new(|| RwLock::new(None));
 
+/// Point-in-time copy of process runtime state for `status` / `/health`.
 pub fn runtime_snapshot() -> RuntimeSnapshot {
     let state = RUNTIME.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
     RuntimeSnapshot {
@@ -107,11 +108,13 @@ pub fn runtime_snapshot() -> RuntimeSnapshot {
     }
 }
 
+/// Record the active tool surface and HTTP bind address (if any).
 pub fn configure_runtime(tool_surface: &str, http_bind: Option<String>) {
     let mut state = RUNTIME.write().unwrap_or_else(|poisoned| poisoned.into_inner());
     state.tool_surface = tool_surface.into(); state.http_bind = http_bind;
 }
 
+/// Set the start-up phase label reported by [`runtime_snapshot`].
 pub fn set_startup_phase(phase: &str) {
     RUNTIME.write().unwrap_or_else(|p| p.into_inner()).phase = phase.into();
 }
@@ -125,7 +128,14 @@ pub fn set_startup_timing(name: &str, elapsed: Duration, warn_ms: u64) {
     if ms >= warn_ms { tracing::warn!(phase = name, elapsed_ms = ms, warn_ms, "slow startup phase"); }
 }
 
-pub fn mark_ready() { let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner()); s.phase = "ready".into(); s.ready = true; }
+/// Mark start-up complete: phase `ready`, `ready = true`.
+pub fn mark_ready() {
+    let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
+    s.phase = "ready".into();
+    s.ready = true;
+}
+/// Mark shutdown complete and remove the PID file written by
+/// [`validate_runtime_paths`].
 pub fn mark_shutdown(checkpointed: bool) {
     let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     s.phase = "shutdown_complete".into();
@@ -137,6 +147,7 @@ pub fn mark_shutdown(checkpointed: bool) {
     }
 }
 
+/// Enable autosync reporting and schedule the next run `interval` from now.
 pub fn configure_autosync(interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_enabled = true;
@@ -145,12 +156,20 @@ pub fn configure_autosync(interval: Duration) {
     set_autosync_next(interval);
 }
 
-pub fn mark_autosync_running() { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).autosync_running = true; }
+/// Record that an autosync pass has started.
+pub fn mark_autosync_running() {
+    RUNTIME
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .autosync_running = true;
+}
+/// Record a finished autosync pass and schedule the next one after `interval`.
 pub fn mark_autosync_success(interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_running = false; state.autosync_last_completed_at = Some(Utc::now()); state.autosync_last_error = None;
     state.autosync_next_run_at = Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
+/// Record a failed autosync pass and schedule the retry after `interval`.
 pub fn mark_autosync_error(error: &str, interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_running = false; state.autosync_last_error = Some(error.into());
@@ -161,6 +180,9 @@ fn set_autosync_next(interval: Duration) {
         Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
 
+/// Check start-up paths: create the database and auto-backup directories,
+/// reject read-only ones and missing ingest roots, then write the PID file
+/// (noting a stale one left by another process).
 pub fn validate_runtime_paths(config: &Config) -> Result<()> {
     let db_path = config.db_path.as_path();
     let ingest_roots = &config.ingest_roots;
@@ -247,6 +269,8 @@ pub struct AutoBackupInventory {
     pub free_bytes: Option<u64>,
 }
 
+/// Snapshot footprint of the automatic backup directory, or `None` when
+/// automatic backups are not configured.
 pub fn auto_backup_inventory(config: &Config) -> Option<AutoBackupInventory> {
     let settings = auto_backup_settings(config)?;
     Some(inventory_at(&settings))

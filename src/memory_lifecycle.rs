@@ -38,6 +38,8 @@ pub struct LifecycleMutationResult {
     pub output_document_id: Option<String>,
 }
 
+/// Documents eligible for lifecycle actions, filtered by status (default
+/// active), layer and kind; archived documents are included.
 pub fn list_candidates(
     store: &Store,
     status: Option<&str>,
@@ -67,6 +69,8 @@ pub fn list_candidates(
         .collect())
 }
 
+/// Mark `document_ids` consolidated into an existing output document:
+/// sources get status `consolidated` and a back-link; the output lists them.
 pub fn consolidate_selected(
     store: &Store,
     document_ids: &[String],
@@ -142,6 +146,8 @@ pub fn consolidate_selected(
     Ok(result)
 }
 
+/// Set status `archived` on the selected documents; already archived and
+/// missing ids are reported, not changed.
 pub fn archive_selected(
     store: &Store,
     document_ids: &[String],
