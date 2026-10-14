@@ -120,7 +120,7 @@ pub async fn consolidate(
     let source_count = resolved.len();
 
     if !apply {
-        let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
+        crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
             id: Uuid::new_v4().to_string(),
             seq: 0,
             ts: Utc::now(),
@@ -175,7 +175,7 @@ pub async fn consolidate(
     )
     .await?;
 
-    let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
+    crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: Utc::now(),
@@ -314,7 +314,9 @@ pub(super) async fn apply_consolidate_proposal_at_revision(
         if let Ok(Some(wiki_node)) = store.find_node_by_document_id(&wr.document_id) {
             for src in sources {
                 if let Ok(Some(src_node)) = store.find_node_by_document_id(&src.id) {
-                    let _ = store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0);
+                    if let Err(error) = store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0) {
+                        tracing::warn!(%error, "failed to link consolidated wiki node");
+                    }
                 }
             }
         }

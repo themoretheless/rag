@@ -252,8 +252,10 @@ pub(crate) async fn write_wiki_page_synced_command(
             return Err(AppError::config("wiki metadata must be a JSON object"));
         }
     }
-    let metadata_json = if incoming && opts.metadata_json_override.is_some() {
-        opts.metadata_json_override.clone().unwrap()
+    let metadata_json = if let Some(metadata) =
+        opts.metadata_json_override.as_ref().filter(|_| incoming)
+    {
+        metadata.clone()
     } else {
         merge_wiki_metadata(
             opts.metadata_json_override.as_deref().or_else(|| {

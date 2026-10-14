@@ -7,6 +7,8 @@ use rmcp::{tool, tool_router, ErrorData as McpError};
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::db::store::MAX_OPS_LOG_PAGE;
+
 use super::facade::RagServer;
 use super::maintain::clamp_maintenance_max_docs;
 use super::tools::{
@@ -34,6 +36,19 @@ use crate::retrieval::{self};
 use crate::util::{non_blank, run_blocking};
 use crate::wiki;
 use crate::wiki::FileAnswerCitation;
+
+/// Upper bound for `wake_up` diary / pinned-memory limits.
+const MAX_WAKE_UP_LIMIT: usize = 200;
+/// Upper bound for `list_memory_lifecycle_candidates` page size.
+const MAX_LIFECYCLE_CANDIDATES: usize = 1000;
+
+/// Resolve an optional client-supplied limit to `default`, clamped to `1..=max`.
+fn clamp_limit(limit: Option<u32>, default: usize, max: usize) -> usize {
+    limit
+        .map(|n| usize::try_from(n).unwrap_or(max))
+        .unwrap_or(default)
+        .clamp(1, max)
+}
 
 #[tool_router(router = wiki_router, vis = "pub(super)")]
 impl RagServer {
@@ -141,8 +156,8 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let status = DiagnosticsService::new(&self.store, &self.config).status()?;
-            let diary_limit = params.diary_limit.unwrap_or(5) as usize;
-            let pinned_limit = params.pinned_limit.unwrap_or(20) as usize;
+            let diary_limit = clamp_limit(params.diary_limit, 5, MAX_WAKE_UP_LIMIT);
+            let pinned_limit = clamp_limit(params.pinned_limit, 20, MAX_WAKE_UP_LIMIT);
             let body = diary::wake_up(
                 &self.store,
                 status,
@@ -251,7 +266,7 @@ impl RagServer {
         Parameters(params): Parameters<ListRecentOpsParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let limit = params.limit.unwrap_or(20) as usize;
+            let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
             let ops = self.store.list_recent_ops(limit)?;
             Self::json_result(&ops)
         })
@@ -266,7 +281,7 @@ impl RagServer {
         Parameters(params): Parameters<MemoriesFiledAwayParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let limit = params.limit.unwrap_or(20) as usize;
+            let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
             let ops_log_available = self.store.ops_log_exists()?;
             let ops = if ops_log_available {
                 self.store.memories_filed_away(limit)?
@@ -797,7 +812,7 @@ impl RagServer {
                 params.status.as_deref(),
                 params.layer.as_deref(),
                 params.kind.as_deref(),
-                params.limit.unwrap_or(100) as usize,
+                clamp_limit(params.limit, 100, MAX_LIFECYCLE_CANDIDATES),
             )?;
             Self::json_result(&rows)
         })
@@ -909,4 +924,21 @@ struct ReadIndexResult {
 #[derive(Debug, Serialize)]
 struct RebuildIndexResult {
     count: usize,
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn clamp_limit_defaults_and_bounds() {
+        assert_eq!(clamp_limit(None, 20, MAX_OPS_LOG_PAGE), 20);
+        assert_eq!(clamp_limit(Some(0), 20, MAX_OPS_LOG_PAGE), 1);
+        assert_eq!(clamp_limit(Some(7), 20, MAX_OPS_LOG_PAGE), 7);
+        assert_eq!(clamp_limit(Some(u32::MAX), 20, MAX_OPS_LOG_PAGE), MAX_OPS_LOG_PAGE);
+        assert_eq!(
+            clamp_limit(Some(u32::MAX), 100, MAX_LIFECYCLE_CANDIDATES),
+            MAX_LIFECYCLE_CANDIDATES
+        );
+    }
 }

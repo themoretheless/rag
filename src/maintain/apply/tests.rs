@@ -796,3 +796,25 @@ async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
         .iter()
         .any(|error| error["action"] == "finalize_fts"));
 }
+
+#[test]
+fn param_usize_accepts_absent_and_non_negative() {
+    let params = serde_json::json!({"a": 3, "b": "7", "c": 2.9});
+    assert_eq!(param_usize(&params, "missing").unwrap(), None);
+    assert_eq!(param_usize(&params, "a").unwrap(), Some(3));
+    assert_eq!(param_usize(&params, "b").unwrap(), Some(7));
+    assert_eq!(param_usize(&params, "c").unwrap(), Some(2));
+}
+
+#[test]
+fn param_usize_rejects_negative_nan_and_infinite() {
+    for bad in [
+        serde_json::json!({"max_docs": -1}),
+        serde_json::json!({"max_docs": "NaN"}),
+        serde_json::json!({"max_docs": "inf"}),
+        serde_json::json!({"max_docs": "-inf"}),
+    ] {
+        let err = param_usize(&bad, "max_docs").unwrap_err();
+        assert!(err.to_string().contains("max_docs"), "{err}");
+    }
+}

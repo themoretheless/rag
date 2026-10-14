@@ -359,7 +359,7 @@ pub fn analyze_corpus(
     };
 
     if opts.log_ops {
-        let _ = store.append_ops_log(&OpsLogEntry {
+        if let Err(error) = store.append_ops_log(&OpsLogEntry {
             id: Uuid::new_v4().to_string(),
             seq: 0,
             ts: generated_at,
@@ -385,7 +385,9 @@ pub fn analyze_corpus(
             })
             .to_string(),
             agent_name: None,
-        });
+        }) {
+            tracing::warn!(%error, "failed to append analyze_corpus ops_log entry");
+        }
     }
 
     Ok(report)

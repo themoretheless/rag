@@ -143,7 +143,7 @@ async fn run_serve_modes(
     if let Some(ref bind_str) = http_bind {
         let addr = http_api::parse_bind(bind_str)
             .context("RAG_HTTP_BIND")?
-            .expect("non-empty bind validated");
+            .context("RAG_HTTP_BIND is empty")?;
 
         let mcp_svc = if mcp_http_enabled {
             Some(http_api::mcp_http_service_for(

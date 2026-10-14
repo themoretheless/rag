@@ -594,6 +594,18 @@ fn param_f64(params: &serde_json::Value, key: &str) -> Option<f64> {
     })
 }
 
+/// Non-negative integer param (e.g. `max_docs`). Absent → `Ok(None)`;
+/// negative, NaN or infinite values are rejected; fractions truncate.
+fn param_usize(params: &serde_json::Value, key: &str) -> Result<Option<usize>> {
+    match param_f64(params, key) {
+        None => Ok(None),
+        Some(n) if n.is_finite() && n >= 0.0 => Ok(Some(n.min(usize::MAX as f64) as usize)),
+        Some(n) => Err(AppError::config(format!(
+            "maintenance param '{key}' must be a non-negative finite number, got {n}"
+        ))),
+    }
+}
+
 fn param_bool(params: &serde_json::Value, key: &str) -> Option<bool> {
     params.get(key).and_then(|v| {
         v.as_bool().or_else(|| match v.as_str() {

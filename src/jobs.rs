@@ -416,7 +416,9 @@ impl JobRegistry {
             entry.snapshot.started_at = Some(Utc::now());
             entry.snapshot.clone()
         };
-        let _ = self.persist(&snapshot);
+        if let Err(error) = self.persist(&snapshot) {
+            tracing::warn!(%error, "failed to persist job snapshot");
+        }
         true
     }
 
@@ -439,7 +441,9 @@ impl JobRegistry {
             entry.progress_persisted_at = Some(now);
             entry.snapshot.clone()
         };
-        let _ = self.persist(&snapshot);
+        if let Err(error) = self.persist(&snapshot) {
+            tracing::warn!(%error, "failed to persist job snapshot");
+        }
     }
 
     pub(crate) fn finish_cancelled(&self, id: &str, report: SourceSyncReport) {
@@ -480,9 +484,13 @@ impl JobRegistry {
             let removed = prune_jobs(&mut jobs);
             (snapshot, removed)
         };
-        let _ = self.persist(&snapshot);
+        if let Err(error) = self.persist(&snapshot) {
+            tracing::warn!(%error, "failed to persist job snapshot");
+        }
         for removed_id in removed {
-            let _ = self.delete_persisted(&removed_id);
+            if let Err(error) = self.delete_persisted(&removed_id) {
+                tracing::warn!(%error, "failed to delete persisted job");
+            }
         }
     }
 
