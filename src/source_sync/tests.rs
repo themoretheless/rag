@@ -1486,7 +1486,11 @@ fn source_stamp_rejects_a_file_that_exceeds_the_scan_guard() {
 async fn unchanged_files_between_changed_ones_keep_one_batch() {
     let root = tempfile::tempdir().unwrap();
     let db = tempfile::tempdir().unwrap();
-    for (name, body) in [("a.md", "alpha body"), ("b.md", "bravo body"), ("c.md", "charlie body")] {
+    for (name, body) in [
+        ("a.md", "alpha body"),
+        ("b.md", "bravo body"),
+        ("c.md", "charlie body"),
+    ] {
         std::fs::write(root.path().join(name), body).unwrap();
     }
     let config = Config {
@@ -1529,4 +1533,90 @@ async fn unchanged_files_between_changed_ones_keep_one_batch() {
             "charlie body, edited".to_string(),
         ]]
     );
+}
+
+fn nonblocking_fixture(root: &Path) -> (Arc<Store>, Arc<dyn EmbeddingProvider>, Config) {
+    let config = Config {
+        ingest_roots: vec![root.to_path_buf()],
+        embedding_dims: 8,
+        ..Config::for_tests()
+    };
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+    (Arc::new(crate::testkit::temp_store()), embedder, config)
+}
+
+#[test]
+fn source_sync_command_new_has_conservative_defaults() {
+    let command = SourceSyncCommand::new(PathBuf::from("/root"));
+    assert_eq!(command.path, PathBuf::from("/root"));
+    assert!(!command.remove_deleted);
+    assert!(command.wing.is_none());
+    assert!(command.room.is_none());
+    assert!(command.max_file_bytes.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_sources_nonblocking_completes_and_second_run_skips_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("one.md"), "# One\nfirst").unwrap();
+    std::fs::write(root.path().join("two.txt"), "second").unwrap();
+    let (store, embedder, config) = nonblocking_fixture(root.path());
+    let progress = Arc::new(AtomicUsize::new(0));
+    let seen = progress.clone();
+    let control = SourceSyncControl::new(CancellationToken::new(), move |_| {
+        seen.fetch_add(1, Ordering::Relaxed);
+    });
+
+    let outcome = sync_sources_nonblocking(
+        store.clone(),
+        embedder.clone(),
+        config.clone(),
+        SourceSyncCommand::new(root.path().to_path_buf()),
+        control,
+    )
+    .await
+    .unwrap();
+    let SourceSyncOutcome::Completed(report) = outcome else {
+        panic!("expected completion");
+    };
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(report.added.len(), 2);
+    assert!(progress.load(Ordering::Relaxed) > 0);
+    assert_eq!(store.list_documents().unwrap().len(), 2);
+
+    let again = sync_sources_nonblocking(
+        store.clone(),
+        embedder,
+        config,
+        SourceSyncCommand::new(root.path().to_path_buf()),
+        SourceSyncControl::default(),
+    )
+    .await
+    .unwrap();
+    let SourceSyncOutcome::Completed(report) = again else {
+        panic!("expected completion");
+    };
+    assert!(report.added.is_empty());
+    assert_eq!(report.skipped.len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_sources_nonblocking_honours_pre_cancelled_control() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("one.md"), "# One\nfirst").unwrap();
+    let (store, embedder, config) = nonblocking_fixture(root.path());
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let outcome = sync_sources_nonblocking(
+        store.clone(),
+        embedder,
+        config,
+        SourceSyncCommand::new(root.path().to_path_buf()),
+        SourceSyncControl::new(token, |_| {}),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(outcome, SourceSyncOutcome::Cancelled(_)));
+    assert!(store.list_documents().unwrap().is_empty());
 }

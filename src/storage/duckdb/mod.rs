@@ -45,4 +45,3 @@ impl Storage for Store {
         Store::delete_document(self, id)
     }
 }
-

@@ -610,7 +610,10 @@ mod tests {
         for step in 0..50 {
             registry.update("job-1", |job| job.error = Some(format!("step {step}")));
         }
-        assert_eq!(registry.get("job-1").unwrap().error.as_deref(), Some("step 49"));
+        assert_eq!(
+            registry.get("job-1").unwrap().error.as_deref(),
+            Some("step 49")
+        );
         assert_eq!(persisted().error.as_deref(), Some("step 0"));
 
         registry.update("job-1", |job| job.status = JobStatus::Succeeded);

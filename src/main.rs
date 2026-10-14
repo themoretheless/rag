@@ -27,8 +27,7 @@ async fn main() -> anyhow::Result<()> {
     config.apply_process_limits();
     rag_mcp::ops::configure_runtime(config.tool_surface.as_str(), config.http_bind.clone());
     rag_mcp::ops::set_startup_phase("validating_paths");
-    rag_mcp::ops::validate_runtime_paths(&config)
-        .context("runtime path validation failed")?;
+    rag_mcp::ops::validate_runtime_paths(&config).context("runtime path validation failed")?;
     rag_mcp::ops::set_startup_phase("opening_store");
     let store = rag_mcp::storage::open_configured(&config)
         .context("failed to open configured storage backend")?;
@@ -223,5 +222,3 @@ async fn shutdown_signal() -> std::io::Result<()> {
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await
 }
-
-

@@ -40,8 +40,11 @@ impl BackendKind {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::DuckDb => "duckdb", Self::Sqlite => "sqlite", Self::Postgres => "postgres",
-            Self::Markdown => "markdown", Self::Memory => "memory",
+            Self::DuckDb => "duckdb",
+            Self::Sqlite => "sqlite",
+            Self::Postgres => "postgres",
+            Self::Markdown => "markdown",
+            Self::Memory => "memory",
         }
     }
 }
@@ -61,9 +64,12 @@ pub enum StorageCapability {
 impl StorageCapability {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Documents => "documents", Self::FullTextSearch => "full_text_search",
-            Self::VectorSearch => "vector_search", Self::Transactions => "transactions",
-            Self::Graph => "graph", Self::TemporalKnowledgeGraph => "temporal_knowledge_graph",
+            Self::Documents => "documents",
+            Self::FullTextSearch => "full_text_search",
+            Self::VectorSearch => "vector_search",
+            Self::Transactions => "transactions",
+            Self::Graph => "graph",
+            Self::TemporalKnowledgeGraph => "temporal_knowledge_graph",
         }
     }
 }
@@ -139,11 +145,17 @@ pub fn open_configured_storage(config: &Config) -> Result<Box<dyn Storage>, AppE
 }
 
 pub fn markdown_capability_names() -> Vec<String> {
-    markdown::CAPABILITIES.iter().map(|cap| cap.as_str().to_string()).collect()
+    markdown::CAPABILITIES
+        .iter()
+        .map(|cap| cap.as_str().to_string())
+        .collect()
 }
 
 pub fn duckdb_capability_names() -> Vec<String> {
-    duckdb::CAPABILITIES.iter().map(|cap| cap.as_str().to_string()).collect()
+    duckdb::CAPABILITIES
+        .iter()
+        .map(|cap| cap.as_str().to_string())
+        .collect()
 }
 
 #[cfg(test)]

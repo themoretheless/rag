@@ -409,9 +409,12 @@ mod tests {
             prefix: prefix.map(str::to_string),
         };
 
-        let response = ops_log(State(st.clone()), Query(query(Some("ALICE"), Some("wiki"), None)))
-            .await
-            .into_response();
+        let response = ops_log(
+            State(st.clone()),
+            Query(query(Some("ALICE"), Some("wiki"), None)),
+        )
+        .await
+        .into_response();
         let json = body(response).await;
         assert_eq!(json["count"], 1, "{json}");
         assert_eq!(json["items"][0]["op"], "wiki_write");

@@ -180,7 +180,6 @@ pub struct MaintainCompressReport {
     pub notes: Vec<String>,
 }
 
-
 /// Run compression according to `opts.level`.
 ///
 /// Never hard-deletes `layer=raw` without `allow_raw_delete`. Level 2 merges
@@ -677,9 +676,9 @@ fn load_docs_ordered(store: &Store, ids: &[String]) -> Result<Vec<Document>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::SeedDoc;
     use crate::models::SearchMode;
-    
+    use crate::testkit::SeedDoc;
+
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf) -> Config {
@@ -970,7 +969,8 @@ mod tests {
         store.set_embedding_manifest(&migration).unwrap();
         // Compare against the persisted round-trip: DuckDB keeps microseconds,
         // while `Utc::now()` carries nanoseconds on Linux.
-        let manifest_before = serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap();
+        let manifest_before =
+            serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap();
         let stats_before = store.stats().unwrap();
         let documents_before = serde_json::to_value(store.list_documents().unwrap()).unwrap();
         let chunks_before =

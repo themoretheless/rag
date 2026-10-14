@@ -3,10 +3,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::gateway::{
-    GatewayClient, Method,
-    ReqwestGatewayClient,
-};
+use crate::gateway::{GatewayClient, Method, ReqwestGatewayClient};
 
 const BACKUP_TIMEOUT_SECS: u64 = 30 * 60;
 

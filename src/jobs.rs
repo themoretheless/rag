@@ -45,8 +45,6 @@ pub(crate) fn sync_command(request: &SyncJobRequest) -> SourceSyncCommand {
     }
 }
 
-
-
 impl From<SourceSyncReport> for SourceSyncJobReport {
     fn from(report: SourceSyncReport) -> Self {
         Self {
@@ -61,7 +59,6 @@ impl From<SourceSyncReport> for SourceSyncJobReport {
         }
     }
 }
-
 
 pub(crate) struct JobEntry {
     pub(crate) sequence: u64,
@@ -535,3 +532,6 @@ pub(crate) fn prune_jobs_to(jobs: &mut HashMap<String, JobEntry>, maximum: usize
     }
     removed
 }
+
+#[cfg(test)]
+mod tests;

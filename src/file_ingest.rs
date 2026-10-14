@@ -37,13 +37,18 @@ pub struct ExtractedFile {
 pub fn is_supported_source(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(),
-            "md" | "markdown" | "txt" | "html" | "htm" | "pdf"
-        ) || source_language(ext).is_some())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "txt" | "html" | "htm" | "pdf"
+            ) || source_language(ext).is_some()
+        })
 }
 
 pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
-    let extension = path.extension().and_then(|ext| ext.to_str())
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase);
     let format = match extension.as_deref() {
         Some("html" | "htm") => "html",
@@ -56,27 +61,39 @@ pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
         extract_pdf(path)?
     } else {
         let bytes = std::fs::read(path).map_err(|source| FileIngestError::Read {
-            path: path.display().to_string(), source,
+            path: path.display().to_string(),
+            source,
         })?;
         if bytes.contains(&0) {
             return Err(FileIngestError::Binary(path.display().to_string()));
         }
         let text = String::from_utf8(bytes).map_err(|source| FileIngestError::Utf8 {
-            path: path.display().to_string(), source,
+            path: path.display().to_string(),
+            source,
         })?;
-        if format == "html" { html_to_text(&text) } else { text }
+        if format == "html" {
+            html_to_text(&text)
+        } else {
+            text
+        }
     };
 
     let mut metadata = Map::new();
     metadata.insert("format".into(), Value::String(format.into()));
-    metadata.insert("source_path".into(), Value::String(path.display().to_string()));
+    metadata.insert(
+        "source_path".into(),
+        Value::String(path.display().to_string()),
+    );
     if let Some(language) = extension.as_deref().and_then(source_language) {
         metadata.insert("language".into(), Value::String(language.into()));
     }
     Ok(ExtractedFile { text, metadata })
 }
 
-pub fn merge_metadata(existing: Option<String>, additions: Map<String, Value>) -> Result<String, serde_json::Error> {
+pub fn merge_metadata(
+    existing: Option<String>,
+    additions: Map<String, Value>,
+) -> Result<String, serde_json::Error> {
     let mut value = match existing.filter(|s| !s.trim().is_empty()) {
         Some(raw) => serde_json::from_str::<Value>(&raw)?,
         None => Value::Object(Map::new()),
@@ -90,11 +107,22 @@ pub fn merge_metadata(existing: Option<String>, additions: Map<String, Value>) -
 }
 
 fn extract_pdf(path: &Path) -> Result<String, FileIngestError> {
-    let output = Command::new("pdftotext").arg("-layout").arg(path).arg("-").output()
-        .map_err(|error| if error.kind() == std::io::ErrorKind::NotFound {
-            FileIngestError::PdfToolMissing { path: path.display().to_string() }
-        } else {
-            FileIngestError::Read { path: path.display().to_string(), source: error }
+    let output = Command::new("pdftotext")
+        .arg("-layout")
+        .arg(path)
+        .arg("-")
+        .output()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                FileIngestError::PdfToolMissing {
+                    path: path.display().to_string(),
+                }
+            } else {
+                FileIngestError::Read {
+                    path: path.display().to_string(),
+                    source: error,
+                }
+            }
         })?;
     if !output.status.success() {
         return Err(FileIngestError::PdfExtract {
@@ -103,21 +131,41 @@ fn extract_pdf(path: &Path) -> Result<String, FileIngestError> {
         });
     }
     String::from_utf8(output.stdout).map_err(|source| FileIngestError::Utf8 {
-        path: path.display().to_string(), source,
+        path: path.display().to_string(),
+        source,
     })
 }
 
 fn source_language(ext: &str) -> Option<&'static str> {
     Some(match ext.to_ascii_lowercase().as_str() {
-        "rs" => "rust", "py" => "python", "js" | "mjs" | "cjs" => "javascript",
-        "ts" | "tsx" => "typescript", "jsx" => "javascript", "java" => "java",
-        "c" | "h" => "c", "cc" | "cpp" | "cxx" | "hpp" => "cpp",
-        "cs" => "csharp", "go" => "go", "rb" => "ruby", "php" => "php",
-        "swift" => "swift", "kt" | "kts" => "kotlin", "scala" => "scala",
-        "sh" | "bash" | "zsh" => "shell", "sql" => "sql", "lua" => "lua",
-        "ex" | "exs" => "elixir", "erl" | "hrl" => "erlang", "r" => "r",
-        "vue" => "vue", "svelte" => "svelte", "toml" => "toml", "yaml" | "yml" => "yaml",
-        "json" => "json", "xml" => "xml", "css" | "scss" | "sass" | "less" => "css",
+        "rs" => "rust",
+        "py" => "python",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "jsx" => "javascript",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cc" | "cpp" | "cxx" | "hpp" => "cpp",
+        "cs" => "csharp",
+        "go" => "go",
+        "rb" => "ruby",
+        "php" => "php",
+        "swift" => "swift",
+        "kt" | "kts" => "kotlin",
+        "scala" => "scala",
+        "sh" | "bash" | "zsh" => "shell",
+        "sql" => "sql",
+        "lua" => "lua",
+        "ex" | "exs" => "elixir",
+        "erl" | "hrl" => "erlang",
+        "r" => "r",
+        "vue" => "vue",
+        "svelte" => "svelte",
+        "toml" => "toml",
+        "yaml" | "yml" => "yaml",
+        "json" => "json",
+        "xml" => "xml",
+        "css" | "scss" | "sass" | "less" => "css",
         _ => return None,
     })
 }
@@ -131,19 +179,49 @@ fn html_to_text(html: &str) -> String {
         if in_tag {
             if character == '>' {
                 let normalized = tag.trim().to_ascii_lowercase();
-                let name = normalized.trim_start_matches('/').split_whitespace().next().unwrap_or("");
-                if normalized.starts_with('/') && suppressed.as_deref() == Some(name) { suppressed = None; }
-                else if !normalized.starts_with('/') && matches!(name, "script" | "style") { suppressed = Some(name.to_string()); }
-                if suppressed.is_none() && matches!(name, "p" | "div" | "br" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "tr") {
+                let name = normalized
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if normalized.starts_with('/') && suppressed.as_deref() == Some(name) {
+                    suppressed = None;
+                } else if !normalized.starts_with('/') && matches!(name, "script" | "style") {
+                    suppressed = Some(name.to_string());
+                }
+                if suppressed.is_none()
+                    && matches!(
+                        name,
+                        "p" | "div" | "br" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "tr"
+                    )
+                {
                     output.push('\n');
                 }
                 tag.clear();
                 in_tag = false;
-            } else { tag.push(character); }
-        } else if character == '<' { in_tag = true; }
-        else if suppressed.is_none() { output.push(character); }
+            } else {
+                tag.push(character);
+            }
+        } else if character == '<' {
+            in_tag = true;
+        } else if suppressed.is_none() {
+            output.push(character);
+        }
     }
-    let decoded = output.replace("&nbsp;", " ").replace("&amp;", "&")
-        .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'");
-    decoded.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join("\n")
+    let decoded = output
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+    decoded
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
+
+#[cfg(test)]
+mod tests;

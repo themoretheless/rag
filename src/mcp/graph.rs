@@ -33,9 +33,11 @@ impl RagServer {
         let kinds = params.kinds.or_else(|| Some(pkb_node_kinds(include_tags)));
         // Naming tag nodes as a kind means the caller wants the edges that reach them.
         let wants_tags = include_tags
-            || kinds
-                .as_deref()
-                .is_some_and(|kinds| kinds.iter().any(|kind| crate::models::NodeKind::Tag.is(kind)));
+            || kinds.as_deref().is_some_and(|kinds| {
+                kinds
+                    .iter()
+                    .any(|kind| crate::models::NodeKind::Tag.is(kind))
+            });
         let filter = GraphFilter {
             max_nodes: params.max_nodes,
             rel_types: params.rel_types.or_else(|| Some(pkb_rel_types(wants_tags))),

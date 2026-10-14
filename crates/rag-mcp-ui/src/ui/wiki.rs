@@ -777,7 +777,10 @@ impl WikiKnownKeys {
 enum InlineSegment<'a> {
     Plain(&'a str),
     /// `key` is the link target (heading stripped); `display` is the alias or target.
-    Link { key: String, display: String },
+    Link {
+        key: String,
+        display: String,
+    },
 }
 
 /// Owned form of [`InlineSegment`] for the per-line egui cache: plain runs
@@ -965,7 +968,6 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri, WikiKnownKeys};
@@ -1056,7 +1058,10 @@ mod tests {
                 ("Beta".to_string(), "Beta".to_string()),
             ]
         );
-        assert_eq!(wikilink_segments("plain"), vec![InlineSegment::Plain("plain")]);
+        assert_eq!(
+            wikilink_segments("plain"),
+            vec![InlineSegment::Plain("plain")]
+        );
         // Multi-byte text before a link keeps slicing on char boundaries.
         assert_eq!(
             wikilink_segments("Привет [[Мир]]!"),

@@ -120,32 +120,34 @@ pub async fn consolidate(
     let source_count = resolved.len();
 
     if !apply {
-        let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "consolidate".into(),
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "consolidate dry_run proposed wiki://{} from {} source(s)",
-                proposed.slug, source_count
-            ),
-            entity_id: None,
-            entity_kind: Some(LAYER_WIKI.into()),
-            payload_json: serde_json::json!({
-                "apply": false,
-                "dry_run": true,
-                "source_ids": &source_ids,
-                "source_uris": &source_uris,
-                "slug": &proposed.slug,
-                "title": &proposed.title,
-                "kind": &proposed.kind,
-                "capped": capped,
-                "max_docs": max_docs,
+        let _ = crate::util::blocking_section(|| {
+            store.append_ops_log(&OpsLogEntry {
+                id: Uuid::new_v4().to_string(),
+                seq: 0,
+                ts: Utc::now(),
+                op: "consolidate".into(),
+                prefix: Some("MAINT".into()),
+                message: format!(
+                    "consolidate dry_run proposed wiki://{} from {} source(s)",
+                    proposed.slug, source_count
+                ),
+                entity_id: None,
+                entity_kind: Some(LAYER_WIKI.into()),
+                payload_json: serde_json::json!({
+                    "apply": false,
+                    "dry_run": true,
+                    "source_ids": &source_ids,
+                    "source_uris": &source_uris,
+                    "slug": &proposed.slug,
+                    "title": &proposed.title,
+                    "kind": &proposed.kind,
+                    "capped": capped,
+                    "max_docs": max_docs,
+                })
+                .to_string(),
+                agent_name: agent.map(|s| s.to_string()),
             })
-            .to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        }))?;
+        })?;
 
         return Ok(ConsolidateResult {
             source_ids,
@@ -175,33 +177,35 @@ pub async fn consolidate(
     )
     .await?;
 
-    let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: "consolidate".into(),
-        prefix: Some("MAINT".into()),
-        message: format!(
-            "consolidated {} source(s) into wiki://{}",
-            source_count, written.slug
-        ),
-        entity_id: Some(written.document_id.clone()),
-        entity_kind: Some(LAYER_WIKI.into()),
-        payload_json: serde_json::json!({
-            "apply": true,
-            "dry_run": false,
-            "source_ids": &source_ids,
-            "source_uris": &source_uris,
-            "slug": &written.slug,
-            "document_id": &written.document_id,
-            "node_id": &written.node_id,
-            "edge_count": written.edge_count,
-            "capped": capped,
-            "max_docs": max_docs,
+    let _ = crate::util::blocking_section(|| {
+        store.append_ops_log(&OpsLogEntry {
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "consolidate".into(),
+            prefix: Some("MAINT".into()),
+            message: format!(
+                "consolidated {} source(s) into wiki://{}",
+                source_count, written.slug
+            ),
+            entity_id: Some(written.document_id.clone()),
+            entity_kind: Some(LAYER_WIKI.into()),
+            payload_json: serde_json::json!({
+                "apply": true,
+                "dry_run": false,
+                "source_ids": &source_ids,
+                "source_uris": &source_uris,
+                "slug": &written.slug,
+                "document_id": &written.document_id,
+                "node_id": &written.node_id,
+                "edge_count": written.edge_count,
+                "capped": capped,
+                "max_docs": max_docs,
+            })
+            .to_string(),
+            agent_name: agent.map(|s| s.to_string()),
         })
-        .to_string(),
-        agent_name: agent.map(|s| s.to_string()),
-    }))?;
+    })?;
 
     Ok(ConsolidateResult {
         source_ids,

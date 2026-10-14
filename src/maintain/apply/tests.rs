@@ -1,7 +1,7 @@
 use super::*;
 use crate::db;
-use crate::llm::ChatClient;
 use crate::embeddings::MockEmbedder;
+use crate::llm::ChatClient;
 use crate::models::SearchMode;
 use crate::testkit::SeedDoc;
 use crate::util::content_hash;

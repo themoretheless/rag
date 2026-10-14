@@ -133,3 +133,6 @@ pub(crate) fn accept_locked(
     proposal.revision += 1;
     save(conn, &proposal)
 }
+
+#[cfg(test)]
+mod tests;

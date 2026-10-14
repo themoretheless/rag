@@ -537,7 +537,9 @@ fn pick_wikilink_node(matches: &[GraphNode]) -> Option<&GraphNode> {
 /// Existing promotion target for a wikilink: an unresolved stub-like node. Both
 /// tag and structural-entity nodes carry `resolved = true`, so they never match.
 fn pick_stub_node(matches: &[GraphNode]) -> Option<&GraphNode> {
-    matches.iter().find(|n| NodeKind::Stub.is(&n.kind) || !n.resolved)
+    matches
+        .iter()
+        .find(|n| NodeKind::Stub.is(&n.kind) || !n.resolved)
 }
 
 fn upsert_stub(conn: &Connection, label: &str) -> Result<String> {

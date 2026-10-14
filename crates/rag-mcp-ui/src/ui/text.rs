@@ -29,6 +29,9 @@ mod tests {
     fn truncate_counts_the_ellipsis_and_short_timestamp_drops_fractions() {
         assert_eq!(truncate("абвгде", 4), "абв…");
         assert_eq!(truncate("abc", 3), "abc");
-        assert_eq!(short_timestamp("2026-09-02T12:34:56.123+00:00"), "2026-09-02 12:34:56");
+        assert_eq!(
+            short_timestamp("2026-09-02T12:34:56.123+00:00"),
+            "2026-09-02 12:34:56"
+        );
     }
 }

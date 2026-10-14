@@ -144,9 +144,7 @@ impl EmbeddingProvider for PrecomputedEmbedder {
 /// [`ollama::prefers_openai_compat_path`]); callers never branch on kind for construction.
 pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
     match config.embedding_provider {
-        EmbeddingProviderKind::Mock => {
-            Ok(Arc::new(MockEmbedder::new(config.embedding_dims)))
-        }
+        EmbeddingProviderKind::Mock => Ok(Arc::new(MockEmbedder::new(config.embedding_dims))),
         EmbeddingProviderKind::OpenAi => {
             let provider = OpenAiEmbedder::new(
                 config.embedding_base_url.clone(),

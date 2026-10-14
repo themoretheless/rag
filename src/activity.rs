@@ -8,7 +8,6 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-
 /// Ring-buffer capacity; the oldest event is dropped first.
 pub const MAX_ACTIVITY_EVENTS: usize = 1_000;
 

@@ -412,7 +412,9 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let document_id = params.document_id.clone();
         let deleted = self
-            .blocking("delete_document", move |store| store.delete_document(&document_id))
+            .blocking("delete_document", move |store| {
+                store.delete_document(&document_id)
+            })
             .await?;
         if !deleted {
             return Err(McpError::from(AppError::not_found(format!(

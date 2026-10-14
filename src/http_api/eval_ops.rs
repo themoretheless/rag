@@ -280,9 +280,15 @@ async fn online_one(st: HttpState, body: OnlineBody) -> Result<Value> {
 async fn export(State(st): State<HttpState>, Query(q): Query<ExportQuery>) -> Response {
     let result = super::run_blocking("export eval bundle", move || {
         seed_builtin_prompt(&st.store)?;
-        let include = q.include.unwrap_or_else(|| "runs,traces,prompts,feedback".into());
+        let include = q
+            .include
+            .unwrap_or_else(|| "runs,traces,prompts,feedback".into());
         let limit = q.limit.unwrap_or(EXPORT_CAP).min(EXPORT_CAP);
-        let want = |name: &str| include.split(',').any(|p| p.trim() == name || p.trim() == "all");
+        let want = |name: &str| {
+            include
+                .split(',')
+                .any(|p| p.trim() == name || p.trim() == "all")
+        };
         let prompts = if want("prompts") {
             list_table_payloads(&st.store, "eval_prompts", limit)?
         } else {
@@ -368,8 +374,11 @@ fn upsert_prompt(store: &Store, prompt: &PromptVersion) -> Result<()> {
 }
 
 fn load_prompt(store: &Store, id: &str) -> Result<Option<PromptVersion>> {
-    match super::payload_kv::get_payload_raw(store, super::payload_kv::PayloadTable::EvalPrompts, id)?
-    {
+    match super::payload_kv::get_payload_raw(
+        store,
+        super::payload_kv::PayloadTable::EvalPrompts,
+        id,
+    )? {
         Some(raw) => Ok(Some(serde_json::from_str(&raw)?)),
         None => {
             let builtin = builtin_answer_judge();
@@ -389,7 +398,9 @@ fn list_table_payloads(store: &Store, table: &str, limit: usize) -> Result<Vec<V
         "eval_traces" => super::payload_kv::PayloadTable::EvalTraces,
         "search_feedback" => super::payload_kv::PayloadTable::SearchFeedback,
         other => {
-            return Err(AppError::invalid(format!("unsupported export table: {other}")))
+            return Err(AppError::invalid(format!(
+                "unsupported export table: {other}"
+            )))
         }
     };
     let mut items = super::payload_kv::list_payload_values(store, table)?;
@@ -397,7 +408,6 @@ fn list_table_payloads(store: &Store, table: &str, limit: usize) -> Result<Vec<V
     items.truncate(limit);
     Ok(items)
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -124,8 +124,7 @@ pub struct LexFilters {
 
 /// Retrieval's status predicate on the `d` documents alias: archived and
 /// tombstoned documents are hidden unless `include_archived` is set.
-const ACTIVE_DOCUMENT_SQL: &str =
-    "COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')";
+const ACTIVE_DOCUMENT_SQL: &str = "COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')";
 
 impl LexFilters {
     /// The one scope predicate shared by the lexical and vector retrieval legs.
@@ -1199,7 +1198,10 @@ mod tests {
         assert_eq!(lexical_bind, vec!["doc-1".to_string(), "rag".to_string()]);
         assert_eq!(lexical_bind, vector_bind);
         assert!(lexical_sql.contains("c.document_id = ?") && vector_sql.contains("d.id = ?"));
-        assert!(!lexical_sql.contains("d.room"), "blank scope values are ignored");
+        assert!(
+            !lexical_sql.contains("d.room"),
+            "blank scope values are ignored"
+        );
     }
     use crate::db::schema;
     use crate::models::{Chunk, Document};

@@ -51,7 +51,12 @@ pub fn compare_query_metrics(
     dataset_content_hash: String,
     settings_a: SearchSettingsProfile,
     settings_b: SearchSettingsProfile,
-    pairs: Vec<(String, QuerySideMetrics, QuerySideMetrics, Option<ErrorLabel>)>,
+    pairs: Vec<(
+        String,
+        QuerySideMetrics,
+        QuerySideMetrics,
+        Option<ErrorLabel>,
+    )>,
     epsilon: f64,
 ) -> CompareReport {
     let side_a_name = settings_a.display_name("A");

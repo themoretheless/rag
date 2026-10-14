@@ -31,7 +31,6 @@ const SOURCE_SYNC_BATCH_MAX_DOCUMENTS: usize = 64;
 const SOURCE_SYNC_BATCH_MAX_CHUNKS: usize = 64;
 const FTS_FINALIZATION_ERROR_CODE: &str = "FTS_FINALIZATION_FAILED";
 
-
 #[derive(Debug, Clone)]
 pub struct SourceSyncCommand {
     pub path: PathBuf,
@@ -55,8 +54,6 @@ impl SourceSyncCommand {
     }
 }
 
-
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceSyncReport {
     pub added: Vec<String>,
@@ -69,7 +66,6 @@ pub struct SourceSyncReport {
     pub counters: SourceSyncCounters,
 }
 
-
 impl SourceSyncReport {
     fn sort_paths(&mut self) {
         self.added.sort();
@@ -80,8 +76,6 @@ impl SourceSyncReport {
             .sort_by(|left, right| left.path.cmp(&right.path));
     }
 }
-
-
 
 fn progress_from_report(
     phase: SourceSyncPhase,
@@ -980,7 +974,10 @@ fn inferred_scope(root: &Path, path: &Path) -> (String, String) {
                 components.next().unwrap_or("root").to_string(),
             );
         }
-        (top_level.to_string(), components.next().unwrap_or("root").to_string())
+        (
+            top_level.to_string(),
+            components.next().unwrap_or("root").to_string(),
+        )
     } else {
         let room = relative
             .parent()
@@ -1005,8 +1002,8 @@ fn belongs_to_dodo_group(root: &Path, path: &Path) -> bool {
 }
 
 fn add_metadata_tag(metadata_json: &str, tag: &str) -> Result<String, AppError> {
-    let mut metadata: serde_json::Value = serde_json::from_str(metadata_json)
-        .map_err(|error| AppError::config(error.to_string()))?;
+    let mut metadata: serde_json::Value =
+        serde_json::from_str(metadata_json).map_err(|error| AppError::config(error.to_string()))?;
     let object = metadata
         .as_object_mut()
         .ok_or_else(|| AppError::config("document metadata must be a JSON object"))?;

@@ -1176,3 +1176,84 @@ fn import_preserves_document_timestamps_to_the_microsecond() {
     assert_eq!(restored.updated_at, updated);
     assert_eq!(store.list_chunks_for_document("timed").unwrap().len(), 1);
 }
+
+fn preflight_bundle(chunks_per_doc: &[usize]) -> RecoveryBundle {
+    RecoveryBundle {
+        format: "rag-mcp-recovery".into(),
+        version: BUNDLE_VERSION,
+        exported_at: Utc::now(),
+        embedding_manifest: Some(recovery_manifest()),
+        documents: chunks_per_doc
+            .iter()
+            .enumerate()
+            .map(|(d, count)| {
+                let id = format!("doc-{d}");
+                BundleDocument {
+                    document: recovery_document(&id, &format!("recovery://{id}"), "body"),
+                    chunks: (0..*count)
+                        .map(|c| recovery_chunk(&format!("{id}-c{c}"), &id, "chunk"))
+                        .collect(),
+                }
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn preflight_recovery_bundle_counts_documents_chunks_and_vector_values() {
+    let bundle = preflight_bundle(&[2, 0, 1]);
+    let preflight = preflight_recovery_bundle(&bundle).unwrap();
+    assert_eq!(preflight.documents, 3);
+    assert_eq!(preflight.chunks, 3);
+    // recovery_chunk carries two-dimensional embeddings.
+    assert_eq!(preflight.embedding_values, 6);
+    assert!(preflight.estimated_bytes > 0);
+
+    let empty = preflight_recovery_bundle(&preflight_bundle(&[])).unwrap();
+    assert_eq!(
+        (empty.documents, empty.chunks, empty.embedding_values),
+        (0, 0, 0)
+    );
+    assert!(empty.estimated_bytes < preflight.estimated_bytes);
+}
+
+#[test]
+fn preflight_recovery_bundle_reembed_sizes_vectors_by_target_dimensions() {
+    let bundle = preflight_bundle(&[2, 1]);
+    let stored = preflight_recovery_bundle(&bundle).unwrap();
+    let reembed = preflight_recovery_bundle_reembed(&bundle, 10).unwrap();
+    assert_eq!(reembed.documents, stored.documents);
+    assert_eq!(reembed.chunks, 3);
+    assert_eq!(reembed.embedding_values, 30);
+    // Only vector values differ; each is budgeted at the worst-case float width.
+    assert_eq!(
+        reembed.estimated_bytes - stored.estimated_bytes,
+        (30 - 6) * JSON_FLOAT_WORST_CASE_BYTES
+    );
+}
+
+#[test]
+fn preflight_recovery_bundle_reembed_refuses_oversized_target_vectors() {
+    let bundle = preflight_bundle(&[1]);
+    assert!(preflight_recovery_bundle(&bundle).is_ok());
+    let dims =
+        usize::try_from(PORTABLE_RECOVERY_MAX_BYTES / JSON_FLOAT_WORST_CASE_BYTES).unwrap() + 1;
+    let error = preflight_recovery_bundle_reembed(&bundle, dims).unwrap_err();
+    assert!(
+        error.to_string().contains("materialized-size estimate"),
+        "{error}"
+    );
+}
+
+#[test]
+fn preflight_recovery_bundle_refuses_too_many_chunks() {
+    let max = usize::try_from(PORTABLE_RECOVERY_MAX_CHUNKS).unwrap();
+    let bundle = preflight_bundle(&[max + 1]);
+    let error = preflight_recovery_bundle(&bundle).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("contains {} chunks", max + 1)),
+        "{error}"
+    );
+}

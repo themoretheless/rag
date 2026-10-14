@@ -55,4 +55,3 @@ pub(super) async fn search_response_error(response: axum::response::Response) ->
         String::from_utf8_lossy(&bytes)
     ))
 }
-

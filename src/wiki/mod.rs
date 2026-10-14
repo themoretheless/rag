@@ -299,27 +299,27 @@ pub struct ConsolidateResult {
     pub notes: Option<String>,
 }
 
-mod schema;
-mod write;
 mod compile;
 mod consolidate;
-mod stale;
 mod file_answer;
-mod lint;
 mod index;
+mod lint;
 mod put;
 mod review;
+mod schema;
+mod stale;
+mod write;
 
-pub use self::schema::*;
-pub use self::write::*;
 pub use self::compile::*;
 pub use self::consolidate::*;
-pub use self::stale::*;
 pub use self::file_answer::*;
-pub use self::lint::*;
 use self::index::*;
+pub use self::lint::*;
 pub use self::put::*;
 pub use self::review::create_review_proposal;
+pub use self::schema::*;
+pub use self::stale::*;
+pub use self::write::*;
 
 #[cfg(test)]
 mod tests;

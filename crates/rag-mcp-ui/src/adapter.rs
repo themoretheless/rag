@@ -195,7 +195,8 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let anchors: HashSet<&str> = kind_visible
         .iter()
         .filter(|node| {
-            rag_mcp_core::NodeKind::Document.is(&node.kind) && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
+            rag_mcp_core::NodeKind::Document.is(&node.kind)
+                && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
         })
         .map(|node| node.id.as_str())
         .collect();
@@ -687,7 +688,12 @@ pub fn topology_generation(view: &GraphView) -> u64 {
 fn node_layer_is_wiki(metadata_json: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(metadata_json)
         .ok()
-        .and_then(|value| value.get("layer")?.as_str().map(|layer| rag_mcp_core::Layer::Wiki.is(layer)))
+        .and_then(|value| {
+            value
+                .get("layer")?
+                .as_str()
+                .map(|layer| rag_mcp_core::Layer::Wiki.is(layer))
+        })
         .unwrap_or(false)
 }
 

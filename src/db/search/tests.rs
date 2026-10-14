@@ -556,7 +556,10 @@ fn search_vec_respects_wing_room_source_and_archived() {
     let (_, unscoped) = vector_search_inputs(&store, &LexFilters::default()).unwrap();
     match &unscoped {
         VectorDocumentScope::Excluding(ids) => {
-            assert_eq!(ids.iter().map(String::as_str).collect::<Vec<_>>(), vec!["arch"]);
+            assert_eq!(
+                ids.iter().map(String::as_str).collect::<Vec<_>>(),
+                vec!["arch"]
+            );
         }
         VectorDocumentScope::Only(_) => panic!("unscoped search must use an exclusion set"),
     }
@@ -1589,7 +1592,12 @@ fn layer_only_vector_scope_lists_the_smaller_side() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(&dir.path().join("layers.duckdb")).expect("open");
     for index in 0..3 {
-        vector_test_document(&store, &format!("raw{index}"), "raw", vec![1.0, index as f32]);
+        vector_test_document(
+            &store,
+            &format!("raw{index}"),
+            "raw",
+            vec![1.0, index as f32],
+        );
     }
     vector_test_document(&store, "wiki0", "wiki", vec![1.0, 0.0]);
     vector_test_document(&store, "nolayer", "raw", vec![1.0, 0.0]);
@@ -1616,7 +1624,11 @@ fn layer_only_vector_scope_lists_the_smaller_side() {
     // wiki matches 1 of 5: listed directly.
     let (_, wiki) = vector_search_inputs(&store, &layer("wiki")).unwrap();
     assert_eq!(
-        wiki.only_ids().unwrap().iter().map(String::as_str).collect::<Vec<_>>(),
+        wiki.only_ids()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         vec!["wiki0"]
     );
 

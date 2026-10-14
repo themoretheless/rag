@@ -121,11 +121,7 @@ impl Store {
     ) -> FtsFinalizationFailure {
         // Called from async workflows after a failed finalization task.
         crate::util::blocking_section(|| {
-            self.record_fts_finalization_failure_inner(
-                operation,
-                durable_mutation_committed,
-                error,
-            )
+            self.record_fts_finalization_failure_inner(operation, durable_mutation_committed, error)
         })
     }
 

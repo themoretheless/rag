@@ -644,7 +644,10 @@ mod tests {
         assert_eq!(command.diversity, None);
         assert_eq!(command.timeout_ms, Some(DEFAULT_SEARCH_TIMEOUT_MS));
         assert_eq!(command.max_context_tokens, Some(config.max_context_tokens));
-        assert_eq!(command.max_chunks_per_document, Some(config.max_chunks_per_doc));
+        assert_eq!(
+            command.max_chunks_per_document,
+            Some(config.max_chunks_per_doc)
+        );
     }
     use crate::embeddings::MockEmbedder;
     use async_trait::async_trait;
