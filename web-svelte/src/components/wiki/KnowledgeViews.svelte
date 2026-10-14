@@ -6,6 +6,8 @@
   type Filter = {q:string;wing:string;document_type:string;review_status:string;owner:string;due_before:string;offset:number}
   type Row = {id:string;uri:string;title:string;wing:string|null;revision:number;properties:Partial<Props>}
   type View = {id:string;name:string;revision:number;filters:Filter}
+  const DOCUMENT_TYPE_OPTIONS = [['note','Заметка'],['decision','Решение'],['guide','Инструкция'],['service','Сервис'],['research','Исследование']] as const
+  const REVIEW_STATUS_OPTIONS = [['draft','Черновик'],['needs_review','Нужна проверка'],['verified','Проверено']] as const
   const blankProps:Props={document_type:'',review_status:'',owner:'',review_due:''}
   const blankFilter:Filter={q:'',wing:'',document_type:'',review_status:'',owner:'',due_before:'',offset:0}
   let filter = $state<Filter>({...blankFilter})
@@ -62,8 +64,8 @@
 <p>Представления отбирают актуальный список wiki-статей по свойствам. Статус «Проверено» задаёт человек; он не заменяет проверку источников.</p>
 <div class="filters">
 <label>Название<input bind:value={filter.q} /></label><label>Проект<input bind:value={filter.wing} /></label>
-<label>Тип<select bind:value={filter.document_type}><option value="">Любой</option><option value="note">Заметка</option><option value="decision">Решение</option><option value="guide">Инструкция</option><option value="service">Сервис</option><option value="research">Исследование</option></select></label>
-<label>Проверка<select bind:value={filter.review_status}><option value="">Любой статус</option><option value="draft">Черновик</option><option value="needs_review">Нужна проверка</option><option value="verified">Проверено</option></select></label>
+<label>Тип<select bind:value={filter.document_type}><option value="">Любой</option>{#each DOCUMENT_TYPE_OPTIONS as [value, label]}<option {value}>{label}</option>{/each}</select></label>
+<label>Проверка<select bind:value={filter.review_status}><option value="">Любой статус</option>{#each REVIEW_STATUS_OPTIONS as [value, label]}<option {value}>{label}</option>{/each}</select></label>
 <label>Ответственный<input bind:value={filter.owner} /></label><label>Пересмотреть до<input type="date" bind:value={filter.due_before}/></label>
 </div>
 <button disabled={busy || dirty} onclick={()=>refresh()}>Применить фильтры</button>
@@ -75,8 +77,8 @@
 {#each rows as row (row.id)}<article><button disabled={busy || dirty} onclick={()=>goWiki(row.id)}>{row.title}</button><span>{row.wing || 'Без проекта'} · {row.properties.owner || 'Без ответственного'} · {row.properties.review_due || 'Без даты'}</span><button disabled={busy || dirty} onclick={()=>edit(row)}>Свойства</button></article>{/each}
 {#if rows.length<total}<button disabled={busy || dirty} onclick={()=>refresh(true)}>Загрузить ещё</button>{/if}
 {#if selected}<section aria-label="Свойства статьи"><h3>{selected.title}</h3><div class="filters">
-<label>Тип статьи<select bind:value={properties.document_type} disabled={busy}><option value="">Не задан</option><option value="note">Заметка</option><option value="decision">Решение</option><option value="guide">Инструкция</option><option value="service">Сервис</option><option value="research">Исследование</option></select></label>
-<label>Статус проверки<select bind:value={properties.review_status} disabled={busy}><option value="">Не задан</option><option value="draft">Черновик</option><option value="needs_review">Нужна проверка</option><option value="verified">Проверено</option></select></label>
+<label>Тип статьи<select bind:value={properties.document_type} disabled={busy}><option value="">Не задан</option>{#each DOCUMENT_TYPE_OPTIONS as [value, label]}<option {value}>{label}</option>{/each}</select></label>
+<label>Статус проверки<select bind:value={properties.review_status} disabled={busy}><option value="">Не задан</option>{#each REVIEW_STATUS_OPTIONS as [value, label]}<option {value}>{label}</option>{/each}</select></label>
 <label>Ответственный за статью<input bind:value={properties.owner} disabled={busy}/></label><label>Дата пересмотра<input type="date" bind:value={properties.review_due} disabled={busy}/></label></div>
 <button disabled={busy || !dirty} onclick={saveProperties}>Сохранить свойства</button><button disabled={busy} onclick={()=>{selected=null}}>Отменить</button></section>{/if}
 </details>
