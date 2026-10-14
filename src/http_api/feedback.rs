@@ -452,13 +452,15 @@ mod tests {
             &st.store,
             &st.embedder,
             &st.config,
-            "alpha",
-            "Alpha",
-            "alpha unique source",
-            "wiki",
-            None,
-            None,
-            None,
+            crate::wiki::WikiPageWrite {
+                slug: "alpha",
+                title: "Alpha",
+                content: "alpha unique source",
+                kind: "wiki",
+                category: None,
+                summary: None,
+                agent: None,
+            },
         )
         .await
         .unwrap();

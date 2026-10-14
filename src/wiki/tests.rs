@@ -516,12 +516,14 @@ async fn maintenance_compile_and_stale_refresh_reuse_the_exclusive_lease() {
         &store,
         &embedder,
         &config,
-        "Source content".into(),
-        Some("Source".into()),
-        Some("raw://compiled-source".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "Source content".into(),
+            title: Some("Source".into()),
+            uri: Some("raw://compiled-source".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .unwrap();
@@ -595,12 +597,14 @@ async fn consolidate_creates_and_updates_with_required_if_match() {
         &store,
         &embedder,
         &config,
-        "Raw source".into(),
-        Some("Source".into()),
-        Some("raw://source".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "Raw source".into(),
+            title: Some("Source".into()),
+            uri: Some("raw://source".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .unwrap();
@@ -615,10 +619,12 @@ async fn consolidate_creates_and_updates_with_required_if_match() {
             &embedder,
             &config,
             &llm,
-            std::slice::from_ref(&raw.document_id),
-            true,
-            ConsolidateOpts::default(),
-            None,
+            ConsolidateRequest {
+                document_ids: std::slice::from_ref(&raw.document_id),
+                apply: true,
+                opts: ConsolidateOpts::default(),
+                agent: None,
+            },
         )
         .await
         .unwrap();
@@ -657,12 +663,14 @@ async fn generated_wiki_rejects_concurrent_edits_and_creates_during_llm_generati
                 &store,
                 &embedder,
                 &config,
-                "Raw source".into(),
-                Some("Source".into()),
-                Some("raw://source".into()),
-                None,
-                None,
-                None,
+                RawIngest {
+                    text: "Raw source".into(),
+                    title: Some("Source".into()),
+                    uri: Some("raw://source".into()),
+                    wing: None,
+                    room: None,
+                    source_file: None,
+                },
             )
             .await
             .unwrap();
@@ -694,10 +702,12 @@ async fn generated_wiki_rejects_concurrent_edits_and_creates_during_llm_generati
                         &work_embedder,
                         &work_config,
                         &llm,
-                        &[raw.document_id],
-                        true,
-                        ConsolidateOpts::default(),
-                        None,
+                        ConsolidateRequest {
+                            document_ids: &[raw.document_id],
+                            apply: true,
+                            opts: ConsolidateOpts::default(),
+                            agent: None,
+                        },
                     )
                     .await
                     .map(|_| ())
@@ -762,12 +772,14 @@ async fn generated_wiki_is_stale_when_source_changes_during_llm_generation() {
             &store,
             &embedder,
             &config,
-            original.clone(),
-            Some("Source".into()),
-            Some("raw://source".into()),
-            None,
-            None,
-            None,
+            RawIngest {
+                text: original.clone(),
+                title: Some("Source".into()),
+                uri: Some("raw://source".into()),
+                wing: None,
+                room: None,
+                source_file: None,
+            },
         )
         .await
         .unwrap();
@@ -785,10 +797,12 @@ async fn generated_wiki_is_stale_when_source_changes_during_llm_generation() {
                     &work_embedder,
                     &work_config,
                     &llm,
-                    &[source_id],
-                    true,
-                    ConsolidateOpts::default(),
-                    None,
+                    ConsolidateRequest {
+                        document_ids: &[source_id],
+                        apply: true,
+                        opts: ConsolidateOpts::default(),
+                        agent: None,
+                    },
                 )
                 .await
                 .map(|_| ())
@@ -815,12 +829,14 @@ async fn generated_wiki_is_stale_when_source_changes_during_llm_generation() {
             &store,
             &embedder,
             &config,
-            "Changed source while LLM was running".into(),
-            Some("Source".into()),
-            Some("raw://source".into()),
-            None,
-            None,
-            None,
+            RawIngest {
+                text: "Changed source while LLM was running".into(),
+                title: Some("Source".into()),
+                uri: Some("raw://source".into()),
+                wing: None,
+                room: None,
+                source_file: None,
+            },
         )
         .await
         .unwrap();
@@ -862,12 +878,14 @@ async fn source_versions_exclude_old_parents_after_regeneration() {
                 &store,
                 &embedder,
                 &config,
-                format!("Source {name}"),
-                Some(name.into()),
-                Some(format!("raw://{name}")),
-                None,
-                None,
-                None,
+                RawIngest {
+                    text: format!("Source {name}"),
+                    title: Some(name.into()),
+                    uri: Some(format!("raw://{name}")),
+                    wing: None,
+                    room: None,
+                    source_file: None,
+                },
             )
             .await
             .unwrap();
@@ -897,10 +915,12 @@ async fn source_versions_exclude_old_parents_after_regeneration() {
                 &embedder,
                 &config,
                 &llm,
-                &[sources[0].id.clone()],
-                true,
-                ConsolidateOpts::default(),
-                None,
+                ConsolidateRequest {
+                    document_ids: &[sources[0].id.clone()],
+                    apply: true,
+                    opts: ConsolidateOpts::default(),
+                    agent: None,
+                },
             )
             .await
             .unwrap();
@@ -927,12 +947,14 @@ async fn source_versions_exclude_old_parents_after_regeneration() {
             &store,
             &embedder,
             &config,
-            "Changed excluded source".into(),
-            Some("b".into()),
-            Some("raw://b".into()),
-            None,
-            None,
-            None,
+            RawIngest {
+                text: "Changed excluded source".into(),
+                title: Some("b".into()),
+                uri: Some("raw://b".into()),
+                wing: None,
+                room: None,
+                source_file: None,
+            },
         )
         .await
         .unwrap();
@@ -958,12 +980,14 @@ async fn source_versions_exclude_old_parents_after_regeneration() {
             &store,
             &embedder,
             &config,
-            "Changed retained source".into(),
-            Some("a".into()),
-            Some("raw://a".into()),
-            None,
-            None,
-            None,
+            RawIngest {
+                text: "Changed retained source".into(),
+                title: Some("a".into()),
+                uri: Some("raw://a".into()),
+                wing: None,
+                room: None,
+                source_file: None,
+            },
         )
         .await
         .unwrap();
@@ -995,12 +1019,14 @@ async fn source_versions_ignore_metadata_changes_and_report_deleted_parents() {
         &store,
         &embedder,
         &config,
-        "Original source".into(),
-        Some("Source".into()),
-        Some("raw://source".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "Original source".into(),
+            title: Some("Source".into()),
+            uri: Some("raw://source".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .unwrap();
@@ -1063,13 +1089,15 @@ async fn wiki_crud_write_get_list_update() {
         &store,
         &embedder,
         &config,
-        "cats",
-        "Cats",
-        "Felines are [[Mammals]] #animals",
-        "entity",
-        Some("biology"),
-        Some("About cats"),
-        None,
+        WikiPageWrite {
+            slug: "cats",
+            title: "Cats",
+            content: "Felines are [[Mammals]] #animals",
+            kind: "entity",
+            category: Some("biology"),
+            summary: Some("About cats"),
+            agent: None,
+        },
     )
     .await
     .expect("write");
@@ -1091,17 +1119,20 @@ async fn wiki_crud_write_get_list_update() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, written.document_id);
 
-    let updated = update_wiki_page(
+    let updated = update_wiki_page_cas(
         &store,
         &embedder,
         &config,
-        "cats",
-        Some("Domestic Cats"),
-        "Updated body about cats #pets",
-        None,
-        None,
-        Some("updated summary"),
-        None,
+        WikiPageUpdate {
+            id_or_slug: "cats",
+            title: Some("Domestic Cats"),
+            content: "Updated body about cats #pets",
+            kind: None,
+            category: None,
+            summary: Some("updated summary"),
+            agent: None,
+            if_match_revision: None,
+        },
     )
     .await
     .expect("update");
@@ -1124,13 +1155,15 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
         &store,
         &embedder,
         &config,
-        "preserved-page",
-        "Preserved page",
-        "original body",
-        "concept",
-        Some("architecture"),
-        Some("original summary"),
-        None,
+        WikiPageWrite {
+            slug: "preserved-page",
+            title: "Preserved page",
+            content: "original body",
+            kind: "concept",
+            category: Some("architecture"),
+            summary: Some("original summary"),
+            agent: None,
+        },
     )
     .await
     .expect("create wiki page");
@@ -1242,13 +1275,15 @@ async fn wiki_require_if_match_blocks_update_without_revision() {
         &store,
         &embedder,
         &config,
-        "cas-page",
-        "CAS Page",
-        "first body",
-        "wiki",
-        None,
-        None,
-        None,
+        WikiPageWrite {
+            slug: "cas-page",
+            title: "CAS Page",
+            content: "first body",
+            kind: "wiki",
+            category: None,
+            summary: None,
+            agent: None,
+        },
     )
     .await
     .expect("create without if_match is allowed");
@@ -1259,13 +1294,15 @@ async fn wiki_require_if_match_blocks_update_without_revision() {
         &store,
         &embedder,
         &config,
-        "cas-page",
-        "CAS Page",
-        "second body without if_match",
-        "wiki",
-        None,
-        None,
-        None,
+        WikiPageWrite {
+            slug: "cas-page",
+            title: "CAS Page",
+            content: "second body without if_match",
+            kind: "wiki",
+            category: None,
+            summary: None,
+            agent: None,
+        },
     )
     .await
     .unwrap_err();
@@ -1314,13 +1351,15 @@ async fn stale_if_match_preserves_body_and_chunks() {
         &store,
         &embedder,
         &config,
-        "cas-preserve",
-        "CAS Preserve",
-        original_body,
-        "wiki",
-        None,
-        None,
-        None,
+        WikiPageWrite {
+            slug: "cas-preserve",
+            title: "CAS Preserve",
+            content: original_body,
+            kind: "wiki",
+            category: None,
+            summary: None,
+            agent: None,
+        },
     )
     .await
     .expect("create");
@@ -1405,12 +1444,14 @@ async fn raw_layer_immutable_rejects_wiki_overwrite_and_content_update() {
         &store,
         &embedder,
         &config,
-        "raw source text".into(),
-        Some("Raw Title".into()),
-        Some("wiki://stolen-slug".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "raw source text".into(),
+            title: Some("Raw Title".into()),
+            uri: Some("wiki://stolen-slug".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .expect("ingest raw at wiki-like uri");
@@ -1424,13 +1465,15 @@ async fn raw_layer_immutable_rejects_wiki_overwrite_and_content_update() {
         &store,
         &embedder,
         &config,
-        "stolen-slug",
-        "Wiki Title",
-        "trying to overwrite raw",
-        "wiki",
-        None,
-        None,
-        None,
+        WikiPageWrite {
+            slug: "stolen-slug",
+            title: "Wiki Title",
+            content: "trying to overwrite raw",
+            kind: "wiki",
+            category: None,
+            summary: None,
+            agent: None,
+        },
     )
     .await
     .unwrap_err();
@@ -1448,12 +1491,14 @@ async fn raw_layer_immutable_rejects_wiki_overwrite_and_content_update() {
         &store,
         &embedder,
         &config,
-        "replaced raw content".into(),
-        Some("Raw Title".into()),
-        Some("wiki://stolen-slug".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "replaced raw content".into(),
+            title: Some("Raw Title".into()),
+            uri: Some("wiki://stolen-slug".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .expect("re-ingest replace");
@@ -1490,11 +1535,13 @@ async fn file_answer_writes_wiki_graph_index_and_ops_log() {
         &store,
         &embedder,
         &config,
-        "Why Alpha Matters",
-        "Alpha is important because of [[Beta]] #research",
-        None,
-        Some(cites),
-        Some("agent-test"),
+        FileAnswerRequest {
+            title: "Why Alpha Matters",
+            body: "Alpha is important because of [[Beta]] #research",
+            slug: None,
+            citations: Some(cites),
+            agent: Some("agent-test"),
+        },
     )
     .await
     .expect("file_answer");
@@ -1547,11 +1594,13 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
         &store,
         &embedder,
         &config,
-        "Atomic Answer",
-        "Original answer links to [[Old target]].",
-        Some("atomic-answer"),
-        None,
-        Some("agent-test"),
+        FileAnswerRequest {
+            title: "Atomic Answer",
+            body: "Original answer links to [[Old target]].",
+            slug: Some("atomic-answer"),
+            citations: None,
+            agent: Some("agent-test"),
+        },
     )
     .await
     .expect("initial file_answer");
@@ -1573,11 +1622,13 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
         &store,
         &failing_embedder,
         &config,
-        "Changed Answer",
-        "Changed answer links to [[New target]].",
-        Some("atomic-answer"),
-        None,
-        Some("agent-test"),
+        FileAnswerRequest {
+            title: "Changed Answer",
+            body: "Changed answer links to [[New target]].",
+            slug: Some("atomic-answer"),
+            citations: None,
+            agent: Some("agent-test"),
+        },
     )
     .await
     .expect_err("embedding must fail before persistence");
@@ -1619,13 +1670,15 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
         &store,
         &embedder,
         &config,
-        "atomic-wiki-update",
-        "Original Wiki Title",
-        "Original body links to [[Old target]].",
-        "wiki",
-        Some("tests"),
-        Some("original summary"),
-        Some("agent-test"),
+        WikiPageWrite {
+            slug: "atomic-wiki-update",
+            title: "Original Wiki Title",
+            content: "Original body links to [[Old target]].",
+            kind: "wiki",
+            category: Some("tests"),
+            summary: Some("original summary"),
+            agent: Some("agent-test"),
+        },
     )
     .await
     .expect("initial wiki write");
@@ -1766,13 +1819,15 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
         &store,
         &embedder,
         &config,
-        "late-update-rollback",
-        "Original title",
-        "Original body links to [[Old target]].",
-        "concept",
-        Some("original"),
-        Some("original summary"),
-        Some("agent-test"),
+        WikiPageWrite {
+            slug: "late-update-rollback",
+            title: "Original title",
+            content: "Original body links to [[Old target]].",
+            kind: "concept",
+            category: Some("original"),
+            summary: Some("original summary"),
+            agent: Some("agent-test"),
+        },
     )
     .await
     .expect("initial wiki write");
@@ -1866,12 +1921,14 @@ async fn find_stale_wiki_via_metadata_and_graph() {
         &store,
         &embedder,
         &config,
-        "version one of the source".into(),
-        Some("Alpha".into()),
-        Some("raw://alpha".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "version one of the source".into(),
+            title: Some("Alpha".into()),
+            uri: Some("raw://alpha".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .expect("ingest raw");
@@ -1980,12 +2037,14 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
         &store,
         &embedder,
         &config,
-        "Alpha talks about hybrid search and BM25.".into(),
-        Some("Alpha note".into()),
-        Some("raw://alpha-note".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "Alpha talks about hybrid search and BM25.".into(),
+            title: Some("Alpha note".into()),
+            uri: Some("raw://alpha-note".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .unwrap();
@@ -1993,12 +2052,14 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
         &store,
         &embedder,
         &config,
-        "Beta covers vector embeddings and RRF fusion.".into(),
-        Some("Beta note".into()),
-        Some("raw://beta-note".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "Beta covers vector embeddings and RRF fusion.".into(),
+            title: Some("Beta note".into()),
+            uri: Some("raw://beta-note".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .unwrap();
@@ -2155,10 +2216,12 @@ async fn consolidate_rejects_empty_ids() {
         &embedder,
         &config,
         &llm,
-        &[],
-        false,
-        ConsolidateOpts::default(),
-        None,
+        ConsolidateRequest {
+            document_ids: &[],
+            apply: false,
+            opts: ConsolidateOpts::default(),
+            agent: None,
+        },
     )
     .await
     .unwrap_err();
@@ -2181,12 +2244,14 @@ async fn refresh_stale_wiki_apply_without_llm_lists_only() {
         &store,
         &embedder,
         &config,
-        "body".into(),
-        Some("B".into()),
-        Some("raw://b".into()),
-        None,
-        None,
-        None,
+        RawIngest {
+            text: "body".into(),
+            title: Some("B".into()),
+            uri: Some("raw://b".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .unwrap();

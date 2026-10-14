@@ -187,6 +187,18 @@ pub(crate) struct DocumentEmbeddingSample {
     pub embedding: Vec<f32>,
 }
 
+/// Inputs for [`Store::write_wiki_document_atomic`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WikiDocumentWrite<'a> {
+    pub(crate) doc: &'a Document,
+    pub(crate) if_match_revision: Option<i64>,
+    pub(crate) chunks: &'a [Chunk],
+    pub(crate) index_entry: &'a WikiIndexEntry,
+    pub(crate) audit_entry: &'a OpsLogEntry,
+    pub(crate) sync: &'a super::sync::WikiSyncWrite<'a>,
+    pub(crate) create_only: bool,
+}
+
 impl Store {
     /// Open (or create) a DuckDB database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
@@ -436,17 +448,19 @@ impl Store {
 
     /// Persist a wiki document and its chunks, graph, catalog row, and audit
     /// event, replication journal and applied cursor under one transaction.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_wiki_document_atomic(
         &self,
-        doc: &Document,
-        if_match_revision: Option<i64>,
-        chunks: &[Chunk],
-        index_entry: &WikiIndexEntry,
-        audit_entry: &OpsLogEntry,
-        sync: &super::sync::WikiSyncWrite<'_>,
-        create_only: bool,
+        write: WikiDocumentWrite<'_>,
     ) -> Result<(Option<AtomicDocumentWriteResult>, i64)> {
+        let WikiDocumentWrite {
+            doc,
+            if_match_revision,
+            chunks,
+            index_entry,
+            audit_entry,
+            sync,
+            create_only,
+        } = write;
         if index_entry.page_id.as_deref() != Some(doc.id.as_str()) {
             return Err(AppError::config(format!(
                 "wiki index page id {:?} does not match document {}",

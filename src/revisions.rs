@@ -190,15 +190,15 @@ impl<'a> RevisionService<'a> {
                     crate::db::sync::SyncIdentity::current()?,
                 );
                 self.store
-                    .write_wiki_document_atomic(
-                        &restored,
-                        Some(command.if_match_revision),
-                        &chunks,
-                        &index,
-                        &audit_entry,
-                        &mode,
-                        false,
-                    )?
+                    .write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                        doc: &restored,
+                        if_match_revision: Some(command.if_match_revision),
+                        chunks: &chunks,
+                        index_entry: &index,
+                        audit_entry: &audit_entry,
+                        sync: &mode,
+                        create_only: false,
+                    })?
                     .0
                     .ok_or_else(|| AppError::db("wiki restore returned no committed document"))?
             } else {

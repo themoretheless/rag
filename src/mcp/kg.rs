@@ -25,16 +25,16 @@ impl RagServer {
         crate::util::blocking_section(|| {
             let valid_from = parse_optional_timestamp(params.valid_from.as_deref())?;
             let valid_to = parse_optional_timestamp(params.valid_to.as_deref())?;
-            let fact = self.store.kg_add(
-                &params.subject,
-                &params.predicate,
-                &params.object,
+            let fact = self.store.kg_add(crate::db::kg::KgFactInput {
+                subject: &params.subject,
+                predicate: &params.predicate,
+                object: &params.object,
                 valid_from,
                 valid_to,
-                params.source_document_id.as_deref(),
-                params.confidence,
-                params.metadata_json.as_deref(),
-            )?;
+                source_document_id: params.source_document_id.as_deref(),
+                confidence: params.confidence,
+                metadata_json: params.metadata_json.as_deref(),
+            })?;
             Self::json_result(&fact)
         })
     }
@@ -91,15 +91,15 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let at = parse_optional_timestamp(params.at.as_deref())?;
-            let fact = self.store.kg_supersede(
-                &params.subject,
-                &params.predicate,
-                &params.old_object,
-                &params.new_object,
+            let fact = self.store.kg_supersede(crate::db::kg::KgSupersedeInput {
+                subject: &params.subject,
+                predicate: &params.predicate,
+                old_object: &params.old_object,
+                new_object: &params.new_object,
                 at,
-                params.source_document_id.as_deref(),
-                params.confidence,
-            )?;
+                source_document_id: params.source_document_id.as_deref(),
+                confidence: params.confidence,
+            })?;
             Self::json_result(&fact)
         })
     }

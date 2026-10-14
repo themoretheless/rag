@@ -18,20 +18,34 @@ pub enum HomeAction {
     OpenAgents,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn draw_project_home(
-    ui: &mut egui::Ui,
-    selected_project: Option<&str>,
-    home: Option<&ProjectHome>,
-    operations: Option<&OperationsSnapshot>,
-    activity: &[ActivityEvent],
-    project_error: Option<&str>,
-    operations_error: Option<&str>,
-    operations_stale: bool,
-    loading: bool,
-    http_available: bool,
-    wiki_available: bool,
-) -> HomeAction {
+/// Data shown by [`draw_project_home`].
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectHomeView<'a> {
+    pub selected_project: Option<&'a str>,
+    pub home: Option<&'a ProjectHome>,
+    pub operations: Option<&'a OperationsSnapshot>,
+    pub activity: &'a [ActivityEvent],
+    pub project_error: Option<&'a str>,
+    pub operations_error: Option<&'a str>,
+    pub operations_stale: bool,
+    pub loading: bool,
+    pub http_available: bool,
+    pub wiki_available: bool,
+}
+
+pub fn draw_project_home(ui: &mut egui::Ui, view: ProjectHomeView<'_>) -> HomeAction {
+    let ProjectHomeView {
+        selected_project,
+        home,
+        operations,
+        activity,
+        project_error,
+        operations_error,
+        operations_stale,
+        loading,
+        http_available,
+        wiki_available,
+    } = view;
     let mut action = HomeAction::None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])

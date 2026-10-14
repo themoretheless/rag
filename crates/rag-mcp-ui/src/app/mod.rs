@@ -26,7 +26,7 @@ use crate::ui::detail::{draw_detail, DetailAction, DetailContentState};
 use crate::ui::empty::{
     draw_empty_banner, draw_no_source, EmptyGraphStats, EmptyKind, NoSourceAction,
 };
-use crate::ui::home::{draw_project_home, HomeAction};
+use crate::ui::home::{draw_project_home, HomeAction, ProjectHomeView};
 use crate::ui::insights::{
     draw_evaluation_workspace, draw_models_workspace, EvaluationAction, ModelsAction,
 };
@@ -39,7 +39,7 @@ use crate::ui::operations::{
 use crate::ui::revisions::{draw_revisions_workspace, RevisionsAction, RevisionsView};
 use crate::ui::search::{draw_search_workspace, SearchAction};
 use crate::ui::shell::{draw_rail, draw_topbar, ShellRoute, TopbarState};
-use crate::ui::status::draw_status;
+use crate::ui::status::{draw_status, StatusView};
 use crate::ui::sync::draw_sync_workspace;
 use crate::ui::theme;
 use crate::ui::wiki::{

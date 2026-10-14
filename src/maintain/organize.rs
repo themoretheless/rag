@@ -1027,18 +1027,16 @@ mod tests {
         }
     }
 
-    // Compact test fixture helper; keeping call sites readable is more useful here.
-    #[allow(clippy::too_many_arguments)]
+    /// Seed one document; `scope` is `(wing, room, source_file)`.
     fn seed_doc(
         store: &Store,
         id: &str,
         title: &str,
         content: &str,
-        wing: Option<&str>,
-        room: Option<&str>,
-        source_file: Option<&str>,
+        scope: (Option<&str>, Option<&str>, Option<&str>),
         uri: &str,
     ) {
+        let (wing, room, source_file) = scope;
         SeedDoc::new(id, title, content)
             .kind("document")
             .uri(uri)
@@ -1078,9 +1076,11 @@ mod tests {
             "placed",
             "Placed",
             "already filed",
-            Some("research"),
-            Some("rag"),
-            Some("/vault/research/rag/placed.md"),
+            (
+                Some("research"),
+                Some("rag"),
+                Some("/vault/research/rag/placed.md"),
+            ),
             "file:///vault/research/rag/placed.md",
         );
         seed_doc(
@@ -1088,9 +1088,7 @@ mod tests {
             "loose",
             "Loose note",
             "needs a wing",
-            None,
-            None,
-            Some("/vault/research/rag/loose.md"),
+            (None, None, Some("/vault/research/rag/loose.md")),
             "file:///vault/research/rag/loose.md",
         );
 
@@ -1135,9 +1133,7 @@ mod tests {
             "a",
             "Alpha research notes",
             "body a",
-            Some("research"),
-            Some("core"),
-            None,
+            (Some("research"), Some("core"), None),
             "text://a",
         );
         seed_doc(
@@ -1145,9 +1141,7 @@ mod tests {
             "b",
             "research follow-up",
             "body b",
-            None,
-            None,
-            None,
+            (None, None, None),
             "text://b",
         );
 
@@ -1179,9 +1173,7 @@ mod tests {
             "placed",
             "Seed",
             "labeled vector seed",
-            Some("research"),
-            Some("core"),
-            None,
+            (Some("research"), Some("core"), None),
             "text://raw/a",
         );
         seed_doc(
@@ -1189,9 +1181,7 @@ mod tests {
             "loose",
             "Loose",
             "unscoped vector candidate",
-            None,
-            None,
-            None,
+            (None, None, None),
             "text://raw/b",
         );
         store
@@ -1223,9 +1213,7 @@ mod tests {
             "x",
             "X",
             "body",
-            Some("ops"),
-            Some("run"),
-            None,
+            (Some("ops"), Some("run"), None),
             "text://x",
         );
         let opts = OrganizeOptions::from_config(&cfg);
@@ -1246,9 +1234,7 @@ mod tests {
             "seed",
             "research seed",
             "s",
-            Some("research"),
-            None,
-            None,
+            (Some("research"), None, None),
             "text://seed",
         );
         for i in 0..5 {
@@ -1257,9 +1243,7 @@ mod tests {
                 &format!("u{i}"),
                 &format!("research item {i}"),
                 "body",
-                None,
-                None,
-                None,
+                (None, None, None),
                 &format!("text://u{i}"),
             );
         }

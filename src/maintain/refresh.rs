@@ -1732,13 +1732,15 @@ mod tests {
             &store,
             &embedder,
             &config,
-            "alpha-page",
-            "Alpha Page",
-            "Body with [[Other]]",
-            "wiki",
-            Some("notes"),
-            Some("summary line"),
-            None,
+            crate::wiki::WikiPageWrite {
+                slug: "alpha-page",
+                title: "Alpha Page",
+                content: "Body with [[Other]]",
+                kind: "wiki",
+                category: Some("notes"),
+                summary: Some("summary line"),
+                agent: None,
+            },
         )
         .await
         .unwrap();

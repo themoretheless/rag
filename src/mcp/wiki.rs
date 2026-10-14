@@ -506,11 +506,13 @@ impl RagServer {
             &self.store,
             &self.embedder,
             &self.config,
-            &params.title,
-            &params.body,
-            params.slug.as_deref(),
-            citations,
-            params.agent.as_deref(),
+            wiki::FileAnswerRequest {
+                title: &params.title,
+                body: &params.body,
+                slug: params.slug.as_deref(),
+                citations,
+                agent: params.agent.as_deref(),
+            },
         )
         .await?;
 
@@ -813,10 +815,12 @@ impl RagServer {
             &self.embedder,
             &self.config,
             llm,
-            &params.document_ids,
-            apply,
-            opts,
-            params.agent.as_deref(),
+            wiki::ConsolidateRequest {
+                document_ids: &params.document_ids,
+                apply,
+                opts,
+                agent: params.agent.as_deref(),
+            },
         )
         .await?;
         Self::json_result(&res)

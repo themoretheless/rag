@@ -1975,16 +1975,16 @@ fn kg_store_roundtrip_via_server() {
 
     let f = server
         .store
-        .kg_add(
-            "Alice",
-            "works_at",
-            "Acme",
-            parse_optional_timestamp(Some("2020-01-01")).unwrap(),
-            None,
-            Some("doc:1"),
-            Some(0.95),
-            None,
-        )
+        .kg_add(crate::db::kg::KgFactInput {
+            subject: "Alice",
+            predicate: "works_at",
+            object: "Acme",
+            valid_from: parse_optional_timestamp(Some("2020-01-01")).unwrap(),
+            valid_to: None,
+            source_document_id: Some("doc:1"),
+            confidence: Some(0.95),
+            metadata_json: None,
+        })
         .expect("kg_add");
     assert_eq!(f.status, "active");
 
@@ -1996,15 +1996,15 @@ fn kg_store_roundtrip_via_server() {
 
     let new_f = server
         .store
-        .kg_supersede(
-            "Alice",
-            "works_at",
-            "Acme",
-            "BetaCo",
-            parse_optional_timestamp(Some("2024-06-01")).unwrap(),
-            None,
-            None,
-        )
+        .kg_supersede(crate::db::kg::KgSupersedeInput {
+            subject: "Alice",
+            predicate: "works_at",
+            old_object: "Acme",
+            new_object: "BetaCo",
+            at: parse_optional_timestamp(Some("2024-06-01")).unwrap(),
+            source_document_id: None,
+            confidence: None,
+        })
         .expect("kg_supersede");
     assert_eq!(new_f.object, "BetaCo");
 

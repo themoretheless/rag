@@ -48,19 +48,31 @@ impl FileAnswerCitation {
     }
 }
 
+/// Inputs for [`file_answer`].
+#[derive(Debug, Clone)]
+pub struct FileAnswerRequest<'a> {
+    pub title: &'a str,
+    pub body: &'a str,
+    /// Defaults to a slug derived from the title.
+    pub slug: Option<&'a str>,
+    pub citations: Option<Vec<FileAnswerCitation>>,
+    pub agent: Option<&'a str>,
+}
+
 /// Persist a cited answer as a wiki page: body + citations metadata, graph rebuild, ops log, index touch.
-// Compatibility adapter: preserve the established public call shape.
-#[allow(clippy::too_many_arguments)]
 pub async fn file_answer(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    title: &str,
-    body: &str,
-    slug: Option<&str>,
-    citations: Option<Vec<FileAnswerCitation>>,
-    agent: Option<&str>,
+    request: FileAnswerRequest<'_>,
 ) -> Result<WikiWriteResult> {
+    let FileAnswerRequest {
+        title,
+        body,
+        slug,
+        citations,
+        agent,
+    } = request;
     if title.trim().is_empty() {
         return Err(AppError::config("file_answer requires a non-empty title"));
     }

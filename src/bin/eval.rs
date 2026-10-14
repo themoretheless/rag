@@ -585,12 +585,14 @@ async fn evaluate(
             &store,
             &embedder,
             &config,
-            text,
-            Some(title),
-            Some(format!("eval://{relative}")),
-            None,
-            None,
-            Some(path.display().to_string()),
+            wiki::RawIngest {
+                text,
+                title: Some(title),
+                uri: Some(format!("eval://{relative}")),
+                wing: None,
+                room: None,
+                source_file: Some(path.display().to_string()),
+            },
         )
         .await
         .with_context(|| format!("ingest {relative}"))?;
@@ -608,12 +610,14 @@ async fn evaluate(
                 &store,
                 &embedder,
                 &config,
-                document.content,
-                Some(document.title),
-                Some(document.uri),
-                None,
-                None,
-                None,
+                wiki::RawIngest {
+                    text: document.content,
+                    title: Some(document.title),
+                    uri: Some(document.uri),
+                    wing: None,
+                    room: None,
+                    source_file: None,
+                },
             )
             .await
             .context("ingest deterministic synthetic corpus")?;
@@ -767,12 +771,14 @@ async fn evaluate_compare(
             &store,
             &embedder,
             &config,
-            text,
-            Some(title),
-            Some(format!("eval://{relative}")),
-            None,
-            None,
-            Some(path.display().to_string()),
+            wiki::RawIngest {
+                text,
+                title: Some(title),
+                uri: Some(format!("eval://{relative}")),
+                wing: None,
+                room: None,
+                source_file: Some(path.display().to_string()),
+            },
         )
         .await
         .with_context(|| format!("ingest {relative}"))?;

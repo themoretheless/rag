@@ -36,21 +36,36 @@ pub struct WikiWriteCommand {
     pub options: WriteWikiOpts,
 }
 
+/// Borrowed fields for [`write_wiki_page`].
+#[derive(Debug, Clone, Copy)]
+pub struct WikiPageWrite<'a> {
+    /// Kebab slug; the page lives at `wiki://{slug}`.
+    pub slug: &'a str,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub kind: &'a str,
+    pub category: Option<&'a str>,
+    pub summary: Option<&'a str>,
+    pub agent: Option<&'a str>,
+}
+
 /// Write/update a wiki page by slug (`wiki://{slug}`), chunk+embed+graph.
 // Compatibility adapter: new integrations should prefer the command API.
-#[allow(clippy::too_many_arguments)]
 pub async fn write_wiki_page(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    slug: &str,
-    title: &str,
-    content: &str,
-    kind: &str,
-    category: Option<&str>,
-    summary: Option<&str>,
-    agent: Option<&str>,
+    page: WikiPageWrite<'_>,
 ) -> Result<WikiWriteResult> {
+    let WikiPageWrite {
+        slug,
+        title,
+        content,
+        kind,
+        category,
+        summary,
+        agent,
+    } = page;
     write_wiki_page_command(
         store,
         embedder,
@@ -236,23 +251,22 @@ pub(crate) async fn write_wiki_page_synced_command(
             return Err(AppError::config("wiki metadata must be a JSON object"));
         }
     }
-    let metadata_json = if let Some(metadata) =
-        opts.metadata_json_override.as_ref().filter(|_| incoming)
-    {
-        metadata.clone()
-    } else {
-        merge_wiki_metadata(
-            opts.metadata_json_override.as_deref().or_else(|| {
-                existing
-                    .as_ref()
-                    .map(|document| document.metadata_json.as_str())
-            }),
-            category.as_deref(),
-            summary.as_deref(),
-            opts.extra_metadata,
-            metadata_overlay_requested,
-        )?
-    };
+    let metadata_json =
+        if let Some(metadata) = opts.metadata_json_override.as_ref().filter(|_| incoming) {
+            metadata.clone()
+        } else {
+            merge_wiki_metadata(
+                opts.metadata_json_override.as_deref().or_else(|| {
+                    existing
+                        .as_ref()
+                        .map(|document| document.metadata_json.as_str())
+                }),
+                category.as_deref(),
+                summary.as_deref(),
+                opts.extra_metadata,
+                metadata_overlay_requested,
+            )?
+        };
     let mut doc = existing.clone().unwrap_or_default();
     doc.id = document_id.clone();
     doc.uri = uri.clone();
@@ -383,28 +397,28 @@ pub(crate) async fn write_wiki_page_synced_command(
         crate::db::sync::WikiSyncWrite::Local(identity) => {
             let store = store.clone();
             crate::util::run_blocking("wiki write commit", move || {
-                store.write_wiki_document_atomic(
-                    &doc,
-                    if_match,
-                    &chunks,
-                    &index_entry,
-                    &audit_entry,
-                    &crate::db::sync::WikiSyncWrite::Local(identity),
+                store.write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                    doc: &doc,
+                    if_match_revision: if_match,
+                    chunks: &chunks,
+                    index_entry: &index_entry,
+                    audit_entry: &audit_entry,
+                    sync: &crate::db::sync::WikiSyncWrite::Local(identity),
                     create_only,
-                )
+                })
             })
             .await?
         }
         replicated => crate::util::blocking_section(|| {
-            store.write_wiki_document_atomic(
-                &doc,
-                if_match,
-                &chunks,
-                &index_entry,
-                &audit_entry,
-                &replicated,
+            store.write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                doc: &doc,
+                if_match_revision: if_match,
+                chunks: &chunks,
+                index_entry: &index_entry,
+                audit_entry: &audit_entry,
+                sync: &replicated,
                 create_only,
-            )
+            })
         })?,
     };
     let Some(write) = write else {
@@ -495,40 +509,8 @@ pub(super) fn metadata_string_field<'a>(
 /// Update an existing wiki page (by document id, `wiki://slug`, or slug).
 ///
 /// Requires an existing `layer=wiki` document. Re-chunks, re-embeds, and
-/// re-runs wikilink/tag graph extract. Rejects raw-layer documents.
-// Compatibility adapter: preserve the established public call shape.
-#[allow(clippy::too_many_arguments)]
-pub async fn update_wiki_page(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    id_or_slug: &str,
-    title: Option<&str>,
-    content: &str,
-    kind: Option<&str>,
-    category: Option<&str>,
-    summary: Option<&str>,
-    agent: Option<&str>,
-) -> Result<WikiWriteResult> {
-    update_wiki_page_cas(
-        store,
-        embedder,
-        config,
-        WikiPageUpdate {
-            id_or_slug,
-            title,
-            content,
-            kind,
-            category,
-            summary,
-            agent,
-            if_match_revision: None,
-        },
-    )
-    .await
-}
-
-/// Like [`update_wiki_page`] with optional `if_match_revision` (multi-LLM CAS).
+/// re-runs wikilink/tag graph extract. Rejects raw-layer documents. Honors
+/// optional `if_match_revision` (multi-LLM CAS).
 pub async fn update_wiki_page_cas(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -668,20 +650,34 @@ pub(super) fn slug_from_wiki_doc(doc: &Document) -> String {
     slugify(&doc.title)
 }
 
+/// Owned fields for [`ingest_raw`].
+#[derive(Debug, Clone, Default)]
+pub struct RawIngest {
+    pub text: String,
+    /// Defaults to the last uri segment.
+    pub title: Option<String>,
+    /// Defaults to a fresh `raw://{uuid}`.
+    pub uri: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub source_file: Option<String>,
+}
+
 /// Ingest immutable raw text (layer=raw). Re-ingest same uri replaces chunks but keeps raw policy.
-// Compatibility adapter: preserve the established public call shape.
-#[allow(clippy::too_many_arguments)]
 pub async fn ingest_raw(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    text: String,
-    title: Option<String>,
-    uri: Option<String>,
-    wing: Option<String>,
-    room: Option<String>,
-    source_file: Option<String>,
+    raw: RawIngest,
 ) -> Result<crate::models::IngestResult> {
+    let RawIngest {
+        text,
+        title,
+        uri,
+        wing,
+        room,
+        source_file,
+    } = raw;
     crate::util::blocking_section(|| {
         store.ensure_embedding_manifest(config)?;
         store.require_embedding_manifest_match(config)

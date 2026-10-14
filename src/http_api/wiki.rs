@@ -394,13 +394,15 @@ mod tests {
             &state.store,
             &state.embedder,
             &state.config,
-            "original",
-            "Original",
-            "original body",
-            "wiki",
-            None,
-            None,
-            None,
+            wiki::WikiPageWrite {
+                slug: "original",
+                title: "Original",
+                content: "original body",
+                kind: "wiki",
+                category: None,
+                summary: None,
+                agent: None,
+            },
         )
         .await
         .unwrap();
@@ -483,13 +485,15 @@ mod tests {
             &state.store,
             &state.embedder,
             &state.config,
-            "project-page",
-            "Project page",
-            "original body",
-            "concept",
-            Some("architecture"),
-            Some("original summary"),
-            None,
+            wiki::WikiPageWrite {
+                slug: "project-page",
+                title: "Project page",
+                content: "original body",
+                kind: "concept",
+                category: Some("architecture"),
+                summary: Some("original summary"),
+                agent: None,
+            },
         )
         .await
         .expect("create page");

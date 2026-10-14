@@ -156,13 +156,15 @@ pub(super) async fn apply_consolidate(
         store,
         embedder,
         config,
-        &slug,
-        &title,
-        &content,
-        &kind,
-        category.as_deref(),
-        summary.as_deref(),
-        agent,
+        wiki::WikiPageWrite {
+            slug: &slug,
+            title: &title,
+            content: &content,
+            kind: &kind,
+            category: category.as_deref(),
+            summary: summary.as_deref(),
+            agent,
+        },
     )
     .await?;
     Ok(StepResult {
@@ -264,11 +266,13 @@ pub(super) async fn apply_file_answer(
         store,
         embedder,
         config,
-        &title,
-        &body,
-        slug.as_deref(),
-        citations,
-        agent,
+        wiki::FileAnswerRequest {
+            title: &title,
+            body: &body,
+            slug: slug.as_deref(),
+            citations,
+            agent,
+        },
     )
     .await?;
     Ok(StepResult {
