@@ -7,6 +7,10 @@ resolver = "2"
 name = "rag-mcp"
 version = "0.1.0"
 edition = "2021"
+# MSRV: egui/eframe (rag-mcp-ui) declare rust-version 1.95, the highest in
+# Cargo.lock, so the workspace uses that floor. CI builds on stable only (1.97 at
+# time of writing); there is no separate MSRV job (it would rebuild bundled DuckDB).
+rust-version = "1.95"
 description = "RAG MCP server backed by DuckDB"
 license = "MIT"
 readme = "README.md"
@@ -24,8 +28,8 @@ name = "ingest_file"
 path = "src/bin/ingest_file.rs"
 
 [dependencies]
-rag-mcp-core = { path = "crates/rag-mcp-core" }
-rag-mcp-markup = { path = "crates/rag-mcp-markup" }
+rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
+rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"

@@ -6,7 +6,11 @@
     mkdir -p ~/.local/share/rag-mcp/cron
     cp scripts/wiki-refresh.sh ~/.local/bin/rag-wiki-refresh.sh
     chmod +x ~/.local/bin/rag-wiki-refresh.sh
-    cp scripts/com.rag.wiki-refresh.plist ~/Library/LaunchAgents/
+    # launchd does not expand ~ or $HOME: substitute the placeholders
+    # __HOME__ and __RAG_PROJECT_ROOT__ (absolute path of this checkout).
+    sed -e "s#__HOME__#$HOME#g" -e "s#__RAG_PROJECT_ROOT__#$PWD#g" \
+      scripts/com.rag.wiki-refresh.plist > ~/Library/LaunchAgents/com.rag.wiki-refresh.plist
+    plutil -lint ~/Library/LaunchAgents/com.rag.wiki-refresh.plist
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rag.wiki-refresh.plist
 
   Uninstall:
@@ -35,21 +39,21 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/themoretheless/.local/bin/rag-wiki-refresh.sh</string>
+    <string>__HOME__/.local/bin/rag-wiki-refresh.sh</string>
   </array>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/bin:/bin:/usr/sbin:/sbin:/Users/themoretheless/.local/bin</string>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.local/bin</string>
     <key>RAG_MCP_URL</key>
     <string>http://127.0.0.1:7432/mcp</string>
     <key>RAG_CRON_WING</key>
     <string>rag</string>
     <key>RAG_CRON_PROJECT_ROOT</key>
-    <string>/Users/themoretheless/Documents/Sources/rag</string>
+    <string>__RAG_PROJECT_ROOT__</string>
     <key>RAG_CRON_STATE_DIR</key>
-    <string>/Users/themoretheless/.local/share/rag-mcp/cron</string>
+    <string>__HOME__/.local/share/rag-mcp/cron</string>
   </dict>
 
   <key>StartInterval</key>
@@ -59,6 +63,6 @@
   <false/>
 
   <key>StandardErrorPath</key>
-  <string>/Users/themoretheless/.local/share/rag-mcp/cron/wiki-refresh.err</string>
+  <string>__HOME__/.local/share/rag-mcp/cron/wiki-refresh.err</string>
 </dict>
 </plist>
