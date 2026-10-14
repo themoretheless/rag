@@ -11,6 +11,8 @@
   type DocumentPage = { items?: Row[]; page?: { total?: number; next_cursor?: string | null } }
   type EmbeddingStatus = { match?: boolean; live?: { provider?: string; model?: string; dims?: number }; manifest?: { provider?: string; model?: string; dims?: number } }
   type Taxonomy = { unscoped_count?: number; total_documents?: number }
+  type ProjectHome = { source_roots?: { canonical_root: string; file_count: number }[] }
+  type SyncJobResponse = { id?: string; job?: { id?: string } }
 
   let projects = $state<Project[]>([])
   let rows = $state<Row[]>([])
@@ -33,7 +35,7 @@
   let loadingMore = $state(false)
   let syncPath = $state('')
   let syncBusy = $state(false)
-  let projectHome = $state<any>(null)
+  let projectHome = $state<ProjectHome | null>(null)
   let embeddingStatus = $state<EmbeddingStatus | null>(null)
   let taxonomy = $state<Taxonomy>({})
   let backlinks = $state<{ id: string; label: string }[]>([])
@@ -207,11 +209,11 @@
     detailError = ''
     try {
       const [response, backlinkResponse] = await Promise.all([
-        api.post<any>('/v1/multi-get', { document_ids: [row.id], include_chunks: true, chunk_limit: 80 }),
+        api.post<{ items?: DocumentDetail[] }>('/v1/multi-get', { document_ids: [row.id], include_chunks: true, chunk_limit: 80 }),
         api.backlinks(row.id).catch(() => null),
       ])
       if (requestId === detailRequestId && selected?.id === row.id && (generation == null || generation === refreshGeneration)) {
-        detail = response.items?.[0] ?? null
+        detail = response?.items?.[0] ?? null
         backlinks = backlinkResponse?.backlinks ?? []
       }
     } catch (cause) {
@@ -230,9 +232,14 @@
     room = nextRoom
     projectHome = null
     if (nextProject) {
-      void api.get<any>(`/v1/project-home?project=${encodeURIComponent(nextProject)}`).then((response) => {
-        if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response.project ?? null
-      }).catch(() => {})
+      void api.get<{ project?: ProjectHome }>(`/v1/project-home?project=${encodeURIComponent(nextProject)}`).then((response) => {
+        if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response?.project ?? null
+      }).catch((cause) => {
+        if (requestId !== projectHomeRequestId) return
+        const message = cause instanceof Error ? cause.message : String(cause)
+        console.warn('project-home load failed', cause)
+        panelWarning = `Не удалось загрузить корни проекта: ${message}`
+      })
     }
     void loadDocuments()
   }
@@ -241,8 +248,8 @@
     if (!syncPath.trim()) return
     syncBusy = true
     try {
-      const response = await api.post<any>('/v1/jobs/sync', { path: syncPath.trim(), wing: project || undefined, room: room || undefined })
-      ui.toast(`Sync поставлен в очередь · ${response.id ?? response.job?.id ?? ''}`, 'ok')
+      const response = await api.post<SyncJobResponse>('/v1/jobs/sync', { path: syncPath.trim(), wing: project || undefined, room: room || undefined })
+      ui.toast(`Sync поставлен в очередь · ${response?.id ?? response?.job?.id ?? ''}`, 'ok')
     } catch (cause) {
       ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
     } finally {
@@ -326,7 +333,7 @@
       <strong>Корень ingest · sync</strong>
       <p>Gateway читает только разрешённые пути из <code>RAG_INGEST_ROOTS</code>.</p>
       {#each projectHome?.source_roots ?? [] as root}<small>{root.canonical_root} · {root.file_count} файлов</small>{/each}
-      <input bind:value={syncPath} placeholder="/разрешённый/путь" />
+      <input bind:value={syncPath} aria-label="Путь для sync_sources" placeholder="/разрешённый/путь" />
       <button class="primary" disabled={syncBusy || !syncPath.trim()} onclick={startSync}>{syncBusy ? 'Запуск…' : 'sync_sources'}</button>
     </section>
   </aside>
@@ -339,10 +346,10 @@
     {#if panelWarning}<div class="panel-warning" role="status">{panelWarning}</div>{/if}
     <section class="ingest-zone"><div><strong>Индексировать разрешённую папку</strong><p><code>sync_sources</code> · дубли по content_hash пропускаются · чанки и граф обновляются одним writer</p></div><div class="connectors"><span class="native">Markdown · Obsidian</span><span class="native">Код · репозитории</span><span class="native">TXT · JSON · TOML</span><span class="external">PDF · pdftotext</span><span class="planned">Notion · экспорт md</span><span class="planned">Картинки · OCR</span></div></section>
     <div class="toolbar">
-      <input bind:value={query} onkeydown={(event) => event.key === 'Enter' && loadDocuments()} placeholder="Фильтр по названию, URI или пути…" />
+      <input bind:value={query} aria-label="Фильтр документов" onkeydown={(event) => event.key === 'Enter' && loadDocuments()} placeholder="Фильтр по названию, URI или пути…" />
       <div class="layer-tabs" aria-label="Слой документа">{#each [['','все'],['raw','raw'],['wiki','wiki']] as option}<button class:active={layer === option[0]} onclick={() => { layer = option[0]; void loadDocuments() }}>{option[1]}</button>{/each}</div>
-      <select bind:value={status} onchange={() => void loadDocuments()}><option value="">активные</option><option>active</option><option>draft</option><option>archived</option></select>
-      <select disabled title="Сервер возвращает каталог в каноническом порядке"><option>обновлён ↓</option></select>
+      <select bind:value={status} aria-label="Статус документа" onchange={() => void loadDocuments()}><option value="">активные</option><option>active</option><option>draft</option><option>archived</option></select>
+      <select disabled aria-label="Сортировка" title="Сервер возвращает каталог в каноническом порядке"><option>обновлён ↓</option></select>
       <button class="secondary" onclick={() => void loadDocuments()}>Найти</button>
     </div>
     <div class="table panel">

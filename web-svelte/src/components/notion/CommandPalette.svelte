@@ -192,12 +192,13 @@
     onkeydown={onKey}
     role="presentation"
   >
-    <div class="panel" role="dialog" aria-modal="true">
+    <div class="panel" role="dialog" aria-modal="true" aria-label={ui.t('palettePlaceholder')}>
       <input
         bind:this={inputEl}
         bind:value={q}
         class="input"
         type="search"
+        aria-label={ui.t('palettePlaceholder')}
         placeholder={ui.t('palettePlaceholder')}
       />
       <ul>
