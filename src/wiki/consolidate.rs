@@ -1,8 +1,8 @@
 //! LLM-assisted consolidation of several sources into one page.
 
 use super::*;
-use crate::llm::json::truncate_chars as truncate;
 use crate::llm::{parse_consolidate_json, system_user, ChatCompleter};
+use crate::util::excerpt_chars as truncate;
 
 /// Optional overrides when consolidating (title/slug/kind/category).
 #[derive(Debug, Clone, Default)]

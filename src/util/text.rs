@@ -33,10 +33,23 @@ pub fn truncate_chars(line: &str, max: usize) -> String {
     if max == 0 {
         return String::new();
     }
-    if line.chars().count() <= max {
-        line.to_string()
+    cut_with_ellipsis(line, max, max - 1)
+}
+
+/// First `max` characters of `s`, with `…` appended when cut (the ellipsis
+/// does not count, so a cut result has `max + 1` characters). Used for error
+/// excerpts and prompt budgets.
+pub fn excerpt_chars(s: &str, max: usize) -> String {
+    cut_with_ellipsis(s, max, max)
+}
+
+/// `s` unchanged when it has at most `limit` characters, else its first
+/// `keep` characters followed by `…`.
+fn cut_with_ellipsis(s: &str, limit: usize, keep: usize) -> String {
+    if s.chars().count() <= limit {
+        s.to_string()
     } else {
-        let mut out: String = line.chars().take(max.saturating_sub(1)).collect();
+        let mut out: String = s.chars().take(keep).collect();
         out.push('…');
         out
     }
@@ -45,6 +58,12 @@ pub fn truncate_chars(line: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excerpt_counts_characters_not_bytes() {
+        assert_eq!(excerpt_chars("привет", 3), "при…");
+        assert_eq!(excerpt_chars("abc", 3), "abc");
+    }
 
     #[test]
     fn blank_values_become_none() {

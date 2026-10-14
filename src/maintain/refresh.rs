@@ -59,7 +59,7 @@ impl Default for MaintainRefreshFlags {
             rebuild_wiki_index: true,
             reembed_all: false,
             dry_run: false,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
         }
     }
 }

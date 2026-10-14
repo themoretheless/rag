@@ -60,7 +60,7 @@ impl Default for CompressOptions {
             confirm: false,
             allow_raw_delete: false,
             near_dup_threshold: 0.92,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
             log_ops: true,
         }
     }

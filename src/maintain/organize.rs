@@ -12,11 +12,12 @@ use serde::{Deserialize, Serialize};
 use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::cosine_similarity;
-use crate::llm::json::{parse_model_object, truncate_chars, ERROR_EXCERPT_CHARS};
 use crate::error::{AppError, Result};
+use crate::llm::json::{parse_model_object, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
+use crate::util::excerpt_chars as truncate_chars;
 
 /// Cap titles / samples sent to the LLM.
 const LLM_SAMPLE_CAP: usize = 40;
@@ -83,7 +84,7 @@ impl Default for OrganizeOptions {
         Self {
             dry_run: true,
             mode: OrganizeMode::Heuristic,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
             min_confidence: 0.5,
             rebuild_index: false,
             agent: None,

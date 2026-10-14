@@ -49,7 +49,6 @@ tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-unicode-normalization = "0.1.25"
 
 # Only read by ops::free_space_bytes for the automatic snapshot disk guard.
 [target.'cfg(unix)'.dependencies]

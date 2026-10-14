@@ -13,9 +13,10 @@ use super::prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
 use crate::config::Config;
 use crate::db::Store;
 use crate::error::{AppError, Result};
-use crate::llm::json::{parse_embedded, strip_json_fences, truncate_chars, ERROR_EXCERPT_CHARS};
+use crate::llm::json::{parse_embedded, strip_json_fences, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
 use crate::models::OpsLogEntry;
+use crate::util::excerpt_chars as truncate_chars;
 
 /// Default cap on actions returned by a plan (LLM or heuristic).
 const DEFAULT_MAX_ACTIONS: usize = 30;

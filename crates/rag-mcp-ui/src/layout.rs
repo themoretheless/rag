@@ -347,7 +347,6 @@ mod tests {
             room: None,
             depth,
             degree: 0,
-            pinned: false,
         }
     }
 
@@ -358,7 +357,6 @@ mod tests {
             target_id: t.into(),
             rel_type: "wikilink".into(),
             weight: 1.0,
-            origin: "extract".into(),
             multi_count: 1,
             members: vec![],
         }

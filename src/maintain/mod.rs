@@ -20,6 +20,9 @@ pub mod plan;
 pub mod prompts;
 pub mod refresh;
 
+/// Default cap on documents one maintenance run touches (`RAG_MAINT_MAX_DOCS`).
+pub const DEFAULT_MAX_DOCS: usize = 50;
+
 pub use analyze::{
     analyze_corpus, AnalyzeOptions, AnalysisIssue, AnalysisReport, ArchiveCandidate,
     CountBucket, CorpusCounts, DuplicateGroup, EmbedMismatchInfo, NearDuplicatePair,

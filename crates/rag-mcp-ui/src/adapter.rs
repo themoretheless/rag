@@ -10,7 +10,6 @@ use crate::ui::theme;
 
 /// Display node after clamp + style derivation.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // layer/wing/room/pinned reserved for post-MVP chrome
 pub struct UiNode {
     pub id: String,
     pub kind: String,
@@ -25,19 +24,16 @@ pub struct UiNode {
     pub room: Option<String>,
     pub depth: u32,
     pub degree: u32,
-    pub pinned: bool,
 }
 
 /// Canvas edge after multi-edge collapse by (source, target, rel_type).
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // origin used by detail styling later
 pub struct UiEdge {
     pub id: String,
     pub source_id: String,
     pub target_id: String,
     pub rel_type: String,
     pub weight: f64,
-    pub origin: String,
     pub multi_count: u32,
     /// Full provenance for detail panel only (not drawn).
     pub members: Vec<GraphEdge>,
@@ -45,13 +41,15 @@ pub struct UiEdge {
 
 /// UI-ready topology under layout caps.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // raw_* for status banners / future chrome
 pub struct UiGraph {
     pub nodes: Vec<UiNode>,
     pub edges: Vec<UiEdge>,
     pub truncated_nodes: bool,
     pub truncated_edges: bool,
+    /// Pre-cap counts, kept for status banners; read only by tests today.
+    #[allow(dead_code)]
     pub raw_nodes: usize,
+    #[allow(dead_code)]
     pub raw_edges: usize,
     /// Human-readable note when nodes/edges were dropped for caps.
     pub note: Option<String>,
@@ -585,8 +583,6 @@ pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
                 target_id: e.target_id.clone(),
                 rel_type: e.rel_type.clone(),
                 weight: e.weight,
-                // Wire GraphEdge has no origin yet; default extract (GRAPH_DESIGN).
-                origin: "extract".into(),
                 multi_count: 1,
                 members: vec![e.clone()],
             });
@@ -618,7 +614,6 @@ fn node_to_ui(n: &GraphNode, depth: u32, degree: u32) -> UiNode {
         room,
         depth,
         degree,
-        pinned: false,
     }
 }
 

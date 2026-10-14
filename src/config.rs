@@ -239,7 +239,7 @@ impl Default for Config {
             llm_enabled: true,
             llm_timeout_secs: 120,
             llm_max_tokens: 4096,
-            maint_max_docs: 50,
+            maint_max_docs: crate::maintain::DEFAULT_MAX_DOCS,
             maint_near_dup_threshold: 0.92,
             tool_surface: ToolSurface::Spine,
             http_bind: None,
