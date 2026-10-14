@@ -43,8 +43,14 @@ jobs:
         run: cargo +stable test --workspace --locked
       - name: Run example retrieval regression
         run: cargo +stable run --locked --bin eval -- --modes lex --min-recall-at-k 0.5 --min-mrr 0.5 --json > eval-example.json
-      - name: Report repository retrieval baseline
-        run: cargo +stable run --locked --bin eval -- --dataset data/eval/repository-v1.json --modes lex --warmup 1 --repeat 3 --json > eval-repository.json
+      - name: Repository retrieval baseline gate
+        # Measured baseline (lex): recall@k 0.958, MRR 0.800. Thresholds sit
+        # slightly below so ordinary noise passes but a real regression fails.
+        run: cargo +stable run --locked --bin eval -- --dataset data/eval/repository-v1.json --modes lex --warmup 1 --repeat 3 --min-recall-at-k 0.9 --min-mrr 0.75 --json > eval-repository.json
+      - name: Release-profile build
+        # Only on main to save CI time; catches release-only (opt/LTO) breakage.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cargo +stable build --release --locked -p rag-mcp
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -53,6 +59,47 @@ jobs:
             eval-example.json
             eval-repository.json
           if-no-files-found: ignore
+
+  rust-linux:
+    # Lean Linux coverage: clippy only (tests run on macOS). Builds the egui
+    # client with default features, so the X11/Wayland system libraries are needed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install egui/winit system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxrandr-dev libxi-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libgl1-mesa-dev
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy without warnings (workspace, default features)
+        run: cargo +stable clippy --workspace --all-targets --locked -- -D warnings
+
+  supply-chain:
+    # Advisories, licenses, bans and sources per deny.toml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --workspace
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck scripts/
+        # shellcheck is preinstalled on ubuntu-latest runners.
+        run: shellcheck scripts/*.sh
 
   web:
     runs-on: ubuntu-latest

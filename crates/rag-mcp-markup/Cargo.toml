@@ -2,6 +2,7 @@
 name = "rag-mcp-markup"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.95"
 description = "Pure parsing of [[wikilinks]] and #tags shared by the rag-mcp server graph and its clients"
 license = "MIT"
 publish = false
