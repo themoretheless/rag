@@ -314,7 +314,7 @@ pub struct RejectedAction {
 }
 
 /// Result of `plan_maintenance`: ordered, whitelist-validated actions.
-/// No JsonSchema (result type; DateTime clashes with dual schemars versions).
+/// No JsonSchema: result type, never handed to the LLM as a schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenancePlan {
     pub generated_at: DateTime<Utc>,

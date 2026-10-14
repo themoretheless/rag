@@ -8,8 +8,8 @@ name = "rag-mcp"
 version = "0.1.0"
 edition = "2021"
 # MSRV: egui/eframe (rag-mcp-ui) declare rust-version 1.95, the highest in
-# Cargo.lock, so the workspace uses that floor. CI builds on stable only (1.97 at
-# time of writing); there is no separate MSRV job (it would rebuild bundled DuckDB).
+# Cargo.lock, so the workspace uses that floor. CI builds on stable (1.97 at time
+# of writing) and the `msrv` job in checks.yml runs `cargo check` on 1.95.
 rust-version = "1.95"
 description = "RAG MCP server backed by DuckDB"
 license = "MIT"
@@ -44,7 +44,8 @@ rmcp = { version = "=1.4.0", features = ["server", "transport-io", "transport-st
 # proc-macro crate to the matching security-fixed release as well.
 rmcp-macros = "=1.4.0"
 tokio-util = { version = "0.7", features = ["rt"] }
-schemars = "0.8"
+# Same major as rmcp's re-export so Cargo.lock holds one schemars version.
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

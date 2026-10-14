@@ -81,6 +81,25 @@ jobs:
       - name: Clippy without warnings (workspace, default features)
         run: cargo +stable clippy --workspace --all-targets --locked -- -D warnings
 
+  msrv:
+    # Declared rust-version (Cargo.toml) must keep compiling; check only, no tests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install egui/winit system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxrandr-dev libxi-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libgl1-mesa-dev
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+      - name: Check workspace on the MSRV
+        run: cargo check --workspace --locked
+
   supply-chain:
     # Advisories, licenses, bans and sources per deny.toml.
     runs-on: ubuntu-latest
