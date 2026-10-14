@@ -825,7 +825,7 @@ impl RagServer {
     #[tool(
         name = "list_memory_lifecycle_candidates",
         description = "List durable memory lifecycle candidates without content. Defaults to \
-        active items; optional status/layer/kind filters and limit. Deterministic and does not \
+        active items; optional status/layer/kind filters and limit (default 100, capped at 1000). Deterministic and does not \
         require an LLM."
     )]
     pub(super) async fn list_memory_lifecycle_candidates(

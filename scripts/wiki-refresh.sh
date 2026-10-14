@@ -60,7 +60,8 @@ fi
 TMPBASE=${TMPDIR:-/tmp}
 TMP_REQ=; TMP_RES=; TMP_ERR=
 cleanup() { rmdir "$LOCK" 2>/dev/null || true; rm -f "$TMP_REQ" "$TMP_RES" "$TMP_ERR" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 1' INT TERM
 
 TMP_REQ=$(mktemp "$TMPBASE/ragreq.XXXXXX")
 TMP_RES=$(mktemp "$TMPBASE/ragres.XXXXXX")
@@ -199,6 +200,7 @@ if ! skipped refresh; then
     stale=$(printf '%s' "$res" | jq -r '(.stale // []) | length' 2>/dev/null || echo 0)
     done_n=$(printf '%s' "$res" | jq -r '(.recompiled // []) | length' 2>/dev/null || echo 0)
     errs=$(printf '%s' "$res" | jq -r '(.errors // []) | length' 2>/dev/null || echo 0)
+    stale=${stale:-0}; done_n=${done_n:-0}; errs=${errs:-0}
     log "refresh stale=$stale recompiled=$done_n errors=$errs"
     if [ "$DRY" = false ] && [ "$stale" -gt 0 ] && [ "$done_n" -eq 0 ]; then
       log "  WARN stale pages found but nothing recompiled - LLM likely disabled on the gateway (RAG_LLM_ENABLED / RAG_LLM_MODEL)"
