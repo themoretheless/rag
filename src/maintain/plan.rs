@@ -975,9 +975,9 @@ pub async fn plan_maintenance(
     Ok(plan)
 }
 
-/// Append `plan_maintenance` to ops_log.
+/// Append `plan_maintenance` to ops_log (best-effort: failures are logged, not propagated).
 pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
-    store.append_ops_log(&OpsLogEntry {
+    if let Err(error) = store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: plan.generated_at,
@@ -1003,7 +1003,9 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
         })
         .to_string(),
         agent_name: None,
-    })?;
+    }) {
+        tracing::warn!(%error, "failed to append plan_maintenance ops_log entry");
+    }
     Ok(())
 }
 

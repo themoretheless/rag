@@ -132,7 +132,7 @@ pub async fn consolidate(
     let source_count = resolved.len();
 
     if !apply {
-        crate::util::blocking_section(|| {
+        if let Err(error) = crate::util::blocking_section(|| {
             store.append_ops_log(&OpsLogEntry {
                 id: Uuid::new_v4().to_string(),
                 seq: 0,
@@ -159,7 +159,9 @@ pub async fn consolidate(
                 .to_string(),
                 agent_name: agent.map(|s| s.to_string()),
             })
-        })?;
+        }) {
+            tracing::warn!(%error, "failed to append consolidate dry-run ops_log entry");
+        }
 
         return Ok(ConsolidateResult {
             source_ids,
@@ -189,7 +191,7 @@ pub async fn consolidate(
     )
     .await?;
 
-    crate::util::blocking_section(|| {
+    if let Err(error) = crate::util::blocking_section(|| {
         store.append_ops_log(&OpsLogEntry {
             id: Uuid::new_v4().to_string(),
             seq: 0,
@@ -217,7 +219,9 @@ pub async fn consolidate(
             .to_string(),
             agent_name: agent.map(|s| s.to_string()),
         })
-    })?;
+    }) {
+        tracing::warn!(%error, "failed to append consolidate ops_log entry");
+    }
 
     Ok(ConsolidateResult {
         source_ids,
