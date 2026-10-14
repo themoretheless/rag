@@ -51,38 +51,6 @@ pub async fn write_wiki_page(
     summary: Option<&str>,
     agent: Option<&str>,
 ) -> Result<WikiWriteResult> {
-    write_wiki_page_with_opts(
-        store,
-        embedder,
-        config,
-        slug,
-        title,
-        content,
-        kind,
-        category,
-        summary,
-        agent,
-        WriteWikiOpts::default(),
-    )
-    .await
-}
-
-/// Write/update a wiki page with custom log op and metadata.
-// Compatibility adapter: new integrations should prefer the command API.
-#[allow(clippy::too_many_arguments)]
-pub async fn write_wiki_page_with_opts(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    slug: &str,
-    title: &str,
-    content: &str,
-    kind: &str,
-    category: Option<&str>,
-    summary: Option<&str>,
-    agent: Option<&str>,
-    opts: WriteWikiOpts,
-) -> Result<WikiWriteResult> {
     write_wiki_page_command(
         store,
         embedder,
@@ -97,10 +65,26 @@ pub async fn write_wiki_page_with_opts(
             category: category.map(str::to_string),
             summary: summary.map(str::to_string),
             agent: agent.map(str::to_string),
-            options: opts,
+            options: WriteWikiOpts::default(),
         },
     )
     .await
+}
+
+/// Borrowed fields for [`update_wiki_page_cas`]. `None` title/kind keep the
+/// page's current values.
+#[derive(Debug, Clone, Copy)]
+pub struct WikiPageUpdate<'a> {
+    /// Document id, `wiki://slug`, or bare slug of an existing wiki page.
+    pub id_or_slug: &'a str,
+    pub title: Option<&'a str>,
+    pub content: &'a str,
+    pub kind: Option<&'a str>,
+    pub category: Option<&'a str>,
+    pub summary: Option<&'a str>,
+    pub agent: Option<&'a str>,
+    /// Optimistic concurrency: must match the current revision when set.
+    pub if_match_revision: Option<i64>,
 }
 
 /// Command-object entrypoint used by transports and application services.
@@ -527,27 +511,40 @@ pub async fn update_wiki_page(
     agent: Option<&str>,
 ) -> Result<WikiWriteResult> {
     update_wiki_page_cas(
-        store, embedder, config, id_or_slug, title, content, kind, category, summary, agent, None,
+        store,
+        embedder,
+        config,
+        WikiPageUpdate {
+            id_or_slug,
+            title,
+            content,
+            kind,
+            category,
+            summary,
+            agent,
+            if_match_revision: None,
+        },
     )
     .await
 }
 
 /// Like [`update_wiki_page`] with optional `if_match_revision` (multi-LLM CAS).
-// Compatibility adapter: preserve the established public call shape.
-#[allow(clippy::too_many_arguments)]
 pub async fn update_wiki_page_cas(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
-    id_or_slug: &str,
-    title: Option<&str>,
-    content: &str,
-    kind: Option<&str>,
-    category: Option<&str>,
-    summary: Option<&str>,
-    agent: Option<&str>,
-    if_match_revision: Option<i64>,
+    update: WikiPageUpdate<'_>,
 ) -> Result<WikiWriteResult> {
+    let WikiPageUpdate {
+        id_or_slug,
+        title,
+        content,
+        kind,
+        category,
+        summary,
+        agent,
+        if_match_revision,
+    } = update;
     let existing = get_wiki_page(store, id_or_slug)?;
     assert_content_mutable(&existing)?;
 
@@ -561,20 +558,24 @@ pub async fn update_wiki_page_cas(
         .filter(|s| !s.is_empty())
         .unwrap_or(existing.kind.as_str());
 
-    write_wiki_page_with_opts(
+    write_wiki_page_command(
         store,
         embedder,
         config,
-        &slug,
-        title,
-        content,
-        kind,
-        category,
-        summary,
-        agent,
-        WriteWikiOpts {
-            if_match_revision,
-            ..Default::default()
+        WikiWriteCommand {
+            slug,
+            title: title.to_string(),
+            content: content.to_string(),
+            wing: None,
+            room: None,
+            kind: kind.to_string(),
+            category: category.map(str::to_string),
+            summary: summary.map(str::to_string),
+            agent: agent.map(str::to_string),
+            options: WriteWikiOpts {
+                if_match_revision,
+                ..Default::default()
+            },
         },
     )
     .await

@@ -9,10 +9,13 @@ const DATE_TIME_FORMATS: &[&str] = &[
     "%Y-%m-%dT%H:%M:%S",
 ];
 
+/// Format a UTC time as the database timestamp text (microsecond precision).
 pub fn format_db_timestamp(value: DateTime<Utc>) -> String {
     value.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
 }
 
+/// Parse RFC 3339 or a database timestamp format as UTC; `None` when blank
+/// or unrecognised.
 pub fn parse_db_timestamp(raw: &str) -> Option<DateTime<Utc>> {
     let value = raw.trim();
     if value.is_empty() {
@@ -28,6 +31,8 @@ pub fn parse_db_timestamp(raw: &str) -> Option<DateTime<Utc>> {
     })
 }
 
+/// Like [`parse_db_timestamp`], but also accepts a bare `YYYY-MM-DD`
+/// (midnight UTC).
 pub fn parse_flexible_timestamp(raw: &str) -> Option<DateTime<Utc>> {
     parse_db_timestamp(raw).or_else(|| {
         NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")

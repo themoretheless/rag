@@ -58,6 +58,8 @@ where
     result
 }
 
+/// Verify a backup on a disposable copy: size, SHA-256, schema version,
+/// counts, orphan rows and the embedding contract.
 pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
     if !path.is_file() {
         return Err(AppError::not_found(format!(
@@ -156,6 +158,8 @@ pub(super) fn verify_embedding_contract(
     Ok(consistent)
 }
 
+/// `.duckdb` snapshots in `dir`, newest first; the newest and any named
+/// `*final*` are protected.
 pub fn backup_inventory(dir: &Path) -> Result<Vec<BackupInventoryItem>> {
     if !dir.exists() {
         return Ok(Vec::new());
@@ -194,6 +198,8 @@ pub fn backup_inventory(dir: &Path) -> Result<Vec<BackupInventoryItem>> {
     Ok(rows)
 }
 
+/// Snapshots retention would delete when keeping the newest `keep`
+/// (at least one); protected snapshots are never listed.
 pub fn retention_preview(dir: &Path, keep: usize) -> Result<Vec<BackupInventoryItem>> {
     Ok(backup_inventory(dir)?
         .into_iter()

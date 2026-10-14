@@ -14,6 +14,9 @@ use crate::models::{
     RelType,
 };
 
+/// Node cap for a filtered graph export when the filter sets none.
+const DEFAULT_EXPORT_MAX_NODES: u32 = 500;
+
 /// GRAPH_DESIGN §9 hard cap for a local-graph walk. Hop-by-hop frontier queries
 /// make depth affordable, so this bounds pathological requests rather than cost.
 const MAX_LOCAL_GRAPH_DEPTH: u32 = 5;
@@ -176,7 +179,7 @@ impl Store {
     /// Edges are restricted to the returned node set (both endpoints present).
     pub fn get_graph_view(&self, filter: GraphFilter) -> Result<GraphView> {
         // A cap of 0 historically still returned the first node.
-        let max_nodes = i64::from(filter.max_nodes.unwrap_or(500).max(1));
+        let max_nodes = i64::from(filter.max_nodes.unwrap_or(DEFAULT_EXPORT_MAX_NODES).max(1));
         let conn = self.lock()?;
 
         // Kind / seed filters and the node cap run in SQL; edges are joined

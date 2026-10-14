@@ -14,6 +14,10 @@ use crate::db::Store;
 
 use crate::error::{AppError, Result};
 
+/// Longest sleep between automatic-backup checks: a longer interval is still
+/// checked hourly, and the check only snapshots once the interval has elapsed.
+const AUTO_BACKUP_MAX_SLEEP: Duration = Duration::from_secs(3600);
+
 const BACKUP_PREFIX: &str = "rag-auto-";
 const BACKUP_SUFFIX: &str = ".duckdb";
 
@@ -97,6 +101,7 @@ static RUNTIME: LazyLock<RwLock<RuntimeState>> = LazyLock::new(|| {
 });
 static PID_PATH: LazyLock<RwLock<Option<PathBuf>>> = LazyLock::new(|| RwLock::new(None));
 
+/// Point-in-time copy of process runtime state for `status` / `/health`.
 pub fn runtime_snapshot() -> RuntimeSnapshot {
     let state = RUNTIME
         .read()
@@ -133,6 +138,7 @@ pub fn runtime_snapshot() -> RuntimeSnapshot {
     }
 }
 
+/// Record the active tool surface and HTTP bind address (if any).
 pub fn configure_runtime(tool_surface: &str, http_bind: Option<String>) {
     let mut state = RUNTIME
         .write()
@@ -141,6 +147,7 @@ pub fn configure_runtime(tool_surface: &str, http_bind: Option<String>) {
     state.http_bind = http_bind;
 }
 
+/// Set the start-up phase label reported by [`runtime_snapshot`].
 pub fn set_startup_phase(phase: &str) {
     RUNTIME.write().unwrap_or_else(|p| p.into_inner()).phase = phase.into();
 }
@@ -161,11 +168,15 @@ pub fn set_startup_timing(name: &str, elapsed: Duration, warn_ms: u64) {
     }
 }
 
+/// Mark start-up complete: phase `ready`, `ready = true`.
 pub fn mark_ready() {
     let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     s.phase = "ready".into();
     s.ready = true;
 }
+
+/// Mark shutdown complete and remove the PID file written by
+/// [`validate_runtime_paths`].
 pub fn mark_shutdown(checkpointed: bool) {
     let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     s.phase = "shutdown_complete".into();
@@ -177,6 +188,7 @@ pub fn mark_shutdown(checkpointed: bool) {
     }
 }
 
+/// Enable autosync reporting and schedule the next run `interval` from now.
 pub fn configure_autosync(interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_enabled = true;
@@ -185,12 +197,15 @@ pub fn configure_autosync(interval: Duration) {
     set_autosync_next(interval);
 }
 
+/// Record that an autosync pass has started.
 pub fn mark_autosync_running() {
     RUNTIME
         .write()
         .unwrap_or_else(|p| p.into_inner())
         .autosync_running = true;
 }
+
+/// Record a finished autosync pass and schedule the next one after `interval`.
 pub fn mark_autosync_success(interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_running = false;
@@ -199,6 +214,7 @@ pub fn mark_autosync_success(interval: Duration) {
     state.autosync_next_run_at =
         Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
+/// Record a failed autosync pass and schedule the retry after `interval`.
 pub fn mark_autosync_error(error: &str, interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_running = false;
@@ -214,6 +230,9 @@ fn set_autosync_next(interval: Duration) {
         Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
 
+/// Check start-up paths: create the database and auto-backup directories,
+/// reject read-only ones and missing ingest roots, then write the PID file
+/// (noting a stale one left by another process).
 pub fn validate_runtime_paths(config: &Config) -> Result<()> {
     let db_path = config.db_path.as_path();
     let ingest_roots = &config.ingest_roots;
@@ -326,6 +345,8 @@ pub struct AutoBackupInventory {
     pub free_bytes: Option<u64>,
 }
 
+/// Snapshot footprint of the automatic backup directory, or `None` when
+/// automatic backups are not configured.
 pub fn auto_backup_inventory(config: &Config) -> Option<AutoBackupInventory> {
     let settings = auto_backup_settings(config)?;
     Some(inventory_at(&settings))
@@ -418,11 +439,11 @@ pub fn spawn_auto_backup(store: Store, config: &Config) {
                 state.auto_backup_running = false;
                 state.auto_backup_next_run_at = Some(
                     Utc::now()
-                        + chrono::Duration::from_std(interval.min(Duration::from_secs(3600)))
+                        + chrono::Duration::from_std(interval.min(AUTO_BACKUP_MAX_SLEEP))
                             .unwrap_or_default(),
                 );
             }
-            tokio::time::sleep(interval.min(Duration::from_secs(3600))).await;
+            tokio::time::sleep(interval.min(AUTO_BACKUP_MAX_SLEEP)).await;
         }
     });
 }

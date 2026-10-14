@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Largest uncompiled-raw sample or shelf queue read at once.
+const MAX_UNCOMPILED_ROWS: usize = 200;
+
 impl Store {
     /// Counts: `(documents, chunks, graph_nodes, graph_edges)`.
     pub fn stats(&self) -> Result<(u64, u64, u64, u64)> {
@@ -78,7 +81,7 @@ impl Store {
     /// A sample only: paging a whole shelf is the catalog's job
     /// ([`Store::list_document_catalog`] with `layer=raw` and `compiled=false`).
     pub fn list_uncompiled_raw_sample(&self, limit: usize) -> Result<Vec<UncompiledRawSample>> {
-        let limit = limit.clamp(1, 200) as i64;
+        let limit = limit.clamp(1, MAX_UNCOMPILED_ROWS) as i64;
         let conn = self.lock()?;
         let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
         let mut stmt = conn.prepare(&format!(
@@ -114,7 +117,7 @@ impl Store {
     /// same first shelves, which on the live corpus is 25 of 82 925 docs in one of 503
     /// shelves. Counting in SQL ranks every shelf instead.
     pub(crate) fn uncompiled_raw_shelves(&self, limit: usize) -> Result<UncompiledShelfQueue> {
-        let limit = limit.clamp(1, 200) as i64;
+        let limit = limit.clamp(1, MAX_UNCOMPILED_ROWS) as i64;
         let conn = self.lock()?;
         let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
         // One predicate text for both the ranking and the queue width, so the two

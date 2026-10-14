@@ -22,6 +22,11 @@ use crate::models::{
 };
 use crate::util::content_hash;
 
+/// Most diary entries one read or wake-up returns.
+const MAX_DIARY_ENTRIES: usize = 100;
+/// Most pinned documents one wake-up returns.
+const MAX_PINNED_DOCS: usize = 200;
+
 /// Session bootstrap payload for `wake_up` (MemPalace parity).
 ///
 /// Combines store [`StatusReport`], recent diary notes, pinned documents, and
@@ -247,7 +252,7 @@ pub async fn diary_write(
 /// Uses [`Store::list_diary_entries`] (`kind=diary`, wing `agents/<name>` or room).
 pub fn diary_read(store: &Store, agent_name: &str, last_n: usize) -> Result<Vec<DiaryEntry>> {
     let agent = normalize_agent_name(agent_name)?;
-    let limit = last_n.clamp(1, 100);
+    let limit = last_n.clamp(1, MAX_DIARY_ENTRIES);
     store.list_diary_entries(Some(&agent), limit)
 }
 
@@ -265,8 +270,8 @@ pub fn wake_up(
         Some(a) if !a.trim().is_empty() => Some(normalize_agent_name(a)?),
         _ => None,
     };
-    let diary_limit = diary_limit.clamp(1, 100);
-    let pinned_limit = pinned_limit.clamp(1, 200);
+    let diary_limit = diary_limit.clamp(1, MAX_DIARY_ENTRIES);
+    let pinned_limit = pinned_limit.clamp(1, MAX_PINNED_DOCS);
 
     let diary = store.list_diary_entries(agent_scope.as_deref(), diary_limit)?;
     let pinned_docs = store.list_pinned_documents(pinned_limit)?;

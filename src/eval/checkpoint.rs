@@ -25,6 +25,7 @@ pub struct CheckpointPair {
     pub error_label: Option<ErrorLabel>,
 }
 
+/// Read an eval checkpoint; `Ok(None)` when the file does not exist.
 pub fn load_checkpoint(path: &Path) -> crate::error::Result<Option<Checkpoint>> {
     if !path.exists() {
         return Ok(None);
@@ -38,6 +39,7 @@ pub fn load_checkpoint(path: &Path) -> crate::error::Result<Option<Checkpoint>> 
     Ok(Some(checkpoint))
 }
 
+/// Write an eval checkpoint, creating its parent directory.
 pub fn save_checkpoint(path: &Path, checkpoint: &Checkpoint) -> crate::error::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
@@ -60,6 +62,7 @@ pub fn save_checkpoint(path: &Path, checkpoint: &Checkpoint) -> crate::error::Re
 }
 
 impl Checkpoint {
+    /// Whether this checkpoint was taken for the same dataset and settings pair.
     pub fn compatible_with(
         &self,
         dataset_content_hash: &str,
@@ -71,6 +74,7 @@ impl Checkpoint {
             && self.settings_b_name == settings_b_name
     }
 
+    /// Mark `query_id` done and store its paired metrics, replacing a prior pair.
     pub fn record(
         &mut self,
         query_id: String,

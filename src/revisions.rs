@@ -101,7 +101,8 @@ impl<'a> RevisionService<'a> {
         })?;
         if is_source_controlled(&restored) {
             return Err(AppError::forbidden(format!(
-                "revision {} for document '{document_id}' is a source-controlled snapshot and cannot be restored; restore the source file and synchronize it instead",
+                "revision {} for document '{document_id}' is a source-controlled snapshot and \
+                cannot be restored; restore the source file and synchronize it instead",
                 command.revision
             )));
         }

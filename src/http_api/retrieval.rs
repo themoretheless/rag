@@ -23,6 +23,11 @@ use crate::search_pack::PackHitParams;
 use crate::telemetry;
 use crate::util::{check_path_allowlist, non_blank};
 
+/// Revisions returned per page when `limit` is absent.
+const DEFAULT_REVISIONS_LIMIT: usize = 50;
+/// Largest revisions page a client may request.
+const MAX_REVISIONS_LIMIT: usize = 200;
+
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
         .route("/v1/search", post(search_http))
@@ -154,7 +159,10 @@ async fn revisions(
     State(state): State<HttpState>,
     Query(query): Query<RevisionsQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_REVISIONS_LIMIT)
+        .clamp(1, MAX_REVISIONS_LIMIT);
     let offset = match decode_cursor(query.cursor.as_deref()) {
         Ok(value) => value,
         Err(error) => return api_err(error),

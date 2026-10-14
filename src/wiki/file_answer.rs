@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Characters of the filed question quoted in a citation line (ellipsis included).
+const QUESTION_PREVIEW_MAX_CHARS: usize = 160;
+
 /// One citation attached to a filed answer (metadata + optional body lines).
 #[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
 pub struct FileAnswerCitation {
@@ -35,13 +38,7 @@ impl FileAnswerCitation {
             }
         }
         if let Some(q) = self.quote.as_deref().filter(|s| !s.is_empty()) {
-            let short = if q.chars().count() > 160 {
-                let mut s: String = q.chars().take(159).collect();
-                s.push('…');
-                s
-            } else {
-                q.to_string()
-            };
+            let short = crate::util::truncate_chars(q, QUESTION_PREVIEW_MAX_CHARS);
             line.push_str(&format!(": \"{short}\""));
         }
         if let Some(n) = self.note.as_deref().filter(|s| !s.is_empty()) {
@@ -95,30 +92,34 @@ pub async fn file_answer(
     let cites_json = serde_json::to_value(&cites).unwrap_or_else(|_| serde_json::json!([]));
     let summary = first_line(body, 240);
 
-    write_wiki_page_with_opts(
+    write_wiki_page_command(
         store,
         embedder,
         config,
-        &slug,
-        title,
-        &page_body,
-        "wiki",
-        Some("answers"),
-        Some(&summary),
-        agent,
-        WriteWikiOpts {
-            op: Some("file_answer".into()),
-            metadata_json_override: None,
-            prefix: Some("FILE".into()),
-            message: Some(format!("filed answer wiki://{slug}")),
-            extra_metadata: Some(serde_json::json!({
-                "citations": cites_json,
-                "filed_as": "answer",
-            })),
-            extra_payload: Some(serde_json::json!({
-                "citation_count": cites.len(),
-            })),
-            if_match_revision: None,
+        WikiWriteCommand {
+            slug: slug.to_string(),
+            title: title.to_string(),
+            content: page_body,
+            wing: None,
+            room: None,
+            kind: "wiki".to_string(),
+            category: Some("answers".to_string()),
+            summary: Some(summary),
+            agent: agent.map(str::to_string),
+            options: WriteWikiOpts {
+                op: Some("file_answer".into()),
+                metadata_json_override: None,
+                prefix: Some("FILE".into()),
+                message: Some(format!("filed answer wiki://{slug}")),
+                extra_metadata: Some(serde_json::json!({
+                    "citations": cites_json,
+                    "filed_as": "answer",
+                })),
+                extra_payload: Some(serde_json::json!({
+                    "citation_count": cites.len(),
+                })),
+                if_match_revision: None,
+            },
         },
     )
     .await

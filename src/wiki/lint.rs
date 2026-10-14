@@ -268,7 +268,9 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             code: LintCode::RawUncompiled,
             severity: crate::models::IssueSeverity::Info,
             message: format!(
-                "{} uncompiled raw source(s) in {} wing/room shelf(ves); biggest first: {}. Page a shelf with list_documents(layer=raw, wing, room, compiled=false) and close it via bounded compile / file_answer, not a full corpus pass.",
+                "{} uncompiled raw source(s) in {} wing/room shelf(ves); biggest first: {}. Page \
+                a shelf with list_documents(layer=raw, wing, room, compiled=false) and close it \
+                via bounded compile / file_answer, not a full corpus pass.",
                 health.uncompiled_raw_count,
                 queue.total_shelves,
                 if shelves.is_empty() {

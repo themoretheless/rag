@@ -76,7 +76,9 @@ impl RagServer {
 
     #[tool(
         name = "sync_sources",
-        description = "Recursively sync supported text, Markdown, HTML, PDF, and source-code files from an allowlisted directory. Adds or updates changed files and removes missing sources only when requested."
+        description = "Recursively sync supported text, Markdown, HTML, PDF, and source-code \
+        files from an allowlisted directory. Adds or updates changed files and removes missing \
+        sources only when requested."
     )]
     pub(super) async fn sync_sources(
         &self,
@@ -129,7 +131,8 @@ impl RagServer {
 
     #[tool(
         name = "add_drawer",
-        description = "File verbatim content as a drawer (document): chunk, embed, store. Requires wing and room; optional source_file/title/uri. Does not summarize on ingest."
+        description = "File verbatim content as a drawer (document): chunk, embed, store. \
+        Requires wing and room; optional source_file/title/uri. Does not summarize on ingest."
     )]
     pub(super) async fn add_drawer(
         &self,
@@ -168,7 +171,8 @@ impl RagServer {
 
     #[tool(
         name = "check_duplicate",
-        description = "Exact content-hash / uri dedupe probe before filing. Pass content and/or hash (or content_hash), and/or uri. Returns is_duplicate, content_hash, and matches."
+        description = "Exact content-hash / uri dedupe probe before filing. Pass content and/or \
+        hash (or content_hash), and/or uri. Returns is_duplicate, content_hash, and matches."
     )]
     pub(super) async fn check_duplicate(
         &self,
@@ -297,7 +301,9 @@ impl RagServer {
 
     #[tool(
         name = "get_source",
-        description = "Fetch one raw-layer source by document_id or uri. include_chunks returns text-only chunks, default 100 and hard cap 500 via chunk_limit; one response has an 8 MiB aggregate chunk-text budget."
+        description = "Fetch one raw-layer source by document_id or uri. include_chunks returns \
+        text-only chunks, default 100 and hard cap 500 via chunk_limit; one response has an 8 \
+        MiB aggregate chunk-text budget."
     )]
     pub(super) async fn get_source(
         &self,
@@ -351,7 +357,10 @@ impl RagServer {
 
     #[tool(
         name = "list_documents",
-        description = "List stored documents without loading full content. Filters: wing?, room?, source_file?, include_archived?, layer?, kind?, compiled? (false = raw compile debt, true = sources a wiki page links to); limit defaults 50 (hard cap 200), offset defaults 0. Default excludes archived/tombstone."
+        description = "List stored documents without loading full content. Filters: wing?, \
+        room?, source_file?, include_archived?, layer?, kind?, compiled? (false = raw compile \
+        debt, true = sources a wiki page links to); limit defaults 50 (hard cap 200), offset \
+        defaults 0. Default excludes archived/tombstone."
     )]
     pub(super) async fn list_documents(
         &self,
@@ -384,7 +393,9 @@ impl RagServer {
 
     #[tool(
         name = "get_document",
-        description = "Get a document by id with metadata. include_chunks returns text-only chunks, default 100 and hard cap 500 via chunk_limit; one response has an 8 MiB aggregate chunk-text budget."
+        description = "Get a document by id with metadata. include_chunks returns text-only \
+        chunks, default 100 and hard cap 500 via chunk_limit; one response has an 8 MiB \
+        aggregate chunk-text budget."
     )]
     pub(super) async fn get_document(
         &self,
@@ -430,7 +441,10 @@ impl RagServer {
 
     #[tool(
         name = "update_document_meta",
-        description = "Update document meta without re-embedding: wing, room, title, metadata_json, pinned, boost, status (and layer/kind/source_file). Optional content triggers re-chunk+re-embed only when body changes (refused for layer=raw). MemPalace update_drawer analogue."
+        description = "Update document meta without re-embedding: wing, room, title, \
+        metadata_json, pinned, boost, status (and layer/kind/source_file). Optional content \
+        triggers re-chunk+re-embed only when body changes (refused for layer=raw). MemPalace \
+        update_drawer analogue."
     )]
     pub(super) async fn update_document_meta(
         &self,
@@ -507,7 +521,9 @@ impl RagServer {
 
     #[tool(
         name = "status",
-        description = "Index health: backend=duckdb, docs/chunks/nodes/edges, wings summary, ready_for_search, fts_ready, embed_dims, db path, db/WAL sizes, and the automatic snapshot footprint (count, bytes, retention, free disk) when configured."
+        description = "Index health: backend=duckdb, docs/chunks/nodes/edges, wings summary, \
+        ready_for_search, fts_ready, embed_dims, db path, db/WAL sizes, and the automatic \
+        snapshot footprint (count, bytes, retention, free disk) when configured."
     )]
     pub(super) async fn status(&self) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
@@ -529,7 +545,8 @@ impl RagServer {
 
     #[tool(
         name = "llm_status",
-        description = "Local chat LLM + embeddings: llm_enabled, base_url, model, reachable (short probe), embed provider/model/dims. Does not hang long when Ollama is down."
+        description = "Local chat LLM + embeddings: llm_enabled, base_url, model, reachable \
+        (short probe), embed provider/model/dims. Does not hang long when Ollama is down."
     )]
     pub(super) async fn llm_status(&self) -> Result<CallToolResult, McpError> {
         let body = self.llm_status_report().await?;

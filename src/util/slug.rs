@@ -7,6 +7,8 @@ pub enum SlugPolicy {
     LinkTarget,
 }
 
+/// Lowercase ASCII slug of `input` under `policy` (`LinkTarget` also keeps
+/// `-`, `_` and `.`).
 pub fn slugify(input: &str, policy: SlugPolicy) -> String {
     let mut output = String::new();
     for character in input.chars() {

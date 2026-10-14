@@ -820,11 +820,6 @@ pub fn attach_context(
     Ok(())
 }
 
-#[cfg(test)]
-fn chunk_section_metadata(chunk: &crate::models::Chunk) -> (Option<Vec<String>>, Option<String>) {
-    section_metadata(&chunk.metadata_json)
-}
-
 fn section_metadata(metadata_json: &str) -> (Option<Vec<String>>, Option<String>) {
     let value = serde_json::from_str::<serde_json::Value>(metadata_json).ok();
     let heading_path = value
@@ -1723,77 +1718,6 @@ fn search_lex(
     Ok(hits)
 }
 
-/// Simple term-frequency lexical ranking (direct TF path for unit tests).
-#[cfg(test)]
-fn search_lex_tf(
-    store: &Store,
-    query_text: &str,
-    top_k: usize,
-    document_id: Option<&str>,
-) -> Result<Vec<SearchHit>> {
-    let chunks = load_chunks(store, document_id)?;
-    if chunks.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let query_terms = tokenize(query_text);
-    if query_terms.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut scored: Vec<(f32, usize)> = chunks
-        .iter()
-        .enumerate()
-        .filter_map(|(i, chunk)| {
-            let s = tf_score(&query_terms, &chunk.content);
-            if s > 0.0 {
-                Some((s, i))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(top_k);
-
-    let mut doc_cache: HashMap<String, (String, String)> = HashMap::new();
-    let mut hits = Vec::with_capacity(scored.len());
-    for (score, idx) in scored {
-        let chunk = &chunks[idx];
-        let (title, uri) = resolve_doc(store, &chunk.document_id, &mut doc_cache)?;
-        let (heading_path, section) = chunk_section_metadata(chunk);
-        hits.push(SearchHit {
-            chunk_id: chunk.id.clone(),
-            document_id: chunk.document_id.clone(),
-            document_title: title,
-            document_uri: uri,
-            chunk_index: chunk.chunk_index,
-            content: chunk.content.clone(),
-            score,
-            score_vec: None,
-            score_lex: Some(score),
-            score_rrf: None,
-            snippet: None,
-            char_start: Some(chunk.char_start),
-            char_end: Some(chunk.char_end),
-            heading_path,
-            section,
-            context: None,
-            explanation: None,
-            rank_vec: None,
-            rank_lex: None,
-        });
-    }
-    Ok(hits)
-}
-
-/// Term-frequency score: sum of occurrences of each query term in `content`.
-#[cfg(test)]
-fn tf_score(query_terms: &[String], content: &str) -> f32 {
-    fts::term_frequency_score(query_terms, content)
-}
-
 /// Lowercase alphanumeric tokens (simple, language-agnostic).
 fn tokenize(text: &str) -> Vec<String> {
     fts::tokenize(text)
@@ -1963,35 +1887,6 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
     } else {
         Some(snippet)
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-fn load_chunks(store: &Store, document_id: Option<&str>) -> Result<Vec<crate::models::Chunk>> {
-    match document_id {
-        Some(doc_id) => store.list_chunks_for_document(doc_id),
-        None => store.all_chunks_with_embeddings(),
-    }
-}
-
-#[cfg(test)]
-fn resolve_doc(
-    store: &Store,
-    document_id: &str,
-    cache: &mut HashMap<String, (String, String)>,
-) -> Result<(String, String)> {
-    if let Some(entry) = cache.get(document_id) {
-        return Ok(entry.clone());
-    }
-    let (title, uri) = match store.get_document(document_id)? {
-        Some(doc) => (doc.title, doc.uri),
-        None => (String::new(), String::new()),
-    };
-    cache.insert(document_id.to_string(), (title.clone(), uri.clone()));
-    Ok((title, uri))
 }
 
 #[cfg(test)]

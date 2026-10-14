@@ -14,7 +14,9 @@ use crate::util::parse_optional_timestamp;
 impl RagServer {
     #[tool(
         name = "kg_add",
-        description = "Add a temporal KG fact (subject, predicate, object). Idempotent for open active SPO. Optional valid_from/valid_to (half-open), source_document_id, confidence, metadata_json."
+        description = "Add a temporal KG fact (subject, predicate, object). Idempotent for open \
+        active SPO. Optional valid_from/valid_to (half-open), source_document_id, confidence, \
+        metadata_json."
     )]
     pub(super) async fn kg_add(
         &self,
@@ -39,7 +41,8 @@ impl RagServer {
 
     #[tool(
         name = "kg_query",
-        description = "Query temporal KG facts by optional subject/predicate/object. Without at_time: active only. With at_time: half-open validity window filter."
+        description = "Query temporal KG facts by optional subject/predicate/object. Without \
+        at_time: active only. With at_time: half-open validity window filter."
     )]
     pub(super) async fn kg_query(
         &self,
@@ -79,7 +82,8 @@ impl RagServer {
 
     #[tool(
         name = "kg_supersede",
-        description = "Supersede a KG fact object: close (subject,predicate,old_object) at boundary `at` and open (subject,predicate,new_object). Returns the successor fact."
+        description = "Supersede a KG fact object: close (subject,predicate,old_object) at \
+        boundary `at` and open (subject,predicate,new_object). Returns the successor fact."
     )]
     pub(super) async fn kg_supersede(
         &self,

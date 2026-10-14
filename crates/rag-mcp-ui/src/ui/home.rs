@@ -685,14 +685,7 @@ fn compact_count(value: u64) -> String {
     }
 }
 
-use crate::ui::text::short_timestamp as readable_timestamp;
-
-fn short_time(value: &str) -> String {
-    value
-        .split_once('T')
-        .map(|(_, time)| time.trim_end_matches('Z').chars().take(8).collect())
-        .unwrap_or_else(|| value.chars().take(8).collect())
-}
+use crate::ui::text::{short_time, short_timestamp as readable_timestamp};
 
 #[cfg(test)]
 mod tests {
@@ -711,6 +704,5 @@ mod tests {
             readable_timestamp("2026-09-02T12:00:00Z"),
             "2026-09-02 12:00:00"
         );
-        assert_eq!(short_time("2026-09-02T12:34:56Z"), "12:34:56");
     }
 }

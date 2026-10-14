@@ -9,6 +9,9 @@ use crate::db::Store;
 use crate::error::{AppError, Result};
 use crate::models::{Document, DocumentFilter, DocumentMetaUpdate, OpsLogEntry};
 
+/// Upper bound on lifecycle candidates listed per call.
+const MAX_CANDIDATES: usize = 500;
+
 pub const STATUS_ACTIVE: &str = "active";
 pub const STATUS_CONSOLIDATED: &str = "consolidated";
 pub const STATUS_ARCHIVED: &str = "archived";
@@ -35,6 +38,8 @@ pub struct LifecycleMutationResult {
     pub output_document_id: Option<String>,
 }
 
+/// Documents eligible for lifecycle actions, filtered by status (default
+/// active), layer and kind; archived documents are included.
 pub fn list_candidates(
     store: &Store,
     status: Option<&str>,
@@ -47,7 +52,7 @@ pub fn list_candidates(
         layer: layer.map(str::to_string),
         kind: kind.map(str::to_string),
         include_archived: Some(true),
-        limit: Some(limit.clamp(1, 500)),
+        limit: Some(limit.clamp(1, MAX_CANDIDATES)),
         ..DocumentFilter::default()
     })?;
     Ok(docs
@@ -64,6 +69,8 @@ pub fn list_candidates(
         .collect())
 }
 
+/// Mark `document_ids` consolidated into an existing output document:
+/// sources get status `consolidated` and a back-link; the output lists them.
 pub fn consolidate_selected(
     store: &Store,
     document_ids: &[String],
@@ -139,6 +146,8 @@ pub fn consolidate_selected(
     Ok(result)
 }
 
+/// Set status `archived` on the selected documents; already archived and
+/// missing ids are reported, not changed.
 pub fn archive_selected(
     store: &Store,
     document_ids: &[String],

@@ -38,12 +38,18 @@ fn read(conn: &Connection, id: &str) -> Result<Proposal> {
     })?)?)
 }
 fn save(conn: &Connection, proposal: &Proposal) -> Result<()> {
-    conn.execute("INSERT INTO wiki_proposals VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload", params![proposal.id, serde_json::to_string(proposal)?])?;
+    conn.execute(
+        "INSERT INTO wiki_proposals VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload \
+    = excluded.payload",
+        params![proposal.id, serde_json::to_string(proposal)?],
+    )?;
     Ok(())
 }
+/// Load one wiki review proposal by id.
 pub fn get(store: &Store, id: &str) -> Result<Proposal> {
     read(&*store.lock()?, id)
 }
+/// All wiki review proposals, ordered by id.
 pub fn list(store: &Store) -> Result<Vec<Proposal>> {
     let conn = store.lock()?;
     let mut stmt = conn.prepare("SELECT payload FROM wiki_proposals ORDER BY id")?;
@@ -64,6 +70,8 @@ pub fn insert_new(store: &Store, base: Document, sources: Vec<ReviewSource>) -> 
     save(&*store.lock()?, &proposal)?;
     Ok(proposal)
 }
+/// Replace a pending proposal's content (optionally rejecting it); fails
+/// with a conflict unless it is still pending at `revision`.
 pub fn update(
     store: &Store,
     id: &str,

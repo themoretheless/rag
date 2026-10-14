@@ -59,7 +59,7 @@ impl Default for MaintainRefreshFlags {
             rebuild_wiki_index: true,
             reembed_all: false,
             dry_run: false,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
         }
     }
 }
@@ -228,7 +228,9 @@ pub(crate) fn reembed_all_incomplete(report: &ReembedAllReport) -> bool {
 
 pub(crate) fn reembed_all_incomplete_message(report: &ReembedAllReport) -> String {
     format!(
-        "{REEMBED_ALL_INCOMPLETE_CODE}: processed={} succeeded={} failed={} skipped={}; chunks_considered={} attached_chunks={} orphan_chunks={} chunks_reembedded={} errors={}; full-corpus completion was not reached",
+        "{REEMBED_ALL_INCOMPLETE_CODE}: processed={} succeeded={} failed={} skipped={}; \
+        chunks_considered={} attached_chunks={} orphan_chunks={} chunks_reembedded={} errors={}; \
+        full-corpus completion was not reached",
         report.documents_processed,
         report.documents_succeeded,
         report.documents_failed,
@@ -470,7 +472,9 @@ fn refuse_capped_embedding_migration(
         .map(|error| error.to_string())
         .unwrap_or_else(|| "embedding identity changed during migration preflight".into());
     Err(AppError::embeddings(format!(
-        "refuse capped embedding migration: corpus has {document_count} documents but max_docs={max_docs}; no vectors were changed. Run a complete uncapped reembed_all. {mismatch}"
+        "refuse capped embedding migration: corpus has {document_count} documents but \
+        max_docs={max_docs}; no vectors were changed. Run a complete uncapped reembed_all. \
+        {mismatch}"
     )))
 }
 
@@ -503,7 +507,10 @@ pub async fn reembed_all(
     let skipped_cap = documents_considered.saturating_sub(max_docs);
     if inventory_before.orphan > 0 {
         let error = format!(
-            "{REEMBED_ALL_INCOMPLETE_CODE}: refuse reembed_all because {} orphan chunk(s) are not attached to any document; no vectors were changed and no target embedding manifest was published. Run doctor and repair corpus integrity explicitly before retrying",
+            "{REEMBED_ALL_INCOMPLETE_CODE}: refuse reembed_all because {} orphan chunk(s) are \
+            not attached to any document; no vectors were changed and no target embedding \
+            manifest was published. Run doctor and repair corpus integrity explicitly before \
+            retrying",
             inventory_before.orphan
         );
         return Ok(ReembedAllReport {
@@ -546,7 +553,8 @@ pub async fn reembed_all(
         })?;
         if page.is_empty() {
             errors.push(format!(
-                "{REEMBED_ALL_INCOMPLETE_CODE}: document inventory changed during reembed_all (expected to process {target_count}, reached {documents_processed})"
+                "{REEMBED_ALL_INCOMPLETE_CODE}: document inventory changed during reembed_all \
+                (expected to process {target_count}, reached {documents_processed})"
             ));
             break;
         }
@@ -914,7 +922,9 @@ pub async fn maintain_refresh(
             let errors = (inventory.orphan > 0)
                 .then(|| {
                     format!(
-                        "{REEMBED_ALL_INCOMPLETE_CODE}: {} orphan chunk(s) are outside document-driven re-embedding; apply would refuse without changing vectors",
+                        "{REEMBED_ALL_INCOMPLETE_CODE}: {} orphan chunk(s) are outside \
+                        document-driven re-embedding; apply would refuse without changing \
+                        vectors",
                         inventory.orphan
                     )
                 })

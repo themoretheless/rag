@@ -60,7 +60,7 @@ impl Default for CompressOptions {
             confirm: false,
             allow_raw_delete: false,
             near_dup_threshold: 0.92,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
             log_ops: true,
         }
     }
@@ -492,7 +492,9 @@ pub fn maintain_compress(
             || deleted_chunks != chunks_removed
         {
             return Err(AppError::db(format!(
-                "compression disposition counts changed during atomic apply: planned deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
+                "compression disposition counts changed during atomic apply: planned \
+                deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, \
+                applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
             )));
         }
     }

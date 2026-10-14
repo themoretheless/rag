@@ -86,7 +86,11 @@ impl HttpAuth {
 
     pub(crate) fn validate_bind(&self, bind: SocketAddr) -> Result<(), AppError> {
         if !bind.ip().is_loopback() && self.credentials.is_empty() {
-            return Err(AppError::config("non-loopback HTTP/MCP requires RAG_HTTP_READ_TOKEN, RAG_HTTP_WRITE_TOKEN or RAG_HTTP_ADMIN_TOKEN; configure credentials before remote startup"));
+            return Err(AppError::config(
+                "non-loopback HTTP/MCP requires RAG_HTTP_READ_TOKEN, \
+            RAG_HTTP_WRITE_TOKEN or RAG_HTTP_ADMIN_TOKEN; configure credentials before remote \
+            startup",
+            ));
         }
         Ok(())
     }
@@ -285,7 +289,14 @@ pub(super) async fn enforce_auth(
             header::ACCESS_CONTROL_ALLOW_METHODS,
             HeaderValue::from_static("GET, HEAD, POST, PUT, DELETE, OPTIONS"),
         );
-        response.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Authorization, Content-Type, If-Match, X-Request-Id, X-Rag-Client-Host, MCP-Protocol-Version, MCP-Session-Id"));
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static(
+                "Authorization, \
+        Content-Type, If-Match, X-Request-Id, X-Rag-Client-Host, MCP-Protocol-Version, \
+        MCP-Session-Id",
+            ),
+        );
         return response;
     }
     let Some(role) = auth.authenticate(request.headers()) else {

@@ -5,9 +5,7 @@ pub use crate::direct_db::{
     expand_neighbors_store, export_graph_snapshot, fetch_document_db, fetch_wiki_list_db,
     load_live_db,
 };
-use rag_mcp_core::{
-    pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, UI_GRAPH_EXPORT_MAX_NODES,
-};
+use rag_mcp_core::{pkb_rel_types, GraphEdge, GraphNode, GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -474,9 +472,6 @@ pub struct WikiPageMeta {
 struct WikiListResponse {
     #[serde(default)]
     pages: Vec<WikiPageMeta>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    count: usize,
     total: Option<usize>,
     limit: Option<usize>,
     offset: Option<usize>,
@@ -918,14 +913,6 @@ fn http_neighbors_path(
     path
 }
 
-/// Live-load filter: PKB rel types, caller-selected tags, hard UI node cap.
-///
-/// Prefer [`Store::export_graph_for_ui`]; this mirrors
-/// [`GraphFilter::pkb_ui_export`] for callers that only need the filter value.
-#[allow(dead_code)] // public helper for tests / callers building filters without Store
-pub fn pkb_live_filter(include_tags: bool) -> GraphFilter {
-    GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), include_tags)
-}
 
 /// Parse bare `GraphView` or envelope `{ "graph": { ... } }`.
 ///
@@ -1786,8 +1773,8 @@ mod tests {
     }
 
     #[test]
-    fn pkb_live_filter_defaults() {
-        let f = pkb_live_filter(false);
+    fn pkb_ui_export_filter_defaults() {
+        let f = rag_mcp_core::GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), false);
         let rels = f.rel_types.expect("rels");
         assert!(rels.iter().any(|r| r == "wikilink"));
         assert!(rels.iter().any(|r| r == "related"));
@@ -1796,7 +1783,8 @@ mod tests {
         assert!(kinds.iter().any(|k| k == "document"));
         assert!(!kinds.iter().any(|k| k == "tag"));
 
-        let with_tags = pkb_live_filter(true);
+        let with_tags =
+            rag_mcp_core::GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), true);
         assert!(with_tags
             .kinds
             .expect("kinds")

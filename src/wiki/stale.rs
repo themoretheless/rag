@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Most graph neighbours read when collecting a page's review dependencies;
+/// reaching it means the set may be incomplete, which is an error.
+const REVIEW_NEIGHBOR_LIMIT: u32 = 10_000;
+
 /// One wiki page whose recorded source changed, disappeared, or is newer than
 /// the page when only legacy timestamp provenance is available.
 #[derive(Debug, Clone, Serialize)]
@@ -212,8 +216,8 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
         .map(|(d, _)| (d.id.clone(), d.uri.clone()))
         .collect();
     if let Some(node) = store.find_node_by_document_id(&page.id)? {
-        let view = store.neighbors(&node.id, 1, 10000)?;
-        if view.nodes.len() >= 10000 {
+        let view = store.neighbors(&node.id, 1, REVIEW_NEIGHBOR_LIMIT)?;
+        if view.nodes.len() >= REVIEW_NEIGHBOR_LIMIT as usize {
             return Err(AppError::config(
                 "review dependency set exceeds graph limit",
             ));
@@ -331,7 +335,10 @@ pub async fn refresh_stale_wiki(
         .filter(|item| item.link_kind == "source_missing")
         .count();
     if missing_sources > 0 {
-        let note = format!("{missing_sources} source reference(s) are unavailable; restore or relink them before recompiling. Missing sources are excluded from automatic recompile.");
+        let note = format!(
+            "{missing_sources} source reference(s) are unavailable; restore or \
+        relink them before recompiling. Missing sources are excluded from automatic recompile."
+        );
         notes = Some(match notes {
             Some(existing) => format!("{existing}. {note}"),
             None => note,

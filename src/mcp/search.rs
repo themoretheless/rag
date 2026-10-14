@@ -19,7 +19,9 @@ use crate::util::run_blocking;
 impl RagServer {
     #[tool(
         name = "search",
-        description = "Search stored chunks (mode=lex|vec|hybrid). Supports filters, diversity, token packing, and optional context_expansion=neighbors|parent_section. Markdown hits include heading_path/section."
+        description = "Search stored chunks (mode=lex|vec|hybrid). Supports filters, diversity, \
+        token packing, and optional context_expansion=neighbors|parent_section. Markdown hits \
+        include heading_path/section."
     )]
     pub(super) async fn search(
         &self,
@@ -106,7 +108,9 @@ impl RagServer {
 
     #[tool(
         name = "reembed_document",
-        description = "Refresh one document's vectors only when the live embedding identity already matches the corpus manifest. Use complete uncapped reembed_all for provider/model/dims/endpoint migration."
+        description = "Refresh one document's vectors only when the live embedding identity \
+        already matches the corpus manifest. Use complete uncapped reembed_all for \
+        provider/model/dims/endpoint migration."
     )]
     pub(super) async fn reembed_document(
         &self,
@@ -120,7 +124,9 @@ impl RagServer {
 
     #[tool(
         name = "multi_get",
-        description = "Get up to 100 documents by id in request order. Returns found documents plus missing ids. include_chunks returns no embeddings, defaults to 100 chunks per document (hard cap 500 via chunk_limit), and has an 8 MiB aggregate chunk-text budget."
+        description = "Get up to 100 documents by id in request order. Returns found documents \
+        plus missing ids. include_chunks returns no embeddings, defaults to 100 chunks per \
+        document (hard cap 500 via chunk_limit), and has an 8 MiB aggregate chunk-text budget."
     )]
     pub(super) async fn multi_get(
         &self,
@@ -168,7 +174,8 @@ impl RagServer {
 
     #[tool(
         name = "find_similar",
-        description = "Find documents with chunk embeddings similar to a seed document. Uses the normalized mean of its existing chunk vectors and excludes the seed."
+        description = "Find documents with chunk embeddings similar to a seed document. Uses the \
+        normalized mean of its existing chunk vectors and excludes the seed."
     )]
     pub(super) async fn find_similar(
         &self,
@@ -192,7 +199,10 @@ impl RagServer {
 
     #[tool(
         name = "pack_context",
-        description = "Pack ranked search hits under a complete citation-block budget (~4 chars/token), including headers and optional neighbors/parent-section expansion. total_tokens never exceeds max_tokens; 0 returns an empty block. Packed content is canonical; duplicate snippet/context text is omitted."
+        description = "Pack ranked search hits under a complete citation-block budget (~4 \
+        chars/token), including headers and optional neighbors/parent-section expansion. \
+        total_tokens never exceeds max_tokens; 0 returns an empty block. Packed content is \
+        canonical; duplicate snippet/context text is omitted."
     )]
     pub(super) async fn pack_context(
         &self,

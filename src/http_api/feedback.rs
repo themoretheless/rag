@@ -18,6 +18,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+/// Search-feedback rows per page.
+const FEEDBACK_PAGE_SIZE: usize = 50;
+
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
         .route("/v1/eval/feedback", get(list).post(create))
@@ -65,7 +68,7 @@ async fn list(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
             &st.store,
             super::payload_kv::PayloadTable::SearchFeedback,
             q.offset,
-            50,
+            FEEDBACK_PAGE_SIZE,
         )?;
         Ok(json!({"items":items,"total":total,"offset":q.offset}))
     })
@@ -222,7 +225,7 @@ async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Respon
             &st.store,
             super::payload_kv::PayloadTable::EvalRuns,
             q.offset,
-            50,
+            FEEDBACK_PAGE_SIZE,
         )?;
         Ok(json!({"items":page,"total":total,"offset":q.offset}))
     })
@@ -406,7 +409,9 @@ async fn run_one(
         "result_count": hits.len(),
         "timings": search_result["timings"],
         "embedding_manifest": crate::util::blocking_section(|| st.store.get_embedding_manifest())?,
-        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer correctness; citation_judge is deterministic expected-doc coverage; answer_judge is heuristic unless use_llm and RAG_LLM_ENABLED"
+        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer \
+        correctness; citation_judge is deterministic expected-doc coverage; answer_judge is \
+        heuristic unless use_llm and RAG_LLM_ENABLED"
     });
     crate::util::blocking_section(|| persist_feedback_run(&st.store, &id, &item.search, &result))?;
     Ok(result)

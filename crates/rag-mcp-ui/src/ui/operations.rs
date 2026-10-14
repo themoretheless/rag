@@ -4,7 +4,7 @@ use crate::operations::{
     BackupRequest, JobSnapshot, JobSnapshotExt, MaintenanceResult, OperationsSnapshot,
     SyncJobRequest,
 };
-use crate::ui::text::short_timestamp;
+use crate::ui::text::{short_id, short_timestamp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OperationsTab {
@@ -528,9 +528,6 @@ fn progress_fraction(processed: usize, total: usize) -> f32 {
     }
 }
 
-fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
-}
 
 fn health_metric(ui: &mut egui::Ui, label: &str, value: &str, healthy: bool) {
     egui::Frame::group(ui.style())
@@ -636,12 +633,6 @@ mod tests {
         )
         .expect_err("zero would reject every non-empty file");
         assert_eq!(error, "Макс. MiB должен быть положительным целым числом");
-    }
-
-    #[test]
-    fn short_job_id_never_splits_invalid_boundary() {
-        assert_eq!(short_id("abc"), "abc");
-        assert_eq!(short_id("123456789"), "12345678");
     }
 
     #[test]

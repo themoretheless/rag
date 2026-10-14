@@ -42,17 +42,6 @@ pub fn parse_model_object<T: DeserializeOwned>(raw: &str) -> Option<T> {
     parse_embedded(strip_json_fences(raw), '{', '}')
 }
 
-/// First `max` characters of `s`, with `…` appended when cut.
-pub fn truncate_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut out: String = s.chars().take(max).collect();
-        out.push('…');
-        out
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,9 +70,4 @@ mod tests {
         assert_eq!(parse_model_object::<Probe>("no json"), None);
     }
 
-    #[test]
-    fn truncation_counts_characters_not_bytes() {
-        assert_eq!(truncate_chars("привет", 3), "при…");
-        assert_eq!(truncate_chars("abc", 3), "abc");
-    }
 }

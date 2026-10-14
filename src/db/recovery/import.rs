@@ -145,7 +145,10 @@ impl Store {
         let conn = self.lock()?;
         portable_store_preflight_locked(&conn)?;
         let mut stmt = conn.prepare(
-            "SELECT id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), COALESCE(revision, 1) FROM documents ORDER BY id",
+            "SELECT id, uri, title, content, metadata_json, content_hash, wing, room, \
+            source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), \
+            COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), \
+            COALESCE(revision, 1) FROM documents ORDER BY id",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(Document {
@@ -177,7 +180,9 @@ impl Store {
             std::collections::HashMap::with_capacity(documents.len());
         {
             let mut chunks_stmt = conn.prepare(
-                "SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, COALESCE(metadata_json, '{}') FROM chunks ORDER BY document_id, chunk_index",
+                "SELECT id, document_id, chunk_index, content, embedding_json, char_start, \
+                char_end, COALESCE(metadata_json, '{}') FROM chunks ORDER BY document_id, \
+                chunk_index",
             )?;
             let mut rows = chunks_stmt.query([])?;
             crate::db::rows::visit_rows(&mut rows, |row| {
@@ -306,7 +311,9 @@ impl Store {
                     validate_embedding_manifest(target, "target corpus")?;
                     if !embedding_manifests_match(target, bundle_manifest) {
                         return Err(AppError::embeddings(format!(
-                            "recovery bundle embedding identity does not match target corpus (bundle provider='{}', model='{}', dims={}; target provider='{}', model='{}', dims={})",
+                            "recovery bundle embedding identity does not match target corpus \
+                            (bundle provider='{}', model='{}', dims={}; target provider='{}', \
+                            model='{}', dims={})",
                             bundle_manifest.provider,
                             bundle_manifest.model,
                             bundle_manifest.dims,
@@ -392,8 +399,29 @@ impl Store {
             }
             let d = &item.document;
             tx.execute(
-                "INSERT INTO documents (id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, status, pinned, boost, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))",
-                params![d.id, d.uri, d.title, d.content, d.metadata_json, d.content_hash, d.wing, d.room, d.source_file, d.layer, d.kind, d.status, d.pinned, d.boost, d.revision, crate::util::format_db_timestamp(d.created_at), crate::util::format_db_timestamp(d.updated_at)],
+                "INSERT INTO documents (id, uri, title, content, metadata_json, content_hash, \
+                wing, room, source_file, layer, kind, status, pinned, boost, revision, \
+                created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+                CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))",
+                params![
+                    d.id,
+                    d.uri,
+                    d.title,
+                    d.content,
+                    d.metadata_json,
+                    d.content_hash,
+                    d.wing,
+                    d.room,
+                    d.source_file,
+                    d.layer,
+                    d.kind,
+                    d.status,
+                    d.pinned,
+                    d.boost,
+                    d.revision,
+                    crate::util::format_db_timestamp(d.created_at),
+                    crate::util::format_db_timestamp(d.updated_at)
+                ],
             )?;
             // Restore keeps the bundle's revision and timestamps (no CAS bump),
             // but chunk rows go through the same writer as every other path.

@@ -190,7 +190,7 @@ fn tokenize_and_tf_score() {
     let terms = tokenize("Hello, WORLD! hello");
     assert_eq!(terms, vec!["hello", "world", "hello"]);
     let q = tokenize("hello world");
-    let s = tf_score(&q, "hello hello world foo");
+    let s = fts::term_frequency_score(&q, "hello hello world foo");
     assert!((s - 3.0).abs() < 1e-6); // hello x2 + world x1
 }
 
@@ -203,7 +203,7 @@ fn sanitize_stemmer_rejects_injection() {
 }
 
 #[test]
-fn search_lex_tf_and_hybrid_with_store() {
+fn search_lex_and_hybrid_with_store() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("search_test.duckdb");
     let store = Store::open(&path).expect("open");
@@ -266,8 +266,15 @@ fn search_lex_tf_and_hybrid_with_store() {
     ];
     store.insert_chunks(&chunks).unwrap();
 
-    // Pure TF path (bypass FTS by calling search_lex_tf).
-    let lex = search_lex_tf(&store, "cats xylophone", 10, None).unwrap();
+    // Production lexical path (DuckDB BM25, or the TF fallback without FTS).
+    let lex = search_lex(
+        &store,
+        "cats xylophone",
+        10,
+        &LexFilters::default(),
+        "porter",
+    )
+    .unwrap();
     assert!(!lex.is_empty());
     assert!(lex[0].score_lex.is_some());
     // c1 has both cats + xylophone; c2 has many cats only
