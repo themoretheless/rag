@@ -22,7 +22,11 @@ use crate::util::{run_blocking, run_detached};
 impl RagServer {
     #[tool(
         name = "cleanup_source_duplicates",
-        description = "Safely preview or remove legacy active raw source duplicates. A candidate must share the exact non-empty source_file and content_hash with one canonical file://<source_file> survivor. dry_run defaults true; apply requires dry_run=false and confirm=true. The operation is atomic, capped, rewires graph/KG/manifest references, and skips groups with wiki or collection references."
+        description = "Safely preview or remove legacy active raw source duplicates. A candidate \
+        must share the exact non-empty source_file and content_hash with one canonical \
+        file://<source_file> survivor. dry_run defaults true; apply requires dry_run=false and \
+        confirm=true. The operation is atomic, capped, rewires graph/KG/manifest references, and \
+        skips groups with wiki or collection references."
     )]
     pub(super) async fn cleanup_source_duplicates(
         &self,
@@ -70,7 +74,9 @@ impl RagServer {
 
     #[tool(
         name = "doctor_repair",
-        description = "Preview or repair doctor findings. Defaults to dry_run=true. Reingests non-schema documents missing chunks, prunes orphan chunks/nodes/edges transactionally, checkpoints, and returns before/after doctor reports."
+        description = "Preview or repair doctor findings. Defaults to dry_run=true. Reingests \
+        non-schema documents missing chunks, prunes orphan chunks/nodes/edges transactionally, \
+        checkpoints, and returns before/after doctor reports."
     )]
     pub(super) async fn doctor_repair(
         &self,
@@ -91,7 +97,10 @@ impl RagServer {
 
     #[tool(
         name = "analyze_corpus",
-        description = "Deterministic corpus health report (no LLM): counts by layer/kind/status/wing, exact dups, optional near-dups, orphan nodes/wiki, unresolved/aging stubs, stale wiki, embed mismatch, FTS, size, archive candidates. Returns AnalysisReport JSON; logs to ops_log."
+        description = "Deterministic corpus health report (no LLM): counts by \
+        layer/kind/status/wing, exact dups, optional near-dups, orphan nodes/wiki, \
+        unresolved/aging stubs, stale wiki, embed mismatch, FTS, size, archive candidates. \
+        Returns AnalysisReport JSON; logs to ops_log."
     )]
     pub(super) async fn analyze_corpus(
         &self,
@@ -121,7 +130,11 @@ impl RagServer {
 
     #[tool(
         name = "plan_maintenance",
-        description = "Build an ordered maintenance plan from AnalysisReport. When RAG_LLM_ENABLED, calls local chat with analysis JSON + system prompt, parses JSON actions, validates whitelist. When LLM disabled (or force_heuristic), returns deterministic heuristic plan. Optional analysis JSON; else runs analyze_corpus. Logs to ops_log."
+        description = "Build an ordered maintenance plan from AnalysisReport. When \
+        RAG_LLM_ENABLED, calls local chat with analysis JSON + system prompt, parses JSON \
+        actions, validates whitelist. When LLM disabled (or force_heuristic), returns \
+        deterministic heuristic plan. Optional analysis JSON; else runs analyze_corpus. Logs to \
+        ops_log."
     )]
     pub(super) async fn plan_maintenance(
         &self,
@@ -167,7 +180,12 @@ impl RagServer {
 
     #[tool(
         name = "apply_maintenance_plan",
-        description = "Execute a whitelist-only maintenance plan (refile/pin/archive/set_tags/rebuild_*/reembed/compile_source/refresh_stale_wiki/merge_exact_dup/vacuum/…). dry_run defaults to true (preview + ops_log, no mutation). Set dry_run=false to apply. Document-scoped ops capped by max_docs / RAG_MAINT_MAX_DOCS. Returns applied/skipped/errors; ops_log each action. Never hard-deletes layer=raw without params.allow_raw_delete."
+        description = "Execute a whitelist-only maintenance plan \
+        (refile/pin/archive/set_tags/rebuild_*/reembed/compile_source/refresh_stale_wiki/merge_exact_dup/vacuum/…). \
+        dry_run defaults to true (preview + ops_log, no mutation). Set dry_run=false to apply. \
+        Document-scoped ops capped by max_docs / RAG_MAINT_MAX_DOCS. Returns \
+        applied/skipped/errors; ops_log each action. Never hard-deletes layer=raw without \
+        params.allow_raw_delete."
     )]
     pub(super) async fn apply_maintenance_plan(
         &self,
@@ -236,7 +254,10 @@ impl RagServer {
 
     #[tool(
         name = "maintain_organize",
-        description = "Suggest refiles for documents missing wing (heuristic path/title/embedding; mode=llm|auto uses local chat when enabled). dry_run default true; dry_run=false applies whitelist refile via placement meta only. Optional rebuild_index. Cap: max_docs / RAG_MAINT_MAX_DOCS. Logs ops_log."
+        description = "Suggest refiles for documents missing wing (heuristic \
+        path/title/embedding; mode=llm|auto uses local chat when enabled). dry_run default true; \
+        dry_run=false applies whitelist refile via placement meta only. Optional rebuild_index. \
+        Cap: max_docs / RAG_MAINT_MAX_DOCS. Logs ops_log."
     )]
     pub(super) async fn maintain_organize(
         &self,
@@ -279,7 +300,10 @@ impl RagServer {
 
     #[tool(
         name = "maintain_refresh",
-        description = "Actualize store after bulk edits: reindex_fts, rebuild_graph (dirty or all), rebuild_wiki_index, optional reembed_all. Whitelist actions only; logs to ops_log. dry_run previews without mutation. Defaults (no flags): fts+dirty graph+wiki index. Cap: RAG_MAINT_MAX_DOCS / max_docs."
+        description = "Actualize store after bulk edits: reindex_fts, rebuild_graph (dirty or \
+        all), rebuild_wiki_index, optional reembed_all. Whitelist actions only; logs to ops_log. \
+        dry_run previews without mutation. Defaults (no flags): fts+dirty graph+wiki index. Cap: \
+        RAG_MAINT_MAX_DOCS / max_docs."
     )]
     pub(super) async fn maintain_refresh(
         &self,
@@ -320,7 +344,10 @@ impl RagServer {
 
     #[tool(
         name = "maintain_compress",
-        description = "Compress store: L0=CHECKPOINT+FTS reindex; L1=exact content_hash merge (keep canonical); L2=near-dup list (merge only with confirm=true). dry_run default true. Never hard-deletes layer=raw without allow_raw_delete (tombstones). Cap: max_docs / RAG_MAINT_MAX_DOCS. Logs ops_log."
+        description = "Compress store: L0=CHECKPOINT+FTS reindex; L1=exact content_hash merge \
+        (keep canonical); L2=near-dup list (merge only with confirm=true). dry_run default true. \
+        Never hard-deletes layer=raw without allow_raw_delete (tombstones). Cap: max_docs / \
+        RAG_MAINT_MAX_DOCS. Logs ops_log."
     )]
     pub(super) async fn maintain_compress(
         &self,
@@ -363,7 +390,9 @@ impl RagServer {
 
     #[tool(
         name = "vacuum_store",
-        description = "Safe L0 maintenance: DuckDB CHECKPOINT (flush WAL into main file). Returns db_path and file size bytes_before/bytes_after/bytes_delta when readable. Logs to ops_log. Does not delete rows."
+        description = "Safe L0 maintenance: DuckDB CHECKPOINT (flush WAL into main file). \
+        Returns db_path and file size bytes_before/bytes_after/bytes_delta when readable. Logs \
+        to ops_log. Does not delete rows."
     )]
     pub(super) async fn vacuum_store(&self) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {

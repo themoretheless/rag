@@ -60,7 +60,7 @@ impl Default for CompressOptions {
             confirm: false,
             allow_raw_delete: false,
             near_dup_threshold: 0.92,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
             log_ops: true,
         }
     }
@@ -179,7 +179,6 @@ pub struct MaintainCompressReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }
-
 
 /// Run compression according to `opts.level`.
 ///
@@ -493,7 +492,9 @@ pub fn maintain_compress(
             || deleted_chunks != chunks_removed
         {
             return Err(AppError::db(format!(
-                "compression disposition counts changed during atomic apply: planned deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
+                "compression disposition counts changed during atomic apply: planned \
+                deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, \
+                applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
             )));
         }
     }
@@ -677,9 +678,9 @@ fn load_docs_ordered(store: &Store, ids: &[String]) -> Result<Vec<Document>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::SeedDoc;
     use crate::models::SearchMode;
-    
+    use crate::testkit::SeedDoc;
+
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf) -> Config {
@@ -970,7 +971,8 @@ mod tests {
         store.set_embedding_manifest(&migration).unwrap();
         // Compare against the persisted round-trip: DuckDB keeps microseconds,
         // while `Utc::now()` carries nanoseconds on Linux.
-        let manifest_before = serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap();
+        let manifest_before =
+            serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap();
         let stats_before = store.stats().unwrap();
         let documents_before = serde_json::to_value(store.list_documents().unwrap()).unwrap();
         let chunks_before =

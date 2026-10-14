@@ -5,7 +5,7 @@ pub use crate::direct_db::{
     expand_neighbors_store, export_graph_snapshot, fetch_document_db, fetch_wiki_list_db,
     load_live_db,
 };
-use rag_mcp_core::{pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, UI_GRAPH_EXPORT_MAX_NODES};
+use rag_mcp_core::{pkb_rel_types, GraphEdge, GraphNode, GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -20,6 +20,12 @@ use crate::gateway::{
 /// Hard layout caps (EGUI_GRAPH_VIEW §8.1).
 pub const UI_HARD_MAX_NODES: usize = 300;
 pub const UI_MAX_DRAW_EDGES: usize = 2000;
+/// Unseeded overview lenses draw at most this many nodes (the most connected
+/// ones): the canvas switches to its simplified mode above it, and painting,
+/// hit-testing and the detail panel visit every drawn element each frame.
+pub const UI_OVERVIEW_MAX_NODES: usize = 5000;
+/// Draw-edge cap for overview lenses (same priority order as the local cap).
+pub const UI_OVERVIEW_MAX_EDGES: usize = 20_000;
 pub const UI_LOCAL_MAX_NODES: u32 = UI_GRAPH_EXPORT_MAX_NODES;
 pub const UI_DEFAULT_DEPTH: u32 = 1;
 
@@ -131,6 +137,7 @@ pub struct OpenArgs {
 }
 
 impl OpenArgs {
+    /// Reject open args that name more than one of `--http`, `--snapshot` and `--db`.
     pub fn validate(&self) -> Result<(), String> {
         let n = usize::from(self.snapshot.is_some())
             + usize::from(self.db.is_some())
@@ -170,9 +177,7 @@ impl OpenArgs {
 #[derive(Debug, Clone)]
 pub enum GraphSourceKind {
     #[cfg_attr(not(feature = "direct-db"), allow(dead_code))]
-    LiveStore {
-        path: PathBuf,
-    },
+    LiveStore { path: PathBuf },
     SnapshotFile {
         path: PathBuf,
         mtime: Option<SystemTime>,
@@ -182,9 +187,7 @@ pub enum GraphSourceKind {
         mtime: Option<SystemTime>,
     },
     /// Loaded via rag-mcp HTTP API (same process as DuckDB writer).
-    HttpService {
-        base: String,
-    },
+    HttpService { base: String },
 }
 
 /// PKB default edge types for live Store load (EGUI_GRAPH_VIEW §7.1 / GRAPH_DESIGN §7.1).
@@ -194,6 +197,7 @@ pub fn pkb_default_rel_types() -> Vec<String> {
 }
 
 impl GraphSourceKind {
+    /// Stable machine label for this source kind.
     pub fn label(&self) -> &'static str {
         match self {
             Self::LiveStore { .. } => "live_store",
@@ -278,6 +282,7 @@ struct ActivityResponse {
     items: Vec<ActivityEvent>,
 }
 
+/// Fetch recent gateway activity events from `GET /v1/activity`.
 pub fn fetch_activity_http(base: &str) -> Result<Vec<ActivityEvent>, String> {
     let client = gateway_client(5)?;
     let url = http_join(normalize_http_base(base), "v1/activity");
@@ -470,9 +475,6 @@ pub struct WikiPageMeta {
 struct WikiListResponse {
     #[serde(default)]
     pages: Vec<WikiPageMeta>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    count: usize,
     total: Option<usize>,
     limit: Option<usize>,
     offset: Option<usize>,
@@ -640,7 +642,6 @@ fn wiki_catalog_path(project: Option<&str>) -> String {
         .unwrap_or_else(|| "v1/wiki".to_string())
 }
 
-
 /// Fetch full document text via `GET /v1/document` on the rag-mcp HTTP gateway.
 pub fn fetch_document_http(
     base: &str,
@@ -684,7 +685,6 @@ fn fetch_document_http_with_client(
     document_body_from_json(&v, DocumentBodyJsonDefaults::default())
         .ok_or_else(|| "Document response is missing document fields".to_string())
 }
-
 
 /// Body for `PUT /v1/wiki` (must match server `WikiPutBody`: slug-keyed write).
 #[derive(Debug, Clone, Serialize)]
@@ -917,15 +917,6 @@ fn http_neighbors_path(
 }
 
 
-/// Live-load filter: PKB rel types, caller-selected tags, hard UI node cap.
-///
-/// Prefer [`Store::export_graph_for_ui`]; this mirrors
-/// [`GraphFilter::pkb_ui_export`] for callers that only need the filter value.
-#[allow(dead_code)] // public helper for tests / callers building filters without Store
-pub fn pkb_live_filter(include_tags: bool) -> GraphFilter {
-    GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), include_tags)
-}
-
 /// Parse bare `GraphView` or envelope `{ "graph": { ... } }`.
 ///
 /// Bare form matches `rag_mcp::models::GraphView` serde (MCP tool wire JSON).
@@ -989,7 +980,6 @@ pub struct ExportResult {
     pub edge_count: usize,
     pub truncated: bool,
 }
-
 
 /// Load from a resolved CLI source (snapshot XOR read-only db XOR http).
 pub fn load_cli_source(
@@ -1264,7 +1254,6 @@ fn expand_neighbors_http_with_client(
         max_nodes.max(1) as usize,
     ))
 }
-
 
 fn subgraph_from_keep(full: &GraphView, keep: &HashSet<String>) -> GraphView {
     let nodes: Vec<GraphNode> = full
@@ -1787,8 +1776,8 @@ mod tests {
     }
 
     #[test]
-    fn pkb_live_filter_defaults() {
-        let f = pkb_live_filter(false);
+    fn pkb_ui_export_filter_defaults() {
+        let f = rag_mcp_core::GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), false);
         let rels = f.rel_types.expect("rels");
         assert!(rels.iter().any(|r| r == "wikilink"));
         assert!(rels.iter().any(|r| r == "related"));
@@ -1797,7 +1786,8 @@ mod tests {
         assert!(kinds.iter().any(|k| k == "document"));
         assert!(!kinds.iter().any(|k| k == "tag"));
 
-        let with_tags = pkb_live_filter(true);
+        let with_tags =
+            rag_mcp_core::GraphFilter::pkb_ui_export(Some(UI_HARD_MAX_NODES as u32), true);
         assert!(with_tags
             .kinds
             .expect("kinds")

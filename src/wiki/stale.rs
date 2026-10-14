@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Most graph neighbours read when collecting a page's review dependencies;
+/// reaching it means the set may be incomplete, which is an error.
+const REVIEW_NEIGHBOR_LIMIT: u32 = 10_000;
+
 /// One wiki page whose recorded source changed, disappeared, or is newer than
 /// the page when only legacy timestamp provenance is available.
 #[derive(Debug, Clone, Serialize)]
@@ -212,8 +216,8 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
         .map(|(d, _)| (d.id.clone(), d.uri.clone()))
         .collect();
     if let Some(node) = store.find_node_by_document_id(&page.id)? {
-        let view = store.neighbors(&node.id, 1, 10000)?;
-        if view.nodes.len() >= 10000 {
+        let view = store.neighbors(&node.id, 1, REVIEW_NEIGHBOR_LIMIT)?;
+        if view.nodes.len() >= REVIEW_NEIGHBOR_LIMIT as usize {
             return Err(AppError::config(
                 "review dependency set exceeds graph limit",
             ));
@@ -331,39 +335,44 @@ pub async fn refresh_stale_wiki(
         .filter(|item| item.link_kind == "source_missing")
         .count();
     if missing_sources > 0 {
-        let note = format!("{missing_sources} source reference(s) are unavailable; restore or relink them before recompiling. Missing sources are excluded from automatic recompile.");
+        let note = format!(
+            "{missing_sources} source reference(s) are unavailable; restore or \
+        relink them before recompiling. Missing sources are excluded from automatic recompile."
+        );
         notes = Some(match notes {
             Some(existing) => format!("{existing}. {note}"),
             None => note,
         });
     }
 
-    let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: "refresh_stale_wiki".into(),
-        prefix: Some("MAINT".into()),
-        message: format!(
-            "refresh_stale_wiki dry_run={dry_run} stale={} raws={} applied={applied}",
-            stale.len(),
-            total_raws
-        ),
-        entity_id: None,
-        entity_kind: Some("wiki".into()),
-        payload_json: serde_json::json!({
-            "stale_count": stale.len(),
-            "raw_count": total_raws,
-            "dry_run": dry_run,
-            "applied": applied,
-            "capped": capped,
-            "max_docs": max_docs,
-            "recompiled": recompiled.len(),
-            "errors": errors.len(),
+    let _ = crate::util::blocking_section(|| {
+        store.append_ops_log(&OpsLogEntry {
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "refresh_stale_wiki".into(),
+            prefix: Some("MAINT".into()),
+            message: format!(
+                "refresh_stale_wiki dry_run={dry_run} stale={} raws={} applied={applied}",
+                stale.len(),
+                total_raws
+            ),
+            entity_id: None,
+            entity_kind: Some("wiki".into()),
+            payload_json: serde_json::json!({
+                "stale_count": stale.len(),
+                "raw_count": total_raws,
+                "dry_run": dry_run,
+                "applied": applied,
+                "capped": capped,
+                "max_docs": max_docs,
+                "recompiled": recompiled.len(),
+                "errors": errors.len(),
+            })
+            .to_string(),
+            agent_name: agent.map(|s| s.to_string()),
         })
-        .to_string(),
-        agent_name: agent.map(|s| s.to_string()),
-    }))?;
+    })?;
 
     Ok(RefreshStaleWikiResult {
         stale_count: stale.len(),

@@ -5,6 +5,7 @@ use crate::db::search::{DiversityMode, SearchQuery};
 use crate::error::{AppError, Result};
 use crate::models::SearchMode;
 
+/// Apply a search settings profile's overrides to a query, validating values.
 pub fn apply_settings_profile(
     mut query: SearchQuery,
     profile: &SearchSettingsProfile,

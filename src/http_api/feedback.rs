@@ -18,6 +18,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+/// Search-feedback rows per page.
+const FEEDBACK_PAGE_SIZE: usize = 50;
+
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
         .route("/v1/eval/feedback", get(list).post(create))
@@ -65,7 +68,7 @@ async fn list(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
             &st.store,
             super::payload_kv::PayloadTable::SearchFeedback,
             q.offset,
-            50,
+            FEEDBACK_PAGE_SIZE,
         )?;
         Ok(json!({"items":items,"total":total,"offset":q.offset}))
     })
@@ -161,7 +164,12 @@ pub(super) fn persist_eval_run(store: &Store, payload: &Value) -> Result<()> {
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    super::payload_kv::upsert_payload(store, super::payload_kv::PayloadTable::EvalRuns, &id, payload)
+    super::payload_kv::upsert_payload(
+        store,
+        super::payload_kv::PayloadTable::EvalRuns,
+        &id,
+        payload,
+    )
 }
 fn score_hits(item: &Feedback, hits: &[Value]) -> (Option<f64>, Option<f64>) {
     if item.no_answer {
@@ -217,7 +225,7 @@ async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Respon
             &st.store,
             super::payload_kv::PayloadTable::EvalRuns,
             q.offset,
-            50,
+            FEEDBACK_PAGE_SIZE,
         )?;
         Ok(json!({"items":page,"total":total,"offset":q.offset}))
     })
@@ -401,12 +409,19 @@ async fn run_one(
         "result_count": hits.len(),
         "timings": search_result["timings"],
         "embedding_manifest": crate::util::blocking_section(|| st.store.get_embedding_manifest())?,
-        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer correctness; citation_judge is deterministic expected-doc coverage; answer_judge is heuristic unless use_llm and RAG_LLM_ENABLED"
+        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer \
+        correctness; citation_judge is deterministic expected-doc coverage; answer_judge is \
+        heuristic unless use_llm and RAG_LLM_ENABLED"
     });
     crate::util::blocking_section(|| persist_feedback_run(&st.store, &id, &item.search, &result))?;
     Ok(result)
 }
-fn persist_feedback_run(store: &Store, question_id: &str, settings: &Value, result: &Value) -> Result<()> {
+fn persist_feedback_run(
+    store: &Store,
+    question_id: &str,
+    settings: &Value,
+    result: &Value,
+) -> Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let payload = json!({
         "kind": "feedback_run",
@@ -437,13 +452,15 @@ mod tests {
             &st.store,
             &st.embedder,
             &st.config,
-            "alpha",
-            "Alpha",
-            "alpha unique source",
-            "wiki",
-            None,
-            None,
-            None,
+            crate::wiki::WikiPageWrite {
+                slug: "alpha",
+                title: "Alpha",
+                content: "alpha unique source",
+                kind: "wiki",
+                category: None,
+                summary: None,
+                agent: None,
+            },
         )
         .await
         .unwrap();
@@ -470,7 +487,10 @@ mod tests {
         let mut source = st.store.get_document(&doc).unwrap().unwrap();
         source.content = "changed".into();
         st.store.upsert_document(&source).unwrap();
-        assert_eq!(run_one(st, id, None, false).await.unwrap()["status"], "source_changed");
+        assert_eq!(
+            run_one(st, id, None, false).await.unwrap()["status"],
+            "source_changed"
+        );
     }
     #[tokio::test]
     async fn negative_questions_are_not_counted_as_positive_recall() {

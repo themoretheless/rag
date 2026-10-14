@@ -28,13 +28,11 @@ pub use judges::{judge_citations, CitationJudgeInput, CitationJudgeResult};
 pub use labels::{ErrorLabel, QueryErrorLabel};
 pub use metrics::{macro_average, score_ranked_titles, RankedTitle, ScoredQuery};
 pub use prompts::{
-    builtin_answer_judge, prompt_content_hash, validate_prompt, PromptVersion, ANSWER_JUDGE_V1_BODY,
-    ANSWER_JUDGE_V1_NAME, ANSWER_JUDGE_V1_VERSION, PROMPT_KIND_ANSWER_JUDGE,
+    builtin_answer_judge, prompt_content_hash, validate_prompt, PromptVersion,
+    ANSWER_JUDGE_V1_BODY, ANSWER_JUDGE_V1_NAME, ANSWER_JUDGE_V1_VERSION, PROMPT_KIND_ANSWER_JUDGE,
 };
 pub use settings::SearchSettingsProfile;
-pub use trace::{
-    source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder, TraceSpan,
-};
+pub use trace::{source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder, TraceSpan};
 
 use crate::util::content_hash;
 use std::path::Path;
@@ -50,4 +48,34 @@ pub fn dataset_content_hash(path: &Path) -> crate::error::Result<String> {
 /// Hash arbitrary UTF-8 bytes (for in-memory or already-loaded datasets).
 pub fn dataset_bytes_hash(raw: &str) -> String {
     content_hash(raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dataset_bytes_hash_is_stable_and_content_sensitive() {
+        let raw = "{\"query\":\"a\"}\n{\"query\":\"b\"}\n";
+        assert_eq!(dataset_bytes_hash(raw), dataset_bytes_hash(raw));
+        assert_eq!(dataset_bytes_hash(raw), content_hash(raw));
+        assert_ne!(
+            dataset_bytes_hash(raw),
+            dataset_bytes_hash(&raw.replace('b', "c"))
+        );
+        assert_ne!(dataset_bytes_hash(""), dataset_bytes_hash(" "));
+    }
+
+    #[test]
+    fn dataset_bytes_hash_matches_the_file_hash_of_the_same_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dataset.jsonl");
+        let raw = "{\"query\":\"wiki\"}\n";
+        std::fs::write(&path, raw).unwrap();
+        assert_eq!(
+            dataset_content_hash(&path).unwrap(),
+            dataset_bytes_hash(raw)
+        );
+        assert!(dataset_content_hash(&dir.path().join("missing.jsonl")).is_err());
+    }
 }

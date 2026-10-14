@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::DocumentMetaUpdate;
-use rag_mcp::wiki::{self, assert_content_mutable, FileAnswerCitation};
+use rag_mcp::wiki::{
+    self, assert_content_mutable, FileAnswerCitation, FileAnswerRequest, WikiPageWrite,
+};
 use rag_mcp::{
     file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config, Store,
     LAYER_RAW, LAYER_WIKI,
@@ -49,13 +51,15 @@ async fn write_wiki_page_get_list_and_ops_log() {
         &store,
         &embedder,
         &config,
-        "rust-ownership",
-        "Rust Ownership",
-        "Ownership moves values. See [[Borrow Checker]] #rust",
-        "concept",
-        Some("languages"),
-        Some("Ownership moves values"),
-        Some("wiki-agent"),
+        WikiPageWrite {
+            slug: "rust-ownership",
+            title: "Rust Ownership",
+            content: "Ownership moves values. See [[Borrow Checker]] #rust",
+            kind: "concept",
+            category: Some("languages"),
+            summary: Some("Ownership moves values"),
+            agent: Some("wiki-agent"),
+        },
     )
     .await
     .expect("write_wiki_page");
@@ -128,11 +132,13 @@ async fn file_answer_persists_citations_index_and_ops_log() {
         &store,
         &embedder,
         &config,
-        "Why Alpha Matters",
-        "Alpha is important because of [[Beta]] #research",
-        None,
-        Some(cites),
-        Some("answer-agent"),
+        FileAnswerRequest {
+            title: "Why Alpha Matters",
+            body: "Alpha is important because of [[Beta]] #research",
+            slug: None,
+            citations: Some(cites),
+            agent: Some("answer-agent"),
+        },
     )
     .await
     .expect("file_answer");
@@ -192,13 +198,15 @@ async fn rebuild_index_from_wiki_docs_drops_orphan_catalog_rows() {
         &store,
         &embedder,
         &config,
-        "alpha",
-        "Alpha",
-        "Alpha page body #tag-a",
-        "entity",
-        Some("entities"),
-        Some("Alpha summary"),
-        None,
+        WikiPageWrite {
+            slug: "alpha",
+            title: "Alpha",
+            content: "Alpha page body #tag-a",
+            kind: "entity",
+            category: Some("entities"),
+            summary: Some("Alpha summary"),
+            agent: None,
+        },
     )
     .await
     .expect("write alpha");
@@ -207,13 +215,15 @@ async fn rebuild_index_from_wiki_docs_drops_orphan_catalog_rows() {
         &store,
         &embedder,
         &config,
-        "beta",
-        "Beta",
-        "Beta page body",
-        "wiki",
-        None,
-        None,
-        None,
+        WikiPageWrite {
+            slug: "beta",
+            title: "Beta",
+            content: "Beta page body",
+            kind: "wiki",
+            category: None,
+            summary: None,
+            agent: None,
+        },
     )
     .await
     .expect("write beta");
@@ -273,12 +283,14 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
         &store,
         &embedder,
         &config,
-        "verbatim raw source v1".into(),
-        Some("Source Alpha".into()),
-        Some("raw://alpha".into()),
-        Some("projects".into()),
-        Some("lab".into()),
-        Some("/vault/alpha.md".into()),
+        wiki::RawIngest {
+            text: "verbatim raw source v1".into(),
+            title: Some("Source Alpha".into()),
+            uri: Some("raw://alpha".into()),
+            wing: Some("projects".into()),
+            room: Some("lab".into()),
+            source_file: Some("/vault/alpha.md".into()),
+        },
     )
     .await
     .expect("ingest_raw");
@@ -319,12 +331,14 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
         &store,
         &embedder,
         &config,
-        "raw parked on wiki uri".into(),
-        Some("Stolen".into()),
-        Some("wiki://stolen-slug".into()),
-        None,
-        None,
-        None,
+        wiki::RawIngest {
+            text: "raw parked on wiki uri".into(),
+            title: Some("Stolen".into()),
+            uri: Some("wiki://stolen-slug".into()),
+            wing: None,
+            room: None,
+            source_file: None,
+        },
     )
     .await
     .expect("ingest at wiki-like uri");
@@ -333,13 +347,15 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
         &store,
         &embedder,
         &config,
-        "stolen-slug",
-        "Wiki Title",
-        "trying to overwrite raw",
-        "wiki",
-        None,
-        None,
-        None,
+        WikiPageWrite {
+            slug: "stolen-slug",
+            title: "Wiki Title",
+            content: "trying to overwrite raw",
+            kind: "wiki",
+            category: None,
+            summary: None,
+            agent: None,
+        },
     )
     .await
     .expect_err("write_wiki_page over raw uri must fail");
@@ -363,12 +379,14 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
         &store,
         &embedder,
         &config,
-        "verbatim raw source v2".into(),
-        Some("Source Alpha".into()),
-        Some("raw://alpha".into()),
-        Some("projects".into()),
-        Some("lab".into()),
-        Some("/vault/alpha.md".into()),
+        wiki::RawIngest {
+            text: "verbatim raw source v2".into(),
+            title: Some("Source Alpha".into()),
+            uri: Some("raw://alpha".into()),
+            wing: Some("projects".into()),
+            room: Some("lab".into()),
+            source_file: Some("/vault/alpha.md".into()),
+        },
     )
     .await
     .expect("re-ingest replace");
@@ -412,13 +430,15 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
         &store,
         &embedder,
         &config,
-        "timeline-page",
-        "Timeline Page",
-        "First durable note.",
-        "wiki",
-        None,
-        None,
-        Some("agent-a"),
+        WikiPageWrite {
+            slug: "timeline-page",
+            title: "Timeline Page",
+            content: "First durable note.",
+            kind: "wiki",
+            category: None,
+            summary: None,
+            agent: Some("agent-a"),
+        },
     )
     .await
     .expect("write");
@@ -427,11 +447,13 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
         &store,
         &embedder,
         &config,
-        "Timeline Answer",
-        "Filed answer body with detail.",
-        Some("timeline-answer"),
-        None,
-        Some("agent-a"),
+        FileAnswerRequest {
+            title: "Timeline Answer",
+            body: "Filed answer body with detail.",
+            slug: Some("timeline-answer"),
+            citations: None,
+            agent: Some("agent-a"),
+        },
     )
     .await
     .expect("file_answer");

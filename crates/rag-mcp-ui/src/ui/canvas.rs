@@ -19,8 +19,6 @@ pub struct CanvasOut {
     pub clicked_id: Option<String>,
     /// True when the pointer clicked the canvas but no node hit (deselect).
     pub clicked_empty: bool,
-    #[allow(dead_code)]
-    pub hover_id: Option<String>,
 }
 
 struct ScreenNode<'a> {
@@ -361,7 +359,6 @@ pub fn draw_canvas(
     CanvasOut {
         clicked_id,
         clicked_empty,
-        hover_id,
     }
 }
 
@@ -585,7 +582,6 @@ mod tests {
             room: None,
             depth: 2,
             degree: 7,
-            pinned: false,
         };
         let label = node_accessibility_label(&node);
         assert!(label.contains("Architecture"));

@@ -31,7 +31,8 @@ pub(crate) const MAX_ERROR_SAMPLES: usize = 20;
 /// Requeue is safe because sync skips unchanged committed files (committed-prefix
 /// awareness via source manifests). It does **not** resume an in-flight embedding
 /// batch; any uncommitted batch from the interrupted run was never written.
-pub const SOURCE_SYNC_REQUEUE_LIMITS: &str = "requeue_safe: source_sync skips unchanged committed files; does not resume mid-batch embeds or delete-phase mid-flight";
+pub const SOURCE_SYNC_REQUEUE_LIMITS: &str = "requeue_safe: source_sync skips unchanged \
+committed files; does not resume mid-batch embeds or delete-phase mid-flight";
 
 pub use rag_mcp_core::SyncJobRequest;
 
@@ -44,8 +45,6 @@ pub(crate) fn sync_command(request: &SyncJobRequest) -> SourceSyncCommand {
         max_file_bytes: request.max_file_bytes,
     }
 }
-
-
 
 impl From<SourceSyncReport> for SourceSyncJobReport {
     fn from(report: SourceSyncReport) -> Self {
@@ -61,7 +60,6 @@ impl From<SourceSyncReport> for SourceSyncJobReport {
         }
     }
 }
-
 
 pub(crate) struct JobEntry {
     pub(crate) sequence: u64,
@@ -101,6 +99,7 @@ impl Default for JobRegistry {
 }
 
 impl JobRegistry {
+    /// Create a registry, optionally persisting job history to `store`.
     pub fn new(store: Option<Arc<Store>>) -> Self {
         Self {
             inner: Arc::new(JobRegistryInner {
@@ -113,6 +112,7 @@ impl JobRegistry {
         }
     }
 
+    /// Create a registry that persists job history to `store`.
     pub fn with_store(store: Arc<Store>) -> Self {
         Self::new(Some(store))
     }
@@ -242,6 +242,7 @@ impl JobRegistry {
         )
     }
 
+    /// Start a background source sync job.
     pub fn start_source_sync(
         &self,
         request: SyncJobRequest,
@@ -351,6 +352,7 @@ impl JobRegistry {
         Ok(snapshot)
     }
 
+    /// All known jobs, newest first.
     pub fn list(&self) -> Vec<JobSnapshot> {
         let jobs = self.jobs();
         let mut entries = jobs.values().collect::<Vec<_>>();
@@ -361,10 +363,12 @@ impl JobRegistry {
             .collect()
     }
 
+    /// Snapshot of one job by id.
     pub fn get(&self, id: &str) -> Option<JobSnapshot> {
         self.jobs().get(id).map(|entry| entry.snapshot.clone())
     }
 
+    /// Cancel a queued or running job by id.
     pub fn cancel(&self, id: &str) -> Result<JobSnapshot, AppError> {
         let (snapshot, cancellation, should_cancel) = {
             let mut jobs = self.jobs();
@@ -416,7 +420,9 @@ impl JobRegistry {
             entry.snapshot.started_at = Some(Utc::now());
             entry.snapshot.clone()
         };
-        let _ = self.persist(&snapshot);
+        if let Err(error) = self.persist(&snapshot) {
+            tracing::warn!(%error, "failed to persist job snapshot");
+        }
         true
     }
 
@@ -439,7 +445,9 @@ impl JobRegistry {
             entry.progress_persisted_at = Some(now);
             entry.snapshot.clone()
         };
-        let _ = self.persist(&snapshot);
+        if let Err(error) = self.persist(&snapshot) {
+            tracing::warn!(%error, "failed to persist job snapshot");
+        }
     }
 
     pub(crate) fn finish_cancelled(&self, id: &str, report: SourceSyncReport) {
@@ -480,9 +488,13 @@ impl JobRegistry {
             let removed = prune_jobs(&mut jobs);
             (snapshot, removed)
         };
-        let _ = self.persist(&snapshot);
+        if let Err(error) = self.persist(&snapshot) {
+            tracing::warn!(%error, "failed to persist job snapshot");
+        }
         for removed_id in removed {
-            let _ = self.delete_persisted(&removed_id);
+            if let Err(error) = self.delete_persisted(&removed_id) {
+                tracing::warn!(%error, "failed to delete persisted job");
+            }
         }
     }
 
@@ -535,3 +547,6 @@ pub(crate) fn prune_jobs_to(jobs: &mut HashMap<String, JobEntry>, maximum: usize
     }
     removed
 }
+
+#[cfg(test)]
+mod tests;

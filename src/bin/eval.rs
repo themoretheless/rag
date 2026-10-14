@@ -279,9 +279,7 @@ where
                     it.next().context("--error-labels needs path")?,
                 ))
             }
-            "--replay" => {
-                replay = Some(PathBuf::from(it.next().context("--replay needs path")?))
-            }
+            "--replay" => replay = Some(PathBuf::from(it.next().context("--replay needs path")?)),
             "-h" | "--help" => {
                 eprintln!(
                     "Usage: eval [--root DIR] [--dataset FILE.json] [--top-k N]\n\
@@ -562,7 +560,12 @@ fn synthetic_content(document_index: usize, len: usize) -> String {
     content
 }
 
-async fn evaluate(args: &Args, dataset: Dataset, dataset_hash: &str, db_path: &Path) -> Result<Report> {
+async fn evaluate(
+    args: &Args,
+    dataset: Dataset,
+    dataset_hash: &str,
+    db_path: &Path,
+) -> Result<Report> {
     let rag_mcp::bootstrap::OfflineRuntime {
         config,
         store,
@@ -582,12 +585,14 @@ async fn evaluate(args: &Args, dataset: Dataset, dataset_hash: &str, db_path: &P
             &store,
             &embedder,
             &config,
-            text,
-            Some(title),
-            Some(format!("eval://{relative}")),
-            None,
-            None,
-            Some(path.display().to_string()),
+            wiki::RawIngest {
+                text,
+                title: Some(title),
+                uri: Some(format!("eval://{relative}")),
+                wing: None,
+                room: None,
+                source_file: Some(path.display().to_string()),
+            },
         )
         .await
         .with_context(|| format!("ingest {relative}"))?;
@@ -605,12 +610,14 @@ async fn evaluate(args: &Args, dataset: Dataset, dataset_hash: &str, db_path: &P
                 &store,
                 &embedder,
                 &config,
-                document.content,
-                Some(document.title),
-                Some(document.uri),
-                None,
-                None,
-                None,
+                wiki::RawIngest {
+                    text: document.content,
+                    title: Some(document.title),
+                    uri: Some(document.uri),
+                    wing: None,
+                    room: None,
+                    source_file: None,
+                },
             )
             .await
             .context("ingest deterministic synthetic corpus")?;
@@ -701,18 +708,12 @@ async fn evaluate_compare(
     dataset_hash: &str,
     db_path: &Path,
 ) -> Result<rag_mcp::eval::CompareReport> {
-    let settings_a = SearchSettingsProfile::load(
-        args.settings_a
-            .as_ref()
-            .context("missing --settings-a")?,
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
-    let settings_b = SearchSettingsProfile::load(
-        args.settings_b
-            .as_ref()
-            .context("missing --settings-b")?,
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
+    let settings_a =
+        SearchSettingsProfile::load(args.settings_a.as_ref().context("missing --settings-a")?)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    let settings_b =
+        SearchSettingsProfile::load(args.settings_b.as_ref().context("missing --settings-b")?)
+            .map_err(|e| anyhow::anyhow!(e))?;
     let side_a_name = settings_a.display_name("A");
     let side_b_name = settings_b.display_name("B");
     let labels_by_id: HashMap<String, _> = if let Some(path) = &args.error_labels {
@@ -770,12 +771,14 @@ async fn evaluate_compare(
             &store,
             &embedder,
             &config,
-            text,
-            Some(title),
-            Some(format!("eval://{relative}")),
-            None,
-            None,
-            Some(path.display().to_string()),
+            wiki::RawIngest {
+                text,
+                title: Some(title),
+                uri: Some(format!("eval://{relative}")),
+                wing: None,
+                room: None,
+                source_file: Some(path.display().to_string()),
+            },
         )
         .await
         .with_context(|| format!("ingest {relative}"))?;
@@ -785,24 +788,12 @@ async fn evaluate_compare(
         if checkpoint.completed_query_ids.contains(&query.id) {
             continue;
         }
-        let a = eval_query_with_settings(
-            &store,
-            &embedder,
-            &config,
-            query,
-            &settings_a,
-            args.top_k,
-        )
-        .await?;
-        let b = eval_query_with_settings(
-            &store,
-            &embedder,
-            &config,
-            query,
-            &settings_b,
-            args.top_k,
-        )
-        .await?;
+        let a =
+            eval_query_with_settings(&store, &embedder, &config, query, &settings_a, args.top_k)
+                .await?;
+        let b =
+            eval_query_with_settings(&store, &embedder, &config, query, &settings_b, args.top_k)
+                .await?;
         checkpoint.record(
             query.id.clone(),
             QuerySideMetrics {
@@ -900,14 +891,23 @@ fn load_dataset(path: &Path) -> Result<Dataset> {
     if data.corpus.is_empty() || data.queries.is_empty() {
         bail!("dataset corpus and queries must not be empty");
     }
-    let titles: HashSet<_> = data.corpus.iter().filter_map(|path| Path::new(path).file_name().and_then(|name| name.to_str())).collect();
+    let titles: HashSet<_> = data
+        .corpus
+        .iter()
+        .filter_map(|path| Path::new(path).file_name().and_then(|name| name.to_str()))
+        .collect();
     if titles.len() != data.corpus.len() {
         bail!("corpus filenames must be unique: evaluation labels identify documents by filename");
     }
     let mut query_ids = HashSet::new();
     for q in &data.queries {
-        if !query_ids.insert(q.id.as_str()) { bail!("duplicate query id '{}'", q.id); }
-        if q.relevant.iter().any(|label| !titles.contains(label.document_title.as_str())) {
+        if !query_ids.insert(q.id.as_str()) {
+            bail!("duplicate query id '{}'", q.id);
+        }
+        if q.relevant
+            .iter()
+            .any(|label| !titles.contains(label.document_title.as_str()))
+        {
             bail!("query '{}' references a document outside the corpus", q.id);
         }
         if q.id.trim().is_empty() || q.query.trim().is_empty() || q.relevant.is_empty() {
@@ -1300,7 +1300,10 @@ mod tests {
     fn dataset_labels_must_reference_unique_corpus_filenames() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dataset.json");
-        for (corpus, title) in [(vec!["a.md"], "missing.md"), (vec!["x/a.md", "y/a.md"], "a.md")] {
+        for (corpus, title) in [
+            (vec!["a.md"], "missing.md"),
+            (vec!["x/a.md", "y/a.md"], "a.md"),
+        ] {
             std::fs::write(&path, serde_json::json!({"version":1,"name":"invalid","corpus":corpus,
                 "queries":[{"id":"q","query":"question","relevant":[{"document_title":title,"relevance":3}]}]}).to_string()).unwrap();
             assert!(load_dataset(&path).is_err());

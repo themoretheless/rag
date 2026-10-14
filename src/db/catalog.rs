@@ -37,7 +37,6 @@ pub struct DocumentCatalogPage {
     pub total: u64,
 }
 
-
 impl Store {
     /// Return one lean catalog page without loading document bodies.
     pub fn list_document_catalog(
@@ -71,24 +70,25 @@ impl Store {
             filter.offset
         );
         let mut stmt = conn.prepare(&sql)?;
-        let items = crate::db::rows::query_vec(&mut stmt, dynamic_params(&binds).as_slice(), |row| {
-            Ok(DrawerListItem {
-                id: row.get(0)?,
-                uri: row.get(1)?,
-                title: row.get(2)?,
-                wing: row.get(3)?,
-                room: row.get(4)?,
-                source_file: row.get(5)?,
-                layer: row.get(6)?,
-                kind: row.get(7)?,
-                content_hash: row.get(8)?,
-                pinned: row.get(9)?,
-                boost: row.get(10)?,
-                status: row.get(11)?,
-                created_at: timestamp(row.get(12)?)?,
-                updated_at: timestamp(row.get(13)?)?,
-            })
-        })?;
+        let items =
+            crate::db::rows::query_vec(&mut stmt, dynamic_params(&binds).as_slice(), |row| {
+                Ok(DrawerListItem {
+                    id: row.get(0)?,
+                    uri: row.get(1)?,
+                    title: row.get(2)?,
+                    wing: row.get(3)?,
+                    room: row.get(4)?,
+                    source_file: row.get(5)?,
+                    layer: row.get(6)?,
+                    kind: row.get(7)?,
+                    content_hash: row.get(8)?,
+                    pinned: row.get(9)?,
+                    boost: row.get(10)?,
+                    status: row.get(11)?,
+                    created_at: timestamp(row.get(12)?)?,
+                    updated_at: timestamp(row.get(13)?)?,
+                })
+            })?;
         Ok(DocumentCatalogPage {
             items,
             total: total.max(0) as u64,

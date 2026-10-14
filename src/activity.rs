@@ -8,7 +8,6 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-
 /// Ring-buffer capacity; the oldest event is dropped first.
 pub const MAX_ACTIVITY_EVENTS: usize = 1_000;
 
@@ -24,6 +23,7 @@ fn events() -> &'static Mutex<VecDeque<ActivityEvent>> {
     EVENTS.get_or_init(|| Mutex::new(VecDeque::with_capacity(MAX_ACTIVITY_EVENTS)))
 }
 
+/// Append one event to the in-memory activity ring buffer.
 pub fn record(
     kind: &'static str,
     client: Option<String>,

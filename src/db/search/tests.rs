@@ -190,7 +190,7 @@ fn tokenize_and_tf_score() {
     let terms = tokenize("Hello, WORLD! hello");
     assert_eq!(terms, vec!["hello", "world", "hello"]);
     let q = tokenize("hello world");
-    let s = tf_score(&q, "hello hello world foo");
+    let s = fts::term_frequency_score(&q, "hello hello world foo");
     assert!((s - 3.0).abs() < 1e-6); // hello x2 + world x1
 }
 
@@ -203,7 +203,7 @@ fn sanitize_stemmer_rejects_injection() {
 }
 
 #[test]
-fn search_lex_tf_and_hybrid_with_store() {
+fn search_lex_and_hybrid_with_store() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("search_test.duckdb");
     let store = Store::open(&path).expect("open");
@@ -266,8 +266,15 @@ fn search_lex_tf_and_hybrid_with_store() {
     ];
     store.insert_chunks(&chunks).unwrap();
 
-    // Pure TF path (bypass FTS by calling search_lex_tf).
-    let lex = search_lex_tf(&store, "cats xylophone", 10, None).unwrap();
+    // Production lexical path (DuckDB BM25, or the TF fallback without FTS).
+    let lex = search_lex(
+        &store,
+        "cats xylophone",
+        10,
+        &LexFilters::default(),
+        "porter",
+    )
+    .unwrap();
     assert!(!lex.is_empty());
     assert!(lex[0].score_lex.is_some());
     // c1 has both cats + xylophone; c2 has many cats only
@@ -556,7 +563,10 @@ fn search_vec_respects_wing_room_source_and_archived() {
     let (_, unscoped) = vector_search_inputs(&store, &LexFilters::default()).unwrap();
     match &unscoped {
         VectorDocumentScope::Excluding(ids) => {
-            assert_eq!(ids.iter().map(String::as_str).collect::<Vec<_>>(), vec!["arch"]);
+            assert_eq!(
+                ids.iter().map(String::as_str).collect::<Vec<_>>(),
+                vec!["arch"]
+            );
         }
         VectorDocumentScope::Only(_) => panic!("unscoped search must use an exclusion set"),
     }
@@ -1389,7 +1399,8 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
     }
     let previous = {
         let conn = store.lock().unwrap();
-        build_vector_snapshot(&conn, 1).unwrap()
+        let generation = fts::chunks_generation(&conn).unwrap();
+        build_vector_snapshot(&conn, generation).unwrap()
     };
 
     // New document, replaced chunks, and an in-place embedding change.
@@ -1397,6 +1408,8 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
     add("doc2", &[[3.0, 4.0]]);
     {
         let conn = store.lock().unwrap();
+        // An unscoped write: logged as "unknown", so the refresh lists all.
+        fts::mark_fts_dirty(&conn).unwrap();
         // Chunk writers maintain the digest alongside the JSON.
         conn.execute(
             "UPDATE chunks SET embedding_json = '[0.0,2.0]', embedding_digest = ? \
@@ -1407,8 +1420,9 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
     }
 
     let conn = store.lock().unwrap();
-    let refreshed = refresh_vector_snapshot(&conn, &previous, 2, None).unwrap();
-    let rebuilt = build_vector_snapshot(&conn, 2).unwrap();
+    let generation = fts::chunks_generation(&conn).unwrap();
+    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
+    let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
     let view = |snapshot: &VectorSnapshot| {
         snapshot
             .chunks
@@ -1424,7 +1438,7 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
             .collect::<Vec<_>>()
     };
     assert_eq!(view(&refreshed), view(&rebuilt));
-    assert_eq!(refreshed.generation, 2);
+    assert_eq!(refreshed.generation, generation);
 }
 
 #[test]
@@ -1589,7 +1603,12 @@ fn layer_only_vector_scope_lists_the_smaller_side() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(&dir.path().join("layers.duckdb")).expect("open");
     for index in 0..3 {
-        vector_test_document(&store, &format!("raw{index}"), "raw", vec![1.0, index as f32]);
+        vector_test_document(
+            &store,
+            &format!("raw{index}"),
+            "raw",
+            vec![1.0, index as f32],
+        );
     }
     vector_test_document(&store, "wiki0", "wiki", vec![1.0, 0.0]);
     vector_test_document(&store, "nolayer", "raw", vec![1.0, 0.0]);
@@ -1616,7 +1635,11 @@ fn layer_only_vector_scope_lists_the_smaller_side() {
     // wiki matches 1 of 5: listed directly.
     let (_, wiki) = vector_search_inputs(&store, &layer("wiki")).unwrap();
     assert_eq!(
-        wiki.only_ids().unwrap().iter().map(String::as_str).collect::<Vec<_>>(),
+        wiki.only_ids()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         vec!["wiki0"]
     );
 
@@ -1631,4 +1654,115 @@ fn layer_only_vector_scope_lists_the_smaller_side() {
     };
     assert_eq!(hits(&layer("raw")), vec!["raw0", "raw1", "raw2"]);
     assert_eq!(hits(&layer("wiki")), vec!["wiki0"]);
+}
+
+#[test]
+fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("change-log.duckdb")).expect("open");
+    let chunk = |doc: &str, index: i32, value: f32| Chunk {
+        id: format!("{doc}-{index}"),
+        document_id: doc.into(),
+        chunk_index: index,
+        content: format!("{doc} {index}"),
+        embedding: vec![value, 1.0 - value],
+        char_start: 0,
+        char_end: 1,
+        metadata_json: "{}".into(),
+    };
+    for (n, doc) in ["a", "b", "c", "d"].iter().enumerate() {
+        store
+            .upsert_document(&Document {
+                id: (*doc).into(),
+                uri: format!("uri://{doc}"),
+                title: (*doc).into(),
+                content: (*doc).into(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .insert_chunks(&[chunk(doc, 0, n as f32 / 10.0), chunk(doc, 1, 0.5)])
+            .unwrap();
+    }
+    let snapshot = |store: &Store| {
+        let conn = store.lock().unwrap();
+        let generation = fts::chunks_generation(&conn).unwrap();
+        build_vector_snapshot(&conn, generation).unwrap()
+    };
+    let view = |snapshot: &VectorSnapshot| {
+        snapshot
+            .chunks
+            .iter()
+            .map(|c| {
+                (
+                    c.id.clone(),
+                    c.document_id.clone(),
+                    c.chunk_index,
+                    c.embedding_hash,
+                    c.vector.to_vec(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let previous = snapshot(&store);
+
+    // Scoped writes: replace, delete, insert, re-embed.
+    store
+        .replace_chunks_for_document("a", &[chunk("a", 0, 0.9), chunk("a", 2, 0.3)])
+        .unwrap();
+    store.delete_document("b").unwrap();
+    store
+        .upsert_document(&Document {
+            id: "e".into(),
+            uri: "uri://e".into(),
+            title: "e".into(),
+            content: "e".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    store.insert_chunks(&[chunk("e", 0, 0.7)]).unwrap();
+    let c_chunks = store.list_chunks_for_document("c").unwrap();
+    let c_revision = store.get_document("c").unwrap().unwrap().revision;
+    store
+        .update_chunk_embeddings_atomic(
+            "c",
+            c_revision,
+            &c_chunks,
+            &[vec![0.2, 0.8], vec![0.6, 0.4]],
+            None,
+        )
+        .unwrap();
+
+    {
+        let conn = store.lock().unwrap();
+        let generation = fts::chunks_generation(&conn).unwrap();
+        let documents = fts::changed_documents_since(&conn, previous.generation, generation)
+            .unwrap()
+            .expect("every generation logged with its documents");
+        let mut documents: Vec<_> = documents.into_iter().collect();
+        documents.sort();
+        assert_eq!(documents, vec!["a", "b", "c", "e"]);
+        let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
+        let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+        assert_eq!(view(&refreshed), view(&rebuilt));
+    }
+
+    // An unscoped write (raw SQL plus plain mark_fts_dirty) forces a full listing.
+    let previous = snapshot(&store);
+    {
+        let conn = store.lock().unwrap();
+        fts::mark_fts_dirty(&conn).unwrap();
+        conn.execute("DELETE FROM chunks WHERE document_id = 'd'", [])
+            .unwrap();
+        let generation = fts::chunks_generation(&conn).unwrap();
+        assert!(
+            fts::changed_documents_since(&conn, previous.generation, generation)
+                .unwrap()
+                .is_none()
+        );
+        let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
+        let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+        assert_eq!(view(&refreshed), view(&rebuilt));
+        assert!(refreshed.chunks.iter().all(|c| c.document_id != "d"));
+    }
 }

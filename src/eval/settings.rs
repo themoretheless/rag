@@ -31,6 +31,7 @@ pub struct SearchSettingsProfile {
 }
 
 impl SearchSettingsProfile {
+    /// Load a settings profile from a JSON file.
     pub fn load(path: &std::path::Path) -> crate::error::Result<Self> {
         let raw = std::fs::read_to_string(path).map_err(|e| {
             crate::error::AppError::config(format!("read settings {}: {e}", path.display()))
@@ -40,9 +41,8 @@ impl SearchSettingsProfile {
         })
     }
 
+    /// Profile name, or `fallback` when unnamed.
     pub fn display_name(&self, fallback: &str) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| fallback.to_string())
+        self.name.clone().unwrap_or_else(|| fallback.to_string())
     }
 }

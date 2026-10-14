@@ -30,18 +30,20 @@ impl GraphApp {
                     }
                     let action = draw_project_home(
                         ui,
-                        nonempty(&self.filter_wing).as_deref(),
-                        self.project_home.as_ref(),
-                        self.operations_snapshot.as_ref(),
-                        &self.activity,
-                        self.project_home_error.as_deref(),
-                        self.operations_error.as_deref(),
-                        self.operations_snapshot_stale,
-                        self.pending_project_home.is_some()
-                            || self.pending_operations.is_some()
-                            || self.pending_activity.is_some(),
-                        self.activity_base().is_some(),
-                        self.available_load_source().is_some(),
+                        ProjectHomeView {
+                            selected_project: nonempty(&self.filter_wing).as_deref(),
+                            home: self.project_home.as_ref(),
+                            operations: self.operations_snapshot.as_ref(),
+                            activity: &self.activity,
+                            project_error: self.project_home_error.as_deref(),
+                            operations_error: self.operations_error.as_deref(),
+                            operations_stale: self.operations_snapshot_stale,
+                            loading: self.pending_project_home.is_some()
+                                || self.pending_operations.is_some()
+                                || self.pending_activity.is_some(),
+                            http_available: self.activity_base().is_some(),
+                            wiki_available: self.available_load_source().is_some(),
+                        },
                     );
                     match action {
                         HomeAction::None => {}

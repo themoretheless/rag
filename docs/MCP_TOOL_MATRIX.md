@@ -54,7 +54,7 @@ Priority labels in this matrix may lag shipped code; for “exists today” pref
 | Tool | Purpose | Karpathy | MemPalace | Priority |
 |------|---------|----------|-----------|----------|
 | `refile` | Set wing/room/kind/sort_key | Filing wiki pages into sections | Wing/room assignment | P0.5 |
-| `list_by_placement` / `list_taxonomy` | Browse ordered shelves | index.md by category | `list_wings` / `list_rooms` | P0.5 |
+| `list_by_placement` / `list_taxonomy` | Browse ordered shelves | index.md by category | `list_wings` / `list_rooms` | P0.5 — **planned, not implemented** (use `list_wings` / `list_rooms` / `list_documents` filters today) |
 | `pin` / `unpin` / `set_boost` | Manual rank | Evergreen pages on top | Priority drawers | P0.5 |
 | `archive` / `unarchive` | Soft remove from default views | Drop without delete | Forget-lite | P0.5 |
 | `check_duplicate` | content_hash probe | Avoid double sources | `check_duplicate` | P0.5 |
@@ -76,15 +76,15 @@ See [`ORGANIZE.md`](ORGANIZE.md).
 | `diary_write` / `diary_read` | Per-agent chronological notes | log.md agent notes | `mempalace_diary_write` / `diary_read` | P1 |
 | `kg_add` / `kg_query` / `kg_invalidate` / `kg_supersede` / `kg_timeline` / `kg_stats` | Temporal fact graph | Stale-claim / contradiction lint substrate | Full `mempalace_kg_*` suite | P1 |
 | `checkpoint` | Batch file + optional diary | Multi-page ingest savepoint | `mempalace_checkpoint` | P1 |
-| `forget` / `undelete` | Soft-delete tombstone path | Remove without breaking node ids | Memory update/delete | P1 |
-| `consolidate_memory` | Diary/episode → wiki/kg compression | Compile pass over agent notes | Sleep / consolidate pattern | P1–P2 |
+| `forget` / `undelete` | Soft-delete tombstone path | Remove without breaking node ids | Memory update/delete | P1 — **planned, not implemented** |
+| `consolidate_memory` | Diary/episode → wiki/kg compression | Compile pass over agent notes | Sleep / consolidate pattern | P1–P2 — **planned, not implemented** |
 | `backup_db` | Consistent DuckDB file snapshot | Before reembed / migration | Export outside core | shipped |
 | `export_bundle` | Portable recovery v2 with documents, chunks, and canonical embedding identity | Transfer the retrieval substrate honestly | Portable drawer snapshot | shipped |
 | `import_bundle` | Transactional identity-checked v2 restore; explicit `reembed_legacy=true` replaces unverifiable v1 vectors through the gateway | Restore without silently mixing models | Restore drawer contents | shipped |
 | `multi_get` / `find_similar` / `expand_chunks` | Retrieval UX | Open several index hits | Multi-drawer fetch | shipped |
 | `export_vault` / `export_markdown` / `export_graph` | Obsidian/git-friendly dump | Wiki is markdown repo | Export outside core MCP | P1 |
-| `ingest_directory` / `sync_sources` | Bulk mine + prune orphans | Batch ingest + cleanup | `mine` + `mempalace_sync` | shipped |
-| `get_subgraph` | Seeded graph export | Local graph seed | Traverse with seeds | P1 |
+| `sync_sources` (`ingest_directory`: **not implemented**) | Bulk mine + prune orphans | Batch ingest + cleanup | `mine` + `mempalace_sync` | `sync_sources` shipped; `ingest_directory` planned |
+| `get_subgraph` | Seeded graph export | Local graph seed | Traverse with seeds | P1 — **planned, not implemented** (use `get_graph` / `get_neighbors`) |
 | `reindex` | Rebuild FTS / embeddings subset | Repair catalog search | Re-mine subset | P1 |
 | `record_feedback` | Label hits for eval (schema early) | — | Relevance labels | P1 schema / P2 harness |
 
@@ -93,7 +93,7 @@ See [`ORGANIZE.md`](ORGANIZE.md).
 | Tool | Purpose | Karpathy | MemPalace | Priority |
 |------|---------|----------|-----------|----------|
 | `search_raw` | Explicit raw-layer fallback | When wiki insufficient | Verbatim drawer search | P2 |
-| `hyde_search` / `evaluate_retrieval` | Advanced retrieval / metrics | Optional at scale | Hybrid + rerank path | P2 |
+| `hyde_search` / `evaluate_retrieval` | Advanced retrieval / metrics | Optional at scale | Hybrid + rerank path | P2 — **planned, not implemented** (offline metrics: `cargo run --bin eval`) |
 | `repair` / `prune_orphans` / `watch_path` | Integrity + file watch | Drift control | `sync` / reconnect | P2 |
 | `hook_settings` | Client auto-save protocol | — | `mempalace_hook_settings` | P2 |
 

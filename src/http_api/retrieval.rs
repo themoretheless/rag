@@ -15,15 +15,18 @@ use super::{
 };
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
-use crate::eval::{
-    source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder,
-};
-use crate::search_pack::PackHitParams;
+use crate::eval::{source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder};
 use crate::models::SearchHit;
 use crate::retrieval::{self, SimilarDocumentsQuery};
 use crate::revisions::{RestoreRevisionCommand, RevisionService};
+use crate::search_pack::PackHitParams;
 use crate::telemetry;
 use crate::util::{check_path_allowlist, non_blank};
+
+/// Revisions returned per page when `limit` is absent.
+const DEFAULT_REVISIONS_LIMIT: usize = 50;
+/// Largest revisions page a client may request.
+const MAX_REVISIONS_LIMIT: usize = 200;
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -156,7 +159,10 @@ async fn revisions(
     State(state): State<HttpState>,
     Query(query): Query<RevisionsQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_REVISIONS_LIMIT)
+        .clamp(1, MAX_REVISIONS_LIMIT);
     let offset = match decode_cursor(query.cursor.as_deref()) {
         Ok(value) => value,
         Err(error) => return api_err(error),
@@ -367,10 +373,9 @@ pub(super) async fn search_http(
                 if persist_trace {
                     let _ = persist_retrieval_trace(&state.store, &trace);
                 }
-                response
-                    .as_object_mut()
-                    .expect("object")
-                    .insert("trace".into(), json!(trace));
+                if let Some(obj) = response.as_object_mut() {
+                    obj.insert("trace".into(), json!(trace));
+                }
             }
             api_ok(response)
         }
@@ -456,18 +461,14 @@ async fn pack_context_http(
         if persist_trace {
             let _ = persist_retrieval_trace(&state.store, &trace);
         }
-        response
-            .as_object_mut()
-            .expect("object")
-            .insert("trace".into(), json!(trace));
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("trace".into(), json!(trace));
+        }
     }
     api_ok(response)
 }
 
-fn source_versions_for_hits(
-    store: &crate::db::Store,
-    hits: &[SearchHit],
-) -> Vec<SourceVersion> {
+fn source_versions_for_hits(store: &crate::db::Store, hits: &[SearchHit]) -> Vec<SourceVersion> {
     let ids: Vec<&str> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
     // One query for every hit's stored hash (was one full document load per hit).
     let hashes = crate::util::blocking_section(|| store.content_hashes(&ids)).unwrap_or_default();

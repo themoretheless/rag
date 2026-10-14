@@ -86,6 +86,7 @@ fn gain(values: impl Iterator<Item = u32>) -> f64 {
         .sum()
 }
 
+/// Mean of the values, or 0 when empty.
 pub fn macro_average(values: impl Iterator<Item = f64>) -> f64 {
     let mut sum = 0.0;
     let mut n = 0usize;

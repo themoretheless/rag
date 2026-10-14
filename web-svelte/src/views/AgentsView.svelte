@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
+  import type { ItemsResponse, KgFact, OpsLogItem } from '@/api/types'
 
   type AgentRow = {
     agent: string
@@ -23,15 +24,16 @@
   }
   type CallStreamState = 'loading' | 'live' | 'empty' | 'stale' | 'error'
   type SparkPoint = { count: number; height: number; label: string }
+  type KgListResponse = { items?: KgFact[]; facts?: KgFact[]; count?: number; total?: number }
 
   const CALL_TIMEOUT_MS = 8_000
   const SPARK_BUCKET_COUNT = 12
   const SPARK_BUCKET_MS = 5 * 60_000
 
   let agents = $state<AgentRow[]>([])
-  let operations = $state<any[]>([])
+  let operations = $state<OpsLogItem[]>([])
   let calls = $state<CallRow[]>([])
-  let facts = $state<any[]>([])
+  let facts = $state<KgFact[]>([])
   let factsTotal = $state(0)
   let busy = $state(false)
   let error = $state('')
@@ -153,16 +155,16 @@
     error = ''
     const failures = await loadPanels([
       ['агенты', loadAgents],
-      ['ops_log', async () => { operations = (await api.get<any>('/v1/ops-log?limit=100')).items ?? [] }],
+      ['ops_log', async () => { operations = (await api.get<ItemsResponse<OpsLogItem>>('/v1/ops-log?limit=100'))?.items ?? [] }],
       ['MCP-вызовы', fetchCalls],
       ['KG', async () => {
-        const response = await api.get<any>('/v1/kg?limit=80')
+        const response = (await api.get<KgListResponse>('/v1/kg?limit=80')) ?? {}
         const items = response.items ?? response.facts ?? []
         factsTotal = response.count ?? response.total ?? items.length
         facts = items.slice(0, 80)
       }],
     ])
-    const pageFailures = failures.filter((label) => label !== 'MCP-вызовы')
+    const pageFailures = failures.filter((failure) => failure !== 'MCP-вызовы' && !failure.startsWith('MCP-вызовы: '))
     error = pageFailures.length ? `Не обновлены панели: ${pageFailures.join(', ')}` : ''
     busy = false
   }
@@ -193,7 +195,7 @@
     return (parts.length === 1 ? parts[0].slice(0, 2) : parts.slice(0, 2).map((part) => part[0]).join('')).toUpperCase()
   }
   function time(value?: string) { return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—' }
-  function payload(item: any) { try { const parsed = JSON.parse(item.payload_json || '{}'); return Object.keys(parsed).length ? JSON.stringify(parsed, null, 2) : '' } catch { return item.payload_json || '' } }
+  function payload(item: Pick<OpsLogItem, 'payload_json'>) { try { const parsed = JSON.parse(item.payload_json || '{}'); return Object.keys(parsed).length ? JSON.stringify(parsed, null, 2) : '' } catch { return item.payload_json || '' } }
   function streamLabel(state: CallStreamState) { return ({ loading: 'loading', live: 'live', empty: 'empty', stale: 'stale', error: 'error' } as const)[state] }
   function streamTitle() {
     if (callsError) return callsUpdatedAt ? `${callsError} · последний успешный снимок ${time(new Date(callsUpdatedAt).toISOString())}` : callsError

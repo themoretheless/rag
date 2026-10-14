@@ -42,11 +42,13 @@ pub struct SourceScanPolicy {
 }
 
 impl SourceScanPolicy {
+    /// Skip files larger than `max_bytes`.
     pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
         self.max_bytes = Some(max_bytes);
         self
     }
 
+    /// Only collect files with these extensions.
     pub fn with_extensions<I, S>(mut self, extensions: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -127,6 +129,7 @@ pub fn is_explicitly_excluded_source_path(root: &Path, source: &Path) -> bool {
     false
 }
 
+/// All files under `root` that `policy` admits.
 pub fn collect_source_files(
     root: &Path,
     policy: &SourceScanPolicy,

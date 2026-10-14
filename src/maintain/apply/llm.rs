@@ -156,13 +156,15 @@ pub(super) async fn apply_consolidate(
         store,
         embedder,
         config,
-        &slug,
-        &title,
-        &content,
-        &kind,
-        category.as_deref(),
-        summary.as_deref(),
-        agent,
+        wiki::WikiPageWrite {
+            slug: &slug,
+            title: &title,
+            content: &content,
+            kind: &kind,
+            category: category.as_deref(),
+            summary: summary.as_deref(),
+            agent,
+        },
     )
     .await?;
     Ok(StepResult {
@@ -190,7 +192,7 @@ pub(super) async fn apply_refresh_stale(
     let llm = context.llm;
     let dry_run = context.dry_run;
     let agent = context.agent;
-    let max_docs = param_f64(params, "max_docs").map(|n| n as usize);
+    let max_docs = param_usize(params, "max_docs")?;
     // A nested action may opt into preview inside an applying plan, but it may
     // never override the plan-wide safety boundary in the mutating direction.
     let nested_dry = dry_run || param_bool(params, "dry_run").unwrap_or(false);
@@ -264,11 +266,13 @@ pub(super) async fn apply_file_answer(
         store,
         embedder,
         config,
-        &title,
-        &body,
-        slug.as_deref(),
-        citations,
-        agent,
+        wiki::FileAnswerRequest {
+            title: &title,
+            body: &body,
+            slug: slug.as_deref(),
+            citations,
+            agent,
+        },
     )
     .await?;
     Ok(StepResult {

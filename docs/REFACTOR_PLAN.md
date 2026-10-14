@@ -20,17 +20,23 @@ Sizes: **S** < 200 lines touched · **M** 200–1000 · **L** > 1000.
 Small, independent fixes. Each ships with a regression test that fails before the
 fix. These go first because the later refactors would otherwise move the bugs.
 
+Evidence line numbers were taken at the audit baseline, before Phase 4 split
+`src/db/store.rs` into `src/db/store/*.rs` and moved `src/graph/resolve.rs` to
+`src/db/graph/resolve.rs`. Where code has moved, the cell reads
+"baseline → now (current location)"; re-verified 2026-10-14. Bare
+`file:line` references in later phases are also baseline positions.
+
 | # | Defect | Evidence | Fix | Size |
 |---|--------|----------|-----|------|
-| 0.1 | `prune_orphans` runs `BEGIN…COMMIT` through `execute_batch` on the shared connection; a mid-batch failure leaves the transaction open for every later caller, and FTS is marked dirty before the work starts | `src/db/store.rs:2160-2185` | Use `conn.transaction()`; mark dirty inside it | S |
-| 0.2 | HTTP embedding-manifest report says `match: true` without checking `base_url` or the fingerprint; the canonical predicate is fail-closed | `src/http_api/admin.rs:136-152` vs `src/db/store.rs:4157` | Call `embedding_manifest_matches_config` | S |
-| 0.3 | Lexical and vector legs build scope filters differently: vector trims values, lexical does not, so a padded `wing` filters one leg of hybrid search only | `src/db/fts.rs:683-714` vs `src/db/search.rs:1096-1122` | One `LexFilters::where_sql(doc_id_col)`; delete the test-only `sanitize_stemmer`/`make_snippet`/`search_lex_tf` copies in `search.rs:1194-1394` so tests hit production code | S |
-| 0.4 | `maintain` `set_tags` creates tag nodes with its own key rule (`tag://{label}`, no `#` strip, no `tag_key`), so `tag://#Alpha` and `tag://alpha` can coexist; edge delete/insert run under separate locks | `src/maintain/apply.rs:930-986` vs `src/graph/resolve.rs:413` | Reuse the resolver's tag upsert; one transaction | S |
+| 0.1 | `prune_orphans` runs `BEGIN…COMMIT` through `execute_batch` on the shared connection; a mid-batch failure leaves the transaction open for every later caller, and FTS is marked dirty before the work starts | baseline `src/db/store.rs:2160-2185` → now `Store::prune_orphans` in `src/db/store/health.rs:230` | Use `conn.transaction()`; mark dirty inside it | S |
+| 0.2 | HTTP embedding-manifest report says `match: true` without checking `base_url` or the fingerprint; the canonical predicate is fail-closed | baseline `src/http_api/admin.rs:136-152` vs `src/db/store.rs:4157` → now `embedding_manifest_report` in `src/http_api/admin.rs:157` vs `embedding_manifest_matches_config` in `src/db/store/manifest.rs:218` | Call `embedding_manifest_matches_config` | S |
+| 0.3 | Lexical and vector legs build scope filters differently: vector trims values, lexical does not, so a padded `wing` filters one leg of hybrid search only | `src/db/fts.rs:683-714` vs `src/db/search.rs:1096-1122` (baseline; `LexFilters` now at `src/db/fts.rs:113`) | One `LexFilters::where_sql(doc_id_col)`; delete the test-only `sanitize_stemmer`/`make_snippet`/`search_lex_tf` copies in `search.rs:1194-1394` (baseline range; `sanitize_stemmer` now lives only in `src/db/fts.rs:962`) so tests hit production code | S |
+| 0.4 | `maintain` `set_tags` creates tag nodes with its own key rule (`tag://{label}`, no `#` strip, no `tag_key`), so `tag://#Alpha` and `tag://alpha` can coexist; edge delete/insert run under separate locks | baseline `src/maintain/apply.rs:930-986` vs `src/graph/resolve.rs:413` → now `apply_set_tags_inner` in `src/maintain/apply/metadata.rs:272` vs `upsert_tag_node` in `src/db/graph/resolve.rs:427` | Reuse the resolver's tag upsert; one transaction | S |
 | 0.5 | Schema document writes are `upsert_document` + `let _ = rebuild_document_graph` + `let _ = append_ops_log`: not atomic, errors swallowed | `src/wiki/mod.rs:307-320, 386-395` | Route through `write_document_atomic` | S |
-| 0.6 | DuckDB `Storage::upsert_document` skips graph rebuild and wiki journal that `write_document_atomic_with_manifest` performs | `src/db/store.rs:548-565` | Delegate to the atomic path; add a two-backend conformance test for the trait | S |
+| 0.6 | DuckDB `Storage::upsert_document` skips graph rebuild and wiki journal that `write_document_atomic_with_manifest` performs | baseline `src/db/store.rs:548-565` → now `Storage::upsert_document` in `src/storage/duckdb/mod.rs:31` | Delegate to the atomic path; add a two-backend conformance test for the trait | S |
 | 0.7 | MCP `data.code` is attached only for `Busy`; a CAS conflict is indistinguishable from bad input (CLAUDE.md documents the workaround) | `src/mcp/error.rs` | Always attach `{"code": err.code()}` (additive) | S |
 | 0.8 | `From<reqwest::Error>` always yields `Embeddings`, so LLM HTTP failures report `EMBEDDINGS_ERROR` | `src/error.rs:66` | Map at the call site (`llm` → `Llm`) | S |
-| 0.9 | HTTP `find_similar` drops `wing`/`room` | `src/http_api/retrieval.rs:587` vs `src/mcp/search.rs:225` | Pass them through | S |
+| 0.9 | HTTP `find_similar` drops `wing`/`room` | `src/http_api/retrieval.rs:588` vs `src/mcp/search.rs:173` (both now call `retrieval::find_similar`, `src/retrieval.rs:573`) | Pass them through | S |
 | 0.10 | Environment-dependent tests: nanosecond vs microsecond timestamp compare; 5 s child-process budget breaks under `RUST_BACKTRACE=1`; 2 s semaphore timeouts | `src/maintain/compress.rs:1158`; `tests/http_auth_startup_test.rs:36`; `src/wiki/mod.rs:2998,3019,3324,3338,3415,3434` | Compare the store round-trip; drop or raise wall-clock budgets to ≥ 30 s | S |
 
 ---
@@ -77,14 +83,14 @@ a service, ~8 duplicate validation/defaults/clamping and already disagree.
 3. **`app::` commands (M, S per op).** Each takes raw `Option` params and owns
    `non_blank → default → clamp → run_blocking`; transports only map fields and
    response shape. Order:
-   - `pack_context` (`retrieval.rs:418` / `search.rs:248`; MCP runs DuckDB on the executor)
+   - `pack_context` (`http_api/retrieval.rs:410` / `mcp/search.rs:197`, shared `retrieval::pack_context` at `src/retrieval.rs:547`; MCP runs DuckDB on the executor)
    - `SearchCommand::from_request` (~28-line copy; MCP skips `non_blank`)
    - ops-log and diary reads (HTTP clamps 500/200, MCP does not; defaults 20 vs 10)
    - graph node / seed resolution (3 implementations; only HTTP checks URI)
    - list documents / list wiki pages
    - wiki upsert policy (slug/uri/id resolution lives only in `http_api/wiki.rs:208`)
    - `llm_status` (HTTP builds a `ChatClient` per request)
-   - `multi_query_search` inline logic (`mcp/search.rs:79-140`) → `retrieval`
+   - `multi_query_search` inline logic (baseline `mcp/search.rs:79-140`) → `retrieval` (now `src/retrieval.rs:184`)
 4. **No synchronous DuckDB on the async executor (S–M).** Falls out of 3; the
    remaining direct calls (MCP ingest 18, graph 15, wiki 22, kg 5, collections 5;
    HTTP `admin.rs`) are wrapped in `run_blocking`.
@@ -109,7 +115,7 @@ keeps its default through an explicit policy parameter.
    - Acceptance: a test or `cargo-modules` check that `db`/domain never import `mcp`/`http_api`.
 2. **Configuration read once (M).** ~30 `RAG_*` variables are read outside
    `Config` in 14 files (`ops.rs` 7, `http_api/sync.rs` 3, `mcp/facade.rs`,
-   `llm/chat.rs`, `graph/resolve.rs:151`, `db/sync.rs:65` via
+   `llm/chat.rs`, `graph/resolve.rs:151` (baseline; now `db/graph/resolve.rs`), `db/sync.rs:65` via
    `SyncIdentity::from_env()` inside `wiki::write_wiki_page_command`, …) and
    `main.rs:235 env_flag` duplicates `config.rs:415`. Add `OpsConfig`,
    `SyncConfig`, `HttpConfig` sub-structs parsed in `Config::from_env`.
@@ -144,7 +150,7 @@ keeps its default through an explicit policy parameter.
    sites (plus a verbatim copy at `recovery.rs:1044`), ~21 open-tx/commit
    blocks. Add `Store::with_tx`, `query_vec`, `query_documents`.
 2. **One chunk/document write path (M).** Embedding-JSON serialization and
-   chunk ownership checks appear 4× (`store.rs:530,596,785,2432`), "mark FTS
+   chunk ownership checks appear 4× (baseline `store.rs:530,596,785,2432`; now split across `src/db/store/{documents,chunks}.rs`), "mark FTS
    dirty + delete chunks" 3×. Recovery import inserts rows itself
    (`recovery.rs:1262-1270`) with `to_rfc3339()` instead of `format_ts`,
    `CURRENT_TIMESTAMP` chunk times and no layer/kind/status/hash normalization.
@@ -156,7 +162,7 @@ keeps its default through an explicit policy parameter.
    production call sites in 12 files outside `db` (~70 raw SQL statements):
    `maintain/analyze` 14 statements, `apply`, `compress`, `refresh`, `review`,
    `http_api/{knowledge,feedback,labels,jobs}`, `retrieval.rs:345-445`
-   (duplicates `count_chunks_for_document`), `graph/resolve.rs` (~500 lines of
+   (duplicates `count_chunks_for_document`), `graph/resolve.rs` (now `db/graph/resolve.rs`; ~500 lines of
    SQL). Move each into a `db::*` repository, then narrow `lock` to
    `pub(super)`. `payload_kv` keeps its SQL by design. Reverse edges
    (`store.rs:660 → review`, `store.rs:3230 → graph::resolve`,
@@ -164,8 +170,8 @@ keeps its default through an explicit policy parameter.
 5. **Extract Store slices (M each).** 185 `impl Store` methods (116 in
    `store.rs`). Candidates with clean seams: `CorpusLane` (13 methods, tokio
    lock policy), `EmbeddingManifestRepo` (8, removes `db → Config`),
-   `WikiIndexRepo` (12; scoring/markdown rendering at `store.rs:3717-3985` moves
-   to `wiki::index`), `OpsLog` (9). `Store` keeps delegating methods. Move the
+   `WikiIndexRepo` (12; scoring/markdown rendering at baseline `store.rs:3717-3985`,
+   now `src/db/store/wiki_index.rs`, moves to `wiki::index`), `OpsLog` (9). `Store` keeps delegating methods. Move the
    2,400 lines of store tests to `db/store/tests.rs`.
 6. **Split `db/recovery.rs` (M)** into `recovery/{bundle,import,publish}.rs`
    along existing boundaries (codec 203-900, store ops 901-1431, filesystem
@@ -998,6 +1004,40 @@ polled paths. These costs remain, each bounded and kept on purpose:
     Painting culls off-screen items and switches to a simpler mode above
     5,000 nodes. The detail panel's scan is the same order as painting, so
     caching it would save only a constant factor.
+
+## Follow-up: kept costs revisited
+
+Three costs the plan kept on purpose were taken up afterwards. All figures
+are from a debug build.
+
+- **Vector refresh after a write** now reads a chunk change log.
+  - `chunk_change_log` records, for each chunk generation, which documents'
+    chunks changed.
+  - The hot writers log their documents through
+    `fts::mark_chunks_changed_for`: chunk insert and replace, document
+    delete, and embedding updates.
+  - Every other writer still calls plain `mark_fts_dirty`, which logs
+    "unknown".
+  - The database-wide refresh re-reads only the named documents' chunks. It
+    falls back to the full listing when any generation since the cached
+    snapshot is unknown or pruned; the log keeps 4096 generations.
+  - Measured on 20k chunks × 768 dims after replacing 15 chunks of one
+    document: 325 ms → 48 ms. A full build is about 4 s.
+  - A test checks the delta against a full rebuild after replace, delete,
+    insert and re-embed writes, and checks the fallback after an unscoped
+    write.
+- **BM25 patch: kept.** Its two anti-joins take 21 ms of the 222 ms patch.
+  The rest is tokenizing and updating the dict, terms and stats tables,
+  which a change log would not shrink.
+- **`/v1/agents` diary read:** an index on `documents(kind)` brings it from
+  30 ms to 23 ms on 83k documents.
+- **Overview lenses** (no seed) draw at most `UI_OVERVIEW_MAX_NODES` = 5,000
+  nodes and `UI_OVERVIEW_MAX_EDGES` = 20,000 edges.
+  - 5,000 is the canvas's simplified-mode threshold.
+  - The most connected nodes are kept, with ties broken by id.
+  - The truncation note names the cap.
+  - Before, these lenses drew the whole loaded graph, up to 100,000 nodes,
+    so painting, hit-testing and the detail panel scaled with it each frame.
 
 ## Not planned
 

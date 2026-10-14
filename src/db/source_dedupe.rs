@@ -958,8 +958,7 @@ fn promote_node_to_survivor(conn: &Connection, node_id: &str, survivor: &Documen
 fn graph_node_ids(conn: &Connection, document_id: &str) -> Result<Vec<String>> {
     let mut stmt =
         conn.prepare("SELECT id FROM graph_nodes WHERE document_id = ? ORDER BY id ASC")?;
-    let ids =
-        crate::db::rows::query_vec(&mut stmt, params![document_id], |row| Ok(row.get(0)?))?;
+    let ids = crate::db::rows::query_vec(&mut stmt, params![document_id], |row| Ok(row.get(0)?))?;
     Ok(ids)
 }
 

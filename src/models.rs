@@ -364,6 +364,7 @@ pub struct WingCount {
 pub struct ProjectId(String);
 
 impl ProjectId {
+    /// Validate a project id: 1..=128 bytes after trimming, no control characters.
     pub fn parse(value: impl Into<String>) -> Result<Self, AppError> {
         let value = value.into();
         let trimmed = value.trim();
@@ -378,6 +379,7 @@ impl ProjectId {
         Ok(Self(trimmed.to_owned()))
     }
 
+    /// The project id string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -470,9 +472,6 @@ pub struct Chunk {
     pub metadata_json: String,
 }
 
-
-
-
 /// Lean wiki catalog row for list/sidebar surfaces (`GET /v1/wiki`, UI).
 ///
 /// ISP: deliberately **no** `content` / body / `metadata_json`. Full page text
@@ -547,9 +546,9 @@ pub struct VacuumStoreReport {
 }
 
 pub use rag_mcp_core::{
-    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind, SearchContextChunk,
-    SearchExplanation, SearchHit,
-    PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
+    pkb_node_kinds, pkb_rel_types, GraphEdge, GraphFilter, GraphNode, GraphView, Layer, NodeKind,
+    SearchContextChunk, SearchExplanation, SearchHit, PKB_CORE_REL_TYPES, PKB_NODE_KINDS,
+    UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
 
 /// Aggregate counts for the object graph (`graph_stats` tool).
@@ -831,6 +830,7 @@ impl OpsLogEntry {
         }
     }
 
+    /// Set the entity id and kind.
     pub fn entity(mut self, id: Option<String>, kind: &str) -> Self {
         self.entity_id = id;
         self.entity_kind = Some(kind.to_string());
@@ -843,6 +843,7 @@ impl OpsLogEntry {
         self
     }
 
+    /// Set the agent name.
     pub fn agent(mut self, agent_name: Option<String>) -> Self {
         self.agent_name = agent_name;
         self
@@ -1069,6 +1070,7 @@ pub struct WakeUpSchemaSnippet {
 }
 
 impl WakeUpSchemaSnippet {
+    /// Snapshot a schema document for wake-up context.
     pub fn from_document(doc: &Document) -> Self {
         Self {
             document_id: doc.id.clone(),
@@ -1182,6 +1184,7 @@ macro_rules! finding_codes {
         }
 
         impl $name {
+            /// Wire code string.
             pub fn as_str(&self) -> &str {
                 match self {
                     $(Self::$variant => $wire,)+

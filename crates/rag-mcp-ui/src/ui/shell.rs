@@ -20,6 +20,7 @@ pub enum ShellRoute {
 }
 
 impl ShellRoute {
+    /// True for routes that need the HTTP gateway.
     pub const fn requires_http(self) -> bool {
         matches!(
             self,
@@ -32,6 +33,7 @@ impl ShellRoute {
         )
     }
 
+    /// Localized title shown for this route.
     pub const fn title(self) -> &'static str {
         match self {
             Self::Console => "Пульт",
@@ -46,6 +48,7 @@ impl ShellRoute {
         }
     }
 
+    /// Layer caption shown for this route.
     pub const fn layer(self) -> &'static str {
         match self {
             Self::Console => "L0–L4 · обзор",
@@ -60,6 +63,7 @@ impl ShellRoute {
         }
     }
 
+    /// Accent color for this route.
     pub const fn color(self) -> Color32 {
         match self {
             Self::Console => theme::ACCENT,
@@ -77,6 +81,7 @@ pub struct RailOutput {
     pub navigate: Option<ShellRoute>,
 }
 
+/// Draw the left navigation rail and report which route was clicked.
 pub fn draw_rail(
     root_ui: &mut egui::Ui,
     current: ShellRoute,
@@ -366,6 +371,7 @@ pub struct TopbarOutput {
     pub open_search: bool,
 }
 
+/// Draw the global top bar and report user interactions.
 pub fn draw_topbar(root_ui: &mut egui::Ui, state: TopbarState<'_>) -> TopbarOutput {
     let mut output = TopbarOutput::default();
     egui::Panel::top("console_global_topbar")

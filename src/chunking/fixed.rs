@@ -189,7 +189,10 @@ mod tests {
         for w in chunks.windows(2) {
             assert_eq!(w[0].char_end, w[1].char_start);
         }
-        assert_eq!(chunks.last().unwrap().char_end as usize, text.chars().count());
+        assert_eq!(
+            chunks.last().unwrap().char_end as usize,
+            text.chars().count()
+        );
     }
 
     #[test]

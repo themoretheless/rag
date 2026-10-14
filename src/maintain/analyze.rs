@@ -359,7 +359,7 @@ pub fn analyze_corpus(
     };
 
     if opts.log_ops {
-        let _ = store.append_ops_log(&OpsLogEntry {
+        if let Err(error) = store.append_ops_log(&OpsLogEntry {
             id: Uuid::new_v4().to_string(),
             seq: 0,
             ts: generated_at,
@@ -385,7 +385,9 @@ pub fn analyze_corpus(
             })
             .to_string(),
             agent_name: None,
-        });
+        }) {
+            tracing::warn!(%error, "failed to append analyze_corpus ops_log entry");
+        }
     }
 
     Ok(report)
@@ -487,8 +489,14 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(issue.code, AnalysisCode::Other("custom_client_code".into()));
-        assert_eq!(serde_json::to_value(&issue).unwrap()["code"], "custom_client_code");
-        assert_eq!(serde_json::to_value(AnalysisCode::ExactDup).unwrap(), "exact_dup");
+        assert_eq!(
+            serde_json::to_value(&issue).unwrap()["code"],
+            "custom_client_code"
+        );
+        assert_eq!(
+            serde_json::to_value(AnalysisCode::ExactDup).unwrap(),
+            "exact_dup"
+        );
         assert_eq!(AnalysisCode::from("stale_wiki"), AnalysisCode::StaleWiki);
     }
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};

@@ -100,6 +100,7 @@ pub fn begin(
 }
 
 impl CallStart {
+    /// Record the finished call in the telemetry ring buffer.
     pub fn finish(self, ok: bool, error: Option<String>, result_hint: Option<String>) {
         let record = CallRecord {
             seq: 0,
@@ -368,6 +369,7 @@ pub struct CallSummary {
     pub by_tool: Vec<ToolStats>,
 }
 
+/// Aggregate buffered calls into counts, latency stats and per-group/tool breakdowns.
 pub fn summary() -> CallSummary {
     let buffer = BUFFER
         .read()
@@ -435,6 +437,7 @@ pub struct AgentActivity {
     pub online: bool,
 }
 
+/// Per-agent call activity from the telemetry buffer.
 pub fn agent_activity() -> Vec<AgentActivity> {
     let buffer = BUFFER
         .read()

@@ -195,7 +195,9 @@ fn stored_event_locked(
     origin_seq: i64,
 ) -> Result<Option<SyncChange>> {
     let mut stmt = conn.prepare(
-        "SELECT primary_seq, entity_kind, entity_id, operation, payload_json, content_hash, strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM sync_changes WHERE origin_node = ? AND origin_seq = ?"
+        "SELECT primary_seq, entity_kind, entity_id, operation, payload_json, content_hash, \
+        strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM sync_changes WHERE origin_node = ? \
+        AND origin_seq = ?",
     )?;
     let mut rows = stmt.query(params![origin_node, origin_seq])?;
     let Some(row) = rows.next()? else {
@@ -261,7 +263,8 @@ fn insert_event_locked(
 ) -> Result<()> {
     let change = canonical_change(change)?;
     conn.execute(
-        "INSERT INTO sync_changes (primary_seq, origin_node, origin_seq, entity_kind, entity_id, operation, payload_json, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sync_changes (primary_seq, origin_node, origin_seq, entity_kind, entity_id, \
+        operation, payload_json, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![primary_seq, origin_node, change.origin_seq, change.entity_kind, change.entity_id,
             change.operation, change.payload_json, change.content_hash, change.created_at],
     )?;
@@ -282,7 +285,11 @@ fn accept_change_locked(
         |row| row.get(0),
     )?;
     insert_event_locked(conn, next, origin_node, change)?;
-    conn.execute("UPDATE sync_nodes SET last_seen_at = CURRENT_TIMESTAMP, last_push_seq = GREATEST(last_push_seq, ?) WHERE node_id = ?", params![change.origin_seq, origin_node])?;
+    conn.execute(
+        "UPDATE sync_nodes SET last_seen_at = CURRENT_TIMESTAMP, last_push_seq = \
+    GREATEST(last_push_seq, ?) WHERE node_id = ?",
+        params![change.origin_seq, origin_node],
+    )?;
     Ok(next)
 }
 
@@ -292,7 +299,8 @@ fn enqueue_change_locked(
     node_id: Option<&str>,
 ) -> Result<i64> {
     let next: i64 = conn.query_row(
-        "SELECT GREATEST(COALESCE((SELECT MAX(local_seq) FROM sync_outbox), 0), COALESCE((SELECT MAX(origin_seq) FROM sync_changes WHERE origin_node = ?), 0)) + 1",
+        "SELECT GREATEST(COALESCE((SELECT MAX(local_seq) FROM sync_outbox), 0), COALESCE((SELECT \
+        MAX(origin_seq) FROM sync_changes WHERE origin_node = ?), 0)) + 1",
         params![node_id.unwrap_or("")], |row| row.get(0),
     )?;
     let mut change = prototype.clone();
@@ -317,7 +325,8 @@ pub(crate) fn local_change_locked(
     }
     // Both the origin and canonical sequence are allocated under this same transaction.
     let next: i64 = conn.query_row(
-        "SELECT GREATEST(COALESCE((SELECT MAX(origin_seq) FROM sync_changes WHERE origin_node = ?), 0), COALESCE((SELECT MAX(local_seq) FROM sync_outbox), 0)) + 1",
+        "SELECT GREATEST(COALESCE((SELECT MAX(origin_seq) FROM sync_changes WHERE origin_node = \
+        ?), 0), COALESCE((SELECT MAX(local_seq) FROM sync_outbox), 0)) + 1",
         params![&identity.node_id], |row| row.get(0),
     )?;
     let mut change = prototype.clone();
@@ -401,7 +410,12 @@ pub(crate) fn defer_pulled_document_locked(
     if !matches!(mode, WikiSyncWrite::Pull { .. }) {
         return Ok(false);
     }
-    let pending: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE entity_kind = 'wiki' AND entity_id = ? AND sent_at IS NULL", params![uri], |row| row.get(0))?;
+    let pending: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sync_outbox WHERE entity_kind = \
+    'wiki' AND entity_id = ? AND sent_at IS NULL",
+        params![uri],
+        |row| row.get(0),
+    )?;
     Ok(pending > 0)
 }
 
@@ -426,6 +440,7 @@ pub(crate) fn commit_sync_write_locked(
 }
 
 impl Store {
+    /// True when a sync change from this origin node and sequence is already stored.
     pub fn has_sync_change(&self, origin_node: &str, origin_seq: i64) -> Result<bool> {
         let conn = self.lock()?;
         Ok(stored_event_locked(&conn, origin_node, origin_seq)?.is_some())
@@ -489,6 +504,7 @@ impl Store {
         })
     }
 
+    /// Append a local change to the sync outbox and return its local sequence.
     pub fn enqueue_sync_change(
         &self,
         entity_kind: &str,
@@ -511,11 +527,14 @@ impl Store {
         })
     }
 
+    /// Unsent sync outbox changes in local order, up to `limit`.
     pub fn pending_sync_outbox(&self, limit: usize) -> Result<Vec<SyncChangeInput>> {
         let limit = limit.clamp(1, MAX_SYNC_BATCH);
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT local_seq, entity_kind, entity_id, operation, payload_json, content_hash, strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM sync_outbox WHERE sent_at IS NULL ORDER BY local_seq LIMIT {limit}"
+            "SELECT local_seq, entity_kind, entity_id, operation, payload_json, content_hash, \
+            strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM sync_outbox WHERE sent_at IS NULL \
+            ORDER BY local_seq LIMIT {limit}"
         ))?;
         let rows = stmt.query_map([], |row| {
             Ok(SyncChangeInput {
@@ -531,6 +550,7 @@ impl Store {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    /// Record primary sequence numbers for sent outbox entries.
     pub fn mark_sync_outbox_sent(&self, assignments: &[(i64, i64)]) -> Result<()> {
         self.with_tx(|tx| {
             for (local_seq, primary_seq) in assignments {
@@ -545,7 +565,11 @@ impl Store {
                 if existing.is_some_and(|existing| existing != *primary_seq) {
                     return Err(AppError::conflict("outbox canonical sequence changed"));
                 }
-                let updated = tx.execute("UPDATE sync_outbox SET sent_at = CURRENT_TIMESTAMP, primary_seq = ? WHERE local_seq = ?", params![primary_seq, local_seq])?;
+                let updated = tx.execute(
+                    "UPDATE sync_outbox SET sent_at = CURRENT_TIMESTAMP, \
+                primary_seq = ? WHERE local_seq = ?",
+                    params![primary_seq, local_seq],
+                )?;
                 if updated == 0 {
                     return Err(AppError::conflict(
                         "outbox acknowledgement has no local event",
@@ -556,6 +580,7 @@ impl Store {
         })
     }
 
+    /// Register or refresh a sync node's hostname and role.
     pub fn register_sync_node(&self, node_id: &str, hostname: &str, role: &str) -> Result<()> {
         self.with_tx(|tx| {
             register_node_locked(tx, node_id, hostname, role)?;
@@ -594,7 +619,9 @@ impl Store {
         let limit = limit.clamp(1, MAX_SYNC_BATCH);
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT primary_seq, origin_node, origin_seq, entity_kind, entity_id, operation, payload_json, content_hash, strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM sync_changes WHERE primary_seq > ? ORDER BY primary_seq LIMIT {limit}"
+            "SELECT primary_seq, origin_node, origin_seq, entity_kind, entity_id, operation, \
+            payload_json, content_hash, strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM \
+            sync_changes WHERE primary_seq > ? ORDER BY primary_seq LIMIT {limit}"
         ))?;
         let rows = stmt.query_map(params![after], |row| {
             Ok(SyncChange {
@@ -630,7 +657,11 @@ impl Store {
         if cursor > latest {
             return Err(AppError::config("sync cursor exceeds canonical journal"));
         }
-        let updated = conn.execute("UPDATE sync_nodes SET last_seen_at = CURRENT_TIMESTAMP, pull_cursor = GREATEST(pull_cursor, ?) WHERE node_id = ?", params![cursor, node_id])?;
+        let updated = conn.execute(
+            "UPDATE sync_nodes SET last_seen_at = CURRENT_TIMESTAMP, \
+        pull_cursor = GREATEST(pull_cursor, ?) WHERE node_id = ?",
+            params![cursor, node_id],
+        )?;
         if updated == 0 {
             return Err(AppError::not_found("sync node is not registered"));
         }
@@ -643,6 +674,7 @@ impl Store {
         cursor_locked(&conn, node_id)
     }
 
+    /// Summarize sync journal, outbox and cursor state for this node.
     pub fn sync_status(
         &self,
         role: &str,

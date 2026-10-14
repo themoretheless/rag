@@ -20,6 +20,11 @@ use crate::mcp::RagServer;
 use crate::telemetry;
 use crate::util::resolve_allowlisted_output_file;
 
+/// Recent calls returned when `limit` is absent.
+const DEFAULT_CALLS_LIMIT: usize = 50;
+/// Largest recent-calls page a client may request.
+const MAX_CALLS_LIMIT: usize = 500;
+
 const CAPABILITY_FEATURES: &[&str] = &[
     "status",
     "doctor",
@@ -530,7 +535,10 @@ struct CallsQuery {
 
 /// Recent MCP / HTTP calls from the in-memory ring buffer plus latency and share summary.
 async fn calls(Query(q): Query<CallsQuery>) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_CALLS_LIMIT)
+        .clamp(1, MAX_CALLS_LIMIT);
     let agent = q.agent.filter(|v| !v.trim().is_empty());
     let tool = q.tool.filter(|v| !v.trim().is_empty());
     let items = telemetry::recent(limit, agent.as_deref(), tool.as_deref());

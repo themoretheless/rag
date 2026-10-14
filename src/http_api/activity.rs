@@ -30,6 +30,7 @@ async fn list_activity(Query(query): Query<ActivityQuery>) -> Json<ActivityRespo
     })
 }
 
+/// `GET /v1/activity` route.
 pub fn routes() -> Router<super::HttpState> {
     Router::new().route("/v1/activity", get(list_activity))
 }

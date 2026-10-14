@@ -25,6 +25,7 @@ pub enum BackendKind {
 }
 
 impl BackendKind {
+    /// Parse a backend name (as in `RAG_STORAGE_BACKEND`).
     pub fn parse(value: &str) -> Result<Self, AppError> {
         match value.trim().to_ascii_lowercase().as_str() {
             "duckdb" | "duck_db" => Ok(Self::DuckDb),
@@ -38,10 +39,14 @@ impl BackendKind {
         }
     }
 
+    /// Wire string for this backend.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::DuckDb => "duckdb", Self::Sqlite => "sqlite", Self::Postgres => "postgres",
-            Self::Markdown => "markdown", Self::Memory => "memory",
+            Self::DuckDb => "duckdb",
+            Self::Sqlite => "sqlite",
+            Self::Postgres => "postgres",
+            Self::Markdown => "markdown",
+            Self::Memory => "memory",
         }
     }
 }
@@ -59,11 +64,15 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
+    /// Wire string for this capability.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Documents => "documents", Self::FullTextSearch => "full_text_search",
-            Self::VectorSearch => "vector_search", Self::Transactions => "transactions",
-            Self::Graph => "graph", Self::TemporalKnowledgeGraph => "temporal_knowledge_graph",
+            Self::Documents => "documents",
+            Self::FullTextSearch => "full_text_search",
+            Self::VectorSearch => "vector_search",
+            Self::Transactions => "transactions",
+            Self::Graph => "graph",
+            Self::TemporalKnowledgeGraph => "temporal_knowledge_graph",
         }
     }
 }
@@ -77,6 +86,7 @@ pub struct BackendMetadata {
 }
 
 impl BackendMetadata {
+    /// Whether this backend implements `capability` natively.
     pub fn supports(self, capability: StorageCapability) -> bool {
         self.capabilities.contains(&capability)
     }
@@ -96,6 +106,7 @@ pub trait Storage: Send + Sync {
     fn delete_document(&self, id: &str) -> Result<bool, AppError>;
 }
 
+/// Backend kind named by the configuration.
 pub fn configured_backend(config: &Config) -> Result<BackendKind, AppError> {
     BackendKind::parse(&config.storage_backend)
 }
@@ -138,12 +149,20 @@ pub fn open_configured_storage(config: &Config) -> Result<Box<dyn Storage>, AppE
     }
 }
 
+/// Capability names of the Markdown backend.
 pub fn markdown_capability_names() -> Vec<String> {
-    markdown::CAPABILITIES.iter().map(|cap| cap.as_str().to_string()).collect()
+    markdown::CAPABILITIES
+        .iter()
+        .map(|cap| cap.as_str().to_string())
+        .collect()
 }
 
+/// Capability names of the DuckDB backend.
 pub fn duckdb_capability_names() -> Vec<String> {
-    duckdb::CAPABILITIES.iter().map(|cap| cap.as_str().to_string()).collect()
+    duckdb::CAPABILITIES
+        .iter()
+        .map(|cap| cap.as_str().to_string())
+        .collect()
 }
 
 #[cfg(test)]

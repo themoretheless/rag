@@ -146,9 +146,7 @@ async fn wiki_list_with_headers(st: HttpState, q: WikiListQuery, headers: Header
                 "pages": pages,
                 "page": {"limit":page_limit,"next_cursor":next,"total":total},
             }));
-            response
-                .headers_mut()
-                .insert(axum::http::header::ETAG, etag.parse().unwrap());
+            super::error::insert_etag(&mut response, &etag);
             response
         }
         Err(e) => api_err(e),
@@ -365,7 +363,9 @@ mod tests {
         let before = state.store.get_document(&doc.id).unwrap().unwrap();
         let response = wiki_review(State(state.clone())).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["items"][0]["link_kind"], "source_missing");
         assert_eq!(value["items"][0]["wiki_id"], doc.id);
@@ -380,7 +380,9 @@ mod tests {
         let state = test_state("review-empty");
         let response = wiki_review(State(state)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["items"], json!([]));
     }
@@ -392,13 +394,15 @@ mod tests {
             &state.store,
             &state.embedder,
             &state.config,
-            "original",
-            "Original",
-            "original body",
-            "wiki",
-            None,
-            None,
-            None,
+            wiki::WikiPageWrite {
+                slug: "original",
+                title: "Original",
+                content: "original body",
+                kind: "wiki",
+                category: None,
+                summary: None,
+                agent: None,
+            },
         )
         .await
         .unwrap();
@@ -481,13 +485,15 @@ mod tests {
             &state.store,
             &state.embedder,
             &state.config,
-            "project-page",
-            "Project page",
-            "original body",
-            "concept",
-            Some("architecture"),
-            Some("original summary"),
-            None,
+            wiki::WikiPageWrite {
+                slug: "project-page",
+                title: "Project page",
+                content: "original body",
+                kind: "concept",
+                category: Some("architecture"),
+                summary: Some("original summary"),
+                agent: None,
+            },
         )
         .await
         .expect("create page");

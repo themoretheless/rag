@@ -75,6 +75,7 @@ struct Frontmatter {
 }
 
 impl MarkdownVaultStorage {
+    /// Open (creating if needed) a Markdown vault at a canonicalized root directory.
     pub fn open(root: impl AsRef<Path>) -> Result<Self, AppError> {
         let requested = root.as_ref();
         if requested.as_os_str().is_empty() {
@@ -91,6 +92,7 @@ impl MarkdownVaultStorage {
         Ok(Self { root })
     }
 
+    /// Canonical vault root directory.
     pub fn root(&self) -> &Path {
         &self.root
     }

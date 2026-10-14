@@ -234,6 +234,7 @@ pub struct DiagnosticsService<'a> {
 }
 
 impl<'a> DiagnosticsService<'a> {
+    /// Bind the service to a store and config.
     pub fn new(store: &'a Store, config: &'a Config) -> Self {
         Self { store, config }
     }
@@ -373,6 +374,7 @@ impl<'a> DiagnosticsService<'a> {
         Ok(report)
     }
 
+    /// Full status report: schema, counts, wings, layer health and embedding state.
     pub fn status(&self) -> Result<StatusReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let fts_ready = self.store.fts_ready()?;
@@ -428,6 +430,7 @@ impl<'a> DiagnosticsService<'a> {
         })
     }
 
+    /// Lightweight status: backend, schema version and row counts.
     pub fn status_summary(&self) -> Result<StatusSummary, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
@@ -442,6 +445,7 @@ impl<'a> DiagnosticsService<'a> {
         })
     }
 
+    /// Run health checks (schema, FTS, embeddings, integrity) and report findings.
     pub fn doctor(&self) -> Result<DoctorReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let schema_ok = schema_version >= SCHEMA_VERSION;
@@ -871,7 +875,8 @@ mod tests {
         #[async_trait::async_trait]
         impl EmbeddingProvider for Counting {
             async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
-                self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 self.inner.embed(texts).await
             }
             fn dimensions(&self) -> usize {

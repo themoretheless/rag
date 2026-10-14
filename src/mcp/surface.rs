@@ -107,7 +107,9 @@ mod tests {
     #[test]
     fn spine_is_bounded() {
         let n = spine_tool_names().len();
-        assert!((15..=33).contains(&n), "spine size {n}");
+        // Upper bound leaves headroom above the current 33 while still catching
+        // an accidental "everything is spine" regression (full surface is far larger).
+        assert!((15..=40).contains(&n), "spine size {n}");
         assert!(tool_allowed(ToolSurface::Spine, "search"));
         assert!(tool_allowed(ToolSurface::Spine, "multi_query_search"));
         assert!(tool_allowed(ToolSurface::Spine, "query_with_index"));

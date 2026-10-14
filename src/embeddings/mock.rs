@@ -104,14 +104,8 @@ mod tests {
     #[tokio::test]
     async fn same_text_same_vector() {
         let emb = MockEmbedder::new(32);
-        let a = emb
-            .embed(&[String::from("hello world")])
-            .await
-            .unwrap();
-        let b = emb
-            .embed(&[String::from("hello world")])
-            .await
-            .unwrap();
+        let a = emb.embed(&[String::from("hello world")]).await.unwrap();
+        let b = emb.embed(&[String::from("hello world")]).await.unwrap();
         assert_eq!(a, b);
         assert_eq!(a[0].len(), 32);
     }

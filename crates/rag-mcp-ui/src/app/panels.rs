@@ -764,14 +764,16 @@ impl GraphApp {
                         || self.local_truncated;
                     draw_status(
                         ui,
-                        self.source.as_ref(),
-                        seed_label,
-                        self.depth,
-                        self.ui_graph.as_ref(),
-                        self.layout_ready,
-                        truncated,
-                        self.status_banner().as_deref(),
-                        self.any_pending(),
+                        StatusView {
+                            source: self.source.as_ref(),
+                            seed_label,
+                            depth: self.depth,
+                            graph: self.ui_graph.as_ref(),
+                            layout_frozen: self.layout_ready,
+                            truncated,
+                            banner: self.status_banner().as_deref(),
+                            pending: self.any_pending(),
+                        },
                     );
                 }
             });

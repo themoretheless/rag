@@ -361,4 +361,3 @@ fn draw_copy_actions(ui: &mut Ui, node: &UiNode) {
         }
     });
 }
-

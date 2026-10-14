@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use axum::{
     extract::{Request, State},
-    http::{header, Method, StatusCode},
+    http::{header, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -34,7 +34,7 @@ pub(crate) struct AuthPosture {
 impl HttpAuth {
     #[cfg(test)]
     pub(super) fn local_for_tests() -> Self {
-        Self::from_tokens(None, None, None).unwrap()
+        Self::from_tokens(None, None, None).expect("no tokens is always a valid auth config")
     }
     pub(crate) fn from_config(config: &crate::config::Config) -> Result<Self, AppError> {
         Self::from_tokens(
@@ -86,7 +86,11 @@ impl HttpAuth {
 
     pub(crate) fn validate_bind(&self, bind: SocketAddr) -> Result<(), AppError> {
         if !bind.ip().is_loopback() && self.credentials.is_empty() {
-            return Err(AppError::config("non-loopback HTTP/MCP requires RAG_HTTP_READ_TOKEN, RAG_HTTP_WRITE_TOKEN or RAG_HTTP_ADMIN_TOKEN; configure credentials before remote startup"));
+            return Err(AppError::config(
+                "non-loopback HTTP/MCP requires RAG_HTTP_READ_TOKEN, \
+            RAG_HTTP_WRITE_TOKEN or RAG_HTTP_ADMIN_TOKEN; configure credentials before remote \
+            startup",
+            ));
         }
         Ok(())
     }
@@ -123,7 +127,6 @@ impl HttpAuth {
         })
     }
 }
-
 
 /// Routes that require admin on purpose (operations, sync transport, jobs).
 /// Listed so the route-catalog test can tell them from unclassified routes.
@@ -284,9 +287,16 @@ pub(super) async fn enforce_auth(
         let mut response = StatusCode::NO_CONTENT.into_response();
         response.headers_mut().insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
-            "GET, HEAD, POST, PUT, DELETE, OPTIONS".parse().unwrap(),
+            HeaderValue::from_static("GET, HEAD, POST, PUT, DELETE, OPTIONS"),
         );
-        response.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "Authorization, Content-Type, If-Match, X-Request-Id, X-Rag-Client-Host, MCP-Protocol-Version, MCP-Session-Id".parse().unwrap());
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static(
+                "Authorization, \
+        Content-Type, If-Match, X-Request-Id, X-Rag-Client-Host, MCP-Protocol-Version, \
+        MCP-Session-Id",
+            ),
+        );
         return response;
     }
     let Some(role) = auth.authenticate(request.headers()) else {
@@ -320,7 +330,7 @@ fn denied(request: &Request, status: StatusCode, code: &str, message: &str) -> R
     if status == StatusCode::UNAUTHORIZED {
         response.headers_mut().insert(
             header::WWW_AUTHENTICATE,
-            "Bearer realm=\"rag-mcp\"".parse().unwrap(),
+            HeaderValue::from_static("Bearer realm=\"rag-mcp\""),
         );
     }
     response

@@ -18,20 +18,35 @@ pub enum HomeAction {
     OpenAgents,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn draw_project_home(
-    ui: &mut egui::Ui,
-    selected_project: Option<&str>,
-    home: Option<&ProjectHome>,
-    operations: Option<&OperationsSnapshot>,
-    activity: &[ActivityEvent],
-    project_error: Option<&str>,
-    operations_error: Option<&str>,
-    operations_stale: bool,
-    loading: bool,
-    http_available: bool,
-    wiki_available: bool,
-) -> HomeAction {
+/// Data shown by [`draw_project_home`].
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectHomeView<'a> {
+    pub selected_project: Option<&'a str>,
+    pub home: Option<&'a ProjectHome>,
+    pub operations: Option<&'a OperationsSnapshot>,
+    pub activity: &'a [ActivityEvent],
+    pub project_error: Option<&'a str>,
+    pub operations_error: Option<&'a str>,
+    pub operations_stale: bool,
+    pub loading: bool,
+    pub http_available: bool,
+    pub wiki_available: bool,
+}
+
+/// Draw the project console home and return the action the user picked.
+pub fn draw_project_home(ui: &mut egui::Ui, view: ProjectHomeView<'_>) -> HomeAction {
+    let ProjectHomeView {
+        selected_project,
+        home,
+        operations,
+        activity,
+        project_error,
+        operations_error,
+        operations_stale,
+        loading,
+        http_available,
+        wiki_available,
+    } = view;
     let mut action = HomeAction::None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -685,14 +700,7 @@ fn compact_count(value: u64) -> String {
     }
 }
 
-use crate::ui::text::short_timestamp as readable_timestamp;
-
-fn short_time(value: &str) -> String {
-    value
-        .split_once('T')
-        .map(|(_, time)| time.trim_end_matches('Z').chars().take(8).collect())
-        .unwrap_or_else(|| value.chars().take(8).collect())
-}
+use crate::ui::text::{short_time, short_timestamp as readable_timestamp};
 
 #[cfg(test)]
 mod tests {
@@ -711,6 +719,5 @@ mod tests {
             readable_timestamp("2026-09-02T12:00:00Z"),
             "2026-09-02 12:00:00"
         );
-        assert_eq!(short_time("2026-09-02T12:34:56Z"), "12:34:56");
     }
 }

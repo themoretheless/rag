@@ -8,6 +8,13 @@ use std::str::FromStr;
 use crate::error::AppError;
 use crate::models::SearchMode;
 
+/// `RAG_AUTO_SYNC_INTERVAL_SECS` default (hourly).
+const DEFAULT_AUTO_SYNC_INTERVAL_SECS: u64 = 3600;
+/// `RAG_STARTUP_WARN_MS` default: start-up phases at least this slow log a warning.
+const DEFAULT_STARTUP_WARN_MS: u64 = 30_000;
+/// `RAG_AUTO_BACKUP_INTERVAL_SECS` default (daily).
+const DEFAULT_AUTO_BACKUP_INTERVAL_SECS: u64 = 86_400;
+
 /// Embedding backend selected via `RAG_EMBEDDING_PROVIDER`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmbeddingProviderKind {
@@ -163,6 +170,7 @@ pub enum ToolSurface {
 }
 
 impl ToolSurface {
+    /// Wire string for this tool surface (`spine` or `full`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Spine => "spine",
@@ -239,7 +247,7 @@ impl Default for Config {
             llm_enabled: true,
             llm_timeout_secs: 120,
             llm_max_tokens: 4096,
-            maint_max_docs: 50,
+            maint_max_docs: crate::maintain::DEFAULT_MAX_DOCS,
             maint_near_dup_threshold: 0.92,
             tool_surface: ToolSurface::Spine,
             http_bind: None,
@@ -286,6 +294,7 @@ impl Secret {
         &self.0
     }
 
+    /// True when the secret holds no value.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -438,7 +447,7 @@ impl Config {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
-            .unwrap_or(3600);
+            .unwrap_or(DEFAULT_AUTO_SYNC_INTERVAL_SECS);
         let eval_history_path = env::var("RAG_EVAL_HISTORY")
             .ok()
             .filter(|v| !v.trim().is_empty())
@@ -454,7 +463,11 @@ impl Config {
                 .filter(|value| !value.to_string_lossy().trim().is_empty())
                 .map(|value| PathBuf::from(value.to_string_lossy().trim()))
         };
-        let parsed = |name: &str| env::var(name).ok().and_then(|v| v.trim().parse::<u64>().ok());
+        let parsed = |name: &str| {
+            env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+        };
         let storage_backend =
             env::var("RAG_STORAGE_BACKEND").unwrap_or_else(|_| "duckdb".to_string());
         let vault_path = non_blank_path("RAG_VAULT_PATH");
@@ -462,10 +475,10 @@ impl Config {
         let wal_warn_bytes = parsed("RAG_WAL_WARN_BYTES")
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_WAL_WARN_BYTES);
-        let startup_warn_ms = parsed("RAG_STARTUP_WARN_MS").unwrap_or(30_000);
+        let startup_warn_ms = parsed("RAG_STARTUP_WARN_MS").unwrap_or(DEFAULT_STARTUP_WARN_MS);
         let auto_backup_dir = non_blank_path("RAG_AUTO_BACKUP_DIR");
         let auto_backup_interval_secs = parsed("RAG_AUTO_BACKUP_INTERVAL_SECS")
-            .unwrap_or(86_400)
+            .unwrap_or(DEFAULT_AUTO_BACKUP_INTERVAL_SECS)
             .max(1);
         let auto_backup_keep = env::var("RAG_AUTO_BACKUP_KEEP")
             .ok()
@@ -654,7 +667,9 @@ impl Config {
                     "RAG_LLM_MODEL must be non-empty when RAG_LLM_ENABLED=true",
                 ));
             }
-            if !self.llm_provider.allows_empty_api_key() && self.llm_api_key.expose().trim().is_empty() {
+            if !self.llm_provider.allows_empty_api_key()
+                && self.llm_api_key.expose().trim().is_empty()
+            {
                 return Err(AppError::config(format!(
                     "RAG_LLM_API_KEY (or provider key env) required when RAG_LLM_PROVIDER={}",
                     self.llm_provider.as_str()
@@ -939,7 +954,10 @@ mod tests {
             ..super::Config::for_tests()
         };
         let printed = format!("{config:?}");
-        assert!(!printed.contains("sk-live-123") && !printed.contains("tok-456"), "{printed}");
+        assert!(
+            !printed.contains("sk-live-123") && !printed.contains("tok-456"),
+            "{printed}"
+        );
         assert_eq!(config.llm_api_key.expose(), "sk-live-123");
     }
 }

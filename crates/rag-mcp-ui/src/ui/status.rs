@@ -34,22 +34,34 @@ fn source_detail(source: Option<&GraphSourceKind>) -> String {
     }
 }
 
+/// Data shown by [`draw_status`].
+#[derive(Debug, Clone, Copy)]
+pub struct StatusView<'a> {
+    pub source: Option<&'a GraphSourceKind>,
+    pub seed_label: Option<&'a str>,
+    pub depth: u32,
+    pub graph: Option<&'a UiGraph>,
+    pub layout_frozen: bool,
+    pub truncated: bool,
+    pub banner: Option<&'a str>,
+    pub pending: bool,
+}
+
 /// Draw the bottom status bar (read-only inspector chrome).
 ///
 /// Shows: mode, detailed source, file/mtime, seed, depth, node/edge counts vs hard caps,
 /// layout freeze, optional truncation banner, and brief interaction instructions.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_status(
-    ui: &mut Ui,
-    source: Option<&GraphSourceKind>,
-    seed_label: Option<&str>,
-    depth: u32,
-    graph: Option<&UiGraph>,
-    layout_frozen: bool,
-    truncated: bool,
-    banner: Option<&str>,
-    pending: bool,
-) {
+pub fn draw_status(ui: &mut Ui, view: StatusView<'_>) {
+    let StatusView {
+        source,
+        seed_label,
+        depth,
+        graph,
+        layout_frozen,
+        truncated,
+        banner,
+        pending,
+    } = view;
     ui.horizontal_wrapped(|ui| {
         let connected = source.is_some();
         ui.colored_label(

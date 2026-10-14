@@ -1,8 +1,8 @@
 //! LLM-assisted consolidation of several sources into one page.
 
 use super::*;
-use crate::llm::json::truncate_chars as truncate;
 use crate::llm::{parse_consolidate_json, system_user, ChatCompleter};
+use crate::util::excerpt_chars as truncate;
 
 /// Optional overrides when consolidating (title/slug/kind/category).
 #[derive(Debug, Clone, Default)]
@@ -15,6 +15,17 @@ pub struct ConsolidateOpts {
     pub max_docs: Option<usize>,
 }
 
+/// Inputs for [`consolidate`].
+#[derive(Debug, Clone)]
+pub struct ConsolidateRequest<'a> {
+    /// Source document ids or uris.
+    pub document_ids: &'a [String],
+    /// Write the wiki page (`true`) or only return the proposal (`false`).
+    pub apply: bool,
+    pub opts: ConsolidateOpts,
+    pub agent: Option<&'a str>,
+}
+
 /// LLM consolidates N document texts into one wiki page proposal.
 ///
 /// - `apply=false` (default for safety): return proposal only (agent may edit).
@@ -22,18 +33,19 @@ pub struct ConsolidateOpts {
 ///   each source document node → wiki node with `related`.
 ///
 /// Raw sources stay immutable; only the compiled wiki layer is written.
-// Compatibility adapter: preserve the established public call shape.
-#[allow(clippy::too_many_arguments)]
 pub async fn consolidate(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
     llm: &dyn ChatCompleter,
-    document_ids: &[String],
-    apply: bool,
-    opts: ConsolidateOpts,
-    agent: Option<&str>,
+    request: ConsolidateRequest<'_>,
 ) -> Result<ConsolidateResult> {
+    let ConsolidateRequest {
+        document_ids,
+        apply,
+        opts,
+        agent,
+    } = request;
     if document_ids.is_empty() {
         return Err(AppError::config(
             "consolidate requires at least one document id or uri",
@@ -120,32 +132,36 @@ pub async fn consolidate(
     let source_count = resolved.len();
 
     if !apply {
-        let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "consolidate".into(),
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "consolidate dry_run proposed wiki://{} from {} source(s)",
-                proposed.slug, source_count
-            ),
-            entity_id: None,
-            entity_kind: Some(LAYER_WIKI.into()),
-            payload_json: serde_json::json!({
-                "apply": false,
-                "dry_run": true,
-                "source_ids": &source_ids,
-                "source_uris": &source_uris,
-                "slug": &proposed.slug,
-                "title": &proposed.title,
-                "kind": &proposed.kind,
-                "capped": capped,
-                "max_docs": max_docs,
+        if let Err(error) = crate::util::blocking_section(|| {
+            store.append_ops_log(&OpsLogEntry {
+                id: Uuid::new_v4().to_string(),
+                seq: 0,
+                ts: Utc::now(),
+                op: "consolidate".into(),
+                prefix: Some("MAINT".into()),
+                message: format!(
+                    "consolidate dry_run proposed wiki://{} from {} source(s)",
+                    proposed.slug, source_count
+                ),
+                entity_id: None,
+                entity_kind: Some(LAYER_WIKI.into()),
+                payload_json: serde_json::json!({
+                    "apply": false,
+                    "dry_run": true,
+                    "source_ids": &source_ids,
+                    "source_uris": &source_uris,
+                    "slug": &proposed.slug,
+                    "title": &proposed.title,
+                    "kind": &proposed.kind,
+                    "capped": capped,
+                    "max_docs": max_docs,
+                })
+                .to_string(),
+                agent_name: agent.map(|s| s.to_string()),
             })
-            .to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        }))?;
+        }) {
+            tracing::warn!(%error, "failed to append consolidate dry-run ops_log entry");
+        }
 
         return Ok(ConsolidateResult {
             source_ids,
@@ -175,33 +191,37 @@ pub async fn consolidate(
     )
     .await?;
 
-    let _ = crate::util::blocking_section(|| store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: "consolidate".into(),
-        prefix: Some("MAINT".into()),
-        message: format!(
-            "consolidated {} source(s) into wiki://{}",
-            source_count, written.slug
-        ),
-        entity_id: Some(written.document_id.clone()),
-        entity_kind: Some(LAYER_WIKI.into()),
-        payload_json: serde_json::json!({
-            "apply": true,
-            "dry_run": false,
-            "source_ids": &source_ids,
-            "source_uris": &source_uris,
-            "slug": &written.slug,
-            "document_id": &written.document_id,
-            "node_id": &written.node_id,
-            "edge_count": written.edge_count,
-            "capped": capped,
-            "max_docs": max_docs,
+    if let Err(error) = crate::util::blocking_section(|| {
+        store.append_ops_log(&OpsLogEntry {
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "consolidate".into(),
+            prefix: Some("MAINT".into()),
+            message: format!(
+                "consolidated {} source(s) into wiki://{}",
+                source_count, written.slug
+            ),
+            entity_id: Some(written.document_id.clone()),
+            entity_kind: Some(LAYER_WIKI.into()),
+            payload_json: serde_json::json!({
+                "apply": true,
+                "dry_run": false,
+                "source_ids": &source_ids,
+                "source_uris": &source_uris,
+                "slug": &written.slug,
+                "document_id": &written.document_id,
+                "node_id": &written.node_id,
+                "edge_count": written.edge_count,
+                "capped": capped,
+                "max_docs": max_docs,
+            })
+            .to_string(),
+            agent_name: agent.map(|s| s.to_string()),
         })
-        .to_string(),
-        agent_name: agent.map(|s| s.to_string()),
-    }))?;
+    }) {
+        tracing::warn!(%error, "failed to append consolidate ops_log entry");
+    }
 
     Ok(ConsolidateResult {
         source_ids,
@@ -314,7 +334,9 @@ pub(super) async fn apply_consolidate_proposal_at_revision(
         if let Ok(Some(wiki_node)) = store.find_node_by_document_id(&wr.document_id) {
             for src in sources {
                 if let Ok(Some(src_node)) = store.find_node_by_document_id(&src.id) {
-                    let _ = store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0);
+                    if let Err(error) = store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0) {
+                        tracing::warn!(%error, "failed to link consolidated wiki node");
+                    }
                 }
             }
         }

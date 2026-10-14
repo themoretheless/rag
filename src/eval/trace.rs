@@ -37,6 +37,7 @@ pub struct SpanBuilder {
 }
 
 impl SpanBuilder {
+    /// Start timing a named span.
     pub fn start(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -46,11 +47,13 @@ impl SpanBuilder {
         }
     }
 
+    /// Attach one attribute to the span.
     pub fn attr(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
         self.attrs.insert(key.into(), value.into());
         self
     }
 
+    /// Stop timing and produce the finished span.
     pub fn finish(self) -> TraceSpan {
         let ended_at = Utc::now();
         TraceSpan {
@@ -64,6 +67,7 @@ impl SpanBuilder {
 }
 
 impl RetrievalTrace {
+    /// Start an empty trace with a fresh id for the given retrieval path.
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
@@ -73,6 +77,7 @@ impl RetrievalTrace {
         }
     }
 
+    /// Append a finished span.
     pub fn push(&mut self, span: TraceSpan) {
         self.spans.push(span);
     }
@@ -88,6 +93,7 @@ pub struct SourceVersion {
     pub content_hash: Option<String>,
 }
 
+/// Serialize source versions as a JSON array.
 pub fn source_versions_json(versions: &[SourceVersion]) -> Value {
     json!(versions)
 }
@@ -104,6 +110,9 @@ mod tests {
             .finish();
         assert_eq!(span.name, "search");
         assert!(span.duration_ms >= 0.0);
-        assert_eq!(span.attrs.get("mode").and_then(|v| v.as_str()), Some("hybrid"));
+        assert_eq!(
+            span.attrs.get("mode").and_then(|v| v.as_str()),
+            Some("hybrid")
+        );
     }
 }

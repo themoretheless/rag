@@ -2,12 +2,18 @@
 
 use super::*;
 
+/// Largest page of document revisions read at once.
+const MAX_REVISIONS_PAGE: usize = 200;
+
 impl Store {
     /// Historical document snapshots, newest revision first.
     pub fn list_document_revisions(&self, document_id: &str) -> Result<Vec<Document>> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), revision FROM document_revisions WHERE document_id = ? ORDER BY revision DESC"
+            "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, \
+            room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS \
+            VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), \
+            revision FROM document_revisions WHERE document_id = ? ORDER BY revision DESC",
         )?;
         let out =
             crate::db::rows::query_vec(&mut stmt, params![document_id.trim()], rows::document)?;
@@ -26,7 +32,7 @@ impl Store {
         if document_id.is_empty() {
             return Err(AppError::config("document_id must be non-empty"));
         }
-        let limit = limit.clamp(1, 200);
+        let limit = limit.clamp(1, MAX_REVISIONS_PAGE);
         let conn = self.lock()?;
         let total: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM document_revisions WHERE document_id = ?",
@@ -84,7 +90,10 @@ impl Store {
         }
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), revision FROM document_revisions WHERE document_id = ? AND revision = ?",
+            "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, \
+            room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS \
+            VARCHAR), COALESCE(status, 'active'), COALESCE(pinned, false), COALESCE(boost, 1.0), \
+            revision FROM document_revisions WHERE document_id = ? AND revision = ?",
         )?;
         let mut rows = stmt.query(params![document_id.trim(), revision])?;
         match rows.next()? {

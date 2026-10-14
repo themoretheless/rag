@@ -34,19 +34,19 @@ mod admin;
 mod auth;
 mod bind;
 mod error;
+mod eval_ops;
+mod feedback;
 mod graph;
 mod health;
 mod jobs;
+mod knowledge;
 mod labels;
 mod ops;
 mod retrieval;
-mod sync;
-mod wiki;
 mod review;
-mod feedback;
-mod knowledge;
+mod sync;
 mod traces;
-mod eval_ops;
+mod wiki;
 use crate::db::payload_kv;
 
 use std::collections::BTreeSet;
@@ -68,6 +68,9 @@ use crate::models::GraphView;
 use crate::util::run_blocking;
 
 pub use bind::parse_bind;
+
+/// Keep-alive ping interval on streamable-HTTP MCP SSE responses.
+const MCP_SSE_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Validate security before opening the store or starting background writers.
 pub fn validate_security(
@@ -107,7 +110,15 @@ impl HttpState {
         config: Config,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Self {
-        let llm = crate::llm::ChatClient::from_config(&config).ok();
+        let llm = match crate::llm::ChatClient::from_config(&config) {
+            Ok(client) => Some(client),
+            Err(error) => {
+                if config.llm_enabled {
+                    tracing::warn!(%error, "LLM enabled but chat client config is invalid; LLM features disabled");
+                }
+                None
+            }
+        };
         Self::from_context(
             crate::context::AppContext {
                 store,
@@ -171,8 +182,10 @@ pub fn mcp_http_service_for(
     context: crate::context::AppContext,
     cancellation_token: CancellationToken,
 ) -> StreamableHttpService<RagServer, LocalSessionManager> {
-    let allowed_hosts =
-        configured_http_allowed_hosts(&context.config, context.config.http_allowed_hosts.as_deref());
+    let allowed_hosts = configured_http_allowed_hosts(
+        &context.config,
+        context.config.http_allowed_hosts.as_deref(),
+    );
     // Build once: the context already holds the checked manifest and the chat
     // client; each stateless request gets a cheap clone of this server.
     let prototype = RagServer::from_context(context).with_transport("http-mcp");
@@ -189,7 +202,7 @@ fn mcp_service_from(
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default()
             .with_stateful_mode(false)
-            .with_sse_keep_alive(Some(std::time::Duration::from_secs(15)))
+            .with_sse_keep_alive(Some(MCP_SSE_KEEP_ALIVE))
             .with_cancellation_token(cancellation_token)
             .with_allowed_hosts(allowed_hosts),
     )
@@ -261,8 +274,10 @@ pub async fn serve(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
         })?;
     let mcp_http = mcp.is_some();
-    let allowed_hosts =
-        configured_http_allowed_hosts(&context.config, context.config.http_allowed_hosts.as_deref());
+    let allowed_hosts = configured_http_allowed_hosts(
+        &context.config,
+        context.config.http_allowed_hosts.as_deref(),
+    );
     let posture = auth.posture();
     if !posture.tokens_required {
         tracing::warn!(
@@ -636,7 +651,6 @@ fn sanitize_client_host(value: &str) -> Option<String> {
     }
     Some(value.to_ascii_lowercase())
 }
-
 
 fn loopback_origin(origin: &str) -> bool {
     [

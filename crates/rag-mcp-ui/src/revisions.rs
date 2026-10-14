@@ -2,10 +2,7 @@
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::gateway::{
-    GatewayClient, Method,
-    ReqwestGatewayClient,
-};
+use crate::gateway::{GatewayClient, Method, ReqwestGatewayClient};
 use crate::load::DocumentBody;
 
 pub const REVISION_PAGE_SIZE: usize = 50;
@@ -91,6 +88,7 @@ struct RestoreRequest<'a> {
     if_match_revision: i64,
 }
 
+/// Fetch one page of a document's revision history from the gateway.
 pub fn fetch_revisions_http(
     base: &str,
     document_id: &str,
@@ -120,6 +118,7 @@ fn fetch_revisions_with_client(
     })
 }
 
+/// Fetch the document body as of one revision from the gateway.
 pub fn fetch_revision_snapshot_http(
     base: &str,
     document_id: &str,
@@ -142,6 +141,7 @@ fn fetch_revision_snapshot_with_client(
     get_json::<SnapshotEnvelope>(client, base, &path).map(|envelope| envelope.result)
 }
 
+/// Fetch the diff between two revisions (or a revision and current) from the gateway.
 pub fn fetch_revision_diff_http(
     base: &str,
     document_id: &str,
@@ -159,6 +159,7 @@ pub fn fetch_revision_diff_http(
     get_json::<DiffEnvelope>(&client, base, &path).map(|envelope| envelope.result)
 }
 
+/// Restore a document to an earlier revision, guarded by `if_match_revision`.
 pub fn restore_revision_http(
     base: &str,
     document_id: &str,

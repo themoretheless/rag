@@ -5,7 +5,7 @@
 ## Why
 
 The broad compatibility surface overloads MCP clients. The default advertises
-**33 compile-first tools**, with a test-enforced 15–33 bound; advanced
+**33 compile-first tools**, with a test-enforced 15–40 bound; advanced
 MemPalace/maintenance tools stay behind `RAG_TOOLS=full`.
 
 ## Index-first cascade

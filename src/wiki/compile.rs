@@ -1,8 +1,8 @@
 //! LLM-assisted compile of one raw source into wiki pages.
 
 use super::*;
-use crate::llm::json::truncate_chars as truncate;
 use crate::llm::{parse_compile_json, system_user, ChatCompleter};
+use crate::util::excerpt_chars as truncate;
 
 /// Compile raw document with local LLM into wiki pages.
 pub async fn compile_source(
@@ -96,23 +96,25 @@ pub async fn compile_source(
         ) {
             for pid in &page_ids {
                 if let Ok(Some(dst)) = store.find_node_by_document_id(pid) {
-                    let _ = store.link_nodes(&src_node.id, &dst.id, "related", 1.0);
+                    if let Err(error) = store.link_nodes(&src_node.id, &dst.id, "related", 1.0) {
+                        tracing::warn!(%error, "failed to link wiki graph nodes");
+                    }
                 }
             }
         }
 
         store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: "compile_source".into(),
-        prefix: Some("COMPILE".into()),
-        message: format!("compiled {} into {} wiki pages", source.uri, page_ids.len()),
-        entity_id: Some(source.id.clone()),
-        entity_kind: Some("raw".into()),
-        payload_json: serde_json::json!({ "page_ids": page_ids }).to_string(),
-        agent_name: agent.map(|s| s.to_string()),
-    })
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "compile_source".into(),
+            prefix: Some("COMPILE".into()),
+            message: format!("compiled {} into {} wiki pages", source.uri, page_ids.len()),
+            entity_id: Some(source.id.clone()),
+            entity_kind: Some("raw".into()),
+            payload_json: serde_json::json!({ "page_ids": page_ids }).to_string(),
+            agent_name: agent.map(|s| s.to_string()),
+        })
     })?;
 
     Ok(CompileApplyResult {

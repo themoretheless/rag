@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::db::Store;
 use crate::models::{Chunk, Document};
@@ -27,6 +27,7 @@ pub(crate) struct SeedDoc<'a> {
     source_file: Option<&'a str>,
     embedding: Vec<f32>,
     with_hash: bool,
+    created_at: Option<DateTime<Utc>>,
 }
 
 impl<'a> SeedDoc<'a> {
@@ -44,6 +45,7 @@ impl<'a> SeedDoc<'a> {
             source_file: None,
             embedding: vec![0.1; 8],
             with_hash: false,
+            created_at: None,
         }
     }
 
@@ -86,8 +88,14 @@ impl<'a> SeedDoc<'a> {
         self
     }
 
+    /// Fixed `created_at`/`updated_at` (default: now) for order-sensitive tests.
+    pub(crate) fn created_at(mut self, at: DateTime<Utc>) -> Self {
+        self.created_at = Some(at);
+        self
+    }
+
     pub(crate) fn insert(self, store: &Store) {
-        let now = Utc::now();
+        let now = self.created_at.unwrap_or_else(Utc::now);
         let kind = self.kind.unwrap_or(if self.layer == "wiki" {
             "wiki"
         } else {

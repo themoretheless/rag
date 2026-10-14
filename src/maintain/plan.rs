@@ -13,9 +13,10 @@ use super::prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
 use crate::config::Config;
 use crate::db::Store;
 use crate::error::{AppError, Result};
-use crate::llm::json::{parse_embedded, strip_json_fences, truncate_chars, ERROR_EXCERPT_CHARS};
+use crate::llm::json::{parse_embedded, strip_json_fences, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
 use crate::models::OpsLogEntry;
+use crate::util::excerpt_chars as truncate_chars;
 
 /// Default cap on actions returned by a plan (LLM or heuristic).
 const DEFAULT_MAX_ACTIONS: usize = 30;
@@ -313,7 +314,7 @@ pub struct RejectedAction {
 }
 
 /// Result of `plan_maintenance`: ordered, whitelist-validated actions.
-/// No JsonSchema (result type; DateTime clashes with dual schemars versions).
+/// No JsonSchema: result type, never handed to the LLM as a schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenancePlan {
     pub generated_at: DateTime<Utc>,
@@ -466,7 +467,12 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
         }
         MaintenanceAction::MergeExactDup | MaintenanceAction::MergeNearDup => {
             // Apply may resolve peers by content_hash / embedding from target_id alone.
-            let obj = item.params.as_object().expect("params object");
+            let Some(obj) = item.params.as_object() else {
+                return Err(AppError::config(format!(
+                    "maintenance action '{}' params must be a JSON object",
+                    item.action
+                )));
+            };
             let has_group = obj
                 .get("document_ids")
                 .and_then(|v| v.as_array())
@@ -489,7 +495,12 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
             }
         }
         MaintenanceAction::ConsolidatePropose | MaintenanceAction::Consolidate => {
-            let obj = item.params.as_object().expect("params object");
+            let Some(obj) = item.params.as_object() else {
+                return Err(AppError::config(format!(
+                    "maintenance action '{}' params must be a JSON object",
+                    item.action
+                )));
+            };
             let has_sources = obj
                 .get("source_ids")
                 .or_else(|| obj.get("document_ids"))
@@ -945,8 +956,8 @@ pub async fn plan_maintenance(
     let max_actions = opts.max_actions.max(1);
     let use_llm = config.llm_enabled && !opts.force_heuristic && llm.is_some();
 
-    let mut plan = if use_llm {
-        let client = llm.expect("use_llm implies Some");
+    let llm_client = if use_llm { llm } else { None };
+    let mut plan = if let Some(client) = llm_client {
         plan_with_llm(report, client, max_actions).await?
     } else {
         let mut p = heuristic_plan(report, max_actions);
@@ -964,9 +975,9 @@ pub async fn plan_maintenance(
     Ok(plan)
 }
 
-/// Append `plan_maintenance` to ops_log.
+/// Append `plan_maintenance` to ops_log (best-effort: failures are logged, not propagated).
 pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
-    let _ = store.append_ops_log(&OpsLogEntry {
+    if let Err(error) = store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: plan.generated_at,
@@ -992,7 +1003,9 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
         })
         .to_string(),
         agent_name: None,
-    })?;
+    }) {
+        tracing::warn!(%error, "failed to append plan_maintenance ops_log entry");
+    }
     Ok(())
 }
 
@@ -1135,6 +1148,16 @@ mod tests {
     fn validate_rejects_unknown() {
         let err = action_from_parts("rm -rf", None, None, serde_json::json!({})).unwrap_err();
         assert!(err.to_string().contains("whitelist"));
+    }
+
+    #[test]
+    fn validate_rejects_non_object_params_for_merge_and_consolidate() {
+        for action in ["merge_exact_dup", "consolidate"] {
+            for params in [serde_json::json!([1, 2]), serde_json::json!("x")] {
+                let err = action_from_parts(action, None, Some("doc-1".into()), params).unwrap_err();
+                assert!(err.to_string().contains("object"), "{action}: {err}");
+            }
+        }
     }
 
     #[test]

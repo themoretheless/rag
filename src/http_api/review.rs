@@ -46,7 +46,9 @@ async fn change(State(st): State<HttpState>, Json(body): Json<Change>) -> Respon
         Change::Accept { id, revision } => accept(&st, &id, revision).await,
         other => {
             super::run_blocking("change review proposal", move || match other {
-                Change::Create { document_id } => crate::wiki::create_review_proposal(&st.store, &document_id),
+                Change::Create { document_id } => {
+                    crate::wiki::create_review_proposal(&st.store, &document_id)
+                }
                 Change::Save {
                     id,
                     revision,

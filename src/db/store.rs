@@ -187,6 +187,18 @@ pub(crate) struct DocumentEmbeddingSample {
     pub embedding: Vec<f32>,
 }
 
+/// Inputs for [`Store::write_wiki_document_atomic`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WikiDocumentWrite<'a> {
+    pub(crate) doc: &'a Document,
+    pub(crate) if_match_revision: Option<i64>,
+    pub(crate) chunks: &'a [Chunk],
+    pub(crate) index_entry: &'a WikiIndexEntry,
+    pub(crate) audit_entry: &'a OpsLogEntry,
+    pub(crate) sync: &'a super::sync::WikiSyncWrite<'a>,
+    pub(crate) create_only: bool,
+}
+
 impl Store {
     /// Open (or create) a DuckDB database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
@@ -436,17 +448,19 @@ impl Store {
 
     /// Persist a wiki document and its chunks, graph, catalog row, and audit
     /// event, replication journal and applied cursor under one transaction.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_wiki_document_atomic(
         &self,
-        doc: &Document,
-        if_match_revision: Option<i64>,
-        chunks: &[Chunk],
-        index_entry: &WikiIndexEntry,
-        audit_entry: &OpsLogEntry,
-        sync: &super::sync::WikiSyncWrite<'_>,
-        create_only: bool,
+        write: WikiDocumentWrite<'_>,
     ) -> Result<(Option<AtomicDocumentWriteResult>, i64)> {
+        let WikiDocumentWrite {
+            doc,
+            if_match_revision,
+            chunks,
+            index_entry,
+            audit_entry,
+            sync,
+            create_only,
+        } = write;
         if index_entry.page_id.as_deref() != Some(doc.id.as_str()) {
             return Err(AppError::config(format!(
                 "wiki index page id {:?} does not match document {}",
@@ -548,8 +562,13 @@ impl Store {
         }
 
         let embedding_json = embedding_json(chunks)?;
+        let documents: std::collections::BTreeSet<&str> = chunks
+            .iter()
+            .map(|chunk| chunk.document_id.as_str())
+            .collect();
+        let documents: Vec<&str> = documents.into_iter().collect();
         let conn = self.lock()?;
-        super::fts::mark_fts_dirty(&conn)?;
+        super::fts::mark_chunks_changed_for(&conn, &documents)?;
         insert_chunks_locked(&conn, chunks, &embedding_json)
     }
 
@@ -754,7 +773,7 @@ impl Store {
     /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
     pub fn delete_chunks_for_document(&self, document_id: &str) -> Result<()> {
         let conn = self.lock()?;
-        super::fts::mark_fts_dirty(&conn)?;
+        super::fts::mark_chunks_changed_for(&conn, &[document_id])?;
         conn.execute(
             "DELETE FROM chunks WHERE document_id = ?",
             params![document_id],
@@ -822,7 +841,6 @@ impl Store {
             Ok((ids, manifest_present))
         })
     }
-
 }
 
 fn canonical_wiki_slug(uri: &str) -> Option<&str> {
@@ -953,7 +971,7 @@ fn write_document_locked(
             (refresh_document_graph_label_locked(conn, doc)?, 0)
         }
         (DocumentDerivedWrite::ReplaceChunksAndGraph(chunks), Some(embedding_json)) => {
-            super::fts::mark_fts_dirty(conn)?;
+            super::fts::mark_chunks_changed_for(conn, &[doc.id.as_str()])?;
             conn.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
             insert_chunks_locked(conn, chunks, embedding_json)?;
             let (node_id, edge_count) =
@@ -1113,7 +1131,7 @@ pub(super) fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Res
     if !exists {
         return Ok(false);
     }
-    super::fts::mark_fts_dirty(conn)?;
+    super::fts::mark_chunks_changed_for(conn, &[id])?;
     // GRAPH_DESIGN.md §6.3: never wipe incident edges here. The node is demoted to
     // an unresolved stub and edges from other notes survive.
     super::graph::demote_graph_for_document_locked(conn, id)?;
@@ -1402,8 +1420,7 @@ fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Resu
         ORDER BY chunk_index ASC, id ASC
         "#,
     )?;
-    let chunks =
-        crate::db::rows::query_vec(&mut stmt, params![document_id], rows::chunk)?;
+    let chunks = crate::db::rows::query_vec(&mut stmt, params![document_id], rows::chunk)?;
     Ok(chunks)
 }
 
@@ -1511,11 +1528,11 @@ mod schema_diary;
 mod wiki_index;
 mod wiki_meta;
 
-use self::{ops_log::*, wiki_index::*, wiki_meta::*};
-pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
 pub(crate) use self::chunks::ChunkBody;
 pub(crate) use self::documents::{wiki_backlink_rows, DocumentRef};
 pub(crate) use self::manifest::{embedding_identity_fingerprint, embedding_migration_manifest};
+pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
+use self::{ops_log::*, wiki_index::*, wiki_meta::*};
 
 #[cfg(test)]
 mod tests;

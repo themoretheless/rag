@@ -540,33 +540,35 @@ fn log_action(
     );
     let payload = serde_json::to_string(outcome).unwrap_or_else(|_| "{}".into());
     // One autocommit per plan step, called from the async plan loop.
-    match blocking_section(|| store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op,
-        prefix: Some("MAINT".into()),
-        message: format!(
-            "{} [{}] {}",
-            outcome.action,
-            match outcome.outcome {
-                ActionOutcomeKind::Applied => {
-                    if dry_run {
-                        "dry_run"
-                    } else {
-                        "applied"
+    match blocking_section(|| {
+        store.append_ops_log(&OpsLogEntry {
+            id: Uuid::new_v4().to_string(),
+            seq: 0,
+            ts: Utc::now(),
+            op,
+            prefix: Some("MAINT".into()),
+            message: format!(
+                "{} [{}] {}",
+                outcome.action,
+                match outcome.outcome {
+                    ActionOutcomeKind::Applied => {
+                        if dry_run {
+                            "dry_run"
+                        } else {
+                            "applied"
+                        }
                     }
-                }
-                ActionOutcomeKind::Skipped => "skipped",
-                ActionOutcomeKind::Error => "error",
-            },
-            outcome.message
-        ),
-        entity_id: outcome.target_id.clone(),
-        entity_kind: Some("maintenance_action".into()),
-        payload_json: payload,
-        agent_name: agent.map(|s| s.to_string()),
-    })) {
+                    ActionOutcomeKind::Skipped => "skipped",
+                    ActionOutcomeKind::Error => "error",
+                },
+                outcome.message
+            ),
+            entity_id: outcome.target_id.clone(),
+            entity_kind: Some("maintenance_action".into()),
+            payload_json: payload,
+            agent_name: agent.map(|s| s.to_string()),
+        })
+    }) {
         Ok(e) => Some(e.id),
         Err(e) => {
             tracing::warn!(error = %e, "failed to append ops_log for maintenance action");
@@ -592,6 +594,18 @@ fn param_f64(params: &serde_json::Value, key: &str) -> Option<f64> {
             .or_else(|| v.as_i64().map(|i| i as f64))
             .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
     })
+}
+
+/// Non-negative integer param (e.g. `max_docs`). Absent → `Ok(None)`;
+/// negative, NaN or infinite values are rejected; fractions truncate.
+fn param_usize(params: &serde_json::Value, key: &str) -> Result<Option<usize>> {
+    match param_f64(params, key) {
+        None => Ok(None),
+        Some(n) if n.is_finite() && n >= 0.0 => Ok(Some(n.min(usize::MAX as f64) as usize)),
+        Some(n) => Err(AppError::config(format!(
+            "maintenance param '{key}' must be a non-negative finite number, got {n}"
+        ))),
+    }
 }
 
 fn param_bool(params: &serde_json::Value, key: &str) -> Option<bool> {

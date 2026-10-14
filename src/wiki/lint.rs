@@ -7,8 +7,10 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     let mut issues = Vec::new();
     // Ids, URIs and layers only: lint never reads document bodies.
     let documents = store.list_document_refs()?;
-    let wiki_docs: Vec<&crate::db::store::DocumentRef> =
-        documents.iter().filter(|doc| doc.layer == LAYER_WIKI).collect();
+    let wiki_docs: Vec<&crate::db::store::DocumentRef> = documents
+        .iter()
+        .filter(|doc| doc.layer == LAYER_WIKI)
+        .collect();
     let index = store.list_wiki_index()?;
     // Nodes and the raw edge list are each read once; everything else
     // (incident nodes, stub backlinks) is derived in memory.
@@ -164,7 +166,10 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
     }
 
     // Unresolved stubs in graph (include who links + expected label)
-    for n in graph_nodes.iter().filter(|n| crate::models::NodeKind::Stub.is(&n.kind)) {
+    for n in graph_nodes
+        .iter()
+        .filter(|n| crate::models::NodeKind::Stub.is(&n.kind))
+    {
         if !n.resolved {
             health.unresolved_targets += 1;
             // Distinct incoming sources in id order (what `backlinks` returned).
@@ -263,7 +268,9 @@ pub fn lint_wiki(store: &Store) -> Result<LintReport> {
             code: LintCode::RawUncompiled,
             severity: crate::models::IssueSeverity::Info,
             message: format!(
-                "{} uncompiled raw source(s) in {} wing/room shelf(ves); biggest first: {}. Page a shelf with list_documents(layer=raw, wing, room, compiled=false) and close it via bounded compile / file_answer, not a full corpus pass.",
+                "{} uncompiled raw source(s) in {} wing/room shelf(ves); biggest first: {}. Page \
+                a shelf with list_documents(layer=raw, wing, room, compiled=false) and close it \
+                via bounded compile / file_answer, not a full corpus pass.",
                 health.uncompiled_raw_count,
                 queue.total_shelves,
                 if shelves.is_empty() {

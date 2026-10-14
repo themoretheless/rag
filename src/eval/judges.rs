@@ -51,7 +51,10 @@ pub fn judge_citations(input: &CitationJudgeInput) -> CitationJudgeResult {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let text_marker = input.answer_text.as_deref().is_some_and(answer_has_citation_marker);
+    let text_marker = input
+        .answer_text
+        .as_deref()
+        .is_some_and(answer_has_citation_marker);
     let citation_present = !cited.is_empty() || text_marker;
 
     let mut missing = Vec::new();

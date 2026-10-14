@@ -54,6 +54,7 @@ pub struct ReplayReport {
 }
 
 impl EvalExportBundle {
+    /// Bundle eval prompts, runs, traces and feedback stamped with version and export time.
     pub fn new(
         prompts: Vec<Value>,
         runs: Vec<Value>,
@@ -146,12 +147,10 @@ pub fn replay_bundle(bundle: &EvalExportBundle) -> Result<ReplayReport> {
 
 /// Load a bundle from a JSON file (CLI `--replay`).
 pub fn load_export_bundle(path: &std::path::Path) -> Result<EvalExportBundle> {
-    let raw = std::fs::read_to_string(path).map_err(|e| {
-        AppError::config(format!("read export bundle {}: {e}", path.display()))
-    })?;
-    serde_json::from_str(&raw).map_err(|e| {
-        AppError::config(format!("parse export bundle {}: {e}", path.display()))
-    })
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| AppError::config(format!("read export bundle {}: {e}", path.display())))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| AppError::config(format!("parse export bundle {}: {e}", path.display())))
 }
 
 fn stored_overall(run: &Value) -> Option<f64> {

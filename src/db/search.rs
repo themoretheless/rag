@@ -57,6 +57,7 @@ pub enum ContextExpansion {
 }
 
 impl ContextExpansion {
+    /// Parse a context expansion name (`neighbors` or `parent_section`, with aliases).
     pub fn parse(raw: &str) -> Result<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "neighbors" | "neighboring_chunks" => Ok(Self::Neighbors),
@@ -721,6 +722,7 @@ pub fn fuse_rrf_many(lists: &[Vec<SearchHit>], rrf_k: f32, top_k: usize) -> Vec<
     out
 }
 
+/// Attach section labels and, when requested, neighbor or parent-section context to hits.
 pub fn attach_context(
     store: &Store,
     hits: &mut [SearchHit],
@@ -782,19 +784,20 @@ pub fn attach_context(
         hit.section = section.clone();
 
         let selected: Vec<&Sectioned> = match expansion {
-            ContextExpansion::Neighbors => {
-                chunks
-                    .iter()
-                    .filter(|(c, _, _)| (c.chunk_index - current.chunk_index).abs() <= radius)
-                    .collect()
-            }
+            ContextExpansion::Neighbors => chunks
+                .iter()
+                .filter(|(c, _, _)| (c.chunk_index - current.chunk_index).abs() <= radius)
+                .collect(),
             ContextExpansion::ParentSection => chunks
                 .iter()
                 .filter(|(_, path, _)| heading_path.is_some() && path == heading_path)
                 .collect(),
         };
         let selected: Vec<&Sectioned> = if selected.is_empty() {
-            chunks.iter().filter(|(c, _, _)| c.id == current.id).collect()
+            chunks
+                .iter()
+                .filter(|(c, _, _)| c.id == current.id)
+                .collect()
         } else {
             selected
         };
@@ -817,11 +820,6 @@ pub fn attach_context(
             .join("\n");
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn chunk_section_metadata(chunk: &crate::models::Chunk) -> (Option<Vec<String>>, Option<String>) {
-    section_metadata(&chunk.metadata_json)
 }
 
 fn section_metadata(metadata_json: &str) -> (Option<Vec<String>>, Option<String>) {
@@ -877,7 +875,10 @@ fn mmr_select(hits: Vec<SearchHit>, max_per_doc: usize, limit: usize) -> Vec<Sea
     while selected.len() < limit {
         let mut best: Option<(usize, f32)> = None;
         for i in (0..hits.len()).filter(|&i| available[i]) {
-            let count = per_doc.get(hits[i].document_id.as_str()).copied().unwrap_or(0);
+            let count = per_doc
+                .get(hits[i].document_id.as_str())
+                .copied()
+                .unwrap_or(0);
             if count >= max_per_doc {
                 continue;
             }
@@ -959,7 +960,7 @@ struct VectorSnapshot {
     chunks: Vec<VectorSnapshotChunk>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct VectorSnapshotChunk {
     id: String,
     document_id: String,
@@ -1061,9 +1062,7 @@ fn rank_vector_candidates(
         BinaryHeap::with_capacity(top_k.saturating_add(1));
 
     for (ordinal, chunk) in snapshot.chunks.iter().enumerate() {
-        if !documents.contains(&chunk.document_id)
-            || chunk.vector.len() != normalized_query.len()
-        {
+        if !documents.contains(&chunk.document_id) || chunk.vector.len() != normalized_query.len() {
             continue;
         }
         let embedding = &chunk.vector;
@@ -1362,6 +1361,15 @@ fn refresh_vector_snapshot(
         metadata_json: String,
         embedding_hash: i64,
     }
+    // Database-wide snapshot: when the change log names every document whose
+    // chunks changed since `previous`, re-read only those documents.
+    if filters.is_none() {
+        if let Some(documents) =
+            fts::changed_documents_since(conn, previous.generation, generation)?
+        {
+            return refresh_changed_documents(conn, previous, generation, &documents);
+        }
+    }
     let (join_sql, where_sql, bind) = match filters {
         Some(filters) => {
             let (where_sql, bind) = filters.scope_where_clause("d.id");
@@ -1421,22 +1429,7 @@ fn refresh_vector_snapshot(
     }
 
     // Parse only the new or changed vectors.
-    const PARSE_BATCH: usize = 512;
-    let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(changed.len());
-    for batch in changed.chunks(PARSE_BATCH) {
-        let placeholders = vec!["?"; batch.len()].join(",");
-        let mut stmt = conn.prepare(&format!(
-            "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
-        ))?;
-        crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
-            let id: String = row.get(0)?;
-            let embedding_json: String = row.get(1)?;
-            let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
-            let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
-            parsed.insert(id, embedding.into());
-            Ok(())
-        })?;
-    }
+    let parsed = parse_vectors(conn, &changed)?;
 
     let mut chunks = Vec::with_capacity(listed.len());
     for row in listed {
@@ -1460,6 +1453,115 @@ fn refresh_vector_snapshot(
             vector,
         });
     }
+    Ok(VectorSnapshot { generation, chunks })
+}
+
+/// Parse and normalize the stored vectors of `ids`, in `IN` batches.
+fn parse_vectors<S: AsRef<str>>(
+    conn: &duckdb::Connection,
+    ids: &[S],
+) -> Result<HashMap<String, Arc<[f32]>>> {
+    const PARSE_BATCH: usize = 512;
+    let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(ids.len());
+    for batch in ids.chunks(PARSE_BATCH) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
+        ))?;
+        let binds: Vec<&str> = batch.iter().map(AsRef::as_ref).collect();
+        crate::db::rows::for_each_row(&mut stmt, params_from_iter(binds.iter()), |row| {
+            let id: String = row.get(0)?;
+            let embedding_json: String = row.get(1)?;
+            let raw: Vec<f32> = serde_json::from_str(&embedding_json)?;
+            let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
+            parsed.insert(id, embedding.into());
+            Ok(())
+        })?;
+    }
+    Ok(parsed)
+}
+
+/// Database-wide refresh from the change log: keep every chunk of documents
+/// not in `documents`, and re-read (reusing vectors by id + digest) only the
+/// chunks of `documents`. Cost follows the change, not the corpus.
+fn refresh_changed_documents(
+    conn: &duckdb::Connection,
+    previous: &VectorSnapshot,
+    generation: u64,
+    documents: &HashSet<String>,
+) -> Result<VectorSnapshot> {
+    const DOCUMENT_BATCH: usize = 512;
+    let ids: Vec<&str> = documents.iter().map(String::as_str).collect();
+    let mut listed: Vec<VectorSnapshotChunk> = Vec::new();
+    let mut digests: Vec<(usize, Option<Arc<[f32]>>)> = Vec::new();
+    let reusable: HashMap<&str, &VectorSnapshotChunk> = previous
+        .chunks
+        .iter()
+        .filter(|chunk| documents.contains(&chunk.document_id))
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect();
+    for batch in ids.chunks(DOCUMENT_BATCH) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, document_id, chunk_index, char_start, char_end, metadata_json, \
+                    COALESCE(embedding_digest, CAST(hash(embedding_json) >> 1 AS BIGINT)) \
+             FROM chunks WHERE document_id IN ({placeholders})"
+        ))?;
+        crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
+            let chunk = VectorSnapshotChunk {
+                id: row.get(0)?,
+                document_id: row.get(1)?,
+                chunk_index: row.get(2)?,
+                char_start: row.get(3)?,
+                char_end: row.get(4)?,
+                metadata_json: row
+                    .get::<_, Option<String>>(5)?
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "{}".into()),
+                embedding_hash: row.get(6)?,
+                vector: Arc::from([] as [f32; 0]),
+            };
+            let reused = reusable
+                .get(chunk.id.as_str())
+                .filter(|old| old.embedding_hash == chunk.embedding_hash)
+                .map(|old| old.vector.clone());
+            digests.push((listed.len(), reused));
+            listed.push(chunk);
+            Ok(())
+        })?;
+    }
+    let changed: Vec<&str> = digests
+        .iter()
+        .filter(|(_, reused)| reused.is_none())
+        .map(|(index, _)| listed[*index].id.as_str())
+        .collect();
+    let mut parsed = parse_vectors(conn, &changed)?;
+    let mut fresh = Vec::with_capacity(listed.len());
+    for ((_, reused), mut chunk) in digests.into_iter().zip(listed) {
+        chunk.vector = match reused {
+            Some(vector) => vector,
+            None => match parsed.remove(&chunk.id) {
+                Some(vector) => vector,
+                // Deleted between the listing and the parse: skip it.
+                None => continue,
+            },
+        };
+        fresh.push(chunk);
+    }
+    let mut chunks: Vec<VectorSnapshotChunk> = previous
+        .chunks
+        .iter()
+        .filter(|chunk| !documents.contains(&chunk.document_id))
+        .cloned()
+        .chain(fresh)
+        .collect();
+    // Same order as a full listing (document, index, id).
+    chunks.sort_by(|a, b| {
+        a.document_id
+            .cmp(&b.document_id)
+            .then(a.chunk_index.cmp(&b.chunk_index))
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(VectorSnapshot { generation, chunks })
 }
 
@@ -1523,7 +1625,11 @@ fn hydrate_vector_hits(
         .collect();
     let document_ids: Vec<&str> = ranked
         .iter()
-        .map(|candidate| snapshot.chunks[candidate.snapshot_index].document_id.as_str())
+        .map(|candidate| {
+            snapshot.chunks[candidate.snapshot_index]
+                .document_id
+                .as_str()
+        })
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -1612,77 +1718,6 @@ fn search_lex(
         "lex search via db::fts (BM25 or TF fallback)"
     );
     Ok(hits)
-}
-
-/// Simple term-frequency lexical ranking (direct TF path for unit tests).
-#[cfg(test)]
-fn search_lex_tf(
-    store: &Store,
-    query_text: &str,
-    top_k: usize,
-    document_id: Option<&str>,
-) -> Result<Vec<SearchHit>> {
-    let chunks = load_chunks(store, document_id)?;
-    if chunks.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let query_terms = tokenize(query_text);
-    if query_terms.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut scored: Vec<(f32, usize)> = chunks
-        .iter()
-        .enumerate()
-        .filter_map(|(i, chunk)| {
-            let s = tf_score(&query_terms, &chunk.content);
-            if s > 0.0 {
-                Some((s, i))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(top_k);
-
-    let mut doc_cache: HashMap<String, (String, String)> = HashMap::new();
-    let mut hits = Vec::with_capacity(scored.len());
-    for (score, idx) in scored {
-        let chunk = &chunks[idx];
-        let (title, uri) = resolve_doc(store, &chunk.document_id, &mut doc_cache)?;
-        let (heading_path, section) = chunk_section_metadata(chunk);
-        hits.push(SearchHit {
-            chunk_id: chunk.id.clone(),
-            document_id: chunk.document_id.clone(),
-            document_title: title,
-            document_uri: uri,
-            chunk_index: chunk.chunk_index,
-            content: chunk.content.clone(),
-            score,
-            score_vec: None,
-            score_lex: Some(score),
-            score_rrf: None,
-            snippet: None,
-            char_start: Some(chunk.char_start),
-            char_end: Some(chunk.char_end),
-            heading_path,
-            section,
-            context: None,
-            explanation: None,
-            rank_vec: None,
-            rank_lex: None,
-        });
-    }
-    Ok(hits)
-}
-
-/// Term-frequency score: sum of occurrences of each query term in `content`.
-#[cfg(test)]
-fn tf_score(query_terms: &[String], content: &str) -> f32 {
-    fts::term_frequency_score(query_terms, content)
 }
 
 /// Lowercase alphanumeric tokens (simple, language-agnostic).
@@ -1854,35 +1889,6 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
     } else {
         Some(snippet)
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-fn load_chunks(store: &Store, document_id: Option<&str>) -> Result<Vec<crate::models::Chunk>> {
-    match document_id {
-        Some(doc_id) => store.list_chunks_for_document(doc_id),
-        None => store.all_chunks_with_embeddings(),
-    }
-}
-
-#[cfg(test)]
-fn resolve_doc(
-    store: &Store,
-    document_id: &str,
-    cache: &mut HashMap<String, (String, String)>,
-) -> Result<(String, String)> {
-    if let Some(entry) = cache.get(document_id) {
-        return Ok(entry.clone());
-    }
-    let (title, uri) = match store.get_document(document_id)? {
-        Some(doc) => (doc.title, doc.uri),
-        None => (String::new(), String::new()),
-    };
-    cache.insert(document_id.to_string(), (title.clone(), uri.clone()));
-    Ok((title, uri))
 }
 
 #[cfg(test)]

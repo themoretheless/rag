@@ -11,26 +11,29 @@
 //! - Mutations must append `ops_log` and never silently delete `layer=raw`.
 //! - Compile/improve: `crate::wiki::consolidate` (LLM merge N docs → one wiki page).
 
-mod audit;
 pub mod analyze;
 pub mod apply;
+mod audit;
 pub mod compress;
 pub mod organize;
 pub mod plan;
 pub mod prompts;
 pub mod refresh;
 
+/// Default cap on documents one maintenance run touches (`RAG_MAINT_MAX_DOCS`).
+pub const DEFAULT_MAX_DOCS: usize = 50;
+
 pub use analyze::{
-    analyze_corpus, AnalyzeOptions, AnalysisIssue, AnalysisReport, ArchiveCandidate,
-    CountBucket, CorpusCounts, DuplicateGroup, EmbedMismatchInfo, NearDuplicatePair,
-    OrphanNode, SizeStats, StaleWikiPage, StubInfo,
+    analyze_corpus, AnalysisIssue, AnalysisReport, AnalyzeOptions, ArchiveCandidate, CorpusCounts,
+    CountBucket, DuplicateGroup, EmbedMismatchInfo, NearDuplicatePair, OrphanNode, SizeStats,
+    StaleWikiPage, StubInfo,
 };
 pub use apply::{
     apply_maintenance_plan, ActionOutcome, ActionOutcomeKind, ApplyMaintenancePlanReport,
     ApplyPlanOptions,
 };
 pub use compress::{
-    maintain_compress, CompressMergeAction, CompressOptions, CompressL0Report,
+    maintain_compress, CompressL0Report, CompressMergeAction, CompressOptions,
     MaintainCompressReport, COMPRESS_ACTION_WHITELIST, COMPRESS_LEVEL_MAX,
 };
 pub use organize::{
@@ -46,9 +49,9 @@ pub use plan::{
 };
 pub use prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
 pub use refresh::{
-    maintain_refresh, rebuild_graph_for_all_or_dirty, rebuild_wiki_index, reembed_all,
-    reindex_fts, GraphRebuildReport, MaintainRefreshFlags, MaintainRefreshReport,
-    ReembedAllReport, ReindexFtsReport, WikiIndexRebuildReport, REFRESH_ACTION_WHITELIST,
+    maintain_refresh, rebuild_graph_for_all_or_dirty, rebuild_wiki_index, reembed_all, reindex_fts,
+    GraphRebuildReport, MaintainRefreshFlags, MaintainRefreshReport, ReembedAllReport,
+    ReindexFtsReport, WikiIndexRebuildReport, REFRESH_ACTION_WHITELIST,
 };
 
 // Stale wiki recompile (Karpathy layer hygiene); implementation in `crate::wiki`.

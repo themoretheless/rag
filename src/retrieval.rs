@@ -82,6 +82,8 @@ pub struct SearchRequest {
 pub const DEFAULT_SEARCH_TIMEOUT_MS: u64 = 5_000;
 
 impl SearchRequest {
+    /// Resolve this transport request into a [`SearchCommand`]: blank strings
+    /// become `None` and config defaults are attached.
     pub fn into_command(self, config: &Config) -> SearchCommand {
         SearchCommand {
             query: self.query,
@@ -112,6 +114,8 @@ impl SearchRequest {
     }
 }
 
+/// Run one search command (mode resolution, embedding, retrieval) within
+/// its time budget and return the ranked hits.
 pub async fn execute_search(
     store: &Store,
     embedder: &dyn EmbeddingProvider,
@@ -119,7 +123,12 @@ pub async fn execute_search(
     command: SearchCommand,
 ) -> Result<Vec<SearchHit>, AppError> {
     let started = std::time::Instant::now();
-    let budget = std::time::Duration::from_millis(command.timeout_ms.unwrap_or(5_000).max(1));
+    let budget = std::time::Duration::from_millis(
+        command
+            .timeout_ms
+            .unwrap_or(DEFAULT_SEARCH_TIMEOUT_MS)
+            .max(1),
+    );
     let mode = resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
     // Acquire before the potentially slow async embedding request. The read
     // guard both fast-fails an already-running source sync and prevents a new
@@ -239,6 +248,8 @@ pub async fn multi_query_search(
     Ok(fuse_rrf_many(&lists, DEFAULT_RRF_K, top_k))
 }
 
+/// Resolve the search mode and build the [`SearchQuery`] (embedding the
+/// query when the mode needs a vector) without running it.
 pub async fn prepare_search(
     embedder: &dyn EmbeddingProvider,
     command: SearchCommand,
@@ -247,6 +258,7 @@ pub async fn prepare_search(
     prepare_search_with_mode(embedder, command, mode).await
 }
 
+/// Parse the requested mode; blank or absent falls back to `default_mode`.
 pub(crate) fn resolve_search_mode(
     requested: Option<&str>,
     default_mode: SearchMode,
@@ -380,6 +392,7 @@ pub struct SimilarDocumentsQuery {
     pub fts_stemmer: String,
 }
 
+/// Load one document by id, optionally with a bounded page of its chunks.
 pub fn get_document(
     store: &Store,
     document_id: &str,
@@ -393,6 +406,8 @@ pub fn get_document(
     document_with_chunks(store, document, include_chunks, chunk_limit)
 }
 
+/// Attach a bounded page of chunk text to an already loaded document when
+/// `include_chunks` is set.
 pub(crate) fn document_with_chunks(
     store: &Store,
     document: Document,
@@ -412,6 +427,8 @@ pub(crate) fn document_with_chunks(
     Ok(with_chunk_page(document, page))
 }
 
+/// Load up to `MAX_MULTI_GET_DOCUMENTS` documents by id, reporting ids that
+/// were not found.
 pub fn multi_get(
     store: &Store,
     document_ids: Vec<String>,
@@ -483,12 +500,15 @@ fn list_chunk_text_page(
         max_content_bytes,
         |content_bytes| {
             AppError::invalid(format!(
-                "included chunk text needs {content_bytes} bytes, exceeding the {max_content_bytes}-byte response budget; lower chunk_limit or set include_chunks=false"
+                "included chunk text needs {content_bytes} bytes, exceeding the \
+                {max_content_bytes}-byte response budget; lower chunk_limit or set \
+                include_chunks=false"
             ))
         },
     )
 }
 
+/// Chunks of `document_id` within `radius` (capped) of `chunk_index`.
 pub fn expand_chunks(
     store: &Store,
     document_id: &str,
@@ -570,6 +590,7 @@ pub fn pack_context(
     })
 }
 
+/// Documents nearest to the centroid of a seed document's chunk embeddings.
 pub fn find_similar(
     store: &Store,
     config: &Config,
@@ -644,7 +665,10 @@ mod tests {
         assert_eq!(command.diversity, None);
         assert_eq!(command.timeout_ms, Some(DEFAULT_SEARCH_TIMEOUT_MS));
         assert_eq!(command.max_context_tokens, Some(config.max_context_tokens));
-        assert_eq!(command.max_chunks_per_document, Some(config.max_chunks_per_doc));
+        assert_eq!(
+            command.max_chunks_per_document,
+            Some(config.max_chunks_per_doc)
+        );
     }
     use crate::embeddings::MockEmbedder;
     use async_trait::async_trait;

@@ -5,10 +5,32 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use super::json::{parse_model_object, ERROR_EXCERPT_CHARS};
 use crate::config::Config;
-use super::json::{parse_model_object, truncate_chars as truncate, ERROR_EXCERPT_CHARS};
+use crate::util::excerpt_chars as truncate;
+
 use crate::error::{AppError, Result};
 use crate::llm::provider::{LlmApiDialect, LlmProviderKind};
+
+/// Characters of a non-2xx chat/anthropic response body quoted in the error.
+const HTTP_ERROR_BODY_CHARS: usize = 500;
+/// Characters of an unparsable chat/anthropic body quoted in the error.
+const PARSE_ERROR_BODY_CHARS: usize = 300;
+/// Characters of a `/models` response body quoted in either error.
+const MODELS_ERROR_BODY_CHARS: usize = 200;
+
+/// `"<label> HTTP <status>: <body excerpt>"`.
+fn http_error_message(label: &str, status: reqwest::StatusCode, body: &str, max: usize) -> String {
+    format!("{label} HTTP {status}: {}", truncate(body, max))
+}
+
+/// `"<label> JSON parse failed: <err>; body=<body excerpt>"`.
+fn parse_error_message(label: &str, err: &serde_json::Error, body: &str, max: usize) -> String {
+    format!(
+        "{label} JSON parse failed: {err}; body={}",
+        truncate(body, max)
+    )
+}
 
 /// Default HTTP timeout when `RAG_LLM_TIMEOUT_SECS` is unset or invalid.
 /// Matches `Config` / SPEC default (long compiles on local models).
@@ -211,26 +233,32 @@ impl ChatClient {
         })
     }
 
+    /// Configured model name.
     pub fn model(&self) -> &str {
         &self.model
     }
 
+    /// Configured API base URL.
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
+    /// Configured provider kind.
     pub fn provider(&self) -> LlmProviderKind {
         self.provider
     }
 
+    /// API dialect used for requests.
     pub fn dialect(&self) -> LlmApiDialect {
         self.dialect
     }
 
+    /// Request timeout in seconds.
     pub fn timeout_secs(&self) -> u64 {
         self.timeout_secs
     }
 
+    /// Max completion tokens per request.
     pub fn max_tokens(&self) -> u32 {
         self.max_tokens
     }
@@ -293,12 +321,8 @@ impl ChatClient {
         max_tokens: u32,
     ) -> Result<String> {
         match self.dialect {
-            LlmApiDialect::OpenAiCompat => {
-                self.complete_openai_compat(messages, max_tokens).await
-            }
-            LlmApiDialect::AnthropicMessages => {
-                self.complete_anthropic(messages, max_tokens).await
-            }
+            LlmApiDialect::OpenAiCompat => self.complete_openai_compat(messages, max_tokens).await,
+            LlmApiDialect::AnthropicMessages => self.complete_anthropic(messages, max_tokens).await,
         }
     }
 
@@ -329,15 +353,19 @@ impl ChatClient {
             .await
             .map_err(|e| AppError::llm(format!("chat read body failed: {e}")))?;
         if !status.is_success() {
-            return Err(AppError::llm(format!(
-                "chat HTTP {status}: {}",
-                truncate(&text, 500)
+            return Err(AppError::llm(http_error_message(
+                "chat",
+                status,
+                &text,
+                HTTP_ERROR_BODY_CHARS,
             )));
         }
         let parsed: ChatResponse = serde_json::from_str(&text).map_err(|e| {
-            AppError::llm(format!(
-                "chat JSON parse failed: {e}; body={}",
-                truncate(&text, 300)
+            AppError::llm(parse_error_message(
+                "chat",
+                &e,
+                &text,
+                PARSE_ERROR_BODY_CHARS,
             ))
         })?;
         let content = parsed
@@ -420,15 +448,19 @@ impl ChatClient {
             .await
             .map_err(|e| AppError::llm(format!("anthropic read body failed: {e}")))?;
         if !status.is_success() {
-            return Err(AppError::llm(format!(
-                "anthropic HTTP {status}: {}",
-                truncate(&text, 500)
+            return Err(AppError::llm(http_error_message(
+                "anthropic",
+                status,
+                &text,
+                HTTP_ERROR_BODY_CHARS,
             )));
         }
         let parsed: AnthropicResponse = serde_json::from_str(&text).map_err(|e| {
-            AppError::llm(format!(
-                "anthropic JSON parse failed: {e}; body={}",
-                truncate(&text, 300)
+            AppError::llm(parse_error_message(
+                "anthropic",
+                &e,
+                &text,
+                PARSE_ERROR_BODY_CHARS,
             ))
         })?;
         let content = parsed
@@ -532,17 +564,15 @@ impl ChatClient {
             .await
             .map_err(|e| format!("models read body failed: {e}"))?;
         if !status.is_success() {
-            return Err(format!(
-                "models HTTP {status}: {}",
-                truncate(&text, 200)
+            return Err(http_error_message(
+                "models",
+                status,
+                &text,
+                MODELS_ERROR_BODY_CHARS,
             ));
         }
-        let parsed: ModelsResponse = serde_json::from_str(&text).map_err(|e| {
-            format!(
-                "models JSON parse failed: {e}; body={}",
-                truncate(&text, 200)
-            )
-        })?;
+        let parsed: ModelsResponse = serde_json::from_str(&text)
+            .map_err(|e| parse_error_message("models", &e, &text, MODELS_ERROR_BODY_CHARS))?;
         let ids: Vec<String> = parsed
             .data
             .into_iter()
@@ -582,7 +612,6 @@ impl ChatClient {
             .await
             .map_err(|e| e.to_string())
     }
-
 }
 
 fn elapsed_ms(start: Instant) -> u64 {
@@ -688,7 +717,6 @@ fn validate_consolidate_proposal(mut p: ConsolidateProposal) -> Result<Consolida
     Ok(p)
 }
 
-
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
@@ -763,7 +791,8 @@ mod tests {
 
     #[test]
     fn parse_plain_json() {
-        let raw = r#"{"pages":[{"slug":"a","title":"A","kind":"wiki","content":"hi"}],"notes":null}"#;
+        let raw =
+            r#"{"pages":[{"slug":"a","title":"A","kind":"wiki","content":"hi"}],"notes":null}"#;
         let r = parse_compile_json(raw).unwrap();
         assert_eq!(r.pages.len(), 1);
         assert_eq!(r.pages[0].slug, "a");
@@ -804,7 +833,8 @@ mod tests {
 
     #[test]
     fn parse_consolidate_from_compile_pages_shape() {
-        let raw = r#"{"pages":[{"slug":"c","title":"C","kind":"entity","content":"hi"}],"notes":"n"}"#;
+        let raw =
+            r#"{"pages":[{"slug":"c","title":"C","kind":"entity","content":"hi"}],"notes":"n"}"#;
         let p = parse_consolidate_json(raw).unwrap();
         assert_eq!(p.slug, "c");
         assert_eq!(p.notes.as_deref(), Some("n"));
@@ -831,9 +861,8 @@ mod tests {
 
     #[test]
     fn with_limits_stores_timeout_and_max_tokens() {
-        let c =
-            ChatClient::with_limits("http://127.0.0.1:11434/v1", "ollama", "llama3.2", 45, 512)
-                .unwrap();
+        let c = ChatClient::with_limits("http://127.0.0.1:11434/v1", "ollama", "llama3.2", 45, 512)
+            .unwrap();
         assert_eq!(c.timeout_secs(), 45);
         assert_eq!(c.max_tokens(), 512);
         assert_eq!(c.model(), "llama3.2");

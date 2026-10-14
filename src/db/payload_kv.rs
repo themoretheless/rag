@@ -24,6 +24,7 @@ pub enum PayloadTable {
 }
 
 impl PayloadTable {
+    /// SQL table name for this payload table.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::EvalRuns => "eval_runs",
@@ -38,7 +39,12 @@ impl PayloadTable {
 }
 
 /// Insert or replace a JSON payload row.
-pub fn upsert_payload(store: &Store, table: PayloadTable, id: &str, payload: &impl Serialize) -> Result<()> {
+pub fn upsert_payload(
+    store: &Store,
+    table: PayloadTable,
+    id: &str,
+    payload: &impl Serialize,
+) -> Result<()> {
     // Store-level helpers here are called from async handlers and workflows;
     // keep the lock wait and query off the async workers.
     crate::util::blocking_section(|| {
@@ -169,9 +175,11 @@ pub fn page_payloads_by_id(
     limit: usize,
 ) -> Result<(i64, Vec<Value>)> {
     let conn = store.lock()?;
-    let total: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {}", table.as_str()), [], |r| {
-        r.get(0)
-    })?;
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM {}", table.as_str()),
+        [],
+        |r| r.get(0),
+    )?;
     let mut stmt = conn.prepare(&format!(
         "SELECT payload FROM {} ORDER BY id LIMIT ? OFFSET ?",
         table.as_str()
@@ -193,18 +201,22 @@ pub struct PayloadSession<'a> {
 }
 
 impl PayloadSession<'_> {
+    /// List `(id, payload)` pairs from a payload table.
     pub fn list_pairs(&self, table: PayloadTable) -> Result<Vec<(String, String)>> {
         list_payload_pairs_conn(self.conn, table)
     }
 
+    /// Fetch one raw JSON payload by id.
     pub fn get_raw(&self, table: PayloadTable, id: &str) -> Result<Option<String>> {
         get_payload_raw_conn(self.conn, table, id)
     }
 
+    /// Insert or replace one serialized payload by id.
     pub fn upsert(&self, table: PayloadTable, id: &str, payload: &impl Serialize) -> Result<()> {
         upsert_payload_conn(self.conn, table, id, payload)
     }
 
+    /// Count rows in a payload table.
     pub fn count(&self, table: PayloadTable) -> Result<i64> {
         let sql = format!("SELECT COUNT(*) FROM {}", table.as_str());
         Ok(self.conn.query_row(&sql, [], |r| r.get(0))?)
@@ -212,7 +224,10 @@ impl PayloadSession<'_> {
 }
 
 /// Run `work` with one [`PayloadSession`] under the Store lock.
-pub fn with_session<R>(store: &Store, work: impl FnOnce(&PayloadSession<'_>) -> Result<R>) -> Result<R> {
+pub fn with_session<R>(
+    store: &Store,
+    work: impl FnOnce(&PayloadSession<'_>) -> Result<R>,
+) -> Result<R> {
     crate::util::blocking_section(|| {
         let conn = store.lock()?;
         work(&PayloadSession { conn: &conn })
@@ -261,7 +276,9 @@ mod tests {
         assert_eq!(total, 2);
         assert_eq!(page[0]["id"], "b");
         assert_eq!(page[1]["id"], "a");
-        let raw = get_payload_raw(&store, PayloadTable::EvalRuns, "a").unwrap().unwrap();
+        let raw = get_payload_raw(&store, PayloadTable::EvalRuns, "a")
+            .unwrap()
+            .unwrap();
         assert!(raw.contains("\"kind\":\"x\""));
     }
 

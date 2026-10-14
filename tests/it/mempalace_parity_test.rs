@@ -309,16 +309,16 @@ fn kg_add_query_invalidate_supersede() {
     let (_dir, store) = open_temp_store();
 
     let f1 = store
-        .kg_add(
-            "Alice",
-            "works_at",
-            "Acme",
-            Some(ts(2020, 1, 1)),
-            None,
-            Some("doc:alice"),
-            Some(0.95),
-            None,
-        )
+        .kg_add(rag_mcp::db::kg::KgFactInput {
+            subject: "Alice",
+            predicate: "works_at",
+            object: "Acme",
+            valid_from: Some(ts(2020, 1, 1)),
+            valid_to: None,
+            source_document_id: Some("doc:alice"),
+            confidence: Some(0.95),
+            metadata_json: None,
+        })
         .expect("kg_add");
     assert_eq!(f1.subject, "Alice");
     assert_eq!(f1.predicate, "works_at");
@@ -327,7 +327,16 @@ fn kg_add_query_invalidate_supersede() {
 
     // Idempotent open SPO.
     let again = store
-        .kg_add("Alice", "works_at", "Acme", None, None, None, None, None)
+        .kg_add(rag_mcp::db::kg::KgFactInput {
+            subject: "Alice",
+            predicate: "works_at",
+            object: "Acme",
+            valid_from: None,
+            valid_to: None,
+            source_document_id: None,
+            confidence: None,
+            metadata_json: None,
+        })
         .expect("idempotent");
     assert_eq!(again.id, f1.id);
 
@@ -340,15 +349,15 @@ fn kg_add_query_invalidate_supersede() {
     // Supersede employer at a shared boundary.
     let at = ts(2023, 6, 1);
     let successor = store
-        .kg_supersede(
-            "Alice",
-            "works_at",
-            "Acme",
-            "Globex",
-            Some(at),
-            Some("doc:alice-2"),
-            None,
-        )
+        .kg_supersede(rag_mcp::db::kg::KgSupersedeInput {
+            subject: "Alice",
+            predicate: "works_at",
+            old_object: "Acme",
+            new_object: "Globex",
+            at: Some(at),
+            source_document_id: Some("doc:alice-2"),
+            confidence: None,
+        })
         .expect("supersede");
     assert_eq!(successor.object, "Globex");
     assert_eq!(successor.status, "active");
@@ -376,16 +385,16 @@ fn kg_add_query_invalidate_supersede() {
 
     // Invalidate a separate fact.
     store
-        .kg_add(
-            "Bob",
-            "lives_in",
-            "Paris",
-            Some(ts(2019, 1, 1)),
-            None,
-            None,
-            None,
-            None,
-        )
+        .kg_add(rag_mcp::db::kg::KgFactInput {
+            subject: "Bob",
+            predicate: "lives_in",
+            object: "Paris",
+            valid_from: Some(ts(2019, 1, 1)),
+            valid_to: None,
+            source_document_id: None,
+            confidence: None,
+            metadata_json: None,
+        })
         .expect("add bob");
     let ended = ts(2022, 6, 1);
     let inv = store
