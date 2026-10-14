@@ -196,9 +196,7 @@ async fn document(
             "revision": doc.revision,
             "etag": doc.etag(),
             }));
-            response
-                .headers_mut()
-                .insert(axum::http::header::ETAG, etag.parse().unwrap());
+            super::error::insert_etag(&mut response, &etag);
             response
         }
         Err(e) => api_err(e),

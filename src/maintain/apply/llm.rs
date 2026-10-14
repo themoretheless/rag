@@ -190,7 +190,7 @@ pub(super) async fn apply_refresh_stale(
     let llm = context.llm;
     let dry_run = context.dry_run;
     let agent = context.agent;
-    let max_docs = param_f64(params, "max_docs").map(|n| n as usize);
+    let max_docs = param_usize(params, "max_docs")?;
     // A nested action may opt into preview inside an applying plan, but it may
     // never override the plan-wide safety boundary in the mutating direction.
     let nested_dry = dry_run || param_bool(params, "dry_run").unwrap_or(false);

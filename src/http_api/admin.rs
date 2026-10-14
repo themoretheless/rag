@@ -70,7 +70,10 @@ struct OpsLogQuery {
 async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> impl IntoResponse {
     crate::util::blocking_section(|| {
         // Page size is bounded by `Store` (MAX_OPS_LOG_PAGE) for every transport.
-        let limit = q.limit.unwrap_or(50);
+        let limit = q
+            .limit
+            .unwrap_or(50)
+            .clamp(1, crate::db::store::MAX_OPS_LOG_PAGE);
         let id = non_blank(q.id);
         let has_key = id.is_some() || q.seq.is_some();
         match st.store.read_ops_log(id.as_deref(), q.seq, Some(limit)) {

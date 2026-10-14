@@ -96,7 +96,9 @@ pub async fn compile_source(
         ) {
             for pid in &page_ids {
                 if let Ok(Some(dst)) = store.find_node_by_document_id(pid) {
-                    let _ = store.link_nodes(&src_node.id, &dst.id, "related", 1.0);
+                    if let Err(error) = store.link_nodes(&src_node.id, &dst.id, "related", 1.0) {
+                        tracing::warn!(%error, "failed to link wiki graph nodes");
+                    }
                 }
             }
         }

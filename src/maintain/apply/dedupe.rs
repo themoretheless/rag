@@ -169,8 +169,7 @@ pub(super) fn apply_drop_tombstones(
     dry_run: bool,
 ) -> Result<StepResult> {
     let allow_raw_delete = param_bool(params, "allow_raw_delete").unwrap_or(false);
-    let max_docs = param_f64(params, "max_docs")
-        .map(|n| n as usize)
+    let max_docs = param_usize(params, "max_docs")?
         .unwrap_or(config.maint_max_docs)
         .max(1)
         .min(config.maint_max_docs.max(1));

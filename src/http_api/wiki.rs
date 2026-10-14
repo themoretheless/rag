@@ -146,9 +146,7 @@ async fn wiki_list_with_headers(st: HttpState, q: WikiListQuery, headers: Header
                 "pages": pages,
                 "page": {"limit":page_limit,"next_cursor":next,"total":total},
             }));
-            response
-                .headers_mut()
-                .insert(axum::http::header::ETAG, etag.parse().unwrap());
+            super::error::insert_etag(&mut response, &etag);
             response
         }
         Err(e) => api_err(e),

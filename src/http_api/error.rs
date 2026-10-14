@@ -1,6 +1,6 @@
 //! HTTP JSON envelope helpers: success + map [`AppError`] to status/body.
 
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
@@ -37,9 +37,26 @@ pub(super) fn api_err(err: AppError) -> Response {
     if err.is_retryable() {
         response
             .headers_mut()
-            .insert("retry-after", "1".parse().unwrap());
+            .insert("retry-after", HeaderValue::from_static("1"));
     }
     response
+}
+
+/// Insert an `ETag` header when `etag` is a valid header value; otherwise log
+/// and leave the response without one (never panics on runtime values).
+pub(super) fn insert_etag(response: &mut Response, etag: &str) -> bool {
+    match HeaderValue::from_str(etag) {
+        Ok(value) => {
+            response
+                .headers_mut()
+                .insert(axum::http::header::ETAG, value);
+            true
+        }
+        Err(err) => {
+            tracing::warn!(etag, error = %err, "skipping invalid ETag header value");
+            false
+        }
+    }
 }
 
 /// Error for an internal `/v1/search` call that returned a non-success status,
@@ -56,3 +73,22 @@ pub(super) async fn search_response_error(response: axum::response::Response) ->
     ))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_etag_sets_valid_value() {
+        let mut response = StatusCode::OK.into_response();
+        assert!(insert_etag(&mut response, "W/\"3\""));
+        assert_eq!(response.headers()[axum::http::header::ETAG], "W/\"3\"");
+    }
+
+    #[test]
+    fn insert_etag_skips_invalid_value_without_panicking() {
+        let mut response = StatusCode::OK.into_response();
+        assert!(!insert_etag(&mut response, "bad\netag"));
+        assert!(response.headers().get(axum::http::header::ETAG).is_none());
+    }
+}

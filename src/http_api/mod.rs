@@ -107,7 +107,15 @@ impl HttpState {
         config: Config,
         embedder: Arc<dyn EmbeddingProvider>,
     ) -> Self {
-        let llm = crate::llm::ChatClient::from_config(&config).ok();
+        let llm = match crate::llm::ChatClient::from_config(&config) {
+            Ok(client) => Some(client),
+            Err(error) => {
+                if config.llm_enabled {
+                    tracing::warn!(%error, "LLM enabled but chat client config is invalid; LLM features disabled");
+                }
+                None
+            }
+        };
         Self::from_context(
             crate::context::AppContext {
                 store,

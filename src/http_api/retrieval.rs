@@ -367,10 +367,9 @@ pub(super) async fn search_http(
                 if persist_trace {
                     let _ = persist_retrieval_trace(&state.store, &trace);
                 }
-                response
-                    .as_object_mut()
-                    .expect("object")
-                    .insert("trace".into(), json!(trace));
+                if let Some(obj) = response.as_object_mut() {
+                    obj.insert("trace".into(), json!(trace));
+                }
             }
             api_ok(response)
         }
@@ -456,10 +455,9 @@ async fn pack_context_http(
         if persist_trace {
             let _ = persist_retrieval_trace(&state.store, &trace);
         }
-        response
-            .as_object_mut()
-            .expect("object")
-            .insert("trace".into(), json!(trace));
+        if let Some(obj) = response.as_object_mut() {
+            obj.insert("trace".into(), json!(trace));
+        }
     }
     api_ok(response)
 }

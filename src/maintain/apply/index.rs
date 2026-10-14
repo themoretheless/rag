@@ -45,8 +45,7 @@ pub(super) fn apply_rebuild_graph(
     dry_run: bool,
 ) -> Result<StepResult> {
     let dirty_only = param_bool(params, "dirty_only").unwrap_or(true);
-    let max_docs = param_f64(params, "max_docs")
-        .map(|n| n as usize)
+    let max_docs = param_usize(params, "max_docs")?
         .unwrap_or(config.maint_max_docs)
         .max(1)
         .min(config.maint_max_docs.max(1));
@@ -189,8 +188,7 @@ pub(super) async fn apply_reembed_all(
     params: &serde_json::Value,
     dry_run: bool,
 ) -> Result<StepResult> {
-    let max_docs = param_f64(params, "max_docs")
-        .map(|n| n as usize)
+    let max_docs = param_usize(params, "max_docs")?
         .unwrap_or(config.maint_max_docs)
         .max(1)
         .min(config.maint_max_docs.max(1));
