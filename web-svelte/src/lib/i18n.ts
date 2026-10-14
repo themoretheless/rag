@@ -106,6 +106,7 @@ export type MessageKey =
   | 'apiForbidden'
   | 'apiHttpError'
   | 'apiInvalidJson'
+  | 'apiEmptyBody'
   | 'tokenInvalidChars'
   | 'tokenStorageDenied'
   | 'graphProject'
@@ -229,6 +230,7 @@ export const messages: Record<Locale, Messages> = {
     apiForbidden: 'HTTP 403: The token lacks permission for this action.',
     apiHttpError: 'HTTP {status}: {detail}',
     apiInvalidJson: 'HTTP {status}: response is not valid JSON',
+    apiEmptyBody: 'HTTP {status}: expected a JSON response but the body was empty',
     tokenInvalidChars: 'The token may contain only valid Bearer token characters.',
     tokenStorageDenied: 'The browser refused to store the token in this tab’s session.',
     graphProject: 'Project',
@@ -344,11 +346,12 @@ export const messages: Record<Locale, Messages> = {
     confirm: 'Подтвердить',
     keepDraft: 'Оставить черновик',
     discardReload: 'Отбросить и загрузить',
-    apiInvalidPath: 'Gateway requests require an absolute API path.',
+    apiInvalidPath: 'Запросы к шлюзу требуют абсолютного пути API.',
     apiUnauthorized: 'HTTP 401: Укажите действующий токен в разделе «Доступ».',
     apiForbidden: 'HTTP 403: У токена нет прав для этого действия.',
     apiHttpError: 'HTTP {status}: {detail}',
     apiInvalidJson: 'HTTP {status}: ответ не является корректным JSON',
+    apiEmptyBody: 'HTTP {status}: ожидался JSON-ответ, но тело пустое',
     tokenInvalidChars: 'Токен должен содержать только допустимые символы Bearer token.',
     tokenStorageDenied: 'Браузер запретил хранение токена в сессии этой вкладки.',
     graphProject: 'Проект',

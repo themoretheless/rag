@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api, hasGatewayToken, loadPanels, parseJsonBody, setGatewayToken } from './client'
+import { ApiError, api, hasGatewayToken, loadPanels, parseJsonBody, parseOptionalJsonBody, setGatewayToken } from './client'
+import { t } from '@/lib/i18n'
 
 const secret = 'test-access-token'
 
@@ -97,7 +98,7 @@ describe('gateway Bearer authentication', () => {
   it('rejects external or protocol-relative request paths before sending credentials', async () => {
     setGatewayToken(secret)
     for (const path of ['https://external.example/data', '//external.example/data', '/\\external.example/data', '/\t/external.example/data']) {
-      await expect(api.get(path)).rejects.toThrow('absolute API path')
+      await expect(api.get(path)).rejects.toThrow(t('apiInvalidPath'))
     }
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -124,12 +125,22 @@ describe('JSON response handling', () => {
 
   it('resolves 204 No Content to undefined without parsing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
-    await expect(api.post('/v1/operations/checkpoint')).resolves.toBeUndefined()
+    await expect(api.postOptional('/v1/operations/checkpoint')).resolves.toBeUndefined()
   })
 
-  it('resolves an empty 200 body to undefined', async () => {
-    expect(await parseJsonBody(new Response('', { status: 200 }))).toBeUndefined()
-    expect(await parseJsonBody(new Response('  \n', { status: 200 }))).toBeUndefined()
+  it('resolves an empty 200 body to undefined for optional endpoints', async () => {
+    expect(await parseOptionalJsonBody(new Response('', { status: 200 }))).toBeUndefined()
+    expect(await parseOptionalJsonBody(new Response('  \n', { status: 200 }))).toBeUndefined()
+  })
+
+  it('throws ApiError on an empty body for endpoints that must return JSON', async () => {
+    for (const res of [new Response(null, { status: 204 }), new Response('', { status: 200 }), new Response('  \n', { status: 200 })]) {
+      const error = await parseJsonBody(res).catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(ApiError)
+      expect((error as ApiError).status).toBe(res.status)
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
+    await expect(api.post('/v1/search')).rejects.toBeInstanceOf(ApiError)
   })
 
   it('throws a typed ApiError carrying the status for non-JSON bodies', async () => {

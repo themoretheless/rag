@@ -51,7 +51,23 @@ describe('WikiArticle', () => {
     const { container } = render(WikiArticle)
     const link = container.querySelector<HTMLAnchorElement>('a[data-wikilink]')!
     await fireEvent.keyDown(link, { key: 'Enter' })
+    expect(goWiki).toHaveBeenCalledOnce()
     expect(goWiki).toHaveBeenCalledWith('b')
+  })
+
+  it('activates wikilinks with the Space key exactly once', async () => {
+    const { container } = render(WikiArticle)
+    const link = container.querySelector<HTMLAnchorElement>('a[data-wikilink]')!
+    await fireEvent.keyDown(link, { key: ' ' })
+    expect(goWiki).toHaveBeenCalledOnce()
+    expect(goWiki).toHaveBeenCalledWith('b')
+  })
+
+  it('ignores other keys on wikilinks', async () => {
+    const { container } = render(WikiArticle)
+    const link = container.querySelector<HTMLAnchorElement>('a[data-wikilink]')!
+    await fireEvent.keyDown(link, { key: 'a' })
+    expect(goWiki).not.toHaveBeenCalled()
   })
 
   it('re-renders when the open page changes', () => {

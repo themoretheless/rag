@@ -84,11 +84,14 @@ describe('GraphToolbar', () => {
     expect(p.onreload).toHaveBeenCalledOnce()
     expect(graph.includeTags).toBe(false)
 
+    let duringReload: boolean | undefined
     p.onreload.mockImplementationOnce(async () => {
+      duringReload = graph.includeTags
       graph.error = 'nope'
     })
     await fireEvent.click(tags)
     await vi.waitFor(() => expect(p.onreload).toHaveBeenCalledTimes(2))
+    expect(duringReload).toBe(true)
     expect(graph.includeTags).toBe(false)
   })
 

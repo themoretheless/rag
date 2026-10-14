@@ -35,7 +35,7 @@
   }
 
   async function checkpoint() {
-    try { await api.post('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
+    try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
     catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
   }
 
@@ -43,7 +43,7 @@
     if (!backupPath.trim()) return
     backupBusy = true
     try {
-      await api.post('/v1/operations/backup', { path: backupPath.trim(), dry_run: false, overwrite: false })
+      await api.postOptional('/v1/operations/backup', { path: backupPath.trim(), dry_run: false, overwrite: false })
       ui.toast('Резервная копия создана', 'ok')
       backupOpen = false
     } catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }

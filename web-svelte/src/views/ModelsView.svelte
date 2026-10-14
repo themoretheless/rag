@@ -58,7 +58,7 @@
   }
 
   async function checkpoint() {
-    try { await api.post('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
+    try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
     catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
   }
 

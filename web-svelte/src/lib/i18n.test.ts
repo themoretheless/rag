@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { formatMessage, getActiveLocale, messages, setActiveLocale, t, type MessageKey } from './i18n'
 
+/** Keys whose ru text legitimately equals en; any other equal pair is an untranslated string. */
+const SAME_IN_BOTH_LOCALES: MessageKey[] = ['apiHttpError', 'graphSeedHint']
+
 describe('i18n catalog', () => {
   it('defines every key in both locales', () => {
     const en = Object.keys(messages.en).sort()
@@ -9,6 +12,14 @@ describe('i18n catalog', () => {
       expect(messages.en[key]).not.toBe('')
       expect(messages.ru[key]).not.toBe('')
     }
+  })
+
+  it('translates ru strings that are translated today (no English fallbacks)', () => {
+    // Keys whose ru value intentionally equals en (identical technical strings).
+    const same = (Object.keys(messages.en) as MessageKey[]).filter((key) => messages.ru[key] === messages.en[key])
+    expect(same).not.toContain('apiInvalidPath')
+    expect(messages.ru.apiInvalidPath).not.toBe(messages.en.apiInvalidPath)
+    expect(same).toEqual(SAME_IN_BOTH_LOCALES)
   })
 
   it('keeps placeholders consistent across locales', () => {

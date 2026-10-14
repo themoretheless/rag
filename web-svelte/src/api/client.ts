@@ -72,16 +72,11 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * Parse a JSON body. Empty bodies (204/205, Content-Length 0, or blank text) resolve to
- * `undefined`; a non-empty body that is not JSON throws an `ApiError` with the status.
- */
-export async function parseJsonBody<T>(res: Response): Promise<T> {
-  if (res.status === 204 || res.status === 205 || res.headers.get('Content-Length') === '0') {
-    return undefined as T
-  }
-  const text = await res.text()
-  if (!text.trim()) return undefined as T
+function isEmptyStatus(res: Response): boolean {
+  return res.status === 204 || res.status === 205 || res.headers.get('Content-Length') === '0'
+}
+
+function parseText<T>(res: Response, text: string): T {
   try {
     return JSON.parse(text) as T
   } catch {
@@ -89,9 +84,35 @@ export async function parseJsonBody<T>(res: Response): Promise<T> {
   }
 }
 
+/**
+ * Parse a JSON body for endpoints that must return JSON. An empty body (204/205,
+ * Content-Length 0, or blank text) or a non-JSON body throws an `ApiError` with the status.
+ */
+export async function parseJsonBody<T>(res: Response): Promise<T> {
+  const text = isEmptyStatus(res) ? '' : await res.text()
+  if (!text.trim()) throw new ApiError(res.status, t('apiEmptyBody', { status: res.status }))
+  return parseText<T>(res, text)
+}
+
+/**
+ * Parse a JSON body for endpoints that may legitimately answer 204 No Content.
+ * Empty bodies resolve to `undefined`; a non-empty non-JSON body throws an `ApiError`.
+ */
+export async function parseOptionalJsonBody<T>(res: Response): Promise<T | undefined> {
+  if (isEmptyStatus(res)) return undefined
+  const text = await res.text()
+  if (!text.trim()) return undefined
+  return parseText<T>(res, text)
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await requestResponse(path, init)
   return parseJsonBody<T>(res)
+}
+
+async function requestOptional<T>(path: string, init?: RequestInit): Promise<T | undefined> {
+  const res = await requestResponse(path, init)
+  return parseOptionalJsonBody<T>(res)
 }
 
 /**
@@ -206,4 +227,7 @@ export const api = {
   put: <T = Record<string, unknown>>(path: string, body: unknown) => request<T>(path, { method:'PUT', body:JSON.stringify(body) }),
   post: <T = Record<string, unknown>>(path: string, body: unknown = {}) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  /** POST to an endpoint that may answer 204 No Content (e.g. operations, feedback). */
+  postOptional: <T = Record<string, unknown>>(path: string, body: unknown = {}) =>
+    requestOptional<T>(path, { method: 'POST', body: JSON.stringify(body) }),
 }
