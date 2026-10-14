@@ -99,6 +99,7 @@ impl Default for JobRegistry {
 }
 
 impl JobRegistry {
+    /// Create a registry, optionally persisting job history to `store`.
     pub fn new(store: Option<Arc<Store>>) -> Self {
         Self {
             inner: Arc::new(JobRegistryInner {
@@ -111,6 +112,7 @@ impl JobRegistry {
         }
     }
 
+    /// Create a registry that persists job history to `store`.
     pub fn with_store(store: Arc<Store>) -> Self {
         Self::new(Some(store))
     }
@@ -240,6 +242,7 @@ impl JobRegistry {
         )
     }
 
+    /// Start a background source sync job.
     pub fn start_source_sync(
         &self,
         request: SyncJobRequest,
@@ -349,6 +352,7 @@ impl JobRegistry {
         Ok(snapshot)
     }
 
+    /// All known jobs, newest first.
     pub fn list(&self) -> Vec<JobSnapshot> {
         let jobs = self.jobs();
         let mut entries = jobs.values().collect::<Vec<_>>();
@@ -359,10 +363,12 @@ impl JobRegistry {
             .collect()
     }
 
+    /// Snapshot of one job by id.
     pub fn get(&self, id: &str) -> Option<JobSnapshot> {
         self.jobs().get(id).map(|entry| entry.snapshot.clone())
     }
 
+    /// Cancel a queued or running job by id.
     pub fn cancel(&self, id: &str) -> Result<JobSnapshot, AppError> {
         let (snapshot, cancellation, should_cancel) = {
             let mut jobs = self.jobs();

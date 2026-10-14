@@ -22,6 +22,7 @@ pub enum SearchAction {
     },
 }
 
+/// Draw the search workspace and return the chosen action.
 pub fn draw_search_workspace(
     ui: &mut egui::Ui,
     request: &mut SearchRequest,

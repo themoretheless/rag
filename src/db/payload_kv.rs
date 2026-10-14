@@ -24,6 +24,7 @@ pub enum PayloadTable {
 }
 
 impl PayloadTable {
+    /// SQL table name for this payload table.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::EvalRuns => "eval_runs",
@@ -200,18 +201,22 @@ pub struct PayloadSession<'a> {
 }
 
 impl PayloadSession<'_> {
+    /// List `(id, payload)` pairs from a payload table.
     pub fn list_pairs(&self, table: PayloadTable) -> Result<Vec<(String, String)>> {
         list_payload_pairs_conn(self.conn, table)
     }
 
+    /// Fetch one raw JSON payload by id.
     pub fn get_raw(&self, table: PayloadTable, id: &str) -> Result<Option<String>> {
         get_payload_raw_conn(self.conn, table, id)
     }
 
+    /// Insert or replace one serialized payload by id.
     pub fn upsert(&self, table: PayloadTable, id: &str, payload: &impl Serialize) -> Result<()> {
         upsert_payload_conn(self.conn, table, id, payload)
     }
 
+    /// Count rows in a payload table.
     pub fn count(&self, table: PayloadTable) -> Result<i64> {
         let sql = format!("SELECT COUNT(*) FROM {}", table.as_str());
         Ok(self.conn.query_row(&sql, [], |r| r.get(0))?)

@@ -88,6 +88,7 @@ pub enum ConflictPolicy {
 }
 
 impl ConflictPolicy {
+    /// Parse a conflict policy name (default `error`).
     pub fn parse(value: Option<&str>) -> Result<Self> {
         match value
             .unwrap_or("error")

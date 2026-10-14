@@ -55,6 +55,7 @@ struct SearchEnvelope {
     items: Vec<SearchHit>,
 }
 
+/// Run a search request against the gateway.
 pub fn fetch_search_http(base: &str, request: &SearchRequest) -> Result<SearchResults, String> {
     let client = ReqwestGatewayClient::new(Duration::from_secs(15))?;
     fetch_search_with_client(&client, base, request)

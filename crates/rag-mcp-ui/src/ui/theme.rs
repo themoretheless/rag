@@ -27,6 +27,7 @@ pub const L2: Color32 = Color32::from_rgb(240, 182, 74);
 pub const L3: Color32 = Color32::from_rgb(167, 139, 250);
 pub const L4: Color32 = Color32::from_rgb(244, 114, 182);
 
+/// Install the dark theme, spacing and visuals on the egui context.
 pub fn install(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
@@ -110,6 +111,7 @@ pub fn install(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Dark, style);
 }
 
+/// Frame for the left navigation rail.
 pub fn rail_frame() -> Frame {
     Frame::new()
         .fill(RAIL)
@@ -117,6 +119,7 @@ pub fn rail_frame() -> Frame {
         .inner_margin(Margin::symmetric(4, 8))
 }
 
+/// Frame for the global top bar.
 pub fn topbar_frame() -> Frame {
     Frame::new()
         .fill(BG)
@@ -124,6 +127,7 @@ pub fn topbar_frame() -> Frame {
         .inner_margin(Margin::symmetric(14, 8))
 }
 
+/// Frame for workspace toolbars.
 pub fn toolbar_frame() -> Frame {
     Frame::new()
         .fill(SURFACE)
@@ -131,6 +135,7 @@ pub fn toolbar_frame() -> Frame {
         .inner_margin(Margin::symmetric(14, 6))
 }
 
+/// Rounded surface frame for a content card.
 pub fn card() -> Frame {
     Frame::new()
         .fill(SURFACE)
@@ -139,6 +144,7 @@ pub fn card() -> Frame {
         .inner_margin(Margin::same(12))
 }
 
+/// Rounded inset frame nested inside a card.
 pub fn inset() -> Frame {
     Frame::new()
         .fill(SURFACE_2)
@@ -147,6 +153,7 @@ pub fn inset() -> Frame {
         .inner_margin(Margin::same(10))
 }
 
+/// Accent color for a layer or object kind name (L0–L4), muted when unknown.
 pub fn layer_color(layer: &str) -> Color32 {
     match layer.to_ascii_lowercase().as_str() {
         "l0" | "raw" | "document" | "code" => L0,
@@ -158,6 +165,7 @@ pub fn layer_color(layer: &str) -> Color32 {
     }
 }
 
+/// Same color with the given alpha.
 pub fn rgba(color: Color32, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }

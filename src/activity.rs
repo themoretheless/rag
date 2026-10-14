@@ -23,6 +23,7 @@ fn events() -> &'static Mutex<VecDeque<ActivityEvent>> {
     EVENTS.get_or_init(|| Mutex::new(VecDeque::with_capacity(MAX_ACTIVITY_EVENTS)))
 }
 
+/// Append one event to the in-memory activity ring buffer.
 pub fn record(
     kind: &'static str,
     client: Option<String>,

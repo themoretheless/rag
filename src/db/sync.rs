@@ -440,6 +440,7 @@ pub(crate) fn commit_sync_write_locked(
 }
 
 impl Store {
+    /// True when a sync change from this origin node and sequence is already stored.
     pub fn has_sync_change(&self, origin_node: &str, origin_seq: i64) -> Result<bool> {
         let conn = self.lock()?;
         Ok(stored_event_locked(&conn, origin_node, origin_seq)?.is_some())
@@ -503,6 +504,7 @@ impl Store {
         })
     }
 
+    /// Append a local change to the sync outbox and return its local sequence.
     pub fn enqueue_sync_change(
         &self,
         entity_kind: &str,
@@ -525,6 +527,7 @@ impl Store {
         })
     }
 
+    /// Unsent sync outbox changes in local order, up to `limit`.
     pub fn pending_sync_outbox(&self, limit: usize) -> Result<Vec<SyncChangeInput>> {
         let limit = limit.clamp(1, MAX_SYNC_BATCH);
         let conn = self.lock()?;
@@ -547,6 +550,7 @@ impl Store {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    /// Record primary sequence numbers for sent outbox entries.
     pub fn mark_sync_outbox_sent(&self, assignments: &[(i64, i64)]) -> Result<()> {
         self.with_tx(|tx| {
             for (local_seq, primary_seq) in assignments {
@@ -576,6 +580,7 @@ impl Store {
         })
     }
 
+    /// Register or refresh a sync node's hostname and role.
     pub fn register_sync_node(&self, node_id: &str, hostname: &str, role: &str) -> Result<()> {
         self.with_tx(|tx| {
             register_node_locked(tx, node_id, hostname, role)?;
@@ -669,6 +674,7 @@ impl Store {
         cursor_locked(&conn, node_id)
     }
 
+    /// Summarize sync journal, outbox and cursor state for this node.
     pub fn sync_status(
         &self,
         role: &str,

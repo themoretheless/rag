@@ -137,6 +137,7 @@ pub struct OpenArgs {
 }
 
 impl OpenArgs {
+    /// Reject open args that name more than one of `--http`, `--snapshot` and `--db`.
     pub fn validate(&self) -> Result<(), String> {
         let n = usize::from(self.snapshot.is_some())
             + usize::from(self.db.is_some())
@@ -196,6 +197,7 @@ pub fn pkb_default_rel_types() -> Vec<String> {
 }
 
 impl GraphSourceKind {
+    /// Stable machine label for this source kind.
     pub fn label(&self) -> &'static str {
         match self {
             Self::LiveStore { .. } => "live_store",
@@ -280,6 +282,7 @@ struct ActivityResponse {
     items: Vec<ActivityEvent>,
 }
 
+/// Fetch recent gateway activity events from `GET /v1/activity`.
 pub fn fetch_activity_http(base: &str) -> Result<Vec<ActivityEvent>, String> {
     let client = gateway_client(5)?;
     let url = http_join(normalize_http_base(base), "v1/activity");

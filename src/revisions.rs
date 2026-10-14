@@ -48,6 +48,7 @@ pub struct RevisionService<'a> {
 }
 
 impl<'a> RevisionService<'a> {
+    /// Bind the service to a store, embedder and config.
     pub fn new(
         store: &'a Store,
         embedder: &'a Arc<dyn EmbeddingProvider>,

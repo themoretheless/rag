@@ -57,6 +57,7 @@ pub enum ContextExpansion {
 }
 
 impl ContextExpansion {
+    /// Parse a context expansion name (`neighbors` or `parent_section`, with aliases).
     pub fn parse(raw: &str) -> Result<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "neighbors" | "neighboring_chunks" => Ok(Self::Neighbors),
@@ -721,6 +722,7 @@ pub fn fuse_rrf_many(lists: &[Vec<SearchHit>], rrf_k: f32, top_k: usize) -> Vec<
     out
 }
 
+/// Attach section labels and, when requested, neighbor or parent-section context to hits.
 pub fn attach_context(
     store: &Store,
     hits: &mut [SearchHit],

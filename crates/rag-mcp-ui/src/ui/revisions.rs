@@ -40,6 +40,7 @@ pub struct RevisionsView<'a> {
     pub loading_restore: bool,
 }
 
+/// Draw a document's revision history workspace and return the chosen action.
 pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> RevisionsAction {
     let mut action = RevisionsAction::None;
     ui.horizontal(|ui| {

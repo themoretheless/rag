@@ -67,6 +67,7 @@ impl Store {
         })
     }
 
+    /// Insert graph edges under the store lock.
     pub fn insert_graph_edges(&self, edges: &[GraphEdge]) -> Result<()> {
         let conn = self.lock()?;
         insert_graph_edges_locked(&conn, edges)

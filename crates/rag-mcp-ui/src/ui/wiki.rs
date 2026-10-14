@@ -81,6 +81,7 @@ pub struct WikiSidebarIndex {
 }
 
 impl WikiSidebarIndex {
+    /// Precompute lowercase search haystacks (title, slug, summary, category) and group pages by category.
     pub fn new(pages: &[WikiPageMeta]) -> Self {
         let haystacks = pages
             .iter()
@@ -145,6 +146,7 @@ enum SidebarRow<'a> {
     Page(usize),
 }
 
+/// Draw the filterable wiki page list; returns the id of a clicked page.
 pub fn draw_wiki_sidebar(
     ui: &mut Ui,
     pages: &[WikiPageMeta],

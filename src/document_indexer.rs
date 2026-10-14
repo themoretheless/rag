@@ -87,6 +87,7 @@ pub struct DocumentIndexer<'a> {
 }
 
 impl<'a> DocumentIndexer<'a> {
+    /// Build an indexer using the config's chunk size and overlap.
     pub fn new(embedder: &'a dyn EmbeddingProvider, config: &Config) -> Self {
         Self {
             embedder,

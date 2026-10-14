@@ -29,6 +29,7 @@ pub enum LibraryDetailAction {
     OpenGraph(String),
 }
 
+/// Draw the library list with filters and paging and return the chosen action.
 pub fn draw_library_workspace(
     ui: &mut egui::Ui,
     request: &mut LibraryRequest,
@@ -279,6 +280,7 @@ pub fn draw_library_workspace(
     action
 }
 
+/// Draw one library item's detail pane and return the chosen action.
 pub fn draw_library_detail(
     ui: &mut egui::Ui,
     item: &LibraryItem,

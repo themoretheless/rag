@@ -170,6 +170,7 @@ pub enum ToolSurface {
 }
 
 impl ToolSurface {
+    /// Wire string for this tool surface (`spine` or `full`).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Spine => "spine",
@@ -293,6 +294,7 @@ impl Secret {
         &self.0
     }
 
+    /// True when the secret holds no value.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

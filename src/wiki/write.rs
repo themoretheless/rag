@@ -50,7 +50,6 @@ pub struct WikiPageWrite<'a> {
 }
 
 /// Write/update a wiki page by slug (`wiki://{slug}`), chunk+embed+graph.
-// Compatibility adapter: new integrations should prefer the command API.
 pub async fn write_wiki_page(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,

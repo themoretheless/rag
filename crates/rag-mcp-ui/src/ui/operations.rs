@@ -52,6 +52,7 @@ impl Default for BackupForm {
     }
 }
 
+/// Draw the jobs panel with the sync-job form and return the chosen action.
 pub fn draw_jobs(
     ui: &mut egui::Ui,
     jobs: &[JobSnapshot],
@@ -141,6 +142,7 @@ pub fn draw_jobs(
     action
 }
 
+/// Draw the maintenance panel (checkpoint/backup) and return the chosen action.
 pub fn draw_maintenance(
     ui: &mut egui::Ui,
     snapshot: Option<&OperationsSnapshot>,

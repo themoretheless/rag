@@ -54,6 +54,7 @@ impl OrganizeMode {
         }
     }
 
+    /// Wire string for this organize mode.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Heuristic => "heuristic",

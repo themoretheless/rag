@@ -471,6 +471,7 @@ pub struct WorkerHandle {
 }
 
 impl WorkerHandle {
+    /// Queue a command on the main or maintenance lane, recording its latest sequence.
     pub fn send(&self, cmd: WorkerCmd) {
         if let Some((slot, seq)) = cmd.slot_and_seq() {
             lock_latest(&self.latest).insert(slot, seq);

@@ -23,6 +23,7 @@ pub enum ModelsAction {
     OpenMaintenance,
 }
 
+/// Draw the evaluation workspace (search results plus activity) and return the chosen action.
 pub fn draw_evaluation_workspace(
     ui: &mut egui::Ui,
     results: Option<&SearchResults>,
@@ -160,6 +161,7 @@ pub fn draw_evaluation_workspace(
     action
 }
 
+/// Draw the models workspace from the operations snapshot and return the chosen action.
 pub fn draw_models_workspace(
     ui: &mut egui::Ui,
     snapshot: Option<&OperationsSnapshot>,

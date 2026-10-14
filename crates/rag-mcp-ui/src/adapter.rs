@@ -76,6 +76,7 @@ impl GraphLens {
         Self::Quality,
     ];
 
+    /// Short localized display label for this lens.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overview => "Обзор",
@@ -87,6 +88,7 @@ impl GraphLens {
         }
     }
 
+    /// Localized one-line description of what this lens shows.
     pub const fn description(self) -> &'static str {
         match self {
             Self::Overview => "Карта проекта: каталоги, документы и основные сущности",

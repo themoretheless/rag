@@ -122,6 +122,7 @@ impl Default for SourceSyncControl {
 }
 
 impl SourceSyncControl {
+    /// Create a control from a cancellation token and progress callback.
     pub fn new(
         cancellation: CancellationToken,
         on_progress: impl Fn(SourceSyncProgress) + Send + Sync + 'static,
@@ -230,6 +231,7 @@ enum BatchFlushOutcome {
 }
 
 impl<'a> SourceSyncService<'a> {
+    /// Bind the service to a store, embedder and config.
     pub fn new(
         store: &'a Store,
         embedder: &'a Arc<dyn EmbeddingProvider>,
@@ -242,6 +244,7 @@ impl<'a> SourceSyncService<'a> {
         }
     }
 
+    /// Run a source sync to completion (or cancellation) without progress reporting.
     pub async fn sync(&self, command: SourceSyncCommand) -> Result<SourceSyncReport, AppError> {
         match self
             .sync_with_control(command, SourceSyncControl::default())

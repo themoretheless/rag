@@ -22,6 +22,7 @@ pub struct QueryErrorLabel {
 }
 
 impl QueryErrorLabel {
+    /// Load error labels from a JSONL file, skipping blank lines.
     pub fn load_jsonl(path: &std::path::Path) -> crate::error::Result<Vec<Self>> {
         let raw = std::fs::read_to_string(path).map_err(|e| {
             crate::error::AppError::config(format!("read error labels {}: {e}", path.display()))

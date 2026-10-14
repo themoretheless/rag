@@ -33,6 +33,7 @@ pub struct ProjectHomeView<'a> {
     pub wiki_available: bool,
 }
 
+/// Draw the project console home and return the action the user picked.
 pub fn draw_project_home(ui: &mut egui::Ui, view: ProjectHomeView<'_>) -> HomeAction {
     let ProjectHomeView {
         selected_project,

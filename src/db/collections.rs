@@ -9,6 +9,7 @@ use crate::error::{AppError, Result};
 use crate::models::{Collection, CollectionDetail, CollectionEntry};
 
 impl Store {
+    /// Create a collection with its entries after validating them, in one transaction.
     pub fn create_collection(
         &self,
         collection: &Collection,
@@ -42,6 +43,7 @@ impl Store {
         })
     }
 
+    /// List all collections, most recently updated first.
     pub fn list_collections(&self) -> Result<Vec<Collection>> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
@@ -53,6 +55,7 @@ impl Store {
         Ok(out)
     }
 
+    /// Fetch one collection with its entries, or `None` when absent.
     pub fn get_collection(&self, id: &str) -> Result<Option<CollectionDetail>> {
         let conn = self.lock()?;
         let collection = conn
@@ -99,6 +102,7 @@ impl Store {
         }))
     }
 
+    /// Update a collection's name, description, metadata and/or entries.
     pub fn update_collection(
         &self,
         id: &str,

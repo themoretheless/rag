@@ -311,6 +311,7 @@ pub enum Layer {
 }
 
 impl Layer {
+    /// Wire string for this layer (`raw`, `wiki`, `schema`, `diary`, `document`).
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Raw => "raw",
@@ -391,6 +392,7 @@ impl NodeKind {
     /// Accepted wire strings (`GRAPH_DESIGN.md` §1.1).
     pub const WIRE: &'static [&'static str] = &["document", "tag", "stub", "entity"];
 
+    /// Wire string for this node kind (`document`, `tag`, `stub`, `entity`).
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Document => "document",
@@ -400,6 +402,7 @@ impl NodeKind {
         }
     }
 
+    /// Parse a node kind from its exact wire string.
     pub fn parse(value: &str) -> Option<Self> {
         [Self::Document, Self::Tag, Self::Stub, Self::Entity]
             .into_iter()

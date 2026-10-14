@@ -325,6 +325,7 @@ pub fn free_space_bytes(path: &Path) -> Option<u64> {
     Some(stat.f_bavail as u64 * block_size)
 }
 
+/// Free space is not measured on this platform; always `None`.
 #[cfg(not(unix))]
 pub fn free_space_bytes(_path: &Path) -> Option<u64> {
     None

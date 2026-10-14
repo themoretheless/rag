@@ -137,6 +137,7 @@ pub struct IngestService<'a> {
 }
 
 impl<'a> IngestService<'a> {
+    /// Bind the service to a store, embedder and config.
     pub fn new(
         store: &'a Store,
         embedder: &'a Arc<dyn EmbeddingProvider>,
@@ -222,6 +223,7 @@ impl<'a> IngestService<'a> {
         })
     }
 
+    /// Ingest one document: prepare (dedupe, chunk), embed, then commit.
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
         let preparation = self
             .off_thread("ingest prepare", move |service| {
@@ -574,6 +576,7 @@ impl<'a> IngestService<'a> {
         }))
     }
 
+    /// Re-embed an existing document's chunks with the current embedder.
     pub async fn reembed_document(
         &self,
         document_id: &str,
@@ -619,6 +622,7 @@ impl<'a> IngestService<'a> {
         })
     }
 
+    /// Apply a metadata or content update to an existing document, re-embedding when content changed.
     pub async fn update_document(
         &self,
         command: UpdateDocumentCommand,

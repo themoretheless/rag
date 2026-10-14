@@ -25,6 +25,7 @@ pub struct Response {
 }
 
 impl Response {
+    /// True for 2xx HTTP status codes.
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
     }
@@ -236,6 +237,7 @@ pub struct ReqwestGatewayClient {
 }
 
 impl ReqwestGatewayClient {
+    /// Build a client with the given timeout, using `RAG_HTTP_TOKEN` as bearer token when set.
     pub fn new(timeout: Duration) -> Result<Self, String> {
         let token = match std::env::var("RAG_HTTP_TOKEN") {
             Ok(token) => Some(token),

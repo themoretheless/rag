@@ -164,11 +164,13 @@ impl Store {
         std::fs::metadata(&self.path).ok().map(|m| m.len())
     }
 
+    /// Size in bytes of the DuckDB WAL file, or 0 when absent.
     pub fn wal_file_size_bytes(&self) -> u64 {
         let wal = PathBuf::from(format!("{}.wal", self.path.display()));
         std::fs::metadata(wal).map(|m| m.len()).unwrap_or(0)
     }
 
+    /// Run a DuckDB `CHECKPOINT`.
     pub fn checkpoint(&self) -> Result<()> {
         self.lock()?.execute_batch("CHECKPOINT")?;
         Ok(())

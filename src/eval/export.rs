@@ -54,6 +54,7 @@ pub struct ReplayReport {
 }
 
 impl EvalExportBundle {
+    /// Bundle eval prompts, runs, traces and feedback stamped with version and export time.
     pub fn new(
         prompts: Vec<Value>,
         runs: Vec<Value>,

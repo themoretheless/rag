@@ -43,6 +43,7 @@ pub struct LibraryItem {
 }
 
 impl LibraryItem {
+    /// Human label for the item's wing/room scope, or `Unscoped`.
     pub fn scope_label(&self) -> String {
         match (self.wing.as_deref(), self.room.as_deref()) {
             (Some(wing), Some(room)) if !wing.is_empty() && !room.is_empty() => {
@@ -54,6 +55,7 @@ impl LibraryItem {
         }
     }
 
+    /// True when the item is a wiki-layer document or has a `wiki://` uri.
     pub fn is_wiki(&self) -> bool {
         rag_mcp_core::Layer::Wiki.is(&self.layer) || self.uri.starts_with("wiki://")
     }
@@ -89,6 +91,7 @@ pub struct LibraryRequest {
 }
 
 impl LibraryRequest {
+    /// Reset all filters and the page cursor, keeping the project.
     pub fn clear_filters(&mut self) {
         self.q.clear();
         self.room.clear();
@@ -129,6 +132,7 @@ struct LibraryPageMeta {
     total: u64,
 }
 
+/// Fetch the project home overview for one project from the gateway.
 pub fn fetch_project_home_http(base: &str, project: &str) -> Result<ProjectHome, String> {
     let client = ReqwestGatewayClient::new(Duration::from_secs(20))?;
     fetch_project_home_with_client(&client, base, project)
@@ -155,6 +159,7 @@ fn fetch_project_home_with_client(
     })
 }
 
+/// Fetch one page of the document library from the gateway.
 pub fn fetch_library_http(base: &str, request: &LibraryRequest) -> Result<LibraryPage, String> {
     let client = ReqwestGatewayClient::new(Duration::from_secs(30))?;
     fetch_library_with_client(&client, base, request)

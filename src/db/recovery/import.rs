@@ -9,6 +9,7 @@ impl Store {
         portable_store_preflight_locked(&conn)
     }
 
+    /// Back up the database to `path`, optionally as a dry run or overwriting.
     pub fn backup_database(
         &self,
         path: &Path,
@@ -141,6 +142,7 @@ impl Store {
         })
     }
 
+    /// Export all documents and related rows as a portable recovery bundle.
     pub fn recovery_bundle(&self) -> Result<RecoveryBundle> {
         let conn = self.lock()?;
         portable_store_preflight_locked(&conn)?;
@@ -245,6 +247,7 @@ impl Store {
         Ok(bundle)
     }
 
+    /// Import a recovery bundle, resolving conflicts with `policy`.
     pub fn import_recovery_bundle(
         &self,
         bundle: &RecoveryBundle,

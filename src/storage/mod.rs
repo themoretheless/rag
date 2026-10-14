@@ -39,6 +39,7 @@ impl BackendKind {
         }
     }
 
+    /// Wire string for this backend.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::DuckDb => "duckdb",
@@ -63,6 +64,7 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
+    /// Wire string for this capability.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Documents => "documents",

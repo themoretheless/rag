@@ -364,6 +364,7 @@ pub struct WingCount {
 pub struct ProjectId(String);
 
 impl ProjectId {
+    /// Validate a project id: 1..=128 bytes after trimming, no control characters.
     pub fn parse(value: impl Into<String>) -> Result<Self, AppError> {
         let value = value.into();
         let trimmed = value.trim();
@@ -378,6 +379,7 @@ impl ProjectId {
         Ok(Self(trimmed.to_owned()))
     }
 
+    /// The project id string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -828,6 +830,7 @@ impl OpsLogEntry {
         }
     }
 
+    /// Set the entity id and kind.
     pub fn entity(mut self, id: Option<String>, kind: &str) -> Self {
         self.entity_id = id;
         self.entity_kind = Some(kind.to_string());
@@ -840,6 +843,7 @@ impl OpsLogEntry {
         self
     }
 
+    /// Set the agent name.
     pub fn agent(mut self, agent_name: Option<String>) -> Self {
         self.agent_name = agent_name;
         self
@@ -1066,6 +1070,7 @@ pub struct WakeUpSchemaSnippet {
 }
 
 impl WakeUpSchemaSnippet {
+    /// Snapshot a schema document for wake-up context.
     pub fn from_document(doc: &Document) -> Self {
         Self {
             document_id: doc.id.clone(),
@@ -1179,6 +1184,7 @@ macro_rules! finding_codes {
         }
 
         impl $name {
+            /// Wire code string.
             pub fn as_str(&self) -> &str {
                 match self {
                     $(Self::$variant => $wire,)+

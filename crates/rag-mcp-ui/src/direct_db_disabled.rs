@@ -9,6 +9,7 @@ use std::path::Path;
 const DISABLED: &str =
     "rag-mcp-ui was built without the `direct-db` feature; use --http with the gateway";
 
+/// Direct DB access is compiled out; always returns the disabled error.
 #[allow(unused_variables)]
 pub fn fetch_wiki_list_db(
     db_path: &Path,
@@ -17,6 +18,7 @@ pub fn fetch_wiki_list_db(
     Err(DISABLED.into())
 }
 
+/// Direct DB access is compiled out; always returns the disabled error.
 #[allow(unused_variables)]
 pub fn fetch_document_db(
     db_path: &Path,
@@ -26,6 +28,7 @@ pub fn fetch_document_db(
     Err(DISABLED.into())
 }
 
+/// Direct DB access is compiled out; always returns the disabled error.
 #[allow(unused_variables)]
 pub fn load_live_db(
     path: &Path,
@@ -37,11 +40,13 @@ pub fn load_live_db(
     Err(DISABLED.into())
 }
 
+/// Direct DB access is compiled out; always returns the disabled error.
 #[allow(unused_variables)]
 pub fn export_graph_snapshot(args: &ExportArgs) -> Result<ExportResult, String> {
     Err(DISABLED.into())
 }
 
+/// Direct DB access is compiled out; always returns the disabled error.
 #[allow(unused_variables)]
 pub fn expand_neighbors_store(
     db_path: &Path,
@@ -54,6 +59,7 @@ pub fn expand_neighbors_store(
     Err(DISABLED.into())
 }
 
+/// Direct DB access is compiled out; always returns the disabled backlinks error.
 #[allow(unused_variables)]
 pub fn fetch_backlinks_db(
     path: &Path,

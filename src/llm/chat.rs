@@ -233,26 +233,32 @@ impl ChatClient {
         })
     }
 
+    /// Configured model name.
     pub fn model(&self) -> &str {
         &self.model
     }
 
+    /// Configured API base URL.
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
+    /// Configured provider kind.
     pub fn provider(&self) -> LlmProviderKind {
         self.provider
     }
 
+    /// API dialect used for requests.
     pub fn dialect(&self) -> LlmApiDialect {
         self.dialect
     }
 
+    /// Request timeout in seconds.
     pub fn timeout_secs(&self) -> u64 {
         self.timeout_secs
     }
 
+    /// Max completion tokens per request.
     pub fn max_tokens(&self) -> u32 {
         self.max_tokens
     }

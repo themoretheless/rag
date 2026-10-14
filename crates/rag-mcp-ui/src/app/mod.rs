@@ -424,6 +424,7 @@ pub struct GraphApp {
 }
 
 impl GraphApp {
+    /// Build the app from CLI open args, installing the theme and clamping depth/node limits.
     pub fn new(cc: &eframe::CreationContext<'_>, open: OpenArgs) -> Self {
         theme::install(&cc.egui_ctx);
         let depth = open.depth.clamp(1, 3);

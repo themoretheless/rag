@@ -161,6 +161,7 @@ struct ReportEnvelope {
     report: Value,
 }
 
+/// Fetch the operations snapshot (status, health, jobs) from the gateway.
 pub fn fetch_operations_http(base: &str) -> Result<OperationsSnapshot, String> {
     let client = client(15)?;
     fetch_operations_with_client(&client, base)
@@ -190,6 +191,7 @@ fn fetch_operations_with_client(
     })
 }
 
+/// List background jobs from `GET /v1/jobs`.
 pub fn fetch_jobs_http(base: &str) -> Result<Vec<JobSnapshot>, String> {
     let client = client(15)?;
     fetch_jobs_with_client(&client, base)
@@ -202,6 +204,7 @@ fn fetch_jobs_with_client(
     get_json::<JobsEnvelope>(client, base, "v1/jobs").map(|envelope| envelope.items)
 }
 
+/// Start a source sync job via `POST /v1/jobs/sync`.
 pub fn start_sync_job_http(base: &str, request: &SyncJobRequest) -> Result<JobSnapshot, String> {
     let client = client(20)?;
     let body = serde_json::to_string(request)
@@ -210,6 +213,7 @@ pub fn start_sync_job_http(base: &str, request: &SyncJobRequest) -> Result<JobSn
         .map(|envelope| envelope.job)
 }
 
+/// Cancel a background job via `DELETE /v1/jobs/{id}`.
 pub fn cancel_job_http(base: &str, id: &str) -> Result<JobSnapshot, String> {
     let client = client(15)?;
     let path = format!("v1/jobs/{}", encode_segment(id));
@@ -217,6 +221,7 @@ pub fn cancel_job_http(base: &str, id: &str) -> Result<JobSnapshot, String> {
         .map(|envelope| envelope.job)
 }
 
+/// Run a database checkpoint via `POST /v1/operations/checkpoint`.
 pub fn checkpoint_http(base: &str) -> Result<MaintenanceResult, String> {
     let client = client(60)?;
     send_json::<ReportEnvelope>(
@@ -232,6 +237,7 @@ pub fn checkpoint_http(base: &str) -> Result<MaintenanceResult, String> {
     })
 }
 
+/// Create a database backup via `POST /v1/operations/backup`.
 pub fn backup_http(base: &str, request: &BackupRequest) -> Result<MaintenanceResult, String> {
     let client = client(BACKUP_TIMEOUT_SECS)?;
     let body =
