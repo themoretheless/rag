@@ -3,14 +3,15 @@
   import { api, loadPanels } from '@/api/client'
   import { go } from '@/lib/router.svelte'
   import { ui } from '@/lib/state/ui.svelte'
+  import type { AgentSummary, DoctorReport, ItemsResponse, KgStats, OpsLogItem, RuntimeInfo, StorageStatus, TaxonomySummary } from '@/api/types'
 
-  let status = $state<any>({})
-  let doctor = $state<any>({})
-  let runtime = $state<any>({})
-  let taxonomy = $state<any>({ wings: [] })
-  let operations = $state<any[]>([])
-  let agents = $state<any[]>([])
-  let kg = $state<any>({})
+  let status = $state<StorageStatus>({})
+  let doctor = $state<DoctorReport>({})
+  let runtime = $state<RuntimeInfo>({})
+  let taxonomy = $state<TaxonomySummary>({ wings: [] })
+  let operations = $state<OpsLogItem[]>([])
+  let agents = $state<AgentSummary[]>([])
+  let kg = $state<KgStats>({})
   let busy = $state(false)
   let error = $state('')
   let backupOpen = $state(false)
@@ -21,13 +22,13 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['status', async () => { status = await api.get<any>('/v1/status') }],
-      ['doctor', async () => { doctor = await api.get<any>('/v1/doctor') }],
-      ['runtime', async () => { runtime = (await api.get<any>('/v1/runtime')).runtime ?? {} }],
-      ['taxonomy', async () => { taxonomy = (await api.get<any>('/v1/taxonomy')).taxonomy ?? taxonomy }],
-      ['ops_log', async () => { operations = (await api.get<any>('/v1/ops-log?limit=8')).items ?? [] }],
-      ['agents', async () => { agents = (await api.get<any>('/v1/agents')).items ?? [] }],
-      ['KG', async () => { kg = (await api.get<any>('/v1/kg/stats')).stats ?? {} }],
+      ['status', async () => { status = (await api.get<StorageStatus>('/v1/status')) ?? {} }],
+      ['doctor', async () => { doctor = (await api.get<DoctorReport>('/v1/doctor')) ?? {} }],
+      ['runtime', async () => { runtime = (await api.get<{ runtime?: RuntimeInfo }>('/v1/runtime'))?.runtime ?? {} }],
+      ['taxonomy', async () => { taxonomy = (await api.get<{ taxonomy?: TaxonomySummary }>('/v1/taxonomy'))?.taxonomy ?? taxonomy }],
+      ['ops_log', async () => { operations = (await api.get<ItemsResponse<OpsLogItem>>('/v1/ops-log?limit=8'))?.items ?? [] }],
+      ['agents', async () => { agents = (await api.get<ItemsResponse<AgentSummary>>('/v1/agents'))?.items ?? [] }],
+      ['KG', async () => { kg = (await api.get<{ stats?: KgStats }>('/v1/kg/stats'))?.stats ?? {} }],
     ])
     error = failures.length ? `Не обновлены панели: ${failures.join(', ')}` : ''
     busy = false
@@ -72,7 +73,7 @@
   const wikiIndexState = $derived(
     wikiIndexPercent === null
       ? 'проверка…'
-      : status.index_coverage >= 1
+      : (status.index_coverage ?? 0) >= 1
         ? 'готово'
         : typeof status.index_entry_count === 'number' && typeof status.wiki_count === 'number' && status.wiki_count > status.index_entry_count
           ? `${status.wiki_count - status.index_entry_count} без индекса`
@@ -104,7 +105,7 @@
 
   <section class="kpis">
     <article><span>Документы</span><strong>{count(status.document_count)}</strong><small>raw {count(status.raw_count)} · wiki {count(status.wiki_count)}</small></article>
-    <article><span>Чанки</span><strong>{count(status.chunk_count)}</strong><small>≈{status.document_count ? (status.chunk_count / status.document_count).toFixed(1) : '—'} / док · {status.embed_model ?? '—'} · {status.embed_dims ?? '—'}d</small></article>
+    <article><span>Чанки</span><strong>{count(status.chunk_count)}</strong><small>≈{status.document_count ? (Number(status.chunk_count) / status.document_count).toFixed(1) : '—'} / док · {status.embed_model ?? '—'} · {status.embed_dims ?? '—'}d</small></article>
     <article><span>Граф</span><strong>{count(status.node_count)} / {count(status.edge_count)}</strong><small>узлы / рёбра</small></article>
     <article><span>Индекс вики</span><strong>{wikiIndexPercent == null ? '—' : `${wikiIndexPercent}%`}</strong><div class="progress" class:unknown={wikiIndexPercent == null}><i style={`width:${wikiIndexPercent ?? 0}%`}></i></div><small>{count(status.index_entry_count)} из {count(status.wiki_count)} страниц</small></article>
     <article class="debt"><span>Долг компиляции</span><strong>{count(status.uncompiled_raw_count)}</strong><small>raw-документов без покрытия вики</small></article>

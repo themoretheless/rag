@@ -11,6 +11,8 @@
   type DocumentPage = { items?: Row[]; page?: { total?: number; next_cursor?: string | null } }
   type EmbeddingStatus = { match?: boolean; live?: { provider?: string; model?: string; dims?: number }; manifest?: { provider?: string; model?: string; dims?: number } }
   type Taxonomy = { unscoped_count?: number; total_documents?: number }
+  type ProjectHome = { source_roots?: { canonical_root: string; file_count: number }[] }
+  type SyncJobResponse = { id?: string; job?: { id?: string } }
 
   let projects = $state<Project[]>([])
   let rows = $state<Row[]>([])
@@ -33,7 +35,7 @@
   let loadingMore = $state(false)
   let syncPath = $state('')
   let syncBusy = $state(false)
-  let projectHome = $state<any>(null)
+  let projectHome = $state<ProjectHome | null>(null)
   let embeddingStatus = $state<EmbeddingStatus | null>(null)
   let taxonomy = $state<Taxonomy>({})
   let backlinks = $state<{ id: string; label: string }[]>([])
@@ -207,11 +209,11 @@
     detailError = ''
     try {
       const [response, backlinkResponse] = await Promise.all([
-        api.post<any>('/v1/multi-get', { document_ids: [row.id], include_chunks: true, chunk_limit: 80 }),
+        api.post<{ items?: DocumentDetail[] }>('/v1/multi-get', { document_ids: [row.id], include_chunks: true, chunk_limit: 80 }),
         api.backlinks(row.id).catch(() => null),
       ])
       if (requestId === detailRequestId && selected?.id === row.id && (generation == null || generation === refreshGeneration)) {
-        detail = response.items?.[0] ?? null
+        detail = response?.items?.[0] ?? null
         backlinks = backlinkResponse?.backlinks ?? []
       }
     } catch (cause) {
@@ -230,9 +232,14 @@
     room = nextRoom
     projectHome = null
     if (nextProject) {
-      void api.get<any>(`/v1/project-home?project=${encodeURIComponent(nextProject)}`).then((response) => {
-        if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response.project ?? null
-      }).catch(() => {})
+      void api.get<{ project?: ProjectHome }>(`/v1/project-home?project=${encodeURIComponent(nextProject)}`).then((response) => {
+        if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response?.project ?? null
+      }).catch((cause) => {
+        if (requestId !== projectHomeRequestId) return
+        const message = cause instanceof Error ? cause.message : String(cause)
+        console.warn('project-home load failed', cause)
+        panelWarning = `Не удалось загрузить корни проекта: ${message}`
+      })
     }
     void loadDocuments()
   }
@@ -241,8 +248,8 @@
     if (!syncPath.trim()) return
     syncBusy = true
     try {
-      const response = await api.post<any>('/v1/jobs/sync', { path: syncPath.trim(), wing: project || undefined, room: room || undefined })
-      ui.toast(`Sync поставлен в очередь · ${response.id ?? response.job?.id ?? ''}`, 'ok')
+      const response = await api.post<SyncJobResponse>('/v1/jobs/sync', { path: syncPath.trim(), wing: project || undefined, room: room || undefined })
+      ui.toast(`Sync поставлен в очередь · ${response?.id ?? response?.job?.id ?? ''}`, 'ok')
     } catch (cause) {
       ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
     } finally {
