@@ -2618,17 +2618,20 @@ fn list_by_content_hash_returns_every_match_oldest_first() {
     crate::testkit::SeedDoc::new("other", "Other", "different")
         .hashed()
         .insert(&store);
-    crate::testkit::SeedDoc::new("unhashed", "Unhashed", "same body").insert(&store);
+    // The store hashes content on insert, so an unhashed seed still matches.
+    crate::testkit::SeedDoc::new("unhashed", "Unhashed", "same body")
+        .created_at(t0 + chrono::Duration::minutes(10))
+        .insert(&store);
 
     let hash = content_hash("same body");
     let ids = |docs: Vec<Document>| docs.into_iter().map(|d| d.id).collect::<Vec<_>>();
     assert_eq!(
         ids(store.list_by_content_hash(&hash).unwrap()),
-        vec!["first", "second"]
+        vec!["first", "second", "unhashed"]
     );
     assert_eq!(
         ids(store.find_all_by_content_hash(&hash).unwrap()),
-        vec!["first", "second"]
+        vec!["first", "second", "unhashed"]
     );
     assert!(store
         .list_by_content_hash(&content_hash("absent"))
