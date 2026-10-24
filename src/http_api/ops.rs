@@ -20,6 +20,11 @@ use crate::mcp::RagServer;
 use crate::telemetry;
 use crate::util::resolve_allowlisted_output_file;
 
+/// Recent calls returned when `limit` is absent.
+const DEFAULT_CALLS_LIMIT: usize = 50;
+/// Largest recent-calls page a client may request.
+const MAX_CALLS_LIMIT: usize = 500;
+
 const CAPABILITY_FEATURES: &[&str] = &[
     "status",
     "doctor",
@@ -70,7 +75,7 @@ const CAPABILITY_FEATURES: &[&str] = &[
     "database_sync_transport",
 ];
 
-const PRODUCT_ROUTES: &[(&str, &str)] = &[
+pub(super) const PRODUCT_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health"),
     ("GET", "/live"),
     ("GET", "/ready"),
@@ -177,20 +182,34 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/operations/backup", post(backup))
 }
 
-fn server(st: &HttpState) -> RagServer {
-    RagServer::new((*st.store).clone(), st.embedder.clone(), st.config.clone())
+#[derive(Deserialize)]
+struct StatusQuery {
+    /// Counts only, for pollers; see `DiagnosticsService::status_summary`.
+    #[serde(default, deserialize_with = "super::query_flag")]
+    summary: bool,
 }
-async fn status(State(st): State<HttpState>) -> impl IntoResponse {
-    match DiagnosticsService::new(&st.store, &st.config).status() {
-        Ok(value) => api_ok(value),
-        Err(error) => api_err(error),
-    }
+
+async fn status(
+    State(st): State<HttpState>,
+    Query(query): Query<StatusQuery>,
+) -> impl IntoResponse {
+    crate::util::blocking_section(|| {
+        let service = DiagnosticsService::new(&st.store, &st.config);
+        let result = if query.summary {
+            service.status_summary().map(api_ok)
+        } else {
+            service.status().map(api_ok)
+        };
+        result.unwrap_or_else(api_err)
+    })
 }
 async fn doctor(State(st): State<HttpState>) -> impl IntoResponse {
-    match DiagnosticsService::new(&st.store, &st.config).doctor() {
-        Ok(value) => api_ok(value),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match DiagnosticsService::new(&st.store, &st.config).doctor() {
+            Ok(value) => api_ok(value),
+            Err(error) => api_err(error),
+        }
+    })
 }
 async fn version() -> impl IntoResponse {
     api_ok(
@@ -198,10 +217,10 @@ async fn version() -> impl IntoResponse {
     )
 }
 async fn projects(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.list_projects() {
+    crate::util::blocking_section(|| match st.store.list_projects() {
         Ok(items) => api_ok(json!({"ok":true, "items":items})),
         Err(error) => api_err(error),
-    }
+    })
 }
 #[derive(Deserialize)]
 struct ProjectHomeQuery {
@@ -212,17 +231,17 @@ async fn project_home(
     State(st): State<HttpState>,
     Query(query): Query<ProjectHomeQuery>,
 ) -> impl IntoResponse {
-    match st.store.project_home(&query.project) {
+    crate::util::blocking_section(|| match st.store.project_home(&query.project) {
         Ok(value) => api_ok(json!({"ok": true, "project": value})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 async fn checkpoint(State(st): State<HttpState>) -> impl IntoResponse {
-    match st.store.vacuum_store() {
+    crate::util::blocking_section(|| match st.store.vacuum_store() {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]
@@ -261,7 +280,7 @@ const fn default_true() -> bool {
 async fn capabilities(State(st): State<HttpState>) -> impl IntoResponse {
     api_ok(json!({
         "api_version":"v1", "mcp_http":st.mcp_http, "tool_surface":st.config.tool_surface.as_str(),
-        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { server(&st).tool_count() },
+        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { RagServer::registered_tool_count() },
         "features":CAPABILITY_FEATURES,
         "deprecated_tools":[],
         "auth":st.auth
@@ -274,6 +293,130 @@ async fn route_inventory(State(st): State<HttpState>) -> impl IntoResponse {
         .map(|(method, path)| json!({"method":method, "path":path}))
         .collect::<Vec<_>>();
     api_ok(json!({"openapi":"3.1-style", "routes":routes}))
+}
+
+/// Process / startup / autosync / auto-backup snapshot (`pid`, uptime, phases).
+async fn runtime() -> impl IntoResponse {
+    api_ok(json!({"ok": true, "runtime": crate::ops::runtime_snapshot()}))
+}
+
+#[derive(Deserialize)]
+struct CallsQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    tool: Option<String>,
+}
+
+/// Recent MCP / HTTP calls from the in-memory ring buffer plus latency and share summary.
+async fn calls(Query(q): Query<CallsQuery>) -> impl IntoResponse {
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_CALLS_LIMIT)
+        .clamp(1, MAX_CALLS_LIMIT);
+    let agent = q.agent.filter(|v| !v.trim().is_empty());
+    let tool = q.tool.filter(|v| !v.trim().is_empty());
+    let items = telemetry::recent(limit, agent.as_deref(), tool.as_deref());
+    api_ok(json!({
+        "ok": true,
+        "summary": telemetry::summary(),
+        "count": items.len(),
+        "items": items,
+    }))
+}
+
+/// One console row per agent: live call activity merged with durable ops_log / diary footprint.
+#[derive(Debug, Default, Serialize)]
+struct AgentRow {
+    agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport: Option<String>,
+    online: bool,
+    calls_today: usize,
+    calls_total: usize,
+    call_errors: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_call_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_tool: Option<String>,
+    p95_ms: f64,
+    ops_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_op_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_op: Option<String>,
+    diary_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_diary_at: Option<DateTime<Utc>>,
+}
+
+const AGENT_SCAN_ROWS: usize = 500;
+
+async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
+    let mut rows: BTreeMap<String, AgentRow> = BTreeMap::new();
+    fn row<'a>(rows: &'a mut BTreeMap<String, AgentRow>, name: &str) -> &'a mut AgentRow {
+        let key = name.trim().to_ascii_lowercase();
+        rows.entry(key).or_insert_with(|| AgentRow {
+            agent: name.trim().to_string(),
+            ..Default::default()
+        })
+    }
+    for activity in telemetry::agent_activity() {
+        let entry = row(&mut rows, &activity.agent);
+        entry.transport = Some(activity.transport);
+        entry.online = activity.online;
+        entry.calls_today = activity.calls_today;
+        entry.calls_total = activity.calls_total;
+        entry.call_errors = activity.errors;
+        entry.last_call_at = Some(activity.last_call_at);
+        entry.last_tool = Some(activity.last_tool);
+        entry.p95_ms = activity.p95_ms;
+    }
+    let ops = match crate::util::blocking_section(|| st.store.list_recent_ops(AGENT_SCAN_ROWS)) {
+        Ok(value) => value,
+        Err(error) => return api_err(error),
+    };
+    for op in ops {
+        let Some(name) = op.agent_name.as_deref().filter(|n| !n.trim().is_empty()) else {
+            continue;
+        };
+        let entry = row(&mut rows, name);
+        entry.ops_count += 1;
+        if entry.last_op_at.is_none_or(|ts| op.ts > ts) {
+            entry.last_op_at = Some(op.ts);
+            entry.last_op = Some(op.prefix.clone().unwrap_or_else(|| op.op.clone()));
+        }
+    }
+    // Counts and timestamps only: read diary rows without their bodies.
+    let diary =
+        match crate::util::blocking_section(|| st.store.list_diary_activity(None, AGENT_SCAN_ROWS))
+        {
+            Ok(value) => value,
+            Err(error) => return api_err(error),
+        };
+    for entry in diary {
+        let agent = row(&mut rows, &entry.agent_name);
+        agent.diary_count += 1;
+        if agent.last_diary_at.is_none_or(|ts| entry.created_at > ts) {
+            agent.last_diary_at = Some(entry.created_at);
+        }
+    }
+    let mut items: Vec<AgentRow> = rows.into_values().collect();
+    items.sort_by(|a, b| {
+        b.online
+            .cmp(&a.online)
+            .then(b.last_call_at.cmp(&a.last_call_at))
+            .then(b.last_op_at.cmp(&a.last_op_at))
+            .then(a.agent.cmp(&b.agent))
+    });
+    api_ok(json!({
+        "ok": true,
+        "online_window_secs": telemetry::ONLINE_WINDOW_SECS,
+        "count": items.len(),
+        "items": items,
+    }))
 }
 
 #[cfg(test)]
@@ -289,7 +432,7 @@ mod tests {
     use crate::embeddings::MockEmbedder;
 
     fn state(mcp_http: bool) -> HttpState {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("ops-http.duckdb"),
             embedding_dims: 16,
@@ -497,122 +640,4 @@ mod tests {
             json!({"tokens_required":true,"roles_configured":["RAG_HTTP_READ_TOKEN"]})
         );
     }
-}
-
-/// Process / startup / autosync / auto-backup snapshot (`pid`, uptime, phases).
-async fn runtime() -> impl IntoResponse {
-    api_ok(json!({"ok": true, "runtime": crate::ops::runtime_snapshot()}))
-}
-
-#[derive(Deserialize)]
-struct CallsQuery {
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    agent: Option<String>,
-    #[serde(default)]
-    tool: Option<String>,
-}
-
-/// Recent MCP / HTTP calls from the in-memory ring buffer plus latency and share summary.
-async fn calls(Query(q): Query<CallsQuery>) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
-    let agent = q.agent.filter(|v| !v.trim().is_empty());
-    let tool = q.tool.filter(|v| !v.trim().is_empty());
-    let items = telemetry::recent(limit, agent.as_deref(), tool.as_deref());
-    api_ok(json!({
-        "ok": true,
-        "summary": telemetry::summary(),
-        "count": items.len(),
-        "items": items,
-    }))
-}
-
-/// One console row per agent: live call activity merged with durable ops_log / diary footprint.
-#[derive(Debug, Default, Serialize)]
-struct AgentRow {
-    agent: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    transport: Option<String>,
-    online: bool,
-    calls_today: usize,
-    calls_total: usize,
-    call_errors: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_call_at: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_tool: Option<String>,
-    p95_ms: f64,
-    ops_count: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_op_at: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_op: Option<String>,
-    diary_count: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_diary_at: Option<DateTime<Utc>>,
-}
-
-const AGENT_SCAN_ROWS: usize = 500;
-
-async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
-    let mut rows: BTreeMap<String, AgentRow> = BTreeMap::new();
-    fn row<'a>(rows: &'a mut BTreeMap<String, AgentRow>, name: &str) -> &'a mut AgentRow {
-        let key = name.trim().to_ascii_lowercase();
-        rows.entry(key).or_insert_with(|| AgentRow {
-            agent: name.trim().to_string(),
-            ..Default::default()
-        })
-    }
-    for activity in telemetry::agent_activity() {
-        let entry = row(&mut rows, &activity.agent);
-        entry.transport = Some(activity.transport);
-        entry.online = activity.online;
-        entry.calls_today = activity.calls_today;
-        entry.calls_total = activity.calls_total;
-        entry.call_errors = activity.errors;
-        entry.last_call_at = Some(activity.last_call_at);
-        entry.last_tool = Some(activity.last_tool);
-        entry.p95_ms = activity.p95_ms;
-    }
-    let ops = match st.store.list_recent_ops(AGENT_SCAN_ROWS) {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
-    for op in ops {
-        let Some(name) = op.agent_name.as_deref().filter(|n| !n.trim().is_empty()) else {
-            continue;
-        };
-        let entry = row(&mut rows, name);
-        entry.ops_count += 1;
-        if entry.last_op_at.is_none_or(|ts| op.ts > ts) {
-            entry.last_op_at = Some(op.ts);
-            entry.last_op = Some(op.prefix.clone().unwrap_or_else(|| op.op.clone()));
-        }
-    }
-    let diary = match st.store.list_diary_entries(None, AGENT_SCAN_ROWS) {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
-    for entry in diary {
-        let agent = row(&mut rows, &entry.agent_name);
-        agent.diary_count += 1;
-        if agent.last_diary_at.is_none_or(|ts| entry.created_at > ts) {
-            agent.last_diary_at = Some(entry.created_at);
-        }
-    }
-    let mut items: Vec<AgentRow> = rows.into_values().collect();
-    items.sort_by(|a, b| {
-        b.online
-            .cmp(&a.online)
-            .then(b.last_call_at.cmp(&a.last_call_at))
-            .then(b.last_op_at.cmp(&a.last_op_at))
-            .then(a.agent.cmp(&b.agent))
-    });
-    api_ok(json!({
-        "ok": true,
-        "online_window_secs": telemetry::ONLINE_WINDOW_SECS,
-        "count": items.len(),
-        "items": items,
-    }))
 }

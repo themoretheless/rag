@@ -1,6 +1,6 @@
 import { api } from '@/api/client'
 import type { HealthResponse } from '@/api/types'
-import { formatMessage, type Locale, type MessageKey } from '@/lib/i18n'
+import { formatMessage, setActiveLocale, type Locale, type MessageKey } from '@/lib/i18n'
 
 export type Theme = 'dark' | 'light' | 'system'
 
@@ -54,10 +54,12 @@ class UiStore {
   hydrateLocale() {
     const saved = localStorage.getItem(LOCALE_KEY) as Locale | null
     if (saved === 'en' || saved === 'ru') this.locale = saved
+    setActiveLocale(this.locale)
   }
 
   setLocale(l: Locale) {
     this.locale = l
+    setActiveLocale(l)
     localStorage.setItem(LOCALE_KEY, l)
   }
 

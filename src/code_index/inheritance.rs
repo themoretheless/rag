@@ -304,7 +304,7 @@ fn mro<'a>(
             return None;
         }
         // Rust has trait defaults, not class inheritance or C3 ordering between traits.
-        if spec.relation == "implements" && parents.len() > 0 {
+        if spec.relation == "implements" && !parents.is_empty() {
             return None;
         }
         parents.push(matches[0]);

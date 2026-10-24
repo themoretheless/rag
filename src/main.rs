@@ -11,10 +11,9 @@ use rag_mcp::http_api;
 use rag_mcp::mcp::RagServer;
 use rmcp::{transport::stdio, ServiceExt};
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
-    init_tracing();
+    rag_mcp::bootstrap::init_tracing("info");
     // Worker pool size is configurable (`RAG_WORKER_THREADS`); the default is
     // one worker per logical CPU. Set it lower to leave headroom for the
     // desktop when heavy embed/reindex bursts run.
@@ -48,24 +47,24 @@ async fn async_main() -> anyhow::Result<()> {
     let config = Config::from_env().context("failed to load config from environment")?;
     if let Some(bind) = config.http_bind.as_deref() {
         if let Some(address) = http_api::parse_bind(bind)? {
-            http_api::validate_security(address).context("HTTP security configuration")?;
+            http_api::validate_security(address, &config).context("HTTP security configuration")?;
         }
     }
+    config.apply_process_limits();
     rag_mcp::ops::configure_runtime(config.tool_surface.as_str(), config.http_bind.clone());
     rag_mcp::ops::set_startup_phase("validating_paths");
-    rag_mcp::ops::validate_runtime_paths(&config.db_path, &config.ingest_roots)
-        .context("runtime path validation failed")?;
+    rag_mcp::ops::validate_runtime_paths(&config).context("runtime path validation failed")?;
     rag_mcp::ops::set_startup_phase("opening_store");
-    let store = rag_mcp::storage::open_configured(&config.db_path)
+    let store = rag_mcp::storage::open_configured(&config)
         .context("failed to open configured storage backend")?;
 
-    if env_truthy_default("RAG_CHECKPOINT_ON_START", true) {
+    if config.checkpoint_on_start {
         rag_mcp::ops::set_startup_phase("checkpoint");
         let phase = Instant::now();
         store.checkpoint().context(
             "startup DuckDB CHECKPOINT failed; run db_repair offline if this is an ART/index error",
         )?;
-        rag_mcp::ops::set_startup_timing("checkpoint", phase.elapsed());
+        rag_mcp::ops::set_startup_timing("checkpoint", phase.elapsed(), config.startup_warn_ms);
     }
 
     // FTS / BM25 (or TF fallback) before serving tools so lex/hybrid is ready.
@@ -74,7 +73,7 @@ async fn async_main() -> anyhow::Result<()> {
     let fts_state = store
         .ensure_fts(&config.fts_stemmer)
         .context("failed to ensure FTS index")?;
-    rag_mcp::ops::set_startup_timing("fts", phase.elapsed());
+    rag_mcp::ops::set_startup_timing("fts", phase.elapsed(), config.startup_warn_ms);
 
     // Corpus embedding fingerprint (does not overwrite an existing row).
     rag_mcp::ops::set_startup_phase("embedding_manifest");
@@ -90,7 +89,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
         Err(error) => return Err(error).context("failed to record embedding_manifest"),
     };
-    rag_mcp::ops::set_startup_timing("manifest", phase.elapsed());
+    rag_mcp::ops::set_startup_timing("manifest", phase.elapsed(), config.startup_warn_ms);
     // Persist migration, FTS DDL, and manifest writes before accepting traffic.
     // Otherwise a SIGTERM/restart can leave FTS catalog DDL in WAL that DuckDB
     // cannot replay on the next open because extension objects depend on it.
@@ -132,7 +131,7 @@ async fn async_main() -> anyhow::Result<()> {
 
     rag_mcp::ops::set_startup_phase("embedding_provider");
     let embedder = build_provider(&config).context("failed to build embedding provider")?;
-    rag_mcp::ops::set_startup_timing("total", startup_started.elapsed());
+    rag_mcp::ops::set_startup_timing("total", startup_started.elapsed(), config.startup_warn_ms);
     rag_mcp::ops::mark_ready();
     tracing::info!(startup = %serde_json::to_string(&rag_mcp::ops::runtime_snapshot()).unwrap_or_default(), "startup summary");
     let result = run_serve_modes(store.clone(), embedder, config).await;
@@ -155,14 +154,17 @@ async fn run_serve_modes(
     embedder: Arc<dyn EmbeddingProvider>,
     config: Config,
 ) -> anyhow::Result<()> {
-    rag_mcp::ops::spawn_auto_backup(store.clone());
+    rag_mcp::ops::spawn_auto_backup(store.clone(), &config);
+    // One context for every transport: config parsed once, one embedder, one
+    // chat client, one manifest check.
     rag_mcp::diagnostics::spawn_fts_maintenance(store.clone(), config.clone());
-    let server = RagServer::new(store.clone(), embedder.clone(), config.clone());
-    server.clone().spawn_auto_sync();
-    server.spawn_file_watcher();
-    let http_only = env_flag("RAG_HTTP_ONLY");
+    let context = rag_mcp::context::AppContext::new(store, embedder, config);
+    let config = context.config.clone();
+    RagServer::from_context(context.clone()).spawn_auto_sync();
+    RagServer::from_context(context.clone()).spawn_file_watcher();
+    let http_only = config.http_only;
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
-    let mcp_http_enabled = env_truthy_default("RAG_MCP_HTTP", true);
+    let mcp_http_enabled = config.mcp_http;
 
     let http_bind = config.http_bind.clone();
     let shutdown = CancellationToken::new();
@@ -170,20 +172,18 @@ async fn run_serve_modes(
     if let Some(ref bind_str) = http_bind {
         let addr = http_api::parse_bind(bind_str)
             .context("RAG_HTTP_BIND")?
-            .expect("non-empty bind validated");
+            .context("RAG_HTTP_BIND is empty")?;
 
         let mcp_svc = if mcp_http_enabled {
-            Some(http_api::mcp_http_service(
-                store.clone(),
-                embedder.clone(),
-                config.clone(),
+            Some(http_api::mcp_http_service_for(
+                context.clone(),
                 shutdown.clone(),
             ))
         } else {
             None
         };
 
-        let store_http = Arc::new(store.clone());
+        let http_context = context.clone();
         if http_only {
             tracing::info!(
                 %addr,
@@ -192,7 +192,7 @@ async fn run_serve_modes(
                 addr
             );
             let running =
-                http_api::serve_with_shutdown(addr, store_http, mcp_svc, shutdown.clone());
+                http_api::serve_with_shutdown(addr, http_context, mcp_svc, shutdown.clone());
             tokio::pin!(running);
             tokio::select! {
                 result=&mut running=>{ result.context("HTTP API server error")?; }
@@ -212,7 +212,7 @@ async fn run_serve_modes(
         let http_shutdown = shutdown.clone();
         http_task = Some(tokio::spawn(async move {
             let result =
-                http_api::serve_with_shutdown(addr, store_http, mcp_svc, http_shutdown).await;
+                http_api::serve_with_shutdown(addr, http_context, mcp_svc, http_shutdown).await;
             if let Err(error) = &result {
                 tracing::error!(error=%error,"HTTP API exited");
             }
@@ -223,7 +223,7 @@ async fn run_serve_modes(
     }
 
     let has_http = http_bind.is_some();
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(context);
 
     tracing::info!("starting rag-mcp on stdio");
     let stdio_run = async {
@@ -285,29 +285,4 @@ async fn shutdown_signal() -> std::io::Result<()> {
     }
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_target(true)
-        .init();
-}
-
-fn env_flag(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| rag_mcp::config::parse_env_truthy(&v))
-        .unwrap_or(false)
-}
-
-/// Bool env with default when unset (`false`/`0`/`off` force off).
-fn env_truthy_default(name: &str, default: bool) -> bool {
-    match std::env::var(name) {
-        Ok(v) => rag_mcp::config::parse_env_truthy(&v).unwrap_or(default),
-        Err(_) => default,
-    }
 }

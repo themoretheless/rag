@@ -1,6 +1,6 @@
 //! HTTP JSON envelope helpers: success + map [`AppError`] to status/body.
 
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
@@ -11,7 +11,7 @@ use crate::error::AppError;
 pub(super) fn status_for(err: &AppError) -> StatusCode {
     match err {
         AppError::NotFound(_) => StatusCode::NOT_FOUND,
-        AppError::Config(_) => StatusCode::BAD_REQUEST,
+        AppError::Config(_) | AppError::Invalid(_) => StatusCode::BAD_REQUEST,
         AppError::Conflict(_) => StatusCode::CONFLICT,
         AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         AppError::Busy(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -24,31 +24,70 @@ pub(super) fn api_ok(value: impl serde::Serialize) -> Response {
     Json(value).into_response()
 }
 
-/// Error JSON envelope: `{"ok": false, "error": "..."}` with status from [`status_for`].
+/// Error JSON envelope: `{"ok": false, "code": "...", "error": "..."}` with
+/// status from [`status_for`] and the code from [`AppError::code`].
 pub(super) fn api_err(err: AppError) -> Response {
     let status = status_for(&err);
-    let code = match &err {
-        AppError::NotFound(_) => "NOT_FOUND",
-        AppError::Config(_) => "INVALID_REQUEST",
-        AppError::Conflict(_) => "CONFLICT",
-        AppError::Forbidden(_) => "FORBIDDEN",
-        AppError::Busy(_) => "STORE_BUSY",
-        AppError::Db(_) => "DATABASE_ERROR",
-        AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
-        AppError::Fts(_) => "FTS_ERROR",
-        AppError::Io(_) => "IO_ERROR",
-        _ => "INTERNAL_ERROR",
-    };
     let body = Json(json!({
         "ok": false,
-        "code": code,
+        "code": err.code(),
         "error": err.to_string(),
     }));
     let mut response = (status, body).into_response();
-    if matches!(err, AppError::Busy(_)) {
+    if err.is_retryable() {
         response
             .headers_mut()
-            .insert("retry-after", "1".parse().unwrap());
+            .insert("retry-after", HeaderValue::from_static("1"));
     }
     response
+}
+
+/// Insert an `ETag` header when `etag` is a valid header value; otherwise log
+/// and leave the response without one (never panics on runtime values).
+pub(super) fn insert_etag(response: &mut Response, etag: &str) -> bool {
+    match HeaderValue::from_str(etag) {
+        Ok(value) => {
+            response
+                .headers_mut()
+                .insert(axum::http::header::ETAG, value);
+            true
+        }
+        Err(err) => {
+            tracing::warn!(etag, error = %err, "skipping invalid ETag header value");
+            false
+        }
+    }
+}
+
+/// Error for an internal `/v1/search` call that returned a non-success status,
+/// carrying the status and (bounded) response body.
+pub(super) async fn search_response_error(response: axum::response::Response) -> AppError {
+    let status = response.status();
+    let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
+        Ok(bytes) => bytes,
+        Err(e) => return AppError::invalid(e.to_string()),
+    };
+    AppError::invalid(format!(
+        "search failed ({status}): {}",
+        String::from_utf8_lossy(&bytes)
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_etag_sets_valid_value() {
+        let mut response = StatusCode::OK.into_response();
+        assert!(insert_etag(&mut response, "W/\"3\""));
+        assert_eq!(response.headers()[axum::http::header::ETAG], "W/\"3\"");
+    }
+
+    #[test]
+    fn insert_etag_skips_invalid_value_without_panicking() {
+        let mut response = StatusCode::OK.into_response();
+        assert!(!insert_etag(&mut response, "bad\netag"));
+        assert!(response.headers().get(axum::http::header::ETAG).is_none());
+    }
 }

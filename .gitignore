@@ -23,3 +23,8 @@
 /web/
 
 .DS_Store
+
+# Local process marker and Python smoke-test bytecode.
+/rag.pid
+__pycache__/
+*.py[cod]

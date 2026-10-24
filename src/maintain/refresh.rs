@@ -3,21 +3,20 @@
 //! Whitelist-only actions (no SQL/shell invention). Logs every apply to `ops_log`.
 //! See `docs/LOCAL_LLM_MAINTENANCE.md` §3.5.
 
+use crate::db::store::embedding_manifest_from_config;
+use crate::models::OpsLogEntry;
+use chrono::Utc;
 use std::sync::Arc;
 
-use chrono::Utc;
 use serde::Serialize;
-use uuid::Uuid;
 
 use crate::config::Config;
-use crate::db::store::{
-    embedding_manifest_from_config, embedding_manifest_matches_config, embedding_migration_manifest,
-};
-use crate::db::{self, Store};
+use crate::db::store::{embedding_manifest_matches_config, embedding_migration_manifest};
+use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::graph::rebuild_document_graph;
-use crate::models::{EmbeddingManifest, OpsLogEntry};
+use crate::models::EmbeddingManifest;
 
 /// Allowed `maintain_refresh` action names (safety whitelist).
 pub const REFRESH_ACTION_WHITELIST: &[&str] = &[
@@ -63,7 +62,7 @@ impl Default for MaintainRefreshFlags {
             rebuild_wiki_index: true,
             reembed_all: false,
             dry_run: false,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
         }
     }
 }
@@ -238,7 +237,9 @@ pub(crate) fn reembed_all_incomplete(report: &ReembedAllReport) -> bool {
 
 pub(crate) fn reembed_all_incomplete_message(report: &ReembedAllReport) -> String {
     format!(
-        "{REEMBED_ALL_INCOMPLETE_CODE}: processed={} succeeded={} failed={} skipped={}; chunks_considered={} attached_chunks={} orphan_chunks={} chunks_reembedded={} errors={}; full-corpus completion was not reached",
+        "{REEMBED_ALL_INCOMPLETE_CODE}: processed={} succeeded={} failed={} skipped={}; \
+        chunks_considered={} attached_chunks={} orphan_chunks={} chunks_reembedded={} errors={}; \
+        full-corpus completion was not reached",
         report.documents_processed,
         report.documents_succeeded,
         report.documents_failed,
@@ -277,20 +278,13 @@ pub struct MaintainRefreshReport {
 ///
 /// Uses `stemmer` when provided; otherwise the last meta stemmer / `"porter"`.
 pub fn reindex_fts(store: &Store, stemmer: Option<&str>) -> Result<ReindexFtsReport> {
-    let conn = store.lock()?;
-    let state = match stemmer {
-        Some(s) if !s.trim().is_empty() => db::reindex_with_stemmer(&conn, s)?,
-        _ => db::reindex(&conn)?,
-    };
+    let state = store.reindex_fts(stemmer)?;
     Ok(ReindexFtsReport {
         backend: state.backend.as_str().to_string(),
         stemmer: state.stemmer,
         dry_run: false,
     })
 }
-
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_refresh_finalize_fts__";
 
 /// Run an explicit FTS rebuild on Tokio's blocking pool.
 ///
@@ -302,9 +296,7 @@ pub(crate) async fn reindex_fts_nonblocking(
     operation: &'static str,
 ) -> Result<ReindexFtsReport> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected refresh FTS finalization failure"));
-    }
+    crate::db::fts::test_fault::check("refresh", stemmer)?;
 
     let store = store.clone();
     let stemmer = stemmer.to_string();
@@ -323,9 +315,7 @@ pub(crate) async fn ensure_fts_nonblocking(
     operation: &'static str,
 ) -> Result<()> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected refresh FTS finalization failure"));
-    }
+    crate::db::fts::test_fault::check("refresh", stemmer)?;
 
     let store = store.clone();
     let stemmer = stemmer.to_string();
@@ -453,18 +443,7 @@ struct ReembedChunkInventory {
 /// than pruned: maintenance repair owns deletion policy, while re-embedding
 /// must fail closed instead of silently certifying vectors it never replaced.
 fn reembed_chunk_inventory(store: &Store) -> Result<ReembedChunkInventory> {
-    let conn = store.lock()?;
-    let (total, attached): (i64, i64) = conn.query_row(
-        r#"
-        SELECT
-          COUNT(*)::BIGINT,
-          COUNT(d.id)::BIGINT
-        FROM chunks c
-        LEFT JOIN documents d ON d.id = c.document_id
-        "#,
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let (total, attached) = crate::db::analytics::chunk_attachment_counts(store)?;
     let total = usize::try_from(total).map_err(|_| {
         AppError::db(format!(
             "invalid chunk count during reembed preflight: {total}"
@@ -487,19 +466,12 @@ fn reembed_chunk_inventory(store: &Store) -> Result<ReembedChunkInventory> {
     })
 }
 
-/// Re-embed chunks for pending documents (bounded by `max_docs`) with the live embedder.
+/// Re-embed chunks for every document (capped by `max_docs`) with the live embedder.
 ///
-/// Two modes:
-/// - **Refresh** (live config already matches the corpus manifest): re-embed
-///   up to `max_docs` documents; no identity migration, manifest unchanged.
-/// - **Migration** (identity changed): a resumable, batched pass tracked in
-///   the `reembed_progress` table keyed by the target identity fingerprint.
-///   Each successfully re-embedded document is marked done, so a crash or a
-///   capped batch can be resumed by simply calling again; already-migrated
-///   documents are skipped. The first successful vector mutation publishes an
-///   incompatible `migration-incomplete` marker (fail-closed for both the old
-///   and the target config), and the target manifest is published only when
-///   zero pending documents remain — the manifest flip stays atomic.
+/// A different embedding identity may be migrated in resumable batches. Vector
+/// reads remain closed between batches. The target manifest is published only after an
+/// uncapped, zero-failure pass (or for an empty corpus), so a partial migration
+/// remains visibly incompatible with vector search.
 pub async fn reembed_all(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -525,7 +497,10 @@ pub async fn reembed_all(
     let inventory_before = reembed_chunk_inventory(store)?;
     if inventory_before.orphan > 0 {
         let error = format!(
-            "{REEMBED_ALL_INCOMPLETE_CODE}: refuse reembed_all because {} orphan chunk(s) are not attached to any document; no vectors were changed and no target embedding manifest was published. Run doctor and repair corpus integrity explicitly before retrying",
+            "{REEMBED_ALL_INCOMPLETE_CODE}: refuse reembed_all because {} orphan chunk(s) are \
+            not attached to any document; no vectors were changed and no target embedding \
+            manifest was published. Run doctor and repair corpus integrity explicitly before \
+            retrying",
             inventory_before.orphan
         );
         return Ok(ReembedAllReport {
@@ -552,6 +527,7 @@ pub async fn reembed_all(
     let migration_marker = target_fingerprint
         .as_ref()
         .map(|_| embedding_migration_manifest(config));
+    let mut migration_started = false;
     let target_count = pending_before.min(max_docs);
 
     let mut documents = Vec::with_capacity(target_count.min(REPORT_DOCUMENT_CAP));
@@ -575,60 +551,86 @@ pub async fn reembed_all(
         };
         if page.is_empty() {
             errors.push(format!(
-                "{REEMBED_ALL_INCOMPLETE_CODE}: document inventory changed during reembed_all (expected to process {target_count}, reached {documents_processed})"
+                "{REEMBED_ALL_INCOMPLETE_CODE}: document inventory changed during reembed_all \
+                (expected to process {target_count}, reached {documents_processed})"
             ));
             break;
         }
-        for document_id in page {
-            after_id = Some(document_id.clone());
-            documents_processed += 1;
-            let result = match reembed_one_document(
-                store,
-                embedder,
-                &document_id,
-                config.embedding_dims,
-                migration_marker.as_ref(),
-            )
-            .await
-            {
-                Ok(chunk_count) => {
-                    if let Some(fingerprint) = target_fingerprint.as_ref() {
-                        // Progress marking is a separate tiny write; a crash
-                        // between the atomic vector swap and this mark only
-                        // re-embeds this one document on resume (idempotent).
-                        store.mark_reembed_done(fingerprint, &document_id, chunk_count)?;
+        after_id = page.last().cloned();
+        // Load the page, then embed its chunks in cross-document groups: a
+        // corpus of small documents costs ~chunks/REEMBED_GROUP_CHUNKS
+        // provider calls instead of one call per document.
+        let loaded = crate::util::blocking_section(|| {
+            page.into_iter()
+                .map(|document_id| {
+                    let pending = load_reembed_document(store, &document_id);
+                    (document_id, pending)
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut embedded = embed_reembed_groups(embedder, &loaded).await.into_iter();
+        crate::util::blocking_section(|| {
+            for (document_id, pending) in loaded {
+                documents_processed += 1;
+                let manifest = migration_marker.as_ref().filter(|_| !migration_started);
+                let outcome = match pending {
+                    Err(e) => Err(e),
+                    Ok(pending) => {
+                        let vectors = embedded.next().unwrap_or_else(|| {
+                            Err(AppError::embeddings("missing embeddings for document"))
+                        });
+                        vectors.and_then(|vectors| {
+                            apply_reembedding(
+                                store,
+                                &pending,
+                                &vectors,
+                                config.embedding_dims,
+                                manifest,
+                            )
+                        })
                     }
-                    documents_succeeded += 1;
-                    chunks_reembedded += chunk_count;
-                    ReembedDocResult {
-                        document_id,
-                        chunk_count,
-                        error: None,
+                };
+                let result = match outcome {
+                    Ok(chunk_count) => {
+                        if let Some(fingerprint) = target_fingerprint.as_ref() {
+                            store.mark_reembed_done(fingerprint, &document_id, chunk_count)?;
+                        }
+                        if chunk_count > 0 && manifest.is_some() {
+                            migration_started = true;
+                        }
+                        documents_succeeded += 1;
+                        chunks_reembedded += chunk_count;
+                        ReembedDocResult {
+                            document_id,
+                            chunk_count,
+                            error: None,
+                        }
                     }
+                    Err(e) => {
+                        documents_failed += 1;
+                        tracing::warn!(
+                            document_id = %document_id,
+                            error = %e,
+                            "reembed document failed (best effort continue)"
+                        );
+                        ReembedDocResult {
+                            document_id,
+                            chunk_count: 0,
+                            error: Some(e.to_string()),
+                        }
+                    }
+                };
+                if documents.len() < REPORT_DOCUMENT_CAP {
+                    documents.push(result);
+                } else {
+                    document_results_truncated += 1;
                 }
-                Err(e) => {
-                    documents_failed += 1;
-                    tracing::warn!(
-                        document_id = %document_id,
-                        error = %e,
-                        "reembed document failed (best effort continue)"
-                    );
-                    ReembedDocResult {
-                        document_id,
-                        chunk_count: 0,
-                        error: Some(e.to_string()),
-                    }
-                }
-            };
-            if documents.len() < REPORT_DOCUMENT_CAP {
-                documents.push(result);
-            } else {
-                document_results_truncated += 1;
             }
-        }
+            Ok::<_, AppError>(())
+        })?;
     }
 
-    let inventory_after = reembed_chunk_inventory(store)?;
+    let inventory_after = crate::util::blocking_section(|| reembed_chunk_inventory(store))?;
     if inventory_after.orphan > 0 {
         errors.push(format!(
             "{REEMBED_ALL_INCOMPLETE_CODE}: {} orphan chunk(s) were observed after document re-embedding",
@@ -727,31 +729,96 @@ pub async fn reembed_all(
     })
 }
 
-async fn reembed_one_document(
-    store: &Store,
+/// Chunks per provider call when re-embedding across documents.
+const REEMBED_GROUP_CHUNKS: usize = 128;
+
+/// A document's revision and current chunks, read before re-embedding.
+struct PendingReembed {
+    document_id: String,
+    revision: i64,
+    chunks: Vec<crate::models::Chunk>,
+}
+
+fn load_reembed_document(store: &Store, document_id: &str) -> Result<PendingReembed> {
+    // The revision is the CAS token; the document body is never needed.
+    let revision = store
+        .document_revision(document_id)?
+        .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
+    let chunks = store.list_chunks_for_document(document_id)?;
+    Ok(PendingReembed {
+        document_id: document_id.to_string(),
+        revision,
+        chunks,
+    })
+}
+
+/// Embeddings for every successfully loaded document, in order.
+///
+/// Documents are grouped up to [`REEMBED_GROUP_CHUNKS`] chunks per call. When a
+/// group call fails, its documents are retried one by one so a single bad
+/// document still fails alone, as before batching.
+async fn embed_reembed_groups(
     embedder: &Arc<dyn EmbeddingProvider>,
-    document_id: &str,
+    loaded: &[(String, Result<PendingReembed>)],
+) -> Vec<Result<Vec<Vec<f32>>>> {
+    let pending: Vec<&PendingReembed> = loaded
+        .iter()
+        .filter_map(|(_, pending)| pending.as_ref().ok())
+        .collect();
+    let mut out = Vec::with_capacity(pending.len());
+    let mut start = 0;
+    while start < pending.len() {
+        let mut end = start;
+        let mut chunk_total = 0;
+        while end < pending.len()
+            && (end == start || chunk_total + pending[end].chunks.len() <= REEMBED_GROUP_CHUNKS)
+        {
+            chunk_total += pending[end].chunks.len();
+            end += 1;
+        }
+        let group = &pending[start..end];
+        let texts: Vec<String> = group
+            .iter()
+            .flat_map(|doc| doc.chunks.iter().map(|c| c.content.clone()))
+            .collect();
+        let grouped = if texts.is_empty() {
+            Ok(Vec::new())
+        } else {
+            crate::embeddings::embed_exact(embedder.as_ref(), &texts).await
+        };
+        match grouped {
+            Ok(vectors) => {
+                let mut vectors = vectors.into_iter();
+                for doc in group {
+                    out.push(Ok(vectors.by_ref().take(doc.chunks.len()).collect()));
+                }
+            }
+            Err(_) if group.len() > 1 => {
+                for doc in group {
+                    let texts: Vec<String> = doc.chunks.iter().map(|c| c.content.clone()).collect();
+                    out.push(if texts.is_empty() {
+                        Ok(Vec::new())
+                    } else {
+                        crate::embeddings::embed_exact(embedder.as_ref(), &texts).await
+                    });
+                }
+            }
+            Err(e) => out.push(Err(e)),
+        }
+        start = end;
+    }
+    out
+}
+
+fn apply_reembedding(
+    store: &Store,
+    pending: &PendingReembed,
+    embeddings: &[Vec<f32>],
     expected_dims: usize,
     manifest: Option<&EmbeddingManifest>,
 ) -> Result<usize> {
-    let doc = store
-        .get_document(document_id)?
-        .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-
-    let chunks = store.list_chunks_for_document(&doc.id)?;
-    let chunk_count = chunks.len();
-    if chunks.is_empty() {
+    if pending.chunks.is_empty() {
         return Ok(0);
-    }
-
-    let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-    let embeddings = embedder.embed(&texts).await?;
-    if embeddings.len() != chunks.len() {
-        return Err(AppError::embeddings(format!(
-            "embedder returned {} vectors for {} chunks",
-            embeddings.len(),
-            chunks.len()
-        )));
     }
     if let Some((index, embedding)) = embeddings
         .iter()
@@ -763,90 +830,14 @@ async fn reembed_one_document(
             embedding.len()
         )));
     }
-    store.update_chunk_embeddings_atomic(&doc.id, doc.revision, &chunks, &embeddings, manifest)?;
-    Ok(chunk_count)
-}
-
-/// Run whitelist refresh actions according to `flags`.
-///
-/// Always appends an `ops_log` row on apply (not on pure dry_run of zero work).
-/// Dry-run still logs with `op=maintain_refresh_dry_run` so the timeline shows intent.
-/// Migration progress for one embedding-identity target.
-#[derive(Debug, Clone, Serialize)]
-pub struct ReembedMigrationStatus {
-    pub target_fingerprint: String,
-    pub documents_done: usize,
-    pub documents_pending: usize,
-    pub documents_total: usize,
-    /// Batch bound applied per `reembed_all` run (`RAG_REEMBED_BATCH`).
-    pub batch_size: usize,
-}
-
-/// Read-only status for embedding identity / migration (`reembed_status`).
-#[derive(Debug, Clone, Serialize)]
-pub struct ReembedStatus {
-    /// True when the persisted manifest matches live config: vector search open.
-    pub identity_match: bool,
-    pub vector_search_open: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub manifest: Option<EmbeddingManifest>,
-    /// Identity implied by live config (what a completed migration publishes).
-    pub configured: EmbeddingManifest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub migration: Option<ReembedMigrationStatus>,
-    pub hint: String,
-}
-
-/// Report embedding identity status without mutating the store.
-///
-/// When the corpus manifest does not match live config, migration progress is
-/// read from `reembed_progress` so callers know how many documents still carry
-/// the old identity and can repeat `reembed_all` (batched, resumable).
-pub fn reembed_status(store: &Store, config: &Config) -> Result<ReembedStatus> {
-    let configured = embedding_manifest_from_config(config);
-    let manifest = store.get_embedding_manifest()?;
-    let identity_match = manifest
-        .as_ref()
-        .is_some_and(|m| embedding_manifest_matches_config(m, config));
-    if identity_match {
-        return Ok(ReembedStatus {
-            identity_match: true,
-            vector_search_open: true,
-            manifest,
-            configured,
-            migration: None,
-            hint: "embedding identity matches live config; vector search is open".into(),
-        });
-    }
-    let documents_total = store.count_documents()?;
-    let target_fingerprint = configured
-        .content_fingerprint
-        .clone()
-        .unwrap_or_else(|| "unknown".into());
-    let documents_done = store.count_reembed_done(&target_fingerprint)?;
-    let documents_pending = store.count_reembed_pending(&target_fingerprint)?;
-    let hint = if documents_pending == 0 {
-        "no pending documents; run reembed_all once to publish the target manifest".to_string()
-    } else {
-        format!(
-            "vector search is closed until migration completes; run reembed_all (maintain_refresh reembed_all=true) repeatedly — {documents_pending} document(s) pending, batches of {}",
-            config.reembed_batch
-        )
-    };
-    Ok(ReembedStatus {
-        identity_match: false,
-        vector_search_open: false,
+    store.update_chunk_embeddings_atomic(
+        &pending.document_id,
+        pending.revision,
+        &pending.chunks,
+        embeddings,
         manifest,
-        configured,
-        migration: Some(ReembedMigrationStatus {
-            target_fingerprint,
-            documents_done,
-            documents_pending,
-            documents_total,
-            batch_size: config.reembed_batch,
-        }),
-        hint,
-    })
+    )?;
+    Ok(pending.chunks.len())
 }
 
 /// Run whitelist refresh actions according to `flags`.
@@ -895,10 +886,7 @@ pub async fn maintain_refresh(
 
     if flags.reindex_fts {
         if dry_run {
-            let status = {
-                let conn = store.lock()?;
-                db::fts_status(&conn)?
-            };
+            let status = crate::util::blocking_section(|| store.fts_status())?;
             report.reindex_fts = Some(ReindexFtsReport {
                 backend: status
                     .as_ref()
@@ -921,7 +909,9 @@ pub async fn maintain_refresh(
 
     if flags.rebuild_graph {
         if dry_run {
-            let candidate_count = store.count_graph_rebuild_candidates(flags.graph_dirty_only)?;
+            let candidate_count = crate::util::blocking_section(|| {
+                store.count_graph_rebuild_candidates(flags.graph_dirty_only)
+            })?;
             let processed = candidate_count.min(flags.max_docs);
             report.rebuild_graph = Some(GraphRebuildReport {
                 dirty_only: flags.graph_dirty_only,
@@ -937,23 +927,24 @@ pub async fn maintain_refresh(
                 documents: Vec::new(),
             });
         } else {
-            report.rebuild_graph = Some(rebuild_graph_for_all_or_dirty(
-                store,
-                flags.graph_dirty_only,
-                flags.max_docs,
-            )?);
+            report.rebuild_graph = Some(crate::util::blocking_section(|| {
+                rebuild_graph_for_all_or_dirty(store, flags.graph_dirty_only, flags.max_docs)
+            })?);
         }
     }
 
     if flags.rebuild_wiki_index {
         if dry_run {
-            let n = store.count_documents_by_layer("wiki")?;
+            let n = crate::util::blocking_section(|| {
+                store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())
+            })?;
             report.rebuild_wiki_index = Some(WikiIndexRebuildReport {
                 entry_count: n,
                 dry_run: true,
             });
         } else {
-            report.rebuild_wiki_index = Some(rebuild_wiki_index(store)?);
+            report.rebuild_wiki_index =
+                Some(crate::util::blocking_section(|| rebuild_wiki_index(store))?);
         }
     }
 
@@ -974,7 +965,9 @@ pub async fn maintain_refresh(
             let errors = (inventory.orphan > 0)
                 .then(|| {
                     format!(
-                        "{REEMBED_ALL_INCOMPLETE_CODE}: {} orphan chunk(s) are outside document-driven re-embedding; apply would refuse without changing vectors",
+                        "{REEMBED_ALL_INCOMPLETE_CODE}: {} orphan chunk(s) are outside \
+                        document-driven re-embedding; apply would refuse without changing \
+                        vectors",
                         inventory.orphan
                     )
                 })
@@ -1048,29 +1041,20 @@ pub async fn maintain_refresh(
     }
 
     // ops_log every run (including dry_run) for auditability.
-    let op = if dry_run {
-        "maintain_refresh_dry_run"
-    } else {
-        "maintain_refresh"
-    };
     let message = if dry_run {
         format!("dry_run maintain_refresh actions=[{}]", actions.join(","))
     } else {
         format!("maintain_refresh actions=[{}]", actions.join(","))
     };
-    let payload = serde_json::to_string(&report).unwrap_or_else(|_| "{}".into());
-    let written = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: op.into(),
-        prefix: Some("MAINT".into()),
+    let written = super::audit::record_run(
+        store,
+        "maintain_refresh",
+        dry_run,
+        "corpus",
         message,
-        entity_id: None,
-        entity_kind: Some("corpus".into()),
-        payload_json: payload,
-        agent_name: None,
-    })?;
+        None,
+        &report,
+    )?;
     report.ops_log_id = Some(written.id);
     report.ops_log_seq = Some(written.seq);
 
@@ -1078,30 +1062,97 @@ pub async fn maintain_refresh(
 }
 
 fn fts_finalization_failure(store: &Store, operation: &str, error: &AppError) -> String {
-    let marker_error = store
-        .mark_fts_dirty_for_retry()
-        .err()
-        .map(|marker_error| marker_error.to_string());
-    let mut message = format!(
-        "FTS_FINALIZATION_FAILED: {operation} committed corpus work, but final FTS refresh failed: {error}; retryable=true"
-    );
-    if let Some(marker_error) = marker_error {
-        message.push_str(&format!(
-            "; additionally failed to mark FTS dirty for retry: {marker_error}"
-        ));
+    crate::util::blocking_section(|| {
+        store.record_fts_finalization_failure(operation, true, &error.to_string())
+    })
+    .message
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReembedMigrationStatus {
+    pub target_fingerprint: String,
+    pub documents_done: usize,
+    pub documents_pending: usize,
+    pub documents_total: usize,
+    /// Batch bound applied per `reembed_all` run (`RAG_REEMBED_BATCH`).
+    pub batch_size: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReembedStatus {
+    /// True when the persisted manifest matches live config: vector search open.
+    pub identity_match: bool,
+    pub vector_search_open: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<EmbeddingManifest>,
+    /// Identity implied by live config (what a completed migration publishes).
+    pub configured: EmbeddingManifest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<ReembedMigrationStatus>,
+    pub hint: String,
+}
+
+pub fn reembed_status(store: &Store, config: &Config) -> Result<ReembedStatus> {
+    let configured = embedding_manifest_from_config(config);
+    let manifest = store.get_embedding_manifest()?;
+    let identity_match = manifest
+        .as_ref()
+        .is_some_and(|m| embedding_manifest_matches_config(m, config));
+    if identity_match {
+        return Ok(ReembedStatus {
+            identity_match: true,
+            vector_search_open: true,
+            manifest,
+            configured,
+            migration: None,
+            hint: "embedding identity matches live config; vector search is open".into(),
+        });
     }
-    message
+    let documents_total = store.count_documents()?;
+    let target_fingerprint = configured
+        .content_fingerprint
+        .clone()
+        .unwrap_or_else(|| "unknown".into());
+    let documents_done = store.count_reembed_done(&target_fingerprint)?;
+    let documents_pending = store.count_reembed_pending(&target_fingerprint)?;
+    let hint = if documents_pending == 0 {
+        "no pending documents; run reembed_all once to publish the target manifest".to_string()
+    } else {
+        format!(
+            "vector search is closed until migration completes; run reembed_all (maintain_refresh reembed_all=true) repeatedly — {documents_pending} document(s) pending, batches of {}",
+            config.reembed_batch
+        )
+    };
+    Ok(ReembedStatus {
+        identity_match: false,
+        vector_search_open: false,
+        manifest,
+        configured,
+        migration: Some(ReembedMigrationStatus {
+            target_fingerprint,
+            documents_done,
+            documents_pending,
+            documents_total,
+            batch_size: config.reembed_batch,
+        }),
+        hint,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::embeddings::MockEmbedder;
-    use crate::models::{Chunk, Document, SearchMode};
-    use crate::wiki::{write_wiki_page, LAYER_WIKI};
+    use crate::models::{Chunk, SearchMode};
+    use crate::testkit::SeedDoc;
+    use crate::wiki::write_wiki_page;
     use async_trait::async_trait;
+    use chrono::Utc;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Seeded body the failing embedder refuses.
+    const FAILING_TEXT: &str = "second body";
 
     struct FailAfterFirstEmbedder {
         calls: AtomicUsize,
@@ -1123,89 +1174,41 @@ mod tests {
         }
     }
 
+    struct FailOnTextEmbedder {
+        calls: AtomicUsize,
+        dims: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for FailOnTextEmbedder {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            // Re-embedding groups documents into one call; failing on one
+            // document's text (not on the Nth call) keeps the failure per
+            // document whatever the grouping.
+            if texts.iter().any(|text| text.contains(FAILING_TEXT)) {
+                return Err(AppError::embeddings("injected provider failure"));
+            }
+            Ok(texts.iter().map(|_| vec![0.25; self.dims]).collect())
+        }
+
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+    }
+
     fn test_config(db_path: PathBuf, dims: usize) -> Config {
         Config {
             db_path,
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".to_string(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".to_string(),
             embedding_dims: dims,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            code_chunking: crate::config::CodeChunkingMode::Structural,
-            default_top_k: 5,
-            ingest_roots: Vec::new(),
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".to_string(),
-            default_search_mode: SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".to_string(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".to_string(),
-            llm_api_key: "ollama".to_string(),
             llm_enabled: false,
-            llm_timeout_secs: 120,
-            llm_max_tokens: 4096,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
-            rerank_provider: crate::rerank::RerankProviderKind::Off,
-            rerank_base_url: String::new(),
-            rerank_api_key: String::new(),
-            rerank_model: String::new(),
-            rerank_top_n: 50,
-            rerank_timeout_secs: 30,
-            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
-            query_rewrite_provider: None,
-            query_rewrite_model: None,
-            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            hyde_provider: None,
-            hyde_model: None,
-            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            ingest_url_allow: Vec::new(),
-            ingest_url_timeout_secs: 30,
-            ingest_url_max_bytes: 10 * 1024 * 1024,
-            reembed_batch: 100,
-            fts_stale_generation_threshold: 64,
-            fts_maint_interval_secs: 300,
+            ..Config::for_tests()
         }
     }
 
     fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str) {
-        let now = Utc::now();
-        store
-            .upsert_document(&Document {
-                id: id.into(),
-                uri: format!("text://{id}"),
-                title: title.into(),
-                content: content.into(),
-                metadata_json: "{}".into(),
-                created_at: now,
-                updated_at: now,
-                layer: layer.into(),
-                kind: if layer == LAYER_WIKI {
-                    "wiki".into()
-                } else {
-                    "document".into()
-                },
-                ..Default::default()
-            })
-            .unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: format!("{id}-c0"),
-                document_id: id.into(),
-                chunk_index: 0,
-                content: content.into(),
-                embedding: vec![0.1; 8],
-                char_start: 0,
-                char_end: content.len() as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+        SeedDoc::new(id, title, content).layer(layer).insert(store);
     }
 
     #[test]
@@ -1577,11 +1580,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reembed_all_capped_migration_runs_one_resumable_batch() {
+    async fn capped_same_dimension_identity_migration_remains_closed_until_resumed() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reembed-cap.duckdb");
         let store = Store::open(&path).unwrap();
-        let old_config = test_config(path.clone(), 8);
+        let old_config = test_config(path, 8);
         let mut target_config = old_config.clone();
         target_config.embedding_model = "next-model-same-dims".into();
         store
@@ -1589,43 +1592,53 @@ mod tests {
             .unwrap();
         seed_doc(&store, "d1", "A", "first body", "raw");
         seed_doc(&store, "d2", "B", "second body", "raw");
-
-        let failing = Arc::new(FailAfterFirstEmbedder {
-            calls: AtomicUsize::new(0),
-            dims: 8,
-        });
-        let embedder: Arc<dyn EmbeddingProvider> = failing.clone();
-
-        // A capped migration is no longer refused: it processes one batch.
-        let batch = reembed_all(&store, &embedder, &target_config, 1)
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        let first = reembed_all(&store, &embedder, &target_config, 1)
             .await
-            .expect("capped migration runs one resumable batch");
-        assert!(batch.resumable);
-        assert_eq!(batch.documents_processed, 1);
-        assert_eq!(batch.documents_succeeded, 1);
-        assert_eq!(batch.skipped_cap, 1);
-        assert_eq!(batch.pending_documents, 1);
-        assert!(reembed_all_incomplete(&batch));
-        assert_eq!(failing.calls.load(Ordering::Relaxed), 1);
-
-        // Fail-closed while partial: neither old nor target identity matches.
-        store
-            .require_embedding_manifest_match(&old_config)
-            .expect_err("old identity refused once mixed vectors exist");
+            .unwrap();
+        assert_eq!(first.documents_processed, 1);
+        assert_eq!(first.pending_documents, 1);
+        assert!(first.resumable);
+        assert!(store.require_embedding_manifest_match(&old_config).is_err());
+        assert!(store
+            .require_embedding_manifest_match(&target_config)
+            .is_err());
+        let resumed = reembed_all(&store, &embedder, &target_config, 1)
+            .await
+            .unwrap();
+        assert_eq!(resumed.documents_processed, 1);
+        assert_eq!(resumed.pending_documents, 0);
+        assert!(resumed.errors.is_empty());
         store
             .require_embedding_manifest_match(&target_config)
-            .expect_err("target identity refused until migration completes");
+            .unwrap();
+        assert!(store.require_embedding_manifest_match(&old_config).is_err());
+    }
 
-        // ops_log carries resumable progress for operators.
-        let ops = store.list_ops_log(10).unwrap();
-        let progress = ops
-            .iter()
-            .find(|entry| entry.op == "reembed_progress")
-            .expect("reembed progress entry");
-        let payload: serde_json::Value = serde_json::from_str(&progress.payload_json).unwrap();
-        assert_eq!(payload["documents_done"], 1);
-        assert_eq!(payload["documents_pending"], 1);
-        assert_eq!(payload["complete"], false);
+    #[tokio::test]
+    async fn reembed_all_groups_small_documents_into_one_provider_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reembed-grouped.duckdb");
+        let store = Store::open(&path).unwrap();
+        let config = test_config(path, 16);
+        for (id, body) in [
+            ("g1", "alpha body"),
+            ("g2", "beta body"),
+            ("g3", "gamma body"),
+        ] {
+            seed_doc(&store, id, id, body, "raw");
+        }
+        let counting = Arc::new(FailOnTextEmbedder {
+            calls: AtomicUsize::new(0),
+            dims: 16,
+        });
+        let embedder: Arc<dyn EmbeddingProvider> = counting.clone();
+
+        let report = reembed_all(&store, &embedder, &config, 3).await.unwrap();
+
+        assert_eq!(report.documents_succeeded, 3);
+        assert_eq!(report.documents_failed, 0);
+        assert_eq!(counting.calls.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
@@ -1641,7 +1654,7 @@ mod tests {
         seed_doc(&store, "d1", "A", "first body", "raw");
         seed_doc(&store, "d2", "B", "second body", "raw");
 
-        let failing = Arc::new(FailAfterFirstEmbedder {
+        let failing = Arc::new(FailOnTextEmbedder {
             calls: AtomicUsize::new(0),
             dims: 16,
         });
@@ -1652,7 +1665,8 @@ mod tests {
         assert_eq!(partial.documents_succeeded, 1);
         assert_eq!(partial.documents_failed, 1);
         assert_eq!(partial.skipped_cap, 0);
-        assert_eq!(failing.calls.load(Ordering::Relaxed), 2);
+        // One grouped call fails, then each document is retried alone.
+        assert_eq!(failing.calls.load(Ordering::Relaxed), 3);
 
         drop(store);
         let store = Store::open(&target_config.db_path).expect("reopen partial migration");
@@ -1726,7 +1740,7 @@ mod tests {
             .unwrap();
         seed_doc(&store, "d1", "A", "first body", "raw");
         seed_doc(&store, "d2", "B", "second body", "raw");
-        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailAfterFirstEmbedder {
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailOnTextEmbedder {
             calls: AtomicUsize::new(0),
             dims: 16,
         });
@@ -1775,7 +1789,7 @@ mod tests {
             "raw",
         );
         store.ensure_fts(&config.fts_stemmer).unwrap();
-        config.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+        config.fts_stemmer = crate::db::fts::test_fault::fail("refresh");
 
         let report = maintain_refresh(
             &store,
@@ -1814,6 +1828,11 @@ mod tests {
             .expect("terminal summary ops_log row");
         let payload: serde_json::Value = serde_json::from_str(&summary.payload_json).unwrap();
         assert_eq!(payload["errors"].as_array().unwrap().len(), 1);
+        assert!(store
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "fts_finalization_failed"));
     }
 
     #[tokio::test]
@@ -1830,13 +1849,15 @@ mod tests {
             &store,
             &embedder,
             &config,
-            "alpha-page",
-            "Alpha Page",
-            "Body with [[Other]]",
-            "wiki",
-            Some("notes"),
-            Some("summary line"),
-            None,
+            crate::wiki::WikiPageWrite {
+                slug: "alpha-page",
+                title: "Alpha Page",
+                content: "Body with [[Other]]",
+                kind: "wiki",
+                category: Some("notes"),
+                summary: Some("summary line"),
+                agent: None,
+            },
         )
         .await
         .unwrap();
@@ -1861,6 +1882,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.rebuild_wiki_index.unwrap().entry_count, 1);
+    }
+
+    #[tokio::test]
+    async fn reembed_all_capped_migration_runs_one_resumable_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reembed-cap.duckdb");
+        let store = Store::open(&path).unwrap();
+        let old_config = test_config(path.clone(), 8);
+        let mut target_config = old_config.clone();
+        target_config.embedding_model = "next-model-same-dims".into();
+        store
+            .write_embedding_manifest_from_config(&old_config)
+            .unwrap();
+        seed_doc(&store, "d1", "A", "first body", "raw");
+        seed_doc(&store, "d2", "B", "second body", "raw");
+
+        let failing = Arc::new(FailAfterFirstEmbedder {
+            calls: AtomicUsize::new(0),
+            dims: 8,
+        });
+        let embedder: Arc<dyn EmbeddingProvider> = failing.clone();
+
+        // A capped migration is no longer refused: it processes one batch.
+        let batch = reembed_all(&store, &embedder, &target_config, 1)
+            .await
+            .expect("capped migration runs one resumable batch");
+        assert!(batch.resumable);
+        assert_eq!(batch.documents_processed, 1);
+        assert_eq!(batch.documents_succeeded, 1);
+        assert_eq!(batch.skipped_cap, 1);
+        assert_eq!(batch.pending_documents, 1);
+        assert!(reembed_all_incomplete(&batch));
+        assert_eq!(failing.calls.load(Ordering::Relaxed), 1);
+
+        // Fail-closed while partial: neither old nor target identity matches.
+        store
+            .require_embedding_manifest_match(&old_config)
+            .expect_err("old identity refused once mixed vectors exist");
+        store
+            .require_embedding_manifest_match(&target_config)
+            .expect_err("target identity refused until migration completes");
+
+        // ops_log carries resumable progress for operators.
+        let ops = store.list_ops_log(10).unwrap();
+        let progress = ops
+            .iter()
+            .find(|entry| entry.op == "reembed_progress")
+            .expect("reembed progress entry");
+        let payload: serde_json::Value = serde_json::from_str(&progress.payload_json).unwrap();
+        assert_eq!(payload["documents_done"], 1);
+        assert_eq!(payload["documents_pending"], 1);
+        assert_eq!(payload["complete"], false);
     }
 
     #[tokio::test]

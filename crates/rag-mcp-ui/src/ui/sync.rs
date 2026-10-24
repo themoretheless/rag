@@ -5,6 +5,7 @@ use crate::operations::OperationsSnapshot;
 
 use super::theme;
 
+/// Draw the sync workspace; returns true when the user asked to refresh.
 pub fn draw_sync_workspace(
     ui: &mut egui::Ui,
     snapshot: Option<&OperationsSnapshot>,

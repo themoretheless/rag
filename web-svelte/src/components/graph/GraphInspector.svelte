@@ -1,17 +1,18 @@
 <script lang="ts">
   import { graph } from '@/lib/state/graph.svelte'
   import { api } from '@/api/client'
+  import type { DocumentBody } from '@/api/types'
   import { goWiki, navigate } from '@/lib/router.svelte'
 
   let { onexpand }: { onexpand?: (seedKey:string)=>void } = $props()
-  let detail = $state<any>(null)
+  let detail = $state<DocumentBody | null>(null)
   const node = $derived(graph.nodes.find(item => item.id === graph.selectedId) || null)
-  const wikiOpenable = $derived(Boolean(node?.document_id && (node?.layer === 'wiki' || node?.uri?.startsWith('wiki://') || /^wiki$/i.test(node?.kind ?? ''))))
+  const wikiOpenable = $derived(Boolean(node?.document_id && (node?.uri?.startsWith('wiki://') || /^wiki$/i.test(node?.kind ?? ''))))
   const degree = $derived(node ? graph.edges.filter(edge => edge.source_id===node.id || edge.target_id===node.id).length : 0)
   const relations = $derived.by(()=>{const map=new Map<string,number>();if(node)for(const edge of graph.edges){if(edge.source_id===node.id||edge.target_id===node.id)map.set(edge.rel_type,(map.get(edge.rel_type)||0)+1)}return [...map.entries()]})
-  const metadata = $derived.by(()=>{try{return JSON.parse(node?.metadata_json||'{}')}catch{return {}}})
+  const metadata = $derived.by((): { wing?: string; room?: string } => {try{return JSON.parse(node?.metadata_json||'{}') ?? {}}catch{return {}}})
   let requestId = 0
-  $effect(()=>{const current=++requestId;const id=node?.document_id;detail=null;if(!id)return;api.document({id}).then(value=>{if(current===requestId)detail=value}).catch(()=>{})})
+  $effect(()=>{const current=++requestId;const id=node?.document_id;detail=null;if(!id)return;api.document({id}).then(value=>{if(current===requestId)detail=value ?? null}).catch(()=>{})})
   function expand(){if(node)onexpand?.((node.document_id||node.label||node.id).trim())}
   function searchChunks(){if(node?.document_id)navigate(`/search?document_id=${encodeURIComponent(node.document_id)}&q=${encodeURIComponent(node.label)}`)}
   function openWiki(){if(wikiOpenable && node?.document_id)goWiki(node.document_id)}

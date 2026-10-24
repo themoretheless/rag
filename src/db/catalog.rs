@@ -4,13 +4,12 @@ use chrono::{DateTime, Utc};
 use duckdb::types::ToSql;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    source_manifest::SourceRootSummary,
-    store::{compiled_link_exists, Store},
-};
+use super::store::{compiled_link_exists, Store};
 use crate::error::{AppError, Result};
 use crate::models::DrawerListItem;
 use crate::util::parse_db_timestamp;
+
+pub use rag_mcp_core::ProjectHome;
 
 pub const DEFAULT_CATALOG_PAGE_SIZE: usize = 50;
 pub const MAX_CATALOG_PAGE_SIZE: usize = 200;
@@ -36,25 +35,6 @@ pub struct DocumentCatalogFilter {
 pub struct DocumentCatalogPage {
     pub items: Vec<DrawerListItem>,
     pub total: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectHome {
-    pub project_id: String,
-    pub documents: u64,
-    pub chunks: u64,
-    pub raw_documents: u64,
-    pub wiki_documents: u64,
-    pub diary_documents: u64,
-    pub archived_documents: u64,
-    pub rooms: u64,
-    pub source_files: u64,
-    pub graph_nodes: u64,
-    pub graph_edges: u64,
-    pub unresolved_links: u64,
-    pub source_roots: Vec<SourceRootSummary>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_updated_at: Option<DateTime<Utc>>,
 }
 
 impl Store {
@@ -90,26 +70,25 @@ impl Store {
             filter.offset
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query(dynamic_params(&binds).as_slice())?;
-        let mut items = Vec::new();
-        while let Some(row) = rows.next()? {
-            items.push(DrawerListItem {
-                id: row.get(0)?,
-                uri: row.get(1)?,
-                title: row.get(2)?,
-                wing: row.get(3)?,
-                room: row.get(4)?,
-                source_file: row.get(5)?,
-                layer: row.get(6)?,
-                kind: row.get(7)?,
-                content_hash: row.get(8)?,
-                pinned: row.get(9)?,
-                boost: row.get(10)?,
-                status: row.get(11)?,
-                created_at: timestamp(row.get(12)?)?,
-                updated_at: timestamp(row.get(13)?)?,
-            });
-        }
+        let items =
+            crate::db::rows::query_vec(&mut stmt, dynamic_params(&binds).as_slice(), |row| {
+                Ok(DrawerListItem {
+                    id: row.get(0)?,
+                    uri: row.get(1)?,
+                    title: row.get(2)?,
+                    wing: row.get(3)?,
+                    room: row.get(4)?,
+                    source_file: row.get(5)?,
+                    layer: row.get(6)?,
+                    kind: row.get(7)?,
+                    content_hash: row.get(8)?,
+                    pinned: row.get(9)?,
+                    boost: row.get(10)?,
+                    status: row.get(11)?,
+                    created_at: timestamp(row.get(12)?)?,
+                    updated_at: timestamp(row.get(13)?)?,
+                })
+            })?;
         Ok(DocumentCatalogPage {
             items,
             total: total.max(0) as u64,

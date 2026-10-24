@@ -15,7 +15,7 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::file_ingest::{extract_file, merge_metadata};
 use crate::models::{Chunk, Document, DocumentMetaUpdate, IngestResult, OpsLogEntry};
-use crate::util::{check_path_allowlist, content_hash};
+use crate::util::{check_path_allowlist, content_hash, non_blank};
 
 #[derive(Debug, Clone)]
 pub struct IngestCommand {
@@ -42,6 +42,7 @@ pub(crate) struct SourceManifestStamp {
 
 /// An ingest whose document identity and chunks are fixed, but whose vectors
 /// have not been requested yet.
+#[derive(Clone)]
 pub(crate) struct PreparedIngest {
     write: Box<PendingIngestWrite>,
     chunks: PreparedDocumentChunks,
@@ -59,6 +60,7 @@ pub(crate) struct EmbeddedIngest {
     chunks: Vec<Chunk>,
 }
 
+#[derive(Clone)]
 struct PendingIngestWrite {
     document: Document,
     expected_revision: Option<i64>,
@@ -66,6 +68,9 @@ struct PendingIngestWrite {
     content_hash: String,
     manifest: Option<SourceManifestStamp>,
 }
+
+/// Chunks per embedding call in [`IngestService::ingest_many`].
+const INGEST_MANY_BATCH_CHUNKS: usize = 64;
 
 enum IngestPreparation {
     Complete(IngestResult),
@@ -153,11 +158,13 @@ pub struct UpdateDocumentResult {
 
 pub struct IngestService<'a> {
     store: &'a Store,
+    embedder: &'a Arc<dyn EmbeddingProvider>,
     indexer: DocumentIndexer<'a>,
     config: &'a Config,
 }
 
 impl<'a> IngestService<'a> {
+    /// Bind the service to a store, embedder and config.
     pub fn new(
         store: &'a Store,
         embedder: &'a Arc<dyn EmbeddingProvider>,
@@ -165,13 +172,41 @@ impl<'a> IngestService<'a> {
     ) -> Self {
         Self {
             store,
+            embedder,
             indexer: DocumentIndexer::new(embedder.as_ref(), config),
             config,
         }
     }
 
+    /// Run synchronous work (file extraction, chunking, DuckDB reads and
+    /// commits) on the blocking pool with an owned service, so ingest never
+    /// pins an async worker. Only the embedding call stays on the executor.
+    async fn off_thread<T, F>(&self, operation: &'static str, work: F) -> Result<T, AppError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&IngestService<'_>) -> Result<T, AppError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        let embedder = self.embedder.clone();
+        let config = self.config.clone();
+        crate::util::run_blocking(operation, move || {
+            work(&IngestService::new(&store, &embedder, &config))
+        })
+        .await
+    }
+
     /// Read, extract, and ingest one allowlisted file as `layer=raw`, `kind=document`.
     pub async fn ingest_file(&self, command: IngestFileCommand) -> Result<IngestResult, AppError> {
+        let ingest = self
+            .off_thread("ingest_file extract", move |service| {
+                service.file_ingest_command(command)
+            })
+            .await?;
+        self.ingest(ingest).await
+    }
+
+    /// Extract an allowlisted file and build its ingest command (blocking I/O).
+    fn file_ingest_command(&self, command: IngestFileCommand) -> Result<IngestCommand, AppError> {
         let path = Path::new(&command.path);
         check_path_allowlist(path, &self.config.ingest_roots)?;
         let extracted = extract_file(path).map_err(|error| {
@@ -201,7 +236,7 @@ impl<'a> IngestService<'a> {
         let source_file = canonical
             .map(|p| p.display().to_string())
             .or_else(|| Some(command.path.clone()));
-        self.ingest(IngestCommand {
+        Ok(IngestCommand {
             text: extracted.text,
             title: command.title.or(default_title),
             uri: Some(uri),
@@ -209,11 +244,10 @@ impl<'a> IngestService<'a> {
             wing: command.wing,
             room: command.room,
             source_file,
-            layer: "raw".into(),
-            kind: "document".into(),
+            layer: crate::models::Layer::Raw.as_str().into(),
+            kind: crate::models::DocumentKind::Document.as_str().into(),
             immutable: false,
         })
-        .await
     }
 
     /// Fetch one allowlisted URL and ingest the extracted main content.
@@ -333,8 +367,14 @@ impl<'a> IngestService<'a> {
         })
     }
 
+    /// Ingest one document: prepare (dedupe, chunk), embed, then commit.
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
-        match self.prepare_ingest(command, None)? {
+        let preparation = self
+            .off_thread("ingest prepare", move |service| {
+                service.prepare_ingest(command, None)
+            })
+            .await?;
+        match preparation {
             IngestPreparation::Complete(result) => Ok(result),
             IngestPreparation::Pending(prepared) => {
                 let embedded = self
@@ -342,7 +382,124 @@ impl<'a> IngestService<'a> {
                     .await?
                     .pop()
                     .expect("one prepared ingest yields one embedded ingest");
-                self.commit_embedded(embedded)
+                self.off_thread("ingest commit", move |service| {
+                    service.commit_embedded(embedded)
+                })
+                .await
+            }
+        }
+    }
+
+    /// Ingest several documents, embedding up to [`INGEST_MANY_BATCH_CHUNKS`]
+    /// chunks per provider call; results keep `commands` order.
+    ///
+    /// Each document still commits at its own atomic/CAS boundary. When a
+    /// grouped embedding call fails, that group's documents are embedded one
+    /// by one, so a single bad document fails alone, as with [`Self::ingest`].
+    pub(crate) async fn ingest_many(
+        &self,
+        commands: Vec<IngestCommand>,
+    ) -> Vec<Result<IngestResult, AppError>> {
+        let mut results: Vec<Option<Result<IngestResult, AppError>>> =
+            (0..commands.len()).map(|_| None).collect();
+        let mut group: Vec<(usize, PreparedIngest)> = Vec::new();
+        let mut group_chunks = 0usize;
+        let preparations = self
+            .off_thread("ingest_many prepare", move |service| {
+                Ok(commands
+                    .into_iter()
+                    .map(|command| service.prepare_ingest(command, None))
+                    .collect::<Vec<_>>())
+            })
+            .await;
+        let preparations = match preparations {
+            Ok(preparations) => preparations,
+            Err(error) => {
+                let message = error.to_string();
+                return results
+                    .into_iter()
+                    .map(|_| Err(AppError::db(message.clone())))
+                    .collect();
+            }
+        };
+        for (index, preparation) in preparations.into_iter().enumerate() {
+            match preparation {
+                Ok(IngestPreparation::Complete(result)) => results[index] = Some(Ok(result)),
+                Ok(IngestPreparation::Pending(prepared)) => {
+                    let chunks = prepared.chunk_count();
+                    if !group.is_empty() && group_chunks + chunks > INGEST_MANY_BATCH_CHUNKS {
+                        self.embed_and_commit(std::mem::take(&mut group), &mut results)
+                            .await;
+                        group_chunks = 0;
+                    }
+                    group_chunks += chunks;
+                    group.push((index, prepared));
+                }
+                Err(error) => results[index] = Some(Err(error)),
+            }
+        }
+        self.embed_and_commit(group, &mut results).await;
+        results
+            .into_iter()
+            .map(|result| result.expect("every command yields a result"))
+            .collect()
+    }
+
+    async fn embed_and_commit(
+        &self,
+        group: Vec<(usize, PreparedIngest)>,
+        results: &mut [Option<Result<IngestResult, AppError>>],
+    ) {
+        if group.is_empty() {
+            return;
+        }
+        let (indexes, prepared): (Vec<usize>, Vec<PreparedIngest>) = group.into_iter().unzip();
+        // Keep a copy of each plan so a failed group can be retried per document.
+        let retry: Option<Vec<PreparedIngest>> = (prepared.len() > 1).then(|| prepared.clone());
+        let mut embedded: Vec<(usize, Result<EmbeddedIngest, AppError>)> = Vec::new();
+        match (self.embed_prepared_batch(prepared).await, retry) {
+            (Ok(vectors), _) => {
+                embedded.extend(indexes.into_iter().zip(vectors.into_iter().map(Ok)));
+            }
+            (Err(error), None) => embedded.push((indexes[0], Err(error))),
+            (Err(_), Some(retry)) => {
+                for (index, prepared) in indexes.into_iter().zip(retry) {
+                    let one = self
+                        .embed_prepared_batch(vec![prepared])
+                        .await
+                        .map(|mut one| {
+                            one.pop()
+                                .expect("one prepared ingest yields one embedded ingest")
+                        });
+                    embedded.push((index, one));
+                }
+            }
+        }
+        // Commit every embedded document (each at its own boundary) in one
+        // blocking-pool hop.
+        let committed = self
+            .off_thread("ingest_many commit", move |service| {
+                Ok(embedded
+                    .into_iter()
+                    .map(|(index, embedded)| {
+                        (
+                            index,
+                            embedded.and_then(|embedded| service.commit_embedded(embedded)),
+                        )
+                    })
+                    .collect::<Vec<_>>())
+            })
+            .await;
+        match committed {
+            Ok(committed) => {
+                for (index, result) in committed {
+                    results[index] = Some(result);
+                }
+            }
+            Err(error) => {
+                for slot in results.iter_mut().filter(|slot| slot.is_none()) {
+                    *slot = Some(Err(AppError::db(error.to_string())));
+                }
             }
         }
     }
@@ -388,7 +545,28 @@ impl<'a> IngestService<'a> {
             .into_iter()
             .map(|prepared| (prepared.write, prepared.chunks))
             .unzip();
-        let chunk_groups = self.indexer.embed_prepared_batch(chunk_plans).await?;
+        // Re-ingest of an existing document: reuse the stored vector of every
+        // chunk whose text is unchanged, so only edited chunks reach the
+        // provider (an identical re-ingest makes no provider call at all).
+        let existing: Vec<&str> = writes
+            .iter()
+            .filter(|write| write.expected_revision.is_some())
+            .map(|write| write.document.id.as_str())
+            .collect();
+        let known = if existing.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            crate::util::blocking_section(|| self.store.chunk_vectors_by_content(&existing))?
+        };
+        let chunk_groups = if known.is_empty() {
+            self.indexer.embed_prepared_batch(chunk_plans).await?
+        } else {
+            let reusing =
+                crate::embeddings::PrecomputedEmbedder::with_vectors(self.embedder.clone(), known);
+            DocumentIndexer::new(&reusing, self.config)
+                .embed_prepared_batch(chunk_plans)
+                .await?
+        };
         Ok(writes
             .into_iter()
             .zip(chunk_groups)
@@ -468,7 +646,7 @@ impl<'a> IngestService<'a> {
                     .unwrap_or_else(|| content_hash(&existing.content));
                 if existing_hash == new_hash {
                     let etag = existing.etag();
-                    let chunk_count = self.store.list_chunks_for_document(&existing.id)?.len();
+                    let chunk_count = self.store.count_chunks_for_document(&existing.id)? as usize;
                     let node_id = self
                         .store
                         .find_node_by_document_id(&existing.id)?
@@ -525,7 +703,7 @@ impl<'a> IngestService<'a> {
                 .source_file
                 .or_else(|| existing.as_ref().and_then(|doc| doc.source_file.clone())),
             layer: command.layer,
-            kind: command.kind,
+            kind: command.kind.into(),
             content_hash: Some(new_hash.clone()),
             ..existing.unwrap_or_default()
         };
@@ -542,6 +720,7 @@ impl<'a> IngestService<'a> {
         }))
     }
 
+    /// Re-embed an existing document's chunks with the current embedder.
     pub async fn reembed_document(
         &self,
         document_id: &str,
@@ -550,12 +729,15 @@ impl<'a> IngestService<'a> {
         if document_id.is_empty() {
             return Err(AppError::config("document_id must be non-empty"));
         }
-        let document = self
-            .store
-            .get_document(document_id)?
-            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-        self.store.require_embedding_manifest_match(self.config)?;
-        let expected_chunks = self.store.list_chunks_for_document(&document.id)?;
+        let (document, expected_chunks) = crate::util::blocking_section(|| {
+            let document = self
+                .store
+                .get_document(document_id)?
+                .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
+            self.store.require_embedding_manifest_match(self.config)?;
+            let chunks = self.store.list_chunks_for_document(&document.id)?;
+            Ok::<_, AppError>((document, chunks))
+        })?;
         let mut chunks = expected_chunks.clone();
         let chunk_count = chunks.len();
         if !chunks.is_empty() {
@@ -566,13 +748,15 @@ impl<'a> IngestService<'a> {
             .map(|chunk| chunk.embedding)
             .collect::<Vec<_>>();
         let manifest = embedding_manifest_from_config(self.config);
-        self.store.update_chunk_embeddings_atomic(
-            &document.id,
-            document.revision,
-            &expected_chunks,
-            &embeddings,
-            Some(&manifest),
-        )?;
+        crate::util::blocking_section(|| {
+            self.store.update_chunk_embeddings_atomic(
+                &document.id,
+                document.revision,
+                &expected_chunks,
+                &embeddings,
+                Some(&manifest),
+            )
+        })?;
         Ok(ReembedDocumentResult {
             document_id: document.id,
             chunk_count,
@@ -582,6 +766,7 @@ impl<'a> IngestService<'a> {
         })
     }
 
+    /// Apply a metadata or content update to an existing document, re-embedding when content changed.
     pub async fn update_document(
         &self,
         command: UpdateDocumentCommand,
@@ -590,63 +775,77 @@ impl<'a> IngestService<'a> {
         if document_id.is_empty() {
             return Err(AppError::config("document_id must be non-empty"));
         }
-        let mut applied = self
-            .store
-            .prepare_document_meta_update(document_id, &command.update)?
-            .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
+        let mut applied = crate::util::blocking_section(|| {
+            self.store
+                .prepare_document_meta_update(document_id, &command.update)
+        })?
+        .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
         let expected_revision = applied.document.revision;
 
         let (write, chunk_count, reembedded) = if applied.content_changed {
             self.ensure_vector_compatibility()?;
-            let chunks = self.indexer.build_plain_chunks(&applied.document).await?;
+            let chunk_embedder = crate::util::blocking_section(|| {
+                crate::document_indexer::reusing_document_vectors(
+                    self.store,
+                    self.embedder,
+                    &applied.document.id,
+                )
+            })?;
+            let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), self.config)
+                .build_plain_chunks(&applied.document)
+                .await?;
             let chunk_count = chunks.len();
-            let write = self.store.write_document_atomic(
-                &applied.document,
-                Some(expected_revision),
-                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-            )?;
+            let write = crate::util::blocking_section(|| {
+                self.store.write_document_atomic(
+                    &applied.document,
+                    Some(expected_revision),
+                    DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+                )
+            })?;
             (write, chunk_count, true)
         } else {
-            let chunk_count = self
-                .store
-                .list_chunks_for_document(&applied.document.id)?
-                .len();
             let derived = if applied.title_changed {
                 DocumentDerivedWrite::RefreshGraphLabel
             } else {
                 DocumentDerivedWrite::Preserve
             };
-            let write = self.store.write_document_atomic(
-                &applied.document,
-                Some(expected_revision),
-                derived,
-            )?;
+            let (write, chunk_count) = crate::util::blocking_section(|| {
+                let chunk_count = self.store.count_chunks_for_document(&applied.document.id)?;
+                let write = self.store.write_document_atomic(
+                    &applied.document,
+                    Some(expected_revision),
+                    derived,
+                )?;
+                Ok::<_, AppError>((write, chunk_count as usize))
+            })?;
             (write, chunk_count, false)
         };
         applied.document.revision = write.revision;
 
         let document = applied.document;
-        let _ = self.store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "update_document_meta".into(),
-            prefix: Some("META".into()),
-            message: format!("updated document meta for {}", document.id),
-            entity_id: Some(document.id.clone()),
-            entity_kind: Some("document".into()),
-            payload_json: serde_json::json!({
-                "content_changed": applied.content_changed,
-                "title_changed": applied.title_changed,
-                "reembedded": reembedded,
-                "wing": document.wing,
-                "room": document.room,
-                "status": document.status,
-                "pinned": document.pinned,
-                "boost": document.boost,
+        let _ = crate::util::blocking_section(|| {
+            self.store.append_ops_log(&OpsLogEntry {
+                id: String::new(),
+                seq: 0,
+                ts: Utc::now(),
+                op: "update_document_meta".into(),
+                prefix: Some("META".into()),
+                message: format!("updated document meta for {}", document.id),
+                entity_id: Some(document.id.clone()),
+                entity_kind: Some("document".into()),
+                payload_json: serde_json::json!({
+                    "content_changed": applied.content_changed,
+                    "title_changed": applied.title_changed,
+                    "reembedded": reembedded,
+                    "wing": document.wing,
+                    "room": document.room,
+                    "status": document.status,
+                    "pinned": document.pinned,
+                    "boost": document.boost,
+                })
+                .to_string(),
+                agent_name: None,
             })
-            .to_string(),
-            agent_name: None,
         });
         Ok(UpdateDocumentResult {
             document_id: document.id,
@@ -659,7 +858,7 @@ impl<'a> IngestService<'a> {
             boost: document.boost,
             metadata_json: document.metadata_json,
             layer: document.layer,
-            kind: document.kind,
+            kind: document.kind.to_string(),
             source_file: document.source_file,
             content_changed: applied.content_changed,
             reembedded,
@@ -669,8 +868,10 @@ impl<'a> IngestService<'a> {
     }
 
     fn ensure_vector_compatibility(&self) -> Result<(), AppError> {
-        self.store.ensure_embedding_manifest(self.config)?;
-        self.store.require_embedding_manifest_match(self.config)
+        crate::util::blocking_section(|| {
+            self.store.ensure_embedding_manifest(self.config)?;
+            self.store.require_embedding_manifest_match(self.config)
+        })
     }
 }
 
@@ -691,12 +892,12 @@ impl TryFrom<IngestCommand> for NormalizedIngest {
     type Error = AppError;
 
     fn try_from(command: IngestCommand) -> Result<Self, Self::Error> {
-        let metadata_json = nonempty(command.metadata_json).unwrap_or_else(|| "{}".into());
+        let metadata_json = non_blank(command.metadata_json).unwrap_or_else(|| "{}".into());
         serde_json::from_str::<serde_json::Value>(&metadata_json).map_err(|error| {
             AppError::config(format!("metadata_json is not valid JSON: {error}"))
         })?;
-        let uri = nonempty(command.uri).unwrap_or_else(|| format!("text://{}", Uuid::new_v4()));
-        let title = nonempty(command.title).unwrap_or_else(|| {
+        let uri = non_blank(command.uri).unwrap_or_else(|| format!("text://{}", Uuid::new_v4()));
+        let title = non_blank(command.title).unwrap_or_else(|| {
             uri.rsplit('/')
                 .next()
                 .filter(|value| !value.is_empty())
@@ -708,18 +909,14 @@ impl TryFrom<IngestCommand> for NormalizedIngest {
             title,
             uri,
             metadata_json,
-            wing: nonempty(command.wing),
-            room: nonempty(command.room),
-            source_file: nonempty(command.source_file),
+            wing: non_blank(command.wing),
+            room: non_blank(command.room),
+            source_file: non_blank(command.source_file),
             layer: normalized_or(command.layer, "raw"),
             kind: normalized_or(command.kind, "document"),
             immutable: command.immutable,
         })
     }
-}
-
-fn nonempty(value: Option<String>) -> Option<String> {
-    value.filter(|item| !item.trim().is_empty())
 }
 
 fn normalized_or(value: String, fallback: &str) -> String {
@@ -825,6 +1022,90 @@ mod tests {
             kind: "wiki".into(),
             immutable: false,
         }
+    }
+
+    struct RecordingEmbedder {
+        inner: MockEmbedder,
+        texts: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl EmbeddingProvider for RecordingEmbedder {
+        async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            self.texts.lock().unwrap().extend(texts.iter().cloned());
+            self.inner.embed(texts).await
+        }
+
+        fn dimensions(&self) -> usize {
+            self.inner.dimensions()
+        }
+    }
+
+    #[tokio::test]
+    async fn reingest_reuses_vectors_of_unchanged_chunks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(temp.path().join("reuse.duckdb"));
+        let store = Store::open(&config.db_path).expect("open");
+        let recording = Arc::new(RecordingEmbedder {
+            inner: MockEmbedder::new(8),
+            texts: std::sync::Mutex::new(Vec::new()),
+        });
+        let embedder: Arc<dyn EmbeddingProvider> = recording.clone();
+        let service = IngestService::new(&store, &embedder, &config);
+        let stable: String = (0..6)
+            .map(|index| format!("Stable paragraph number {index} keeps exactly this text.\n\n"))
+            .collect();
+        let original = format!("{stable}Closing paragraph changes later.");
+        let original = original.as_str();
+        service
+            .ingest(command(original))
+            .await
+            .expect("first ingest");
+        let first_vectors: Vec<Vec<f32>> = {
+            let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+            store
+                .list_chunks_for_document(&document.id)
+                .unwrap()
+                .into_iter()
+                .map(|chunk| chunk.embedding)
+                .collect()
+        };
+        recording.texts.lock().unwrap().clear();
+
+        // Identical content: every vector is reused, no provider call.
+        let same = service
+            .ingest(command(original))
+            .await
+            .expect("identical re-ingest");
+        assert_eq!(same.op, "updated");
+        assert!(recording.texts.lock().unwrap().is_empty());
+        let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+        let reused: Vec<Vec<f32>> = store
+            .list_chunks_for_document(&document.id)
+            .unwrap()
+            .into_iter()
+            .map(|chunk| chunk.embedding)
+            .collect();
+        assert_eq!(reused, first_vectors);
+
+        // An edit embeds only text the document did not already have.
+        let edited = format!("{stable}Closing paragraph is now quite different.");
+        service
+            .ingest(command(&edited))
+            .await
+            .expect("edited re-ingest");
+        let embedded = recording.texts.lock().unwrap().clone();
+        assert!(!embedded.is_empty());
+        let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+        let chunk_texts: Vec<String> = store
+            .list_chunks_for_document(&document.id)
+            .unwrap()
+            .into_iter()
+            .map(|chunk| chunk.content)
+            .collect();
+        assert!(chunk_texts.len() > 2, "{chunk_texts:?}");
+        assert!(embedded.len() < chunk_texts.len(), "{embedded:?}");
+        assert!(embedded.iter().all(|text| chunk_texts.contains(text)));
     }
 
     #[tokio::test]

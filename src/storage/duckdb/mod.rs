@@ -1,10 +1,9 @@
-//! DuckDB storage adapter and compatibility seam.
+//! DuckDB implementation of the document-lifecycle [`Storage`] contract.
 //!
-//! Re-exporting the current data plane here provides the target module path
-//! for gradual migration while `crate::db` and `crate::Store` stay valid.
+//! `crate::db::Store` stays the DuckDB façade; this module only adapts it.
 
-pub use crate::db::*;
-
+use crate::db::store::DocumentDerivedWrite;
+use crate::db::Store;
 use crate::{AppError, Document};
 
 use super::{BackendKind, BackendMetadata, Storage, StorageCapability};
@@ -27,8 +26,11 @@ impl Storage for Store {
         }
     }
 
+    /// Same write boundary as every other generic document write: the row,
+    /// its graph-node label and the wiki change journal commit together.
     fn upsert_document(&self, document: &Document) -> Result<(), AppError> {
-        Store::upsert_document(self, document)
+        self.write_document_atomic(document, None, DocumentDerivedWrite::RefreshGraphLabel)
+            .map(|_| ())
     }
 
     fn get_document(&self, id: &str) -> Result<Option<Document>, AppError> {
@@ -43,6 +45,3 @@ impl Storage for Store {
         Store::delete_document(self, id)
     }
 }
-
-/// Explicit adapter name for new code; existing `Store` imports remain valid.
-pub type DuckDbStore = Store;

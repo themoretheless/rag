@@ -4,8 +4,10 @@
 #
 # Speaks MCP over the running gateway's streamable-HTTP endpoint instead of
 # opening rag.duckdb. This is deliberate: the gateway process is the single
-# DuckDB writer (see CLAUDE.md "One writer"), so a cron job must never use the
-# ingest_file / ingest_project binaries, which open the database directly.
+# DuckDB writer (see CLAUDE.md "One writer"). "ingest_file" below is the MCP
+# *tool* called through that gateway; a cron job must never run the
+# ingest_file / ingest_project *binaries* (src/bin/), which open the database
+# directly.
 #
 # Stages (each can be skipped via env):
 #   1. flush  .rag/pending-ingest.txt  -> ingest_file per path
@@ -55,11 +57,15 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   log "SKIP another run holds $LOCK"
   exit 0
 fi
-cleanup() { rmdir "$LOCK" 2>/dev/null || true; rm -f "$TMP_REQ" "$TMP_RES" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+TMPBASE=${TMPDIR:-/tmp}
+TMP_REQ=; TMP_RES=; TMP_ERR=
+cleanup() { rmdir "$LOCK" 2>/dev/null || true; rm -f "$TMP_REQ" "$TMP_RES" "$TMP_ERR" 2>/dev/null || true; }
+trap cleanup EXIT
+trap 'cleanup; exit 1' INT TERM
 
-TMP_REQ=$(mktemp -t ragreq)
-TMP_RES=$(mktemp -t ragres)
+TMP_REQ=$(mktemp "$TMPBASE/ragreq.XXXXXX")
+TMP_RES=$(mktemp "$TMPBASE/ragres.XXXXXX")
+TMP_ERR=$(mktemp "$TMPBASE/ragerr.XXXXXX")
 RPC_ID=0
 
 skipped() {
@@ -67,21 +73,47 @@ skipped() {
   return 1
 }
 
-# rpc <method> <params-json> -> prints result object on stdout, empty on error.
+# rpc <method> <params-json> -> prints result object on stdout.
 # Unwraps the SSE framing ("data: {...}") that the streamable-HTTP transport uses.
+# Failures are loud: transport errors, JSON-RPC errors and empty replies are
+# logged, echoed to stderr, and returned as a non-zero status.
+rpc_fail() {
+  log "RPC ERROR $1"
+  printf 'wiki-refresh: RPC %s\n' "$1" >&2
+  return 1
+}
 rpc() {
   RPC_ID=$((RPC_ID + 1))
   printf '{"jsonrpc":"2.0","id":%s,"method":"%s","params":%s}' "$RPC_ID" "$1" "$2" >"$TMP_REQ"
-  curl -sS -m 900 -H 'Content-Type: application/json' \
+  if ! curl -sS -m 900 -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
-    --data-binary @"$TMP_REQ" "$MCP_URL" >"$TMP_RES" 2>/dev/null || return 1
-  sed -n 's/^data: //p' "$TMP_RES" | head -n 1 | jq -c '.result // empty'
+    --data-binary @"$TMP_REQ" "$MCP_URL" >"$TMP_RES" 2>"$TMP_ERR"; then
+    rpc_fail "$1 transport failed: $(tr '\n' ' ' <"$TMP_ERR")"
+    return 1
+  fi
+  msg=$(sed -n 's/^data: //p' "$TMP_RES" | head -n 1)
+  [ -n "$msg" ] || msg=$(cat "$TMP_RES")
+  if [ -z "$msg" ]; then
+    rpc_fail "$1 empty response"
+    return 1
+  fi
+  if printf '%s' "$msg" | jq -e '.error' >/dev/null 2>&1; then
+    rpc_fail "$1 error: $(printf '%s' "$msg" | jq -c '.error')"
+    return 1
+  fi
+  out=$(printf '%s' "$msg" | jq -c '.result // empty' 2>/dev/null) || {
+    rpc_fail "$1 unparseable response: $(printf '%s' "$msg" | head -c 300)"
+    return 1
+  }
+  [ -n "$out" ] || { rpc_fail "$1 response without result"; return 1; }
+  printf '%s\n' "$out"
 }
 
 # call <tool> <arguments-json> -> prints the tool's decoded JSON payload.
 call() {
   args=$(printf '{"name":"%s","arguments":%s}' "$1" "$2")
-  rpc tools/call "$args" | jq -c 'if .isError then {error: .content[0].text}
+  raw=$(rpc tools/call "$args") || return 1
+  printf '%s' "$raw" | jq -c 'if .isError then {error: .content[0].text}
                                   else (.content[0].text | fromjson) end'
 }
 
@@ -98,7 +130,8 @@ curl -sS -m 30 -o /dev/null -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   --data-binary @"$TMP_REQ" "$MCP_URL"
 
-TOOLS=$(rpc tools/list '{}' | jq -r '.tools[].name')
+TOOLS_RAW=$(rpc tools/list '{}') || { log "FATAL tools/list failed at $MCP_URL"; exit 1; }
+TOOLS=$(printf '%s' "$TOOLS_RAW" | jq -r '.tools[].name')
 [ -n "$TOOLS" ] || { log "FATAL tools/list returned nothing from $MCP_URL"; exit 1; }
 has_tool() { printf '%s\n' "$TOOLS" | grep -qx "$1"; }
 
@@ -111,7 +144,7 @@ log "START dry_run=$DRY tools=$(printf '%s\n' "$TOOLS" | wc -l | tr -d ' ')"
 # sessions) are dropped rather than ingested.
 
 if ! skipped flush && [ -s "$QUEUE" ]; then
-  REMAIN=$(mktemp -t ragq)
+  REMAIN=$(mktemp "$TMPBASE/ragq.XXXXXX")
   OK=0
   FAIL=0
   DROP=0
@@ -167,6 +200,7 @@ if ! skipped refresh; then
     stale=$(printf '%s' "$res" | jq -r '(.stale // []) | length' 2>/dev/null || echo 0)
     done_n=$(printf '%s' "$res" | jq -r '(.recompiled // []) | length' 2>/dev/null || echo 0)
     errs=$(printf '%s' "$res" | jq -r '(.errors // []) | length' 2>/dev/null || echo 0)
+    stale=${stale:-0}; done_n=${done_n:-0}; errs=${errs:-0}
     log "refresh stale=$stale recompiled=$done_n errors=$errs"
     if [ "$DRY" = false ] && [ "$stale" -gt 0 ] && [ "$done_n" -eq 0 ]; then
       log "  WARN stale pages found but nothing recompiled - LLM likely disabled on the gateway (RAG_LLM_ENABLED / RAG_LLM_MODEL)"

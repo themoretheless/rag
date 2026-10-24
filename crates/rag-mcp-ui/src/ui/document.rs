@@ -9,6 +9,7 @@ enum ReaderMode {
     Plain,
 }
 
+/// Render document content in a centered reader column, picking a mode from kind/uri.
 pub fn draw_document_reader(ui: &mut egui::Ui, content: &str, kind: &str, uri: &str) {
     let mode = reader_mode(content, kind, uri);
     let available = ui.available_width();

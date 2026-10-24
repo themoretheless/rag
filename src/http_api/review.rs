@@ -46,7 +46,9 @@ async fn change(State(st): State<HttpState>, Json(body): Json<Change>) -> Respon
         Change::Accept { id, revision } => accept(&st, &id, revision).await,
         other => {
             super::run_blocking("change review proposal", move || match other {
-                Change::Create { document_id } => review::create(&st.store, &document_id),
+                Change::Create { document_id } => {
+                    crate::wiki::create_review_proposal(&st.store, &document_id)
+                }
                 Change::Save {
                     id,
                     revision,
@@ -67,7 +69,7 @@ async fn change(State(st): State<HttpState>, Json(body): Json<Change>) -> Respon
     }
 }
 async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result<review::Proposal> {
-    let p = review::get(&st.store, id)?;
+    let p = crate::util::blocking_section(|| review::get(&st.store, id))?;
     if p.revision != revision || p.status != "pending" {
         return Err(AppError::conflict("proposal changed; reload it"));
     }
@@ -80,7 +82,7 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
         })
         .collect();
     let slug = crate::util::wiki_slug_from_uri(&p.base.uri)
-        .ok_or_else(|| AppError::config("proposal requires a wiki URI"))?;
+        .ok_or_else(|| AppError::invalid("proposal requires a wiki URI"))?;
     wiki::write_wiki_page_command(
         &st.store,
         &st.embedder,
@@ -91,7 +93,7 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
             content: p.content.clone(),
             wing: p.base.wing.clone(),
             room: p.base.room.clone(),
-            kind: p.base.kind.clone(),
+            kind: p.base.kind.to_string(),
             category: None,
             summary: None,
             agent: Some("knowledge-review".into()),
@@ -105,7 +107,7 @@ async fn accept(st: &HttpState, id: &str, revision: i64) -> crate::error::Result
         },
     )
     .await?;
-    review::get(&st.store, id)
+    crate::util::blocking_section(|| review::get(&st.store, id))
 }
 
 #[cfg(test)]
@@ -117,7 +119,7 @@ mod tests {
     use std::sync::Arc;
 
     async fn fixture() -> (HttpState, review::Proposal) {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("review.duckdb"),
             embedding_dims: 16,
@@ -138,7 +140,7 @@ mod tests {
             slug:"review-test".into(), title:"Review".into(), content:"Before".into(), kind:"wiki".into(), wing:None, room:None, category:None, summary:None, agent:None,
             options: WriteWikiOpts { extra_metadata:Some(json!({"source_versions":[{"document_id":"source","uri":"raw://source","content_hash":content_hash("source version one")}]})), ..Default::default() },
         }).await.unwrap();
-        let p = review::create(&st.store, &page.document_id).unwrap();
+        let p = crate::wiki::create_review_proposal(&st.store, &page.document_id).unwrap();
         let p = review::update(&st.store, &p.id, p.revision, "After".into(), false).unwrap();
         (st, p)
     }
@@ -201,7 +203,7 @@ mod tests {
     async fn missing_source_reappearing_with_new_id_blocks_acceptance() {
         let (st, p) = fixture().await;
         st.store.delete_document("source").unwrap();
-        let p = review::create(&st.store, &p.base.id).unwrap();
+        let p = crate::wiki::create_review_proposal(&st.store, &p.base.id).unwrap();
         assert_eq!(p.sources[0].uri, "raw://source");
         assert!(p.sources[0].content_hash.is_none());
         st.store

@@ -572,12 +572,14 @@ impl Store {
         let limit = q.limit.unwrap_or(50).clamp(1, 200);
         let items:Vec<Value>=match operation {
             "db_schema"=>selected.iter().map(|t|json!({"schema":t.schema,"table":t.name,"kind":t.kind,"columns":t.columns.len(),"complete":t.complete})).collect(),
-            "db_table"=>{if q.table.is_none(){return Err(AppError::config("db_table requires an exact table name"));} if selected.len()>1{return Err(AppError::config("table name is ambiguous; specify schema"));}selected.iter().map(|t|{let mut v=json!(t);v.as_object_mut().unwrap().remove("sample");v["column_traits"]=marks::summary(t,&s.dialect);
+            "db_table"=>{if q.table.is_none(){return Err(AppError::config("db_table requires an exact table name"));}
+if selected.len()>1{return Err(AppError::config("table name is ambiguous; specify schema"));}selected.iter().map(|t|{let mut v=json!(t);v.as_object_mut().unwrap().remove("sample");v["column_traits"]=marks::summary(t,&s.dialect);
                 v["inference_available"]=json!(s.inferred_relations.is_some());
                 v["inferred_relations"]=json!(s.inferred_relations.as_ref().map(|a|a.relations.iter().filter(|r|r["schema"]==t.schema&&r["table"]==t.name).collect::<Vec<_>>()));
                 v["inference_algorithm_version"]=json!(s.inferred_relations.as_ref().map(|a|a.algorithm_version));
                 v["inference_analysis_truncated"]=json!(s.inferred_relations.as_ref().map(|a|a.truncated));v}).collect()},
-            "db_sample"=>{if q.table.is_none(){return Err(AppError::config("db_sample requires an exact table name"));}if selected.len()>1{return Err(AppError::config("table name is ambiguous; specify schema"));}selected.iter().map(|t|json!({"schema":t.schema,"table":t.name,"sample":t.sample})).collect()},
+            "db_sample"=>{if q.table.is_none(){return Err(AppError::config("db_sample requires an exact table name"));}
+if selected.len()>1{return Err(AppError::config("table name is ambiguous; specify schema"));}selected.iter().map(|t|json!({"schema":t.schema,"table":t.name,"sample":t.sample})).collect()},
             _=>return Err(AppError::config("unknown external database operation")),
         };
         Ok(
@@ -1146,14 +1148,11 @@ mod fixture_tests {
                     }
                 )
                 .is_err());
-            assert_eq!(
-                store
-                    .external_db_query("db_drift", &q)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("filters are not supported"),
-                true
-            );
+            assert!(store
+                .external_db_query("db_drift", &q)
+                .unwrap_err()
+                .to_string()
+                .contains("filters are not supported"));
             let drift_q = Query {
                 connection: "fixture".into(),
                 ..Default::default()
@@ -1275,7 +1274,6 @@ mod fixture_tests {
             command.wing = Some("fixture".into());
             let service = crate::source_sync::SourceSyncService::new(&store, &embedder, &config);
             assert!(service.sync(command).await.unwrap().errors.is_empty());
-            drop(service);
             let cross = store.external_db_query("db_cross", &drift_q).unwrap();
             assert!(cross["uses"]
                 .as_array()

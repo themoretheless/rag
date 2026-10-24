@@ -27,7 +27,7 @@ fn test_config(db_path: std::path::PathBuf, ingest_roots: Vec<std::path::PathBuf
         db_path,
         embedding_provider: EmbeddingProviderKind::Mock,
         embedding_base_url: String::new(),
-        embedding_api_key: String::new(),
+        embedding_api_key: String::new().into(),
         embedding_model: "mock".to_string(),
         embedding_dims: DIMS,
         chunk_size: 800,
@@ -42,7 +42,7 @@ fn test_config(db_path: std::path::PathBuf, ingest_roots: Vec<std::path::PathBuf
         llm_provider: rag_mcp::llm::LlmProviderKind::Ollama,
         llm_base_url: "http://127.0.0.1:11434/v1".to_string(),
         llm_model: "llama3.2".to_string(),
-        llm_api_key: "ollama".to_string(),
+        llm_api_key: "ollama".into(),
         llm_enabled: false,
         llm_timeout_secs: 120,
         llm_max_tokens: 4096,
@@ -70,6 +70,7 @@ fn test_config(db_path: std::path::PathBuf, ingest_roots: Vec<std::path::PathBuf
         reembed_batch: 100,
         fts_stale_generation_threshold: 64,
         fts_maint_interval_secs: 300,
+        ..Config::for_tests()
     }
 }
 

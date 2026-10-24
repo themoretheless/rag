@@ -15,16 +15,37 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::models::{Chunk, Document};
 
+/// `embedder`, wrapped to reuse `document_id`'s stored vector for every chunk
+/// text the document already has (exact: the embedding input is the chunk
+/// text under one manifest). Rewriting a page then embeds only changed chunks.
+pub(crate) fn reusing_document_vectors(
+    store: &crate::db::Store,
+    embedder: &std::sync::Arc<dyn EmbeddingProvider>,
+    document_id: &str,
+) -> crate::error::Result<std::sync::Arc<dyn EmbeddingProvider>> {
+    let known = crate::util::blocking_section(|| store.chunk_vectors_by_content(&[document_id]))?;
+    Ok(if known.is_empty() {
+        embedder.clone()
+    } else {
+        std::sync::Arc::new(crate::embeddings::PrecomputedEmbedder::with_vectors(
+            embedder.clone(),
+            known,
+        ))
+    })
+}
+
 /// Chunk contents and metadata prepared before the fallible embedding call.
 ///
 /// Keeping this storage-free representation lets source synchronization group
 /// several small documents into one provider request without duplicating the
 /// chunking and annotation policy used by ordinary ingest.
+#[derive(Clone)]
 pub(crate) struct PreparedDocumentChunks {
     document_id: String,
     pieces: Vec<PreparedChunk>,
 }
 
+#[derive(Clone)]
 struct PreparedChunk {
     content: String,
     char_start: i32,
@@ -89,6 +110,7 @@ pub struct DocumentIndexer<'a> {
 }
 
 impl<'a> DocumentIndexer<'a> {
+    /// Build an indexer using the config's chunk size and overlap.
     pub fn new(embedder: &'a dyn EmbeddingProvider, config: &Config) -> Self {
         Self {
             embedder,
@@ -110,6 +132,15 @@ impl<'a> DocumentIndexer<'a> {
     pub async fn build_plain_chunks(&self, document: &Document) -> Result<Vec<Chunk>> {
         self.build_chunks_with_profile(document, ChunkingProfile::Plain)
             .await
+    }
+
+    /// The texts [`Self::build_plain_chunks`] would embed for `document`.
+    pub(crate) fn plain_chunk_texts(&self, document: &Document) -> Vec<String> {
+        self.prepare_chunks_with_profile(document, ChunkingProfile::Plain)
+            .pieces
+            .into_iter()
+            .map(|piece| piece.content)
+            .collect()
     }
 
     /// Prepare one document synchronously for a later shared embedding call.

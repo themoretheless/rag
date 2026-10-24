@@ -1,4 +1,9 @@
-/** Types matching rag-mcp HTTP gateway JSON. */
+/**
+ * Types matching rag-mcp HTTP gateway JSON.
+ *
+ * GraphNode, GraphEdge, SearchHit and SearchExplanation are checked against the
+ * Rust DTOs by `tests/it/web_types_contract_test.rs`.
+ */
 
 export interface HealthResponse {
   ok: boolean
@@ -8,7 +13,6 @@ export interface HealthResponse {
   chunks?: number
   nodes?: number
   edges?: number
-  unscoped_documents?: number
   mcp_http?: boolean
   db_path?: string
   runtime?: {
@@ -159,10 +163,8 @@ export interface GraphNode {
   kind?: string
   document_id?: string | null
   uri?: string | null
-  layer?: string | null
-  wing?: string | null
-  room?: string | null
   resolved?: boolean
+  /** JSON object text; wing/room live here, not on the node. */
   metadata_json?: string
 }
 
@@ -230,3 +232,162 @@ export interface PackContextResponse {
   context_text: string
   hits: SearchHit[]
 }
+
+/* ---------- Operational dashboards (console / models / agents / evaluation) ---------- */
+
+/** `GET /v1/status` (fields are optional: older gateways omit some). */
+export interface StorageStatus {
+  backend?: string
+  db_path?: string
+  db_file_bytes?: number
+  wal_bytes?: number
+  wal_warn_bytes?: number
+  schema_version?: number | string
+  fts_ready?: boolean
+  ready_for_search?: boolean
+  storage_capabilities?: string[]
+  document_count?: number
+  chunk_count?: number
+  node_count?: number
+  edge_count?: number
+  raw_count?: number
+  wiki_count?: number
+  uncompiled_raw_count?: number
+  index_coverage?: number
+  index_entry_count?: number
+  embed_provider?: string
+  embed_model?: string
+  embed_dims?: number
+  pid?: number
+  uptime_seconds?: number
+  ingest_roots_configured?: boolean
+}
+
+/** `GET /v1/doctor` integrity report. */
+export interface DoctorReport {
+  ok?: boolean
+  schema_ok?: boolean
+  schema_version?: number | string
+  expected_schema_version?: number | string
+  embed_ok?: boolean
+  embed_dims?: number
+  fts_ready?: boolean
+  relational_integrity_ok?: boolean
+  documents_without_chunks?: number
+  orphan_chunks?: number
+  orphan_edges?: number
+  unscoped_documents?: number
+  wal_bytes?: number
+  wal_warn_bytes?: number
+  wal_too_large?: boolean
+}
+
+/** `GET /v1/runtime` → `runtime`. */
+export interface RuntimeInfo {
+  pid?: number
+  uptime_seconds?: number
+  http_bind?: string
+  tool_surface?: string
+  auto_backup_enabled?: boolean
+  auto_backup_last_completed_at?: string | null
+}
+
+export interface TaxonomyRoom { room: string; document_count: number }
+export interface TaxonomyWing { wing: string; document_count: number; rooms?: TaxonomyRoom[] }
+/** `GET /v1/taxonomy` → `taxonomy`. */
+export interface TaxonomySummary {
+  wings: TaxonomyWing[]
+  unscoped_count?: number
+  total_documents?: number
+}
+
+/** One `ops_log` mutation row. */
+export interface OpsLogItem {
+  id: string
+  ts?: string
+  op?: string
+  prefix?: string
+  agent_name?: string | null
+  message?: string
+  payload_json?: string | null
+}
+
+/** `GET /v1/agents` row (only fields read by the console). */
+export interface AgentSummary { agent?: string; online?: boolean }
+
+/** `GET /v1/kg/stats` → `stats`. */
+export interface KgStats { total_facts?: number }
+
+/** `GET /v1/kg` fact row. */
+export interface KgFact {
+  id: string
+  subject: string
+  predicate: string
+  object: string
+  status?: string
+  confidence?: number | null
+  valid_from?: string | null
+  valid_to?: string | null
+}
+
+export interface ItemsResponse<T> { items?: T[] }
+
+/** `GET /v1/llm-status` → `llm`. */
+export interface LlmStatus {
+  provider?: string
+  model?: string
+  base_url?: string
+  llm_enabled?: boolean
+  reachable?: boolean
+  error?: string | null
+  embed_provider?: string
+  embed_model?: string
+  embed_base_url?: string
+  embed_dims?: number
+}
+
+export interface EmbeddingIdentity { provider?: string; model?: string; dims?: number; base_url?: string }
+/** `GET /v1/embedding-manifest`. */
+export interface EmbeddingManifestStatus {
+  match?: boolean
+  live?: EmbeddingIdentity | null
+  manifest?: EmbeddingIdentity | null
+}
+
+/** `GET /v1/capabilities`. */
+export interface Capabilities { api_version?: string | number; tool_count?: number; tool_surface?: string }
+
+/** Retrieval eval history (`GET /v1/eval/history`). */
+export interface EvalResult { rank: number; document_title: string; relevance: number }
+export interface EvalQueryReport {
+  id: string
+  recall_at_k?: number
+  reciprocal_rank?: number
+  ndcg_at_k?: number
+  search_ms?: number
+  results?: EvalResult[]
+}
+export interface EvalModeReport {
+  mode: string
+  recall_at_k?: number
+  mrr?: number
+  ndcg_at_k?: number
+  p95_search_ms?: number
+  queries?: EvalQueryReport[]
+}
+export interface EvalScaleRecommendation {
+  path?: string
+  reason?: string
+  chunk_threshold?: number
+  p95_search_ms_threshold?: number
+}
+export interface EvalRun {
+  dataset_name?: string
+  dataset_version?: string | number
+  top_k?: number
+  sampling?: { queries?: number }
+  corpus?: { chunks?: number }
+  modes?: EvalModeReport[]
+  scale_recommendation?: EvalScaleRecommendation
+}
+export interface EvalHistoryResponse { items?: EvalRun[]; configured?: boolean; path?: string }

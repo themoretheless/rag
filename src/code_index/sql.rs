@@ -2174,7 +2174,6 @@ mod persistence_tests {
             .usages
             .iter()
             .any(|u| u.table == "users" && u.symbol.is_some()));
-        drop(service);
         drop(store);
         let store = Store::open(&config.db_path).unwrap();
         assert_eq!(

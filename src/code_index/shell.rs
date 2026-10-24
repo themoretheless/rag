@@ -428,19 +428,31 @@ enum Event<'a> {
     Function(&'a Function),
     Site(&'a Site),
 }
-fn replay<'a>(
-    docs: &'a HashMap<String, IndexedDocument>,
-    doc: &'a IndexedDocument,
-    owner: Option<&str>,
+#[derive(Clone, Copy)]
+struct ReplayFrame<'a> {
+    owner: Option<&'a str>,
     until: usize,
     query_at: usize,
     foreign: bool,
     available: Option<usize>,
     inherited_conditional: bool,
+}
+fn replay<'a>(
+    docs: &'a HashMap<String, IndexedDocument>,
+    doc: &'a IndexedDocument,
+    frame: ReplayFrame<'_>,
     env: &mut Env<'a>,
     stack: &mut HashSet<String>,
     budget: &mut usize,
 ) {
+    let ReplayFrame {
+        owner,
+        until,
+        query_at,
+        foreign,
+        available,
+        inherited_conditional,
+    } = frame;
     if *budget == 0 || !stack.insert(format!("{}:{owner:?}", doc.path)) {
         env.unknown = true;
         return;
@@ -487,12 +499,14 @@ fn replay<'a>(
                         replay(
                             docs,
                             target,
-                            None,
-                            usize::MAX,
-                            0,
-                            true,
-                            Some(available.unwrap_or(site.start)),
-                            inherited_conditional || site.conditional,
+                            ReplayFrame {
+                                owner: None,
+                                until: usize::MAX,
+                                query_at: 0,
+                                foreign: true,
+                                available: Some(available.unwrap_or(site.start)),
+                                inherited_conditional: inherited_conditional || site.conditional,
+                            },
                             env,
                             stack,
                             budget,
@@ -539,12 +553,14 @@ pub(super) fn resolve(
             replay(
                 docs,
                 current,
-                None,
-                usize::MAX,
-                r.start_byte,
-                false,
-                None,
-                false,
+                ReplayFrame {
+                    owner: None,
+                    until: usize::MAX,
+                    query_at: r.start_byte,
+                    foreign: false,
+                    available: None,
+                    inherited_conditional: false,
+                },
                 &mut env,
                 &mut HashSet::new(),
                 &mut 128,
@@ -555,12 +571,14 @@ pub(super) fn resolve(
             replay(
                 docs,
                 current,
-                Some(owner),
-                r.start_byte,
-                r.start_byte,
-                false,
-                None,
-                false,
+                ReplayFrame {
+                    owner: Some(owner),
+                    until: r.start_byte,
+                    query_at: r.start_byte,
+                    foreign: false,
+                    available: None,
+                    inherited_conditional: false,
+                },
                 &mut env,
                 &mut HashSet::new(),
                 &mut 128,
@@ -569,12 +587,14 @@ pub(super) fn resolve(
             replay(
                 docs,
                 current,
-                None,
-                r.start_byte,
-                r.start_byte,
-                false,
-                None,
-                false,
+                ReplayFrame {
+                    owner: None,
+                    until: r.start_byte,
+                    query_at: r.start_byte,
+                    foreign: false,
+                    available: None,
+                    inherited_conditional: false,
+                },
                 &mut env,
                 &mut HashSet::new(),
                 &mut 128,

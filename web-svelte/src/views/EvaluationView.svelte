@@ -3,8 +3,13 @@
   import { onMount } from 'svelte'
   import { api } from '@/api/client'
   import { ui } from '@/lib/state/ui.svelte'
+  import type { EvalHistoryResponse, EvalModeReport, EvalQueryReport, EvalRun, EvalScaleRecommendation, StorageStatus } from '@/api/types'
 
-  let history = $state<any[]>([])
+  type MetricKey = 'recall_at_k' | 'mrr' | 'ndcg_at_k' | 'p95_search_ms' | 'reciprocal_rank' | 'search_ms'
+  type MetricSource = Partial<Record<MetricKey, unknown>>
+  const MODE_NAMES = ['lex', 'vec', 'hybrid'] as const
+
+  let history = $state<EvalRun[]>([])
   let configured = $state<boolean | null>(null)
   let path = $state('')
   let busy = $state(false)
@@ -14,15 +19,15 @@
 
   const latest = $derived(history[0] ?? null)
   const chronologicalHistory = $derived([...history].reverse())
-  const modes = $derived((latest?.modes ?? []) as any[])
-  const queries = $derived((modes.find((item) => item.mode === 'hybrid')?.queries ?? modes[0]?.queries ?? []) as any[])
-  const scale = $derived(latest?.scale_recommendation ?? {})
+  const modes = $derived<EvalModeReport[]>(latest?.modes ?? [])
+  const queries = $derived<EvalQueryReport[]>(modes.find((item) => item.mode === 'hybrid')?.queries ?? modes[0]?.queries ?? [])
+  const scale = $derived<EvalScaleRecommendation>(latest?.scale_recommendation ?? {})
   const hybrid = $derived(modes.find((item) => item.mode === 'hybrid') ?? null)
 
   const bestMode = $derived.by(() => {
     let best: { mode: string; quality: number; p95: number } | null = null
     for (const report of modes) {
-      const qualityMetrics = ['recall_at_k', 'mrr', 'ndcg_at_k'].map((key) => metric(report, key))
+      const qualityMetrics = (['recall_at_k', 'mrr', 'ndcg_at_k'] as const).map((key) => metric(report, key))
       if (qualityMetrics.some((value) => value === null)) continue
       const quality = qualityMetrics.reduce<number>((sum, value) => sum + (value ?? 0), 0) / qualityMetrics.length
       const p95 = metric(report, 'p95_search_ms') ?? Number.POSITIVE_INFINITY
@@ -42,9 +47,45 @@
   })
 
   const chartHistory = $derived(chronologicalHistory.flatMap((run) => {
-    const recall = metric(run.modes?.find((mode: any) => mode.mode === 'hybrid'), 'recall_at_k')
+    const recall = metric(run.modes?.find((mode) => mode.mode === 'hybrid'), 'recall_at_k')
     return recall === null ? [] : [{ run, recall }]
   }))
+
+  /** Per-mode metric cards, computed once per history change instead of per render call. */
+  const modeCards = $derived(MODE_NAMES.map((name) => {
+    const report: MetricSource = modes.find((item) => item.mode === name) ?? {}
+    return {
+      name,
+      recall: metric(report, 'recall_at_k'),
+      mrr: metric(report, 'mrr'),
+      ndcg: metric(report, 'ndcg_at_k'),
+      p95: metric(report, 'p95_search_ms'),
+    }
+  }))
+
+  /** Per-query table rows with metrics and relevant results precomputed. */
+  const queryRows = $derived(queries.map((query) => {
+    const results = query.results ?? []
+    const relevant = results.filter((result) => result.relevance > 0)
+    const rr = metric(query, 'reciprocal_rank')
+    const searchMs = metric(query, 'search_ms')
+    return {
+      query,
+      results,
+      relevantCount: relevant.length,
+      relevantTitles: relevant.map((result) => result.document_title).join(' · '),
+      recall: metric(query, 'recall_at_k'),
+      rr,
+      ndcg: metric(query, 'ndcg_at_k'),
+      searchMs: searchMs === null ? null : Math.round(searchMs),
+      weak: rr !== null && rr < .5,
+    }
+  }))
+
+  const recentRuns = $derived(history.slice(0, 5).map((run) => ({
+    run,
+    recall: metric(run.modes?.find((mode) => mode.mode === 'hybrid'), 'recall_at_k'),
+  })))
 
   const hybridRecall = $derived(metric(hybrid, 'recall_at_k'))
   const hybridMrr = $derived(metric(hybrid, 'mrr'))
@@ -57,11 +98,11 @@
     busy = true
     error = ''
     const [historyResult, statusResult] = await Promise.allSettled([
-      api.get<any>('/v1/eval/history?limit=30'),
-      api.get<any>('/v1/status'),
+      api.get<EvalHistoryResponse>('/v1/eval/history?limit=30'),
+      api.get<StorageStatus>('/v1/status'),
     ])
     if (historyResult.status === 'fulfilled') {
-      const response = historyResult.value
+      const response = historyResult.value ?? {}
       // The backend preserves append-only JSONL order (oldest -> newest).
       // Keep the screen state newest-first for latest, tables and the run list.
       history = [...(response.items ?? [])].reverse()
@@ -71,11 +112,11 @@
       const cause = historyResult.reason
       error = cause instanceof Error ? cause.message : String(cause)
     }
-    if (statusResult.status === 'fulfilled') liveChunks = statusResult.value.chunk_count ?? null
+    if (statusResult.status === 'fulfilled') liveChunks = statusResult.value?.chunk_count ?? null
     busy = false
   }
 
-  function metric(mode: any, key: string): number | null {
+  function metric(mode: MetricSource | null | undefined, key: MetricKey): number | null {
     const value = mode?.[key]
     return typeof value === 'number' && Number.isFinite(value) ? value : null
   }
@@ -105,14 +146,13 @@
   {#if error}<div class="notice">{error}</div>{/if}
 
   <section class="metric-grid">
-    {#each ['lex', 'vec', 'hybrid'] as name}
-      {@const report = modes.find((item) => item.mode === name) ?? { mode: name }}
-      <article class:best={bestMode === name} class="metric-card">
-        <header><strong>{name}</strong><span>{modeLabel(name)}</span></header>
-        <div class="metric-row"><span>recall@{latest?.top_k ?? 'k'}</span><b>{fixed(metric(report, 'recall_at_k'))}</b><i><em style={`width:${percent(metric(report, 'recall_at_k'))}`}></em></i></div>
-        <div class="metric-row"><span>MRR</span><b>{fixed(metric(report, 'mrr'))}</b><i><em style={`width:${percent(metric(report, 'mrr'))}`}></em></i></div>
-        <div class="metric-row"><span>nDCG@{latest?.top_k ?? 'k'}</span><b>{fixed(metric(report, 'ndcg_at_k'))}</b><i><em style={`width:${percent(metric(report, 'ndcg_at_k'))}`}></em></i></div>
-        <footer>p95 поиска <b>{milliseconds(metric(report, 'p95_search_ms'))}</b></footer>
+    {#each modeCards as card (card.name)}
+      <article class:best={bestMode === card.name} class="metric-card">
+        <header><strong>{card.name}</strong><span>{modeLabel(card.name)}</span></header>
+        <div class="metric-row"><span>recall@{latest?.top_k ?? 'k'}</span><b>{fixed(card.recall)}</b><i><em style={`width:${percent(card.recall)}`}></em></i></div>
+        <div class="metric-row"><span>MRR</span><b>{fixed(card.mrr)}</b><i><em style={`width:${percent(card.mrr)}`}></em></i></div>
+        <div class="metric-row"><span>nDCG@{latest?.top_k ?? 'k'}</span><b>{fixed(card.ndcg)}</b><i><em style={`width:${percent(card.ndcg)}`}></em></i></div>
+        <footer>p95 поиска <b>{milliseconds(card.p95)}</b></footer>
       </article>
     {/each}
     <article class="metric-card scale"><header><strong>Пороги масштаба</strong><span>{scale.path ?? 'наблюдение'}</span></header><div class="threshold"><span>чанков в корпусе</span><b>{latest?.corpus?.chunks ?? liveChunks ?? '—'} / {scale.chunk_threshold ?? 50000}</b><i><em style={`width:${Math.min(100,(latest?.corpus?.chunks ?? liveChunks ?? 0)/(scale.chunk_threshold ?? 50000)*100)}%`}></em></i></div><div class="threshold"><span>p95 vec / hybrid</span><b>{scaleP95 === null ? '—' : `${Math.round(scaleP95)} / ${scale.p95_search_ms_threshold ?? 300} мс`}</b><i><em style={`width:${scaleP95 === null ? 0 : Math.min(100,scaleP95/(scale.p95_search_ms_threshold ?? 300)*100)}%`}></em></i></div><p>{scale.reason ?? 'ANN включается только по измеренным порогам, не по предположению.'}</p></article>
@@ -123,9 +163,9 @@
       <header><strong>Разбор по запросам</strong><span>{queries.length}</span></header>
       <div class="thead"><span>id</span><span>Релевантные документы · текст запроса не хранится</span><span>recall</span><span>MRR</span><span>nDCG</span><span>мс</span></div>
       <div class="query-scroll">
-        {#each queries as query (query.id)}
-          <button class:weak={metric(query, 'reciprocal_rank') !== null && (metric(query, 'reciprocal_rank') ?? 0) < .5} class:expanded={selectedQuery === query.id} onclick={() => { selectedQuery = selectedQuery === query.id ? null : query.id }}>
-            <code>{query.id}</code><span><b>{(query.results ?? []).filter((r:any) => r.relevance > 0).length} релевантных</b><small>{(query.results ?? []).filter((r:any) => r.relevance > 0).map((r:any) => r.document_title).join(' · ') || 'нет размеченных результатов'}</small>{#if selectedQuery === query.id}<em>{#each (query.results ?? []).slice(0, 6) as result}<i>#{result.rank} {result.document_title} · rel {result.relevance}</i>{/each}</em>{/if}</span><strong>{fixed(metric(query, 'recall_at_k'))}</strong><strong>{fixed(metric(query, 'reciprocal_rank'))}</strong><strong>{fixed(metric(query, 'ndcg_at_k'))}</strong><strong>{metric(query, 'search_ms') === null ? '—' : Math.round(metric(query, 'search_ms') ?? 0)}</strong>
+        {#each queryRows as row (row.query.id)}
+          <button class:weak={row.weak} class:expanded={selectedQuery === row.query.id} aria-expanded={selectedQuery === row.query.id} onclick={() => { selectedQuery = selectedQuery === row.query.id ? null : row.query.id }}>
+            <code>{row.query.id}</code><span><b>{row.relevantCount} релевантных</b><small>{row.relevantTitles || 'нет размеченных результатов'}</small>{#if selectedQuery === row.query.id}<em>{#each row.results.slice(0, 6) as result}<i>#{result.rank} {result.document_title} · rel {result.relevance}</i>{/each}</em>{/if}</span><strong>{fixed(row.recall)}</strong><strong>{fixed(row.rr)}</strong><strong>{fixed(row.ndcg)}</strong><strong>{row.searchMs ?? '—'}</strong>
           </button>
         {/each}
         {#if !queries.length}<div class="empty">{busy ? 'Загрузка истории…' : configured === null ? 'Статус history неизвестен' : configured ? 'История пуста: запустите eval с --history-jsonl' : 'Укажите RAG_EVAL_HISTORY и перезапустите gateway'}</div>{/if}
@@ -133,7 +173,7 @@
     </article>
 
     <aside>
-      <article class="panel history"><header><strong>История · hybrid recall</strong><span>{history.length} прогонов</span></header><div class="chart"><svg viewBox="0 0 320 112" preserveAspectRatio="none"><line x1="0" x2="320" y1="92" y2="92"></line><polyline points={chartHistory.map((point,index) => `${chartHistory.length <= 1 ? 160 : index/(chartHistory.length-1)*310+5},${98-point.recall*80}`).join(' ')}></polyline>{#each chartHistory as point,index}<circle cx={chartHistory.length <= 1 ? 160 : index/(chartHistory.length-1)*310+5} cy={98-point.recall*80} r="3"></circle>{/each}</svg></div><div class="runs">{#each history.slice(0,5) as run,index}<div><span>{run.dataset_name} v{run.dataset_version}</span><b>{fixed(metric(run.modes?.find((mode:any)=>mode.mode==='hybrid'), 'recall_at_k'))}</b><em>{index === 0 ? 'последний' : `−${index}`}</em></div>{/each}</div></article>
+      <article class="panel history"><header><strong>История · hybrid recall</strong><span>{history.length} прогонов</span></header><div class="chart"><svg viewBox="0 0 320 112" preserveAspectRatio="none"><line x1="0" x2="320" y1="92" y2="92"></line><polyline points={chartHistory.map((point,index) => `${chartHistory.length <= 1 ? 160 : index/(chartHistory.length-1)*310+5},${98-point.recall*80}`).join(' ')}></polyline>{#each chartHistory as point,index}<circle cx={chartHistory.length <= 1 ? 160 : index/(chartHistory.length-1)*310+5} cy={98-point.recall*80} r="3"></circle>{/each}</svg></div><div class="runs">{#each recentRuns as { run, recall },index}<div><span>{run.dataset_name} v{run.dataset_version}</span><b>{fixed(recall)}</b><em>{index === 0 ? 'последний' : `−${index}`}</em></div>{/each}</div></article>
       <article class="panel ci"><header><strong>Пороги CI · exit ≠ 0</strong></header><div><span>min recall@k</span><b>.75</b><i class:pass={recallCi === true} class:unknown={recallCi === null}>{ciMark(recallCi)}</i></div><div><span>min MRR</span><b>.60</b><i class:pass={mrrCi === true} class:unknown={mrrCi === null}>{ciMark(mrrCi)}</i></div><div><span>max p95</span><b>300 ms</b><i class:pass={p95Ci === true} class:unknown={p95Ci === null}>{ciMark(p95Ci)}</i></div><code>{path || 'RAG_EVAL_HISTORY'}</code></article>
     </aside>
   </section>

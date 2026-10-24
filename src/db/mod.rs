@@ -13,12 +13,18 @@
 //!
 //! Graph *extract/resolve* (wikilinks, tags, stubs) lives in crate-root [`crate::graph`].
 
+pub mod analytics;
 mod catalog;
+pub mod chunk_text;
 pub mod collections;
+pub mod embedding_identity;
 pub mod fts;
 pub mod graph;
 pub mod kg;
+pub mod knowledge;
+pub(crate) mod payload_kv;
 pub mod recovery;
+pub mod review;
 mod rows;
 pub mod schema;
 pub mod search;
@@ -32,6 +38,7 @@ pub use catalog::{
     DocumentCatalogFilter, DocumentCatalogPage, ProjectHome, DEFAULT_CATALOG_PAGE_SIZE,
     MAX_CATALOG_PAGE_SIZE,
 };
+pub use embedding_identity::EmbeddingIdentity;
 pub use fts::{
     chunks_generation, ensure_fts, ensure_fts_with_stemmer, fts_generation_state,
     fts_index_present, fts_status, load_fts_extension, mark_fts_dirty, probe_ready,

@@ -101,6 +101,26 @@ export type MessageKey =
   | 'confirm'
   | 'keepDraft'
   | 'discardReload'
+  | 'apiInvalidPath'
+  | 'apiUnauthorized'
+  | 'apiForbidden'
+  | 'apiHttpError'
+  | 'apiInvalidJson'
+  | 'apiEmptyBody'
+  | 'tokenInvalidChars'
+  | 'tokenStorageDenied'
+  | 'graphProject'
+  | 'graphAllProjects'
+  | 'graphFocusToggle'
+  | 'graphTagsToggle'
+  | 'graphZoomIn'
+  | 'graphZoomOut'
+  | 'graphLabelDensity'
+  | 'graphLabelsHubs'
+  | 'graphLabelsAll'
+  | 'graphLabelsNone'
+  | 'graphSeedLabel'
+  | 'graphSeedHint'
 
 export type Messages = Record<MessageKey, string>
 
@@ -205,6 +225,26 @@ export const messages: Record<Locale, Messages> = {
     confirm: 'Confirm',
     keepDraft: 'Keep draft',
     discardReload: 'Discard & reload',
+    apiInvalidPath: 'Gateway requests require an absolute API path.',
+    apiUnauthorized: 'HTTP 401: Provide a valid token in the “Access” section.',
+    apiForbidden: 'HTTP 403: The token lacks permission for this action.',
+    apiHttpError: 'HTTP {status}: {detail}',
+    apiInvalidJson: 'HTTP {status}: response is not valid JSON',
+    apiEmptyBody: 'HTTP {status}: expected a JSON response but the body was empty',
+    tokenInvalidChars: 'The token may contain only valid Bearer token characters.',
+    tokenStorageDenied: 'The browser refused to store the token in this tab’s session.',
+    graphProject: 'Project',
+    graphAllProjects: 'All projects',
+    graphFocusToggle: '◎ Focus',
+    graphTagsToggle: '◇ Tags',
+    graphZoomIn: 'Zoom in',
+    graphZoomOut: 'Zoom out',
+    graphLabelDensity: 'Label density',
+    graphLabelsHubs: 'Labels: hubs',
+    graphLabelsAll: 'Labels: all',
+    graphLabelsNone: 'Labels: none',
+    graphSeedLabel: 'Seed node',
+    graphSeedHint: 'seed · wiki://…',
   },
   ru: {
     toggleSidebar: 'Боковая панель (⌘B)',
@@ -277,7 +317,7 @@ export const messages: Record<Locale, Messages> = {
     graphExpand: 'Развернуть узел',
     graphSeedPlaceholder: 'id / label / document_id узла',
     graphDepth: 'глубина',
-    graphMax: 'макс.',
+    graphMax: 'макс',
     graphTags: 'теги',
     graphFit: 'Вписать',
     graphFocus: 'Фокус на соседях',
@@ -306,6 +346,26 @@ export const messages: Record<Locale, Messages> = {
     confirm: 'Подтвердить',
     keepDraft: 'Оставить черновик',
     discardReload: 'Отбросить и загрузить',
+    apiInvalidPath: 'Запросы к шлюзу требуют абсолютного пути API.',
+    apiUnauthorized: 'HTTP 401: Укажите действующий токен в разделе «Доступ».',
+    apiForbidden: 'HTTP 403: У токена нет прав для этого действия.',
+    apiHttpError: 'HTTP {status}: {detail}',
+    apiInvalidJson: 'HTTP {status}: ответ не является корректным JSON',
+    apiEmptyBody: 'HTTP {status}: ожидался JSON-ответ, но тело пустое',
+    tokenInvalidChars: 'Токен должен содержать только допустимые символы Bearer token.',
+    tokenStorageDenied: 'Браузер запретил хранение токена в сессии этой вкладки.',
+    graphProject: 'Проект',
+    graphAllProjects: 'Все проекты',
+    graphFocusToggle: '◎ Фокус',
+    graphTagsToggle: '◇ Теги',
+    graphZoomIn: 'Приблизить',
+    graphZoomOut: 'Отдалить',
+    graphLabelDensity: 'Плотность подписей',
+    graphLabelsHubs: 'Подписи: hubs',
+    graphLabelsAll: 'Подписи: все',
+    graphLabelsNone: 'Подписи: нет',
+    graphSeedLabel: 'Исходный узел',
+    graphSeedHint: 'seed · wiki://…',
   },
 }
 
@@ -321,4 +381,15 @@ export function formatMessage(
     }
   }
   return s
+}
+
+let activeLocale: Locale = 'ru'
+
+/** Locale used by non-component modules (API client); kept in sync by the UI store. */
+export function setActiveLocale(locale: Locale): void { activeLocale = locale }
+export function getActiveLocale(): Locale { return activeLocale }
+
+/** Translate with the active locale (for modules outside the Svelte UI store). */
+export function t(key: MessageKey, params?: Record<string, string | number>): string {
+  return formatMessage(activeLocale, key, params)
 }

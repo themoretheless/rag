@@ -5,7 +5,8 @@
 //! bounded ring buffer of every call with latency and outcome. Nothing here touches
 //! the database; the buffer is lost on restart by design.
 //!
-//! Capacity: `RAG_CALL_LOG_CAPACITY` (default [`DEFAULT_CAPACITY`]).
+//! Capacity: `Config::call_log_capacity` via [`configure_capacity`]
+//! (env `RAG_CALL_LOG_CAPACITY`, default [`DEFAULT_CAPACITY`]).
 //! Surfaces: `GET /v1/calls`, `GET /v1/agents`.
 
 use std::collections::{HashMap, VecDeque};
@@ -50,12 +51,15 @@ struct Buffer {
     records: VecDeque<CallRecord>,
 }
 
+static CAPACITY: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// Set the call-log size before the first call is recorded. First value wins.
+pub fn configure_capacity(capacity: usize) {
+    let _ = CAPACITY.set(capacity.max(1));
+}
+
 static BUFFER: LazyLock<RwLock<Buffer>> = LazyLock::new(|| {
-    let capacity = std::env::var("RAG_CALL_LOG_CAPACITY")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_CAPACITY);
+    let capacity = *CAPACITY.get_or_init(|| DEFAULT_CAPACITY);
     RwLock::new(Buffer {
         next_seq: 1,
         capacity,
@@ -96,6 +100,7 @@ pub fn begin(
 }
 
 impl CallStart {
+    /// Record the finished call in the telemetry ring buffer.
     pub fn finish(self, ok: bool, error: Option<String>, result_hint: Option<String>) {
         let record = CallRecord {
             seq: 0,
@@ -154,14 +159,7 @@ fn normalize_agent(raw: &str) -> String {
     }
 }
 
-fn truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push('…');
-    out
-}
+use crate::util::truncate_chars as truncate;
 
 fn sanitize_args(value: &serde_json::Value) -> String {
     let summary = match value {
@@ -247,7 +245,24 @@ fn sanitize_result_hint(hint: &str) -> Option<String> {
 
 /// Coarse tool family used by the console for share breakdowns.
 pub fn tool_group(tool: &str) -> &'static str {
-    match tool {
+    explicit_tool_group(tool).unwrap_or("ops")
+}
+
+/// Group for every registered MCP tool; `None` only for unknown names.
+/// `mcp::facade` tests assert each registered tool has an entry here.
+pub fn explicit_tool_group(tool: &str) -> Option<&'static str> {
+    let group = match tool {
+        "catalog" | "freshness" | "live_read" | "drift_report" | "drift_ack" | "index_status"
+        | "search_multi" | "duplicates" | "index_revisions" | "diff" | "policy_trace"
+        | "class_usage" | "db_refresh" | "db_schema" | "db_table" | "db_relations" | "db_drift"
+        | "db_cross" | "db_sample" | "schema" | "table_usage" | "write_check" | "entrypoints"
+        | "routes" | "dead_code" | "slice" | "inheritance" | "code" | "repo_map" | "impact"
+        | "index_code" | "symbol" | "references" | "callers" | "callees" => "graph",
+        "calibrate" | "calibration_reports" | "gate" => "maintain",
+        "task_set" | "note" | "notes" | "task_stats" => "memory",
+        "ingest_url" => "ingest",
+        "reembed_status" => "ops",
+
         "search" | "multi_query_search" | "query_with_index" | "search_wiki" | "pack_context"
         | "find_similar" | "expand_chunks" | "multi_get" | "get_document" | "get_source"
         | "list_documents" | "list_sources" | "check_duplicate" => "search",
@@ -297,8 +312,25 @@ pub fn tool_group(tool: &str) -> &'static str {
         | "maintain_organize"
         | "maintain_refresh"
         | "maintain_compress" => "maintain",
-        _ => "ops",
-    }
+        "collection_create" | "collection_get" | "collection_list" | "collection_update" => {
+            "collections"
+        }
+        "backup_db" | "export_bundle" | "export_vault" | "import_bundle" => "recovery",
+        "cleanup_source_duplicates"
+        | "doctor"
+        | "doctor_repair"
+        | "get_embedding_manifest"
+        | "get_taxonomy"
+        | "list_rooms"
+        | "list_wings"
+        | "llm_status"
+        | "reconnect"
+        | "stats"
+        | "status"
+        | "vacuum_store" => "ops",
+        _ => return None,
+    };
+    Some(group)
 }
 
 /// Newest-first records, optionally filtered by agent and/or tool.
@@ -348,6 +380,7 @@ pub struct CallSummary {
     pub by_tool: Vec<ToolStats>,
 }
 
+/// Aggregate buffered calls into counts, latency stats and per-group/tool breakdowns.
 pub fn summary() -> CallSummary {
     let buffer = BUFFER
         .read()
@@ -415,6 +448,7 @@ pub struct AgentActivity {
     pub online: bool,
 }
 
+/// Per-agent call activity from the telemetry buffer.
 pub fn agent_activity() -> Vec<AgentActivity> {
     let buffer = BUFFER
         .read()

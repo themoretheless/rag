@@ -10,6 +10,11 @@ use super::Store;
 use crate::error::{AppError, Result};
 use crate::models::GraphFilter;
 
+/// Characters of the document id appended to a vault file name.
+const VAULT_ID_SUFFIX_CHARS: usize = 12;
+/// Longest vault path segment kept after sanitising.
+const VAULT_SEGMENT_MAX_CHARS: usize = 96;
+
 pub const VAULT_VERSION: u32 = 1;
 
 #[derive(Debug, Serialize)]
@@ -147,7 +152,13 @@ fn document_path(document: &crate::models::Document) -> PathBuf {
     let room = safe_segment(document.room.as_deref().unwrap_or("unfiled"));
     let layer = safe_segment(&document.layer);
     let title = safe_segment(&document.title);
-    let id = safe_segment(&document.id.chars().take(12).collect::<String>());
+    let id = safe_segment(
+        &document
+            .id
+            .chars()
+            .take(VAULT_ID_SUFFIX_CHARS)
+            .collect::<String>(),
+    );
     PathBuf::from("projects")
         .join(wing)
         .join(room)
@@ -168,21 +179,33 @@ fn safe_segment(value: &str) -> String {
     if out.is_empty() {
         "untitled".into()
     } else {
-        out.chars().take(96).collect()
+        out.chars().take(VAULT_SEGMENT_MAX_CHARS).collect()
     }
 }
 
 fn markdown_document(document: &crate::models::Document) -> Result<String> {
     let scalar = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into());
     Ok(format!(
-        "---\nid: {}\nuri: {}\ntitle: {}\nwing: {}\nroom: {}\nlayer: {}\nkind: {}\nstatus: {}\npinned: {}\nboost: {}\nrevision: {}\ncontent_hash: {}\nsource_file: {}\ncreated_at: {}\nupdated_at: {}\nmetadata_json: {}\n---\n\n{}\n",
-        scalar(&document.id), scalar(&document.uri), scalar(&document.title),
-        scalar(document.wing.as_deref().unwrap_or("")), scalar(document.room.as_deref().unwrap_or("")),
-        scalar(&document.layer), scalar(&document.kind),
-        scalar(&document.status), document.pinned, document.boost, document.revision,
-        scalar(document.content_hash.as_deref().unwrap_or("")), scalar(document.source_file.as_deref().unwrap_or("")),
-        scalar(&document.created_at.to_rfc3339()), scalar(&document.updated_at.to_rfc3339()),
-        scalar(&document.metadata_json), document.content
+        "---\nid: {}\nuri: {}\ntitle: {}\nwing: {}\nroom: {}\nlayer: {}\nkind: {}\nstatus: \
+        {}\npinned: {}\nboost: {}\nrevision: {}\ncontent_hash: {}\nsource_file: {}\ncreated_at: \
+        {}\nupdated_at: {}\nmetadata_json: {}\n---\n\n{}\n",
+        scalar(&document.id),
+        scalar(&document.uri),
+        scalar(&document.title),
+        scalar(document.wing.as_deref().unwrap_or("")),
+        scalar(document.room.as_deref().unwrap_or("")),
+        scalar(&document.layer),
+        scalar(&document.kind),
+        scalar(&document.status),
+        document.pinned,
+        document.boost,
+        document.revision,
+        scalar(document.content_hash.as_deref().unwrap_or("")),
+        scalar(document.source_file.as_deref().unwrap_or("")),
+        scalar(&document.created_at.to_rfc3339()),
+        scalar(&document.updated_at.to_rfc3339()),
+        scalar(&document.metadata_json),
+        document.content
     ))
 }
 

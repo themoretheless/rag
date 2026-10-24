@@ -96,6 +96,10 @@ fn problem(out: &mut IndexedDocument, line: usize, code: &str) {
         }
     }
 }
+struct StyleContext {
+    selector: Option<String>,
+    conditions: Vec<String>,
+}
 fn add(
     out: &mut IndexedDocument,
     source: &str,
@@ -103,9 +107,12 @@ fn add(
     name: &str,
     kind: &str,
     syntax: &str,
-    selector: Option<String>,
-    conditions: Vec<String>,
+    context: StyleContext,
 ) {
+    let StyleContext {
+        selector,
+        conditions,
+    } = context;
     if name.is_empty() || name.chars().any(|c| c.is_ascii_whitespace() || c == '\0') {
         return;
     }
@@ -137,7 +144,18 @@ fn add(
 }
 fn tokens(out: &mut IndexedDocument, full: &str, offset: usize, value: &str, syntax: &str) {
     for token in value.split_ascii_whitespace() {
-        add(out, full, offset, token, "uses_class", syntax, None, vec![]);
+        add(
+            out,
+            full,
+            offset,
+            token,
+            "uses_class",
+            syntax,
+            StyleContext {
+                selector: None,
+                conditions: vec![],
+            },
+        );
     }
 }
 // CSS escape processing: hexadecimal escapes consume at most six digits plus one whitespace.
@@ -217,8 +235,10 @@ fn css_walk(
                 &unescape_css(text(name, fragment)),
                 "defines_class",
                 "css_selector",
-                selector,
-                conditions,
+                StyleContext {
+                    selector,
+                    conditions,
+                },
             );
         }
     }
@@ -360,8 +380,10 @@ fn html_walk(node: Node, source: &str, out: &mut IndexedDocument, depth: usize) 
                 class,
                 "uses_class",
                 "svelte_class_directive",
-                None,
-                vec![],
+                StyleContext {
+                    selector: None,
+                    conditions: vec![],
+                },
             );
             problem(
                 out,
@@ -535,8 +557,10 @@ fn collect_js(node: Node, fragment: &str, full: &str, base: usize, out: &mut Ind
                                     &value,
                                     "uses_class",
                                     "dom_class_list",
-                                    None,
-                                    vec![],
+                                    StyleContext {
+                                        selector: None,
+                                        conditions: vec![],
+                                    },
                                 );
                             }
                         } else {
@@ -608,8 +632,9 @@ impl CodeSnapshot {
             return Err(AppError::config("name must be one nonempty class token"));
         }
         let limit = q.limit.unwrap_or(200).clamp(1, 500);
-        let mut groups: BTreeMap<(Option<&str>, &str), (Vec<&Evidence>, Vec<&Evidence>)> =
-            BTreeMap::new();
+        type ClassEvidenceGroups<'a> =
+            BTreeMap<(Option<&'a str>, &'a str), (Vec<&'a Evidence>, Vec<&'a Evidence>)>;
+        let mut groups: ClassEvidenceGroups<'_> = BTreeMap::new();
         for f in &self.styles.facts {
             if q.project
                 .as_ref()
@@ -896,7 +921,6 @@ mod persistence_tests {
             "unused_in_indexed_scope"
         );
         assert_eq!(snap.policy_trace(&p).unwrap()["default_behavior"], "allow");
-        drop(service);
         drop(store);
         let store = Store::open(&config.db_path).unwrap();
         assert_eq!(

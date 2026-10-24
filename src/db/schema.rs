@@ -283,6 +283,19 @@ CREATE TABLE IF NOT EXISTS meta (
 )
 "#;
 
+/// Which documents' chunks changed at each chunk generation. A NULL
+/// `document_id` means "unknown / any": readers then fall back to a full
+/// listing. Rows older than a window are pruned (see `db::fts`).
+pub const CREATE_CHUNK_CHANGE_LOG: &str = r#"
+CREATE TABLE IF NOT EXISTS chunk_change_log (
+  generation BIGINT NOT NULL,
+  document_id VARCHAR
+)
+"#;
+
+pub const CREATE_IDX_CHUNK_CHANGE_LOG_GENERATION: &str =
+    "CREATE INDEX IF NOT EXISTS idx_chunk_change_log_generation ON chunk_change_log(generation)";
+
 /// Named, durable reading lists / outlines.
 pub const CREATE_COLLECTIONS: &str = r#"
 CREATE TABLE IF NOT EXISTS collections (
@@ -362,6 +375,10 @@ pub const CREATE_IDX_DOCUMENTS_WING_ROOM: &str =
 
 pub const CREATE_IDX_DOCUMENTS_LAYER: &str =
     "CREATE INDEX IF NOT EXISTS idx_documents_layer ON documents(layer)";
+
+/// Diary activity (`/v1/agents`, polled) filters on `kind = 'diary'`.
+pub const CREATE_IDX_DOCUMENTS_KIND: &str =
+    "CREATE INDEX IF NOT EXISTS idx_documents_kind ON documents(kind)";
 
 pub const CREATE_IDX_DOCUMENTS_STATUS: &str =
     "CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status)";
@@ -462,6 +479,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_chunks_parent_chunk_id ON chunks(parent_chunk_id)",
     )?;
     backfill_chunk_parent_ids(conn)?;
+    // 64-bit digest of `embedding_json`, maintained by every chunk writer, so a
+    // vector-snapshot refresh can tell changed vectors apart without reading
+    // the JSON. Rows written before the column existed are backfilled once.
+    add_column_best_effort(conn, "chunks", "embedding_digest", "BIGINT")?;
+    conn.execute_batch(
+        "UPDATE chunks SET embedding_digest = CAST(hash(embedding_json) >> 1 AS BIGINT) \
+         WHERE embedding_digest IS NULL",
+    )?;
 
     // NULL identifies pre-v11 edges whose author was never persisted. New writes
     // explicitly distinguish extracted edges from durable user-authored links.
@@ -498,6 +523,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_IDX_DOCUMENTS_CONTENT_HASH,
             CREATE_IDX_DOCUMENTS_WING_ROOM,
             CREATE_IDX_DOCUMENTS_LAYER,
+            CREATE_IDX_DOCUMENTS_KIND,
             CREATE_IDX_DOCUMENTS_STATUS,
             CREATE_IDX_DOCUMENTS_PINNED,
         ]
@@ -516,6 +542,8 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_REEMBED_PROGRESS,
             CREATE_SCHEMA_VERSION,
             CREATE_META,
+            CREATE_CHUNK_CHANGE_LOG,
+            CREATE_IDX_CHUNK_CHANGE_LOG_GENERATION,
             "CREATE TABLE IF NOT EXISTS search_feedback (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
             "CREATE TABLE IF NOT EXISTS knowledge_views (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
             "CREATE TABLE IF NOT EXISTS wiki_proposals (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",

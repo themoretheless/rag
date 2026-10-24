@@ -9,6 +9,11 @@
 
 mod adapter;
 mod app;
+#[cfg(feature = "direct-db")]
+mod direct_db;
+#[cfg(not(feature = "direct-db"))]
+#[path = "direct_db_disabled.rs"]
+mod direct_db;
 mod gateway;
 mod layout;
 mod load;

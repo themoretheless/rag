@@ -51,3 +51,33 @@ pub fn dataset_content_hash(path: &Path) -> crate::error::Result<String> {
 pub fn dataset_bytes_hash(raw: &str) -> String {
     content_hash(raw)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dataset_bytes_hash_is_stable_and_content_sensitive() {
+        let raw = "{\"query\":\"a\"}\n{\"query\":\"b\"}\n";
+        assert_eq!(dataset_bytes_hash(raw), dataset_bytes_hash(raw));
+        assert_eq!(dataset_bytes_hash(raw), content_hash(raw));
+        assert_ne!(
+            dataset_bytes_hash(raw),
+            dataset_bytes_hash(&raw.replace('b', "c"))
+        );
+        assert_ne!(dataset_bytes_hash(""), dataset_bytes_hash(" "));
+    }
+
+    #[test]
+    fn dataset_bytes_hash_matches_the_file_hash_of_the_same_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dataset.jsonl");
+        let raw = "{\"query\":\"wiki\"}\n";
+        std::fs::write(&path, raw).unwrap();
+        assert_eq!(
+            dataset_content_hash(&path).unwrap(),
+            dataset_bytes_hash(raw)
+        );
+        assert!(dataset_content_hash(&dir.path().join("missing.jsonl")).is_err());
+    }
+}

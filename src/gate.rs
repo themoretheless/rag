@@ -737,7 +737,7 @@ mod tests {
                         ..Default::default()
                     },
                     mode,
-                    &[self.root.clone()],
+                    std::slice::from_ref(&self.root),
                 )
                 .unwrap()
         }
@@ -803,7 +803,7 @@ mod tests {
             ..Default::default()
         };
         f.store
-            .analysis_gate("s", &fake, Mode::Warn, &[f.root.clone()])
+            .analysis_gate("s", &fake, Mode::Warn, std::slice::from_ref(&f.root))
             .unwrap();
         f.use_index(false, Some(10));
         f.use_index(true, Some(0));
@@ -849,7 +849,7 @@ mod tests {
                     ..Default::default()
                 },
                 Mode::Warn,
-                &[f.root.clone()],
+                std::slice::from_ref(&f.root),
             )
             .unwrap();
         let reset = f.call(Mode::Ask);
@@ -917,7 +917,7 @@ mod tests {
         };
         let r = f
             .store
-            .analysis_gate("s", &p, Mode::Deny, &[f.root.clone()])
+            .analysis_gate("s", &p, Mode::Deny, std::slice::from_ref(&f.root))
             .unwrap();
         assert_eq!(r["verdict"], "allow");
         let r = f.store.analysis_gate("s", &p, Mode::Off, &[]).unwrap();
@@ -947,7 +947,7 @@ mod tests {
                     ..Default::default()
                 },
                 Mode::Ask,
-                &[f.root.clone()],
+                std::slice::from_ref(&f.root),
             )
             .unwrap();
         assert_eq!(r["verdict"], "ask");

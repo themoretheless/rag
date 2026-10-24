@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use rag_mcp::db::search::{search, SearchQuery};
-use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
+use rag_mcp::embeddings::EmbeddingProvider;
 use rag_mcp::eval::{
     apply_settings_profile, compare_query_metrics, dataset_content_hash, load_checkpoint,
     load_export_bundle, replay_bundle, save_checkpoint, triad_report, Checkpoint, QueryErrorLabel,
@@ -168,13 +168,7 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
+    rag_mcp::bootstrap::init_tracing("warn");
     let args = parse_args()?;
     tokio::runtime::Runtime::new()?.block_on(run(args))
 }
@@ -613,11 +607,11 @@ async fn evaluate(
     dataset_hash: &str,
     db_path: &Path,
 ) -> Result<Report> {
-    let mut config = Config::from_env()?;
-    config.db_path = db_path.to_path_buf();
-    let store = Store::open(&config.db_path)?;
-    store.ensure_embedding_manifest(&config)?;
-    let embedder: Arc<dyn EmbeddingProvider> = build_provider(&config)?;
+    let rag_mcp::bootstrap::OfflineRuntime {
+        config,
+        store,
+        embedder,
+    } = rag_mcp::bootstrap::open_offline(db_path.to_path_buf())?;
     let started = Instant::now();
     for relative in &dataset.corpus {
         let path = args.root.join(relative);
@@ -632,12 +626,14 @@ async fn evaluate(
             &store,
             &embedder,
             &config,
-            text,
-            Some(title),
-            Some(format!("eval://{relative}")),
-            None,
-            None,
-            Some(path.display().to_string()),
+            wiki::RawIngest {
+                text,
+                title: Some(title),
+                uri: Some(format!("eval://{relative}")),
+                wing: None,
+                room: None,
+                source_file: Some(path.display().to_string()),
+            },
         )
         .await
         .with_context(|| format!("ingest {relative}"))?;
@@ -655,12 +651,14 @@ async fn evaluate(
                 &store,
                 &embedder,
                 &config,
-                document.content,
-                Some(document.title),
-                Some(document.uri),
-                None,
-                None,
-                None,
+                wiki::RawIngest {
+                    text: document.content,
+                    title: Some(document.title),
+                    uri: Some(document.uri),
+                    wing: None,
+                    room: None,
+                    source_file: None,
+                },
             )
             .await
             .context("ingest deterministic synthetic corpus")?;
@@ -796,11 +794,11 @@ async fn evaluate_compare(
         }
     };
 
-    let mut config = Config::from_env()?;
-    config.db_path = db_path.to_path_buf();
-    let store = Store::open(&config.db_path)?;
-    store.ensure_embedding_manifest(&config)?;
-    let embedder: Arc<dyn EmbeddingProvider> = build_provider(&config)?;
+    let rag_mcp::bootstrap::OfflineRuntime {
+        config,
+        store,
+        embedder,
+    } = rag_mcp::bootstrap::open_offline(db_path.to_path_buf())?;
     for relative in &dataset.corpus {
         let path = args.root.join(relative);
         let text =
@@ -814,12 +812,14 @@ async fn evaluate_compare(
             &store,
             &embedder,
             &config,
-            text,
-            Some(title),
-            Some(format!("eval://{relative}")),
-            None,
-            None,
-            Some(path.display().to_string()),
+            wiki::RawIngest {
+                text,
+                title: Some(title),
+                uri: Some(format!("eval://{relative}")),
+                wing: None,
+                room: None,
+                source_file: Some(path.display().to_string()),
+            },
         )
         .await
         .with_context(|| format!("ingest {relative}"))?;
@@ -963,7 +963,7 @@ async fn eval_query_with_settings(
     .map_err(|e| anyhow::anyhow!(e))?;
     if rerank_mock {
         // Mirror production: expand the candidate pool, rerank, cut back.
-        search_query.top_k = top_k.max(50).min(rag_mcp::db::search::MAX_TOP_K);
+        search_query.top_k = top_k.clamp(50, rag_mcp::db::search::MAX_TOP_K);
         // Post-processing a 50-candidate pool (snippets, context metadata)
         // needs more headroom than the default 5s top-5 budget.
         search_query.timeout_ms = Some(30_000);

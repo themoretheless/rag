@@ -19,8 +19,14 @@
   let svgSel: Selection<SVGSVGElement, unknown, null, undefined> | null = null
   let zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> | null = null
   let liveNodes: SimNode[] = []
-  let viewW = $state(800)
-  let viewH = $state(600)
+  /** Fallback viewport before the host element has been measured. */
+  const DEFAULT_VIEW_WIDTH = 800
+  const DEFAULT_VIEW_HEIGHT = 600
+  /** Width reserved for the inspector panel; also the minimum usable canvas width. */
+  const INSPECTOR_WIDTH = 360
+  const MIN_USABLE_WIDTH = 360
+  let viewW = $state(DEFAULT_VIEW_WIDTH)
+  let viewH = $state(DEFAULT_VIEW_HEIGHT)
   let nodeSel: Selection<SVGGElement, SimNode, SVGGElement, unknown> | null = null
   let linkSel: Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null = null
   let currentTransform: ZoomTransform = zoomIdentity
@@ -54,7 +60,7 @@
     const pad = 48
     const bw = Math.max(1, maxX - minX)
     const bh = Math.max(1, maxY - minY)
-    const usableW = Math.max(360, viewW - (graph.selectedId ? 360 : 0))
+    const usableW = Math.max(MIN_USABLE_WIDTH, viewW - (graph.selectedId ? INSPECTOR_WIDTH : 0))
     const scale = Math.max(
       0.35,
       Math.min(1.8, Math.min(usableW / (bw + pad * 2), viewH / (bh + pad * 2))),
@@ -83,8 +89,8 @@
     const el = host
     if (!el) return
 
-    const width = el.clientWidth || 800
-    const height = el.clientHeight || 600
+    const width = el.clientWidth || DEFAULT_VIEW_WIDTH
+    const height = el.clientHeight || DEFAULT_VIEW_HEIGHT
     viewW = width
     viewH = height
     el.innerHTML = ''

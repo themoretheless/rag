@@ -1,12 +1,8 @@
 //! Revision history HTTP client. Restore always uses gateway-side CAS.
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::time::Duration;
 
-use crate::gateway::{
-    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
-    ReqwestGatewayClient,
-};
+use crate::gateway::{GatewayClient, Method, ReqwestGatewayClient};
 use crate::load::DocumentBody;
 
 pub const REVISION_PAGE_SIZE: usize = 50;
@@ -37,13 +33,7 @@ pub struct RevisionPage {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct RevisionLineChange {
-    pub kind: String,
-    pub line: usize,
-    pub content: String,
-    pub content_truncated: bool,
-}
+pub use rag_mcp_core::RevisionLineChange;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RevisionDiff {
@@ -60,16 +50,7 @@ pub struct RevisionDiff {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct RestoreRevisionResult {
-    pub document_id: String,
-    pub restored_from_revision: i64,
-    pub revision: i64,
-    pub etag: String,
-    pub chunk_count: usize,
-    pub node_id: String,
-    pub edge_count: usize,
-}
+pub use rag_mcp_core::RestoreRevisionResult;
 
 #[derive(Deserialize)]
 struct RevisionsEnvelope {
@@ -107,6 +88,7 @@ struct RestoreRequest<'a> {
     if_match_revision: i64,
 }
 
+/// Fetch one page of a document's revision history from the gateway.
 pub fn fetch_revisions_http(
     base: &str,
     document_id: &str,
@@ -136,6 +118,7 @@ fn fetch_revisions_with_client(
     })
 }
 
+/// Fetch the document body as of one revision from the gateway.
 pub fn fetch_revision_snapshot_http(
     base: &str,
     document_id: &str,
@@ -158,6 +141,7 @@ fn fetch_revision_snapshot_with_client(
     get_json::<SnapshotEnvelope>(client, base, &path).map(|envelope| envelope.result)
 }
 
+/// Fetch the diff between two revisions (or a revision and current) from the gateway.
 pub fn fetch_revision_diff_http(
     base: &str,
     document_id: &str,
@@ -175,6 +159,7 @@ pub fn fetch_revision_diff_http(
     get_json::<DiffEnvelope>(&client, base, &path).map(|envelope| envelope.result)
 }
 
+/// Restore a document to an earlier revision, guarded by `if_match_revision`.
 pub fn restore_revision_http(
     base: &str,
     document_id: &str,
@@ -199,7 +184,7 @@ pub fn restore_revision_http(
 }
 
 fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
-    ReqwestGatewayClient::new(Duration::from_secs(timeout_secs))
+    crate::gateway::client(timeout_secs)
 }
 
 fn get_json<T: DeserializeOwned>(
@@ -217,29 +202,7 @@ fn send_json<T: DeserializeOwned>(
     method: Method,
     body: Option<String>,
 ) -> Result<T, String> {
-    let url = join(base, path)?;
-    let response = execute_request(
-        client,
-        Request {
-            method,
-            url: url.clone(),
-            body,
-            headers: Vec::new(),
-        },
-    )?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, revision_context(path)));
-    }
-    serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error(revision_context(path), &error))
-}
-
-fn join(base: &str, path: &str) -> Result<String, String> {
-    let base = base.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("http base URL is empty".to_string());
-    }
-    Ok(format!("{base}/{}", path.trim_start_matches('/')))
+    crate::gateway::send_json(client, base, path, method, body, revision_context(path))
 }
 
 fn revision_context(path: &str) -> &'static str {
@@ -254,21 +217,12 @@ fn revision_context(path: &str) -> &'static str {
     }
 }
 
-fn encode_query(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
-            }
-            other => format!("%{other:02X}"),
-        })
-        .collect()
-}
+use crate::gateway::percent_encode as encode_query;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Request;
     use crate::gateway::Response;
     use std::collections::VecDeque;
     use std::sync::Mutex;

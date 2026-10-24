@@ -100,11 +100,10 @@ fn eval(
     let mut sub = |e: &Expr| eval(e, values, domain, mysql, budget, depth + 1);
     match expr {
         Expr::Identifier(id) => {
-            if id.quote_style.is_none()
-                && id.value.eq_ignore_ascii_case("value")
-                && domain.is_some()
-            {
-                return literal(domain.unwrap());
+            if id.quote_style.is_none() && id.value.eq_ignore_ascii_case("value") {
+                if let Some(domain) = domain {
+                    return literal(domain);
+                }
             }
             let key = if !mysql && id.quote_style.is_none() {
                 id.value.to_lowercase()

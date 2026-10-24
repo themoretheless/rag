@@ -22,6 +22,7 @@ pub enum SearchAction {
     },
 }
 
+/// Draw the search workspace and return the chosen action.
 pub fn draw_search_workspace(
     ui: &mut egui::Ui,
     request: &mut SearchRequest,
@@ -276,13 +277,7 @@ fn clean(value: String) -> Option<String> {
 }
 
 fn trim_excerpt(value: &str, max_chars: usize) -> String {
-    let value = value.trim();
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut output: String = value.chars().take(max_chars.saturating_sub(1)).collect();
-    output.push('…');
-    output
+    crate::ui::text::truncate(value.trim(), max_chars)
 }
 
 #[cfg(test)]

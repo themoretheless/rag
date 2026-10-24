@@ -14,6 +14,11 @@ use crate::error::AppError;
 use super::error::{api_err, api_ok};
 use super::HttpState;
 
+/// Node cap for a whole-graph export when `max_nodes` is absent.
+const DEFAULT_GRAPH_MAX_NODES: u32 = 500;
+/// Node cap for a seeded neighbourhood when `max_nodes` is absent.
+const DEFAULT_NEIGHBORHOOD_MAX_NODES: u32 = 100;
+
 /// Graph + document UI routes (no `/health`, no wiki).
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -34,7 +39,7 @@ struct GraphQuery {
 }
 
 async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl IntoResponse {
-    let max = q.max_nodes.unwrap_or(500);
+    let max = q.max_nodes.unwrap_or(DEFAULT_GRAPH_MAX_NODES);
     let tags = q.include_tags.unwrap_or(false);
     let project = q.project.and_then(|project| {
         let project = project.trim();
@@ -71,12 +76,12 @@ async fn neighbors(
 ) -> impl IntoResponse {
     let seed = q.seed.trim();
     if seed.is_empty() {
-        return api_err(AppError::config("seed query param required"));
+        return api_err(AppError::invalid("seed query param required"));
     }
     let depth = q.depth.unwrap_or(1).clamp(1, 3);
     let max_nodes = q
         .max_nodes
-        .unwrap_or(100)
+        .unwrap_or(DEFAULT_NEIGHBORHOOD_MAX_NODES)
         .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES);
 
     let seed = seed.to_owned();
@@ -130,7 +135,7 @@ struct FindQuery {
 async fn find_node(State(st): State<HttpState>, Query(q): Query<FindQuery>) -> impl IntoResponse {
     let key = q.q.trim();
     if key.is_empty() {
-        return api_err(AppError::config("q required"));
+        return api_err(AppError::invalid("q required"));
     }
     let key = key.to_owned();
     let store = st.store.clone();
@@ -188,16 +193,15 @@ async fn document(
             "wing": doc.wing,
             "room": doc.room,
             "source_file": doc.source_file,
-            "source_versions": serde_json::from_str::<serde_json::Value>(&doc.metadata_json).ok()
-                .and_then(|metadata| metadata.get("source_versions").cloned())
-                .filter(serde_json::Value::is_array).unwrap_or_else(|| json!([])),
+            "source_versions": doc
+                .metadata_field("source_versions")
+                .filter(serde_json::Value::is_array)
+                .unwrap_or_else(|| json!([])),
             "updated_at": doc.updated_at.to_rfc3339(),
             "revision": doc.revision,
             "etag": doc.etag(),
             }));
-            response
-                .headers_mut()
-                .insert(axum::http::header::ETAG, etag.parse().unwrap());
+            super::error::insert_etag(&mut response, &etag);
             response
         }
         Err(e) => api_err(e),
@@ -219,7 +223,7 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
         q.q.as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| AppError::config("provide id, uri, or q"))?;
+            .ok_or_else(|| AppError::invalid("provide id, uri, or q"))?;
 
     // Direct document id or uri before graph seed.
     if let Some(doc) = store.get_document(key)? {
@@ -232,10 +236,9 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
         return Err(AppError::not_found(format!("document uri '{key}'")));
     }
 
-    let node_id = resolve_seed(store, key)?;
     let node = store
-        .find_node_by_id(&node_id)?
-        .ok_or_else(|| AppError::not_found(format!("node {node_id}")))?;
+        .resolve_seed(key)?
+        .ok_or_else(|| seed_not_found(key))?;
     if let Some(doc_id) = node.document_id.as_deref() {
         return store
             .get_document(doc_id)?
@@ -253,20 +256,55 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
 }
 
 fn resolve_seed(store: &Store, seed: &str) -> Result<String, AppError> {
-    if let Some(n) = store.find_node_by_id(seed)? {
-        return Ok(n.id);
-    }
-    if let Some(n) = store.find_node_by_document_id(seed)? {
-        return Ok(n.id);
-    }
-    if let Some(n) = store.find_node_by_uri(seed)? {
-        return Ok(n.id);
-    }
-    let by_label = store.find_nodes_by_label(seed)?;
-    if let Some(n) = by_label.into_iter().next() {
-        return Ok(n.id);
-    }
-    Err(AppError::not_found(format!(
+    store
+        .resolve_seed(seed)?
+        .map(|node| node.id)
+        .ok_or_else(|| seed_not_found(seed))
+}
+
+fn seed_not_found(seed: &str) -> AppError {
+    AppError::not_found(format!(
         "no graph node for seed '{seed}' (try id, document_id, or exact label)"
-    )))
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn state() -> HttpState {
+        let root = crate::testkit::scratch_dir();
+        let config = crate::config::Config {
+            db_path: root.join("graph-http.duckdb"),
+            embedding_dims: 8,
+            ..crate::config::Config::for_tests()
+        };
+        let store = Arc::new(Store::open(&config.db_path).unwrap());
+        HttpState::new(
+            store,
+            false,
+            config,
+            Arc::new(crate::embeddings::MockEmbedder::new(8)),
+        )
+    }
+
+    fn query(seed: &str, project: Option<&str>) -> NeighborsQuery {
+        serde_json::from_value(json!({"seed": seed, "project": project})).unwrap()
+    }
+
+    #[tokio::test]
+    async fn unknown_seed_is_not_found_instead_of_an_empty_graph() {
+        let st = state();
+        for project in [None, Some("rag")] {
+            let response = neighbors(State(st.clone()), Query(query("missing", project)))
+                .await
+                .into_response();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{project:?}");
+        }
+        let blank = neighbors(State(st), Query(query("   ", None)))
+            .await
+            .into_response();
+        assert_eq!(blank.status(), StatusCode::BAD_REQUEST);
+    }
 }

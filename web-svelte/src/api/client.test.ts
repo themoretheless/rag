@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, hasGatewayToken, setGatewayToken } from './client'
+import { ApiError, api, hasGatewayToken, loadPanels, parseJsonBody, parseOptionalJsonBody, setGatewayToken } from './client'
+import { t } from '@/lib/i18n'
 
 const secret = 'test-access-token'
 
@@ -97,7 +98,7 @@ describe('gateway Bearer authentication', () => {
   it('rejects external or protocol-relative request paths before sending credentials', async () => {
     setGatewayToken(secret)
     for (const path of ['https://external.example/data', '//external.example/data', '/\\external.example/data', '/\t/external.example/data']) {
-      await expect(api.get(path)).rejects.toThrow('absolute API path')
+      await expect(api.get(path)).rejects.toThrow(t('apiInvalidPath'))
     }
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -108,5 +109,73 @@ describe('gateway Bearer authentication', () => {
     const error = await api.health().catch((cause: Error) => cause)
     expect(String(error)).toContain(`HTTP ${status}`)
     expect(String(error)).not.toContain(secret)
+  })
+})
+
+describe('JSON response handling', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    vi.stubEnv('VITE_API_BASE', '')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  it('resolves 204 No Content to undefined without parsing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
+    await expect(api.postOptional('/v1/operations/checkpoint')).resolves.toBeUndefined()
+  })
+
+  it('resolves an empty 200 body to undefined for optional endpoints', async () => {
+    expect(await parseOptionalJsonBody(new Response('', { status: 200 }))).toBeUndefined()
+    expect(await parseOptionalJsonBody(new Response('  \n', { status: 200 }))).toBeUndefined()
+  })
+
+  it('throws ApiError on an empty body for endpoints that must return JSON', async () => {
+    for (const res of [new Response(null, { status: 204 }), new Response('', { status: 200 }), new Response('  \n', { status: 200 })]) {
+      const error = await parseJsonBody(res).catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(ApiError)
+      expect((error as ApiError).status).toBe(res.status)
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
+    await expect(api.post('/v1/search')).rejects.toBeInstanceOf(ApiError)
+  })
+
+  it('throws a typed ApiError carrying the status for non-JSON bodies', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>proxy</html>', { status: 200 })))
+    const error = await api.get('/v1/status').catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(200)
+    expect(String(error)).toContain('HTTP 200')
+  })
+
+  it('throws ApiError with status for HTTP failures', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('bad things', { status: 500 })))
+    const error = await api.get('/v1/status').catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(500)
+    expect((error as Error).message).toBe('HTTP 500: bad things')
+  })
+
+  it('parses valid JSON bodies', async () => {
+    expect(await parseJsonBody<{ ok: boolean }>(new Response('{"ok":true}'))).toEqual({ ok: true })
+  })
+})
+
+describe('loadPanels', () => {
+  it('returns label with the failure message for each failed panel', async () => {
+    const failures = await loadPanels([
+      ['ok', async () => {}],
+      ['status', async () => { throw new Error('HTTP 500: boom') }],
+      ['bare', async () => { throw new Error('') }],
+      ['string', async () => { throw 'nope' }],
+    ])
+    expect(failures).toEqual(['status: HTTP 500: boom', 'bare', 'string: nope'])
+  })
+
+  it('returns an empty list when every panel loads', async () => {
+    expect(await loadPanels([['a', async () => {}]])).toEqual([])
   })
 })

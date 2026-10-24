@@ -15,9 +15,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use duckdb::{params, OptionalExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+
+/// Search-feedback rows per page.
+const FEEDBACK_PAGE_SIZE: usize = 50;
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -62,15 +64,12 @@ struct CompareBody {
 }
 async fn list(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
     let result = super::run_blocking("list feedback", move || {
-        let conn = st.store.lock()?;
-        let total: i64 =
-            conn.query_row("SELECT COUNT(*) FROM search_feedback", [], |r| r.get(0))?;
-        let mut stmt =
-            conn.prepare("SELECT payload FROM search_feedback ORDER BY id LIMIT 50 OFFSET ?")?;
-        let items = stmt
-            .query_map([q.offset as i64], |r| r.get::<_, String>(0))?
-            .map(|r| Ok(serde_json::from_str::<Value>(&r?)?))
-            .collect::<Result<Vec<_>>>()?;
+        let (total, items) = super::payload_kv::page_payloads_by_id(
+            &st.store,
+            super::payload_kv::PayloadTable::SearchFeedback,
+            q.offset,
+            FEEDBACK_PAGE_SIZE,
+        )?;
         Ok(json!({"items":items,"total":total,"offset":q.offset}))
     })
     .await;
@@ -84,22 +83,21 @@ fn capture(store: &Store, body: Capture) -> Result<Feedback> {
         || body.expected.len() > 100
         || body.no_answer == !body.expected.is_empty()
     {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "provide expected sources or mark no_answer; id must be UUID",
         ));
     }
     let search: SearchBody =
-        serde_json::from_value(body.search).map_err(|e| AppError::config(e.to_string()))?;
+        serde_json::from_value(body.search).map_err(|e| AppError::invalid(e.to_string()))?;
     let search = serde_json::to_value(search)?;
     let query = search["query"].as_str().unwrap_or("");
     if query.trim().is_empty() || query.len() > 8000 {
-        return Err(AppError::config("query must contain 1..8000 bytes"));
+        return Err(AppError::invalid("query must contain 1..8000 bytes"));
     }
     let mut expected = Vec::new();
     for key in body.expected {
         let doc = store
-            .get_document(&key)?
-            .or(store.find_by_uri(&key)?)
+            .find_by_id_or_uri(&key, &key)?
             .ok_or_else(|| AppError::not_found(format!("expected source not found: {key}")))?;
         if !expected.iter().any(|e: &Expected| e.document_id == doc.id) {
             expected.push(Expected {
@@ -117,31 +115,25 @@ fn capture(store: &Store, body: Capture) -> Result<Feedback> {
         no_answer: body.no_answer,
         saved_at: chrono::Utc::now().to_rfc3339(),
     };
-    let conn = store.lock()?;
-    let prior: Option<String> = conn
-        .query_row(
-            "SELECT payload FROM search_feedback WHERE id=?",
-            [&item.id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if let Some(prior) = prior {
-        let prior: Feedback = serde_json::from_str(&prior)?;
-        if prior.search != item.search
-            || prior.no_answer != item.no_answer
-            || serde_json::to_value(&prior.expected)? != serde_json::to_value(&item.expected)?
-        {
-            return Err(AppError::conflict(
-                "capture id already belongs to a different evaluation",
-            ));
+    // Lookup and insert share one lock so two captures with the same id
+    // cannot both pass the "no prior" check.
+    super::payload_kv::with_session(store, |kv| {
+        let table = super::payload_kv::PayloadTable::SearchFeedback;
+        if let Some(prior) = kv.get_raw(table, &item.id)? {
+            let prior: Feedback = serde_json::from_str(&prior)?;
+            if prior.search != item.search
+                || prior.no_answer != item.no_answer
+                || serde_json::to_value(&prior.expected)? != serde_json::to_value(&item.expected)?
+            {
+                return Err(AppError::conflict(
+                    "capture id already belongs to a different evaluation",
+                ));
+            }
+            return Ok(prior);
         }
-        return Ok(prior);
-    }
-    conn.execute(
-        "INSERT INTO search_feedback VALUES (?,?)",
-        params![item.id, serde_json::to_string(&item)?],
-    )?;
-    Ok(item)
+        kv.upsert(table, &item.id, &item)?;
+        Ok(item)
+    })
 }
 async fn create(State(st): State<HttpState>, Json(body): Json<Capture>) -> Response {
     match super::run_blocking("save labelled question", move || capture(&st.store, body)).await {
@@ -159,9 +151,7 @@ struct Run {
 }
 fn stale(store: &Store, item: &Feedback) -> Result<bool> {
     for e in &item.expected {
-        let doc = store
-            .get_document(&e.document_id)?
-            .or(store.find_by_uri(&e.uri)?);
+        let doc = store.find_by_id_or_uri(&e.document_id, &e.uri)?;
         if doc.map(|d| content_hash(&d.content)) != Some(e.hash.clone()) {
             return Ok(true);
         }
@@ -212,21 +202,21 @@ fn merge_search(base: &Value, overlay: &Value) -> Result<SearchBody> {
             merged.insert(k.clone(), v.clone());
         }
     }
-    serde_json::from_value(Value::Object(merged)).map_err(|e| AppError::config(e.to_string()))
+    serde_json::from_value(Value::Object(merged)).map_err(|e| AppError::invalid(e.to_string()))
 }
 async fn search_with_body(st: HttpState, body: SearchBody) -> Result<(Value, Vec<Value>)> {
     let response = search_http(State(st), Json(body)).await.into_response();
     if !response.status().is_success() {
-        return Err(response_error(response).await);
+        return Err(super::error::search_response_error(response).await);
     }
     let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
         .await
-        .map_err(|e| AppError::config(e.to_string()))?;
+        .map_err(|e| AppError::invalid(e.to_string()))?;
     let result: Value = serde_json::from_slice(&bytes)?;
     let hits = result["items"]
         .as_array()
         .cloned()
-        .ok_or_else(|| AppError::config("missing search items"))?;
+        .ok_or_else(|| AppError::invalid("missing search items"))?;
     Ok((result, hits))
 }
 async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
@@ -235,7 +225,7 @@ async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Respon
             &st.store,
             super::payload_kv::PayloadTable::EvalRuns,
             q.offset,
-            50,
+            FEEDBACK_PAGE_SIZE,
         )?;
         Ok(json!({"items":page,"total":total,"offset":q.offset}))
     })
@@ -246,15 +236,13 @@ async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Respon
     }
 }
 fn load_feedback_questions(store: &Store, ids: Option<&[String]>) -> Result<Vec<Feedback>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare("SELECT id, payload FROM search_feedback")?;
-    let items = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-        .map(|r| {
-            let (_id, payload) = r?;
-            Ok(serde_json::from_str::<Feedback>(&payload)?)
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let items = super::payload_kv::list_payload_pairs(
+        store,
+        super::payload_kv::PayloadTable::SearchFeedback,
+    )?
+    .into_iter()
+    .map(|(_id, payload)| Ok(serde_json::from_str::<Feedback>(&payload)?))
+    .collect::<Result<Vec<_>>>()?;
     Ok(match ids {
         Some(filter) if !filter.is_empty() => items
             .into_iter()
@@ -270,7 +258,9 @@ async fn compare(State(st): State<HttpState>, Json(body): Json<CompareBody>) -> 
     }
 }
 async fn compare_runs(st: HttpState, body: CompareBody) -> Result<Value> {
-    let questions = load_feedback_questions(&st.store, body.question_ids.as_deref())?;
+    let questions = crate::util::blocking_section(|| {
+        load_feedback_questions(&st.store, body.question_ids.as_deref())
+    })?;
     let mut results = Vec::new();
     let mut regressions = Vec::new();
     const EPSILON: f64 = 1e-9;
@@ -325,7 +315,7 @@ async fn compare_runs(st: HttpState, body: CompareBody) -> Result<Value> {
         "results": results,
         "regressions": regressions,
     });
-    persist_eval_run(&st.store, &report)?;
+    crate::util::blocking_section(|| persist_eval_run(&st.store, &report))?;
     Ok(report)
 }
 async fn run(State(st): State<HttpState>, Json(body): Json<Run>) -> Response {
@@ -341,31 +331,33 @@ async fn run_one(
     answer_text: Option<String>,
     use_llm: bool,
 ) -> Result<Value> {
-    let item: Feedback = {
-        let conn = st.store.lock()?;
-        let payload: Option<String> = conn
-            .query_row(
-                "SELECT payload FROM search_feedback WHERE id=?",
-                [&id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        serde_json::from_str(&payload.ok_or_else(|| AppError::not_found("question not found"))?)?
-    };
-    if stale(&st.store, &item)? {
+    let payload = crate::util::blocking_section(|| {
+        super::payload_kv::get_payload_raw(
+            &st.store,
+            super::payload_kv::PayloadTable::SearchFeedback,
+            &id,
+        )
+    })?;
+    let item: Feedback =
+        serde_json::from_str(&payload.ok_or_else(|| AppError::not_found("question not found"))?)?;
+    if crate::util::blocking_section(|| stale(&st.store, &item))? {
         let result = json!({
             "id": id,
             "status": "source_changed",
             "hint": "Recheck labels against current sources"
         });
-        persist_feedback_run(&st.store, &id, &item.search, &result)?;
+        crate::util::blocking_section(|| {
+            persist_feedback_run(&st.store, &id, &item.search, &result)
+        })?;
         return Ok(result);
     }
     let (search_result, hits) =
         search_with_body(st.clone(), serde_json::from_value(item.search.clone())?).await?;
-    if stale(&st.store, &item)? {
+    if crate::util::blocking_section(|| stale(&st.store, &item))? {
         let result = json!({"id":id,"status":"source_changed"});
-        persist_feedback_run(&st.store, &id, &item.search, &result)?;
+        crate::util::blocking_section(|| {
+            persist_feedback_run(&st.store, &id, &item.search, &result)
+        })?;
         return Ok(result);
     }
     let (recall, mrr) = score_hits(&item, &hits);
@@ -416,10 +408,12 @@ async fn run_one(
         "empty_result_for_no_answer": item.no_answer.then_some(hits.is_empty()),
         "result_count": hits.len(),
         "timings": search_result["timings"],
-        "embedding_manifest": st.store.get_embedding_manifest()?,
-        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer correctness; citation_judge is deterministic expected-doc coverage; answer_judge is heuristic unless use_llm and RAG_LLM_ENABLED"
+        "embedding_manifest": crate::util::blocking_section(|| st.store.get_embedding_manifest())?,
+        "scope": "current corpus; only supplied positive labels; empty retrieval is not answer \
+        correctness; citation_judge is deterministic expected-doc coverage; answer_judge is \
+        heuristic unless use_llm and RAG_LLM_ENABLED"
     });
-    persist_feedback_run(&st.store, &id, &item.search, &result)?;
+    crate::util::blocking_section(|| persist_feedback_run(&st.store, &id, &item.search, &result))?;
     Ok(result)
 }
 fn persist_feedback_run(
@@ -439,17 +433,6 @@ fn persist_feedback_run(
     });
     persist_eval_run(store, &payload)
 }
-async fn response_error(response: Response) -> AppError {
-    let status = response.status();
-    let bytes = match axum::body::to_bytes(response.into_body(), 65536).await {
-        Ok(bytes) => bytes,
-        Err(e) => return AppError::config(e.to_string()),
-    };
-    AppError::config(format!(
-        "search failed ({status}): {}",
-        String::from_utf8_lossy(&bytes)
-    ))
-}
 
 #[cfg(test)]
 mod tests {
@@ -457,7 +440,7 @@ mod tests {
     use crate::{config::Config, embeddings::MockEmbedder};
     use std::sync::Arc;
     async fn fixture() -> (HttpState, String) {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join("feedback.duckdb"),
             embedding_dims: 16,
@@ -469,13 +452,15 @@ mod tests {
             &st.store,
             &st.embedder,
             &st.config,
-            "alpha",
-            "Alpha",
-            "alpha unique source",
-            "wiki",
-            None,
-            None,
-            None,
+            crate::wiki::WikiPageWrite {
+                slug: "alpha",
+                title: "Alpha",
+                content: "alpha unique source",
+                kind: "wiki",
+                category: None,
+                summary: None,
+                agent: None,
+            },
         )
         .await
         .unwrap();

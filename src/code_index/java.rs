@@ -775,16 +775,26 @@ struct Methods<'a> {
     values: Vec<(&'a IndexedDocument, &'a Method)>,
     complete: bool,
 }
-fn methods<'a>(
-    docs: &'a HashMap<String, IndexedDocument>,
-    ty: Target<'a>,
-    name: &str,
+#[derive(Clone, Copy)]
+struct MethodQuery<'a> {
+    name: &'a str,
     n: Option<usize>,
     constructor: bool,
     static_only: bool,
+}
+fn methods<'a>(
+    docs: &'a HashMap<String, IndexedDocument>,
+    ty: Target<'a>,
+    query: MethodQuery<'_>,
     stack: &mut HashSet<String>,
     budget: &mut usize,
 ) -> Methods<'a> {
+    let MethodQuery {
+        name,
+        n,
+        constructor,
+        static_only,
+    } = query;
     let key = format!("{}:{}", ty.doc.path, ty.ty.start);
     if *budget == 0 || !stack.insert(key.clone()) {
         return Methods {
@@ -824,7 +834,18 @@ fn methods<'a>(
                 out.complete = false;
                 continue;
             }
-            let inherited = methods(docs, bases[0], name, n, false, static_only, stack, budget);
+            let inherited = methods(
+                docs,
+                bases[0],
+                MethodQuery {
+                    name,
+                    n,
+                    constructor: false,
+                    static_only,
+                },
+                stack,
+                budget,
+            );
             out.complete &= inherited.complete;
             for (d, m) in inherited.values {
                 if m.private || m.static_ && bases[0].ty.kind == "interface_declaration" {
@@ -1015,10 +1036,12 @@ pub(super) fn resolve(
             let selected = methods(
                 docs,
                 target,
-                &name,
-                site.arity,
-                constructor,
-                static_only,
+                MethodQuery {
+                    name: &name,
+                    n: site.arity,
+                    constructor,
+                    static_only,
+                },
                 &mut HashSet::new(),
                 &mut 256,
             );
@@ -1079,10 +1102,12 @@ pub(super) fn resolve(
                     let selected = methods(
                         docs,
                         target,
-                        member,
-                        site.arity,
-                        false,
-                        true,
+                        MethodQuery {
+                            name: member,
+                            n: site.arity,
+                            constructor: false,
+                            static_only: true,
+                        },
                         &mut HashSet::new(),
                         &mut 256,
                     );

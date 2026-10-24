@@ -714,30 +714,26 @@ impl Store {
                             report.unknown("ASSIGNED_LITERAL_VALUE_NOT_PROVIDED", Some(name));
                         }
                     }
-                    if defaults.contains(name) || (op == "insert" && !assigned.contains(name)) {
-                        if !is_generated && !is_identity && !is_auto {
-                            if let Some(value) = default_literal(c, &snapshot.dialect) {
-                                if value.is_null() && c["nullable"] == "NO" {
-                                    report.issue("NULL_DEFAULT_NOT_ALLOWED", Some(name));
-                                }
-                                if q.row().is_some() {
-                                    validate_literal(
-                                        c,
-                                        &value,
-                                        table,
-                                        &snapshot.dialect,
-                                        &mut report,
-                                    );
-                                }
-                                env.insert(name.into(), value);
-                            } else if !has_default(c) && c["nullable"] == "YES" {
-                                env.insert(name.into(), Value::Null);
-                            } else if defaults.contains(name) && !has_default(c) {
-                                if snapshot.dialect == "postgresql" {
-                                    report.issue("DEFAULT_FOR_REQUIRED_COLUMN_IS_NULL", Some(name));
-                                } else {
-                                    report.unknown("MYSQL_IMPLICIT_DEFAULT_UNVERIFIED", Some(name));
-                                }
+                    if (defaults.contains(name) || (op == "insert" && !assigned.contains(name)))
+                        && !is_generated
+                        && !is_identity
+                        && !is_auto
+                    {
+                        if let Some(value) = default_literal(c, &snapshot.dialect) {
+                            if value.is_null() && c["nullable"] == "NO" {
+                                report.issue("NULL_DEFAULT_NOT_ALLOWED", Some(name));
+                            }
+                            if q.row().is_some() {
+                                validate_literal(c, &value, table, &snapshot.dialect, &mut report);
+                            }
+                            env.insert(name.into(), value);
+                        } else if !has_default(c) && c["nullable"] == "YES" {
+                            env.insert(name.into(), Value::Null);
+                        } else if defaults.contains(name) && !has_default(c) {
+                            if snapshot.dialect == "postgresql" {
+                                report.issue("DEFAULT_FOR_REQUIRED_COLUMN_IS_NULL", Some(name));
+                            } else {
+                                report.unknown("MYSQL_IMPLICIT_DEFAULT_UNVERIFIED", Some(name));
                             }
                         }
                     }

@@ -1,11 +1,19 @@
 //! Environment-backed configuration for the RAG MCP server.
 
 use std::env;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::error::AppError;
 use crate::models::SearchMode;
+
+/// `RAG_AUTO_SYNC_INTERVAL_SECS` default (hourly).
+const DEFAULT_AUTO_SYNC_INTERVAL_SECS: u64 = 3600;
+/// `RAG_STARTUP_WARN_MS` default: start-up phases at least this slow log a warning.
+const DEFAULT_STARTUP_WARN_MS: u64 = 30_000;
+/// `RAG_AUTO_BACKUP_INTERVAL_SECS` default (daily).
+const DEFAULT_AUTO_BACKUP_INTERVAL_SECS: u64 = 86_400;
 
 /// Embedding backend selected via `RAG_EMBEDDING_PROVIDER`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +87,7 @@ pub struct Config {
     pub db_path: PathBuf,
     pub embedding_provider: EmbeddingProviderKind,
     pub embedding_base_url: String,
-    pub embedding_api_key: String,
+    pub embedding_api_key: Secret,
     pub embedding_model: String,
     pub embedding_dims: usize,
     pub chunk_size: usize,
@@ -105,7 +113,7 @@ pub struct Config {
     /// Chat model name (provider default unless `RAG_LLM_MODEL` set).
     pub llm_model: String,
     /// API key (`RAG_LLM_API_KEY` or provider-specific env; see docs/LLM_PROVIDERS.md).
-    pub llm_api_key: String,
+    pub llm_api_key: Secret,
     /// When false, compile_source / chat tools refuse with a clear error.
     pub llm_enabled: bool,
     /// HTTP timeout for chat/completions (`RAG_LLM_TIMEOUT_SECS`, default **120**).
@@ -118,7 +126,7 @@ pub struct Config {
     /// (`RAG_MAINT_NEAR_DUP_THRESHOLD`, default **0.92**). Values in (0, 1].
     pub maint_near_dup_threshold: f64,
     /// Public MCP tool surface (`RAG_TOOLS`: `spine` default | `full`).
-    pub tool_surface: crate::mcp::ToolSurface,
+    pub tool_surface: ToolSurface,
     /// Optional HTTP gateway (`RAG_HTTP_BIND`, e.g. `127.0.0.1:7432`).
     /// Empty = disabled. Same process / DuckDB: graph UI routes + streamable MCP at `/mcp`.
     pub http_bind: Option<String>,
@@ -172,6 +180,120 @@ pub struct Config {
     /// Maintenance-loop interval for FTS staleness checks
     /// (`RAG_FTS_MAINT_INTERVAL_SECS`, default **300**).
     pub fts_maint_interval_secs: u64,
+    /// Extra allowed `Host` values for the HTTP gateway and MCP-over-HTTP.
+    /// Env: `RAG_HTTP_ALLOWED_HOSTS` (comma-separated), unset = loopback only.
+    pub http_allowed_hosts: Option<String>,
+    /// Directories synced periodically by the MCP server.
+    /// Env: `RAG_AUTO_SYNC_ROOTS` (`;`-separated); empty disables auto-sync.
+    pub auto_sync_roots: Vec<String>,
+    /// Seconds between auto-sync cycles. Env: `RAG_AUTO_SYNC_INTERVAL_SECS` (default 3600).
+    pub auto_sync_interval_secs: u64,
+    /// Eval history JSONL served by `GET /v1/eval/history`. Env: `RAG_EVAL_HISTORY`.
+    /// Never taken from a request, so the gateway cannot read arbitrary files.
+    pub eval_history_path: Option<PathBuf>,
+    /// Display name of this sync node. Env: `RAG_NODE_NAME` (default: node id).
+    pub sync_node_name: Option<String>,
+    /// Replica pull interval in seconds. Env: `RAG_SYNC_INTERVAL_SECS` (default 5, min 1).
+    pub sync_interval_secs: u64,
+    /// Storage adapter name. Env: `RAG_STORAGE_BACKEND` (default `duckdb`).
+    pub storage_backend: String,
+    /// Markdown vault root for `storage_backend = markdown`. Env: `RAG_VAULT_PATH`.
+    pub vault_path: Option<PathBuf>,
+    /// PID metadata file. Env: `RAG_PID_FILE` (default: `<db_path>.pid`).
+    pub pid_file: Option<PathBuf>,
+    /// WAL size reported as too large by health/doctor. Env: `RAG_WAL_WARN_BYTES`.
+    pub wal_warn_bytes: u64,
+    /// Start-up phase duration that logs a warning. Env: `RAG_STARTUP_WARN_MS`.
+    pub startup_warn_ms: u64,
+    /// Automatic snapshot directory; `None` disables the loop. Env: `RAG_AUTO_BACKUP_DIR`.
+    pub auto_backup_dir: Option<PathBuf>,
+    /// Env: `RAG_AUTO_BACKUP_INTERVAL_SECS` (default one day, min 1).
+    pub auto_backup_interval_secs: u64,
+    /// Snapshots kept by retention. Env: `RAG_AUTO_BACKUP_KEEP` (default 7, min 1).
+    pub auto_backup_keep: usize,
+    /// Free-space headroom required before a snapshot. Env: `RAG_AUTO_BACKUP_MIN_FREE_BYTES`.
+    pub auto_backup_min_free_bytes: u64,
+    /// Per-document link ceiling for graph extraction. Env: `RAG_MAX_LINKS_PER_DOC`.
+    pub max_links_per_doc: usize,
+    /// In-memory call-log ring size. Env: `RAG_CALL_LOG_CAPACITY`.
+    pub call_log_capacity: usize,
+    /// Sync node id. Env: `RAG_NODE_ID` (default `HOSTNAME`, then `primary`/`local`).
+    pub sync_node_id: Option<String>,
+    /// Primary to replicate from; `None` makes this node the primary. Env: `RAG_PRIMARY_URL`.
+    pub sync_primary_url: Option<String>,
+    /// Bearer token sent to the primary. Env: `RAG_PRIMARY_TOKEN`.
+    pub sync_primary_token: Option<Secret>,
+    /// Run DuckDB `CHECKPOINT` at start-up. Env: `RAG_CHECKPOINT_ON_START` (default true).
+    pub checkpoint_on_start: bool,
+    /// Serve only HTTP (no stdio MCP). Env: `RAG_HTTP_ONLY` (default false).
+    pub http_only: bool,
+    /// Mount streamable MCP at `/mcp` when HTTP is bound. Env: `RAG_MCP_HTTP` (default true).
+    pub mcp_http: bool,
+    /// Bearer tokens per HTTP role. Env: `RAG_HTTP_{READ,WRITE,ADMIN}_TOKEN`.
+    pub http_read_token: Option<Secret>,
+    pub http_write_token: Option<Secret>,
+    pub http_admin_token: Option<Secret>,
+}
+
+/// Which tools are advertised and callable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolSurface {
+    /// 34 compile-first tools (default; count-bounded by test).
+    #[default]
+    Spine,
+    /// All registered tools.
+    Full,
+}
+
+impl ToolSurface {
+    /// Wire string for this tool surface (`spine` or `full`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Spine => "spine",
+            Self::Full => "full",
+        }
+    }
+}
+
+impl FromStr for ToolSurface {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "spine" | "default" | "core" => Ok(Self::Spine),
+            "full" | "all" | "advanced" => Ok(Self::Full),
+            other => Err(AppError::config(format!(
+                "invalid RAG_TOOLS '{other}': expected 'spine' or 'full'"
+            ))),
+        }
+    }
+}
+
+/// Parse `RAG_HTTP_BIND` like `127.0.0.1:7432`. Empty / unset → None.
+///
+/// Non-loopback binds require `RAG_HTTP_ALLOW_REMOTE=1|true|yes|on`.
+/// Startup additionally validates bearer credentials via `validate_security`.
+pub fn parse_bind(raw: &str) -> Result<Option<SocketAddr>, AppError> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let addr = s
+        .parse::<SocketAddr>()
+        .map_err(|e| AppError::config(format!("invalid RAG_HTTP_BIND '{s}': {e}")))?;
+    if !addr.ip().is_loopback() {
+        let allow = std::env::var("RAG_HTTP_ALLOW_REMOTE")
+            .ok()
+            .and_then(|v| crate::config::parse_env_truthy(&v))
+            .unwrap_or(false);
+        if !allow {
+            return Err(AppError::config(format!(
+                "RAG_HTTP_BIND '{s}' is not loopback; set RAG_HTTP_ALLOW_REMOTE=true to expose \
+                 authenticated HTTP/MCP on the network"
+            )));
+        }
+    }
+    Ok(Some(addr))
 }
 
 impl Default for Config {
@@ -183,7 +305,7 @@ impl Default for Config {
             db_path: PathBuf::from("./rag.duckdb"),
             embedding_provider: EmbeddingProviderKind::Mock,
             embedding_base_url: "https://api.openai.com/v1".to_string(),
-            embedding_api_key: String::new(),
+            embedding_api_key: Secret::default(),
             embedding_model: "text-embedding-3-small".to_string(),
             embedding_dims: 1536,
             chunk_size: 800,
@@ -198,13 +320,13 @@ impl Default for Config {
             llm_provider,
             llm_base_url: llm_provider.default_base_url().to_string(),
             llm_model: llm_provider.default_model().to_string(),
-            llm_api_key: String::new(),
+            llm_api_key: Secret::default(),
             llm_enabled: true,
             llm_timeout_secs: 120,
             llm_max_tokens: 4096,
-            maint_max_docs: 50,
+            maint_max_docs: crate::maintain::DEFAULT_MAX_DOCS,
             maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Spine,
+            tool_surface: ToolSurface::Spine,
             http_bind: None,
             wiki_require_if_match: false,
             rerank_provider: crate::rerank::RerankProviderKind::Off,
@@ -226,11 +348,98 @@ impl Default for Config {
             reembed_batch: 100,
             fts_stale_generation_threshold: 64,
             fts_maint_interval_secs: 300,
+            http_allowed_hosts: None,
+            auto_sync_roots: Vec::new(),
+            auto_sync_interval_secs: 3600,
+            eval_history_path: None,
+            sync_node_name: None,
+            sync_interval_secs: 5,
+            storage_backend: "duckdb".to_string(),
+            vault_path: None,
+            pid_file: None,
+            wal_warn_bytes: DEFAULT_WAL_WARN_BYTES,
+            startup_warn_ms: 30_000,
+            auto_backup_dir: None,
+            auto_backup_interval_secs: 86_400,
+            auto_backup_keep: 7,
+            auto_backup_min_free_bytes: DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES,
+            max_links_per_doc: crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
+            call_log_capacity: crate::telemetry::DEFAULT_CAPACITY,
+            sync_node_id: None,
+            sync_primary_url: None,
+            sync_primary_token: None,
+            checkpoint_on_start: true,
+            http_only: false,
+            mcp_http: true,
+            http_read_token: None,
+            http_write_token: None,
+            http_admin_token: None,
         }
     }
 }
 
+/// A credential held in `Config`. `Debug` prints `"***"` (or `""` when empty)
+/// so a logged `Config` never reveals keys or tokens; use [`Secret::expose`]
+/// at the one place that sends it.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Secret(String);
+
+impl Secret {
+    /// The raw credential, for the request that needs it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+
+    /// True when the secret holds no value.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() { "\"\"" } else { "\"***\"" })
+    }
+}
+
+impl From<String> for Secret {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+/// Default `RAG_WAL_WARN_BYTES` (256 MiB).
+pub const DEFAULT_WAL_WARN_BYTES: u64 = 256 * 1024 * 1024;
+/// Default `RAG_AUTO_BACKUP_MIN_FREE_BYTES` (2 GiB).
+pub const DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// `;`-separated directory list, trimmed, blanks dropped.
+fn parse_auto_sync_roots(raw: &str) -> Vec<String> {
+    raw.split(';')
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 impl Config {
+    /// Push process-global settings (graph link ceiling, call-log size, sync identity) into the
+    /// subsystems that hold them. Call once at start-up, before first use.
+    pub fn apply_process_limits(&self) {
+        crate::db::graph::resolve::configure_max_links(self.max_links_per_doc);
+        crate::telemetry::configure_capacity(self.call_log_capacity);
+        crate::db::sync::configure_identity(
+            self.sync_node_id.clone(),
+            self.sync_primary_url.clone(),
+        );
+    }
+
     /// Shared baseline for unit and integration tests.
     ///
     /// Mock-friendly defaults: full MCP tool surface, `wiki_require_if_match = false`,
@@ -238,8 +447,8 @@ impl Config {
     /// `Config { db_path, embedding_dims: 32, llm_enabled: false, ..Config::for_tests() }`.
     pub fn for_tests() -> Self {
         Self {
-            llm_api_key: "ollama".to_string(),
-            tool_surface: crate::mcp::ToolSurface::Full,
+            llm_api_key: Secret::from("ollama"),
+            tool_surface: ToolSurface::Full,
             wiki_require_if_match: false,
             ..Self::default()
         }
@@ -284,7 +493,11 @@ impl Config {
             .parse::<CodeChunkingMode>()?;
         let default_top_k = parse_usize("RAG_DEFAULT_TOP_K", "5")?;
 
-        let ingest_roots = crate::util::ingest_roots_from_env();
+        // Comma-separated; empty or unset refuses every file path.
+        let ingest_roots = env::var_os("RAG_INGEST_ROOTS")
+            .filter(|raw| !raw.is_empty())
+            .map(|raw| crate::util::parse_ingest_roots(&raw))
+            .unwrap_or_default();
 
         let max_context_tokens = parse_usize("RAG_MAX_CONTEXT_TOKENS", "4096")?;
         let max_chunks_per_doc = parse_usize("RAG_MAX_CHUNKS_PER_DOC", "3")?;
@@ -308,7 +521,7 @@ impl Config {
         let llm_model =
             env::var("RAG_LLM_MODEL").unwrap_or_else(|_| llm_provider.default_model().to_string());
         let llm_api_key_raw = env::var("RAG_LLM_API_KEY").unwrap_or_default();
-        let llm_api_key = resolve_api_key(llm_provider, &llm_api_key_raw);
+        let llm_api_key = Secret::from(resolve_api_key(llm_provider, &llm_api_key_raw));
         let llm_enabled = parse_bool_env("RAG_LLM_ENABLED", true)?;
         let llm_timeout_secs = parse_u64("RAG_LLM_TIMEOUT_SECS", "120")?;
         let llm_max_tokens = parse_usize("RAG_LLM_MAX_TOKENS", "4096")?;
@@ -316,15 +529,100 @@ impl Config {
         let maint_near_dup_threshold = parse_f64("RAG_MAINT_NEAR_DUP_THRESHOLD", "0.92")?;
         let tool_surface = env::var("RAG_TOOLS")
             .unwrap_or_else(|_| "spine".to_string())
-            .parse::<crate::mcp::ToolSurface>()?;
+            .parse::<ToolSurface>()?;
         let http_bind = env::var("RAG_HTTP_BIND")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         if let Some(ref b) = http_bind {
-            crate::http_api::parse_bind(b)?;
+            parse_bind(b)?;
         }
         let wiki_require_if_match = parse_bool_env("RAG_WIKI_REQUIRE_IF_MATCH", false)?;
+        let http_allowed_hosts = env::var("RAG_HTTP_ALLOWED_HOSTS").ok();
+        let auto_sync_roots = env::var("RAG_AUTO_SYNC_ROOTS")
+            .map(|raw| parse_auto_sync_roots(&raw))
+            .unwrap_or_default();
+        let auto_sync_interval_secs = env::var("RAG_AUTO_SYNC_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_AUTO_SYNC_INTERVAL_SECS);
+        let eval_history_path = env::var("RAG_EVAL_HISTORY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .map(PathBuf::from);
+        let sync_node_name = env::var("RAG_NODE_NAME").ok();
+        let sync_interval_secs = env::var("RAG_SYNC_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(5u64)
+            .max(1);
+        let non_blank_path = |name: &str| {
+            env::var_os(name)
+                .filter(|value| !value.to_string_lossy().trim().is_empty())
+                .map(|value| PathBuf::from(value.to_string_lossy().trim()))
+        };
+        let parsed = |name: &str| {
+            env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+        };
+        let storage_backend =
+            env::var("RAG_STORAGE_BACKEND").unwrap_or_else(|_| "duckdb".to_string());
+        let vault_path = non_blank_path("RAG_VAULT_PATH");
+        let pid_file = non_blank_path("RAG_PID_FILE");
+        let wal_warn_bytes = parsed("RAG_WAL_WARN_BYTES")
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_WAL_WARN_BYTES);
+        let startup_warn_ms = parsed("RAG_STARTUP_WARN_MS").unwrap_or(DEFAULT_STARTUP_WARN_MS);
+        let auto_backup_dir = non_blank_path("RAG_AUTO_BACKUP_DIR");
+        let auto_backup_interval_secs = parsed("RAG_AUTO_BACKUP_INTERVAL_SECS")
+            .unwrap_or(DEFAULT_AUTO_BACKUP_INTERVAL_SECS)
+            .max(1);
+        let auto_backup_keep = env::var("RAG_AUTO_BACKUP_KEEP")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(7)
+            .max(1);
+        let auto_backup_min_free_bytes = parsed("RAG_AUTO_BACKUP_MIN_FREE_BYTES")
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES);
+        let positive_usize = |name: &str, default: usize| {
+            env::var(name)
+                .ok()
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(default)
+        };
+        let max_links_per_doc = positive_usize(
+            "RAG_MAX_LINKS_PER_DOC",
+            crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
+        );
+        let call_log_capacity =
+            positive_usize("RAG_CALL_LOG_CAPACITY", crate::telemetry::DEFAULT_CAPACITY);
+        let sync_node_id = env::var("RAG_NODE_ID").ok();
+        let sync_primary_url = env::var("RAG_PRIMARY_URL").ok();
+        let sync_primary_token = env::var("RAG_PRIMARY_TOKEN").ok().map(Secret::from);
+        // Lenient flags: an unparseable value keeps the default, as before.
+        let lenient_flag = |name: &str, default: bool| {
+            env::var(name)
+                .ok()
+                .and_then(|value| parse_env_truthy(&value))
+                .unwrap_or(default)
+        };
+        let checkpoint_on_start = lenient_flag("RAG_CHECKPOINT_ON_START", true);
+        let http_only = lenient_flag("RAG_HTTP_ONLY", false);
+        let mcp_http = lenient_flag("RAG_MCP_HTTP", true);
+        let token = |name: &str| -> Result<Option<Secret>, AppError> {
+            match env::var(name) {
+                Ok(value) => Ok(Some(Secret::from(value))),
+                Err(env::VarError::NotPresent) => Ok(None),
+                Err(_) => Err(AppError::invalid(format!("{name} must be valid UTF-8"))),
+            }
+        };
+        let http_read_token = token("RAG_HTTP_READ_TOKEN")?;
+        let http_write_token = token("RAG_HTTP_WRITE_TOKEN")?;
+        let http_admin_token = token("RAG_HTTP_ADMIN_TOKEN")?;
 
         // Rerank stage (opt-in): RAG_RERANK_PROVIDER, RAG_RERANK_MODEL,
         // RAG_RERANK_BASE_URL, RAG_RERANK_API_KEY, RAG_RERANK_TOP_N,
@@ -381,9 +679,9 @@ impl Config {
                 || (embedding_provider == EmbeddingProviderKind::OpenAi
                     && is_local_openai_base(&embedding_base_url)))
         {
-            "ollama".to_string()
+            Secret::from("ollama")
         } else {
-            embedding_api_key
+            Secret::from(embedding_api_key)
         };
 
         let config = Self {
@@ -433,6 +731,32 @@ impl Config {
             reembed_batch,
             fts_stale_generation_threshold,
             fts_maint_interval_secs,
+            http_allowed_hosts,
+            auto_sync_roots,
+            auto_sync_interval_secs,
+            eval_history_path,
+            sync_node_name,
+            sync_interval_secs,
+            storage_backend,
+            vault_path,
+            pid_file,
+            wal_warn_bytes,
+            startup_warn_ms,
+            auto_backup_dir,
+            auto_backup_interval_secs,
+            auto_backup_keep,
+            auto_backup_min_free_bytes,
+            max_links_per_doc,
+            call_log_capacity,
+            sync_node_id,
+            sync_primary_url,
+            sync_primary_token,
+            checkpoint_on_start,
+            http_only,
+            mcp_http,
+            http_read_token,
+            http_write_token,
+            http_admin_token,
         };
         config.validate()?;
         Ok(config)
@@ -476,7 +800,7 @@ impl Config {
         }
 
         if self.embedding_provider == EmbeddingProviderKind::OpenAi
-            && self.embedding_api_key.trim().is_empty()
+            && self.embedding_api_key.expose().trim().is_empty()
             && !is_local_openai_base(&self.embedding_base_url)
         {
             return Err(AppError::config(
@@ -511,7 +835,9 @@ impl Config {
                     "RAG_LLM_MODEL must be non-empty when RAG_LLM_ENABLED=true",
                 ));
             }
-            if !self.llm_provider.allows_empty_api_key() && self.llm_api_key.trim().is_empty() {
+            if !self.llm_provider.allows_empty_api_key()
+                && self.llm_api_key.expose().trim().is_empty()
+            {
                 return Err(AppError::config(format!(
                     "RAG_LLM_API_KEY (or provider key env) required when RAG_LLM_PROVIDER={}",
                     self.llm_provider.as_str()
@@ -709,6 +1035,21 @@ fn parse_search_mode(raw: &str) -> Result<SearchMode, AppError> {
         .map_err(|e| AppError::config(format!("invalid RAG_DEFAULT_SEARCH_MODE: {e}")))
 }
 
+impl crate::db::EmbeddingIdentity for Config {
+    fn embedding_provider_name(&self) -> &str {
+        self.embedding_provider.as_str()
+    }
+    fn embedding_model_name(&self) -> &str {
+        &self.embedding_model
+    }
+    fn embedding_dimensions(&self) -> usize {
+        self.embedding_dims
+    }
+    fn embedding_endpoint(&self) -> &str {
+        &self.embedding_base_url
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -834,7 +1175,7 @@ mod tests {
         let cfg = Config::for_tests();
         assert!(cfg.validate().is_ok());
         assert!(!cfg.wiki_require_if_match);
-        assert_eq!(cfg.tool_surface, crate::mcp::ToolSurface::Full);
+        assert_eq!(cfg.tool_surface, ToolSurface::Full);
         assert_eq!(cfg.embedding_provider, EmbeddingProviderKind::Mock);
     }
 
@@ -843,8 +1184,32 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.embedding_provider, EmbeddingProviderKind::Mock);
         assert_eq!(cfg.embedding_dims, 1536);
-        assert_eq!(cfg.tool_surface, crate::mcp::ToolSurface::Spine);
+        assert_eq!(cfg.tool_surface, ToolSurface::Spine);
         assert!(!cfg.wiki_require_if_match);
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn auto_sync_roots_split_on_semicolons_and_drop_blanks() {
+        assert_eq!(
+            super::parse_auto_sync_roots(" /a ; ;/b;"),
+            vec!["/a".to_string(), "/b".to_string()]
+        );
+        assert!(super::parse_auto_sync_roots("  ").is_empty());
+    }
+
+    #[test]
+    fn secrets_are_redacted_in_config_debug() {
+        let config = super::Config {
+            llm_api_key: "sk-live-123".into(),
+            sync_primary_token: Some("tok-456".into()),
+            ..super::Config::for_tests()
+        };
+        let printed = format!("{config:?}");
+        assert!(
+            !printed.contains("sk-live-123") && !printed.contains("tok-456"),
+            "{printed}"
+        );
+        assert_eq!(config.llm_api_key.expose(), "sk-live-123");
     }
 }

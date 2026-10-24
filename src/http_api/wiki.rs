@@ -1,5 +1,7 @@
 //! Wiki catalog, write (CAS), and backlinks HTTP handlers.
 
+use std::collections::HashMap;
+
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -12,8 +14,7 @@ use crate::db::store::WikiPageMetaFilter;
 use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
 use crate::models::resolve_if_match;
-use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
-use crate::wiki::{self, WriteWikiOpts};
+use crate::wiki;
 
 use super::error::{api_err, api_ok};
 use super::HttpState;
@@ -145,9 +146,7 @@ async fn wiki_list_with_headers(st: HttpState, q: WikiListQuery, headers: Header
                 "pages": pages,
                 "page": {"limit":page_limit,"next_cursor":next,"total":total},
             }));
-            response
-                .headers_mut()
-                .insert(axum::http::header::ETAG, etag.parse().unwrap());
+            super::error::insert_etag(&mut response, &etag);
             response
         }
         Err(e) => api_err(e),
@@ -190,7 +189,7 @@ struct WikiPutBody {
     if_match_etag: Option<String>,
 }
 
-/// Create/overwrite a wiki page via [`wiki::write_wiki_page_with_opts`].
+/// Create/overwrite a wiki page via [`wiki::put_wiki_page`].
 ///
 /// Optional `if_match_revision` / `if_match_etag` enforce CAS; mismatch → **409**.
 async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) -> impl IntoResponse {
@@ -207,93 +206,28 @@ async fn wiki_post(
 
 async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Response {
     if body.content.len() > super::MAX_HTTP_BODY_BYTES {
-        return api_err(AppError::config("wiki content exceeds HTTP body limit"));
+        return api_err(AppError::invalid("wiki content exceeds HTTP body limit"));
     }
     let if_match = match resolve_if_match(body.if_match_revision, body.if_match_etag.as_deref()) {
         Ok(v) => v,
         Err(e) => return api_err(e),
     };
-    let slug_from_uri = body.uri.as_deref().and_then(wiki_slug_from_uri);
-    let slug = body
-        .slug
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or(slug_from_uri)
-        .unwrap_or_default();
-    let slug = slug.trim();
-    if slug.is_empty() {
-        return api_err(AppError::config("slug required (or uri=wiki://slug)"));
-    }
-    let canonical_uri = format!("wiki://{}", slugify(slug, SlugPolicy::WikiPage));
-    let requested_id = body
-        .id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty());
-    if create_only && (requested_id.is_some() || if_match.is_some()) {
-        return api_err(AppError::config(
-            "creating a wiki page does not accept id or if_match",
-        ));
-    }
-    let existing = match requested_id {
-        Some(id) => match wiki::get_wiki_page(&st.store, id) {
-            Ok(document) if document.uri == canonical_uri => Some(document),
-            Ok(document) => {
-                return api_err(AppError::conflict(format!(
-                    "wiki document id '{id}' belongs to '{}', not requested URI '{canonical_uri}'",
-                    document.uri
-                )))
-            }
-            Err(error) => return api_err(error),
-        },
-        None => match st.store.find_by_uri(&canonical_uri) {
-            Ok(document) => document,
-            Err(error) => return api_err(error),
-        },
+    let command = wiki::WikiPutCommand {
+        slug: body.slug,
+        uri: body.uri,
+        id: body.id,
+        title: body.title,
+        content: body.content,
+        wing: body.wing,
+        room: body.room,
+        kind: body.kind,
+        category: body.category,
+        summary: body.summary,
+        agent: body.agent,
+        if_match_revision: if_match,
+        create_only,
     };
-
-    if create_only && existing.is_some() {
-        return api_err(AppError::conflict("wiki page URI is already in use"));
-    }
-    let result = if let Some(existing) = existing {
-        wiki::update_wiki_page_cas(
-            &st.store,
-            &st.embedder,
-            &st.config,
-            &existing.id,
-            Some(&body.title),
-            &body.content,
-            body.kind.as_deref(),
-            body.category.as_deref(),
-            body.summary.as_deref(),
-            body.agent.as_deref(),
-            if_match,
-        )
-        .await
-    } else {
-        let command = wiki::WikiWriteCommand {
-            slug: slug.to_string(),
-            title: body.title,
-            content: body.content,
-            wing: body.wing,
-            room: body.room,
-            kind: body.kind.unwrap_or_else(|| "wiki".into()),
-            category: body.category,
-            summary: body.summary,
-            agent: body.agent,
-            options: WriteWikiOpts {
-                if_match_revision: if_match,
-                ..Default::default()
-            },
-        };
-        if create_only {
-            wiki::create_wiki_page_command(&st.store, &st.embedder, &st.config, command).await
-        } else {
-            wiki::write_wiki_page_command(&st.store, &st.embedder, &st.config, command).await
-        }
-    };
+    let result = wiki::put_wiki_page(&st.store, &st.embedder, &st.config, command).await;
     match result {
         Ok(res) => api_ok(json!({
             "ok": true,
@@ -317,57 +251,72 @@ async fn wiki_backlinks(
     State(st): State<HttpState>,
     Query(q): Query<BacklinksQuery>,
 ) -> impl IntoResponse {
-    let id = q.id.trim();
-    if id.is_empty() {
-        return api_err(AppError::config("id query param required"));
-    }
-    let wing = q
-        .wing
-        .as_deref()
-        .map(str::trim)
-        .filter(|wing| !wing.is_empty());
-    let rows = match wing {
-        Some(wing) => st.store.wiki_backlinks_for_document_in_wing(id, wing),
-        None => st.store.wiki_backlinks_for_document(id),
-    };
-    match rows {
-        Ok(rows) => {
-            let view = match st
-                .store
-                .find_node_by_document_id(id)
-                .and_then(|node| node.map(|node| st.store.backlinks(&node.id)).transpose())
-            {
-                Ok(view) => view,
-                Err(error) => return api_err(error),
-            };
-            let links: Vec<_> = rows
-                .into_iter()
-                .map(|(label, key)| {
-                    let contexts: Vec<_> = view
-                        .as_ref()
-                        .map(|view| {
-                            view.edges
-                                .iter()
-                                .filter(|edge| edge.rel_type == "wikilink")
-                                .filter(|edge| {
-                                    view.nodes.iter().any(|node| {
-                                        node.id == edge.source_id
-                                            && node.document_id.as_deref().unwrap_or(&node.id)
-                                                == key
-                                    })
-                                })
-                                .filter_map(|edge| edge.context.as_deref())
-                                .take(3)
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    json!({ "label": label, "id": key, "contexts": contexts })
-                })
-                .collect();
-            api_ok(json!({ "ok": true, "count": links.len(), "backlinks": links }))
+    crate::util::blocking_section(|| {
+        let id = q.id.trim();
+        if id.is_empty() {
+            return api_err(AppError::invalid("id query param required"));
         }
-        Err(e) => api_err(e),
-    }
+        let wing = q
+            .wing
+            .as_deref()
+            .map(str::trim)
+            .filter(|wing| !wing.is_empty());
+        // One backlinks read serves both the rows and their contexts.
+        let view = match st.store.wiki_backlink_view(id) {
+            Ok(view) => view,
+            Err(error) => return api_err(error),
+        };
+        let rows = match wing {
+            Some(wing) => st.store.wiki_backlinks_for_document_in_wing(id, wing),
+            None => Ok(view
+                .as_ref()
+                .map(|(node_id, view)| crate::db::store::wiki_backlink_rows(node_id, view))
+                .unwrap_or_default()),
+        };
+        let view = view.map(|(_, view)| view);
+        match rows {
+            Ok(rows) => {
+                // Group wikilink contexts by source document key in one pass.
+                let mut contexts_by_key: HashMap<&str, Vec<&str>> = HashMap::new();
+                if let Some(view) = view.as_ref() {
+                    let key_by_node: HashMap<&str, &str> = view
+                        .nodes
+                        .iter()
+                        .map(|node| {
+                            (
+                                node.id.as_str(),
+                                node.document_id.as_deref().unwrap_or(&node.id),
+                            )
+                        })
+                        .collect();
+                    for edge in view.edges.iter().filter(|edge| edge.rel_type == "wikilink") {
+                        let (Some(key), Some(context)) = (
+                            key_by_node.get(edge.source_id.as_str()),
+                            edge.context.as_deref(),
+                        ) else {
+                            continue;
+                        };
+                        let contexts = contexts_by_key.entry(key).or_default();
+                        if contexts.len() < 3 {
+                            contexts.push(context);
+                        }
+                    }
+                }
+                let links: Vec<_> = rows
+                    .into_iter()
+                    .map(|(label, key)| {
+                        let contexts = contexts_by_key
+                            .get(key.as_str())
+                            .cloned()
+                            .unwrap_or_default();
+                        json!({ "label": label, "id": key, "contexts": contexts })
+                    })
+                    .collect();
+                api_ok(json!({ "ok": true, "count": links.len(), "backlinks": links }))
+            }
+            Err(e) => api_err(e),
+        }
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -390,7 +339,7 @@ mod tests {
     use crate::models::{Document, GraphNode};
 
     fn test_state(name: &str) -> HttpState {
-        let root = tempfile::tempdir().unwrap().keep();
+        let root = crate::testkit::scratch_dir();
         let config = Config {
             db_path: root.join(format!("{name}.duckdb")),
             embedding_dims: 16,
@@ -445,13 +394,15 @@ mod tests {
             &state.store,
             &state.embedder,
             &state.config,
-            "original",
-            "Original",
-            "original body",
-            "wiki",
-            None,
-            None,
-            None,
+            wiki::WikiPageWrite {
+                slug: "original",
+                title: "Original",
+                content: "original body",
+                kind: "wiki",
+                category: None,
+                summary: None,
+                agent: None,
+            },
         )
         .await
         .unwrap();
@@ -534,13 +485,15 @@ mod tests {
             &state.store,
             &state.embedder,
             &state.config,
-            "project-page",
-            "Project page",
-            "original body",
-            "concept",
-            Some("architecture"),
-            Some("original summary"),
-            None,
+            wiki::WikiPageWrite {
+                slug: "project-page",
+                title: "Project page",
+                content: "original body",
+                kind: "concept",
+                category: Some("architecture"),
+                summary: Some("original summary"),
+                agent: None,
+            },
         )
         .await
         .expect("create page");

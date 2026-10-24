@@ -505,7 +505,7 @@ fn rust_imported<'a>(
         Some("self" | "super") => scope,
         _ => Vec::new(),
     };
-    while let Some(part) = parts.next() {
+    for part in parts {
         match part {
             "crate" => absolute.clear(),
             "self" => {}

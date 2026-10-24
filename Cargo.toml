@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rag-mcp-ui"]
+members = [".", "crates/rag-mcp-core", "crates/rag-mcp-markup", "crates/rag-mcp-ui"]
 default-members = ["."]
 resolver = "2"
 
@@ -7,6 +7,10 @@ resolver = "2"
 name = "rag-mcp"
 version = "0.1.0"
 edition = "2021"
+# MSRV: egui/eframe (rag-mcp-ui) declare rust-version 1.95, the highest in
+# Cargo.lock, so the workspace uses that floor. CI builds on stable (1.97 at time
+# of writing) and the `msrv` job in checks.yml runs `cargo check` on 1.95.
+rust-version = "1.95"
 description = "RAG MCP server backed by DuckDB"
 license = "MIT"
 readme = "README.md"
@@ -28,6 +32,8 @@ name = "rag_gate"
 path = "src/bin/rag_gate.rs"
 
 [dependencies]
+rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
+rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
 anyhow = "1"
 async-trait = "0.1"
 futures-util = "0.3"
@@ -43,7 +49,8 @@ rmcp = { version = "=1.4.0", features = ["server", "transport-io", "transport-st
 # proc-macro crate to the matching security-fixed release as well.
 rmcp-macros = "=1.4.0"
 tokio-util = { version = "0.7", features = ["rt"] }
-schemars = "0.8"
+# Same major as rmcp's re-export so Cargo.lock holds one schemars version.
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Process/system resource telemetry for the /v1/resources endpoint.
@@ -96,3 +103,23 @@ default = ["tokenizers"]
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
+
+# Debug info dominates build output: every test and binary target statically
+# links bundled DuckDB. Line tables keep panic backtraces readable for our code;
+# dependencies need none.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
+# Production builds (`cargo build --release`, see docs/PROD_RUN.md): one codegen
+# unit plus thin LTO lets rustc inline across crates (serde, duckdb glue, axum)
+# at a modest link-time cost; debug info is dropped from shipped binaries.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

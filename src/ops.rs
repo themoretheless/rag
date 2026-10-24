@@ -9,127 +9,14 @@ use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::config::Config;
 use crate::db::Store;
 
-pub fn wal_warn_bytes() -> u64 {
-    std::env::var("RAG_WAL_WARN_BYTES")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(256 * 1024 * 1024)
-}
-
-// --- Process / system resource telemetry -----------------------------------
-
-/// Point-in-time process and host resource usage for the `/v1/resources`
-/// endpoint and the "Ресурсы" UI tab.
-#[derive(Debug, Clone, Serialize)]
-pub struct ResourceSnapshot {
-    pub pid: u32,
-    pub uptime_seconds: u64,
-    /// CPU usage of this process in percent; may exceed 100 on multi-core
-    /// hosts (280 % ≈ 2.8 busy cores).
-    pub cpu_percent: f32,
-    pub logical_cpus: usize,
-    /// Tokio multi-thread runtime worker count actually used at startup.
-    pub tokio_worker_threads: usize,
-    pub rss_bytes: u64,
-    pub virtual_bytes: u64,
-    pub system_memory_total: u64,
-    pub system_memory_used: u64,
-    pub load_avg_1m: f64,
-    pub load_avg_5m: f64,
-    pub load_avg_15m: f64,
-    pub sampled_at: DateTime<Utc>,
-}
-
-/// Logical CPUs the tokio runtime was (or will be) sized for.
-///
-/// `RAG_WORKER_THREADS` overrides the default of one worker per logical CPU.
-pub fn worker_threads() -> usize {
-    let logical = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    std::env::var("RAG_WORKER_THREADS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(logical)
-}
-
-static RESOURCE_SAMPLE: LazyLock<RwLock<Option<ResourceSnapshot>>> =
-    LazyLock::new(|| RwLock::new(None));
-static RESOURCE_SYSTEM: LazyLock<std::sync::Mutex<sysinfo::System>> =
-    LazyLock::new(|| std::sync::Mutex::new(sysinfo::System::new()));
-static RESOURCE_SAMPLER_STARTED: std::sync::Once = std::sync::Once::new();
-
-fn sample_resources() -> ResourceSnapshot {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate};
-    let pid = Pid::from_u32(std::process::id());
-    let mut sys = RESOURCE_SYSTEM.lock().unwrap_or_else(|p| p.into_inner());
-    sys.refresh_memory();
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_cpu().with_memory(),
-    );
-    let (cpu_percent, rss_bytes, virtual_bytes) = sys
-        .process(pid)
-        .map(|p| (p.cpu_usage(), p.memory(), p.virtual_memory()))
-        .unwrap_or((0.0, 0, 0));
-    let load = sysinfo::System::load_average();
-    ResourceSnapshot {
-        pid: std::process::id(),
-        uptime_seconds: STARTED.elapsed().as_secs(),
-        cpu_percent,
-        logical_cpus: std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1),
-        tokio_worker_threads: worker_threads(),
-        rss_bytes,
-        virtual_bytes,
-        system_memory_total: sys.total_memory(),
-        system_memory_used: sys.used_memory(),
-        load_avg_1m: load.one,
-        load_avg_5m: load.five,
-        load_avg_15m: load.fifteen,
-        sampled_at: Utc::now(),
-    }
-}
-
-/// Latest sampled resource usage.
-///
-/// CPU percentage is only meaningful across two sysinfo refreshes, so a
-/// background sampler thread refreshes every 2 s; this function never blocks
-/// on sampling and lazily starts the sampler on first use.
-pub fn resource_snapshot() -> ResourceSnapshot {
-    RESOURCE_SAMPLER_STARTED.call_once(|| {
-        std::thread::Builder::new()
-            .name("resource-sampler".into())
-            .spawn(|| loop {
-                let snap = sample_resources();
-                *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap);
-                std::thread::sleep(Duration::from_secs(2));
-            })
-            .ok();
-    });
-    let cached = RESOURCE_SAMPLE
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone();
-    match cached {
-        Some(snap) => snap,
-        // First call before the sampler ticked: prime the baseline; CPU reads
-        // 0 % until the second sample, which is expected and self-corrects.
-        None => {
-            let snap = sample_resources();
-            *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap.clone());
-            snap
-        }
-    }
-}
-
 use crate::error::{AppError, Result};
+
+/// Longest sleep between automatic-backup checks: a longer interval is still
+/// checked hourly, and the check only snapshots once the interval has elapsed.
+const AUTO_BACKUP_MAX_SLEEP: Duration = Duration::from_secs(3600);
 
 const BACKUP_PREFIX: &str = "rag-auto-";
 const BACKUP_SUFFIX: &str = ".duckdb";
@@ -214,6 +101,7 @@ static RUNTIME: LazyLock<RwLock<RuntimeState>> = LazyLock::new(|| {
 });
 static PID_PATH: LazyLock<RwLock<Option<PathBuf>>> = LazyLock::new(|| RwLock::new(None));
 
+/// Point-in-time copy of process runtime state for `status` / `/health`.
 pub fn runtime_snapshot() -> RuntimeSnapshot {
     let state = RUNTIME
         .read()
@@ -250,6 +138,7 @@ pub fn runtime_snapshot() -> RuntimeSnapshot {
     }
 }
 
+/// Record the active tool surface and HTTP bind address (if any).
 pub fn configure_runtime(tool_surface: &str, http_bind: Option<String>) {
     let mut state = RUNTIME
         .write()
@@ -258,11 +147,13 @@ pub fn configure_runtime(tool_surface: &str, http_bind: Option<String>) {
     state.http_bind = http_bind;
 }
 
+/// Set the start-up phase label reported by [`runtime_snapshot`].
 pub fn set_startup_phase(phase: &str) {
     RUNTIME.write().unwrap_or_else(|p| p.into_inner()).phase = phase.into();
 }
 
-pub fn set_startup_timing(name: &str, elapsed: Duration) {
+/// Record a start-up phase duration; phases at or above `warn_ms` log a warning.
+pub fn set_startup_timing(name: &str, elapsed: Duration, warn_ms: u64) {
     let ms = elapsed.as_millis().min(u64::MAX as u128) as u64;
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     match name {
@@ -272,20 +163,20 @@ pub fn set_startup_timing(name: &str, elapsed: Duration) {
         "total" => state.startup_total_ms = Some(ms),
         _ => {}
     }
-    let warn_ms = std::env::var("RAG_STARTUP_WARN_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(30_000);
     if ms >= warn_ms {
         tracing::warn!(phase = name, elapsed_ms = ms, warn_ms, "slow startup phase");
     }
 }
 
+/// Mark start-up complete: phase `ready`, `ready = true`.
 pub fn mark_ready() {
     let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     s.phase = "ready".into();
     s.ready = true;
 }
+
+/// Mark shutdown complete and remove the PID file written by
+/// [`validate_runtime_paths`].
 pub fn mark_shutdown(checkpointed: bool) {
     let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     s.phase = "shutdown_complete".into();
@@ -297,6 +188,7 @@ pub fn mark_shutdown(checkpointed: bool) {
     }
 }
 
+/// Enable autosync reporting and schedule the next run `interval` from now.
 pub fn configure_autosync(interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_enabled = true;
@@ -305,12 +197,15 @@ pub fn configure_autosync(interval: Duration) {
     set_autosync_next(interval);
 }
 
+/// Record that an autosync pass has started.
 pub fn mark_autosync_running() {
     RUNTIME
         .write()
         .unwrap_or_else(|p| p.into_inner())
         .autosync_running = true;
 }
+
+/// Record a finished autosync pass and schedule the next one after `interval`.
 pub fn mark_autosync_success(interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_running = false;
@@ -319,6 +214,7 @@ pub fn mark_autosync_success(interval: Duration) {
     state.autosync_next_run_at =
         Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
+/// Record a failed autosync pass and schedule the retry after `interval`.
 pub fn mark_autosync_error(error: &str, interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
     state.autosync_running = false;
@@ -334,7 +230,12 @@ fn set_autosync_next(interval: Duration) {
         Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
 
-pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Result<()> {
+/// Check start-up paths: create the database and auto-backup directories,
+/// reject read-only ones and missing ingest roots, then write the PID file
+/// (noting a stale one left by another process).
+pub fn validate_runtime_paths(config: &Config) -> Result<()> {
+    let db_path = config.db_path.as_path();
+    let ingest_roots = &config.ingest_roots;
     let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
     if !parent.exists() {
         fs::create_dir_all(parent)?;
@@ -356,7 +257,7 @@ pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Resul
         // block a background process indefinitely before the HTTP listener opens.
         // Individual sync/ingest calls still perform and report the real read.
     }
-    if let Some(dir) = auto_backup_dir() {
+    if let Some(dir) = config.auto_backup_dir.clone() {
         fs::create_dir_all(&dir)?;
         if fs::metadata(&dir)?.permissions().readonly() {
             return Err(AppError::config(format!(
@@ -365,10 +266,9 @@ pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Resul
             )));
         }
     }
-    let pid_path = std::env::var("RAG_PID_FILE")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .map(PathBuf::from)
+    let pid_path = config
+        .pid_file
+        .clone()
         .unwrap_or_else(|| db_path.with_extension("pid"));
     let stale = fs::read_to_string(&pid_path)
         .ok()
@@ -383,14 +283,6 @@ pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Resul
     Ok(())
 }
 
-fn auto_backup_dir() -> Option<PathBuf> {
-    std::env::var("RAG_AUTO_BACKUP_DIR")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-}
-
 /// Snapshot-loop settings, read together so the running loop and the reported
 /// inventory cannot disagree about what `keep` is.
 #[derive(Debug, Clone)]
@@ -401,28 +293,12 @@ struct AutoBackupSettings {
     min_free_bytes: u64,
 }
 
-fn auto_backup_settings() -> Option<AutoBackupSettings> {
-    let dir = auto_backup_dir()?;
-    let interval_secs = std::env::var("RAG_AUTO_BACKUP_INTERVAL_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(86_400)
-        .max(1);
-    let keep = std::env::var("RAG_AUTO_BACKUP_KEEP")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(7)
-        .max(1);
-    let min_free_bytes = std::env::var("RAG_AUTO_BACKUP_MIN_FREE_BYTES")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(2 * 1024 * 1024 * 1024);
+fn auto_backup_settings(config: &Config) -> Option<AutoBackupSettings> {
     Some(AutoBackupSettings {
-        dir,
-        interval: Duration::from_secs(interval_secs),
-        keep,
-        min_free_bytes,
+        dir: config.auto_backup_dir.clone()?,
+        interval: Duration::from_secs(config.auto_backup_interval_secs.max(1)),
+        keep: config.auto_backup_keep.max(1),
+        min_free_bytes: config.auto_backup_min_free_bytes,
     })
 }
 
@@ -449,6 +325,7 @@ pub fn free_space_bytes(path: &Path) -> Option<u64> {
     Some(stat.f_bavail as u64 * block_size)
 }
 
+/// Free space is not measured on this platform; always `None`.
 #[cfg(not(unix))]
 pub fn free_space_bytes(_path: &Path) -> Option<u64> {
     None
@@ -469,8 +346,10 @@ pub struct AutoBackupInventory {
     pub free_bytes: Option<u64>,
 }
 
-pub fn auto_backup_inventory() -> Option<AutoBackupInventory> {
-    let settings = auto_backup_settings()?;
+/// Snapshot footprint of the automatic backup directory, or `None` when
+/// automatic backups are not configured.
+pub fn auto_backup_inventory(config: &Config) -> Option<AutoBackupInventory> {
+    let settings = auto_backup_settings(config)?;
     Some(inventory_at(&settings))
 }
 
@@ -499,8 +378,8 @@ fn inventory_at(settings: &AutoBackupSettings) -> AutoBackupInventory {
 
 /// Spawn the optional automatic backup loop. Disabled unless
 /// `RAG_AUTO_BACKUP_DIR` is configured.
-pub fn spawn_auto_backup(store: Store) {
-    let Some(settings) = auto_backup_settings() else {
+pub fn spawn_auto_backup(store: Store, config: &Config) {
+    let Some(settings) = auto_backup_settings(config) else {
         return;
     };
     let dir = settings.dir.clone();
@@ -561,11 +440,11 @@ pub fn spawn_auto_backup(store: Store) {
                 state.auto_backup_running = false;
                 state.auto_backup_next_run_at = Some(
                     Utc::now()
-                        + chrono::Duration::from_std(interval.min(Duration::from_secs(3600)))
+                        + chrono::Duration::from_std(interval.min(AUTO_BACKUP_MAX_SLEEP))
                             .unwrap_or_default(),
                 );
             }
-            tokio::time::sleep(interval.min(Duration::from_secs(3600))).await;
+            tokio::time::sleep(interval.min(AUTO_BACKUP_MAX_SLEEP)).await;
         }
     });
 }
@@ -677,6 +556,106 @@ fn latest_auto_backup_at(dir: &Path) -> Result<Option<DateTime<Utc>>> {
     Ok(list_backups(dir)?
         .first()
         .map(|(_, modified)| DateTime::<Utc>::from(*modified)))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceSnapshot {
+    pub pid: u32,
+    pub uptime_seconds: u64,
+    /// CPU usage of this process in percent; may exceed 100 on multi-core
+    /// hosts (280 % ≈ 2.8 busy cores).
+    pub cpu_percent: f32,
+    pub logical_cpus: usize,
+    /// Tokio multi-thread runtime worker count actually used at startup.
+    pub tokio_worker_threads: usize,
+    pub rss_bytes: u64,
+    pub virtual_bytes: u64,
+    pub system_memory_total: u64,
+    pub system_memory_used: u64,
+    pub load_avg_1m: f64,
+    pub load_avg_5m: f64,
+    pub load_avg_15m: f64,
+    pub sampled_at: DateTime<Utc>,
+}
+
+pub fn worker_threads() -> usize {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    std::env::var("RAG_WORKER_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(logical)
+}
+
+static RESOURCE_SAMPLE: LazyLock<RwLock<Option<ResourceSnapshot>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+static RESOURCE_SYSTEM: LazyLock<std::sync::Mutex<sysinfo::System>> =
+    LazyLock::new(|| std::sync::Mutex::new(sysinfo::System::new()));
+
+static RESOURCE_SAMPLER_STARTED: std::sync::Once = std::sync::Once::new();
+
+fn sample_resources() -> ResourceSnapshot {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate};
+    let pid = Pid::from_u32(std::process::id());
+    let mut sys = RESOURCE_SYSTEM.lock().unwrap_or_else(|p| p.into_inner());
+    sys.refresh_memory();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
+    let (cpu_percent, rss_bytes, virtual_bytes) = sys
+        .process(pid)
+        .map(|p| (p.cpu_usage(), p.memory(), p.virtual_memory()))
+        .unwrap_or((0.0, 0, 0));
+    let load = sysinfo::System::load_average();
+    ResourceSnapshot {
+        pid: std::process::id(),
+        uptime_seconds: STARTED.elapsed().as_secs(),
+        cpu_percent,
+        logical_cpus: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
+        tokio_worker_threads: worker_threads(),
+        rss_bytes,
+        virtual_bytes,
+        system_memory_total: sys.total_memory(),
+        system_memory_used: sys.used_memory(),
+        load_avg_1m: load.one,
+        load_avg_5m: load.five,
+        load_avg_15m: load.fifteen,
+        sampled_at: Utc::now(),
+    }
+}
+
+pub fn resource_snapshot() -> ResourceSnapshot {
+    RESOURCE_SAMPLER_STARTED.call_once(|| {
+        std::thread::Builder::new()
+            .name("resource-sampler".into())
+            .spawn(|| loop {
+                let snap = sample_resources();
+                *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap);
+                std::thread::sleep(Duration::from_secs(2));
+            })
+            .ok();
+    });
+    let cached = RESOURCE_SAMPLE
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    match cached {
+        Some(snap) => snap,
+        // First call before the sampler ticked: prime the baseline; CPU reads
+        // 0 % until the second sample, which is expected and self-corrects.
+        None => {
+            let snap = sample_resources();
+            *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap.clone());
+            snap
+        }
+    }
 }
 
 #[cfg(test)]
@@ -796,7 +775,12 @@ mod tests {
         let db = root.path().join("rag.duckdb");
         let pid = db.with_extension("pid");
         fs::write(&pid, "999999\n").unwrap();
-        validate_runtime_paths(&db, &[root.path().to_path_buf()]).unwrap();
+        let config = Config {
+            db_path: db.clone(),
+            ingest_roots: vec![root.path().to_path_buf()],
+            ..Config::for_tests()
+        };
+        validate_runtime_paths(&config).unwrap();
         assert!(runtime_snapshot().stale_pid_metadata_detected);
         assert_eq!(
             fs::read_to_string(pid).unwrap().trim(),

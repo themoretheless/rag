@@ -1,5 +1,7 @@
 //! Durable multi-machine synchronization transport.
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Query, State},
     response::IntoResponse,
@@ -12,6 +14,7 @@ use serde_json::json;
 use crate::db::sync::{
     validate_wiki_change, SyncChange, SyncChangeInput, SyncIdentity, WikiSyncWrite,
 };
+use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::wiki::{self, WikiWriteCommand, WriteWikiOpts};
 
@@ -19,6 +22,9 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
+
+/// Whole-request timeout for database sync HTTP calls to peers.
+const SYNC_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub(super) fn routes() -> Router<HttpState> {
     Router::new()
@@ -30,7 +36,7 @@ pub(super) fn routes() -> Router<HttpState> {
 }
 
 fn identity() -> Result<(String, String, Option<String>), AppError> {
-    let identity = SyncIdentity::from_env()?;
+    let identity = SyncIdentity::current()?;
     Ok((
         identity.role().into(),
         identity.node_id,
@@ -39,14 +45,16 @@ fn identity() -> Result<(String, String, Option<String>), AppError> {
 }
 
 async fn status(State(st): State<HttpState>) -> impl IntoResponse {
-    let (role, node_id, primary_url) = match identity() {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
-    match st.store.sync_status(&role, &node_id, primary_url) {
-        Ok(value) => api_ok(json!({"ok": true, "sync": value})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        let (role, node_id, primary_url) = match identity() {
+            Ok(value) => value,
+            Err(error) => return api_err(error),
+        };
+        match st.store.sync_status(&role, &node_id, primary_url) {
+            Ok(value) => api_ok(json!({"ok": true, "sync": value})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -64,13 +72,15 @@ async fn register(
     State(st): State<HttpState>,
     Json(body): Json<RegisterBody>,
 ) -> impl IntoResponse {
-    match st
-        .store
-        .register_sync_node(&body.node_id, &body.hostname, &body.role)
-    {
-        Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match st
+            .store
+            .register_sync_node(&body.node_id, &body.hostname, &body.role)
+        {
+            Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -91,13 +101,17 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
     }
     // Validate the whole batch before the first mutation. Each accepted event then
     // commits page+journal together; a retry safely resumes any committed prefix.
-    if let Err(error) = st.store.preflight_sync_batch(&body.node_id, &body.changes) {
+    if let Err(error) = crate::util::blocking_section(|| {
+        st.store.preflight_sync_batch(&body.node_id, &body.changes)
+    }) {
         return api_err(error);
     }
+    let embedder = batch_embedder(&st, body.changes.iter()).await;
     let mut primary_sequences = Vec::with_capacity(body.changes.len());
     for change in &body.changes {
-        match apply_change(
+        match apply_change_with(
             &st,
+            &embedder,
             WikiSyncWrite::Push {
                 origin_node: &body.node_id,
                 change,
@@ -114,7 +128,39 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
     )
 }
 
+#[cfg(test)]
 async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, AppError> {
+    apply_change_with(st, &st.embedder, mode).await
+}
+
+/// Embed the chunk texts of every page in a replication batch with one
+/// provider call; the per-event writes then read those vectors. Falls back to
+/// the plain embedder when the batch call fails (each write retries alone).
+async fn batch_embedder<'a>(
+    st: &HttpState,
+    changes: impl Iterator<Item = &'a SyncChangeInput>,
+) -> Arc<dyn EmbeddingProvider> {
+    let indexer = crate::document_indexer::DocumentIndexer::new(st.embedder.as_ref(), &st.config);
+    let texts: Vec<String> = changes
+        .filter_map(|change| validate_wiki_change(change).ok())
+        .flat_map(|payload| {
+            indexer.plain_chunk_texts(&crate::models::Document {
+                content: payload.content,
+                ..Default::default()
+            })
+        })
+        .collect();
+    match crate::embeddings::PrecomputedEmbedder::prepare(st.embedder.clone(), texts).await {
+        Ok(embedder) => Arc::new(embedder),
+        Err(_) => st.embedder.clone(),
+    }
+}
+
+async fn apply_change_with(
+    st: &HttpState,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    mode: WikiSyncWrite<'_>,
+) -> Result<i64, AppError> {
     let (origin_node, change) = match &mode {
         WikiSyncWrite::Push {
             origin_node,
@@ -122,19 +168,21 @@ async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, Ap
         } => (*origin_node, *change),
         WikiSyncWrite::Pull { event, .. } => (event.origin_node.as_str(), &event.change),
         WikiSyncWrite::Local(_) => {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "transport requires incoming sync provenance",
             ))
         }
     };
     let payload = validate_wiki_change(change)?;
     for attempt in 0..3 {
-        if let Some(sequence) = st.store.previously_applied_sync(&mode)? {
+        if let Some(sequence) =
+            crate::util::blocking_section(|| st.store.previously_applied_sync(&mode))?
+        {
             return Ok(sequence);
         }
         let result = wiki::write_wiki_page_synced_command(
             &st.store,
-            &st.embedder,
+            embedder,
             &st.config,
             WikiWriteCommand {
                 slug: payload.slug.clone(),
@@ -142,7 +190,10 @@ async fn apply_change(st: &HttpState, mode: WikiSyncWrite<'_>) -> Result<i64, Ap
                 content: payload.content.clone(),
                 wing: payload.wing.clone(),
                 room: payload.room.clone(),
-                kind: payload.kind.clone().unwrap_or_else(|| "wiki".into()),
+                kind: payload
+                    .kind
+                    .clone()
+                    .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
                 category: payload.category.clone(),
                 summary: payload.summary.clone(),
                 agent: Some(format!("sync:{origin_node}")),
@@ -186,20 +237,22 @@ pub(super) fn spawn_worker(st: HttpState) {
             return;
         }
     };
-    let hostname = std::env::var("RAG_NODE_NAME").unwrap_or_else(|_| node_id.clone());
-    if let Err(error) = st.store.register_sync_node(&node_id, &hostname, &role) {
+    let hostname = st
+        .config
+        .sync_node_name
+        .clone()
+        .unwrap_or_else(|| node_id.clone());
+    if let Err(error) =
+        crate::util::blocking_section(|| st.store.register_sync_node(&node_id, &hostname, &role))
+    {
         tracing::error!(%error, %node_id, "cannot initialize database sync node");
     }
     let Some(primary_url) = configured_primary else {
         return;
     };
-    let interval_secs = std::env::var("RAG_SYNC_INTERVAL_SECS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(5u64)
-        .max(1);
+    let interval_secs = st.config.sync_interval_secs;
     let mut headers = reqwest::header::HeaderMap::new();
-    if let Ok(token) = std::env::var("RAG_PRIMARY_TOKEN") {
+    if let Some(token) = st.config.sync_primary_token.as_ref().map(|t| t.expose()) {
         let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
         else {
             tracing::error!("RAG_PRIMARY_TOKEN is not a valid credential header");
@@ -211,7 +264,7 @@ pub(super) fn spawn_worker(st: HttpState) {
     let client = match reqwest::Client::builder()
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(SYNC_HTTP_TIMEOUT)
         .build()
     {
         Ok(client) => client,
@@ -222,7 +275,9 @@ pub(super) fn spawn_worker(st: HttpState) {
     };
     tokio::spawn(async move {
         let base = primary_url.trim_end_matches('/').to_string();
-        let _ = st.store.register_sync_node(&node_id, &hostname, "replica");
+        let _ = crate::util::blocking_section(|| {
+            st.store.register_sync_node(&node_id, &hostname, "replica")
+        });
         loop {
             if let Err(error) = sync_once(&st, &client, &base, &node_id, &hostname).await {
                 tracing::warn!(%error, %node_id, "database sync cycle failed");
@@ -246,7 +301,10 @@ fn bounded_sync_batch(
         if next > super::MAX_HTTP_BODY_BYTES || event_bytes > crate::db::sync::MAX_SYNC_EVENT_BYTES
         {
             if batch.is_empty() {
-                return Err(AppError::config("pending sync event exceeds the HTTP body limit; preserve the legacy outbox and repair the oversized entry before retrying"));
+                return Err(AppError::invalid(
+                    "pending sync event exceeds the HTTP body limit; preserve the legacy outbox \
+                     and repair the oversized entry before retrying",
+                ));
             }
             break;
         }
@@ -272,7 +330,10 @@ async fn sync_once(
         .error_for_status()
         .map_err(|error| AppError::db(format!("sync register response: {error}")))?;
 
-    let pending = bounded_sync_batch(node_id, &st.store.pending_sync_outbox(100)?)?;
+    let pending = bounded_sync_batch(
+        node_id,
+        &crate::util::blocking_section(|| st.store.pending_sync_outbox(100))?,
+    )?;
     if !pending.is_empty() {
         let reply = client
             .post(format!("{base}/v1/sync/push"))
@@ -293,18 +354,10 @@ async fn sync_once(
             .zip(reply.primary_sequences)
             .map(|(change, primary)| (change.origin_seq, primary))
             .collect::<Vec<_>>();
-        st.store.mark_sync_outbox_sent(&assignments)?;
+        crate::util::blocking_section(|| st.store.mark_sync_outbox_sent(&assignments))?;
     }
 
-    let local = st
-        .store
-        .sync_status("replica", node_id, Some(base.into()))?;
-    let cursor = local
-        .nodes
-        .iter()
-        .find(|node| node.node_id == node_id)
-        .map(|node| node.pull_cursor)
-        .unwrap_or(0);
+    let cursor = crate::util::blocking_section(|| st.store.sync_pull_cursor(node_id))?;
     let reply = client
         .get(format!("{base}/v1/sync/pull"))
         .query(&[
@@ -333,13 +386,15 @@ async fn sync_once(
         }
     }
     if reply.next_cursor != expected {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "sync reply cursor does not match its events",
         ));
     }
+    let embedder = batch_embedder(st, reply.items.iter().map(|item| &item.change)).await;
     for item in &reply.items {
-        apply_change(
+        apply_change_with(
             st,
+            &embedder,
             WikiSyncWrite::Pull {
                 node_id,
                 event: item,
@@ -373,21 +428,23 @@ fn default_limit() -> usize {
 }
 
 async fn pull(State(st): State<HttpState>, Query(query): Query<PullQuery>) -> impl IntoResponse {
-    match st
-        .store
-        .pull_sync_changes(&query.node_id, query.after, query.limit)
-    {
-        Ok(items) => {
-            let next_cursor = items
-                .last()
-                .map(|item| item.primary_seq)
-                .unwrap_or(query.after);
-            api_ok(
-                json!({"ok": true, "count": items.len(), "items": items, "next_cursor": next_cursor}),
-            )
+    crate::util::blocking_section(|| {
+        match st
+            .store
+            .pull_sync_changes(&query.node_id, query.after, query.limit)
+        {
+            Ok(items) => {
+                let next_cursor = items
+                    .last()
+                    .map(|item| item.primary_seq)
+                    .unwrap_or(query.after);
+                api_ok(
+                    json!({"ok": true, "count": items.len(), "items": items, "next_cursor": next_cursor}),
+                )
+            }
+            Err(error) => api_err(error),
         }
-        Err(error) => api_err(error),
-    }
+    })
 }
 
 #[derive(Deserialize)]
@@ -397,10 +454,12 @@ struct AckBody {
 }
 
 async fn ack(State(st): State<HttpState>, Json(body): Json<AckBody>) -> impl IntoResponse {
-    match st.store.acknowledge_sync_cursor(&body.node_id, body.cursor) {
-        Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id, "cursor": body.cursor})),
-        Err(error) => api_err(error),
-    }
+    crate::util::blocking_section(|| {
+        match st.store.acknowledge_sync_cursor(&body.node_id, body.cursor) {
+            Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id, "cursor": body.cursor})),
+            Err(error) => api_err(error),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -473,14 +532,17 @@ mod tests {
             .revision
     }
     fn cursor(st: &HttpState, node: &str) -> i64 {
-        st.store
+        let listed = st
+            .store
             .sync_status("replica", node, None)
             .unwrap()
             .nodes
             .into_iter()
             .find(|item| item.node_id == node)
             .map(|item| item.pull_cursor)
-            .unwrap_or(0)
+            .unwrap_or(0);
+        assert_eq!(st.store.sync_pull_cursor(node).unwrap(), listed);
+        listed
     }
 
     fn event(seq: i64, body: &str) -> SyncChangeInput {

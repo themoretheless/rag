@@ -23,16 +23,7 @@ pub struct RestoreRevisionCommand {
     pub if_match_revision: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RestoreRevisionResult {
-    pub document_id: String,
-    pub restored_from_revision: i64,
-    pub revision: i64,
-    pub etag: String,
-    pub chunk_count: usize,
-    pub node_id: String,
-    pub edge_count: usize,
-}
+pub use rag_mcp_core::RestoreRevisionResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RevisionDiffResult {
@@ -48,14 +39,7 @@ pub struct RevisionDiffResult {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RevisionLineChange {
-    /// `added` or `removed`.
-    pub kind: String,
-    pub line: usize,
-    pub content: String,
-    pub content_truncated: bool,
-}
+pub use rag_mcp_core::RevisionLineChange;
 
 pub struct RevisionService<'a> {
     store: &'a Store,
@@ -64,6 +48,7 @@ pub struct RevisionService<'a> {
 }
 
 impl<'a> RevisionService<'a> {
+    /// Bind the service to a store, embedder and config.
     pub fn new(
         store: &'a Store,
         embedder: &'a Arc<dyn EmbeddingProvider>,
@@ -92,9 +77,7 @@ impl<'a> RevisionService<'a> {
             ));
         }
 
-        let current = self
-            .store
-            .get_document(document_id)?
+        let current = crate::util::blocking_section(|| self.store.get_document(document_id))?
             .ok_or_else(|| AppError::not_found(format!("document '{document_id}'")))?;
         if is_source_controlled(&current) {
             return Err(AppError::forbidden(format!(
@@ -107,18 +90,20 @@ impl<'a> RevisionService<'a> {
                 command.if_match_revision, current.revision
             )));
         }
-        let mut restored = self
-            .store
-            .get_document_revision(document_id, command.revision)?
-            .ok_or_else(|| {
-                AppError::not_found(format!(
-                    "revision {} for document '{document_id}'",
-                    command.revision
-                ))
-            })?;
+        let mut restored = crate::util::blocking_section(|| {
+            self.store
+                .get_document_revision(document_id, command.revision)
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(format!(
+                "revision {} for document '{document_id}'",
+                command.revision
+            ))
+        })?;
         if is_source_controlled(&restored) {
             return Err(AppError::forbidden(format!(
-                "revision {} for document '{document_id}' is a source-controlled snapshot and cannot be restored; restore the source file and synchronize it instead",
+                "revision {} for document '{document_id}' is a source-controlled snapshot and \
+                cannot be restored; restore the source file and synchronize it instead",
                 command.revision
             )));
         }
@@ -128,7 +113,15 @@ impl<'a> RevisionService<'a> {
         let _embedding_guard = self
             .store
             .try_embedding_write_guard(self.config, "revision restore")?;
-        let chunks = DocumentIndexer::new(self.embedder.as_ref(), self.config)
+        // Restoring usually brings back text the document had: reuse vectors.
+        let chunk_embedder = crate::util::blocking_section(|| {
+            crate::document_indexer::reusing_document_vectors(
+                self.store,
+                self.embedder,
+                &restored.id,
+            )
+        })?;
+        let chunks = DocumentIndexer::new(chunk_embedder.as_ref(), self.config)
             .build_chunks(&restored)
             .await?;
         let now = Utc::now();
@@ -153,70 +146,74 @@ impl<'a> RevisionService<'a> {
             .to_string(),
             agent_name: None,
         };
-        let write = if restored.layer.eq_ignore_ascii_case("wiki") {
-            let slug = restored
-                .uri
-                .strip_prefix("wiki://")
-                .filter(|slug| !slug.is_empty())
-                .ok_or_else(|| AppError::config("wiki revision has no canonical wiki URI"))?;
-            let existing_index = self.store.get_wiki_index_by_slug(slug)?;
-            let metadata: serde_json::Value = serde_json::from_str(&restored.metadata_json)?;
-            let index = WikiIndexEntry {
-                id: existing_index
-                    .map(|entry| entry.id)
-                    .unwrap_or_else(|| format!("idx-{}", restored.id)),
-                slug: slug.into(),
-                title: restored.title.clone(),
-                kind: restored.kind.clone(),
-                category: metadata
-                    .get("category")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string),
-                summary: Some(
-                    metadata
-                        .get("summary")
+        // Index lookup and the atomic commit run off the async workers.
+        let write = crate::util::blocking_section(|| -> Result<_> {
+            Ok(if crate::models::Layer::Wiki.is(&restored.layer) {
+                let slug = restored
+                    .uri
+                    .strip_prefix("wiki://")
+                    .filter(|slug| !slug.is_empty())
+                    .ok_or_else(|| AppError::config("wiki revision has no canonical wiki URI"))?;
+                let existing_index = self.store.get_wiki_index_by_slug(slug)?;
+                let metadata = restored.metadata()?;
+                let index = WikiIndexEntry {
+                    id: existing_index
+                        .map(|entry| entry.id)
+                        .unwrap_or_else(|| format!("idx-{}", restored.id)),
+                    slug: slug.into(),
+                    title: restored.title.clone(),
+                    kind: restored.kind.to_string(),
+                    category: metadata
+                        .get("category")
                         .and_then(|value| value.as_str())
-                        .map(str::to_string)
-                        .unwrap_or_else(|| {
-                            restored
-                                .content
-                                .lines()
-                                .map(str::trim)
-                                .find(|line| !line.is_empty())
-                                .unwrap_or("")
-                                .chars()
-                                .take(240)
-                                .collect()
-                        }),
-                ),
-                page_id: Some(restored.id.clone()),
-                updated_at: now,
-            };
-            let mode =
-                crate::db::sync::WikiSyncWrite::Local(crate::db::sync::SyncIdentity::from_env()?);
-            self.store
-                .write_wiki_document_atomic(
+                        .map(str::to_string),
+                    summary: Some(
+                        metadata
+                            .get("summary")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                restored
+                                    .content
+                                    .lines()
+                                    .map(str::trim)
+                                    .find(|line| !line.is_empty())
+                                    .unwrap_or("")
+                                    .chars()
+                                    .take(240)
+                                    .collect()
+                            }),
+                    ),
+                    page_id: Some(restored.id.clone()),
+                    updated_at: now,
+                };
+                let mode = crate::db::sync::WikiSyncWrite::Local(
+                    crate::db::sync::SyncIdentity::current()?,
+                );
+                self.store
+                    .write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                        doc: &restored,
+                        if_match_revision: Some(command.if_match_revision),
+                        chunks: &chunks,
+                        index_entry: &index,
+                        audit_entry: &audit_entry,
+                        sync: &mode,
+                        create_only: false,
+                    })?
+                    .0
+                    .ok_or_else(|| AppError::db("wiki restore returned no committed document"))?
+            } else {
+                let write = self.store.write_document_atomic(
                     &restored,
                     Some(command.if_match_revision),
-                    &chunks,
-                    &index,
-                    &audit_entry,
-                    &mode,
-                    false,
-                )?
-                .0
-                .ok_or_else(|| AppError::db("wiki restore returned no committed document"))?
-        } else {
-            let write = self.store.write_document_atomic(
-                &restored,
-                Some(command.if_match_revision),
-                DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
-            )?;
-            if let Err(error) = self.store.append_ops_log(&audit_entry) {
-                tracing::warn!(%error, document_id, revision = write.revision, "revision restored but audit log append failed");
-            }
-            write
-        };
+                    DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
+                )?;
+                if let Err(error) = self.store.append_ops_log(&audit_entry) {
+                    tracing::warn!(%error, document_id, revision = write.revision, "revision restored but audit log append failed");
+                }
+                write
+            })
+        })?;
 
         Ok(RestoreRevisionResult {
             document_id: document_id.to_string(),
@@ -302,7 +299,7 @@ impl<'a> RevisionService<'a> {
 }
 
 fn is_source_controlled(document: &crate::models::Document) -> bool {
-    document.layer.eq_ignore_ascii_case("raw")
+    crate::models::Layer::Raw.is(&document.layer)
         || document
             .source_file
             .as_deref()

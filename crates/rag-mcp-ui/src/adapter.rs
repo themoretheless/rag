@@ -1,14 +1,15 @@
 //! Domain GraphView → UI graph: filter, multi-edge collapse, style helpers, hard caps.
 
-use rag_mcp::{GraphEdge, GraphNode, GraphView};
+use rag_mcp_core::{GraphEdge, GraphNode, GraphView};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::load::{UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES};
+use crate::load::{
+    UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES, UI_OVERVIEW_MAX_EDGES, UI_OVERVIEW_MAX_NODES,
+};
 use crate::ui::theme;
 
 /// Display node after clamp + style derivation.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // layer/wing/room/pinned reserved for post-MVP chrome
 pub struct UiNode {
     pub id: String,
     pub kind: String,
@@ -23,19 +24,16 @@ pub struct UiNode {
     pub room: Option<String>,
     pub depth: u32,
     pub degree: u32,
-    pub pinned: bool,
 }
 
 /// Canvas edge after multi-edge collapse by (source, target, rel_type).
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // origin used by detail styling later
 pub struct UiEdge {
     pub id: String,
     pub source_id: String,
     pub target_id: String,
     pub rel_type: String,
     pub weight: f64,
-    pub origin: String,
     pub multi_count: u32,
     /// Full provenance for detail panel only (not drawn).
     pub members: Vec<GraphEdge>,
@@ -43,13 +41,15 @@ pub struct UiEdge {
 
 /// UI-ready topology under layout caps.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // raw_* for status banners / future chrome
 pub struct UiGraph {
     pub nodes: Vec<UiNode>,
     pub edges: Vec<UiEdge>,
     pub truncated_nodes: bool,
     pub truncated_edges: bool,
+    /// Pre-cap counts, kept for status banners; read only by tests today.
+    #[allow(dead_code)]
     pub raw_nodes: usize,
+    #[allow(dead_code)]
     pub raw_edges: usize,
     /// Human-readable note when nodes/edges were dropped for caps.
     pub note: Option<String>,
@@ -76,6 +76,7 @@ impl GraphLens {
         Self::Quality,
     ];
 
+    /// Short localized display label for this lens.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overview => "Обзор",
@@ -87,6 +88,7 @@ impl GraphLens {
         }
     }
 
+    /// Localized one-line description of what this lens shows.
     pub const fn description(self) -> &'static str {
         match self {
             Self::Overview => "Карта проекта: каталоги, документы и основные сущности",
@@ -153,10 +155,10 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .nodes
         .iter()
         .filter(|node| {
-            node.kind == "stub"
+            rag_mcp_core::NodeKind::Stub.is(&node.kind)
                 || !node.resolved
                 || !all_edge_ids.contains(node.id.as_str())
-                || (node.kind == "tag" && suspicious_tag_label(&node.label))
+                || (rag_mcp_core::NodeKind::Tag.is(&node.kind) && suspicious_tag_label(&node.label))
         })
         .map(|node| node.id.as_str())
         .collect();
@@ -195,7 +197,8 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let anchors: HashSet<&str> = kind_visible
         .iter()
         .filter(|node| {
-            node.kind == "document" && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
+            rag_mcp_core::NodeKind::Document.is(&node.kind)
+                && scope.get(node.id.as_str()) == Some(&ScopeDisposition::Match)
         })
         .map(|node| node.id.as_str())
         .collect();
@@ -226,7 +229,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .collect();
 
     let (kept_nodes, truncated_nodes) = if opts.show_all_nodes {
-        (filtered_nodes, false)
+        clamp_overview_nodes(filtered_nodes, view)
     } else {
         clamp_nodes(&filtered_nodes, view, opts.seed_id.as_deref())
     };
@@ -258,7 +261,12 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let mut ui_edges = collapse_edges(&edge_owned);
     let pre_cap_edge_count = ui_edges.len();
     let mut truncated_edges = false;
-    if ui_edges.len() > UI_MAX_DRAW_EDGES && !opts.show_all_nodes {
+    let (node_cap, edge_cap) = if opts.show_all_nodes {
+        (UI_OVERVIEW_MAX_NODES, UI_OVERVIEW_MAX_EDGES)
+    } else {
+        (UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES)
+    };
+    if ui_edges.len() > edge_cap {
         // Drop lowest-weight and tagged first; keep highest-weight wikilink/related.
         ui_edges.sort_by(|a, b| {
             let pa = edge_keep_priority(a);
@@ -271,7 +279,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
                 })
                 .then_with(|| a.id.cmp(&b.id))
         });
-        ui_edges.truncate(UI_MAX_DRAW_EDGES);
+        ui_edges.truncate(edge_cap);
         truncated_edges = true;
     }
 
@@ -312,6 +320,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         pre_cap_edge_count,
         ui_nodes.len(),
         ui_edges.len(),
+        (node_cap, edge_cap),
     );
 
     UiGraph {
@@ -364,7 +373,7 @@ fn node_visible_for_lens(
         GraphLens::Knowledge => {
             lens_edge_ids.contains(node.id.as_str())
                 || matches!(node.kind.as_str(), "concept" | "tag" | "stub")
-                || node.metadata_json.contains("\"layer\":\"wiki\"")
+                || node_layer_is_wiki(&node.metadata_json)
         }
         GraphLens::Quality => quality_context_ids.contains(node.id.as_str()),
     }
@@ -381,6 +390,31 @@ fn edge_keep_priority(e: &UiEdge) -> i32 {
         "tagged" | "mentions" => 5,
         _ => 10,
     }
+}
+
+/// Overview lenses (no seed): keep the `UI_OVERVIEW_MAX_NODES` most connected
+/// nodes (degree over the full view's edges, ties by id) so the drawn graph
+/// stays bounded however large the loaded graph is.
+fn clamp_overview_nodes<'a>(
+    filtered: Vec<&'a GraphNode>,
+    view: &GraphView,
+) -> (Vec<&'a GraphNode>, bool) {
+    if filtered.len() <= UI_OVERVIEW_MAX_NODES {
+        return (filtered, false);
+    }
+    let mut degree: HashMap<&str, usize> = HashMap::with_capacity(filtered.len());
+    for edge in &view.edges {
+        *degree.entry(edge.source_id.as_str()).or_default() += 1;
+        *degree.entry(edge.target_id.as_str()).or_default() += 1;
+    }
+    let mut ranked = filtered;
+    ranked.sort_by(|a, b| {
+        let da = degree.get(a.id.as_str()).copied().unwrap_or(0);
+        let db = degree.get(b.id.as_str()).copied().unwrap_or(0);
+        db.cmp(&da).then_with(|| a.id.cmp(&b.id))
+    });
+    ranked.truncate(UI_OVERVIEW_MAX_NODES);
+    (ranked, true)
 }
 
 /// Clamp node set to UI_HARD_MAX_NODES.
@@ -511,6 +545,7 @@ fn truncation_note(
     collapsed_edges: usize,
     kept_nodes: usize,
     kept_edges: usize,
+    (node_cap, edge_cap): (usize, usize),
 ) -> Option<String> {
     if !truncated_nodes && !truncated_edges {
         return None;
@@ -518,12 +553,12 @@ fn truncation_note(
     let mut parts = Vec::new();
     if truncated_nodes {
         parts.push(format!(
-            "Showing {kept_nodes} of {raw_nodes} nodes (hard cap {UI_HARD_MAX_NODES})"
+            "Showing {kept_nodes} of {raw_nodes} nodes (hard cap {node_cap})"
         ));
     }
     if truncated_edges {
         parts.push(format!(
-            "Showing {kept_edges} of {collapsed_edges} draw edges (cap {UI_MAX_DRAW_EDGES})"
+            "Showing {kept_edges} of {collapsed_edges} draw edges (cap {edge_cap})"
         ));
     }
     Some(parts.join("; "))
@@ -550,8 +585,6 @@ pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
                 target_id: e.target_id.clone(),
                 rel_type: e.rel_type.clone(),
                 weight: e.weight,
-                // Wire GraphEdge has no origin yet; default extract (GRAPH_DESIGN).
-                origin: "extract".into(),
                 multi_count: 1,
                 members: vec![e.clone()],
             });
@@ -583,7 +616,6 @@ fn node_to_ui(n: &GraphNode, depth: u32, degree: u32) -> UiNode {
         room,
         depth,
         degree,
-        pinned: false,
     }
 }
 
@@ -612,7 +644,7 @@ fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition 
     }
 
     if missing_placement {
-        if node.kind == "document" {
+        if rag_mcp_core::NodeKind::Document.is(&node.kind) {
             ScopeDisposition::Excluded
         } else {
             ScopeDisposition::Companion
@@ -681,6 +713,19 @@ pub fn topology_generation(view: &GraphView) -> u64 {
     node_ids.hash(&mut h);
     edge_ids.hash(&mut h);
     h.finish()
+}
+
+/// True when a node's metadata names the wiki layer (any key order or spacing).
+fn node_layer_is_wiki(metadata_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(metadata_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("layer")?
+                .as_str()
+                .map(|layer| rag_mcp_core::Layer::Wiki.is(layer))
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1309,5 +1354,50 @@ mod tests {
         let tag = graph.nodes.iter().find(|node| node.id == "tag").unwrap();
         assert_eq!(tag.color, kind_color("tag"));
         assert_eq!(edge_color(&graph.edges[0].rel_type), edge_color("tagged"));
+    }
+    #[test]
+    fn overview_lenses_keep_the_most_connected_nodes_up_to_the_cap() {
+        let mut nodes: Vec<GraphNode> = (0..UI_OVERVIEW_MAX_NODES + 1000)
+            .map(|i| node(&format!("n{i:05}"), "document", &format!("N{i}")))
+            .collect();
+        nodes.push(node("zz-hub", "document", "Hub"));
+        // The hub sorts last by id but is linked to many nodes.
+        let total = UI_OVERVIEW_MAX_NODES + 1000;
+        let mut edges: Vec<GraphEdge> = (0..total - 1)
+            .map(|i| {
+                edge(
+                    &format!("c{i}"),
+                    &format!("n{i:05}"),
+                    &format!("n{:05}", i + 1),
+                    "wikilink",
+                    1.0,
+                )
+            })
+            .collect();
+        edges.extend((0..50).map(|i| {
+            edge(
+                &format!("h{i}"),
+                "zz-hub",
+                &format!("n{i:05}"),
+                "wikilink",
+                1.0,
+            )
+        }));
+        let view = GraphView { nodes, edges };
+        let overview = adapt(
+            &view,
+            &AdaptOptions {
+                lens: GraphLens::Knowledge,
+                show_all_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(overview.nodes.len(), UI_OVERVIEW_MAX_NODES);
+        assert!(overview.truncated_nodes);
+        assert!(overview.nodes.iter().any(|n| n.id == "zz-hub"));
+        assert!(overview
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains(&UI_OVERVIEW_MAX_NODES.to_string())));
     }
 }

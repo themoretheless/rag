@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, EmbeddingProviderKind};
 use crate::db::schema::SCHEMA_VERSION;
@@ -12,8 +12,181 @@ use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::ingest::{IngestCommand, IngestService};
 use crate::llm::{ChatClient, LlmApiDialect};
-use crate::models::{DoctorReport, LlmStatusReport, StatusReport};
+use crate::models::WingCount;
 use crate::source_sync::SourceSyncError;
+
+/// Extended health snapshot for the `status` MCP tool (MemPalace + vision §5.5).
+///
+/// Layer health (not only undifferentiated row counts): raw/wiki counts,
+/// index coverage, uncompiled raw debt, embedding manifest match.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusReport {
+    /// Storage backend kind (`duckdb` today).
+    pub backend: String,
+    #[serde(default)]
+    pub storage_capabilities: Vec<String>,
+    pub schema_version: i32,
+    pub fts_ready: bool,
+    pub document_count: u64,
+    pub chunk_count: u64,
+    pub node_count: u64,
+    pub edge_count: u64,
+    /// Documents with `layer=raw`.
+    #[serde(default)]
+    pub raw_count: u64,
+    /// Documents with `layer=wiki`.
+    #[serde(default)]
+    pub wiki_count: u64,
+    /// Rows in `wiki_index`.
+    #[serde(default)]
+    pub index_entry_count: u64,
+    /// Wiki pages present in `wiki_index` / `wiki_count` (0 when no wiki).
+    #[serde(default)]
+    pub index_coverage: f64,
+    /// Raw sources still treated as compile debt (raw without wiki corpus coverage).
+    /// Currently equals `raw_count` when `wiki_count == 0`, else raw docs not yet
+    /// referenced by any wiki graph edge (soft); falls back to `raw_count` if
+    /// graph walk is empty.
+    #[serde(default)]
+    pub uncompiled_raw_count: u64,
+    /// Live embedding identity matches stored `embedding_manifest`.
+    /// Persisted canonical fingerprints are authoritative; legacy rows without
+    /// one are unverifiable and remain fail-closed until a complete re-embed.
+    #[serde(default)]
+    pub embedding_manifest_match: bool,
+    /// Configured embedding provider name.
+    #[serde(default)]
+    pub embed_provider: String,
+    /// Configured embedding model id.
+    #[serde(default)]
+    pub embed_model: String,
+    /// Distinct non-empty wings with document counts.
+    pub wings: Vec<WingCount>,
+    pub embed_dims: usize,
+    pub ready_for_search: bool,
+    pub ingest_roots_configured: bool,
+    pub db_path: String,
+    /// Gateway process id (single writer).
+    #[serde(default)]
+    pub pid: u32,
+    /// Seconds since process start.
+    #[serde(default)]
+    pub uptime_seconds: u64,
+    /// Main DuckDB file size in bytes when readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_file_bytes: Option<u64>,
+    /// WAL file size in bytes (0 when absent).
+    #[serde(default)]
+    pub wal_bytes: u64,
+    /// WAL warning threshold (`RAG_WAL_WARN_BYTES`).
+    #[serde(default)]
+    pub wal_warn_bytes: u64,
+    /// Automatic snapshot footprint when `RAG_AUTO_BACKUP_DIR` is configured:
+    /// retention, the bytes it holds on disk, and the volume's free space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_backup: Option<crate::ops::AutoBackupInventory>,
+    /// FTS dirty marker (chunk mutations since last completed refresh).
+    #[serde(default)]
+    pub fts_dirty: bool,
+    /// Gap at or above which the maintenance loop auto-reindexes
+    /// (`RAG_FTS_STALE_GENERATION_THRESHOLD`; 0 disables).
+    #[serde(default)]
+    pub fts_stale_threshold: u64,
+    /// Generations between source chunks and the completed FTS index
+    /// (`None` when the index was never refreshed).
+    #[serde(default)]
+    pub fts_generation_gap: Option<u64>,
+    /// Successful FTS refresh/reindex attempts (diagnostics).
+    #[serde(default)]
+    pub fts_rebuild_count: u64,
+    /// True when `fts_dirty` and the gap reaches `fts_stale_threshold`.
+    #[serde(default)]
+    pub fts_stale: bool,
+}
+
+/// Row counts and identity only: the cheap view of [`StatusReport`] for
+/// clients that poll (`GET /v1/status?summary=true`). Skips the layer-health
+/// and wing scans, whose cost grows with the corpus and graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusSummary {
+    pub backend: String,
+    pub schema_version: i32,
+    pub document_count: u64,
+    pub chunk_count: u64,
+    pub node_count: u64,
+    pub edge_count: u64,
+    pub db_path: String,
+}
+
+/// Local chat LLM + embedding config snapshot for the `llm_status` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmStatusReport {
+    /// Whether chat tools are enabled (`RAG_LLM_ENABLED`).
+    pub llm_enabled: bool,
+    /// Provider preset (`ollama`|`openai`|`codex`|`claude`|`kimi`|`deepseek`|`custom`).
+    #[serde(default)]
+    pub provider: String,
+    /// Wire dialect: `openai_compat` or `anthropic_messages`.
+    #[serde(default)]
+    pub dialect: String,
+    /// Chat API base URL (`RAG_LLM_BASE_URL` or provider default).
+    pub base_url: String,
+    /// Chat model tag (`RAG_LLM_MODEL`).
+    pub model: String,
+    /// True when a short probe against the chat endpoint succeeds.
+    pub reachable: bool,
+    /// Probe error detail when `reachable` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Embedding provider name (`mock` | `openai` | …).
+    pub embed_provider: String,
+    /// Embedding model id.
+    pub embed_model: String,
+    /// Configured embedding dimensionality.
+    pub embed_dims: usize,
+    /// Embedding API base URL when relevant (openai / local compat).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_base_url: Option<String>,
+}
+
+/// Minimal integrity report for the `doctor` MCP tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorReport {
+    pub backend: String,
+    #[serde(default)]
+    pub storage_capabilities: Vec<String>,
+    pub schema_version: i32,
+    pub expected_schema_version: i32,
+    pub schema_ok: bool,
+    pub fts_ready: bool,
+    pub document_count: u64,
+    pub chunk_count: u64,
+    pub node_count: u64,
+    pub edge_count: u64,
+    pub embed_dims: usize,
+    /// Dims from `embedding_manifest` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_dims: Option<i32>,
+    /// True when the stored embedding identity matches live config (or when
+    /// both the manifest and corpus chunks are absent).
+    pub embed_ok: bool,
+    pub ready_for_search: bool,
+    pub ingest_roots_configured: bool,
+    pub db_path: String,
+    pub wal_bytes: u64,
+    pub wal_warn_bytes: u64,
+    pub wal_too_large: bool,
+    pub documents_without_chunks: u64,
+    pub orphan_chunks: u64,
+    pub orphan_document_nodes: u64,
+    pub orphan_edges: u64,
+    pub unscoped_documents: u64,
+    pub relational_integrity_ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_hint: Option<String>,
+    /// Critical integrity gate: schema current and embed dims consistent.
+    pub ok: bool,
+}
 
 /// Outcome of `doctor_repair` (MCP) / `POST /v1/doctor/repair` (HTTP).
 #[derive(Debug, Serialize)]
@@ -31,9 +204,6 @@ pub struct DoctorRepairReport {
     pub before: DoctorReport,
     pub after: DoctorReport,
 }
-
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_doctor_finalize_fts__";
 
 /// Probe the configured chat LLM and describe embedding config (no corpus mutation).
 ///
@@ -81,6 +251,7 @@ pub struct DiagnosticsService<'a> {
 }
 
 impl<'a> DiagnosticsService<'a> {
+    /// Bind the service to a store and config.
     pub fn new(store: &'a Store, config: &'a Config) -> Self {
         Self { store, config }
     }
@@ -102,20 +273,24 @@ impl<'a> DiagnosticsService<'a> {
         };
         let cap = self.config.maint_max_docs.max(1);
         let max_docs = max_docs.unwrap_or(cap).clamp(1, cap);
-        let before = self.doctor()?;
+        let before = crate::util::blocking_section(|| self.doctor())?;
         // Intentionally empty source placeholders are valid manifest entries,
         // not corrupt searchable documents. Keep this aligned with
         // Store::integrity_counts so doctor and doctor_repair agree. The SQL
         // anti-join applies the cap before document bodies enter Rust.
-        let (_missing_total, missing) = self.store.list_documents_missing_chunks(max_docs)?;
+        let (_missing_total, missing) =
+            crate::util::blocking_section(|| self.store.list_documents_missing_chunks(max_docs))?;
 
         let mut documents_repaired = Vec::new();
         let mut documents_failed = Vec::new();
         let mut errors = Vec::new();
         if !dry_run {
             let ingest = IngestService::new(self.store, embedder, self.config);
-            for document in &missing {
-                let command = IngestCommand {
+            // Embed the missing documents in shared provider calls; each one
+            // still commits on its own.
+            let commands: Vec<IngestCommand> = missing
+                .iter()
+                .map(|document| IngestCommand {
                     text: document.content.clone(),
                     title: Some(document.title.clone()),
                     uri: Some(document.uri.clone()),
@@ -124,10 +299,12 @@ impl<'a> DiagnosticsService<'a> {
                     room: document.room.clone(),
                     source_file: document.source_file.clone(),
                     layer: document.layer.clone(),
-                    kind: document.kind.clone(),
+                    kind: document.kind.to_string(),
                     immutable: false,
-                };
-                match ingest.ingest(command).await {
+                })
+                .collect();
+            for (document, result) in missing.iter().zip(ingest.ingest_many(commands).await) {
+                match result {
                     Ok(_) => documents_repaired.push(document.id.clone()),
                     Err(error) => documents_failed.push(SourceSyncError {
                         path: document.uri.clone(),
@@ -137,7 +314,7 @@ impl<'a> DiagnosticsService<'a> {
             }
         }
         let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) =
-            self.store.prune_orphans(dry_run)?;
+            crate::util::blocking_section(|| self.store.prune_orphans(dry_run))?;
         if !dry_run {
             if !documents_repaired.is_empty() || orphan_chunks_pruned > 0 {
                 // Repair is a bounded corpus operation. Publish its derived
@@ -152,11 +329,7 @@ impl<'a> DiagnosticsService<'a> {
                     let refresh_result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             #[cfg(test)]
-                            if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-                                return Err(AppError::fts(
-                                    "injected doctor FTS finalization failure",
-                                ));
-                            }
+                            crate::db::fts::test_fault::check("doctor", &stemmer)?;
                             store.ensure_fts(&stemmer).map(|_| ())
                         }))
                         .unwrap_or_else(|_| {
@@ -194,12 +367,12 @@ impl<'a> DiagnosticsService<'a> {
                     }
                 }
             }
-            self.store.checkpoint()?;
+            crate::util::blocking_section(|| self.store.checkpoint())?;
         }
         let after = if dry_run {
             before.clone()
         } else {
-            self.doctor()?
+            crate::util::blocking_section(|| self.doctor())?
         };
         let report = DoctorRepairReport {
             dry_run,
@@ -218,6 +391,7 @@ impl<'a> DiagnosticsService<'a> {
         Ok(report)
     }
 
+    /// Full status report: schema, counts, wings, layer health and embedding state.
     pub fn status(&self) -> Result<StatusReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let fts_ready = self.store.fts_ready()?;
@@ -279,11 +453,27 @@ impl<'a> DiagnosticsService<'a> {
             uptime_seconds: runtime.uptime_seconds,
             db_file_bytes: self.store.db_file_size_bytes(),
             wal_bytes: self.store.wal_file_size_bytes(),
-            wal_warn_bytes: crate::ops::wal_warn_bytes(),
-            auto_backup: crate::ops::auto_backup_inventory(),
+            wal_warn_bytes: self.config.wal_warn_bytes,
+            auto_backup: crate::ops::auto_backup_inventory(self.config),
         })
     }
 
+    /// Lightweight status: backend, schema version and row counts.
+    pub fn status_summary(&self) -> Result<StatusSummary, AppError> {
+        let schema_version = self.store.schema_version()?.unwrap_or(0);
+        let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
+        Ok(StatusSummary {
+            backend: "duckdb".into(),
+            schema_version,
+            document_count,
+            chunk_count,
+            node_count,
+            edge_count,
+            db_path: self.store.path().display().to_string(),
+        })
+    }
+
+    /// Run health checks (schema, FTS, embeddings, integrity) and report findings.
     pub fn doctor(&self) -> Result<DoctorReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let schema_ok = schema_version >= SCHEMA_VERSION;
@@ -304,7 +494,7 @@ impl<'a> DiagnosticsService<'a> {
         let relational_integrity_ok =
             orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
         let wal_bytes = self.store.wal_file_size_bytes();
-        let wal_warn_bytes = crate::ops::wal_warn_bytes();
+        let wal_warn_bytes = self.config.wal_warn_bytes;
         let wal_too_large = wal_bytes >= wal_warn_bytes;
         let repair_hint = if !embed_ok {
             Some(
@@ -530,10 +720,13 @@ mod tests {
         std::fs::create_dir_all(&backups).expect("backup dir");
         std::fs::write(backups.join("rag-auto-a.duckdb"), b"12345").expect("snapshot");
         std::fs::write(backups.join("notes.txt"), b"0000000000").expect("non-snapshot");
-        std::env::set_var("RAG_AUTO_BACKUP_DIR", &backups);
-        let configured = serde_json::to_value(service.status().expect("footprint status"));
-        std::env::remove_var("RAG_AUTO_BACKUP_DIR");
-        let configured = configured.expect("serialize footprint");
+        let config = Config {
+            auto_backup_dir: Some(backups),
+            ..config
+        };
+        let service = DiagnosticsService::new(&store, &config);
+        let configured = serde_json::to_value(service.status().expect("footprint status"))
+            .expect("serialize footprint");
 
         // Only snapshot groups (`rag-auto-*.duckdb` and their sidecars) are billed.
         assert_eq!(configured["auto_backup"]["snapshots"], 1);
@@ -769,6 +962,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repair_embeds_missing_documents_in_one_provider_call() {
+        struct Counting {
+            inner: MockEmbedder,
+            calls: std::sync::atomic::AtomicUsize,
+        }
+        #[async_trait::async_trait]
+        impl EmbeddingProvider for Counting {
+            async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.inner.embed(texts).await
+            }
+            fn dimensions(&self) -> usize {
+                self.inner.dimensions()
+            }
+        }
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("grouped-doctor-repair.duckdb");
+        let store = Store::open(&path).expect("open store");
+        for index in 0..3 {
+            store
+                .upsert_document(&Document {
+                    id: format!("missing-{index}"),
+                    uri: format!("text://missing-{index}"),
+                    title: format!("Missing {index}"),
+                    content: format!("searchable missing body {index}"),
+                    ..Document::default()
+                })
+                .expect("insert missing document");
+        }
+        let config = Config {
+            db_path: path,
+            embedding_dims: 8,
+            ..Config::for_tests()
+        };
+        let counting = Arc::new(Counting {
+            inner: MockEmbedder::new(8),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let embedder: Arc<dyn EmbeddingProvider> = counting.clone();
+        let report = DiagnosticsService::new(&store, &config)
+            .repair(&embedder, false, Some(10))
+            .await
+            .expect("repair");
+
+        assert_eq!(report.documents_repaired.len(), 3);
+        assert_eq!(counting.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(store.list_documents_missing_chunks(10).unwrap().0, 0);
+    }
+
+    #[tokio::test]
     async fn repair_final_fts_failure_returns_committed_report() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("doctor-finalize-failure.duckdb");
@@ -787,7 +1032,7 @@ mod tests {
         let config = Config {
             db_path: path,
             embedding_dims: 8,
-            fts_stemmer: TEST_FINALIZE_FTS_FAILURE_STEMMER.into(),
+            fts_stemmer: crate::db::fts::test_fault::fail("doctor"),
             ..Config::for_tests()
         };
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));

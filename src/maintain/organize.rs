@@ -7,17 +7,17 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, ChatMessage};
+use crate::llm::json::{parse_model_object, ERROR_EXCERPT_CHARS};
+use crate::llm::ChatMessage;
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
-use crate::models::{Document, DocumentMetaUpdate, OpsLogEntry, Taxonomy};
+use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
+use crate::util::excerpt_chars as truncate_chars;
 
 /// Cap titles / samples sent to the LLM.
 const LLM_SAMPLE_CAP: usize = 40;
@@ -54,6 +54,7 @@ impl OrganizeMode {
         }
     }
 
+    /// Wire string for this organize mode.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Heuristic => "heuristic",
@@ -84,7 +85,7 @@ impl Default for OrganizeOptions {
         Self {
             dry_run: true,
             mode: OrganizeMode::Heuristic,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
             min_confidence: 0.5,
             rebuild_index: false,
             agent: None,
@@ -174,7 +175,7 @@ pub struct OrganizeReport {
 pub async fn maintain_organize(
     store: &Store,
     config: &Config,
-    llm: Option<&ChatClient>,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
     opts: &OrganizeOptions,
 ) -> Result<OrganizeReport> {
     let max_docs = opts.max_docs.max(1);
@@ -196,15 +197,21 @@ pub async fn maintain_organize(
     } else {
         None
     };
-    let taxonomy = store.get_taxonomy()?;
-    let (unscoped_total, considered) = store.list_active_unscoped_documents(max_docs)?;
+    let (taxonomy, (unscoped_total, considered)) = crate::util::blocking_section(|| {
+        Ok::<_, AppError>((
+            store.get_taxonomy()?,
+            store.list_active_unscoped_documents(max_docs)?,
+        ))
+    })?;
     let skipped_cap = unscoped_total.saturating_sub(considered.len());
     let unscoped_considered = considered.len();
 
     let mut embedding_heuristics_enabled = false;
     let mut suggestions = match opts.mode {
         OrganizeMode::Heuristic => {
-            let (suggestions, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+            let (suggestions, enabled) = crate::util::blocking_section(|| {
+                suggest_heuristic(store, config, &taxonomy, &considered)
+            })?;
             embedding_heuristics_enabled = enabled;
             suggestions
         }
@@ -214,8 +221,9 @@ pub async fn maintain_organize(
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(error = %e, "organize LLM failed; falling back to heuristic");
-                        let (mut s, enabled) =
-                            suggest_heuristic(store, config, &taxonomy, &considered)?;
+                        let (mut s, enabled) = crate::util::blocking_section(|| {
+                            suggest_heuristic(store, config, &taxonomy, &considered)
+                        })?;
                         embedding_heuristics_enabled = enabled;
                         for item in &mut s {
                             item.reason = format!("llm_fallback: {}; {}", e, item.reason);
@@ -224,7 +232,9 @@ pub async fn maintain_organize(
                     }
                 }
             } else {
-                let (mut s, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+                let (mut s, enabled) = crate::util::blocking_section(|| {
+                    suggest_heuristic(store, config, &taxonomy, &considered)
+                })?;
                 embedding_heuristics_enabled = enabled;
                 for item in &mut s {
                     item.reason = format!(
@@ -238,7 +248,9 @@ pub async fn maintain_organize(
             }
         }
         OrganizeMode::Auto => {
-            let (mut s, enabled) = suggest_heuristic(store, config, &taxonomy, &considered)?;
+            let (mut s, enabled) = crate::util::blocking_section(|| {
+                suggest_heuristic(store, config, &taxonomy, &considered)
+            })?;
             embedding_heuristics_enabled = enabled;
             let need_llm: Vec<Document> = considered
                 .iter()
@@ -399,7 +411,7 @@ pub async fn maintain_organize(
             room: room.clone(),
             ..Default::default()
         };
-        match store.update_document_meta(doc_id, &update) {
+        match crate::util::blocking_section(|| store.update_document_meta(doc_id, &update)) {
             Ok(Some(_)) => {
                 applied_ok += 1;
                 applied.push(RefileApplyResult {
@@ -439,10 +451,12 @@ pub async fn maintain_organize(
             .any(|a| a.action == MaintenanceAction::RebuildIndex)
     {
         if dry_run {
-            let n = store.list_documents_by_layer("wiki")?.len();
+            let n = crate::util::blocking_section(|| {
+                store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())
+            })?;
             rebuild_index_entries = Some(n);
         } else if applied_ok > 0 || suggestions.is_empty() {
-            let n = store.rebuild_wiki_index_from_docs()?;
+            let n = crate::util::blocking_section(|| store.rebuild_wiki_index_from_docs())?;
             rebuild_index_entries = Some(n);
         }
     }
@@ -475,11 +489,6 @@ pub async fn maintain_organize(
         ops_log_seq: None,
     };
 
-    let op = if dry_run {
-        "maintain_organize_dry_run"
-    } else {
-        "maintain_organize"
-    };
     let message = if dry_run {
         format!(
             "dry_run maintain_organize: {} suggestions, {} actions, {} unscoped",
@@ -495,19 +504,15 @@ pub async fn maintain_organize(
             report.suggestions.len()
         )
     };
-    let payload = serde_json::to_string(&report).unwrap_or_else(|_| "{}".into());
-    let written = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: op.into(),
-        prefix: Some("MAINT".into()),
+    let written = super::audit::record_run(
+        store,
+        "maintain_organize",
+        dry_run,
+        "maintenance",
         message,
-        entity_id: None,
-        entity_kind: Some("maintenance".into()),
-        payload_json: payload,
-        agent_name: opts.agent.clone(),
-    })?;
+        opts.agent.clone(),
+        &report,
+    )?;
     report.ops_log_id = Some(written.id);
     report.ops_log_seq = Some(written.seq);
 
@@ -778,13 +783,11 @@ fn first_chunk_embeddings(
     store: &Store,
     documents: &[Document],
 ) -> Result<BTreeMap<String, Vec<f32>>> {
-    let mut first: BTreeMap<String, Vec<f32>> = BTreeMap::new();
-    for document in documents {
-        if let Some(embedding) = store.first_chunk_embedding(&document.id)? {
-            first.insert(document.id.clone(), embedding);
-        }
-    }
-    Ok(first)
+    let ids: Vec<&str> = documents
+        .iter()
+        .map(|document| document.id.as_str())
+        .collect();
+    store.first_chunk_embeddings(&ids)
 }
 
 fn path_segments(path: &str) -> Vec<String> {
@@ -896,7 +899,7 @@ struct LlmRefileItem {
 }
 
 async fn suggest_llm(
-    client: &ChatClient,
+    client: &dyn crate::llm::ChatCompleter,
     taxonomy: &Taxonomy,
     unscoped: &[Document],
 ) -> Result<Vec<RefileSuggestion>> {
@@ -945,8 +948,8 @@ confidence is 0..1.
 "#;
     let user = format!(
         "## Taxonomy\n\n{tax}\n\n## Unscoped documents (missing wing)\n\n{docs}\n",
-        tax = truncate(&tax_json, 8000),
-        docs = truncate(&sample_json, 16_000),
+        tax = truncate_chars(&tax_json, 8000),
+        docs = truncate_chars(&sample_json, 16_000),
     );
     let messages = [
         ChatMessage {
@@ -1000,143 +1003,46 @@ confidence is 0..1.
 }
 
 fn parse_organize_json(raw: &str) -> Result<LlmOrganizePayload> {
-    let trimmed = raw.trim();
-    let unfenced = if let Some(rest) = trimmed.strip_prefix("```") {
-        let rest = rest
-            .strip_prefix("json")
-            .or_else(|| rest.strip_prefix("JSON"))
-            .unwrap_or(rest);
-        let rest = rest.trim_start_matches('\n');
-        rest.strip_suffix("```").unwrap_or(rest).trim()
-    } else {
-        trimmed
-    };
-    if let Ok(v) = serde_json::from_str::<LlmOrganizePayload>(unfenced) {
-        return Ok(v);
-    }
-    if let (Some(start), Some(end)) = (unfenced.find('{'), unfenced.rfind('}')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(v) = serde_json::from_str::<LlmOrganizePayload>(slice) {
-                return Ok(v);
-            }
-        }
-    }
-    Err(AppError::llm(format!(
-        "failed to parse organize JSON from model output: {}",
-        truncate(raw, 400)
-    )))
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(max).collect();
-        t.push('…');
-        t
-    }
+    parse_model_object::<LlmOrganizePayload>(raw).ok_or_else(|| {
+        AppError::llm(format!(
+            "failed to parse organize JSON from model output: {}",
+            truncate_chars(raw, ERROR_EXCERPT_CHARS)
+        ))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Chunk, SearchMode};
+    use crate::testkit::SeedDoc;
+
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf) -> Config {
         Config {
             db_path,
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".into(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".into(),
             embedding_dims: 8,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            code_chunking: crate::config::CodeChunkingMode::Structural,
-            default_top_k: 5,
-            ingest_roots: vec![],
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".into(),
-            default_search_mode: SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".into(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".into(),
-            llm_api_key: "ollama".into(),
             llm_enabled: false,
-            llm_timeout_secs: 120,
-            llm_max_tokens: 4096,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
-            rerank_provider: crate::rerank::RerankProviderKind::Off,
-            rerank_base_url: String::new(),
-            rerank_api_key: String::new(),
-            rerank_model: String::new(),
-            rerank_top_n: 50,
-            rerank_timeout_secs: 30,
-            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
-            query_rewrite_provider: None,
-            query_rewrite_model: None,
-            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            hyde_provider: None,
-            hyde_model: None,
-            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            ingest_url_allow: Vec::new(),
-            ingest_url_timeout_secs: 30,
-            ingest_url_max_bytes: 10 * 1024 * 1024,
-            reembed_batch: 100,
-            fts_stale_generation_threshold: 64,
-            fts_maint_interval_secs: 300,
+            ..Config::for_tests()
         }
     }
 
-    // Compact test fixture helper; keeping call sites readable is more useful here.
-    #[allow(clippy::too_many_arguments)]
+    /// Seed one document; `scope` is `(wing, room, source_file)`.
     fn seed_doc(
         store: &Store,
         id: &str,
         title: &str,
         content: &str,
-        wing: Option<&str>,
-        room: Option<&str>,
-        source_file: Option<&str>,
+        scope: (Option<&str>, Option<&str>, Option<&str>),
         uri: &str,
     ) {
-        let now = Utc::now();
-        store
-            .upsert_document(&Document {
-                id: id.into(),
-                uri: uri.into(),
-                title: title.into(),
-                content: content.into(),
-                metadata_json: "{}".into(),
-                created_at: now,
-                updated_at: now,
-                wing: wing.map(|s| s.into()),
-                room: room.map(|s| s.into()),
-                source_file: source_file.map(|s| s.into()),
-                layer: "raw".into(),
-                kind: "document".into(),
-                ..Default::default()
-            })
-            .unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: format!("{id}-c0"),
-                document_id: id.into(),
-                chunk_index: 0,
-                content: content.into(),
-                embedding: vec![0.1; 8],
-                char_start: 0,
-                char_end: content.len() as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+        let (wing, room, source_file) = scope;
+        SeedDoc::new(id, title, content)
+            .kind("document")
+            .uri(uri)
+            .scope(wing, room, source_file)
+            .insert(store);
     }
 
     #[test]
@@ -1171,9 +1077,11 @@ mod tests {
             "placed",
             "Placed",
             "already filed",
-            Some("research"),
-            Some("rag"),
-            Some("/vault/research/rag/placed.md"),
+            (
+                Some("research"),
+                Some("rag"),
+                Some("/vault/research/rag/placed.md"),
+            ),
             "file:///vault/research/rag/placed.md",
         );
         seed_doc(
@@ -1181,9 +1089,7 @@ mod tests {
             "loose",
             "Loose note",
             "needs a wing",
-            None,
-            None,
-            Some("/vault/research/rag/loose.md"),
+            (None, None, Some("/vault/research/rag/loose.md")),
             "file:///vault/research/rag/loose.md",
         );
 
@@ -1228,9 +1134,7 @@ mod tests {
             "a",
             "Alpha research notes",
             "body a",
-            Some("research"),
-            Some("core"),
-            None,
+            (Some("research"), Some("core"), None),
             "text://a",
         );
         seed_doc(
@@ -1238,9 +1142,7 @@ mod tests {
             "b",
             "research follow-up",
             "body b",
-            None,
-            None,
-            None,
+            (None, None, None),
             "text://b",
         );
 
@@ -1272,9 +1174,7 @@ mod tests {
             "placed",
             "Seed",
             "labeled vector seed",
-            Some("research"),
-            Some("core"),
-            None,
+            (Some("research"), Some("core"), None),
             "text://raw/a",
         );
         seed_doc(
@@ -1282,9 +1182,7 @@ mod tests {
             "loose",
             "Loose",
             "unscoped vector candidate",
-            None,
-            None,
-            None,
+            (None, None, None),
             "text://raw/b",
         );
         store
@@ -1316,9 +1214,7 @@ mod tests {
             "x",
             "X",
             "body",
-            Some("ops"),
-            Some("run"),
-            None,
+            (Some("ops"), Some("run"), None),
             "text://x",
         );
         let opts = OrganizeOptions::from_config(&cfg);
@@ -1339,9 +1235,7 @@ mod tests {
             "seed",
             "research seed",
             "s",
-            Some("research"),
-            None,
-            None,
+            (Some("research"), None, None),
             "text://seed",
         );
         for i in 0..5 {
@@ -1350,9 +1244,7 @@ mod tests {
                 &format!("u{i}"),
                 &format!("research item {i}"),
                 "body",
-                None,
-                None,
-                None,
+                (None, None, None),
                 &format!("text://u{i}"),
             );
         }

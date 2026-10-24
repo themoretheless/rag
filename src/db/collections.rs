@@ -9,6 +9,7 @@ use crate::error::{AppError, Result};
 use crate::models::{Collection, CollectionDetail, CollectionEntry};
 
 impl Store {
+    /// Create a collection with its entries after validating them, in one transaction.
     pub fn create_collection(
         &self,
         collection: &Collection,
@@ -42,6 +43,7 @@ impl Store {
         })
     }
 
+    /// List all collections, most recently updated first.
     pub fn list_collections(&self) -> Result<Vec<Collection>> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
@@ -49,14 +51,11 @@ impl Store {
                       CAST(created_at AS VARCHAR), CAST(updated_at AS VARCHAR)
                FROM collections ORDER BY updated_at DESC, name ASC"#,
         )?;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row_to_collection(row)?);
-        }
+        let out = crate::db::rows::query_vec(&mut stmt, [], |row| Ok(row_to_collection(row)?))?;
         Ok(out)
     }
 
+    /// Fetch one collection with its entries, or `None` when absent.
     pub fn get_collection(&self, id: &str) -> Result<Option<CollectionDetail>> {
         let conn = self.lock()?;
         let collection = conn
@@ -77,9 +76,7 @@ impl Store {
                FROM collection_entries WHERE collection_id = ?
                ORDER BY position ASC, document_id ASC"#,
         )?;
-        let mut rows = stmt.query(params![id])?;
-        let mut entries = Vec::new();
-        while let Some(row) = rows.next()? {
+        let entries = crate::db::rows::query_vec(&mut stmt, params![id], |row| {
             let document_id: String = row.get(0)?;
             let mut deps_stmt = conn.prepare(
                 r#"SELECT depends_on_document_id FROM collection_dependencies
@@ -89,13 +86,13 @@ impl Store {
             let deps = deps_stmt
                 .query_map(params![id, document_id], |r| r.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            entries.push(CollectionEntry {
+            Ok(CollectionEntry {
                 document_id,
                 position: row.get(1)?,
                 parent_document_id: row.get(2)?,
                 depends_on: deps,
-            });
-        }
+            })
+        })?;
         let (dependency_order, dependency_cycle_members) = dependency_order(&entries);
         Ok(Some(CollectionDetail {
             collection,
@@ -105,6 +102,7 @@ impl Store {
         }))
     }
 
+    /// Update a collection's name, description, metadata and/or entries.
     pub fn update_collection(
         &self,
         id: &str,
@@ -309,3 +307,6 @@ fn row_to_collection(row: &duckdb::Row<'_>) -> duckdb::Result<Collection> {
         updated_at: updated,
     })
 }
+
+#[cfg(test)]
+mod tests;

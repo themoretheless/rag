@@ -191,6 +191,7 @@
         class:on={wiki.isFavorite(wiki.current.id)}
         title={wiki.isFavorite(wiki.current.id) ? ui.t('unpinFavorite') : ui.t('pinFavorite')}
         aria-pressed={wiki.isFavorite(wiki.current.id)}
+        aria-label={wiki.isFavorite(wiki.current.id) ? ui.t('unpinFavorite') : ui.t('pinFavorite')}
         onclick={() => wiki.toggleFavorite(wiki.current!.id)}
       >
         {wiki.isFavorite(wiki.current.id) ? '★' : '☆'}

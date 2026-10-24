@@ -9,22 +9,17 @@
 //! (tombstones instead). Every run appends `ops_log`. See
 //! `docs/LOCAL_LLM_MAINTENANCE.md` §3.4.
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::{self, Store};
-use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
 use crate::maintain::analyze::{DuplicateGroup, NearDuplicatePair};
-use crate::models::{Document, OpsLogEntry};
+use crate::models::Document;
 
 /// Highest compression level implemented (L0–L2).
 pub const COMPRESS_LEVEL_MAX: u8 = 2;
 
-/// Cap document pairs scanned for near-dup cosine (first-chunk embeddings).
-const NEAR_DUP_MAX_DOCS: usize = 200;
 /// Cap reported merge/list lines.
 const REPORT_LIST_CAP: usize = 100;
 
@@ -65,7 +60,7 @@ impl Default for CompressOptions {
             confirm: false,
             allow_raw_delete: false,
             near_dup_threshold: 0.92,
-            max_docs: 50,
+            max_docs: super::DEFAULT_MAX_DOCS,
             log_ops: true,
         }
     }
@@ -185,11 +180,6 @@ pub struct MaintainCompressReport {
     pub notes: Vec<String>,
 }
 
-#[cfg(test)]
-const TEST_FINALIZE_FTS_FAILURE_STEMMER: &str = "__test_fail_finalize_fts__";
-#[cfg(test)]
-const TEST_FINALIZE_FTS_PANIC_STEMMER: &str = "__test_panic_finalize_fts__";
-
 /// Run compression according to `opts.level`.
 ///
 /// Never hard-deletes `layer=raw` without `allow_raw_delete`. Level 2 merges
@@ -231,10 +221,7 @@ pub fn maintain_compress(
     actions.push("checkpoint".into());
     actions.push("reindex_fts".into());
     let mut l0_report = if dry_run {
-        let status = {
-            let conn = store.lock()?;
-            db::fts_status(&conn)?
-        };
+        let status = store.fts_status()?;
         Some(CompressL0Report {
             checkpointed: false,
             fts_backend: status.as_ref().map(|s| s.backend.as_str().to_string()),
@@ -244,13 +231,9 @@ pub fn maintain_compress(
             dry_run: true,
         })
     } else {
-        {
-            let conn = store.lock()?;
-            conn.execute_batch("CHECKPOINT")?;
-        }
+        store.checkpoint()?;
         let fts = if level == 0 {
-            let conn = store.lock()?;
-            Some(db::reindex_with_stemmer(&conn, &config.fts_stemmer)?)
+            Some(store.reindex_fts(Some(&config.fts_stemmer))?)
         } else {
             // Levels 1 and 2 rebuild once after their merge phases.
             None
@@ -268,7 +251,7 @@ pub fn maintain_compress(
     // --- L1: exact hash merge ---
     if level >= 1 {
         actions.push("merge_exact_dup".into());
-        exact_dup_groups = find_exact_duplicate_groups(store)?;
+        exact_dup_groups = crate::db::analytics::find_exact_duplicates(store, true)?;
 
         for group in &exact_dup_groups {
             if group.document_ids.len() < 2 {
@@ -302,7 +285,7 @@ pub fn maintain_compress(
                     continue;
                 }
 
-                let is_raw = doc.layer.eq_ignore_ascii_case("raw");
+                let is_raw = crate::models::Layer::Raw.is(&doc.layer);
                 let (action_name, disposition, reason) = if is_raw && !opts.allow_raw_delete {
                     (
                         "tombstone_raw_dup",
@@ -361,7 +344,8 @@ pub fn maintain_compress(
     // --- L2: near-dup list (+ merge with confirm) ---
     if level >= 2 {
         actions.push("list_near_dup".into());
-        near_duplicates = find_near_duplicate_pairs(store, opts.near_dup_threshold)?;
+        near_duplicates =
+            super::analyze::near_duplicate_pairs(store, opts.near_dup_threshold, true)?;
 
         let apply_near = opts.confirm && !dry_run;
         if apply_near {
@@ -387,14 +371,23 @@ pub fn maintain_compress(
             }
         }
 
+        // A document often appears in several pairs; load each one once.
+        let mut loaded: std::collections::HashMap<String, Option<Document>> =
+            std::collections::HashMap::new();
+        let mut load = |id: &str| -> Result<Option<Document>> {
+            if !loaded.contains_key(id) {
+                loaded.insert(id.to_string(), store.get_document(id)?);
+            }
+            Ok(loaded[id].clone())
+        };
         for pair in &near_duplicates {
             if consumed.contains(&pair.document_id_a) || consumed.contains(&pair.document_id_b) {
                 continue;
             }
-            let Some(doc_a) = store.get_document(&pair.document_id_a)? else {
+            let Some(doc_a) = load(&pair.document_id_a)? else {
                 continue;
             };
-            let Some(doc_b) = store.get_document(&pair.document_id_b)? else {
+            let Some(doc_b) = load(&pair.document_id_b)? else {
                 continue;
             };
             // Skip if either is already non-active (e.g. tombstoned earlier).
@@ -442,7 +435,7 @@ pub fn maintain_compress(
                 continue;
             }
 
-            let is_raw = remove.layer.eq_ignore_ascii_case("raw");
+            let is_raw = crate::models::Layer::Raw.is(&remove.layer);
             if is_raw && !opts.allow_raw_delete {
                 planned_tombstones.push(remove.id.clone());
                 docs_tombstoned += 1;
@@ -499,7 +492,9 @@ pub fn maintain_compress(
             || deleted_chunks != chunks_removed
         {
             return Err(AppError::db(format!(
-                "compression disposition counts changed during atomic apply: planned deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
+                "compression disposition counts changed during atomic apply: planned \
+                deleted={docs_removed} tombstoned={docs_tombstoned} chunks={chunks_removed}, \
+                applied deleted={deleted} tombstoned={tombstoned} chunks={deleted_chunks}"
             )));
         }
     }
@@ -537,10 +532,7 @@ pub fn maintain_compress(
 
     // Final checkpoint after mutations so size stats are meaningful.
     if !dry_run && level >= 1 && (docs_removed > 0 || docs_tombstoned > 0) {
-        let checkpoint = store
-            .lock()
-            .and_then(|conn| conn.execute_batch("CHECKPOINT").map_err(Into::into));
-        if let Err(error) = checkpoint {
+        if let Err(error) = store.checkpoint() {
             errors.push(format!(
                 "CHECKPOINT_FINALIZATION_FAILED retryable=true durable_mutation_committed=true: {error}"
             ));
@@ -606,11 +598,6 @@ pub fn maintain_compress(
     };
 
     if opts.log_ops {
-        let op = if dry_run {
-            "maintain_compress_dry_run"
-        } else {
-            "maintain_compress"
-        };
         let message = format!(
             "maintain_compress level={} dry_run={} removed={} tombstoned={} near_pairs={} errors={}",
             level,
@@ -620,19 +607,17 @@ pub fn maintain_compress(
             report.near_duplicates.len(),
             report.errors.len()
         );
-        let payload = serde_json::to_string(&report).unwrap_or_else(|_| "{}".into());
-        let written = store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: op.into(),
-            prefix: Some("MAINT".into()),
+        // Best-effort audit: the mutation already committed, so a failed
+        // summary write is reported instead of failing the run.
+        let written = super::audit::record_run(
+            store,
+            "maintain_compress",
+            dry_run,
+            "corpus",
             message,
-            entity_id: None,
-            entity_kind: Some("corpus".into()),
-            payload_json: payload,
-            agent_name: None,
-        });
+            None,
+            &report,
+        );
         match written {
             Ok(written) => {
                 report.ops_log_id = Some(written.id);
@@ -650,16 +635,9 @@ pub fn maintain_compress(
 
 fn finalize_compress_fts(store: &Store, stemmer: &str) -> Result<db::FtsState> {
     #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_FAILURE_STEMMER {
-        return Err(AppError::fts("injected final FTS reindex failure"));
-    }
-    #[cfg(test)]
-    if stemmer == TEST_FINALIZE_FTS_PANIC_STEMMER {
-        panic!("injected final FTS reindex panic");
-    }
+    db::fts::test_fault::check("compress", stemmer)?;
 
-    let conn = store.lock()?;
-    db::reindex_with_stemmer(&conn, stemmer)
+    store.reindex_fts(Some(stemmer))
 }
 
 fn is_inactive(doc: &Document) -> bool {
@@ -697,188 +675,30 @@ fn load_docs_ordered(store: &Store, ids: &[String]) -> Result<Vec<Document>> {
     Ok(out)
 }
 
-fn find_exact_duplicate_groups(store: &Store) -> Result<Vec<DuplicateGroup>> {
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT content_hash, COUNT(*)::BIGINT
-        FROM documents
-        WHERE content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-          AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')
-        GROUP BY content_hash
-        HAVING COUNT(*) > 1
-        ORDER BY COUNT(*) DESC
-        LIMIT 50
-        "#,
-    )?;
-    let mut rows = stmt.query([])?;
-    let mut hashes: Vec<(String, i64)> = Vec::new();
-    while let Some(row) = rows.next()? {
-        hashes.push((row.get(0)?, row.get(1)?));
-    }
-    drop(rows);
-    drop(stmt);
-
-    let mut groups = Vec::new();
-    for (hash, _n) in hashes {
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, title FROM documents
-            WHERE content_hash = ?
-              AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')
-            ORDER BY created_at ASC
-            "#,
-        )?;
-        let mut rows = stmt.query(duckdb::params![hash.as_str()])?;
-        let mut ids = Vec::new();
-        let mut titles = Vec::new();
-        while let Some(row) = rows.next()? {
-            ids.push(row.get::<_, String>(0)?);
-            titles.push(row.get::<_, String>(1)?);
-        }
-        let count = ids.len();
-        if count > 1 {
-            groups.push(DuplicateGroup {
-                content_hash: hash,
-                document_ids: ids,
-                titles,
-                count,
-            });
-        }
-        if groups.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    Ok(groups)
-}
-
-fn find_near_duplicate_pairs(store: &Store, threshold: f64) -> Result<Vec<NearDuplicatePair>> {
-    let threshold = threshold.clamp(0.0, 1.0) as f32;
-    // Keep the advertised cap in the data query rather than materializing the
-    // entire vector corpus before truncation.
-    let entries =
-        store.representative_document_embeddings(NEAR_DUP_MAX_DOCS, true, false, false)?;
-
-    let mut pairs = Vec::new();
-    for i in 0..entries.len() {
-        for j in (i + 1)..entries.len() {
-            let cos = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
-            if cos >= threshold {
-                pairs.push(NearDuplicatePair {
-                    document_id_a: entries[i].document_id.clone(),
-                    document_id_b: entries[j].document_id.clone(),
-                    title_a: entries[i].title.clone(),
-                    title_b: entries[j].title.clone(),
-                    cosine: cos,
-                });
-                if pairs.len() >= REPORT_LIST_CAP {
-                    break;
-                }
-            }
-        }
-        if pairs.len() >= REPORT_LIST_CAP {
-            break;
-        }
-    }
-    pairs.sort_by(|a, b| {
-        b.cosine
-            .partial_cmp(&a.cosine)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    Ok(pairs)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Chunk, SearchMode};
-    use crate::util::content_hash;
+    use crate::models::SearchMode;
+    use crate::testkit::SeedDoc;
+
     use std::path::PathBuf;
 
     fn test_config(db_path: PathBuf) -> Config {
         Config {
             db_path,
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".into(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".into(),
             embedding_dims: 8,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            code_chunking: crate::config::CodeChunkingMode::Structural,
-            default_top_k: 5,
-            ingest_roots: vec![],
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".into(),
-            default_search_mode: SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".into(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".into(),
-            llm_api_key: "ollama".into(),
             llm_enabled: false,
-            llm_timeout_secs: 120,
-            llm_max_tokens: 4096,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
-            rerank_provider: crate::rerank::RerankProviderKind::Off,
-            rerank_base_url: String::new(),
-            rerank_api_key: String::new(),
-            rerank_model: String::new(),
-            rerank_top_n: 50,
-            rerank_timeout_secs: 30,
-            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
-            query_rewrite_provider: None,
-            query_rewrite_model: None,
-            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            hyde_provider: None,
-            hyde_model: None,
-            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            ingest_url_allow: Vec::new(),
-            ingest_url_timeout_secs: 30,
-            ingest_url_max_bytes: 10 * 1024 * 1024,
-            reembed_batch: 100,
-            fts_stale_generation_threshold: 64,
-            fts_maint_interval_secs: 300,
+            ..Config::for_tests()
         }
     }
 
     fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str, emb: Vec<f32>) {
-        let now = Utc::now();
-        store
-            .upsert_document(&Document {
-                id: id.into(),
-                uri: format!("text://{id}"),
-                title: title.into(),
-                content: content.into(),
-                metadata_json: "{}".into(),
-                created_at: now,
-                updated_at: now,
-                layer: layer.into(),
-                kind: if layer == "wiki" {
-                    "wiki".into()
-                } else {
-                    "document".into()
-                },
-                content_hash: Some(content_hash(content)),
-                ..Default::default()
-            })
-            .unwrap();
-        store
-            .insert_chunks(&[Chunk {
-                id: format!("{id}-c0"),
-                document_id: id.into(),
-                chunk_index: 0,
-                content: content.into(),
-                embedding: emb,
-                char_start: 0,
-                char_end: content.len() as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+        SeedDoc::new(id, title, content)
+            .layer(layer)
+            .embedding(emb)
+            .hashed()
+            .insert(store);
     }
 
     fn assert_finalization_failure_audit(
@@ -1149,6 +969,10 @@ mod tests {
         seed_doc(&store, "drop", "Drop", "unique body two", "wiki", emb);
         let migration = crate::db::store::embedding_migration_manifest(&cfg);
         store.set_embedding_manifest(&migration).unwrap();
+        // Compare against the persisted round-trip: DuckDB keeps microseconds,
+        // while `Utc::now()` carries nanoseconds on Linux.
+        let manifest_before =
+            serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap();
         let stats_before = store.stats().unwrap();
         let documents_before = serde_json::to_value(store.list_documents().unwrap()).unwrap();
         let chunks_before =
@@ -1177,7 +1001,11 @@ mod tests {
         assert!(store.list_ops_log(10).unwrap().is_empty());
         assert_eq!(
             serde_json::to_value(store.get_embedding_manifest().unwrap()).unwrap(),
-            serde_json::to_value(Some(migration)).unwrap()
+            manifest_before
+        );
+        assert_eq!(
+            manifest_before["content_fingerprint"],
+            serde_json::to_value(migration.content_fingerprint).unwrap()
         );
     }
 
@@ -1216,7 +1044,7 @@ mod tests {
         seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
         seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
         store.ensure_fts(&cfg.fts_stemmer).unwrap();
-        cfg.fts_stemmer = TEST_FINALIZE_FTS_FAILURE_STEMMER.into();
+        cfg.fts_stemmer = db::fts::test_fault::fail("compress");
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 1;
@@ -1229,7 +1057,7 @@ mod tests {
         assert_finalization_failure_audit(
             &store,
             &report,
-            "injected final FTS reindex failure",
+            "injected compress FTS finalization failure",
             true,
         );
         let generation = {
@@ -1254,7 +1082,7 @@ mod tests {
         seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
         seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
         store.ensure_fts(&cfg.fts_stemmer).unwrap();
-        cfg.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+        cfg.fts_stemmer = db::fts::test_fault::panic("compress");
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 1;
@@ -1292,7 +1120,7 @@ mod tests {
             vec![0.2; 8],
         );
         store.ensure_fts(&cfg.fts_stemmer).unwrap();
-        cfg.fts_stemmer = TEST_FINALIZE_FTS_PANIC_STEMMER.into();
+        cfg.fts_stemmer = db::fts::test_fault::panic("compress");
 
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 1;

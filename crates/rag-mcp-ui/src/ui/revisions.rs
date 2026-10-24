@@ -2,6 +2,8 @@
 
 use crate::load::DocumentBody;
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
+use crate::ui::text::{short_timestamp, truncate};
+use rag_mcp_core::Layer;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RevisionsAction {
@@ -38,6 +40,7 @@ pub struct RevisionsView<'a> {
     pub loading_restore: bool,
 }
 
+/// Draw a document's revision history workspace and return the chosen action.
 pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> RevisionsAction {
     let mut action = RevisionsAction::None;
     ui.horizontal(|ui| {
@@ -267,7 +270,7 @@ pub fn draw_revisions_workspace(ui: &mut egui::Ui, view: RevisionsView<'_>) -> R
             }
             columns[2].add_space(10.0);
             let source_controlled =
-                view.document_layer == "raw" || selected.layer.as_str() == "raw";
+                Layer::Raw.is(view.document_layer) || Layer::Raw.is(&selected.layer);
             if source_controlled {
                 egui::Frame::group(columns[2].style())
                     .fill(egui::Color32::from_rgb(190, 125, 55).gamma_multiply(0.10))
@@ -301,22 +304,6 @@ fn summary(item: &RevisionItem) -> String {
         "{} · строк: {} · символов: {}",
         item.layer, item.content_lines, item.content_chars
     )
-}
-
-fn short_timestamp(value: &str) -> String {
-    value.strip_suffix('Z').unwrap_or(value).replace('T', " ")
-}
-
-fn truncate(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut value = value
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    value.push('…');
-    value
 }
 
 #[cfg(test)]

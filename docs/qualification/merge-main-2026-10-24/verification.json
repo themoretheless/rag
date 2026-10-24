@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-24",
+  "local_parent": "39184d7ee8f1c146d4b0621f050017a86f41c54c",
+  "upstream_parent": "9974aa96916cba5dedf4de015b1f5c61564504e0",
+  "scope": "integration of upstream refactoring with preserved RAGRAF extensions; full feature parity is not claimed",
+  "workspace_tests": {
+    "command": "cargo test --workspace --offline",
+    "passed": 1164,
+    "failed": 0,
+    "ignored": 1
+  },
+  "checks": {
+    "workspace_clippy_warnings_denied": true,
+    "native_client_no_default_features_clippy_warnings_denied": true,
+    "locked_dependency_check": true,
+    "formatting": true,
+    "web_svelte_check": true,
+    "web_tests_passed": 111,
+    "web_tests_node": "22.23.4",
+    "web_production_build": true,
+    "debug_mcp_and_gate_build": true
+  },
+  "binary_sha256": "64b802e688021239696539c40b9b2a832547b1f0ac1d9126d1c7d7e6acc394f1",
+  "production_database_touched": false,
+  "release_build_run": false,
+  "msrv_toolchain_run": false,
+  "mcp_smoke": {
+    "defaults": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "migration_sql_executed": false,
+      "checks": [
+        "explicit_default_insert",
+        "explicit_default_update",
+        "values_count",
+        "count_mismatch",
+        "nullable_default_null",
+        "unknown_implicit_default",
+        "unknown_generated_default",
+        "duplicate_defaults",
+        "delete_default_rejected",
+        "literal_default_conflict",
+        "alter_default_refresh"
+      ]
+    },
+    "semantic": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "checks": [
+        "frozen_sql_columns",
+        "inheritance_change",
+        "callback_reference_removed",
+        "test_entrypoint_removed",
+        "bounded_nested_changes",
+        "no_source_bodies",
+        "independent_of_current_files",
+        "same_revision_noop"
+      ],
+      "before": 1,
+      "after": 2
+    },
+    "encodings": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "checks": [
+        "cp1251_search_and_symbols",
+        "utf8_search",
+        "bom_utf8",
+        "bom_utf16",
+        "cp1252",
+        "preserved_html",
+        "encoding_basis",
+        "raw_byte_fingerprint",
+        "warm_no_extraction",
+        "encoding_only_sync_refresh",
+        "live_legacy_and_bom",
+        "decoded_vs_raw_checksums",
+        "gate_original_byte_budget",
+        "malformed_input_unknown"
+      ]
+    }
+  },
+  "retrieval_gates": {
+    "example": {
+      "dataset_content_hash": "fe803e0d09434b3f0f4022b7839881918cac9d91e3140fcf6f93bcef3f802fb2",
+      "modes": [
+        {
+          "mode": "lex",
+          "recall_at_k": 1.0,
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0
+        }
+      ]
+    },
+    "repository": {
+      "dataset_content_hash": "c4daee9612beed5d6b3cdfd7e307d359b6fc8cf47e387203c07c62361b3574db",
+      "modes": [
+        {
+          "mode": "lex",
+          "recall_at_k": 0.9583333333333334,
+          "mrr": 0.7999999999999999,
+          "ndcg_at_k": 0.8392081326706542
+        }
+      ]
+    }
+  }
+}

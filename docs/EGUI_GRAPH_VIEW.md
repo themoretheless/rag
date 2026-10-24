@@ -511,8 +511,12 @@ Rules:
   other HTTP product workspaces do not require one.
 - `--depth` defaults to 1 and clamps to 1–3. `--max-nodes` defaults to 100 and
   clamps to the 300-node layout cap.
-- `RAG_DB_PATH`, `RAG_VAULT_PATH` and `RAG_UI_MAX_NODES` are not implicit UI
-  source/default controls; pass the corresponding CLI source and cap explicitly.
+- `RAG_DB_PATH` and `RAG_VAULT_PATH` are not implicit UI source/default
+  controls; pass the corresponding CLI source explicitly. There is no
+  `RAG_UI_MAX_NODES` env var: the caps are compile-time constants in
+  `crates/rag-mcp-ui/src/load.rs` (`UI_HARD_MAX_NODES = 300` layout cap,
+  `UI_MAX_DRAW_EDGES = 2000`; overview lenses use `UI_OVERVIEW_MAX_NODES = 5000`
+  and `UI_OVERVIEW_MAX_EDGES = 20000`), and `--max-nodes` selects a value below them.
 
 Shipped MCP tool (server side, topology dump only):
 

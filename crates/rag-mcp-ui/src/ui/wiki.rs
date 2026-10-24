@@ -1,7 +1,9 @@
 //! Obsidian/Notion-style wiki browser: page list + article body with `[[wikilinks]]`.
 //! Supports read view and an in-app editor (writes go through HTTP PUT).
 
+use crate::ui::text::truncate;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use egui::{RichText, Sense, Ui};
 
@@ -61,17 +63,94 @@ pub struct WikiNavAction {
 
 /// Read-pane dependencies grouped separately from navigation results.
 pub struct WikiReadContext<'a> {
-    pub known_titles: &'a HashSet<String>,
-    pub known_slugs: &'a HashSet<String>,
+    pub known_keys: &'a WikiKnownKeys,
     pub can_write: bool,
     pub salt_prefix: &'a str,
     pub loading: bool,
 }
 
 /// Left sidebar: searchable list of wiki pages, grouped by `category`.
+/// Per-catalog sidebar data, built once per catalog change instead of on every
+/// frame: lowercased search text per page, pages grouped by category
+/// (uncategorized last), and the last filter's matches.
+pub struct WikiSidebarIndex {
+    haystacks: Vec<String>,
+    /// `(category, page indexes)`; the uncategorized group (empty name) is last.
+    groups: Vec<(String, Vec<usize>)>,
+    last_filter: std::cell::RefCell<Option<(String, std::rc::Rc<Vec<usize>>)>>,
+}
+
+impl WikiSidebarIndex {
+    /// Precompute lowercase search haystacks (title, slug, summary, category) and group pages by category.
+    pub fn new(pages: &[WikiPageMeta]) -> Self {
+        let haystacks = pages
+            .iter()
+            .map(|p| {
+                format!(
+                    "{} {} {} {}",
+                    p.title,
+                    p.slug,
+                    p.summary.as_deref().unwrap_or(""),
+                    p.category.as_deref().unwrap_or("")
+                )
+                .to_lowercase()
+            })
+            .collect();
+        let mut by_category: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (index, page) in pages.iter().enumerate() {
+            by_category
+                .entry(page.category.clone().unwrap_or_default())
+                .or_default()
+                .push(index);
+        }
+        let uncategorized = by_category.remove("");
+        let mut groups: Vec<(String, Vec<usize>)> = by_category.into_iter().collect();
+        if let Some(indexes) = uncategorized {
+            groups.push((String::new(), indexes));
+        }
+        Self {
+            haystacks,
+            groups,
+            last_filter: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// Indexes of pages whose text contains `query` (already lowercased),
+    /// reusing the previous result while the query is unchanged.
+    fn matches(&self, query: &str) -> std::rc::Rc<Vec<usize>> {
+        if let Some((cached, matches)) = self.last_filter.borrow().as_ref() {
+            if cached == query {
+                return matches.clone();
+            }
+        }
+        let matches = std::rc::Rc::new(
+            self.haystacks
+                .iter()
+                .enumerate()
+                .filter(|(_, hay)| hay.contains(query))
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>(),
+        );
+        *self.last_filter.borrow_mut() = Some((query.to_string(), matches.clone()));
+        matches
+    }
+}
+
+/// One uniform-height sidebar row, so long catalogs lay out only visible rows.
+enum SidebarRow<'a> {
+    Header {
+        category: &'a str,
+        count: usize,
+        open: bool,
+    },
+    Page(usize),
+}
+
+/// Draw the filterable wiki page list; returns the id of a clicked page.
 pub fn draw_wiki_sidebar(
     ui: &mut Ui,
     pages: &[WikiPageMeta],
+    index: &WikiSidebarIndex,
     filter: &mut String,
     selected_id: Option<&str>,
     show_summaries: &mut bool,
@@ -103,87 +182,111 @@ pub fn draw_wiki_sidebar(
         .on_hover_text("Показывать краткое описание под каждой страницей");
     ui.separator();
 
-    let q = filter.trim().to_lowercase();
-    let matches_filter = |p: &WikiPageMeta| {
-        if q.is_empty() {
-            return true;
-        }
-        let hay = format!(
-            "{} {} {} {}",
-            p.title,
-            p.slug,
-            p.summary.as_deref().unwrap_or(""),
-            p.category.as_deref().unwrap_or("")
-        )
-        .to_lowercase();
-        hay.contains(&q)
-    };
+    if pages.is_empty() {
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| {
+            ui.strong("В этом проекте пока нет страниц");
+            ui.weak("Выберите другой проект или создайте wiki-страницу.");
+        });
+        return None;
+    }
 
-    egui::ScrollArea::vertical()
-        .id_salt("wiki_sidebar_scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            if pages.is_empty() {
-                ui.add_space(24.0);
-                ui.vertical_centered(|ui| {
-                    ui.strong("В этом проекте пока нет страниц");
-                    ui.weak("Выберите другой проект или создайте wiki-страницу.");
+    let q = filter.trim().to_lowercase();
+    let collapsed_id = egui::Id::new("wiki_sidebar_collapsed");
+    let mut collapsed: HashSet<String> = ui
+        .ctx()
+        .data(|data| data.get_temp::<HashSet<String>>(collapsed_id))
+        .unwrap_or_default();
+
+    // Filtered: flat list (grouping would hide matches under closed headers).
+    let filtered = (!q.is_empty()).then(|| index.matches(&q));
+    let mut rows: Vec<SidebarRow<'_>> = Vec::new();
+    match &filtered {
+        Some(matches) => rows.extend(matches.iter().map(|&page| SidebarRow::Page(page))),
+        None => {
+            // A catalog with no categories at all is one flat list, no header.
+            let single_uncategorized = index.groups.len() == 1 && index.groups[0].0.is_empty();
+            for (category, members) in &index.groups {
+                if single_uncategorized {
+                    rows.extend(members.iter().map(|&page| SidebarRow::Page(page)));
+                    continue;
+                }
+                let open = !collapsed.contains(category);
+                rows.push(SidebarRow::Header {
+                    category,
+                    count: members.len(),
+                    open,
                 });
-                return;
-            }
-            if !q.is_empty() {
-                // Filtered: flat list (grouping would hide matches under closed headers).
-                let matches: Vec<_> = pages.iter().filter(|p| matches_filter(p)).collect();
-                if matches.is_empty() {
-                    ui.add_space(20.0);
-                    ui.vertical_centered(|ui| {
-                        ui.strong("Ничего не найдено");
-                        ui.weak("Измените или сократите запрос.");
-                    });
+                if open {
+                    rows.extend(members.iter().map(|&page| SidebarRow::Page(page)));
                 }
-                for p in matches {
-                    draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                }
-                return;
             }
-            // Grouped by category; uncategorized last.
-            let mut groups: BTreeMap<String, Vec<&WikiPageMeta>> = BTreeMap::new();
-            for p in pages {
-                groups
-                    .entry(p.category.clone().unwrap_or_default())
-                    .or_default()
-                    .push(p);
+        }
+    }
+
+    if filtered.as_ref().is_some_and(|matches| matches.is_empty()) {
+        ui.add_space(20.0);
+        ui.vertical_centered(|ui| {
+            ui.strong("Ничего не найдено");
+            ui.weak("Измените или сократите запрос.");
+        });
+        return None;
+    }
+
+    let mut toggle: Option<String> = None;
+    let mut draw_row = |ui: &mut Ui, row: &SidebarRow<'_>, summaries: bool| match row {
+        SidebarRow::Header {
+            category,
+            count,
+            open,
+        } => {
+            let name = if category.is_empty() {
+                "Без категории"
+            } else {
+                category
+            };
+            let marker = if *open { "▼" } else { "▶" };
+            if ui
+                .selectable_label(
+                    false,
+                    RichText::new(format!("{marker} {name}  ({count})")).strong(),
+                )
+                .clicked()
+            {
+                toggle = Some(category.to_string());
             }
-            let uncategorized = groups.remove("");
-            for (cat, group) in &groups {
-                egui::CollapsingHeader::new(cat)
-                    .id_salt(format!("wiki_cat_{cat}"))
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        for p in group {
-                            draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                        }
-                    });
-            }
-            if let Some(group) = uncategorized {
-                if groups.is_empty() {
-                    // No categories at all: flat list without a header.
-                    for p in group {
-                        draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                    }
-                } else {
-                    egui::CollapsingHeader::new("Без категории")
-                        .id_salt("wiki_cat_uncategorized")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            for p in group {
-                                draw_page_entry(ui, p, selected_id, *show_summaries, &mut clicked);
-                            }
-                        });
-                }
+        }
+        SidebarRow::Page(page) => {
+            draw_page_entry(ui, &pages[*page], selected_id, summaries, &mut clicked);
+        }
+    };
+    let scroll = egui::ScrollArea::vertical()
+        .id_salt("wiki_sidebar_scroll")
+        .auto_shrink([false, false]);
+    if *show_summaries {
+        // Entries have varying heights: lay out every row.
+        scroll.show(ui, |ui| {
+            for row in &rows {
+                draw_row(ui, row, true);
             }
         });
+    } else {
+        // Uniform rows: lay out only the visible ones.
+        let row_height = ui.spacing().interact_size.y;
+        scroll.show_rows(ui, row_height, rows.len(), |ui, range| {
+            for row in &rows[range] {
+                draw_row(ui, row, false);
+            }
+        });
+    }
 
+    if let Some(category) = toggle {
+        if !collapsed.remove(&category) {
+            collapsed.insert(category);
+        }
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(collapsed_id, collapsed));
+    }
     clicked
 }
 
@@ -405,13 +508,8 @@ pub fn draw_wiki_read_view(
                 ui.add_space(padding);
                 ui.vertical(|ui| {
                     ui.set_max_width(780.0);
-                    action.open_link = render_wiki_markdown(
-                        ui,
-                        &page.content,
-                        &page.title,
-                        context.known_titles,
-                        context.known_slugs,
-                    );
+                    action.open_link =
+                        render_wiki_markdown(ui, &page.content, &page.title, context.known_keys);
                     ui.add_space(24.0);
                 });
             });
@@ -518,8 +616,7 @@ fn render_wiki_markdown(
     ui: &mut Ui,
     content: &str,
     page_title: &str,
-    known_titles: &HashSet<String>,
-    known_slugs: &HashSet<String>,
+    known_keys: &WikiKnownKeys,
 ) -> Option<String> {
     let mut open_link: Option<String> = None;
     let mut in_code = false;
@@ -578,9 +675,7 @@ fn render_wiki_markdown(
                 .inner_margin(egui::Margin::symmetric(13, 10))
                 .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        if let Some(link) =
-                            draw_inline_with_wikilinks(ui, rest, known_titles, known_slugs)
-                        {
+                        if let Some(link) = draw_inline_with_wikilinks(ui, rest, known_keys) {
                             open_link = Some(link);
                         }
                     });
@@ -618,7 +713,7 @@ fn render_wiki_markdown(
                 ui.label(RichText::new(format!("{n}.")).strong().color(theme::L3));
             }
             let text = bullet.or(numbered.map(|(_, r)| r)).unwrap_or(trimmed);
-            if let Some(link) = draw_inline_with_wikilinks(ui, text, known_titles, known_slugs) {
+            if let Some(link) = draw_inline_with_wikilinks(ui, text, known_keys) {
                 open_link = Some(link);
             }
         });
@@ -653,64 +748,150 @@ fn draw_wiki_code_block(ui: &mut Ui, code: &str) {
     ui.add_space(5.0);
 }
 
-fn link_resolved(key: &str, titles: &HashSet<String>, slugs: &HashSet<String>) -> bool {
-    let k = key.trim();
-    titles.contains(k)
-        || slugs.contains(k)
-        || titles.iter().any(|t| t.eq_ignore_ascii_case(k))
-        || slugs.iter().any(|s| s.eq_ignore_ascii_case(k))
+/// Page titles and slugs a `[[link]]` can resolve to, ASCII-lowercased once
+/// per catalog so a lookup is one hash probe instead of a scan of every page.
+#[derive(Debug, Default)]
+pub struct WikiKnownKeys {
+    keys: HashSet<String>,
+}
+
+impl WikiKnownKeys {
+    /// Keys from `(title, slug)` pairs.
+    pub fn new<'a>(pages: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let mut keys = HashSet::new();
+        for (title, slug) in pages {
+            keys.insert(title.to_ascii_lowercase());
+            keys.insert(slug.to_ascii_lowercase());
+        }
+        Self { keys }
+    }
+
+    /// Whether `key` names a known page: exact or ASCII case-insensitive
+    /// match against a title or slug.
+    pub fn resolves(&self, key: &str) -> bool {
+        self.keys.contains(&key.trim().to_ascii_lowercase())
+    }
+}
+
+/// Text split into plain runs and wikilinks, using the server's parser so
+/// links inside code spans and `![[embeds]]` are not rendered as links.
+#[derive(Debug, PartialEq, Eq)]
+enum InlineSegment<'a> {
+    Plain(&'a str),
+    /// `key` is the link target (heading stripped); `display` is the alias or target.
+    Link {
+        key: String,
+        display: String,
+    },
+}
+
+/// Owned form of [`InlineSegment`] for the per-line egui cache: plain runs
+/// are byte ranges into the cached line.
+enum CachedSegment {
+    Plain(std::ops::Range<usize>),
+    Link { key: String, display: String },
+}
+
+#[derive(Default)]
+struct SegmentParser;
+
+impl egui::cache::ComputerMut<&str, Arc<Vec<CachedSegment>>> for SegmentParser {
+    fn compute(&mut self, text: &str) -> Arc<Vec<CachedSegment>> {
+        let base = text.as_ptr() as usize;
+        Arc::new(
+            wikilink_segments(text)
+                .into_iter()
+                .map(|segment| match segment {
+                    InlineSegment::Plain(plain) => {
+                        let start = plain.as_ptr() as usize - base;
+                        CachedSegment::Plain(start..start + plain.len())
+                    }
+                    InlineSegment::Link { key, display } => CachedSegment::Link { key, display },
+                })
+                .collect(),
+        )
+    }
+}
+
+fn wikilink_segments(text: &str) -> Vec<InlineSegment<'_>> {
+    let mut byte_of_char: Vec<usize> = text.char_indices().map(|(byte, _)| byte).collect();
+    byte_of_char.push(text.len());
+    let last = byte_of_char.len() - 1;
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+    for link in rag_mcp_markup::extract_links(text)
+        .into_iter()
+        .filter(|link| link.rel_type == rag_mcp_markup::REL_WIKILINK)
+    {
+        let start = byte_of_char[link.char_start.min(last)];
+        let end = byte_of_char[link.char_end.min(last)];
+        if start < cursor {
+            continue;
+        }
+        if start > cursor {
+            segments.push(InlineSegment::Plain(&text[cursor..start]));
+        }
+        let display = link
+            .alias
+            .clone()
+            .unwrap_or_else(|| link.target_label.clone());
+        segments.push(InlineSegment::Link {
+            key: link.target_label,
+            display,
+        });
+        cursor = end;
+    }
+    if cursor < text.len() {
+        segments.push(InlineSegment::Plain(&text[cursor..]));
+    }
+    segments
 }
 
 fn draw_inline_with_wikilinks(
     ui: &mut Ui,
     text: &str,
-    known_titles: &HashSet<String>,
-    known_slugs: &HashSet<String>,
+    known_keys: &WikiKnownKeys,
 ) -> Option<String> {
     let mut clicked: Option<String> = None;
-    let mut rest = text;
-    while let Some(start) = rest.find("[[") {
-        let before = &rest[..start];
-        if !before.is_empty() {
-            emit_rich_plain(ui, before);
-        }
-        let after_open = &rest[start + 2..];
-        if let Some(end) = after_open.find("]]") {
-            let target = after_open[..end].trim();
-            let (link_key, display) = if let Some((a, b)) = target.split_once('|') {
-                (a.trim(), b.trim())
-            } else {
-                (target, target)
-            };
-            let resolved = link_resolved(link_key, known_titles, known_slugs);
-            let color = if resolved {
-                egui::Color32::from_rgb(100, 160, 255)
-            } else {
-                egui::Color32::from_rgb(140, 140, 140)
-            };
-            let mut rich = RichText::new(display).color(color);
-            if resolved {
-                rich = rich.underline();
+    // Parsed once per distinct line and reused while it stays on screen
+    // (egui evicts entries unused for a frame), not re-parsed every frame.
+    let segments = ui.ctx().memory_mut(|memory| {
+        memory
+            .caches
+            .cache::<egui::cache::FrameCache<Arc<Vec<CachedSegment>>, SegmentParser>>()
+            .get(text)
+            .clone()
+    });
+    for segment in segments.iter() {
+        let (link_key, display) = match segment {
+            CachedSegment::Plain(range) => {
+                // The cache is keyed by a 64-bit hash of the line; never
+                // slice out of bounds even on a collision.
+                emit_rich_plain(ui, text.get(range.clone()).unwrap_or(text));
+                continue;
             }
-            let mut resp = ui.add(egui::Label::new(rich).sense(Sense::click()));
-            if resp.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
-            if !resolved {
-                resp = resp.on_hover_text("Не найдено: страницы с таким заголовком/slug нет");
-            }
-            if resp.clicked() && !link_key.is_empty() {
-                clicked = Some(link_key.to_string());
-            }
-            rest = &after_open[end + 2..];
+            CachedSegment::Link { key, display } => (key.clone(), display.clone()),
+        };
+        let resolved = known_keys.resolves(&link_key);
+        let color = if resolved {
+            egui::Color32::from_rgb(100, 160, 255)
         } else {
-            emit_rich_plain(ui, &rest[start..]);
-            rest = "";
-            break;
+            egui::Color32::from_rgb(140, 140, 140)
+        };
+        let mut rich = RichText::new(display).color(color);
+        if resolved {
+            rich = rich.underline();
         }
-    }
-    if !rest.is_empty() {
-        emit_rich_plain(ui, rest);
+        let mut resp = ui.add(egui::Label::new(rich).sense(Sense::click()));
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if !resolved {
+            resp = resp.on_hover_text("Не найдено: страницы с таким заголовком/slug нет");
+        }
+        if resp.clicked() && !link_key.is_empty() {
+            clicked = Some(link_key);
+        }
     }
     clicked
 }
@@ -789,18 +970,113 @@ fn emit_tags_only(ui: &mut Ui, text: &str) {
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{t}…")
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri};
+    use super::{can_cancel_edit, content_summary_line, slug_from_wiki_uri, WikiKnownKeys};
+
+    #[test]
+    fn sidebar_index_groups_by_category_and_filters() {
+        let page = |id: &str, title: &str, category: Option<&str>| crate::load::WikiPageMeta {
+            id: id.into(),
+            title: title.into(),
+            slug: id.into(),
+            category: category.map(str::to_string),
+            ..Default::default()
+        };
+        let pages = vec![
+            page("a", "Alpha", Some("zeta")),
+            page("b", "Beta", None),
+            page("c", "Gamma", Some("eta")),
+            page("d", "Delta", Some("zeta")),
+        ];
+        let index = super::WikiSidebarIndex::new(&pages);
+        let groups: Vec<(&str, Vec<usize>)> = index
+            .groups
+            .iter()
+            .map(|(name, members)| (name.as_str(), members.clone()))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![("eta", vec![2]), ("zeta", vec![0, 3]), ("", vec![1])]
+        );
+        assert_eq!(*index.matches("alpha"), vec![0]);
+        assert_eq!(*index.matches("zeta"), vec![0, 3]);
+        assert_eq!(*index.matches("zeta"), vec![0, 3]);
+    }
+
+    #[test]
+    fn cached_segments_cover_the_line_in_order() {
+        use egui::cache::ComputerMut;
+        let text = "Read [[Alpha|the alpha]] then `[[Code]]` and [[Beta#Setup]] end";
+        let segments = super::SegmentParser.compute(text);
+        let mut rebuilt = String::new();
+        let mut links = Vec::new();
+        for segment in segments.iter() {
+            match segment {
+                super::CachedSegment::Plain(range) => rebuilt.push_str(&text[range.clone()]),
+                super::CachedSegment::Link { key, display } => {
+                    links.push((key.clone(), display.clone()));
+                    rebuilt.push('|');
+                }
+            }
+        }
+        assert_eq!(rebuilt, "Read | then `[[Code]]` and | end");
+        assert_eq!(
+            links,
+            vec![
+                ("Alpha".to_string(), "the alpha".to_string()),
+                ("Beta".to_string(), "Beta".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn known_keys_resolve_titles_and_slugs_case_insensitively() {
+        let keys = WikiKnownKeys::new([("Getting Started", "getting-started"), ("Ёлка", "yolka")]);
+        assert!(keys.resolves("Getting Started"));
+        assert!(keys.resolves("  getting started "));
+        assert!(keys.resolves("GETTING-STARTED"));
+        assert!(keys.resolves("Ёлка"));
+        // ASCII-only folding, as before: non-ASCII case must match exactly.
+        assert!(!keys.resolves("ёлка"));
+        assert!(!keys.resolves("missing"));
+    }
+
+    #[test]
+    fn wikilink_segments_follow_the_server_parser() {
+        use super::{wikilink_segments, InlineSegment};
+        let text = "See [[Alpha|the alpha]] and [[Beta#Setup]], not `[[Code]]` or ![[img.png]].";
+        let links: Vec<_> = wikilink_segments(text)
+            .into_iter()
+            .filter_map(|segment| match segment {
+                InlineSegment::Link { key, display } => Some((key, display)),
+                InlineSegment::Plain(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            links,
+            vec![
+                ("Alpha".to_string(), "the alpha".to_string()),
+                ("Beta".to_string(), "Beta".to_string()),
+            ]
+        );
+        assert_eq!(
+            wikilink_segments("plain"),
+            vec![InlineSegment::Plain("plain")]
+        );
+        // Multi-byte text before a link keeps slicing on char boundaries.
+        assert_eq!(
+            wikilink_segments("Привет [[Мир]]!"),
+            vec![
+                InlineSegment::Plain("Привет "),
+                InlineSegment::Link {
+                    key: "Мир".into(),
+                    display: "Мир".into()
+                },
+                InlineSegment::Plain("!"),
+            ]
+        );
+    }
 
     #[test]
     fn cancel_is_disabled_while_wiki_save_is_in_flight() {

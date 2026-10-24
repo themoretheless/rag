@@ -13,8 +13,10 @@ use super::prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
 use crate::config::Config;
 use crate::db::Store;
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, ChatMessage};
+use crate::llm::json::{parse_embedded, strip_json_fences, ERROR_EXCERPT_CHARS};
+use crate::llm::ChatMessage;
 use crate::models::OpsLogEntry;
+use crate::util::excerpt_chars as truncate_chars;
 
 /// Default cap on actions returned by a plan (LLM or heuristic).
 const DEFAULT_MAX_ACTIONS: usize = 30;
@@ -312,7 +314,7 @@ pub struct RejectedAction {
 }
 
 /// Result of `plan_maintenance`: ordered, whitelist-validated actions.
-/// No JsonSchema (result type; DateTime clashes with dual schemars versions).
+/// No JsonSchema: result type, never handed to the LLM as a schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaintenancePlan {
     pub generated_at: DateTime<Utc>,
@@ -465,7 +467,12 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
         }
         MaintenanceAction::MergeExactDup | MaintenanceAction::MergeNearDup => {
             // Apply may resolve peers by content_hash / embedding from target_id alone.
-            let obj = item.params.as_object().expect("params object");
+            let Some(obj) = item.params.as_object() else {
+                return Err(AppError::config(format!(
+                    "maintenance action '{}' params must be a JSON object",
+                    item.action
+                )));
+            };
             let has_group = obj
                 .get("document_ids")
                 .and_then(|v| v.as_array())
@@ -488,7 +495,12 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
             }
         }
         MaintenanceAction::ConsolidatePropose | MaintenanceAction::Consolidate => {
-            let obj = item.params.as_object().expect("params object");
+            let Some(obj) = item.params.as_object() else {
+                return Err(AppError::config(format!(
+                    "maintenance action '{}' params must be a JSON object",
+                    item.action
+                )));
+            };
             let has_sources = obj
                 .get("source_ids")
                 .or_else(|| obj.get("document_ids"))
@@ -588,7 +600,7 @@ struct PlanEnvelope {
 ///
 /// Returns string-keyed raw items so unknown action names can be soft-rejected.
 pub fn parse_plan_json(raw: &str) -> Result<(Vec<serde_json::Value>, Option<String>)> {
-    let unfenced = strip_json_fences(raw.trim());
+    let unfenced = strip_json_fences(raw);
     let (items, notes) = parse_plan_json_raw(unfenced)?;
     let values = items
         .into_iter()
@@ -613,25 +625,15 @@ fn parse_plan_json_raw(unfenced: &str) -> Result<(Vec<RawPlanItem>, Option<Strin
     if let Ok(list) = serde_json::from_str::<Vec<RawPlanItem>>(unfenced) {
         return Ok((list, None));
     }
-    if let (Some(start), Some(end)) = (unfenced.find('{'), unfenced.rfind('}')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(env) = serde_json::from_str::<PlanEnvelope>(slice) {
-                return Ok((env.actions, env.notes));
-            }
-        }
+    if let Some(env) = parse_embedded::<PlanEnvelope>(unfenced, '{', '}') {
+        return Ok((env.actions, env.notes));
     }
-    if let (Some(start), Some(end)) = (unfenced.find('['), unfenced.rfind(']')) {
-        if end > start {
-            let slice = &unfenced[start..=end];
-            if let Ok(list) = serde_json::from_str::<Vec<RawPlanItem>>(slice) {
-                return Ok((list, None));
-            }
-        }
+    if let Some(list) = parse_embedded::<Vec<RawPlanItem>>(unfenced, '[', ']') {
+        return Ok((list, None));
     }
     Err(AppError::llm(format!(
         "failed to parse maintenance plan JSON from model output: {}",
-        truncate(unfenced, 400)
+        truncate_chars(unfenced, ERROR_EXCERPT_CHARS)
     )))
 }
 
@@ -643,7 +645,7 @@ pub fn parse_and_filter_plan(
     Vec<RejectedAction>,
     Option<String>,
 )> {
-    let unfenced = strip_json_fences(raw.trim());
+    let unfenced = strip_json_fences(raw);
     let (items, notes) = parse_plan_json_raw(unfenced)?;
     let (accepted, rejected) = filter_raw_plan(items);
     Ok((accepted, rejected, notes))
@@ -663,19 +665,6 @@ pub fn action_from_parts(
         params,
     }
     .into_validated()
-}
-
-fn strip_json_fences(trimmed: &str) -> &str {
-    if let Some(rest) = trimmed.strip_prefix("```") {
-        let rest = rest
-            .strip_prefix("json")
-            .or_else(|| rest.strip_prefix("JSON"))
-            .unwrap_or(rest);
-        let rest = rest.trim_start_matches('\n').trim_start();
-        rest.strip_suffix("```").unwrap_or(rest).trim()
-    } else {
-        trimmed
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -891,7 +880,7 @@ fn push_capped(actions: &mut Vec<MaintenancePlanItem>, max: usize, action: Maint
 /// Call local LLM with analysis JSON + system prompt; parse and validate actions.
 pub async fn plan_with_llm(
     report: &AnalysisReport,
-    llm: &ChatClient,
+    llm: &dyn crate::llm::ChatCompleter,
     max_actions: usize,
 ) -> Result<MaintenancePlan> {
     let analysis_json = serde_json::to_string(report).map_err(|e| {
@@ -899,7 +888,7 @@ pub async fn plan_with_llm(
             "failed to serialize AnalysisReport for planner: {e}"
         ))
     })?;
-    let analysis_json = truncate(&analysis_json, ANALYSIS_JSON_MAX_CHARS);
+    let analysis_json = truncate_chars(&analysis_json, ANALYSIS_JSON_MAX_CHARS);
 
     let user = format!("{PLAN_MAINTENANCE_USER_PREFIX}{analysis_json}");
     let messages = [
@@ -913,7 +902,7 @@ pub async fn plan_with_llm(
         },
     ];
     let raw = llm.complete(&messages).await?;
-    let unfenced = strip_json_fences(raw.trim());
+    let unfenced = strip_json_fences(&raw);
     let (parsed, notes) = parse_plan_json_raw(unfenced).map_err(|e| {
         // Preserve llm-flavoured error for bad model output.
         AppError::llm(e.to_string())
@@ -961,14 +950,14 @@ pub async fn plan_with_llm(
 pub async fn plan_maintenance(
     report: &AnalysisReport,
     config: &Config,
-    llm: Option<&ChatClient>,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
     opts: &PlanOptions,
 ) -> Result<MaintenancePlan> {
     let max_actions = opts.max_actions.max(1);
     let use_llm = config.llm_enabled && !opts.force_heuristic && llm.is_some();
 
-    let mut plan = if use_llm {
-        let client = llm.expect("use_llm implies Some");
+    let llm_client = if use_llm { llm } else { None };
+    let mut plan = if let Some(client) = llm_client {
         plan_with_llm(report, client, max_actions).await?
     } else {
         let mut p = heuristic_plan(report, max_actions);
@@ -986,9 +975,9 @@ pub async fn plan_maintenance(
     Ok(plan)
 }
 
-/// Append `plan_maintenance` to ops_log.
+/// Append `plan_maintenance` to ops_log (best-effort: failures are logged, not propagated).
 pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
-    let _ = store.append_ops_log(&OpsLogEntry {
+    if let Err(error) = store.append_ops_log(&OpsLogEntry {
         id: Uuid::new_v4().to_string(),
         seq: 0,
         ts: plan.generated_at,
@@ -1014,18 +1003,10 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
         })
         .to_string(),
         agent_name: None,
-    })?;
-    Ok(())
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(max).collect();
-        t.push('…');
-        t
+    }) {
+        tracing::warn!(%error, "failed to append plan_maintenance ops_log entry");
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,11 +1016,54 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::DoctorReport;
     use crate::maintain::analyze::{
         AnalysisIssue, ArchiveCandidate, CorpusCounts, DuplicateGroup, EmbedMismatchInfo,
         NearDuplicatePair, SizeStats, StaleWikiPage,
     };
-    use crate::models::DoctorReport;
+
+    /// In-process LLM double: no HTTP server, fixed model output.
+    struct ScriptedLlm(&'static str);
+
+    #[async_trait::async_trait]
+    impl crate::llm::ChatCompleter for ScriptedLlm {
+        async fn complete(&self, _: &[crate::llm::ChatMessage]) -> Result<String> {
+            Ok(self.0.to_string())
+        }
+        async fn complete_with_max_tokens(
+            &self,
+            messages: &[crate::llm::ChatMessage],
+            _: u32,
+        ) -> Result<String> {
+            self.complete(messages).await
+        }
+        fn model(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_planner_keeps_whitelisted_actions_and_rejects_the_rest() {
+        let llm = ScriptedLlm(
+            "```json\n{\"actions\": [{\"action\": \"vacuum\", \"reason\": \"wal\"}, {\"action\": \"drop_table\"}], \"notes\": \"n\"}\n```",
+        );
+        let config = Config {
+            llm_enabled: true,
+            ..Config::for_tests()
+        };
+        let plan = plan_maintenance(
+            &empty_report(),
+            &config,
+            Some(&llm),
+            &PlanOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(plan.model.as_deref(), Some("scripted"));
+        assert_eq!(plan.actions.len(), 1);
+        assert_eq!(plan.actions[0].action, MaintenanceAction::Vacuum);
+        assert_eq!(plan.rejected.len(), 1);
+    }
 
     fn empty_report() -> AnalysisReport {
         AnalysisReport {
@@ -1124,6 +1148,17 @@ mod tests {
     fn validate_rejects_unknown() {
         let err = action_from_parts("rm -rf", None, None, serde_json::json!({})).unwrap_err();
         assert!(err.to_string().contains("whitelist"));
+    }
+
+    #[test]
+    fn validate_rejects_non_object_params_for_merge_and_consolidate() {
+        for action in ["merge_exact_dup", "consolidate"] {
+            for params in [serde_json::json!([1, 2]), serde_json::json!("x")] {
+                let err =
+                    action_from_parts(action, None, Some("doc-1".into()), params).unwrap_err();
+                assert!(err.to_string().contains("object"), "{action}: {err}");
+            }
+        }
     }
 
     #[test]
@@ -1245,7 +1280,7 @@ mod tests {
         }];
         report.issues = vec![AnalysisIssue {
             code: "exact_dup".into(),
-            severity: "warn".into(),
+            severity: crate::models::IssueSeverity::Warn,
             message: "dup".into(),
             entity_id: Some("d1".into()),
         }];
@@ -1359,51 +1394,12 @@ mod tests {
     async fn plan_maintenance_heuristic_when_llm_disabled() {
         let cfg = Config {
             db_path: std::path::PathBuf::from("./x.duckdb"),
-            embedding_provider: crate::config::EmbeddingProviderKind::Mock,
-            embedding_base_url: "https://api.openai.com/v1".into(),
-            embedding_api_key: String::new(),
             embedding_model: "mock".into(),
             embedding_dims: 8,
-            chunk_size: 800,
-            chunk_overlap: 120,
-            code_chunking: crate::config::CodeChunkingMode::Structural,
-            default_top_k: 5,
-            ingest_roots: vec![],
-            max_context_tokens: 4096,
-            max_chunks_per_doc: 3,
-            fts_stemmer: "porter".into(),
-            default_search_mode: crate::models::SearchMode::Vec,
-            llm_base_url: "http://127.0.0.1:11434/v1".into(),
-            llm_provider: crate::llm::LlmProviderKind::Ollama,
-            llm_model: "llama3.2".into(),
-            llm_api_key: "ollama".into(),
             llm_enabled: false,
             llm_timeout_secs: 30,
             llm_max_tokens: 512,
-            maint_max_docs: 50,
-            maint_near_dup_threshold: 0.92,
-            tool_surface: crate::mcp::ToolSurface::Full,
-            http_bind: None,
-            wiki_require_if_match: false,
-            rerank_provider: crate::rerank::RerankProviderKind::Off,
-            rerank_base_url: String::new(),
-            rerank_api_key: String::new(),
-            rerank_model: String::new(),
-            rerank_top_n: 50,
-            rerank_timeout_secs: 30,
-            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
-            query_rewrite_provider: None,
-            query_rewrite_model: None,
-            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            hyde_provider: None,
-            hyde_model: None,
-            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
-            ingest_url_allow: Vec::new(),
-            ingest_url_timeout_secs: 30,
-            ingest_url_max_bytes: 10 * 1024 * 1024,
-            reembed_batch: 100,
-            fts_stale_generation_threshold: 64,
-            fts_maint_interval_secs: 300,
+            ..Config::for_tests()
         };
         let report = empty_report();
         let opts = PlanOptions {

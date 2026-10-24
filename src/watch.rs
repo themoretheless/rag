@@ -250,8 +250,7 @@ fn classify_event(event: &notify::Event) -> Option<WatchEvent> {
     event
         .paths
         .iter()
-        .filter(|path| !is_noise_path(path))
-        .last()
+        .rfind(|path| !is_noise_path(path))
         .cloned()
         .map(WatchEvent::Changed)
 }

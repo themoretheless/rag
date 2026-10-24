@@ -2,13 +2,14 @@
   import { onMount } from 'svelte'
   import { api, hasGatewayToken, loadPanels, setGatewayToken } from '@/api/client'
   import { ui } from '@/lib/state/ui.svelte'
+  import type { Capabilities, DoctorReport, EmbeddingManifestStatus, LlmStatus, RuntimeInfo, StorageStatus } from '@/api/types'
 
-  let llm = $state<any>({})
-  let embedding = $state<any>({})
-  let status = $state<any>({})
-  let runtime = $state<any>({})
-  let capabilities = $state<any>({})
-  let doctor = $state<any>({})
+  let llm = $state<LlmStatus>({})
+  let embedding = $state<EmbeddingManifestStatus>({})
+  let status = $state<StorageStatus>({})
+  let runtime = $state<RuntimeInfo>({})
+  let capabilities = $state<Capabilities>({})
+  let doctor = $state<DoctorReport>({})
   let llmKnown = $state(false)
   let embeddingKnown = $state(false)
   let statusKnown = $state(false)
@@ -35,7 +36,7 @@
   }
 
   async function fetchDoctor() {
-    const response = await api.get<any>('/v1/doctor')
+    const response = (await api.get<DoctorReport>('/v1/doctor')) ?? {}
     doctor = response
     doctorKnown = true
     return response
@@ -45,11 +46,11 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['LLM', async () => { llm = (await api.get<any>('/v1/llm-status')).llm ?? {}; llmKnown = true }],
-      ['embedding manifest', async () => { embedding = await api.get<any>('/v1/embedding-manifest'); embeddingKnown = true }],
-      ['storage status', async () => { status = await api.get<any>('/v1/status'); statusKnown = true }],
-      ['runtime', async () => { runtime = (await api.get<any>('/v1/runtime')).runtime ?? {}; runtimeKnown = true }],
-      ['capabilities', async () => { capabilities = await api.get<any>('/v1/capabilities'); capabilitiesKnown = true }],
+      ['LLM', async () => { llm = (await api.get<{ llm?: LlmStatus }>('/v1/llm-status'))?.llm ?? {}; llmKnown = true }],
+      ['embedding manifest', async () => { embedding = (await api.get<EmbeddingManifestStatus>('/v1/embedding-manifest')) ?? {}; embeddingKnown = true }],
+      ['storage status', async () => { status = (await api.get<StorageStatus>('/v1/status')) ?? {}; statusKnown = true }],
+      ['runtime', async () => { runtime = (await api.get<{ runtime?: RuntimeInfo }>('/v1/runtime'))?.runtime ?? {}; runtimeKnown = true }],
+      ['capabilities', async () => { capabilities = (await api.get<Capabilities>('/v1/capabilities')) ?? {}; capabilitiesKnown = true }],
       ['doctor', async () => { await fetchDoctor() }],
     ])
     error = failures.length ? `Не обновлены панели: ${failures.join(', ')}` : ''
@@ -57,11 +58,11 @@
   }
 
   async function checkpoint() {
-    try { await api.post('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
+    try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
     catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
   }
 
-  function summarizeDoctor(report: any, known: boolean) {
+  function summarizeDoctor(report: DoctorReport | null | undefined, known: boolean) {
     if (!known || typeof report?.ok !== 'boolean') return { ok: null as boolean | null, label: 'целостность неизвестна' }
     if (report.ok) return { ok: true as boolean | null, label: 'целостность ✓' }
     const issues = [
@@ -113,7 +114,7 @@
     { id: llm.provider || 'current', name: llmKnown ? (llm.model || 'Текущая модель') : 'Модель не проверена', endpoint: llmKnown ? (llm.base_url || 'не настроено') : 'неизвестно', current: true, state: !llmKnown || typeof llm.reachable !== 'boolean' ? 'не проверена' : llm.reachable ? 'reachable' : llm.error || 'unreachable' },
     { id: 'ollama', name: 'Ollama', endpoint: 'локальный OpenAI-compatible', state: llmKnown && llm.provider === 'ollama' ? (llm.reachable === true ? 'reachable' : llm.reachable === false ? 'unreachable' : 'не проверен') : 'не проверен' },
     { id: 'claude', name: 'Claude', endpoint: 'anthropic_messages', state: llmKnown && llm.provider === 'claude' ? (llm.reachable === true ? 'reachable' : llm.reachable === false ? 'unreachable' : 'не проверен') : 'не проверен' },
-    { id: 'openai', name: 'OpenAI / Codex', endpoint: 'openai_compat', state: llmKnown && ['openai','codex'].includes(llm.provider) ? (llm.reachable === true ? 'reachable' : llm.reachable === false ? 'unreachable' : 'не проверен') : 'не проверен' },
+    { id: 'openai', name: 'OpenAI / Codex', endpoint: 'openai_compat', state: llmKnown && ['openai','codex'].includes(llm.provider ?? '') ? (llm.reachable === true ? 'reachable' : llm.reachable === false ? 'unreachable' : 'не проверен') : 'не проверен' },
     { id: 'custom', name: 'Custom', endpoint: 'LM Studio / vLLM / compatible', state: llmKnown && llm.provider === 'custom' ? (llm.reachable === true ? 'reachable' : llm.reachable === false ? 'unreachable' : 'не проверен') : 'не проверен' },
   ])
 

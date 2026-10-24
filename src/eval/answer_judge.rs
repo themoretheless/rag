@@ -10,7 +10,12 @@ use serde_json::json;
 use super::judges::{judge_citations, CitationJudgeInput, CitationJudgeResult};
 use super::prompts::{builtin_answer_judge, PromptVersion};
 use crate::error::{AppError, Result};
-use crate::llm::{ChatClient, ChatMessage};
+use crate::llm::ChatMessage;
+
+/// Characters of the judge's free-text rationale kept in the scores.
+const JUDGE_RATIONALE_MAX_CHARS: usize = 500;
+/// Completion budget for one judge reply (a small JSON object).
+const JUDGE_MAX_TOKENS: u32 = 256;
 
 /// Inputs for an answer judge (heuristic and/or LLM).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -120,7 +125,7 @@ pub fn parse_llm_judge_json(text: &str) -> Result<LlmJudgeScores> {
         .unwrap_or("")
         .trim()
         .chars()
-        .take(500)
+        .take(JUDGE_RATIONALE_MAX_CHARS)
         .collect();
     Ok(LlmJudgeScores {
         supported,
@@ -162,7 +167,7 @@ pub fn merge_llm_scores(
 
 /// Call the local chat model with a versioned judge prompt.
 pub async fn judge_answer_llm(
-    client: &ChatClient,
+    client: &dyn crate::llm::ChatCompleter,
     prompt: &PromptVersion,
     input: &AnswerJudgeInput,
 ) -> Result<LlmJudgeScores> {
@@ -184,7 +189,9 @@ pub async fn judge_answer_llm(
             content: user.to_string(),
         },
     ];
-    let raw = client.complete_with_max_tokens(&messages, 256).await?;
+    let raw = client
+        .complete_with_max_tokens(&messages, JUDGE_MAX_TOKENS)
+        .await?;
     parse_llm_judge_json(&raw)
 }
 

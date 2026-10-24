@@ -743,13 +743,10 @@ mod tests {
         assert!(members[0]["role_evidence_total"].as_u64().unwrap() >= 105);
         put(&store, "caller", "/p/use.py", "registered = None\n", "p");
         let stale = store.search_multi(&q).unwrap();
-        assert!(
-            stale["family_role_analysis"]["stale_documents"]
-                .as_array()
-                .unwrap()
-                .len()
-                > 0
-        );
+        assert!(!stale["family_role_analysis"]["stale_documents"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         assert!(stale["families"]
             .as_array()
             .unwrap()

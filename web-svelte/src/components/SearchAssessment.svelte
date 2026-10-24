@@ -15,7 +15,7 @@
     busy = true; message = ''
     try {
       const sources = [...expected, ...other.split('\n').map(v => v.trim()).filter(Boolean)]
-      await api.post('/v1/eval/feedback', { id, search, expected:noAnswer ? [] : sources, no_answer:noAnswer })
+      await api.postOptional('/v1/eval/feedback', { id, search, expected:noAnswer ? [] : sources, no_answer:noAnswer })
       saved = true; message = 'Вопрос и разметка сохранены. Повторный прогон доступен в разделе «Оценка».'
     } catch(e) { message = String(e) }
     finally { busy = false }

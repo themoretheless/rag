@@ -1,6 +1,6 @@
 # SOLID / DRY audit
 
-**Updated:** 2026-09-13
+**Updated:** 2026-10-08
 
 This audit records responsibility boundaries that are present in the current
 tree. File size alone is not a refactor reason; behavior-preserving seams and
@@ -30,6 +30,42 @@ documents for the same URI.
 Embedding and injected graph failures preserve the previous document, chunks,
 graph, wiki index and operation log. This is the main SRP/DIP boundary for all
 content writes.
+
+### Domain-owned MCP tool modules
+
+rmcp 1.4 accepts several `#[tool_router(router = …)]` impl blocks on one type
+and adds the routers together, so the tool implementations now live where
+their domain is: `mcp/{ingest,collections,search,graph,wiki,kg,maintain,
+recovery}.rs` each carry one router with their `#[tool]` methods, cluster-local
+response types and helpers. `mcp/server.rs` is the only place that knows the
+full set (`ingest_router() + collections_router() + …`), and `mcp/facade.rs`
+keeps what every cluster shares: `RagServer` state, application-service
+adapters (`ingest_pipeline`, `refresh_fts_after_mutation`, …), `json_result`,
+and the `ServerHandler` dispatch with surface/role checks and audit. The
+by-name `take_routes` partition is gone; a tool that is not registered by a
+domain module no longer exists. Document/chunk views shared by two clusters
+sit in `mcp/views.rs`. Tool names, schemas and the spine/full surface are
+unchanged; the facade behavior tests moved to `mcp/facade/tests.rs` as is.
+
+### One wire vocabulary for domain errors
+
+`AppError::code()` is the single owner of the machine-readable error code
+(`INVALID_REQUEST`, `STORE_BUSY`, `NOT_FOUND`, …) and `AppError::is_retryable()`
+of the retry policy. `http_api::error::api_err` builds the JSON envelope and
+`Retry-After` from them, and `impl From<AppError> for rmcp::ErrorData`
+(`mcp/error.rs`) does the JSON-RPC classification, so tool methods use `?`
+instead of a per-call `map_err`. Adding an `AppError` variant touches one
+match; the former `search_error_kind` and the inline HTTP code table are gone.
+
+### Shared blocking, text and timestamp helpers
+
+`util::blocking::{run_blocking, run_detached}` own the `JoinError → AppError`
+mapping once for both transports and detached maintenance workflows.
+`util::text::{non_blank, trimmed_non_blank}` replace the five private
+`clean`/`nonempty` copies, keeping the two deliberate semantics (filter-only
+versus trim) explicit at each call site. `util::time::parse_optional_timestamp`
+replaces the facade-private parser, so `http_api` no longer imports from
+`mcp::facade`.
 
 ### Transport-independent application services
 
@@ -179,11 +215,29 @@ backlink failures remain visible instead of collapsing into a successful empty
 list. Direct `--db` exposes read-only Wiki/Connections only, so native writes
 remain behind the gateway adapter.
 
+### Transport-free layering and shared start-up
+
+`config` no longer imports `mcp` or `http_api`: `ToolSurface` and the bind
+parser live in configuration and the transports re-export them. The activity
+feed is `crate::activity`, so MCP dispatch records without depending on HTTP.
+`PackHitParams` lives with `search_pack`. `bootstrap` owns start-up for `main`
+and the offline tools. `retrieval::{pack_context, SearchRequest}` and
+`Store::{resolve_seed, resolve_node}` are the shared use cases behind both
+transports; ops-log page size is bounded once in `Store`.
+
+### LLM output and maintenance audit
+
+`llm::json` owns fence stripping, embedded JSON extraction and error excerpts
+for every LLM-backed workflow. `maintain::audit::record_run` writes the one
+terminal `MAINT` row per maintenance run; derived-index finalization failures
+always go through `Store::record_fts_finalization_failure`.
+
 ## Deliberate compatibility boundaries
 
-1. `mcp/facade.rs` remains the rmcp macro composition root. Tool families have
-   bounded routers; moving macro methods without framework support would add
-   forwarding code rather than reduce responsibility.
+1. `mcp/server.rs` is the rmcp router composition root and `mcp/facade.rs`
+   is the shared `RagServer` core; each domain module owns its `#[tool]`
+   methods behind one `#[tool_router]`. New tools go into the domain module
+   that owns their service call, never into the facade.
 2. `Store` remains the public DuckDB façade and transaction owner. Focused
    repository modules may move algorithms out, but callers do not receive raw
    DuckDB connections.
@@ -201,7 +255,7 @@ remain behind the gateway adapter.
 |----------|--------------------|-----------------|
 | Source manifest | Manifest metadata commits after the atomic document write, so a crash can leave repairable stale metadata | Failure injection proves the next sync repairs without duplicate documents or missed deletion; fold into the document transaction only if exact atomic metadata becomes required |
 | Storage | Markdown has document CRUD, sidecar rebuild and watcher, but not application search/graph/transaction parity | One shared conformance suite passes for every capability advertised by both DuckDB and Markdown; unsupported capabilities return structured refusal |
-| Large orchestration roots | `Store`, `wiki`, `mcp/facade` and native `app` still coordinate many compatibility paths | Extract a slice only when its behavior tests can run through the new boundary and the old façade becomes delegation-only for that slice |
+| Large orchestration roots | `Store`, `wiki` and native `app` still coordinate many compatibility paths | Extract a slice only when its behavior tests can run through the new boundary and the old façade becomes delegation-only for that slice |
 
 ## Guardrails
 

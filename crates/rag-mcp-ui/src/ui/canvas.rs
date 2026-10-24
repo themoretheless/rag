@@ -19,8 +19,6 @@ pub struct CanvasOut {
     pub clicked_id: Option<String>,
     /// True when the pointer clicked the canvas but no node hit (deselect).
     pub clicked_empty: bool,
-    #[allow(dead_code)]
-    pub hover_id: Option<String>,
 }
 
 struct ScreenNode<'a> {
@@ -243,7 +241,7 @@ pub fn draw_canvas(
         let radius = sn.radius;
         let selected_here = selected == Some(node.id.as_str());
         let focused_here = focused_id.as_deref() == Some(node.id.as_str());
-        let is_stub = node.kind == "stub" || !node.resolved;
+        let is_stub = rag_mcp_core::NodeKind::Stub.is(&node.kind) || !node.resolved;
 
         // Fill color comes from adapter kind_color (document/tag/stub/entity).
         painter.circle_filled(center, radius, node.color);
@@ -361,7 +359,6 @@ pub fn draw_canvas(
     CanvasOut {
         clicked_id,
         clicked_empty,
-        hover_id,
     }
 }
 
@@ -456,7 +453,7 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
     use std::collections::{BTreeMap, BTreeSet};
     let mut kinds = BTreeMap::new();
     for node in &graph.nodes {
-        let label = if node.kind == "document" {
+        let label = if rag_mcp_core::NodeKind::Document.is(&node.kind) {
             localized_layer(node.layer.as_deref().unwrap_or("document"))
         } else {
             localized_kind(&node.kind)
@@ -585,7 +582,6 @@ mod tests {
             room: None,
             depth: 2,
             degree: 7,
-            pinned: false,
         };
         let label = node_accessibility_label(&node);
         assert!(label.contains("Architecture"));

@@ -29,7 +29,7 @@ async fn resources(State(st): State<HttpState>) -> impl IntoResponse {
             "path": st.store.path().display().to_string(),
             "bytes": db_bytes,
             "wal_bytes": wal_bytes,
-            "wal_warn_bytes": crate::ops::wal_warn_bytes(),
+            "wal_warn_bytes": st.config.wal_warn_bytes,
             "threads": db_threads_setting(),
             "memory_limit": std::env::var("RAG_DB_MEMORY_LIMIT").ok(),
         },

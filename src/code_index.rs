@@ -99,17 +99,7 @@ struct IndexedDocument {
     #[serde(default)]
     shell: Option<shell::Facts>,
 }
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct IndexReport {
-    pub indexed: usize,
-    pub unchanged: usize,
-    pub unsupported: usize,
-    pub parse_errors: Vec<String>,
-    #[serde(default)]
-    pub index_revision: Option<i64>,
-    #[serde(default)]
-    pub revision_created: bool,
-}
+pub use rag_mcp_core::IndexReport;
 #[derive(Debug, Clone, Serialize)]
 pub struct CallEdge {
     pub reference: Reference,
@@ -302,22 +292,36 @@ fn parse(id: &str, path: &str, source: &str, revision: i64) -> Result<IndexedDoc
         }
     }
     out.parse_errors = tree.root_node().has_error();
-    walk(tree.root_node(), source, id, &mut out, &[], None, false, 0);
+    walk(
+        tree.root_node(),
+        source,
+        id,
+        &mut out,
+        WalkContext {
+            scope: &[],
+            caller: None,
+            in_call_target: false,
+            depth: 0,
+        },
+    );
     sql::finish(source, &mut out);
     policy::finish(tree.root_node(), source, &mut out);
     // Declaration names are not usages.
     Ok(out)
 }
-fn walk(
-    node: Node,
-    source: &str,
-    doc: &str,
-    out: &mut IndexedDocument,
-    scope: &[String],
+struct WalkContext<'a> {
+    scope: &'a [String],
     caller: Option<String>,
     in_call_target: bool,
     depth: usize,
-) {
+}
+fn walk(node: Node, source: &str, doc: &str, out: &mut IndexedDocument, context: WalkContext<'_>) {
+    let WalkContext {
+        scope,
+        caller,
+        in_call_target,
+        depth,
+    } = context;
     if depth >= 256 {
         // Malformed/adversarial trees must not exhaust the process stack.
         out.parse_errors = true;
@@ -470,10 +474,12 @@ fn walk(
             source,
             doc,
             out,
-            &nested,
-            owner.clone(),
-            in_call_target || target.is_some_and(|n| n.id() == child.id()),
-            depth + 1,
+            WalkContext {
+                scope: &nested,
+                caller: owner.clone(),
+                in_call_target: in_call_target || target.is_some_and(|n| n.id() == child.id()),
+                depth: depth + 1,
+            },
         );
     }
 }
@@ -507,7 +513,7 @@ impl Store {
         // Replace the complete corpus snapshot atomically; rollback preserves the old one on errors.
         let mut payloads = Vec::new();
         for (id, path, source, revision, project) in &docs {
-            if !indexable(&path) {
+            if !indexable(path) {
                 report.unsupported += 1;
                 continue;
             }
@@ -523,7 +529,7 @@ impl Store {
                 .and_then(|s| serde_json::from_str::<IndexedDocument>(s).ok())
                 .filter(|d| {
                     d.version == INDEX_FORMAT_VERSION
-                        && d.hash == content_hash(&source)
+                        && d.hash == content_hash(source)
                         && d.revision == *revision
                         && d.path == *path
                         && d.project == *project
@@ -535,7 +541,7 @@ impl Store {
                 }
                 None => {
                     report.indexed += 1;
-                    parse(&id, &path, &source, *revision)?
+                    parse(id, path, source, *revision)?
                 }
             };
             parsed.project = project.clone();
@@ -611,9 +617,14 @@ impl Store {
         let conn = self.lock()?;
         let mut stmt = conn.prepare("SELECT d.id, COALESCE(d.source_file,d.uri), d.content, COALESCE(d.revision,1), c.payload, d.wing, d.metadata_json FROM documents d LEFT JOIN code_index_documents c ON c.document_id=d.id WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') ORDER BY d.id")?;
         let mut rows = stmt.query([])?;
-        let mut out = CodeSnapshot::default();
-        out.index_revision =
-            conn.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+        let mut out = CodeSnapshot {
+            index_revision: conn.query_row(
+                "SELECT MAX(id) FROM code_index_revisions",
+                [],
+                |r| r.get(0),
+            )?,
+            ..CodeSnapshot::default()
+        };
         let mut documents = HashMap::new();
         while let Some(row) = rows.next()? {
             let id: String = row.get(0)?;

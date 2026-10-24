@@ -125,3 +125,6 @@ pub fn markdown_section_metadata(text: &str, chunks: &[(String, i32, i32)]) -> V
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

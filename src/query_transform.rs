@@ -100,7 +100,10 @@ pub fn build_transform_llm(config: &Config, kind: TransformKind) -> Result<Optio
     // With an override provider, fall back to that provider's preset base URL /
     // key envs unless the main llm config already targets the same provider.
     let (base_url, api_key) = if provider == config.llm_provider {
-        (config.llm_base_url.clone(), config.llm_api_key.clone())
+        (
+            config.llm_base_url.clone(),
+            config.llm_api_key.expose().to_string(),
+        )
     } else {
         (
             provider.default_base_url().to_string(),
@@ -154,8 +157,8 @@ impl BoundedCache {
         if self.capacity == 0 {
             return;
         }
-        if self.map.contains_key(&key) {
-            self.map.insert(key, value);
+        if let Some(existing) = self.map.get_mut(&key) {
+            *existing = value;
             return;
         }
         while self.order.len() >= self.capacity {
@@ -276,7 +279,7 @@ fn parse_variants(raw: &str, original: &str, limit: usize) -> Vec<String> {
     for line in raw.lines() {
         let mut text = line.trim();
         // Strip common list prefixes: "1.", "1)", "-", "*", "•".
-        if let Some((prefix, rest)) = text.split_once(|c: char| c == '.' || c == ')') {
+        if let Some((prefix, rest)) = text.split_once(['.', ')']) {
             if !prefix.is_empty() && prefix.trim().chars().all(|c| c.is_ascii_digit()) {
                 text = rest.trim();
             }

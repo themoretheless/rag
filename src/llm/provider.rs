@@ -35,6 +35,7 @@ pub enum LlmProviderKind {
 }
 
 impl LlmProviderKind {
+    /// Wire string for this provider.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ollama => "ollama",
@@ -47,6 +48,7 @@ impl LlmProviderKind {
         }
     }
 
+    /// API dialect for this provider (Anthropic Messages for Claude, OpenAI-compatible otherwise).
     pub fn dialect(self) -> LlmApiDialect {
         match self {
             Self::Claude => LlmApiDialect::AnthropicMessages,
