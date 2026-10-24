@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "frozen_sql_columns",
+    "default_expression_change",
+    "generated_expression_change",
+    "inheritance_change",
+    "callback_reference_removed",
+    "test_entrypoint_removed",
+    "bounded_nested_changes",
+    "no_source_bodies",
+    "independent_of_current_files",
+    "same_revision_noop"
+  ],
+  "before": 1,
+  "after": 2
+}

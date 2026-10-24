@@ -34,6 +34,7 @@ fn test_config(dims: usize) -> Config {
         embedding_dims: dims,
         chunk_size: 200,
         chunk_overlap: 20,
+        code_chunking: rag_mcp::config::CodeChunkingMode::Structural,
         default_top_k: 5,
         ingest_roots: Vec::new(),
         max_context_tokens: 4096,
@@ -51,7 +52,26 @@ fn test_config(dims: usize) -> Config {
         maint_near_dup_threshold: 0.92,
         tool_surface: rag_mcp::mcp::ToolSurface::Full,
         http_bind: None,
-            wiki_require_if_match: false,
+        wiki_require_if_match: false,
+        rerank_provider: rag_mcp::rerank::RerankProviderKind::Off,
+        rerank_base_url: String::new(),
+        rerank_api_key: String::new(),
+        rerank_model: String::new(),
+        rerank_top_n: 50,
+        rerank_timeout_secs: 30,
+        query_rewrite_variants: 3,
+        query_rewrite_provider: None,
+        query_rewrite_model: None,
+        query_rewrite_cache_size: 256,
+        hyde_provider: None,
+        hyde_model: None,
+        hyde_cache_size: 256,
+        ingest_url_allow: Vec::new(),
+        ingest_url_timeout_secs: 30,
+        ingest_url_max_bytes: 10 * 1024 * 1024,
+        reembed_batch: 100,
+        fts_stale_generation_threshold: 64,
+        fts_maint_interval_secs: 300,
     }
 }
 
@@ -122,7 +142,11 @@ async fn write_wiki_page_get_list_and_ops_log() {
         Some(written.document_id.as_str())
     );
     assert_eq!(wiki_op.agent_name.as_deref(), Some("wiki-agent"));
-    assert!(wiki_op.seq >= 1, "seq should be assigned, got {}", wiki_op.seq);
+    assert!(
+        wiki_op.seq >= 1,
+        "seq should be assigned, got {}",
+        wiki_op.seq
+    );
 }
 
 #[tokio::test]
@@ -173,8 +197,7 @@ async fn file_answer_persists_citations_index_and_ops_log() {
     assert!(doc.content.contains("## Citations"));
     assert!(doc.content.contains("Alpha Paper"));
 
-    let meta: serde_json::Value =
-        serde_json::from_str(&doc.metadata_json).expect("metadata_json");
+    let meta: serde_json::Value = serde_json::from_str(&doc.metadata_json).expect("metadata_json");
     assert_eq!(meta["category"], "answers");
     assert_eq!(meta["filed_as"], "answer");
     assert_eq!(meta["citations"].as_array().expect("citations").len(), 1);
@@ -195,8 +218,7 @@ async fn file_answer_persists_citations_index_and_ops_log() {
     assert_eq!(fa.entity_id.as_deref(), Some(wr.document_id.as_str()));
     assert_eq!(fa.agent_name.as_deref(), Some("answer-agent"));
     assert!(fa.message.contains("wiki://why-alpha-matters"));
-    let payload: serde_json::Value =
-        serde_json::from_str(&fa.payload_json).expect("payload_json");
+    let payload: serde_json::Value = serde_json::from_str(&fa.payload_json).expect("payload_json");
     assert_eq!(payload["citation_count"], 1);
 }
 
@@ -412,7 +434,9 @@ async fn raw_layer_immutable_content_update_refused_reingest_allowed() {
         "expected ingest_raw ops for initial+collision+reingest, got {}",
         ingest_ops.len()
     );
-    assert!(ingest_ops.iter().any(|e| e.prefix.as_deref() == Some("INGEST")));
+    assert!(ingest_ops
+        .iter()
+        .any(|e| e.prefix.as_deref() == Some("INGEST")));
     assert!(ingest_ops
         .iter()
         .any(|e| e.entity_id.as_deref() == Some(raw.document_id.as_str())));
@@ -463,9 +487,7 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
             None,
         )
         .expect("ghost entry");
-    let rebuilt = store
-        .rebuild_wiki_index_from_docs()
-        .expect("rebuild_index");
+    let rebuilt = store.rebuild_wiki_index_from_docs().expect("rebuild_index");
     assert_eq!(rebuilt, 2);
     assert!(store
         .get_wiki_index_by_slug("ghost")
@@ -508,5 +530,7 @@ async fn wiki_write_file_answer_and_rebuild_share_ops_log_timeline() {
     // Newest-first: rebuild_index should appear before older wiki_write when listing recent.
     let recent = store.list_ops_log(5).expect("recent");
     assert_eq!(recent[0].op, "rebuild_index");
-    assert!(recent.iter().any(|e| e.entity_id.as_deref() == Some(page.document_id.as_str())));
+    assert!(recent
+        .iter()
+        .any(|e| e.entity_id.as_deref() == Some(page.document_id.as_str())));
 }

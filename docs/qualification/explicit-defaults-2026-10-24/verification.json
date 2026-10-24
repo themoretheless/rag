@@ -1,0 +1,19 @@
+{
+  "index_format": 20,
+  "check_evaluator_version": 3,
+  "library_after_main_change": {
+    "passed": 832,
+    "failed": 0,
+    "ignored": 1
+  },
+  "binary_sha256": {
+    "rag-mcp": "8331dcd55b3bfe8c8639ce31fbfd32db70d19997b6419592a0ffb694615da915",
+    "rag_gate": "d60a71ae0c1d1ab71ded1c2d0d0b1ade7075c6664d67e0fa470638b92a6c6dcd"
+  },
+  "source_sha256": {
+    "src/code_index/sql.rs": "9ee386b71d42b66fb64b9aebb881be806508d7f781aee78f178c3db1adba989d",
+    "src/external_db/write_check.rs": "6695bafc5b4f855d25f2265cb7e10a15fedeea3982442cef1d12bde04ee5cf04",
+    "scripts/smoke_explicit_defaults.py": "05c7b45cad3b8c53c4717379f206f87d4ba2821e19c2c51c0aeb3f7cbbd5cedc",
+    "docs/SQL_CODE_ANALYSIS.md": "cafbf462121a4deba80f7d60144453feaefee9fc2f91b2a03ee9488b23800bb2"
+  }
+}

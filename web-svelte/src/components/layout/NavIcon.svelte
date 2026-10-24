@@ -9,6 +9,7 @@
   {:else if name === 'agents'}<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4m-3 9.5h.01m5.99 0h.01M2 13h3m14 0h3"/>
   {:else if name === 'sync'}<ellipse cx="12" cy="5" rx="7" ry="2.5"/><path d="M5 5v5c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V5M5 10v5c0 1.4 3.1 2.5 7 2.5 1.5 0 2.9-.2 4-.5"/><path d="m17 15 3 3-3 3m3-3h-7"/>
   {:else if name === 'evaluation'}<path d="M4 20v-7m6 7V5m6 15V10M2 20h20"/>
+  {:else if name === 'resources'}<path d="M3 12h4l2.5-6.5 4 13L16 12h5"/>
   {:else}<path d="M4 7h9m4 0h3M4 17h5m4 0h7"/><circle cx="15" cy="7" r="2"/><circle cx="11" cy="17" r="2"/>{/if}
 </svg>
 <style>svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}</style>

@@ -1,0 +1,10 @@
+{
+  "src/external_db/mod.rs": "c418f8a27714624cd49ce6fe96b9fd4b8dd1760b4e7a218378e48b07bcaa904d",
+  "src/external_db/metadata.rs": "37e1dcbc3153e9b86603ff07667d8612e0a1f1bc127be7b7c2fea00b545d2cbe",
+  "src/external_db/marks.rs": "c322e00d582b4d2da55e79babec4fc0ebb0de0c49886fca171a8d22418fa595d",
+  "src/external_db/compare.rs": "376ee8cc9b9b0c3cd692e8f4a7fc6ea7a7e70b86751f1cbbdf6ae3571703bd60",
+  "src/external_db/samples.rs": "874dc24f85da424d4113c7c66d6d831c3c45942bb0372f6643500388f449a740",
+  "scripts/smoke_external_db.py": "8698565f6d6635132a61eb9710258f27bf896d2ae023d9eaa1140b246162d72f",
+  "scripts/smoke_external_db_runtime.py": "b00307ebc320904cb0db50f4f8493a7ee47558aa5749c68fe3096449a71fe121",
+  "docs/EXTERNAL_DATABASES.md": "513096a9942ddd2d4c4b52864a35da62d6af7a140844f0d9c4eabb0e36531878"
+}

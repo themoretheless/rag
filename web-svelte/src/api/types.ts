@@ -19,6 +19,48 @@ export interface HealthResponse {
   }
 }
 
+export interface ResourcesResponse {
+  ok: boolean
+  process: {
+    pid: number
+    uptime_seconds: number
+    cpu_percent: number
+    logical_cpus: number
+    tokio_worker_threads: number
+    rss_bytes: number
+    virtual_bytes: number
+    system_memory_total: number
+    system_memory_used: number
+    load_avg_1m: number
+    load_avg_5m: number
+    load_avg_15m: number
+    sampled_at: string
+  }
+  embedder: {
+    concurrency_limit: number
+    in_flight: number
+    calls_total: number
+    texts_total: number
+    wait_ms_total: number
+    embed_ms_total: number
+    last_batch_ms: number
+    max_batch_ms: number
+  }
+  database: {
+    path: string
+    bytes: number
+    wal_bytes: number
+    wal_warn_bytes: number
+    threads: number
+    memory_limit?: string | null
+  }
+  runtime: {
+    version: string
+    build_commit: string
+    worker_threads_env?: string | null
+  }
+}
+
 export interface WikiPageMeta {
   id: string
   uri: string

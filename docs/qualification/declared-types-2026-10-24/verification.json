@@ -1,0 +1,31 @@
+{
+  "library": {
+    "passed": 759,
+    "failed": 0,
+    "ignored": 1
+  },
+  "native_fixture": {
+    "passed": 1,
+    "failed": 0,
+    "servers": [
+      "PostgreSQL 16",
+      "MySQL 8.4"
+    ],
+    "expected_inferred_links": 5,
+    "mysql_mode_cases": [
+      "normal creation / normal reader",
+      "normal creation / NO_BACKSLASH_ESCAPES reader",
+      "NO_BACKSLASH_ESCAPES creation / NO_BACKSLASH_ESCAPES reader"
+    ],
+    "metadata_query_budget_probe_bytes": 8388609,
+    "metadata_query_probe_rejected": true
+  },
+  "capture_format": 4,
+  "structural_format": 3,
+  "inference_algorithm_version": 2,
+  "local_schema_version": 24,
+  "runtime_report": "runtime.json",
+  "binary_sha256": "a169df9236a5324553182e82ce2d8d2af3d79d51aac2abe2afdbb54cc153302f",
+  "production_database_used": false,
+  "existing_server_restarted": false
+}

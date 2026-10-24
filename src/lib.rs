@@ -15,7 +15,10 @@
 //! | [`maintain`] | Corpus analyze / plan whitelist / organize / refresh (ops_log) |
 
 pub mod access;
+pub mod analysis_tasks;
+pub mod calibration;
 pub mod chunking;
+pub mod code_index;
 pub mod config;
 pub mod db;
 pub mod diagnostics;
@@ -24,7 +27,9 @@ pub mod document_indexer;
 pub mod embeddings;
 pub mod error;
 pub mod eval;
+pub mod external_db;
 pub mod file_ingest;
+pub mod gate;
 pub mod graph;
 pub mod http_api;
 pub mod ingest;
@@ -33,16 +38,21 @@ pub mod maintain;
 pub mod mcp;
 pub mod memory_lifecycle;
 pub mod models;
+pub mod ooxml;
 pub mod ops;
+pub mod query_transform;
+pub mod rerank;
 pub mod retrieval;
-pub mod revisions;
 pub mod review;
+pub mod revisions;
 pub mod search_pack;
 pub mod source_scan;
 pub mod source_sync;
 pub mod storage;
 pub mod telemetry;
 pub mod util;
+pub mod watch;
+pub mod web_ingest;
 pub mod wiki;
 
 // --- Core types & config (integration tests / binary) ---
@@ -55,14 +65,14 @@ pub use memory_lifecycle::{
     LifecycleMutationResult, STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_CONSOLIDATED,
 };
 pub use models::{
-    Chunk, DiaryEntry, DoctorReport, Document, DocumentFilter, DocumentMetaApplyResult,
-    DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult, DuplicateMatch, EdgeCutRow,
-    EmbeddingManifest, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, IndexQueryMatch, IndexQueryPage,
-    IndexQueryResult, IngestResult, KgFact, KgStats, LlmStatusReport, OpsLogEntry, PlacementUpdate,
-    RoomCount, SearchHit, SearchMode, Stats, StatusReport, Taxonomy, TaxonomyNode, TaxonomyRoom,
-    TaxonomyWing, VacuumStoreReport, WakeUpReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
-    pkb_node_kinds, pkb_rel_types, PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES,
-    WIKI_SEMANTIC_REL_TYPES,
+    pkb_node_kinds, pkb_rel_types, Chunk, DiaryEntry, DoctorReport, Document, DocumentFilter,
+    DocumentMetaApplyResult, DocumentMetaUpdate, DrawerListItem, DuplicateCheckResult,
+    DuplicateMatch, EdgeCutRow, EmbeddingManifest, GraphEdge, GraphFilter, GraphNode, GraphStats,
+    GraphView, IndexQueryMatch, IndexQueryPage, IndexQueryResult, IngestResult, KgFact, KgStats,
+    LlmStatusReport, OpsLogEntry, PlacementUpdate, RoomCount, SearchHit, SearchMode, Stats,
+    StatusReport, Taxonomy, TaxonomyNode, TaxonomyRoom, TaxonomyWing, VacuumStoreReport,
+    WakeUpReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount, PKB_CORE_REL_TYPES,
+    PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
 pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
 

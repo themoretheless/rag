@@ -1,0 +1,25 @@
+{
+  "library": {
+    "passed": 747,
+    "failed": 0,
+    "ignored": 1,
+    "scope": "full library before final quoted-column comparison regression fix"
+  },
+  "final_external_module": {
+    "passed": 4,
+    "failed": 0,
+    "ignored_fixture": 1
+  },
+  "native_fixture": {
+    "passed": 1,
+    "failed": 0,
+    "dialects": [
+      "PostgreSQL 16",
+      "MySQL 8.4"
+    ],
+    "includes_final_quoted_column_regression": true
+  },
+  "binary_sha256": "06650490fe0ace553eddadf211c13d8cb287a15ed9774194026beaec0ca7fd4e",
+  "production_database_used": false,
+  "existing_server_restarted": false
+}

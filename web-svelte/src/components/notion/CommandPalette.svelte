@@ -84,7 +84,7 @@
       run: () => goSearch(),
     },
     ...([
-      ['console','Пульт','⌘'],['corpus','Корпус','◫'],['agents','Агенты · Журнал','◎'],['evaluation','Оценка retrieval','▥'],['models','Модели и пайплайн','⌁'],
+      ['console','Пульт','⌘'],['corpus','Корпус','◫'],['agents','Агенты · Журнал','◎'],['evaluation','Оценка retrieval','▥'],['models','Модели и пайплайн','⌁'],['resources','Ресурсы','📈'],
     ] as const).map(([name,title,icon]) => ({kind:'action' as const,id:`act-${name}`,icon,title,hint:`/${name}`,run:()=>go(name)})),
   ])
 

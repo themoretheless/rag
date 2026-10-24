@@ -1,0 +1,19 @@
+{
+  "library": {
+    "passed": 771,
+    "failed": 0,
+    "ignored": 1
+  },
+  "history_after_frozen_non_call_assertions": {
+    "passed": 4,
+    "failed": 0,
+    "ignored": 0
+  },
+  "index_format": 13,
+  "runtime_report": "runtime.json",
+  "binary_sha256": "9b3f7cce1f743650430fdadd4c9ee54114d2fb294e68303fbc73c07a02ba58b6",
+  "production_database_used": false,
+  "existing_server_restarted": false,
+  "deployed": false,
+  "full_goal_complete": false
+}

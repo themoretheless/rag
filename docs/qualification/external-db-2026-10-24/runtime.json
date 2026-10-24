@@ -1,0 +1,21 @@
+{
+  "stdio": true,
+  "http_read": true,
+  "http_admin_refresh": true,
+  "read_and_write_cannot_refresh": true,
+  "offline_reads_after_remote_failure": true,
+  "historical_samples": true,
+  "aliases": [
+    "pg",
+    "my"
+  ],
+  "tools": [
+    "db_cross",
+    "db_drift",
+    "db_refresh",
+    "db_relations",
+    "db_sample",
+    "db_schema",
+    "db_table"
+  ]
+}

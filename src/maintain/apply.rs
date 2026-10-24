@@ -1191,7 +1191,9 @@ async fn apply_reembed_all(
         .map(|n| n as usize)
         .unwrap_or(config.maint_max_docs)
         .max(1)
-        .min(config.maint_max_docs.max(1));
+        .min(config.maint_max_docs.max(1))
+        // Resumable migration batches are bounded by RAG_REEMBED_BATCH.
+        .min(config.reembed_batch.max(1));
 
     if dry_run {
         let n = store.count_documents()?;
@@ -1839,6 +1841,7 @@ mod tests {
             embedding_dims: 8,
             chunk_size: 800,
             chunk_overlap: 120,
+            code_chunking: crate::config::CodeChunkingMode::Structural,
             default_top_k: 5,
             ingest_roots: vec![],
             max_context_tokens: 4096,
@@ -1857,6 +1860,25 @@ mod tests {
             tool_surface: crate::mcp::ToolSurface::Full,
             http_bind: None,
             wiki_require_if_match: false,
+            rerank_provider: crate::rerank::RerankProviderKind::Off,
+            rerank_base_url: String::new(),
+            rerank_api_key: String::new(),
+            rerank_model: String::new(),
+            rerank_top_n: 50,
+            rerank_timeout_secs: 30,
+            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
+            query_rewrite_provider: None,
+            query_rewrite_model: None,
+            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            hyde_provider: None,
+            hyde_model: None,
+            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            ingest_url_allow: Vec::new(),
+            ingest_url_timeout_secs: 30,
+            ingest_url_max_bytes: 10 * 1024 * 1024,
+            reembed_batch: 100,
+            fts_stale_generation_threshold: 64,
+            fts_maint_interval_secs: 300,
         }
     }
 

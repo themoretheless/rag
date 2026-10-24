@@ -29,16 +29,16 @@ use super::tools::{
     FindSimilarParams, FindTunnelsParams, FollowTunnelsParams, GetBacklinksParams,
     GetDocumentParams, GetGraphParams, GetNeighborsParams, GetSchemaParams, GetSourceParams,
     GetTaxonomyParams, GetWikiPageParams, GraphExpandSearchParams, ImportBundleParams,
-    IngestFileParams, IngestRawParams, IngestTextParams, KgAddParams, KgInvalidateParams,
-    KgQueryParams, KgSupersedeParams, KgTimelineParams, LinkNodesParams, ListDocumentsParams,
-    ListMemoryLifecycleCandidatesParams, ListRecentOpsParams, ListRoomsParams, ListSourcesParams,
-    ListTunnelsParams, ListWikiPagesParams, ListWingsParams, MaintainCompressParams,
-    MaintainOrganizeParams, MaintainRefreshParams, MemoriesFiledAwayParams, MultiGetParams,
-    MultiQuerySearchParams, PackContextParams, PackHitParams, PlanMaintenanceParams,
-    QueryWithIndexParams, ReadIndexParams, ReadLogParams, RebuildIndexParams, ReconnectParams,
-    ReembedDocumentParams, RefreshStaleWikiParams, SearchParams, SearchWikiParams,
-    SyncSourcesParams, UpdateDocumentMetaParams, UpdateIndexEntryParams, UpdateSchemaParams,
-    WakeUpParams, WriteWikiPageParams,
+    IngestFileParams, IngestRawParams, IngestTextParams, IngestUrlParams, KgAddParams,
+    KgInvalidateParams, KgQueryParams, KgSupersedeParams, KgTimelineParams, LinkNodesParams,
+    ListDocumentsParams, ListMemoryLifecycleCandidatesParams, ListRecentOpsParams, ListRoomsParams,
+    ListSourcesParams, ListTunnelsParams, ListWikiPagesParams, ListWingsParams,
+    MaintainCompressParams, MaintainOrganizeParams, MaintainRefreshParams, MemoriesFiledAwayParams,
+    MultiGetParams, MultiQuerySearchParams, PackContextParams, PackHitParams,
+    PlanMaintenanceParams, QueryWithIndexParams, ReadIndexParams, ReadLogParams,
+    RebuildIndexParams, ReconnectParams, ReembedDocumentParams, RefreshStaleWikiParams,
+    SearchParams, SearchWikiParams, SyncSourcesParams, UpdateDocumentMetaParams,
+    UpdateIndexEntryParams, UpdateSchemaParams, WakeUpParams, WriteWikiPageParams,
 };
 use crate::config::Config;
 #[cfg(test)]
@@ -61,8 +61,8 @@ use crate::diary;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::AppError;
 use crate::ingest::{
-    IngestCommand, IngestFileCommand, IngestService, ReembedDocumentResult, UpdateDocumentCommand,
-    UpdateDocumentResult,
+    IngestCommand, IngestFileCommand, IngestService, IngestUrlCommand, ReembedDocumentResult,
+    UpdateDocumentCommand, UpdateDocumentResult,
 };
 use crate::llm::ChatClient;
 use crate::maintain::{
@@ -112,6 +112,7 @@ pub struct RagServer {
     tool_router: ToolRouter<Self>,
     /// Transport label recorded in the call log (`stdio` | `http-mcp`).
     transport: &'static str,
+    analysis_session: String,
 }
 
 struct FtsFinalizationOutcome {
@@ -194,6 +195,17 @@ impl RagServer {
         self.tool_router.map.len()
     }
 
+    /// HTTP clients must explicitly name a task scope; stdio has an instance-local default.
+    fn analysis_scope<'a>(&'a self, explicit: Option<&'a str>) -> Result<&'a str, McpError> {
+        if self.transport == "http-mcp" && explicit.is_none() {
+            return Err(McpError::invalid_params(
+                "HTTP analysis task operations require explicit session_id",
+                None,
+            ));
+        }
+        Ok(explicit.unwrap_or(&self.analysis_session))
+    }
+
     /// Label the transport this server instance serves (call-log attribution).
     pub fn with_transport(mut self, transport: &'static str) -> Self {
         self.transport = transport;
@@ -258,6 +270,137 @@ impl RagServer {
         });
     }
 
+    /// Start the optional OS file watcher. Disabled unless `RAG_WATCH_ROOTS`
+    /// contains one or more `;`-separated directories. Debounced events run
+    /// the manifest-aware `sync_sources` path; each flush is recorded in the
+    /// ops log (`op = "watch_sync"`).
+    pub fn spawn_file_watcher(self) {
+        let watch_config = match crate::watch::config_from_env() {
+            Ok(Some(config)) => config,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::error!(error = %error, "invalid RAG_WATCH_* configuration; file watcher disabled");
+                return;
+            }
+        };
+        let roots = watch_config.roots.clone();
+        let debounce = watch_config.debounce;
+        let min_sync_interval = watch_config.min_sync_interval;
+        if let Err(error) = std::thread::Builder::new()
+            .name("rag-file-watch".into())
+            .spawn(move || {
+                if let Err(error) = Self::run_file_watcher(
+                    self.store.clone(),
+                    self.embedder.clone(),
+                    self.config.clone(),
+                    roots,
+                    debounce,
+                    min_sync_interval,
+                ) {
+                    tracing::error!(error = %error, "file watcher stopped");
+                }
+            })
+        {
+            tracing::error!(error = %error, "failed to spawn file watcher thread");
+        }
+    }
+
+    fn run_file_watcher(
+        store: Arc<Store>,
+        embedder: Arc<dyn EmbeddingProvider>,
+        config: Config,
+        roots: Vec<PathBuf>,
+        debounce: std::time::Duration,
+        min_sync_interval: std::time::Duration,
+    ) -> Result<(), AppError> {
+        use crate::watch::{NotifyEventSource, SyncDebouncer};
+
+        let mut source = NotifyEventSource::new(&roots)?;
+        let mut debouncer = SyncDebouncer::new(debounce, min_sync_interval)?;
+        // A dedicated current-thread runtime: the watch loop itself is
+        // blocking, and each debounced sync enters the runtime per flush.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| AppError::db(format!("file watcher runtime failed: {error}")))?;
+        let poll = debounce.min(std::time::Duration::from_millis(250));
+        tracing::info!(
+            roots = ?roots,
+            debounce_ms = debounce.as_millis(),
+            min_sync_interval_secs = min_sync_interval.as_secs(),
+            "file watcher started"
+        );
+        let stats = crate::watch::run_watch_loop(
+            &mut source,
+            &roots,
+            &mut debouncer,
+            |root| {
+                let outcome = runtime.block_on(sync_sources_nonblocking(
+                    store.clone(),
+                    embedder.clone(),
+                    config.clone(),
+                    SourceSyncCommand::new(root.to_path_buf()),
+                    SourceSyncControl::default(),
+                ));
+                match outcome {
+                    Ok(outcome) => {
+                        let (report, cancelled) = match outcome {
+                            SourceSyncOutcome::Completed(report) => (report, false),
+                            SourceSyncOutcome::Cancelled(report) => (report, true),
+                        };
+                        let error_count = report.errors.len();
+                        let _ = store.append_ops_log(&OpsLogEntry {
+                            id: Uuid::new_v4().to_string(),
+                            seq: 0,
+                            ts: Utc::now(),
+                            op: "watch_sync".into(),
+                            prefix: Some("WATCH".into()),
+                            message: format!(
+                                "watcher sync {}: added={} updated={} skipped={} deleted={} errors={} cancelled={cancelled}",
+                                root.display(),
+                                report.added.len(),
+                                report.updated.len(),
+                                report.skipped.len(),
+                                report.deleted.len(),
+                                error_count,
+                            ),
+                            entity_id: Some(root.display().to_string()),
+                            entity_kind: Some("watch_root".into()),
+                            payload_json: serde_json::json!({
+                                "root": root.display().to_string(),
+                                "added": report.added.len(),
+                                "updated": report.updated.len(),
+                                "skipped": report.skipped.len(),
+                                "deleted": report.deleted.len(),
+                                "errors": error_count,
+                                "cancelled": cancelled,
+                            })
+                            .to_string(),
+                            agent_name: None,
+                        });
+                        if error_count > 0 {
+                            tracing::warn!(root = %root.display(), error_count, "watcher sync completed with errors");
+                        }
+                        Ok(())
+                    }
+                    Err(error) => {
+                        tracing::error!(root = %root.display(), error = %error, "watcher sync failed");
+                        Err(error.to_string())
+                    }
+                }
+            },
+            || false,
+            poll,
+        );
+        tracing::info!(
+            events = stats.events,
+            sync_runs = stats.sync_runs,
+            sync_failures = stats.sync_failures,
+            "file watcher loop exited"
+        );
+        Ok(())
+    }
+
     fn collection_entries(params: Vec<CollectionEntryParams>) -> Vec<CollectionEntry> {
         params
             .into_iter()
@@ -295,6 +438,7 @@ impl RagServer {
             embedder,
             llm,
             config,
+            analysis_session: uuid::Uuid::new_v4().to_string(),
             tool_router: super::server::compose_tool_router(Self::all_tools_router()),
             transport: "stdio",
         };
@@ -470,6 +614,591 @@ impl RagServer {
 #[tool_router(router = all_tools_router, vis = "pub(super)")]
 impl RagServer {
     #[tool(
+        name = "catalog",
+        description = "List an immutable revision source manifest with checksums and syntax coverage. RAG_TOOLS=full."
+    )]
+    async fn catalog(
+        &self,
+        Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.code_catalog(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "freshness",
+        description = "Compare indexed decoded-source checksums to actual allowlisted files using the ingestion decoder (default) or current stored documents. Records observed drift; never refreshes source/index content. RAG_TOOLS=full."
+    )]
+    async fn freshness(
+        &self,
+        Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .code_freshness(&params, &self.config.ingest_roots)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "live_read",
+        description = "Read a bounded decoded current source range and compare it to an immutable index revision; reports original byte/encoding evidence. Filesystem mode requires RAG_INGEST_ROOTS; source=stored is explicit. RAG_TOOLS=full."
+    )]
+    async fn live_read(
+        &self,
+        Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .code_live_read(&params, &self.config.ingest_roots)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "drift_report",
+        description = "Read a keyset-paginated ledger of observed index/source divergences. Unacknowledged records are the default. RAG_TOOLS=full."
+    )]
+    async fn drift_report(
+        &self,
+        Parameters(params): Parameters<crate::code_index::drift::DriftQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .code_drift_report(&params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "drift_ack",
+        description = "Acknowledge known drift event IDs with a note, atomically. Does not alter sources or index facts. RAG_TOOLS=full."
+    )]
+    async fn drift_ack(
+        &self,
+        Parameters(params): Parameters<crate::code_index::drift::DriftAck>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.code_drift_ack(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "index_status",
+        description = "Code-index revision, graph/SQL coverage and explicit static-analysis degradation. RAG_TOOLS=full."
+    )]
+    async fn index_status(&self) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(
+            &serde_json::json!({"index_rev":snapshot.index_revision,"symbols":snapshot.symbols.len(),"calls":snapshot.calls.len(),"unresolved_calls":snapshot.calls.iter().filter(|c|c.resolution!="resolved_static").count(),"sql_tables":snapshot.sql.tables.len(),"stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors,"capability":"static_syntax_bindings","runtime_dispatch_verified":false,"data_flow_slicing":false}),
+        )
+    }
+
+    #[tool(
+        name = "search_multi",
+        description = "Find literal or regex queries over complete stored documents, with all/any matching, independent per-query result windows, line evidence and project-isolated filename families. Family roles carry fresh static call/reference/entrypoint evidence; runtime activity remains unverified. Captured source encodings include detection basis and byte hashes; legacy choices are heuristic. No chunk-boundary misses. RAG_TOOLS=full."
+    )]
+    async fn search_multi(
+        &self,
+        Parameters(params): Parameters<crate::code_index::corpus::MultiSearch>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.search_multi(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "duplicates",
+        description = "Find exact stored-text copies and similar numbered/name families. Rank primary candidates by observed entrypoint/call evidence; no deletion proof. RAG_TOOLS=full."
+    )]
+    async fn duplicates(
+        &self,
+        Parameters(params): Parameters<crate::code_index::corpus::DuplicateQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.duplicates(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "index_revisions",
+        description = "List immutable code-index revisions with stable cursors and content fingerprints. Source bodies are content-addressed and stored once. RAG_TOOLS=full."
+    )]
+    async fn index_revisions(
+        &self,
+        Parameters(params): Parameters<crate::code_index::history::HistoryQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .code_index_history(&params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "diff",
+        description = "Compare immutable index revisions: changed files, definitions/body hashes, static calls/value references/inheritance/entrypoints and frozen derived SQL schema metadata. Historical missing snapshots are explicit. No source bodies in the response. RAG_TOOLS=full."
+    )]
+    async fn diff(
+        &self,
+        Parameters(params): Parameters<crate::code_index::history::DiffQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.code_index_diff(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "calibrate",
+        description = "Fit/report confidence thresholds from labelled training and independent validation IDs, or explicitly record unvalidated parameters. No runtime thresholds are applied. Reports sample size, confusion matrices and uncertainty. RAG_TOOLS=full."
+    )]
+    async fn calibrate(
+        &self,
+        Parameters(params): Parameters<crate::calibration::CalibrationQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .calibrate_confidence(&params)
+                .map_err(Self::map_err)?,
+        )
+    }
+    #[tool(
+        name = "calibration_reports",
+        description = "Read immutable calibration reports with stable sequence pagination. Reports are not automatically applied to runtime query thresholds. RAG_TOOLS=full."
+    )]
+    async fn calibration_reports(
+        &self,
+        Parameters(params): Parameters<crate::calibration::ReportsQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .calibration_reports(&params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "gate",
+        description = "Evaluate and persist an index-usage allow/ask/deny decision for a proposed tool call. Default warn allows with guidance; strict modes are explicit. Bounded actual source checks and real task/session index-use evidence. Never executes commands or installs hooks. RAG_TOOLS=full."
+    )]
+    async fn gate(
+        &self,
+        Parameters(params): Parameters<crate::gate::GateQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let payload = crate::gate::parse_payload(&params.payload).map_err(Self::map_err)?;
+        let session = self.analysis_scope(payload.session_id.as_deref())?;
+        let mode = params
+            .mode
+            .or_else(|| std::env::var("RAG_GATE_MODE").ok())
+            .unwrap_or("warn".into());
+        let mode = crate::gate::Mode::parse(&mode).map_err(Self::map_err)?;
+        Self::json_result(
+            &self
+                .store
+                .analysis_gate(session, &payload, mode, &self.config.ingest_roots)
+                .map_err(Self::map_err)?,
+        )
+    }
+    #[tool(
+        name = "task_set",
+        description = "Set/clear a durable session-scoped code-analysis task label with TTL and optional generation CAS. Does not create a Codex chat or background goal. RAG_TOOLS=full."
+    )]
+    async fn task_set(
+        &self,
+        Parameters(params): Parameters<crate::analysis_tasks::TaskSet>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.analysis_scope(params.session_id.as_deref())?;
+        Self::json_result(
+            &self
+                .store
+                .analysis_task_set(session, &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+    #[tool(
+        name = "note",
+        description = "Append an unverified analysis note, separate from code/search facts. Defaults to this session's active task. Limits reject oversize input without silent truncation. RAG_TOOLS=full."
+    )]
+    async fn note(
+        &self,
+        Parameters(params): Parameters<crate::analysis_tasks::Note>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.analysis_scope(params.session_id.as_deref())?;
+        let agent = context
+            .peer
+            .peer_info()
+            .map(|i| i.client_info.name.as_str())
+            .unwrap_or("unknown");
+        Self::json_result(
+            &self
+                .store
+                .analysis_note(session, agent, &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+    #[tool(
+        name = "notes",
+        description = "Read unverified task notes with literal substring filtering and stable sequence pagination. all_tasks explicitly includes all labels. Notes are not source evidence. RAG_TOOLS=full."
+    )]
+    async fn notes(
+        &self,
+        Parameters(params): Parameters<crate::analysis_tasks::Notes>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.analysis_scope(params.session_id.as_deref())?;
+        Self::json_result(
+            &self
+                .store
+                .analysis_notes(session, &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+    #[tool(
+        name = "task_stats",
+        description = "Durable measured index-call outcomes, returned-record counts and note totals by task. Unfinished/unmeasured calls remain explicit; no invented saved-call or correctness metric. RAG_TOOLS=full."
+    )]
+    async fn task_stats(
+        &self,
+        Parameters(params): Parameters<crate::analysis_tasks::TaskStats>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.analysis_scope(params.session_id.as_deref())?;
+        Self::json_result(
+            &self
+                .store
+                .analysis_task_stats(session, &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "policy_trace",
+        description = "Trace explicit boolean and computed returns with branch/case conditions and static callers. Reports syntactic fallback and ambiguity; does not evaluate runtime authorization. Rust/Python/JS/TS/PHP. RAG_TOOLS=full."
+    )]
+    async fn policy_trace(
+        &self,
+        Parameters(params): Parameters<crate::code_index::policy::PolicyQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.policy_trace(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "class_usage",
+        description = "Find CSS class definitions and static applications in CSS, HTML, JSX/TSX and DOM class APIs. Modes all/missing/unused describe indexed name matches, not runtime cascade or safe deletion. RAG_TOOLS=full."
+    )]
+    async fn class_usage(
+        &self,
+        Parameters(params): Parameters<crate::code_index::styles::ClassQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.class_usage(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "db_refresh",
+        description = "Capture remote PostgreSQL/MySQL metadata from an owner-configured alias in a read-only transaction. Admin only. No caller SQL. Rows are collected only with owner enablement, column allowlists and include_samples."
+    )]
+    async fn db_refresh(
+        &self,
+        Parameters(params): Parameters<crate::external_db::Refresh>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .external_db_refresh(&params)
+                .await
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "db_schema",
+        description = "Read captured external database metadata. No network call. Exact schema/table filters; reports capture time and scope limitations. RAG_TOOLS=full."
+    )]
+    async fn db_schema(
+        &self,
+        Parameters(params): Parameters<crate::external_db::Query>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .external_db_query("db_schema", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "db_table",
+        description = "Read captured external database metadata. No network call. Exact schema/table filters; reports capture time and scope limitations. RAG_TOOLS=full."
+    )]
+    async fn db_table(
+        &self,
+        Parameters(params): Parameters<crate::external_db::Query>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .external_db_query("db_table", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "db_relations",
+        description = "Read frozen declared FK/view dependencies and separately labelled naming hypotheses. Guesses include key/type evidence, ambiguity diagnostics and uncalibrated confidence, never constraints. relation_kind filters separate arrays. No network call. RAG_TOOLS=full."
+    )]
+    async fn db_relations(
+        &self,
+        Parameters(params): Parameters<crate::external_db::Query>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .external_db_query("db_relations", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "db_drift",
+        description = "Compare captured external metadata: db_drift compares snapshots; db_cross matches static SQL and migration tables to live metadata in the configured project. No network access. Reports uncertainty. RAG_TOOLS=full."
+    )]
+    async fn db_drift(
+        &self,
+        Parameters(params): Parameters<crate::external_db::Query>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .external_db_query("db_drift", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "db_cross",
+        description = "Compare captured external metadata: db_drift compares snapshots; db_cross matches static SQL and migration tables to live metadata in the configured project. No network access. Reports uncertainty. RAG_TOOLS=full."
+    )]
+    async fn db_cross(
+        &self,
+        Parameters(params): Parameters<crate::external_db::Query>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .external_db_query("db_cross", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "db_sample",
+        description = "Read a bounded previously captured row sample. Sampling requires owner enablement, an explicit column allowlist, and include_samples on administrative db_refresh. Never reads live rows. RAG_TOOLS=full."
+    )]
+    async fn db_sample(
+        &self,
+        Parameters(params): Parameters<crate::external_db::Query>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(
+            &self
+                .store
+                .external_db_query("db_sample", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "schema",
+        description = "Inspect the SQL schema derived from ingested .sql files and SQL literals in migration directories. Reports evidence and incomplete coverage; never contacts a database. RAG_TOOLS=full."
+    )]
+    async fn schema(
+        &self,
+        Parameters(params): Parameters<crate::code_index::sql::SqlQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(
+            &snapshot
+                .sql_query("schema", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "table_usage",
+        description = "Find static SQL table read/write sites in ingested SQL, Rust, Python, JS/TS, C/C++ literals (including C++ raw strings) and ordinary Java quoted strings, including joins and subqueries. Java text blocks and unsupported/dynamic SQL are reported as unverified. RAG_TOOLS=full."
+    )]
+    async fn table_usage(
+        &self,
+        Parameters(params): Parameters<crate::code_index::sql::SqlQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(
+            &snapshot
+                .sql_query("table_usage", &params)
+                .map_err(Self::map_err)?,
+        )
+    }
+
+    #[tool(
+        name = "write_check",
+        description = "Check an insert/update/delete plan against ingested migrations or an explicitly selected captured database schema. Supports literal enum/domain checks, DEFAULT/identity rules and value counts. Returns valid/invalid/indeterminate with unverified conditions. Never connects remotely or executes writes. RAG_TOOLS=full."
+    )]
+    async fn write_check(
+        &self,
+        Parameters(params): Parameters<crate::external_db::write_check::Request>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.check_write_plan(params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "entrypoints",
+        description = "List conventional main, exported/public API, test and HTTP route entrypoint candidates with syntax evidence. RAG_TOOLS=full; reports incomplete coverage."
+    )]
+    async fn entrypoints(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("entrypoints", &params))
+    }
+
+    #[tool(
+        name = "routes",
+        description = "List statically recognized Flask/FastAPI decorators, Express-style registrations and Axum route/get(handler) candidates. RAG_TOOLS=full; reports incomplete coverage."
+    )]
+    async fn routes(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("routes", &params))
+    }
+
+    #[tool(
+        name = "dead_code",
+        description = "List routines not reachable from known roots, excluding value references. Candidates only; never proof that deletion is safe. RAG_TOOLS=full; reports incomplete coverage."
+    )]
+    async fn dead_code(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("dead_code", &params))
+    }
+
+    #[tool(
+        name = "slice",
+        description = "Return a bounded structural call subgraph with path/line evidence and no function bodies. direction=back|forward|both; static graph only, not data-flow slicing. RAG_TOOLS=full; reports incomplete coverage."
+    )]
+    async fn slice(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("slice", &params))
+    }
+
+    #[tool(
+        name = "inheritance",
+        description = "List indexed extends/implements relations with base targets and unresolved/ambiguous evidence. Class method lookup uses conservative C3 order; dynamic dispatch is not guaranteed. RAG_TOOLS=full."
+    )]
+    async fn inheritance(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("inheritance", &params))
+    }
+
+    #[tool(
+        name = "code",
+        description = "Explicitly read the body of one indexed symbol. Ambiguous names return candidate definitions without bodies. Requires index_code and RAG_TOOLS=full."
+    )]
+    async fn code(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.code_body(&params).map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "repo_map",
+        description = "Return a map of indexed definitions within budget_chars; reports truncation and incomplete coverage. Requires index_code and RAG_TOOLS=full."
+    )]
+    async fn repo_map(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("repo_map", &params))
+    }
+
+    #[tool(
+        name = "impact",
+        description = "Traverse callers of selected symbols up to depth. Links use conservative static bindings; unresolved and dynamic dependencies are not proven. Requires index_code and RAG_TOOLS=full."
+    )]
+    async fn impact(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("impact", &params))
+    }
+
+    #[tool(
+        name = "index_code",
+        description = "Build or refresh the persistent tree-sitter symbol and call index from ingested Rust/Python/JS/TS/Go/Java/C/C++/Bash/sh and basic PHP sources, plus supported SQL/markup inputs. Go module facts use captured go.mod. No filesystem reads; unchanged parses are reused and limitations reported. RAG_TOOLS=full."
+    )]
+    async fn index_code(&self) -> Result<CallToolResult, McpError> {
+        Self::json_result(&self.store.index_code().map_err(Self::map_err)?)
+    }
+
+    #[tool(
+        name = "symbol",
+        description = "Find syntax definitions with source path, lines, signature, document revision and content hash. Requires index_code and RAG_TOOLS=full. Stale documents are omitted and reported."
+    )]
+    async fn symbol(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("symbol", &params))
+    }
+
+    #[tool(
+        name = "references",
+        description = "Find references bound to indexed definitions through static imports, aliases, lexical scopes and known receiver types, including callbacks and type uses. Ambiguous candidates remain explicit. reference_mode=lexical retains name-only search. Requires index_code and RAG_TOOLS=full. Stale documents are omitted and reported."
+    )]
+    async fn references(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("references", &params))
+    }
+
+    #[tool(
+        name = "callers",
+        description = "Find call sites targeting indexed symbols using conservative lexical/import/receiver-type binding. Returns resolution_basis; ambiguous and unresolved cases remain explicit. Requires index_code and RAG_TOOLS=full. Stale documents are omitted and reported."
+    )]
+    async fn callers(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("callers", &params))
+    }
+
+    #[tool(
+        name = "callees",
+        description = "List calls inside a symbol with source evidence and conservative lexical/import/receiver-type resolution, including ambiguous and unresolved targets. Requires index_code and RAG_TOOLS=full. Stale documents are omitted and reported."
+    )]
+    async fn callees(
+        &self,
+        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        Self::json_result(&snapshot.query("callees", &params))
+    }
+
+    #[tool(
         name = "collection_create",
         description = "Create a durable named collection. entries array order is the reading order; each entry may name a parent_document_id for outline nesting and depends_on document ids for prerequisites. All ids must reference existing documents in the collection."
     )]
@@ -623,6 +1352,32 @@ impl RagServer {
                 wing: params.wing,
                 room: params.room,
             })
+            .await
+            .map_err(Self::map_err)?;
+        Self::json_result(&result)
+    }
+
+    #[tool(
+        name = "ingest_url",
+        description = "Fetch one web page over HTTP(S), extract main content (readability-lite), and ingest it. Disabled unless RAG_INGEST_URL_ALLOW allowlists the host; upserts by final URL."
+    )]
+    async fn ingest_url(
+        &self,
+        Parameters(params): Parameters<IngestUrlParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let fetcher = crate::web_ingest::ReqwestFetcher::new(self.config.ingest_url_timeout_secs);
+        let result = IngestService::new(&self.store, &self.embedder, &self.config)
+            .ingest_url(
+                &fetcher,
+                IngestUrlCommand {
+                    url: params.url,
+                    title: params.title,
+                    uri: params.uri,
+                    metadata_json: params.metadata_json,
+                    wing: params.wing,
+                    room: params.room,
+                },
+            )
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -963,7 +1718,7 @@ impl RagServer {
 
     #[tool(
         name = "search",
-        description = "Search stored chunks (mode=lex|vec|hybrid). Supports filters, diversity, token packing, and optional context_expansion=neighbors|parent_section. Markdown hits include heading_path/section."
+        description = "Search stored chunks (mode=lex|vec|hybrid). Supports filters, diversity, token packing, and optional context_expansion=neighbors|parent_section|parent. Markdown hits include heading_path/section."
     )]
     async fn search(
         &self,
@@ -998,6 +1753,9 @@ impl RagServer {
             timeout_ms: params.timeout_ms.or(Some(5_000)),
             fts_stemmer: self.config.fts_stemmer.clone(),
             rrf_k: params.rrf_k,
+            rerank: params.rerank,
+            rewrite: params.rewrite,
+            hyde: params.hyde,
         };
         let hits = crate::retrieval::execute_search(
             &self.store,
@@ -1027,6 +1785,18 @@ impl RagServer {
             .top_k
             .map(|v| v as usize)
             .unwrap_or(self.config.default_top_k);
+        // Rerank stage (opt-in): expand the per-query candidate pools, fuse,
+        // rerank the fused pool, then cut back to `top_k`. Provider errors fall
+        // back to the fused ranking.
+        let reranker =
+            retrieval::maybe_build_reranker(&self.config, params.rerank.unwrap_or(false));
+        let pool_k = match reranker.is_some() {
+            true => top_k
+                .max(self.config.rerank_top_n)
+                .min(crate::db::search::MAX_TOP_K),
+            false => top_k,
+        };
+        let rerank_query_text = params.queries.first().cloned().unwrap_or_default();
         let mode =
             retrieval::resolve_search_mode(params.mode.as_deref(), self.config.default_search_mode)
                 .map_err(Self::map_err)?;
@@ -1056,7 +1826,7 @@ impl RagServer {
                     &self.store,
                     &SearchQuery {
                         mode,
-                        top_k,
+                        top_k: pool_k,
                         query_text: Some(text),
                         query_embedding: embedding,
                         wing: nonempty_opt(params.wing.clone()),
@@ -1072,11 +1842,13 @@ impl RagServer {
                 .map_err(Self::map_err)?,
             );
         }
-        Self::json_result(&fuse_rrf_many(
-            &lists,
-            crate::db::search::DEFAULT_RRF_K,
-            top_k,
-        ))
+        let mut hits = fuse_rrf_many(&lists, crate::db::search::DEFAULT_RRF_K, pool_k);
+        if let Some(reranker) = reranker {
+            hits =
+                retrieval::rerank_hits_or_fallback(reranker, &rerank_query_text, hits, top_k, None)
+                    .await;
+        }
+        Self::json_result(&hits)
     }
 
     #[tool(
@@ -1385,6 +2157,16 @@ impl RagServer {
     )]
     async fn llm_status(&self) -> Result<CallToolResult, McpError> {
         let body = self.llm_status_report().await.map_err(Self::map_err)?;
+        Self::json_result(&body)
+    }
+
+    #[tool(
+        name = "reembed_status",
+        description = "Embedding identity status: whether vector search is open, stored vs configured identity, and resumable migration progress (documents done/pending, batch size). Read-only."
+    )]
+    async fn reembed_status(&self) -> Result<CallToolResult, McpError> {
+        let body =
+            crate::maintain::reembed_status(&self.store, &self.config).map_err(Self::map_err)?;
         Self::json_result(&body)
     }
 
@@ -2371,6 +3153,16 @@ impl RagServer {
             .map(|k| k as usize)
             .unwrap_or(self.config.default_top_k);
 
+        // Rerank stage (opt-in): expand the candidate pool, rerank, cut back.
+        let reranker =
+            retrieval::maybe_build_reranker(&self.config, params.rerank.unwrap_or(false));
+        let pool_k = match reranker.is_some() {
+            true => top_k
+                .max(self.config.rerank_top_n)
+                .min(crate::db::search::MAX_TOP_K),
+            false => top_k,
+        };
+
         let mode =
             retrieval::resolve_search_mode(params.mode.as_deref(), self.config.default_search_mode)
                 .map_err(Self::map_err)?;
@@ -2416,8 +3208,8 @@ impl RagServer {
 
         let opts = SearchQuery {
             mode,
-            top_k,
-            query_text: Some(params.query),
+            top_k: pool_k,
+            query_text: Some(params.query.clone()),
             query_embedding,
             document_id: None,
             wing: params.wing,
@@ -2433,6 +3225,19 @@ impl RagServer {
 
         let hits =
             search_with_corpus_guard(&self.store, &opts, &corpus_guard).map_err(Self::map_err)?;
+        let hits = match reranker {
+            Some(reranker) => {
+                retrieval::rerank_hits_or_fallback(
+                    reranker,
+                    &params.query,
+                    hits,
+                    top_k,
+                    max_context_tokens,
+                )
+                .await
+            }
+            None => hits,
+        };
         Self::json_result(&hits)
     }
 
@@ -3662,12 +4467,55 @@ impl ServerHandler for RagServer {
         // so record only the tool lineage here.
         let call = crate::telemetry::begin(&agent, self.transport, &name, None);
         let started = std::time::Instant::now();
+        let analysis_call = if crate::analysis_tasks::index_tool(&name) {
+            // rmcp moves protocol metadata into RequestContext before dispatch.
+            let explicit = context.meta.get("rag/task_session").or_else(|| {
+                request
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("rag/task_session"))
+            });
+            if explicit.is_some_and(|v| !v.is_string()) {
+                return Err(McpError::invalid_params(
+                    "rag/task_session metadata must be a string",
+                    None,
+                ));
+            }
+            // HTTP clients share a server instance. Requests without an explicit scope
+            // remain unlabelled instead of inheriting another client's active task.
+            let anonymous = format!("unattributed-{}", uuid::Uuid::new_v4());
+            let default = if self.transport == "http-mcp" {
+                anonymous.as_str()
+            } else {
+                self.analysis_session.as_str()
+            };
+            let session = explicit.and_then(|v| v.as_str()).unwrap_or(default);
+            Some(
+                self.store
+                    .analysis_call_start(session, &name)
+                    .map_err(Self::map_err)?,
+            )
+        } else {
+            None
+        };
         let tcc = ToolCallContext::new(self, request, context);
         let result = self.tool_router.call(tcc).await;
         let operation_ok = match &result {
             Ok(value) => tool_result_succeeded(value),
             Err(_) => false,
         };
+        if let Some(seq) = analysis_call {
+            let evidence = result
+                .as_ref()
+                .ok()
+                .and_then(|r| r.content.iter().find_map(|c| c.as_text()))
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+                .and_then(|v| crate::analysis_tasks::evidence_count(&v));
+            if let Err(error) = self.store.analysis_call_finish(seq, operation_ok, evidence) {
+                // Preserve the operation outcome; a failed telemetry finish remains visibly unfinished.
+                tracing::warn!(error=%error, "analysis call remains unfinished");
+            }
+        }
         crate::http_api::record_mcp_tool(
             &audit_action,
             if operation_ok { 200 } else { 500 },
@@ -4196,6 +5044,7 @@ mod tests {
             embedding_dims: dims,
             chunk_size: 800,
             chunk_overlap: 120,
+            code_chunking: crate::config::CodeChunkingMode::Structural,
             default_top_k: 5,
             ingest_roots: roots,
             max_context_tokens: 4096,
@@ -4214,6 +5063,25 @@ mod tests {
             tool_surface: crate::mcp::ToolSurface::Full,
             http_bind: None,
             wiki_require_if_match: false,
+            rerank_provider: crate::rerank::RerankProviderKind::Off,
+            rerank_base_url: String::new(),
+            rerank_api_key: String::new(),
+            rerank_model: String::new(),
+            rerank_top_n: 50,
+            rerank_timeout_secs: 30,
+            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
+            query_rewrite_provider: None,
+            query_rewrite_model: None,
+            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            hyde_provider: None,
+            hyde_model: None,
+            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            ingest_url_allow: Vec::new(),
+            ingest_url_timeout_secs: 30,
+            ingest_url_max_bytes: 10 * 1024 * 1024,
+            reembed_batch: 100,
+            fts_stale_generation_threshold: 64,
+            fts_maint_interval_secs: 300,
         }
     }
 
@@ -6019,6 +6887,7 @@ mod tests {
                 layer: None,
                 source_file: None,
                 timeout_ms: Some(5_000),
+                rerank: None,
             }))
             .await
             .unwrap_err();
@@ -6065,6 +6934,9 @@ mod tests {
                     neighbor_chunks: None,
                     timeout_ms: Some(5_000),
                     rrf_k: None,
+                    rerank: None,
+                    rewrite: None,
+                    hyde: None,
                 }))
                 .await
         });
@@ -6163,4 +7035,43 @@ struct PackContextResult {
     max_tokens: usize,
     omitted_count: usize,
     context_text: String,
+}
+
+#[cfg(test)]
+mod task_scope_tests {
+    use super::*;
+    use crate::embeddings::MockEmbedder;
+    #[test]
+    fn task_context_is_unique_per_server_and_explicit_for_shared_http() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("scopes.duckdb")).unwrap();
+        let config = Config {
+            embedding_dims: 8,
+            ..Config::for_tests()
+        };
+        let one = RagServer::new(
+            store.clone(),
+            Arc::new(MockEmbedder::new(8)),
+            config.clone(),
+        );
+        let two = RagServer::new(store, Arc::new(MockEmbedder::new(8)), config);
+        assert_ne!(
+            one.analysis_scope(None).unwrap(),
+            two.analysis_scope(None).unwrap()
+        );
+        assert_eq!(
+            one.analysis_scope(None).unwrap(),
+            one.clone().analysis_scope(None).unwrap()
+        );
+        let http = one.with_transport("http-mcp");
+        assert!(http.analysis_scope(None).is_err());
+        assert_eq!(http.analysis_scope(Some("explicit")).unwrap(), "explicit");
+        for name in ["note", "task_set"] {
+            assert!(!crate::access::AccessRole::Read.allows_tool(name));
+            assert!(crate::access::AccessRole::Write.allows_tool(name));
+        }
+        for name in ["notes", "task_stats"] {
+            assert!(crate::access::AccessRole::Read.allows_tool(name));
+        }
+    }
 }

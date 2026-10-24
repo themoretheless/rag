@@ -1,0 +1,8 @@
+{
+  "src/db/fts.rs": "fc214287e15c21485f302465105710014fdb3d0cc5e6eb26fd5f7ca228897eb9",
+  "src/main.rs": "664f0c0adbb914310063b720cacd5e251a635df640e1786e0276ceadb4cb2fed",
+  "src/http_api/mod.rs": "9f93738ccafd905bce9849592dc88cdbded517896bd10c7faec8c88aae02a7d3",
+  "scripts/smoke_fts_recovery.py": "802ecf856ea7ad64982ef4948386984419031d1647a3107a009f2adabbe31de3",
+  "Cargo.toml": "02ff4e6973948816046cca4366ffa33e465f03343260e3f258840411f7e6de4b",
+  "Cargo.lock": "f8dd55b33427fc7593c573be94cfc0ba624eef8f48b05a05a084139e2942dc73"
+}

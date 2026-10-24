@@ -1,0 +1,26 @@
+{
+  "library": {
+    "passed": 756,
+    "failed": 0,
+    "ignored": 1
+  },
+  "native_fixture": {
+    "passed": 1,
+    "failed": 0,
+    "server_versions": [
+      "PostgreSQL 16",
+      "MySQL 8.4"
+    ],
+    "expected_inferred_links": 4,
+    "expected_declared_event_fk_mappings": 1,
+    "schema_case_note": "PostgreSQL CamelCase fixture identifiers are SQL-quoted; MySQL retains its metadata spelling."
+  },
+  "capture_format": 3,
+  "structural_format": 2,
+  "inference_algorithm_version": 1,
+  "local_schema_version": 24,
+  "runtime_report": "runtime.json",
+  "binary_sha256": "4fa502d31c86a86f5d06c045059c1ae342f165d4d5b6c70abd3c97d0f6b1b072",
+  "production_database_used": false,
+  "existing_server_restarted": false
+}

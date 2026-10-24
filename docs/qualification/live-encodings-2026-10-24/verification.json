@@ -1,0 +1,19 @@
+{
+  "decoder_version": 1,
+  "full_library": {
+    "passed": 816,
+    "failed": 0,
+    "ignored": 1
+  },
+  "binary_sha256": "ce15d2da93560a806882efc20257f8eec05a912b91f955dcc1e525d187d4717f",
+  "source_sha256": {
+    "src/file_ingest.rs": "fdce083f250ddf085f5b935e6329f061aaca7789b124ef1c3f28fa4248921185",
+    "src/code_index/drift.rs": "229ccc120ffdbacdaec7b6bb0a826e9d367707e9016fe35b61c5a06b9d26ae1b",
+    "src/gate.rs": "ad1d9f4367ebc9b23ad90fc959664e09c88acb7cbbdfddfdac1953ec2cbca3cb",
+    "src/mcp/facade.rs": "0343e0eff0dcdd80a6d660b320f74d3565fbfc9083a9559947e6f82b701ab2fe",
+    "scripts/smoke_live_encodings.py": "a9f08229382259de13e66c21eaa6d9e1a6b084b689762e7487ed17de86873ec7",
+    "docs/SOURCE_ENCODINGS.md": "e8c7f5106b136cb49ad3beaa0061cdffd060452cb7369c47d2ef9ba481c91559"
+  },
+  "gate_binary_sha256": "64f5fa394d389add03f70fcc04c252bf7a0bf4b475f30628a31226162c54fc1e",
+  "gate_regression": "passed: stdio, authenticated loopback HTTP and actual hook executable"
+}

@@ -1,0 +1,11 @@
+{
+  "src/code_index.rs": "e85ce15469244494f832c7e16fbac43eff15c13ae9c160b8c1c3fe31c7709d0c",
+  "src/code_index/references.rs": "0e0889f0452f362ea221df429770f1d25caa29e91e68c6f299b305580431e2ae",
+  "src/code_index/resolve.rs": "d31799295ff840bc655dc405fe1f81daf153301d33e5b131f9cfe1e93d0ae930",
+  "src/code_index/analysis.rs": "bbb6c9c48d8029f74db3fb0e63ba463ac9c49e2b142cdf9d0cea7dc33eb5a86d",
+  "src/code_index/history.rs": "f09c419d9cdd7d0193e75024be0418252edf7ad42d1c850538c1e203dbb25f46",
+  "src/mcp/facade.rs": "29eff4dc4d23d79ce6aaf48c4b2c67b80f9e1f58a0f28917546f4acd5f3f5df8",
+  "scripts/smoke_code_references.py": "cd645cb6a01c114657e4a0fefbda95f45eee3125c518aca4dc85caeb7533685e",
+  "docs/RAGRAF_PARITY.md": "f778aa6f91b46a34ecd51956deea87f5a10fa85f370d8b338fdae9daf9a4a485",
+  "docs/RAGRAF_FEATURE_MATRIX.md": "80ce3718d48fc82877377f0091550cb9dafa78ba5c2a66f16c4761ad3478e11f"
+}

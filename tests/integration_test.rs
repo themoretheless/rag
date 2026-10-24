@@ -8,7 +8,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use rag_mcp::chunking::{from_config, Chunker};
 use rag_mcp::db::search::search_chunks;
-use rag_mcp::embeddings::{MockEmbedder, EmbeddingProvider};
+use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document};
 use rag_mcp::Store;
 use tempfile::TempDir;
@@ -117,14 +117,8 @@ async fn ingest_search_delete_stats_roundtrip() {
         "doc://xylophone",
     )
     .await;
-    let (id_b, n_b) = ingest_text(
-        &store,
-        &embedder,
-        text_b,
-        "Banana Farming",
-        "doc://banana",
-    )
-    .await;
+    let (id_b, n_b) =
+        ingest_text(&store, &embedder, text_b, "Banana Farming", "doc://banana").await;
 
     assert!(n_a >= 1, "doc A should produce at least one chunk");
     assert!(n_b >= 1, "doc B should produce at least one chunk");
@@ -161,7 +155,8 @@ async fn ingest_search_delete_stats_roundtrip() {
         hits[0].score
     );
     assert!(
-        hits[0].content.contains("xylophone") || hits[0].content.contains("Xylophone")
+        hits[0].content.contains("xylophone")
+            || hits[0].content.contains("Xylophone")
             || hits[0].content.contains("quantum resonance"),
         "top hit content should reflect distinctive terms: {:?}",
         hits[0].content
@@ -258,7 +253,8 @@ async fn multi_chunk_document_search_still_finds_doc() {
     let embedder = MockEmbedder::new(DIMS);
     let now = Utc::now();
     let document_id = Uuid::new_v4().to_string();
-    let text = "alpha word one. beta word two. gamma word three. delta word four. epsilon word five.";
+    let text =
+        "alpha word one. beta word two. gamma word three. delta word four. epsilon word five.";
 
     let doc = Document {
         id: document_id.clone(),
@@ -274,7 +270,11 @@ async fn multi_chunk_document_search_still_finds_doc() {
 
     let chunker = from_config(20, 4);
     let pieces = Chunker::chunk(&chunker, text);
-    assert!(pieces.len() > 1, "expected multi-chunk split, got {}", pieces.len());
+    assert!(
+        pieces.len() > 1,
+        "expected multi-chunk split, got {}",
+        pieces.len()
+    );
 
     let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
     let embeddings = embedder.embed(&texts).await.unwrap();
@@ -303,4 +303,159 @@ async fn multi_chunk_document_search_still_finds_doc() {
     assert!(!hits.is_empty());
     assert_eq!(hits[0].document_id, document_id);
     assert!((hits[0].score - 1.0).abs() < 1e-5);
+}
+
+// --- Phase 4b: structural code chunking + parent/child retrieval -----------
+
+use rag_mcp::config::Config;
+use rag_mcp::db::search::{search, ContextExpansion, SearchQuery};
+use rag_mcp::document_indexer::DocumentIndexer;
+use rag_mcp::models::SearchMode;
+
+fn test_config() -> Config {
+    Config {
+        embedding_dims: DIMS,
+        ..Config::for_tests()
+    }
+}
+
+/// Ingest a Rust source document: chunks map to top-level items and carry
+/// `symbol` / `symbol_kind` metadata, and search retrieves them.
+#[tokio::test]
+async fn ingest_rust_file_stores_symbol_metadata() {
+    let (_dir, store) = open_temp_store();
+    let embedder = MockEmbedder::new(DIMS);
+    let source =
+        "fn alpha_handler(x: i32) -> i32 {\n    x + 1\n}\n\nstruct Beta {\n    y: u8,\n}\n";
+    let doc = Document {
+        id: Uuid::new_v4().to_string(),
+        uri: "file:///src/lib.rs".into(),
+        title: "lib.rs".into(),
+        content: source.into(),
+        metadata_json: r#"{"language":"rust"}"#.into(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        ..Default::default()
+    };
+    store.upsert_document(&doc).unwrap();
+
+    let chunks = DocumentIndexer::new(&embedder, &test_config())
+        .build_chunks(&doc)
+        .await
+        .expect("build chunks");
+    store.insert_chunks(&chunks).unwrap();
+
+    let stored = store.list_chunks_for_document(&doc.id).unwrap();
+    let symbols: Vec<_> = stored
+        .iter()
+        .map(|c| {
+            let meta: serde_json::Value = serde_json::from_str(&c.metadata_json).unwrap();
+            (
+                meta.get("symbol")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                meta.get("symbol_kind")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+            )
+        })
+        .collect();
+    assert!(
+        symbols.contains(&(Some("alpha_handler".into()), Some("function".into()))),
+        "function symbol metadata: {symbols:?}"
+    );
+    assert!(
+        symbols.contains(&(Some("Beta".into()), Some("struct".into()))),
+        "struct symbol metadata: {symbols:?}"
+    );
+
+    // Vector search over the ingested file returns its chunks.
+    let query = embedder.embed_one("alpha_handler");
+    let hits = search_chunks(&store, &query, 5, None).unwrap();
+    assert!(hits.iter().all(|h| h.document_id == doc.id));
+    assert!(!hits.is_empty());
+}
+
+/// Ingest a Markdown document: leaf chunks under one heading link to the
+/// section leader, and `expand=parent` returns the section text exactly once
+/// even when several leaves match.
+#[tokio::test]
+async fn markdown_expand_parent_returns_section_once() {
+    let (_dir, store) = open_temp_store();
+    let embedder = MockEmbedder::new(DIMS);
+    let text = "# Setup\ninstall the tooling and configure the environment variables carefully first\n\n# Usage\nrun it\n";
+    let doc = Document {
+        id: Uuid::new_v4().to_string(),
+        uri: "doc://guide".into(),
+        title: "Guide".into(),
+        content: text.into(),
+        metadata_json: "{}".into(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        ..Default::default()
+    };
+    store.upsert_document(&doc).unwrap();
+
+    // Small windows force several leaf chunks under `# Setup`.
+    let config = Config {
+        chunk_size: 30,
+        chunk_overlap: 5,
+        ..test_config()
+    };
+    let chunks = DocumentIndexer::new(&embedder, &config)
+        .build_chunks(&doc)
+        .await
+        .expect("build chunks");
+    store.insert_chunks(&chunks).unwrap();
+
+    let stored = store.list_chunks_for_document(&doc.id).unwrap();
+    let setup: Vec<_> = stored
+        .iter()
+        .filter(|c| c.metadata_json.contains("\"Setup\""))
+        .collect();
+    assert!(
+        setup.len() > 1,
+        "setup section spans leaves: {}",
+        setup.len()
+    );
+    let leader_id = &setup[0].id;
+    assert!(
+        setup[1..].iter().all(|c| c
+            .metadata_json
+            .contains(&format!("\"parent_chunk_id\":\"{leader_id}\""))),
+        "every later leaf links to the section leader"
+    );
+
+    // All leaves match the same embedding, so several hits share one parent.
+    let query = SearchQuery {
+        top_k: 10,
+        query_embedding: Some(embedder.embed_one("setup")),
+        mode: SearchMode::Vec,
+        context_expansion: Some(ContextExpansion::Parent),
+        ..Default::default()
+    };
+    let hits = search(&store, &query).unwrap();
+    // Exactly one hit carries the expanded section (parent + sibling leaves);
+    // later hits under the same parent keep their own leaf body (dedup).
+    let expanded: Vec<_> = hits
+        .iter()
+        .filter(|h| {
+            h.context
+                .as_ref()
+                .is_some_and(|ctx| ctx.len() == setup.len())
+        })
+        .collect();
+    assert_eq!(
+        expanded.len(),
+        1,
+        "full section text is returned exactly once: {:?}",
+        hits.iter().map(|h| &h.content).collect::<Vec<_>>()
+    );
+    assert!(expanded[0].content.contains("install"));
+    assert!(expanded[0].content.contains("carefully"));
+    assert_eq!(
+        expanded[0].context.as_ref().unwrap()[0].chunk_id,
+        *leader_id,
+        "expansion starts at the section leader"
+    );
 }

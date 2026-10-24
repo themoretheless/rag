@@ -7,6 +7,7 @@ use rmcp::handler::server::tool::ToolRouter;
 const TOOLS: &[&str] = &[
     "ingest_text",
     "ingest_file",
+    "ingest_url",
     "sync_sources",
     "ingest_raw",
     "add_drawer",

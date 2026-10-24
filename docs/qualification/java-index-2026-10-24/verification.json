@@ -1,0 +1,23 @@
+{
+  "library": {
+    "passed": 793,
+    "failed": 0,
+    "ignored": 1
+  },
+  "java_unit_fixtures": 13,
+  "grammar": "tree-sitter-java 0.23.5",
+  "index_format": 15,
+  "local_schema_version": 24,
+  "external_capture_format": 4,
+  "runtime_report": "runtime.json",
+  "cross_language_runtime_regressions": [
+    "go-regression.json",
+    "references-regression.json"
+  ],
+  "binary_sha256": "5418517bb674eae4a52ebcff0611acd1f27ad352ab26b7912621f253d81b1885",
+  "javac_executed": false,
+  "production_database_used": false,
+  "existing_server_restarted": false,
+  "deployed": false,
+  "full_goal_complete": false
+}

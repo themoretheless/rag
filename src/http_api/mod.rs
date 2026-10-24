@@ -34,20 +34,22 @@ mod admin;
 mod auth;
 mod bind;
 mod error;
+mod eval_ops;
+mod feedback;
 mod graph;
 mod health;
+mod ingest;
 mod jobs;
+mod knowledge;
 mod labels;
 mod ops;
-mod retrieval;
-mod sync;
-mod wiki;
-mod review;
-mod feedback;
-mod knowledge;
-mod traces;
-mod eval_ops;
 mod payload_kv;
+mod resources;
+mod retrieval;
+mod review;
+mod sync;
+mod traces;
+mod wiki;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -205,6 +207,17 @@ pub async fn serve(
     store: Arc<Store>,
     mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
 ) -> Result<(), std::io::Error> {
+    serve_with_shutdown(bind, store, mcp, CancellationToken::new()).await
+}
+
+/// Stop accepting connections on cancellation and let accepted requests drain.
+/// The executable bounds that drain before its final database checkpoint.
+pub async fn serve_with_shutdown(
+    bind: SocketAddr,
+    store: Arc<Store>,
+    mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
+    shutdown: CancellationToken,
+) -> Result<(), std::io::Error> {
     let auth = auth::HttpAuth::from_env()
         .and_then(|auth| {
             auth.validate_bind(bind)?;
@@ -252,6 +265,7 @@ pub async fn serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown.cancelled_owned())
     .await?;
     Ok(())
 }
@@ -406,11 +420,13 @@ fn host_rejected(
 fn api_router(state: HttpState) -> Router {
     Router::new()
         .merge(health::routes())
+        .merge(ingest::routes())
         .merge(activity::routes())
         .merge(graph::routes())
         .merge(jobs::routes())
         .merge(ops::routes())
         .merge(retrieval::routes())
+        .merge(resources::routes())
         .merge(sync::routes())
         .merge(wiki::routes())
         .merge(review::routes())

@@ -1,0 +1,6 @@
+{
+  "name": "hybrid-rerank-mock",
+  "mode": "hybrid",
+  "top_k": 5,
+  "rerank": "mock"
+}

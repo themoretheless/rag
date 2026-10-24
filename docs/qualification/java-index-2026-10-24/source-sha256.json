@@ -1,0 +1,19 @@
+{
+  "Cargo.toml": "88f55e19741e54f72b04ae74dad4bb3f05212668bce7aec0dea30bd5462b0b60",
+  "Cargo.lock": "f8c29671da6056b4ab726c3fdc8bb5908477dd65950904355df7b78d8efc46c1",
+  "README.md": "fef544c2120cddf17663a0189329b3f757fd1d80c3246d417042160892f5f68b",
+  "src/code_index.rs": "499e0ae80c1b7df4f869ed6684657dd2aebeb6767c253e9a11fb9c1ef8d91ca4",
+  "src/code_index/java.rs": "2d05e5a42cedba8ebaac735d372c75e57cc906a797e705fe080089df6238bc00",
+  "src/code_index/resolve.rs": "e6ce9231ef5f8b5557158e2c18c020db1b15e57e3bcb090716040ce75d125f0a",
+  "src/code_index/references.rs": "ddf6956b2c1ce28b15b85337e87d64963dcc0f929bf4c58eca0703f8fc42084b",
+  "src/code_index/inheritance.rs": "1dbfe92ad3363efdcd77603f547548a0d2d07769dad2b56f3a620e8f7909bb48",
+  "src/code_index/analysis.rs": "664df7cd2c8121a3bf3aaaad64381667fde5abd888d12f48f2a2bcd1da262a8a",
+  "src/code_index/sql.rs": "8faf7d355282ab52f24f1815bafb430bd887635bb9368ce5760ebcfbadc1b8da",
+  "src/mcp/facade.rs": "8c434a75e465d222b5d1c9cfcd2d75a9012da067c5ca793897c68998803e91df",
+  "scripts/smoke_code_java.py": "21f97891aa6436b93a3d72047c6fa28c63b338175343553149432e19ba8ce9ed",
+  "scripts/smoke_code_go.py": "438ed80351957fd4d120b759dcecaf0b20cd4f3b1731ecad70196d6198605e20",
+  "scripts/smoke_code_references.py": "3880af5089e48747b6cc266d3a7c9ba999c896af36f8d4d936dd4f13768162fe",
+  "docs/RAGRAF_PARITY.md": "0d2b3d6f18ba379d1029a5cdba6561cf91a2ff191d4b8cbc613e0b68310c8055",
+  "docs/RAGRAF_FEATURE_MATRIX.md": "958d75d5de8fd419070b44d51867b951ea1c3e89f855233e127c8e61a052722e",
+  "docs/SQL_CODE_ANALYSIS.md": "0b900bc13a77f6df91a4270c92561028eb084febb4c083c9ce2f0da9d58a4b48"
+}

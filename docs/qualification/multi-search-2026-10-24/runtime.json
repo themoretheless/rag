@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "independent_query_windows",
+    "all_and_any",
+    "missing_query",
+    "per_query_truncation",
+    "occurrence_truncation",
+    "filename_families",
+    "explicit_unverified_roles",
+    "stable_response",
+    "path_scope"
+  ]
+}

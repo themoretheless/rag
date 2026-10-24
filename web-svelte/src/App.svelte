@@ -14,6 +14,7 @@
   import SyncView from '@/views/SyncView.svelte'
   import EvaluationView from '@/views/EvaluationView.svelte'
   import ModelsView from '@/views/ModelsView.svelte'
+  import ResourcesView from '@/views/ResourcesView.svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
 
   onMount(() => {
@@ -44,6 +45,8 @@
     <SyncView />
   {:else if route.name === 'evaluation'}
     <EvaluationView />
+  {:else if route.name === 'resources'}
+    <ResourcesView />
   {:else}
     <ModelsView />
   {/if}

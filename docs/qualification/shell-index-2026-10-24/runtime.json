@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "scripts_executed": false,
+  "production_database_touched": false,
+  "checks": [
+    "absolute_source_binding",
+    "export_function_reference",
+    "constant_sql_usage",
+    "warm_cache",
+    "stale_dependency_omitted",
+    "source_sync_refresh"
+  ]
+}

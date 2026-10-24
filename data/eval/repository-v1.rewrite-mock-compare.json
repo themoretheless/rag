@@ -1,0 +1,589 @@
+{
+  "dataset_content_hash": "448dee4471cdfba92e5e7cc737c6ee3125ca43e12ceb22c26bfbcc50646dfa40",
+  "settings_a": {
+    "name": "hybrid-default",
+    "mode": "hybrid",
+    "top_k": 5
+  },
+  "settings_b": {
+    "name": "hybrid-rewrite-mock",
+    "mode": "hybrid",
+    "top_k": 5,
+    "rewrite": "mock"
+  },
+  "side_a_name": "hybrid-default",
+  "side_b_name": "hybrid-rewrite-mock",
+  "macro_a": {
+    "recall_at_k": 0.75,
+    "reciprocal_rank": 0.5180555555555556,
+    "ndcg_at_k": 0.5743237935413886
+  },
+  "macro_b": {
+    "recall_at_k": 0.875,
+    "reciprocal_rank": 0.6125,
+    "ndcg_at_k": 0.6779968724027983
+  },
+  "regressions": [
+    {
+      "query_id": "remote-auth-en",
+      "metric": "recall_at_k",
+      "side_a": 1.0,
+      "side_b": 0.0,
+      "delta": -1.0
+    },
+    {
+      "query_id": "ann-gate",
+      "metric": "reciprocal_rank",
+      "side_a": 1.0,
+      "side_b": 0.25,
+      "delta": -0.75
+    },
+    {
+      "query_id": "sync-replay",
+      "metric": "reciprocal_rank",
+      "side_a": 1.0,
+      "side_b": 0.3333333333333333,
+      "delta": -0.6666666666666667
+    },
+    {
+      "query_id": "ann-gate",
+      "metric": "ndcg_at_k",
+      "side_a": 1.0,
+      "side_b": 0.43067655807339306,
+      "delta": -0.5693234419266069
+    },
+    {
+      "query_id": "sync-offline-ru",
+      "metric": "reciprocal_rank",
+      "side_a": 1.0,
+      "side_b": 0.5,
+      "delta": -0.5
+    },
+    {
+      "query_id": "sync-replay",
+      "metric": "ndcg_at_k",
+      "side_a": 1.0,
+      "side_b": 0.5,
+      "delta": -0.5
+    },
+    {
+      "query_id": "wikilink-code",
+      "metric": "reciprocal_rank",
+      "side_a": 1.0,
+      "side_b": 0.5,
+      "delta": -0.5
+    },
+    {
+      "query_id": "remote-auth-en",
+      "metric": "ndcg_at_k",
+      "side_a": 0.43067655807339306,
+      "side_b": 0.0,
+      "delta": -0.43067655807339306
+    },
+    {
+      "query_id": "sync-offline-ru",
+      "metric": "ndcg_at_k",
+      "side_a": 1.0,
+      "side_b": 0.6309297535714575,
+      "delta": -0.36907024642854247
+    },
+    {
+      "query_id": "wikilink-code",
+      "metric": "ndcg_at_k",
+      "side_a": 1.0,
+      "side_b": 0.6309297535714575,
+      "delta": -0.36907024642854247
+    },
+    {
+      "query_id": "remote-auth-en",
+      "metric": "reciprocal_rank",
+      "side_a": 0.25,
+      "side_b": 0.0,
+      "delta": -0.25
+    },
+    {
+      "query_id": "tag-code",
+      "metric": "reciprocal_rank",
+      "side_a": 0.5,
+      "side_b": 0.3333333333333333,
+      "delta": -0.16666666666666669
+    },
+    {
+      "query_id": "tag-code",
+      "metric": "ndcg_at_k",
+      "side_a": 0.6309297535714575,
+      "side_b": 0.5,
+      "delta": -0.13092975357145753
+    }
+  ],
+  "improvements": [
+    {
+      "query_id": "clipper-roadmap-ru",
+      "metric": "recall_at_k",
+      "side_a": 0.0,
+      "side_b": 1.0,
+      "delta": 1.0
+    },
+    {
+      "query_id": "context-duplicate",
+      "metric": "recall_at_k",
+      "side_a": 0.0,
+      "side_b": 1.0,
+      "delta": 1.0
+    },
+    {
+      "query_id": "mcp-connect",
+      "metric": "recall_at_k",
+      "side_a": 0.0,
+      "side_b": 1.0,
+      "delta": 1.0
+    },
+    {
+      "query_id": "zero-budget",
+      "metric": "recall_at_k",
+      "side_a": 0.0,
+      "side_b": 1.0,
+      "delta": 1.0
+    },
+    {
+      "query_id": "zero-budget",
+      "metric": "reciprocal_rank",
+      "side_a": 0.0,
+      "side_b": 1.0,
+      "delta": 1.0
+    },
+    {
+      "query_id": "zero-budget",
+      "metric": "ndcg_at_k",
+      "side_a": 0.0,
+      "side_b": 1.0,
+      "delta": 1.0
+    },
+    {
+      "query_id": "context-budget",
+      "metric": "reciprocal_rank",
+      "side_a": 0.2,
+      "side_b": 1.0,
+      "delta": 0.8
+    },
+    {
+      "query_id": "read-role-ru",
+      "metric": "reciprocal_rank",
+      "side_a": 0.25,
+      "side_b": 1.0,
+      "delta": 0.75
+    },
+    {
+      "query_id": "pdf-extract",
+      "metric": "reciprocal_rank",
+      "side_a": 0.3333333333333333,
+      "side_b": 1.0,
+      "delta": 0.6666666666666667
+    },
+    {
+      "query_id": "context-duplicate",
+      "metric": "ndcg_at_k",
+      "side_a": 0.0,
+      "side_b": 0.6309297535714575,
+      "delta": 0.6309297535714575
+    },
+    {
+      "query_id": "mcp-connect",
+      "metric": "ndcg_at_k",
+      "side_a": 0.0,
+      "side_b": 0.6309297535714575,
+      "delta": 0.6309297535714575
+    },
+    {
+      "query_id": "context-budget",
+      "metric": "ndcg_at_k",
+      "side_a": 0.38685280723454163,
+      "side_b": 1.0,
+      "delta": 0.6131471927654584
+    },
+    {
+      "query_id": "read-role-ru",
+      "metric": "ndcg_at_k",
+      "side_a": 0.43067655807339306,
+      "side_b": 1.0,
+      "delta": 0.5693234419266069
+    },
+    {
+      "query_id": "auth-code",
+      "metric": "reciprocal_rank",
+      "side_a": 0.5,
+      "side_b": 1.0,
+      "delta": 0.5
+    },
+    {
+      "query_id": "clipper-roadmap-ru",
+      "metric": "ndcg_at_k",
+      "side_a": 0.0,
+      "side_b": 0.5,
+      "delta": 0.5
+    },
+    {
+      "query_id": "context-duplicate",
+      "metric": "reciprocal_rank",
+      "side_a": 0.0,
+      "side_b": 0.5,
+      "delta": 0.5
+    },
+    {
+      "query_id": "mcp-connect",
+      "metric": "reciprocal_rank",
+      "side_a": 0.0,
+      "side_b": 0.5,
+      "delta": 0.5
+    },
+    {
+      "query_id": "pdf-extract",
+      "metric": "ndcg_at_k",
+      "side_a": 0.5,
+      "side_b": 1.0,
+      "delta": 0.5
+    },
+    {
+      "query_id": "auth-code",
+      "metric": "ndcg_at_k",
+      "side_a": 0.6309297535714575,
+      "side_b": 1.0,
+      "delta": 0.36907024642854247
+    },
+    {
+      "query_id": "clipper-roadmap-ru",
+      "metric": "reciprocal_rank",
+      "side_a": 0.0,
+      "side_b": 0.3333333333333333,
+      "delta": 0.3333333333333333
+    },
+    {
+      "query_id": "llm-wiki",
+      "metric": "reciprocal_rank",
+      "side_a": 0.2,
+      "side_b": 0.25,
+      "delta": 0.04999999999999999
+    },
+    {
+      "query_id": "llm-wiki",
+      "metric": "ndcg_at_k",
+      "side_a": 0.38685280723454163,
+      "side_b": 0.43067655807339306,
+      "delta": 0.04382375083885143
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "read-role-ru",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.25,
+        "ndcg_at_k": 0.43067655807339306
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "remote-auth-en",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.25,
+        "ndcg_at_k": 0.43067655807339306
+      },
+      "side_b": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      }
+    },
+    {
+      "query_id": "auth-code",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5,
+        "ndcg_at_k": 0.6309297535714575
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "agent-synthesis",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "index-first",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "review-conflict-ru",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.2,
+        "ndcg_at_k": 0.38685280723454163
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.2,
+        "ndcg_at_k": 0.38685280723454163
+      }
+    },
+    {
+      "query_id": "review-atomic-code",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "review-recovery-ru",
+      "side_a": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      },
+      "side_b": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      }
+    },
+    {
+      "query_id": "wikilink-code",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5,
+        "ndcg_at_k": 0.6309297535714575
+      }
+    },
+    {
+      "query_id": "tag-code",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5,
+        "ndcg_at_k": 0.6309297535714575
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.3333333333333333,
+        "ndcg_at_k": 0.5
+      }
+    },
+    {
+      "query_id": "context-budget",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.2,
+        "ndcg_at_k": 0.38685280723454163
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "zero-budget",
+      "side_a": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "context-duplicate",
+      "side_a": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5,
+        "ndcg_at_k": 0.6309297535714575
+      }
+    },
+    {
+      "query_id": "sync-offline-ru",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5,
+        "ndcg_at_k": 0.6309297535714575
+      }
+    },
+    {
+      "query_id": "sync-replay",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.3333333333333333,
+        "ndcg_at_k": 0.5
+      }
+    },
+    {
+      "query_id": "mcp-connect",
+      "side_a": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5,
+        "ndcg_at_k": 0.6309297535714575
+      }
+    },
+    {
+      "query_id": "llm-wiki",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.2,
+        "ndcg_at_k": 0.38685280723454163
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.25,
+        "ndcg_at_k": 0.43067655807339306
+      }
+    },
+    {
+      "query_id": "ann-gate",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.25,
+        "ndcg_at_k": 0.43067655807339306
+      }
+    },
+    {
+      "query_id": "markdown-authority",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "restore-code",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "dotnet-bin",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "pdf-extract",
+      "side_a": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.3333333333333333,
+        "ndcg_at_k": 0.5
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "ndcg_at_k": 1.0
+      }
+    },
+    {
+      "query_id": "clipper-roadmap-ru",
+      "side_a": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      },
+      "side_b": {
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.3333333333333333,
+        "ndcg_at_k": 0.5
+      }
+    },
+    {
+      "query_id": "snapshot-before-generation",
+      "side_a": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      },
+      "side_b": {
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "ndcg_at_k": 0.0
+      }
+    }
+  ]
+}

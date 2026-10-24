@@ -221,6 +221,12 @@ impl<'a> DiagnosticsService<'a> {
     pub fn status(&self) -> Result<StatusReport, AppError> {
         let schema_version = self.store.schema_version()?.unwrap_or(0);
         let fts_ready = self.store.fts_ready()?;
+        let fts_state = self.store.fts_generation_state()?;
+        let fts_generation_gap = crate::db::fts::fts_generation_gap(&fts_state);
+        let fts_stale = crate::db::fts::fts_stale_needs_reindex(
+            &fts_state,
+            self.config.fts_stale_generation_threshold,
+        );
         let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
         let wings = self.store.list_wings()?;
         let layer_health = self.store.layer_health_counts()?;
@@ -245,6 +251,11 @@ impl<'a> DiagnosticsService<'a> {
             storage_capabilities: crate::storage::duckdb_capability_names(),
             schema_version,
             fts_ready,
+            fts_dirty: fts_state.dirty,
+            fts_generation_gap,
+            fts_rebuild_count: fts_state.rebuild_count,
+            fts_stale_threshold: self.config.fts_stale_generation_threshold,
+            fts_stale,
             document_count,
             chunk_count,
             node_count,
@@ -356,6 +367,73 @@ fn repair_hint(
     } else {
         None
     }
+}
+
+/// Periodic FTS staleness check (the maintenance loop for the derived lexical
+/// index). When the dirty-generation gap reaches
+/// `config.fts_stale_generation_threshold` the loop rebuilds the FTS index via
+/// `ensure_fts` and records an ops-log entry (`op = "fts_auto_reindex"`).
+/// `threshold == 0` disables auto-reindex entirely; staleness remains visible
+/// in `/v1/status` either way. Interval: `config.fts_maint_interval_secs`
+/// (0 disables the loop).
+pub fn spawn_fts_maintenance(store: Store, config: Config) {
+    if config.fts_stale_generation_threshold == 0 || config.fts_maint_interval_secs == 0 {
+        return;
+    }
+    let threshold = config.fts_stale_generation_threshold;
+    let stemmer = config.fts_stemmer.clone();
+    let interval = std::time::Duration::from_secs(config.fts_maint_interval_secs);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            let check_store = store.clone();
+            let stemmer = stemmer.clone();
+            let outcome = tokio::task::spawn_blocking(move || -> Result<Option<u64>, AppError> {
+                let state = check_store.fts_generation_state()?;
+                if !crate::db::fts::fts_stale_needs_reindex(&state, threshold) {
+                    return Ok(None);
+                }
+                let gap = crate::db::fts::fts_generation_gap(&state);
+                check_store.ensure_fts(&stemmer)?;
+                Ok(Some(gap.unwrap_or(state.chunks_generation)))
+            })
+            .await;
+            match outcome {
+                Ok(Ok(Some(gap))) => {
+                    tracing::warn!(
+                        gap,
+                        threshold,
+                        "FTS stale beyond threshold; auto-reindex completed"
+                    );
+                    let _ = store.append_ops_log(&crate::models::OpsLogEntry {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        seq: 0,
+                        ts: chrono::Utc::now(),
+                        op: "fts_auto_reindex".into(),
+                        prefix: Some("FTS".into()),
+                        message: format!(
+                            "FTS generation gap {gap} reached threshold {threshold}; reindexed"
+                        ),
+                        entity_id: None,
+                        entity_kind: Some("fts".into()),
+                        payload_json: serde_json::json!({
+                            "generation_gap": gap,
+                            "threshold": threshold,
+                        })
+                        .to_string(),
+                        agent_name: None,
+                    });
+                }
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => {
+                    tracing::error!(error = %error, "FTS maintenance check failed")
+                }
+                Err(error) => {
+                    tracing::error!(error = %error, "FTS maintenance task failed")
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]

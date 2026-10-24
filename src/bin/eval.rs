@@ -5,8 +5,8 @@ use rag_mcp::db::search::{search, SearchQuery};
 use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
 use rag_mcp::eval::{
     apply_settings_profile, compare_query_metrics, dataset_content_hash, load_checkpoint,
-    load_export_bundle, replay_bundle, save_checkpoint, Checkpoint, QueryErrorLabel,
-    QuerySideMetrics, SearchSettingsProfile,
+    load_export_bundle, replay_bundle, save_checkpoint, triad_report, Checkpoint, QueryErrorLabel,
+    QuerySideMetrics, SearchSettingsProfile, TriadModeInput,
 };
 use rag_mcp::models::{SearchHit, SearchMode};
 use rag_mcp::wiki;
@@ -164,6 +164,7 @@ struct Args {
     checkpoint: Option<PathBuf>,
     error_labels: Option<PathBuf>,
     replay: Option<PathBuf>,
+    triad_out: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -208,6 +209,7 @@ where
     let mut checkpoint = None;
     let mut error_labels = None;
     let mut replay = None;
+    let mut triad_out = None;
     let mut it = args.into_iter().map(Into::into);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -285,8 +287,9 @@ where
                     it.next().context("--error-labels needs path")?,
                 ))
             }
-            "--replay" => {
-                replay = Some(PathBuf::from(it.next().context("--replay needs path")?))
+            "--replay" => replay = Some(PathBuf::from(it.next().context("--replay needs path")?)),
+            "--triad-out" => {
+                triad_out = Some(PathBuf::from(it.next().context("--triad-out needs path")?))
             }
             "-h" | "--help" => {
                 eprintln!(
@@ -299,9 +302,11 @@ where
                      \t[--settings-a FILE.json --settings-b FILE.json]\n\
                      \t[--compare-out FILE.json] [--checkpoint FILE.json]\n\
                      \t[--error-labels FILE.jsonl] [--replay FILE.json]\n\
+                     \t[--triad-out FILE.json]\n\
                      Uses a throwaway database. --golden remains a --dataset alias.\n\
                      A/B compare: both --settings-a and --settings-b; resume via --checkpoint.\n\
-                     --replay recomputes heuristic judges from an export bundle (no live search)."
+                     --replay recomputes heuristic judges from an export bundle (no live search).\n\
+                     --triad-out writes a RAG-triad-named JSON report (unmeasured metrics null)."
                 );
                 std::process::exit(0);
             }
@@ -367,6 +372,7 @@ where
         checkpoint,
         error_labels,
         replay,
+        triad_out,
     })
 }
 
@@ -416,6 +422,9 @@ async fn run(args: Args) -> Result<()> {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("duckdb.wal"));
     let report = result?;
+    if let Some(path) = &args.triad_out {
+        write_triad_report(path, &report)?;
+    }
     if let Some(path) = &args.feedback_jsonl {
         append_feedback(path, &report)?;
     }
@@ -568,7 +577,42 @@ fn synthetic_content(document_index: usize, len: usize) -> String {
     content
 }
 
-async fn evaluate(args: &Args, dataset: Dataset, dataset_hash: &str, db_path: &Path) -> Result<Report> {
+/// Write the RAG-triad-named view of a finished retrieval report.
+/// Only measured signals map; the rest are null (see docs/RETRIEVAL_EVALUATION.md).
+fn write_triad_report(path: &Path, report: &Report) -> Result<()> {
+    let modes = report
+        .modes
+        .iter()
+        .map(|mode| TriadModeInput {
+            mode: mode.mode.clone(),
+            recall_at_k: mode.recall_at_k,
+            // Retrieval-only eval: no answer judge ran, so faithfulness is null.
+            faithfulness: None,
+        })
+        .collect();
+    let triad = triad_report(
+        &report.dataset_name,
+        &report.dataset_content_hash,
+        report.top_k,
+        modes,
+    );
+    let json = serde_json::to_string_pretty(&triad)?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, json)?;
+    eprintln!("triad report written to {}", path.display());
+    Ok(())
+}
+
+async fn evaluate(
+    args: &Args,
+    dataset: Dataset,
+    dataset_hash: &str,
+    db_path: &Path,
+) -> Result<Report> {
     let mut config = Config::from_env()?;
     config.db_path = db_path.to_path_buf();
     let store = Store::open(&config.db_path)?;
@@ -707,18 +751,12 @@ async fn evaluate_compare(
     dataset_hash: &str,
     db_path: &Path,
 ) -> Result<rag_mcp::eval::CompareReport> {
-    let settings_a = SearchSettingsProfile::load(
-        args.settings_a
-            .as_ref()
-            .context("missing --settings-a")?,
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
-    let settings_b = SearchSettingsProfile::load(
-        args.settings_b
-            .as_ref()
-            .context("missing --settings-b")?,
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
+    let settings_a =
+        SearchSettingsProfile::load(args.settings_a.as_ref().context("missing --settings-a")?)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    let settings_b =
+        SearchSettingsProfile::load(args.settings_b.as_ref().context("missing --settings-b")?)
+            .map_err(|e| anyhow::anyhow!(e))?;
     let side_a_name = settings_a.display_name("A");
     let side_b_name = settings_b.display_name("B");
     let labels_by_id: HashMap<String, _> = if let Some(path) = &args.error_labels {
@@ -791,24 +829,12 @@ async fn evaluate_compare(
         if checkpoint.completed_query_ids.contains(&query.id) {
             continue;
         }
-        let a = eval_query_with_settings(
-            &store,
-            &embedder,
-            &config,
-            query,
-            &settings_a,
-            args.top_k,
-        )
-        .await?;
-        let b = eval_query_with_settings(
-            &store,
-            &embedder,
-            &config,
-            query,
-            &settings_b,
-            args.top_k,
-        )
-        .await?;
+        let a =
+            eval_query_with_settings(&store, &embedder, &config, query, &settings_a, args.top_k)
+                .await?;
+        let b =
+            eval_query_with_settings(&store, &embedder, &config, query, &settings_b, args.top_k)
+                .await?;
         checkpoint.record(
             query.id.clone(),
             QuerySideMetrics {
@@ -847,6 +873,21 @@ async fn evaluate_compare(
     ))
 }
 
+/// Deterministic stub variants for `rewrite = "mock"` settings profiles.
+///
+/// Mirrors the shape of LLM rewrites (alternative phrasings) without any live
+/// LLM: suffix-padded paraphrase stand-ins that keep the original terms so
+/// lexical matching still works. Used to validate the rewrite → per-variant
+/// search → RRF fusion plumbing offline.
+fn mock_rewrite_variants(query: &str) -> Vec<String> {
+    let q = query.trim();
+    vec![
+        format!("{q} overview"),
+        format!("{q} explained"),
+        format!("{q} documentation"),
+    ]
+}
+
 async fn eval_query_with_settings(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -876,7 +917,39 @@ async fn eval_query_with_settings(
     };
     let embedding_ms = ms(embedding_started);
     let search_started = Instant::now();
-    let search_query = apply_settings_profile(
+    let rewrite_mock = profile
+        .rewrite
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|kind| {
+            if kind.eq_ignore_ascii_case("mock") {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "settings rewrite '{kind}' unsupported in eval CLI: only 'mock' is available offline"
+                ))
+            }
+        })
+        .transpose()?
+        .is_some();
+    let rerank_mock = profile
+        .rerank
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|kind| {
+            if kind.eq_ignore_ascii_case("mock") {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "settings rerank '{kind}' unsupported in eval CLI: only 'mock' is available offline"
+                ))
+            }
+        })
+        .transpose()?
+        .is_some();
+    let mut search_query = apply_settings_profile(
         SearchQuery {
             mode,
             top_k,
@@ -888,7 +961,51 @@ async fn eval_query_with_settings(
         profile,
     )
     .map_err(|e| anyhow::anyhow!(e))?;
-    let hits = search(store, &search_query)?;
+    if rerank_mock {
+        // Mirror production: expand the candidate pool, rerank, cut back.
+        search_query.top_k = top_k.max(50).min(rag_mcp::db::search::MAX_TOP_K);
+        // Post-processing a 50-candidate pool (snippets, context metadata)
+        // needs more headroom than the default 5s top-5 budget.
+        search_query.timeout_ms = Some(30_000);
+    }
+    let mut hits = if rewrite_mock {
+        // Mirror production `rewrite=true`: deterministic stub variants, one
+        // search per variant plus the original, fused with RRF. Plumbing
+        // validation only — no claim about real LLM rewrite quality.
+        let variants = mock_rewrite_variants(&query.query);
+        let mut lists = Vec::with_capacity(1 + variants.len());
+        lists.push(search(store, &search_query)?);
+        for variant in variants {
+            let mut leg = search_query.clone();
+            leg.query_text = Some(variant.clone());
+            leg.embed_ms = None;
+            if mode.needs_embedding() {
+                leg.query_embedding = Some(
+                    embedder
+                        .embed(std::slice::from_ref(&variant))
+                        .await?
+                        .remove(0),
+                );
+            }
+            lists.push(search(store, &leg)?);
+        }
+        rag_mcp::db::search::fuse_rrf_many(&lists, search_query.rrf_k, search_query.top_k)
+    } else {
+        search(store, &search_query)?
+    };
+    if rerank_mock {
+        use rag_mcp::rerank::RerankProvider;
+        let documents: Vec<String> = hits
+            .iter()
+            .map(|hit| rag_mcp::rerank::truncate_candidate(&hit.content))
+            .collect();
+        let scores = rag_mcp::rerank::MockReranker
+            .rerank(&query.query, &documents)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        rag_mcp::rerank::apply_rerank_scores(&mut hits, &scores).map_err(|e| anyhow::anyhow!(e))?;
+        hits.truncate(top_k);
+    }
     Ok(score(query, hits, embedding_ms, ms(search_started), top_k))
 }
 
@@ -906,14 +1023,23 @@ fn load_dataset(path: &Path) -> Result<Dataset> {
     if data.corpus.is_empty() || data.queries.is_empty() {
         bail!("dataset corpus and queries must not be empty");
     }
-    let titles: HashSet<_> = data.corpus.iter().filter_map(|path| Path::new(path).file_name().and_then(|name| name.to_str())).collect();
+    let titles: HashSet<_> = data
+        .corpus
+        .iter()
+        .filter_map(|path| Path::new(path).file_name().and_then(|name| name.to_str()))
+        .collect();
     if titles.len() != data.corpus.len() {
         bail!("corpus filenames must be unique: evaluation labels identify documents by filename");
     }
     let mut query_ids = HashSet::new();
     for q in &data.queries {
-        if !query_ids.insert(q.id.as_str()) { bail!("duplicate query id '{}'", q.id); }
-        if q.relevant.iter().any(|label| !titles.contains(label.document_title.as_str())) {
+        if !query_ids.insert(q.id.as_str()) {
+            bail!("duplicate query id '{}'", q.id);
+        }
+        if q.relevant
+            .iter()
+            .any(|label| !titles.contains(label.document_title.as_str()))
+        {
             bail!("query '{}' references a document outside the corpus", q.id);
         }
         if q.id.trim().is_empty() || q.query.trim().is_empty() || q.relevant.is_empty() {
@@ -1306,7 +1432,10 @@ mod tests {
     fn dataset_labels_must_reference_unique_corpus_filenames() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dataset.json");
-        for (corpus, title) in [(vec!["a.md"], "missing.md"), (vec!["x/a.md", "y/a.md"], "a.md")] {
+        for (corpus, title) in [
+            (vec!["a.md"], "missing.md"),
+            (vec!["x/a.md", "y/a.md"], "a.md"),
+        ] {
             std::fs::write(&path, serde_json::json!({"version":1,"name":"invalid","corpus":corpus,
                 "queries":[{"id":"q","query":"question","relevant":[{"document_title":title,"relevance":3}]}]}).to_string()).unwrap();
             assert!(load_dataset(&path).is_err());

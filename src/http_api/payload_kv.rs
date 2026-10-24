@@ -36,7 +36,12 @@ impl PayloadTable {
 }
 
 /// Insert or replace a JSON payload row.
-pub fn upsert_payload(store: &Store, table: PayloadTable, id: &str, payload: &impl Serialize) -> Result<()> {
+pub fn upsert_payload(
+    store: &Store,
+    table: PayloadTable,
+    id: &str,
+    payload: &impl Serialize,
+) -> Result<()> {
     let conn = store.lock()?;
     upsert_payload_conn(&conn, table, id, payload)
 }
@@ -181,7 +186,9 @@ mod tests {
         assert_eq!(total, 2);
         assert_eq!(page[0]["id"], "b");
         assert_eq!(page[1]["id"], "a");
-        let raw = get_payload_raw(&store, PayloadTable::EvalRuns, "a").unwrap().unwrap();
+        let raw = get_payload_raw(&store, PayloadTable::EvalRuns, "a")
+            .unwrap()
+            .unwrap();
         assert!(raw.contains("\"kind\":\"x\""));
     }
 

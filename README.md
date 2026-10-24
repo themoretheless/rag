@@ -31,16 +31,56 @@ Beyond plain RAG it maintains:
 
 Layout is not computed server-side: tools return pure `{nodes, edges}` JSON for clients or LLMs.
 
+## Code analysis (initial implementation)
+
+With `RAG_TOOLS=full`, `index_code` builds a persistent tree-sitter index over
+already ingested Rust/Python/JS/TS/Go/Java/C/C++/Bash/sh and basic PHP sources; source
+synchronization refreshes it automatically. Go uses captured package/module facts;
+Java adds source import/type/arity/hierarchy candidates with explicit compiler
+and runtime limitations. `symbol`, `references`, `callers`, `callees`, `code`, `repo_map`
+and `impact` return source evidence and report stale or missing coverage. Call targets
+use conservative lexical/import/type binding, report their resolution basis,
+and retain unresolved or ambiguous cases explicitly. `inheritance` exposes base
+relations; method lookup supports explicit bases, overrides and `super`.
+`entrypoints`, `routes`, `dead_code` and `slice` add syntax-based navigation,
+reachability candidates and bounded structural call slices. Full compiler inference and
+dynamic dispatch remain outside the current implementation. See
+[`docs/RAGRAF_PARITY.md`](docs/RAGRAF_PARITY.md) for usage, limitations and the
+remaining RAGRAF feature plan.
+
+## SQL schema and table-use analysis
+
+With `RAG_TOOLS=full`, `schema` derives tables/columns from ingested migration DDL,
+`table_usage` finds static SQL reads and writes, and `write_check` validates a
+column/row plan without executing SQL. Source sync refreshes SQL facts alongside
+the code index. Incomplete schemas return an indeterminate verdict. See
+[`docs/SQL_CODE_ANALYSIS.md`](docs/SQL_CODE_ANALYSIS.md) for supported SQL and limits.
+External PostgreSQL/MySQL snapshots, bounded samples and code/schema comparisons are
+configured separately: [`docs/EXTERNAL_DATABASES.md`](docs/EXTERNAL_DATABASES.md).
+
+## Exact code search and index history
+
+`search_multi` searches complete documents with literal/regex conjunctions or
+unions. `duplicates` groups exact/near copies with static usage evidence.
+Index publications now retain immutable revisions and deduplicated source blobs;
+`index_revisions`, `diff`, `catalog`, `freshness`, `live_read`, `drift_report` and
+`drift_ack` expose their history and source differences. See
+[`docs/CODE_HISTORY.md`](docs/CODE_HISTORY.md) for consistency and limits.
+
 ## Features (implemented)
 
-- **Ingest** raw text, UTF-8 files (`RAG_INGEST_ROOTS` allowlist), immutable `ingest_raw`, MemPalace-style `add_drawer` (wing + room required)
+- **Ingest** raw text, UTF-8 files (`RAG_INGEST_ROOTS` allowlist), web pages (`ingest_url`, `RAG_INGEST_URL_ALLOW` host allowlist), immutable `ingest_raw`, MemPalace-style `add_drawer` (wing + room required)
 - **Palace placement**: wings / rooms taxonomy (`list_wings`, `list_rooms`, `get_taxonomy`); scoped search by wing/room/layer/source
 - **Fixed-size chunking** with overlap (`RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`); Markdown chunks retain `heading_path` and leaf `section` metadata
+- **Structural code chunking** (`RAG_CODE_CHUNKING=structural`, default): Rust / Python / JS / TS sources split by top-level items (functions, classes, impl blocks) with `symbol` / `symbol_kind` chunk metadata; oversized items window-split inside their own span, tiny soft items (constants, gaps) merge up to chunk size. Heuristic scanner (brace/indent based, no tree-sitter in the offline build); `RAG_CODE_CHUNKING=window` restores the legacy boundary-preferring splitter. Other languages keep window splitting
+- **Parent/child chunks** (schema v17): Markdown leaves under one heading link to the section's leading chunk, and continuation windows of an oversized code item link to its first window, via `parent_chunk_id` (chunk metadata key + mirrored column). Existing databases migrate additively; the column is backfilled from metadata on open, rows without links stay NULL until re-ingest (lazy)
 - **Embeddings**: `mock` (deterministic), `openai` / `openai_compat`, `ollama` (native or OpenAI-compatible base)
 - **Search modes**: `lex` (BM25 or TF fallback), `vec` (cosine over stored vectors), `hybrid` (RRF fusion); selective vector scopes are materialized in SQL before exact scoring instead of copying the global snapshot
 - **Search filters**: document_id, wing, room, layer, source_file, include_archived; min_score; diversity (`mmr` | `collapse_by_document`); token packing. Project/document/source scopes neither consult nor populate the database-wide vector cache
-- **Citation-oriented hits**: scores (`score`, `score_vec`, `score_lex`, `score_rrf`), snippet, char offsets, and Markdown section metadata when available
-- **Opt-in context expansion**: `search` and `pack_context` accept `context_expansion=neighbors|parent_section`; `neighbor_chunks` controls the neighbor radius (default 1)
+- **Citation-oriented hits**: scores (`score`, `score_vec`, `score_lex`, `score_rrf`, `score_rerank` when reranking), snippet, char offsets, and Markdown section metadata when available
+- **Opt-in reranking**: `search` accepts `rerank=true`; when `RAG_RERANK_PROVIDER` is configured (`mock` | `openai_compat` | `ollama`), the candidate pool (`RAG_RERANK_TOP_N`, default 50) is reranked after retrieval and cut back to `top_k`. Provider errors fall back to the un-reranked ranking (`rerank_fallback` in the explanation). Default off = zero behavior change. `multi_query_search` and `search_wiki` accept the same `rerank` flag
+- **Opt-in server-side query transforms**: `search` (and `POST /v1/search`) accept `rewrite=true` (chat LLM proposes `RAG_QUERY_REWRITE_VARIANTS` query variants, default 3, fused with the original via RRF) and `hyde=true` (LLM-written hypothetical answer passage embedded as an extra dense leg; vec/hybrid only). Both reuse the `RAG_LLM_*` provider unless overridden via `RAG_QUERY_REWRITE_*` / `RAG_HYDE_*`, cache results in a bounded in-process cache, and never fail the request: LLM errors fall back to plain search (`query_rewrite_fallback` / `hyde_fallback` reasons, `rewrite_ms` / `hyde_ms` timings in the explanation). With both flags set, rewrite variants and the HyDE leg are all fused with the original query. Raise `timeout_ms` when enabling transforms against a slow local LLM
+- **Opt-in context expansion**: `search` and `pack_context` accept `context_expansion=neighbors|parent_section|parent`; `neighbor_chunks` controls the neighbor radius (default 1). `parent` returns the stored parent chunk plus its sibling leaves (full Markdown section / code item) for the first hit under each parent — later hits sharing that parent keep their own body (deduped); hits without a stored parent are unchanged
 - **Object graph**: wikilinks, tags, stubs, neighbors BFS, backlinks, `link_nodes`, dedicated tunnel tools, `graph_expand_search`, `graph_stats`
 - **Temporal knowledge graph**: `kg_add` / `kg_query` / `kg_invalidate` / `kg_supersede` / `kg_timeline` / `kg_stats`
 - **Agent diary + session**: `diary_write` / `diary_read`, `wake_up`, `checkpoint`, `memories_filed_away`
@@ -107,6 +147,7 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_EMBEDDING_DIMS` | `1536` (Ollama: `768`) | Vector dimensions (must match model and corpus manifest) |
 | `RAG_CHUNK_SIZE` | `800` | Approx chars per chunk |
 | `RAG_CHUNK_OVERLAP` | `120` | Overlap chars (must be &lt; chunk size) |
+| `RAG_CODE_CHUNKING` | `structural` | `structural` splits Rust/Python/JS/TS by top-level items with symbol metadata; `window` restores the legacy splitter |
 | `RAG_DEFAULT_TOP_K` | `5` | Default search limit |
 | `RAG_STORAGE_BACKEND` | `duckdb` | Full `rag-mcp` runtime accepts DuckDB; the backend-neutral library document factory also supports opt-in `markdown` vault CRUD |
 | `RAG_VAULT_PATH` | — | Explicit vault root required by the Markdown storage adapter; never inferred from `RAG_DB_PATH` |
@@ -114,6 +155,10 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_PID_FILE` | `<RAG_DB_PATH with .pid>` | Optional PID metadata path used to flag stale crash metadata |
 | `RAG_DEFAULT_SEARCH_MODE` | `vec` | `vec` \| `lex` \| `hybrid` |
 | `RAG_INGEST_ROOTS` | (empty) | Comma-separated path allowlist for `ingest_file`. **Empty refuses all file paths** |
+| `RAG_INGEST_URL_ALLOW` | (empty) | Comma-separated host allowlist for `ingest_url` (`*.example.com` matches subdomains). **Empty disables `ingest_url`** |
+| `RAG_INGEST_URL_TIMEOUT_SECS` | `30` | HTTP timeout for `ingest_url` fetches |
+| `RAG_INGEST_URL_MAX_BYTES` | `10485760` | Max response bytes accepted by `ingest_url` (10 MiB) |
+| `RAG_REEMBED_BATCH` | `100` | Documents re-embedded per migration batch; batches are resumable, repeat until `reembed_status` shows zero pending |
 | `RAG_CHECKPOINT_ON_START` | `true` | Flush and validate DuckDB WAL before serving |
 | `RAG_WAL_WARN_BYTES` | `268435456` | Doctor warning threshold for an uncheckpointed WAL |
 | `RAG_AUTO_BACKUP_DIR` | (empty/off) | Directory for periodic checkpointed snapshots |
@@ -122,11 +167,30 @@ parity) stay in [Limitations](#limitations-honest) and the parity doc.
 | `RAG_AUTO_BACKUP_MIN_FREE_BYTES` | `2147483648` | Headroom that must stay free on the snapshot volume after a write; below it the automatic run refuses and `GET /v1/runtime` reports the reason |
 | `RAG_AUTO_SYNC_ROOTS` | (empty/off) | `;`-separated allowlisted directories for incremental background sync |
 | `RAG_AUTO_SYNC_INTERVAL_SECS` | `3600` | Background sync interval; the first pass runs at startup |
-| `RAG_MAX_CONTEXT_TOKENS` | `4096` | Default token budget when packing search hits (~4 chars/token) |
+| `RAG_WATCH_ROOTS` | (empty/off) | `;`-separated directories watched by the OS file watcher (notify); debounced changes trigger the manifest-aware `sync_sources` scan and are logged to the ops log (`watch_sync`) |
+| `RAG_WATCH_DEBOUNCE_MS` | `2000` | Quiet period after the last file event before watched roots sync |
+| `RAG_WATCH_MIN_SYNC_INTERVAL_SECS` | `30` | Minimum interval between watcher-triggered syncs (watcher-storm guard) |
+| `RAG_TOKENIZER_JSON` | (empty/off) | Local Hugging Face `tokenizer.json` for exact token counting (match it to the active LLM provider family); unset uses the calibrated CJK/ASCII/code heuristic |
+| `RAG_MAX_CONTEXT_TOKENS` | `4096` | Default token budget when packing search hits (exact via `RAG_TOKENIZER_JSON`, else calibrated heuristic) |
 | `RAG_MAX_CHUNKS_PER_DOC` | `3` | Max chunks retained per document under diversity collapse |
 | `RAG_MAX_LINKS_PER_DOC` | `2000` | Max wikilinks/tags extracted from one document before truncation |
 | `RAG_FTS_STEMMER` | `porter` | DuckDB FTS stemmer; use `none` for CJK/code |
-| `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (currently 33 compile-first tools, count-bounded by test) or `full` (all tools). See vision §5. |
+| `RAG_FTS_STALE_GENERATION_THRESHOLD` | `64` | Dirty-generation gap at which the maintenance loop auto-reindexes FTS; `0` disables (staleness stays visible in `/v1/status` as `fts_dirty` / `fts_generation_gap` / `fts_stale`) |
+| `RAG_FTS_MAINT_INTERVAL_SECS` | `300` | Maintenance-loop interval for FTS staleness checks |
+| `RAG_RERANK_PROVIDER` | `off` | Rerank backend: `off` \| `mock` \| `openai_compat` (Jina/vLLM `/rerank`) \| `ollama` (chat scoring) |
+| `RAG_RERANK_BASE_URL` | (empty; ollama → `http://127.0.0.1:11434`) | Rerank API root |
+| `RAG_RERANK_MODEL` | (empty) | Rerank model name (required when provider is `openai_compat` / `ollama`) |
+| `RAG_RERANK_API_KEY` | (empty) | Rerank API key (optional for local endpoints) |
+| `RAG_RERANK_TOP_N` | `50` | Candidate pool reranked when `rerank=true` (hard cap 100) |
+| `RAG_RERANK_TIMEOUT_SECS` | `30` | HTTP timeout for rerank requests |
+| `RAG_QUERY_REWRITE_VARIANTS` | `3` | Variants generated when `rewrite=true` (cap 8) |
+| `RAG_QUERY_REWRITE_PROVIDER` | (empty → `RAG_LLM_PROVIDER`) | Optional chat provider override for rewriting |
+| `RAG_QUERY_REWRITE_MODEL` | (empty → `RAG_LLM_MODEL`) | Optional model override for rewriting |
+| `RAG_QUERY_REWRITE_CACHE_SIZE` | `256` | Bounded in-process rewrite cache (0 disables) |
+| `RAG_HYDE_PROVIDER` | (empty → `RAG_LLM_PROVIDER`) | Optional chat provider override for HyDE |
+| `RAG_HYDE_MODEL` | (empty → `RAG_LLM_MODEL`) | Optional model override for HyDE |
+| `RAG_HYDE_CACHE_SIZE` | `256` | Bounded in-process HyDE cache (0 disables) |
+| `RAG_TOOLS` | `spine` | MCP tool surface: `spine` (currently 34 compile-first tools, count-bounded by test) or `full` (all tools). See vision §5. |
 | `RAG_LLM_PROVIDER` | `ollama` | Chat preset: `ollama` \| `openai` \| `codex` \| `claude` \| `kimi` \| `deepseek` \| `custom` — see [`docs/LLM_PROVIDERS.md`](docs/LLM_PROVIDERS.md) |
 | `RAG_LLM_ENABLED` | `true` | When false, chat/compile tools refuse |
 | `RAG_LLM_BASE_URL` | provider default | Chat API root (override preset) |
@@ -186,7 +250,8 @@ cargo run
 ### OpenAI-compatible embeddings
 
 These settings belong to the one gateway. Changing provider, model, dimensions,
-or base endpoint requires a complete uncapped successful `reembed_all` before
+or base endpoint requires a complete successful `reembed_all` (resumable in
+batches of `RAG_REEMBED_BATCH`) before
 the new manifest is published and vector/hybrid search resumes; do not start a
 second `cargo run` process against either the canonical DB or an implicit
 `./rag.duckdb`.
@@ -266,17 +331,19 @@ Embeddings: native Ollama `/api/embed` (or `/api/embeddings`), or OpenAI-compati
 The embedding corpus identity covers provider, model, dimensions, and base
 endpoint. `reembed_document` is a one-document refresh only when that identity
 already matches the stored manifest; it is not a migration command. After an
-identity change, `vec` / `hybrid` and new vector writes remain refused until
-`maintain_refresh` completes an uncapped `reembed_all` (`max_docs` at least the
-current corpus document count) with no skipped or failed documents and publishes
-the new manifest. Per-call `max_docs` is clamped to the gateway's
-`RAG_MAINT_MAX_DOCS`, so a larger corpus migration first requires raising that
-environment limit and restarting the gateway. The default maintenance cap
-deliberately refuses a larger identity migration before changing any vectors.
-Once migration starts, the store persists an incompatible migration marker
-before its first vector write. A partial failure—or switching configuration
-back to the old identity—therefore keeps vector/hybrid search closed; only full
-success replaces the marker with the target manifest.
+identity change, `vec` / `hybrid` and new vector writes remain refused until a
+complete `reembed_all` publishes the new manifest. Migration is **resumable and
+batched**: each `maintain_refresh` run with `reembed_all=true` re-embeds up to
+`max_docs` documents (clamped to `RAG_MAINT_MAX_DOCS` and `RAG_REEMBED_BATCH`,
+default 100), records per-document progress in `reembed_progress` and `ops_log`
+(`reembed_progress` op), and skips already-migrated documents on the next run —
+including after a crash or gateway restart. Check `reembed_status` (or
+`GET /v1/reembed-status`) for done/pending counts and repeat until zero
+documents remain pending. Once migration starts, the store persists an
+incompatible migration marker before its first vector write. A partial
+migration—or switching configuration back to the old identity—therefore keeps
+vector/hybrid search closed; only full coverage replaces the marker with the
+target manifest atomically.
 
 ### Env (LLM + maintenance)
 
@@ -419,12 +486,19 @@ All tools return JSON text content via MCP `CallToolResult`.
 | Tool | Params | Behavior |
 |------|--------|----------|
 | `ingest_text` | `text`, `title?`, `uri?`, `metadata_json?` | Chunk, embed, store; upsert by uri; graph extract |
-| `ingest_file` | `path`, `title?`, `uri?`, `metadata_json?` | Ingest text, Markdown, HTML, PDF, or common source code under `RAG_INGEST_ROOTS` |
+| `ingest_file` | `path`, `title?`, `uri?`, `metadata_json?` | Ingest text, Markdown, HTML, PDF, DOCX, XLSX, or common source code under `RAG_INGEST_ROOTS` |
+| `ingest_url` | `url`, `title?`, `uri?`, `metadata_json?`, `wing?`, `room?` | Fetch one HTTP(S) page (host must match `RAG_INGEST_URL_ALLOW`), extract main content with the readability-lite HTML extractor, ingest; upserts by final post-redirect URL |
 | `sync_sources` | `path`, `remove_deleted?`, `wing?`, `room?`, `max_file_bytes?` | Manifest-aware recursive sync; skip healthy unchanged files and generated trees, repair missing chunks, optionally prune deleted and explicitly excluded sources |
 
-HTML ingest strips tags plus script/style content. Source files retain `format`, `language`, and
+HTML ingest parses the DOM, drops script/style/nav/footer/header/aside boilerplate, prefers the
+`article`/`main` subtree, and keeps headings as Markdown `#` lines and table rows as text.
+DOCX and XLSX are extracted pure-Rust from their OOXML zip parts: DOCX headings become `#` lines
+(so section metadata flows into chunks) and tables/sheet rows become `cell | cell` text; XLSX emits
+one `## Sheet: name` section per worksheet. Source files retain `format`, `language`, and
 `source_path` metadata and prefer code block/line chunk boundaries. PDF ingest invokes Poppler's
-`pdftotext`; a missing tool or extraction failure is reported for that file, and PDF bytes are never
+`pdftotext -layout` (with a plain-mode retry); a missing tool or extraction failure is reported for
+that file, empty/garbled output records an `extract_warnings` metadata note (likely scanned PDF — no
+OCR), and PDF bytes are never
 treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `ingest_raw` | `text`, `title?`, `uri?`, `metadata_json?`, `wing?`, `room?`, `source_file?` | Immutable raw layer (`layer=raw`); same uri+hash no-op; content change refused |
 | `add_drawer` | `content`, `wing`, `room`, `source_file?`, `title?`, `uri?`, `metadata_json?` | Verbatim drawer with required placement |
@@ -435,11 +509,11 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 
 | Tool | Params | Behavior |
 |------|--------|----------|
-| `search` | `query`, `top_k?`, `mode?`, `document_id?`, `wing?`, `room?`, `layer?`, `source_file?`, `include_archived?`, `min_score?`, `diversity?`, `group_by?`, `recency_half_life_days?`, `max_context_tokens?`, `max_chunks_per_document?` | `lex` \| `vec` \| `hybrid` search over chunks; optional document grouping and recency boost |
+| `search` | `query`, `top_k?`, `mode?`, `document_id?`, `wing?`, `room?`, `layer?`, `source_file?`, `include_archived?`, `min_score?`, `diversity?`, `group_by?`, `recency_half_life_days?`, `max_context_tokens?`, `max_chunks_per_document?`, `rerank?`, `rewrite?`, `hyde?` | `lex` \| `vec` \| `hybrid` search over chunks; optional document grouping and recency boost; `rerank=true` reranks the candidate pool when `RAG_RERANK_PROVIDER` is configured; `rewrite=true` / `hyde=true` run server-side LLM query transforms (fallback = plain search) |
 | `multi_get` | `document_ids`, `include_chunks?` | Fetch up to 100 documents in one call and report missing IDs |
 | `expand_chunks` | `document_id`, `chunk_index`, `radius?` | Read the neighboring chunk window around a known hit |
 | `find_similar` | `document_id`, `chunk_indices?`, `top_k?`, filters… | Find chunks nearest to an existing document or selected chunks |
-| `search_wiki` | `query`, `top_k?`, `mode?`, `min_score?`, `wing?`, `room?`, `diversity?`, … | Search restricted to `layer=wiki` |
+| `search_wiki` | `query`, `top_k?`, `mode?`, `min_score?`, `wing?`, `room?`, `diversity?`, `rerank?`, … | Search restricted to `layer=wiki`; `rerank=true` like `search` |
 | `graph_expand_search` | `query`, `top_k?`, `document_id?`, `depth?`, `max_nodes?` | Vector search then neighbor expand from hit document nodes |
 | `pack_context` | `hits`, `max_tokens?` | Pack ranked hits under a token budget into a citation block |
 | `query_with_index` | `query`, `top_k?`, `include_content?` | Index-first catalog match (wiki index) |
@@ -462,8 +536,9 @@ treated as text. Existing plain-text and Markdown behavior remains unchanged.
 | `status` | (none) | Health: counts, FTS readiness, embed dims, `ready_for_search`; layer/index compilation health is aggregated in SQL without loading bodies |
 | `doctor` | (none) | Schema / FTS / embedding manifest, WAL size, orphan references, missing chunks, and scope integrity |
 | `get_embedding_manifest` | (none) | Corpus embedding identity fingerprint (provider, model, dims, base endpoint) |
-| `multi_query_search` | `queries`, `top_k?`, `mode?`, filters | Caller-supplied query rewrites fused with deterministic RRF; no implicit LLM call |
+| `multi_query_search` | `queries`, `top_k?`, `mode?`, `rerank?`, filters | Caller-supplied query rewrites fused with deterministic RRF; no implicit LLM call; `rerank=true` reranks the fused pool |
 | `reembed_document` | `document_id` | Refresh one document only when live embedding identity already matches the corpus manifest; not a model/provider/dims/base migration |
+| `reembed_status` | (none) | Read-only embedding identity status: search open/closed, stored vs configured identity, resumable migration progress (done/pending, batch size) |
 | `llm_status` | (none) | Chat + embed config and reachability |
 | `vacuum_store` | (none) | DuckDB `CHECKPOINT` + file size delta; ops_log |
 
@@ -589,21 +664,20 @@ Keep provider, model, `RAG_EMBEDDING_DIMS`, and
 records their combined identity in the **embedding manifest**; `vec` / `hybrid`
 and new vector writes refuse a mismatch. `reembed_document` only refreshes one
 document when the identity already matches. To change any identity component,
-run `maintain_refresh` with `reembed_all=true` and set `max_docs` to at least the
-current corpus document count, making the run uncapped relative to that corpus.
-Because the request is clamped to `RAG_MAINT_MAX_DOCS`, raise that gateway
-environment value to at least the same count and restart before a larger
-migration. The default maintenance cap refuses a larger migration before mutation. The new
-manifest is published, and search resumes, only after the complete corpus
-finishes with no skipped or failed documents. A persistent incompatible
+run `maintain_refresh` with `reembed_all=true`; each call migrates one batch
+(`RAG_REEMBED_BATCH`, default 100 documents) and persists progress, so repeat
+the call — even across restarts — until `reembed_status` reports zero pending
+documents. The new manifest is published, and search resumes, only when the
+last pending document completes with no failures. A persistent incompatible
 migration marker written before the first vector change keeps search closed
-after partial failure or configuration rollback.
+during partial migration or configuration rollback.
 
 If a non-empty corpus has chunks but no manifest, startup does not invent one
 from the current environment. The gateway stays available for diagnosis and a
 full repair, while vector reads/writes remain fail-closed and
-`ready_for_search=false`. Run one complete uncapped `reembed_all`; only full
-coverage with no skipped or failed documents publishes the verified manifest.
+`ready_for_search=false`. Run `reembed_all` (in `RAG_REEMBED_BATCH`-sized
+resumable batches, or one large `max_docs` pass); only full coverage with no
+skipped or failed documents publishes the verified manifest.
 
 Compatible servers (LiteLLM, Azure OpenAI, LM Studio, local proxies) work by
 setting `RAG_EMBEDDING_BASE_URL` and matching the complete corpus identity.
@@ -643,7 +717,7 @@ If the FTS extension is unavailable (offline CI, locked-down hosts), the same `l
 Tool tables above match the current MCP surface (see also Features and MemPalace-inspired model). Still **not** shipped:
 
 - No MemPalace `mempalace_*` tool renames or AAAK dialect
-- No generic OS watcher for DuckDB source roots; `RAG_AUTO_SYNC_ROOTS` and HTTP jobs run manifest-aware scans. The limited Markdown document adapter has its own sidecar watcher
+- An opt-in OS watcher exists (`RAG_WATCH_ROOTS`, debounced, storm-guarded, feeding the same manifest-aware scans as `RAG_AUTO_SYNC_ROOTS` and HTTP jobs); it stays off by default. The limited Markdown document adapter has its own sidecar watcher
 - No hallways (named multi-hop path objects) as first-class tools
 - Dedicated CLI `maintain` subcommand and compress L3+ remain open; backup and source-sync schedules are built into the gateway
 - No HNSW / DuckDB VSS ANN. A recorded local benchmark observed 133.98 ms
@@ -652,7 +726,7 @@ Tool tables above match the current MCP surface (see also Features and MemPalace
 - Versioned retrieval evaluation is available through the `eval` CLI; see
   [`docs/RETRIEVAL_EVALUATION.md`](docs/RETRIEVAL_EVALUATION.md) for dataset,
   metrics, diagnostics, and threshold-based future ANN guidance.
-- Binary formats other than PDF are not parsed
+- Binary formats other than PDF/DOCX/XLSX are not parsed (no OCR, no PPTX, no images)
 - No multi-tenant auth
 - No force-directed layout server-side (clients own visualization; optional `rag-mcp-ui` is RadialLocal only)
 - No block refs `[[note#^block]]` (full-note link only)
@@ -744,3 +818,9 @@ re-exporting JSON, not opening a second live handle.
 ## License
 
 MIT
+
+Static CSS class navigation and permission-decision traces: [CSS_POLICY_ANALYSIS.md](docs/CSS_POLICY_ANALYSIS.md) (`class_usage`, `policy_trace`; `RAG_TOOLS=full`).
+
+Task-scoped analysis notes and measured index usage: [ANALYSIS_TASKS.md](docs/ANALYSIS_TASKS.md) (`task_set`, `note`, `notes`, `task_stats`; `RAG_TOOLS=full`).
+
+Opt-in index-usage gate and labelled confidence-threshold reports: [GATE_CALIBRATION.md](docs/GATE_CALIBRATION.md) (`gate`, `rag_gate`, `calibrate`, `calibration_reports`).

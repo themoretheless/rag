@@ -204,7 +204,11 @@ fn heuristic_scores(input: &AnswerJudgeInput, citation: &CitationJudgeResult) ->
     } else if let Some(gold) = input.gold_answer.as_deref() {
         token_coverage(gold, answer)
     } else {
-        if citation.citation_present { 1.0 } else { 0.5 }
+        if citation.citation_present {
+            1.0
+        } else {
+            0.5
+        }
     };
     let reference = input
         .gold_answer
@@ -299,12 +303,12 @@ fn extract_json_object(text: &str) -> Result<serde_json::Value> {
             return Ok(v);
         }
     }
-    let start = trimmed.find('{').ok_or_else(|| {
-        AppError::config("LLM judge response did not contain a JSON object")
-    })?;
-    let end = trimmed.rfind('}').ok_or_else(|| {
-        AppError::config("LLM judge response did not contain a JSON object")
-    })?;
+    let start = trimmed
+        .find('{')
+        .ok_or_else(|| AppError::config("LLM judge response did not contain a JSON object"))?;
+    let end = trimmed
+        .rfind('}')
+        .ok_or_else(|| AppError::config("LLM judge response did not contain a JSON object"))?;
     serde_json::from_str(&trimmed[start..=end])
         .map_err(|e| AppError::config(format!("LLM judge JSON parse: {e}")))
 }

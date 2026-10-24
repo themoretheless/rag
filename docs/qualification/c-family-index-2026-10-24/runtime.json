@@ -1,0 +1,55 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "embedding": "mock",
+  "production_database_used": false,
+  "compiler": {
+    "C": {
+      "version": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+      "syntax_only_passed": true,
+      "executed": false
+    },
+    "C++": {
+      "version": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+      "syntax_only_passed": true,
+      "executed": false
+    }
+  },
+  "compiler_missing_declaration_rejected": true,
+  "compiler_member_hiding_rejected": true,
+  "tools_verified": [
+    "symbol",
+    "code",
+    "callers",
+    "callees",
+    "references",
+    "inheritance",
+    "table_usage",
+    "sync_sources",
+    "ingest_file"
+  ],
+  "checks": [
+    "tool_discovery",
+    "C_and_Cpp_parsing",
+    "header_guard",
+    "header_dialect_selection",
+    "external_definition_from_visible_prototype",
+    "static_local_target",
+    "indirect_function_pointer_unresolved",
+    "namespace_methods",
+    "inherited_methods",
+    "static_member_body",
+    "overload_ambiguity",
+    "type_creation_without_invented_body",
+    "callback_reference",
+    "comment_not_call",
+    "raw_sql_line_evidence",
+    "warm_reuse",
+    "stale_header_omitted",
+    "changed_header_does_not_guess_global_definition",
+    "header_restore"
+  ],
+  "initial_index_rev": 1,
+  "changed_index_rev": 2,
+  "restored_index_rev": 3
+}

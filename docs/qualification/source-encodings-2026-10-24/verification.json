@@ -1,0 +1,26 @@
+{
+  "decoder_version": 1,
+  "binary_sha256": "6ce4e6d67744a2b27ee1c854bc7dec199cee3e078b3741c7a22a3cbf7116cf5c",
+  "library_after_implementation": {
+    "passed": 813,
+    "failed": 0,
+    "ignored": 1
+  },
+  "final_corpus": {
+    "passed": 6,
+    "failed": 0
+  },
+  "file_ingestion_integration": {
+    "passed": 3,
+    "failed": 0
+  },
+  "source_sha256": {
+    "Cargo.toml": "bcaeccf475ed72ef2bec09ca67d9da76d2c40ce9476f16241606171638c95f98",
+    "Cargo.lock": "126ba0aaa89bf6375ef46d1951a202d3c4a99dfcf0ef6f585c84a359979d3d58",
+    "src/file_ingest.rs": "95c2a34e8d7e79d2348ff26953677f7ab980c77dac805241ad6a8bd135fe789e",
+    "src/source_sync.rs": "b0bd6728a3fd0d3a4fcfa261c768082c039309eace37021e0ec0a827e6e93e28",
+    "src/code_index/source.rs": "94ba7b90c60cc4029850fb4b05eaf89af54a1deee25e789aa2a20ac46c667a30",
+    "src/code_index/corpus.rs": "bf6f0a92c18cd388032cf11eae266eed760266bed7f9176fc3cb4ddb21048b44",
+    "scripts/smoke_source_encodings.py": "4763c77c2dfd7e424e6822280117e8ff38984b4bee11cbd03bfe34d2af700294"
+  }
+}

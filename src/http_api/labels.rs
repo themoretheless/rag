@@ -115,11 +115,7 @@ struct UpdateBody {
 
 async fn list(State(st): State<HttpState>, Query(q): Query<ListQuery>) -> Response {
     let result = super::run_blocking("list eval labels", move || {
-        let status_filter = q
-            .status
-            .as_deref()
-            .map(parse_status)
-            .transpose()?;
+        let status_filter = q.status.as_deref().map(parse_status).transpose()?;
         let mut items = super::payload_kv::list_payload_pairs(
             &st.store,
             super::payload_kv::PayloadTable::EvalLabelQueue,
@@ -130,7 +126,11 @@ async fn list(State(st): State<HttpState>, Query(q): Query<ListQuery>) -> Respon
         if let Some(want) = status_filter {
             items.retain(|item| item.status == want);
         }
-        items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| b.id.cmp(&a.id)));
+        items.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
         let total = items.len() as i64;
         let page: Vec<Value> = items
             .into_iter()
@@ -204,9 +204,15 @@ async fn claim(State(st): State<HttpState>, Json(body): Json<ClaimBody>) -> Resp
             super::payload_kv::PayloadTable::EvalLabelQueue,
         )?
         .into_iter()
-        .map(|(id, payload)| Ok::<_, AppError>((id, serde_json::from_str::<LabelQueueItem>(&payload)?)))
+        .map(|(id, payload)| {
+            Ok::<_, AppError>((id, serde_json::from_str::<LabelQueueItem>(&payload)?))
+        })
         .collect::<Result<Vec<_>>>()?;
-        candidates.sort_by(|(_, a), (_, b)| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+        candidates.sort_by(|(_, a), (_, b)| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
         let Some((id, mut item)) = candidates.into_iter().find(|(_, item)| {
             item.status == LabelStatus::Open
                 || (item.status == LabelStatus::Claimed
@@ -280,8 +286,10 @@ async fn update(
                 item.lease_owner = Some(owner);
                 item.lease_until = Some(Utc::now() + Duration::seconds(lease_secs));
             }
-        } else if matches!(item.status, LabelStatus::Resolved | LabelStatus::Discarded | LabelStatus::Open)
-        {
+        } else if matches!(
+            item.status,
+            LabelStatus::Resolved | LabelStatus::Discarded | LabelStatus::Open
+        ) {
             item.lease_owner = None;
             item.lease_until = None;
         }
@@ -397,7 +405,9 @@ mod tests {
                     .method("POST")
                     .uri("/v1/eval/labels/claim")
                     .header("content-type", "application/json")
-                    .body(Body::from(json!({"owner":"agent-a","lease_secs":60}).to_string()))
+                    .body(Body::from(
+                        json!({"owner":"agent-a","lease_secs":60}).to_string(),
+                    ))
                     .unwrap(),
             )
             .await

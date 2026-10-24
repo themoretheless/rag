@@ -1,0 +1,19 @@
+{
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "binary_sha256": "36d743f59b7dd08c45482c7967eff88a4d149a06287393b67510484572670e85",
+  "full_library_before_final_ordering": {
+    "passed": 810,
+    "failed": 0,
+    "ignored": 1
+  },
+  "source_sha256": {
+    "src/code_index/corpus.rs": "4bdcb54d707b5c25210b5434afa027dbb5d1c629af4cddd7d70fb6bc8870cb97",
+    "src/mcp/facade.rs": "465159406e0335a217869f86f84df757bfe9fabd38f44808fee0e01024a056dd",
+    "scripts/smoke_search_multi.py": "e60072005f22a2d07c670ed201af8718b700fe84c632b558d1e19c3ef7d04cca",
+    "docs/MULTI_SEARCH.md": "f96c9b94c1a7ab95d360db62127a4eb36e2572eda6c11b8b089b87cac189076b"
+  },
+  "final_corpus_tests": {
+    "passed": 4,
+    "failed": 0
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "index_format": 18,
+  "full_library_after_implementation": {
+    "passed": 818,
+    "failed": 0,
+    "ignored": 1
+  },
+  "final_history_tests": {
+    "passed": 6,
+    "failed": 0
+  },
+  "binary_sha256": {
+    "rag-mcp": "d9fc04df13703f23100968df276defc8cbbc19143d07fbaf3999921db5bc33d5",
+    "rag_gate": "77aeb6acbf4f32fd5e2e5baabcb37aa876b7d5e1276d172697d94b34f4cbe6c8"
+  },
+  "source_sha256": {
+    "src/code_index.rs": "9fba91210626c0733a65372b02fde83663dbef9e302da532dfb5430052010033",
+    "src/code_index/history.rs": "3a90c141c74a2ceb4737b8d3bba9b4b1d224422f4a19b104aa2f02f503fbdaa0",
+    "src/mcp/facade.rs": "34dad336d8e1157feb0cfdbcc3ea68d1feef4c6ee0409940731e21e58e099d5f",
+    "scripts/smoke_semantic_diff.py": "edd1fee3cebc321302878b01cff7a7226484056a3c52131e35381eed9e4f13de",
+    "docs/CODE_HISTORY.md": "fbfca7c1375a9f21c347ca57d52193afeaee7ed71022dd1d06fc6df546942355"
+  }
+}

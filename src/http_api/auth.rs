@@ -218,17 +218,17 @@ fn required_http_role(method: &Method, path: &str) -> AccessRole {
         | (
             "POST",
             "/v1/revisions/restore"
-                | "/v1/wiki-proposals"
-                | "/v1/eval/feedback"
-                | "/v1/eval/feedback/run"
-                | "/v1/eval/runs/compare"
-                | "/v1/eval/labels"
-                | "/v1/eval/labels/claim"
-                | "/v1/eval/traces"
-                | "/v1/eval/judge"
-                | "/v1/eval/online"
-                | "/v1/eval/replay"
-                | "/v1/eval/prompts",
+            | "/v1/wiki-proposals"
+            | "/v1/eval/feedback"
+            | "/v1/eval/feedback/run"
+            | "/v1/eval/runs/compare"
+            | "/v1/eval/labels"
+            | "/v1/eval/labels/claim"
+            | "/v1/eval/traces"
+            | "/v1/eval/judge"
+            | "/v1/eval/online"
+            | "/v1/eval/replay"
+            | "/v1/eval/prompts",
         ) => AccessRole::Write,
         ("PUT", path) if path.starts_with("/v1/eval/labels/") => AccessRole::Write,
         ("PUT", "/v1/knowledge") | ("POST", "/v1/knowledge/views") => AccessRole::Write,
@@ -347,9 +347,18 @@ mod tests {
 
     #[test]
     fn proposal_routes_require_read_or_write_roles() {
-        assert_eq!(required_http_role(&Method::GET, "/v1/wiki-proposals"), AccessRole::Read);
-        assert_eq!(required_http_role(&Method::POST, "/v1/wiki-proposals"), AccessRole::Write);
-        assert_eq!(required_http_role(&Method::GET, "/v1/wiki-review"), AccessRole::Read);
+        assert_eq!(
+            required_http_role(&Method::GET, "/v1/wiki-proposals"),
+            AccessRole::Read
+        );
+        assert_eq!(
+            required_http_role(&Method::POST, "/v1/wiki-proposals"),
+            AccessRole::Write
+        );
+        assert_eq!(
+            required_http_role(&Method::GET, "/v1/wiki-review"),
+            AccessRole::Read
+        );
     }
 
     #[test]
@@ -385,7 +394,10 @@ mod tests {
             required_http_role(&Method::PUT, "/v1/eval/labels/abc"),
             AccessRole::Write
         );
-        assert_eq!(required_http_role(&Method::PUT, "/v1/knowledge"), AccessRole::Write);
+        assert_eq!(
+            required_http_role(&Method::PUT, "/v1/knowledge"),
+            AccessRole::Write
+        );
     }
 
     #[tokio::test]

@@ -47,6 +47,18 @@ pub struct SearchCommand {
     pub fts_stemmer: String,
     /// RRF constant for hybrid fusion; `None` keeps [`crate::db::search::DEFAULT_RRF_K`].
     pub rrf_k: Option<f32>,
+    /// When true and a rerank provider is configured, rerank the candidate pool
+    /// (see `RAG_RERANK_*`). Default false: zero behavior change.
+    pub rerank: Option<bool>,
+    /// When true, the server asks the configured chat LLM for query variants
+    /// and fuses per-variant searches with RRF (see `RAG_QUERY_REWRITE_*`).
+    /// LLM errors fall back to plain search. Default false.
+    pub rewrite: Option<bool>,
+    /// When true, the server embeds an LLM-written hypothetical answer passage
+    /// and fuses it as an extra dense query leg (see `RAG_HYDE_*`). Only
+    /// meaningful for vec/hybrid modes; LLM errors fall back to plain search.
+    /// Default false.
+    pub hyde: Option<bool>,
 }
 
 pub async fn execute_search(
@@ -55,9 +67,40 @@ pub async fn execute_search(
     config: &Config,
     command: SearchCommand,
 ) -> Result<Vec<SearchHit>, AppError> {
+    execute_search_with_llm(store, embedder, config, command, None).await
+}
+
+/// [`execute_search`] with an optional transform-LLM override for tests.
+///
+/// `transform_llm = None` builds the client from config on demand (only when
+/// `rewrite` / `hyde` is requested). `Some(_)` is used as-is.
+pub async fn execute_search_with_llm(
+    store: &Store,
+    embedder: &dyn EmbeddingProvider,
+    config: &Config,
+    command: SearchCommand,
+    transform_llm: Option<&dyn crate::query_transform::TransformLlm>,
+) -> Result<Vec<SearchHit>, AppError> {
     let started = std::time::Instant::now();
     let budget = std::time::Duration::from_millis(command.timeout_ms.unwrap_or(5_000).max(1));
     let mode = resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
+    let command_rerank_requested = command.rerank.unwrap_or(false);
+    let rewrite_requested = command.rewrite.unwrap_or(false);
+    let hyde_requested = command.hyde.unwrap_or(false);
+    // Query transforms first: the LLM call is potentially slow and must happen
+    // before the corpus lane is acquired (same reasoning as the rerank stage
+    // running after the store lock is released). Transform errors never fail
+    // the request; they downgrade to plain search with a fallback reason.
+    let transforms = run_query_transforms(
+        config,
+        transform_llm,
+        &command.query,
+        rewrite_requested,
+        hyde_requested,
+        mode,
+        budget.saturating_sub(started.elapsed()),
+    )
+    .await;
     // Acquire before the potentially slow async embedding request. The read
     // guard both fast-fails an already-running source sync and prevents a new
     // sync from starting between the identity check, embedding, and exact
@@ -67,15 +110,80 @@ pub async fn execute_search(
         store.ensure_embedding_manifest(config)?;
         store.require_embedding_manifest_match(config)?;
     }
-    let mut query = tokio::time::timeout(budget, prepare_search_with_mode(embedder, command, mode))
-        .await
-        .map_err(|_| AppError::config("search timeout budget exceeded during embedding"))??;
+    let remaining = budget
+        .checked_sub(started.elapsed())
+        .filter(|v| !v.is_zero())
+        .ok_or_else(|| AppError::config("search timeout budget exceeded before embedding"))?;
+    let mut query =
+        tokio::time::timeout(remaining, prepare_search_with_mode(embedder, command, mode))
+            .await
+            .map_err(|_| AppError::config("search timeout budget exceeded during embedding"))??;
+    // Rerank stage (opt-in): expand the returned candidate pool to
+    // `rerank_top_n`, rerank after retrieval/finalization, then cut back to the
+    // caller's `top_k`. Provider errors fall back to the un-reranked ranking.
+    let reranker = maybe_build_reranker(config, command_rerank_requested);
+    let requested_top_k = query.top_k;
+    if reranker.is_some() {
+        query.top_k = requested_top_k.max(config.rerank_top_n).min(MAX_TOP_K);
+    }
     let remaining = budget
         .checked_sub(started.elapsed())
         .filter(|v| !v.is_zero())
         .ok_or_else(|| AppError::config("search timeout budget exceeded before retrieval"))?;
     query.timeout_ms = Some(remaining.as_millis().max(1).min(u64::MAX as u128) as u64);
-    let mut hits = search_with_corpus_guard(store, &query, &corpus_guard)?;
+    let query_text = query.query_text.clone();
+    let max_context_tokens = query.max_context_tokens;
+    // Retrieval lists: original query, then one per rewrite variant, then the
+    // HyDE leg (original query text + hypothetical-passage embedding).
+    let mut lists = Vec::with_capacity(
+        1 + transforms.variants.len() + transforms.hyde_passage.is_some() as usize,
+    );
+    lists.push(search_with_corpus_guard(store, &query, &corpus_guard)?);
+    for variant in &transforms.variants {
+        let mut leg = query.clone();
+        leg.query_text = Some(variant.clone());
+        leg.embed_ms = None;
+        if mode.needs_embedding() {
+            leg.query_embedding = Some(
+                embedder
+                    .embed(std::slice::from_ref(variant))
+                    .await?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| AppError::embeddings("embedder returned no vector"))?,
+            );
+        }
+        lists.push(search_with_corpus_guard(store, &leg, &corpus_guard)?);
+    }
+    if let Some(passage) = &transforms.hyde_passage {
+        let mut leg = query.clone();
+        leg.query_embedding = Some(
+            embedder
+                .embed(std::slice::from_ref(passage))
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| AppError::embeddings("embedder returned no vector"))?,
+        );
+        leg.embed_ms = None;
+        lists.push(search_with_corpus_guard(store, &leg, &corpus_guard)?);
+    }
+    let mut hits = if lists.len() > 1 {
+        crate::db::search::fuse_rrf_many(&lists, query.rrf_k, query.top_k)
+    } else {
+        lists.pop().unwrap_or_default()
+    };
+    transforms.stamp(&mut hits);
+    if let Some(reranker) = reranker {
+        hits = rerank_hits_or_fallback(
+            reranker,
+            query_text.as_deref().unwrap_or_default(),
+            hits,
+            requested_top_k,
+            max_context_tokens,
+        )
+        .await;
+    }
     if started.elapsed() > budget {
         return Err(AppError::config(
             "search timeout budget exceeded after retrieval",
@@ -87,6 +195,230 @@ pub async fn execute_search(
         }
     }
     Ok(hits)
+}
+
+/// Outcome of the optional rewrite / HyDE stages (never an error).
+#[derive(Debug, Default)]
+struct TransformOutcome {
+    variants: Vec<String>,
+    hyde_passage: Option<String>,
+    rewrite_ms: Option<f64>,
+    hyde_ms: Option<f64>,
+    /// Fallback markers, e.g. `query_rewrite_fallback`.
+    fallbacks: Vec<&'static str>,
+}
+
+impl TransformOutcome {
+    /// Record transform reasons and stage timings on every returned hit.
+    fn stamp(self, hits: &mut [SearchHit]) {
+        if self.variants.is_empty() && self.hyde_passage.is_none() && self.fallbacks.is_empty() {
+            return;
+        }
+        for hit in hits {
+            let explanation = hit
+                .explanation
+                .get_or_insert_with(crate::models::SearchExplanation::default);
+            if !self.variants.is_empty() {
+                explanation.reasons.push("query_rewrite".into());
+                explanation.rewrite_ms = self.rewrite_ms;
+            }
+            if self.hyde_passage.is_some() {
+                explanation.reasons.push("hyde".into());
+                explanation.hyde_ms = self.hyde_ms;
+            }
+            for fallback in &self.fallbacks {
+                explanation.reasons.push((*fallback).into());
+            }
+        }
+    }
+}
+
+/// Run the requested LLM transform stages outside any store lock.
+///
+/// Never fails: LLM build/call errors and budget timeouts log a warning and
+/// record a fallback marker, leaving the original query untouched.
+async fn run_query_transforms(
+    config: &Config,
+    llm_override: Option<&dyn crate::query_transform::TransformLlm>,
+    query: &str,
+    rewrite_requested: bool,
+    hyde_requested: bool,
+    mode: SearchMode,
+    budget: std::time::Duration,
+) -> TransformOutcome {
+    use crate::query_transform as qt;
+    let mut outcome = TransformOutcome::default();
+    if !rewrite_requested && !hyde_requested {
+        return outcome;
+    }
+    if budget.is_zero() {
+        tracing::warn!("query transform skipped: search timeout budget already exhausted");
+        if rewrite_requested {
+            outcome.fallbacks.push("query_rewrite_fallback");
+        }
+        if hyde_requested {
+            outcome.fallbacks.push("hyde_fallback");
+        }
+        return outcome;
+    }
+    // HyDE only contributes a dense leg; in lex mode it is a no-op fallback.
+    let hyde_requested = if hyde_requested && !mode.needs_embedding() {
+        tracing::warn!("hyde=true ignored in lex mode; plain search");
+        outcome.fallbacks.push("hyde_fallback");
+        false
+    } else {
+        hyde_requested
+    };
+
+    // Build clients up front (owned) so borrowed trait objects stay valid.
+    let build = |kind: qt::TransformKind| -> Option<crate::llm::ChatClient> {
+        match qt::build_transform_llm(config, kind) {
+            Ok(Some(client)) => Some(client),
+            Ok(None) => {
+                tracing::warn!(
+                    kind = kind.as_str(),
+                    "transform requested but RAG_LLM_ENABLED=false; plain search"
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(kind = kind.as_str(), error = %error, "transform LLM build failed; plain search");
+                None
+            }
+        }
+    };
+    let rewrite_client = if llm_override.is_none() && rewrite_requested {
+        build(qt::TransformKind::Rewrite)
+    } else {
+        None
+    };
+    let hyde_client = if llm_override.is_none() && hyde_requested {
+        build(qt::TransformKind::Hyde)
+    } else {
+        None
+    };
+
+    if rewrite_requested {
+        let llm: Option<&dyn qt::TransformLlm> =
+            llm_override.or_else(|| rewrite_client.as_ref().map(|c| c as &dyn qt::TransformLlm));
+        match llm {
+            Some(llm) => {
+                let started = std::time::Instant::now();
+                match tokio::time::timeout(budget, qt::rewrite_queries(llm, config, query)).await {
+                    Ok(Ok(variants)) => {
+                        outcome.rewrite_ms = Some(started.elapsed().as_secs_f64() * 1_000.0);
+                        outcome.variants = variants;
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(error = %error, "query rewrite failed; plain search");
+                        outcome.fallbacks.push("query_rewrite_fallback");
+                    }
+                    Err(_) => {
+                        tracing::warn!("query rewrite exceeded search budget; plain search");
+                        outcome.fallbacks.push("query_rewrite_fallback");
+                    }
+                }
+            }
+            None => outcome.fallbacks.push("query_rewrite_fallback"),
+        }
+    }
+    if hyde_requested {
+        let llm: Option<&dyn qt::TransformLlm> =
+            llm_override.or_else(|| hyde_client.as_ref().map(|c| c as &dyn qt::TransformLlm));
+        match llm {
+            Some(llm) => {
+                let started = std::time::Instant::now();
+                match tokio::time::timeout(budget, qt::hyde_passage(llm, config, query)).await {
+                    Ok(Ok(passage)) => {
+                        outcome.hyde_ms = Some(started.elapsed().as_secs_f64() * 1_000.0);
+                        outcome.hyde_passage = Some(passage);
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(error = %error, "hyde generation failed; plain search");
+                        outcome.fallbacks.push("hyde_fallback");
+                    }
+                    Err(_) => {
+                        tracing::warn!("hyde generation exceeded search budget; plain search");
+                        outcome.fallbacks.push("hyde_fallback");
+                    }
+                }
+            }
+            None => outcome.fallbacks.push("hyde_fallback"),
+        }
+    }
+    outcome
+}
+
+/// Build the rerank provider when requested; build errors downgrade to `None`.
+pub(crate) fn maybe_build_reranker(
+    config: &Config,
+    requested: bool,
+) -> Option<std::sync::Arc<dyn crate::rerank::RerankProvider>> {
+    match requested {
+        true => match crate::rerank::build_provider(config) {
+            Ok(provider) => provider,
+            Err(error) => {
+                tracing::warn!(error = %error, "rerank provider build failed; continuing without rerank");
+                None
+            }
+        },
+        false => None,
+    }
+}
+
+/// Rerank the candidate pool and cut back to the caller's `top_k`.
+///
+/// Never fails: on provider error or a malformed score vector, log a warning,
+/// mark the hits with `rerank_fallback`, and keep the un-reranked ranking.
+pub(crate) async fn rerank_hits_or_fallback(
+    reranker: std::sync::Arc<dyn crate::rerank::RerankProvider>,
+    query_text: &str,
+    mut hits: Vec<SearchHit>,
+    requested_top_k: usize,
+    max_context_tokens: Option<usize>,
+) -> Vec<SearchHit> {
+    let rerank_started = std::time::Instant::now();
+    let documents: Vec<String> = hits
+        .iter()
+        .map(|hit| crate::rerank::truncate_candidate(&hit.content))
+        .collect();
+    let rerank_ms = || rerank_started.elapsed().as_secs_f64() * 1_000.0;
+    match reranker.rerank(query_text, &documents).await {
+        Ok(scores) => match crate::rerank::apply_rerank_scores(&mut hits, &scores) {
+            Ok(()) => {
+                let ms = rerank_ms();
+                for hit in &mut hits {
+                    if let Some(explanation) = &mut hit.explanation {
+                        explanation.rerank_ms = Some(ms);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "rerank scoring failed; keeping original ranking");
+                mark_rerank_fallback(&mut hits);
+            }
+        },
+        Err(error) => {
+            tracing::warn!(error = %error, "rerank provider failed; keeping original ranking");
+            mark_rerank_fallback(&mut hits);
+        }
+    }
+    hits.truncate(requested_top_k);
+    // The pool was fetched with an expanded top_k, so re-apply the citation
+    // token budget against the reranked prefix.
+    if let Some(budget) = max_context_tokens {
+        hits = crate::search_pack::pack_hits(&hits, budget).hits;
+    }
+    hits
+}
+
+fn mark_rerank_fallback(hits: &mut [SearchHit]) {
+    for hit in hits {
+        hit.explanation
+            .get_or_insert_with(crate::models::SearchExplanation::default)
+            .reasons
+            .push("rerank_fallback".into());
+    }
 }
 
 pub async fn prepare_search(
@@ -579,6 +911,9 @@ mod tests {
             timeout_ms: None,
             fts_stemmer: "porter".into(),
             rrf_k: None,
+            rerank: None,
+            rewrite: None,
+            hyde: None,
         }
     }
 
@@ -638,12 +973,23 @@ mod tests {
         drop(sync_guard);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn search_timeout_cancels_embedding_and_releases_the_corpus_lane() {
-        struct NeverReturns;
+        struct MarkDropped<'a>(&'a AtomicUsize);
+        impl Drop for MarkDropped<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        struct NeverReturns {
+            entered: AtomicUsize,
+            dropped: AtomicUsize,
+        }
         #[async_trait]
         impl EmbeddingProvider for NeverReturns {
             async fn embed(&self, _: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                let _drop = MarkDropped(&self.dropped);
                 std::future::pending().await
             }
             fn dimensions(&self) -> usize {
@@ -656,12 +1002,20 @@ mod tests {
             embedding_dims: 8,
             ..Config::for_tests()
         };
+        // Cold DuckDB identity queries must not spend a 20ms wall-clock budget
+        // before the provider is reached on a loaded runner. Paused async time
+        // expires the provider deterministically without waiting five real seconds.
+        store.ensure_embedding_manifest(&config).unwrap();
+        let provider = NeverReturns {
+            entered: AtomicUsize::new(0),
+            dropped: AtomicUsize::new(0),
+        };
         let mut request = command("needle");
         request.mode = Some("vec".into());
-        request.timeout_ms = Some(20);
+        request.timeout_ms = Some(5_000);
         let error = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            execute_search(&store, &NeverReturns, &config, request),
+            std::time::Duration::from_secs(10),
+            execute_search(&store, &provider, &config, request),
         )
         .await
         .unwrap()
@@ -669,6 +1023,8 @@ mod tests {
         assert!(error
             .to_string()
             .contains("timeout budget exceeded during embedding"));
+        assert_eq!(provider.entered.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.dropped.load(Ordering::SeqCst), 1);
         assert!(store.corpus_mutation_lane().try_write_owned().is_ok());
     }
 }

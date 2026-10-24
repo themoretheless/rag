@@ -332,19 +332,38 @@ async fn wiki_backlinks(
     };
     match rows {
         Ok(rows) => {
-            let view = match st.store.find_node_by_document_id(id)
-                .and_then(|node| node.map(|node| st.store.backlinks(&node.id)).transpose()) {
+            let view = match st
+                .store
+                .find_node_by_document_id(id)
+                .and_then(|node| node.map(|node| st.store.backlinks(&node.id)).transpose())
+            {
                 Ok(view) => view,
                 Err(error) => return api_err(error),
             };
-            let links: Vec<_> = rows.into_iter().map(|(label, key)| {
-                let contexts: Vec<_> = view.as_ref().map(|view| view.edges.iter()
-                    .filter(|edge| edge.rel_type == "wikilink")
-                    .filter(|edge| view.nodes.iter().any(|node| node.id == edge.source_id
-                        && node.document_id.as_deref().unwrap_or(&node.id) == key))
-                    .filter_map(|edge| edge.context.as_deref()).take(3).collect()).unwrap_or_default();
-                json!({ "label": label, "id": key, "contexts": contexts })
-            }).collect();
+            let links: Vec<_> = rows
+                .into_iter()
+                .map(|(label, key)| {
+                    let contexts: Vec<_> = view
+                        .as_ref()
+                        .map(|view| {
+                            view.edges
+                                .iter()
+                                .filter(|edge| edge.rel_type == "wikilink")
+                                .filter(|edge| {
+                                    view.nodes.iter().any(|node| {
+                                        node.id == edge.source_id
+                                            && node.document_id.as_deref().unwrap_or(&node.id)
+                                                == key
+                                    })
+                                })
+                                .filter_map(|edge| edge.context.as_deref())
+                                .take(3)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    json!({ "label": label, "id": key, "contexts": contexts })
+                })
+                .collect();
             api_ok(json!({ "ok": true, "count": links.len(), "backlinks": links }))
         }
         Err(e) => api_err(e),
@@ -395,7 +414,9 @@ mod tests {
         let before = state.store.get_document(&doc.id).unwrap().unwrap();
         let response = wiki_review(State(state.clone())).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["items"][0]["link_kind"], "source_missing");
         assert_eq!(value["items"][0]["wiki_id"], doc.id);
@@ -410,7 +431,9 @@ mod tests {
         let state = test_state("review-empty");
         let response = wiki_review(State(state)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["items"], json!([]));
     }

@@ -1,0 +1,18 @@
+{
+  "index_format": 17,
+  "library_tests": {
+    "passed": 809,
+    "failed": 0,
+    "ignored": 1
+  },
+  "binary_sha256": "0ab51745e85fdbf29daaa3ba432a9f74e9d3bf05fef6fe6b997b0049a9ea459a",
+  "source_sha256": {
+    "src/code_index.rs": "f6321f54d51a5fd574eb0d96ba9c240b800d68ca187bcb2dd86c473972b2d0b5",
+    "src/code_index/shell.rs": "eb69cc34026d965e18c3bde37a47223f32b343cc478864639af34120f7791d62",
+    "src/code_index/sql.rs": "3b45fbfe7ff39d527bd7dc8edee650a599638a5a7a098c64aaf3077d056af7a2",
+    "src/code_index/resolve.rs": "0968abafa741e6f47db7cfe3252e2e0eeaceeefa7ba76ca93416d17f70beebec",
+    "src/code_index/references.rs": "362eff81dad02605f82e1c592353fc6e7e84ef58e278c37f69cbfe93d5fcf1dd",
+    "src/code_index/analysis.rs": "150aad39355e63a5d2bcd07e39996a77bfd3ff38f3bc4d171ef67c9e3d1b4f91",
+    "scripts/smoke_code_shell.py": "cd499b34689f3b97aa5696439039af009fef4fc229f501da1d58ed15603313d4"
+  }
+}

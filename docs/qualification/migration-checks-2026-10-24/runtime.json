@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "migration_sql_executed": false,
+  "checks": [
+    "named_column_and_table_checks",
+    "identifier_case_folding",
+    "rejected_row",
+    "sql_null_logic",
+    "unknown_assignment",
+    "column_plan_scope",
+    "unknown_function_no_execution",
+    "no_literal_echo",
+    "partial_update_context",
+    "delete_skips_checks",
+    "not_valid_applies_to_new_row",
+    "constraint_drop_refresh"
+  ]
+}

@@ -12,6 +12,7 @@ mod metrics;
 mod prompts;
 mod settings;
 mod trace;
+mod triad;
 
 pub use answer_judge::{
     judge_answer_heuristic, judge_answer_llm, merge_llm_scores, parse_llm_judge_json,
@@ -28,13 +29,12 @@ pub use judges::{judge_citations, CitationJudgeInput, CitationJudgeResult};
 pub use labels::{ErrorLabel, QueryErrorLabel};
 pub use metrics::{macro_average, score_ranked_titles, RankedTitle, ScoredQuery};
 pub use prompts::{
-    builtin_answer_judge, prompt_content_hash, validate_prompt, PromptVersion, ANSWER_JUDGE_V1_BODY,
-    ANSWER_JUDGE_V1_NAME, ANSWER_JUDGE_V1_VERSION, PROMPT_KIND_ANSWER_JUDGE,
+    builtin_answer_judge, prompt_content_hash, validate_prompt, PromptVersion,
+    ANSWER_JUDGE_V1_BODY, ANSWER_JUDGE_V1_NAME, ANSWER_JUDGE_V1_VERSION, PROMPT_KIND_ANSWER_JUDGE,
 };
 pub use settings::SearchSettingsProfile;
-pub use trace::{
-    source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder, TraceSpan,
-};
+pub use trace::{source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder, TraceSpan};
+pub use triad::{mapping_notes, triad_report, TriadModeInput, TriadModeMetrics, TriadReport};
 
 use crate::util::content_hash;
 use std::path::Path;

@@ -1,0 +1,24 @@
+{
+  "index_format": 19,
+  "library_tests": {
+    "passed": 820,
+    "failed": 0,
+    "ignored": 1
+  },
+  "code_index_tests": {
+    "passed": 106,
+    "failed": 0
+  },
+  "binary_sha256": {
+    "rag-mcp": "aa4b336c432f7fe0519d1c5294d32bf9f261691cde634f5d4fde5af307e12c74",
+    "rag_gate": "23bd2e6367443d18f102a271c80ee8042c9a2c74aeee75ecaeb801a4aa80e481"
+  },
+  "source_sha256": {
+    "src/code_index.rs": "4c64ec141e65a8406bbe1d6b7c5cfb71d34cf698179934d10aee4f29fdf6a926",
+    "src/code_index/sql.rs": "a1539b93d3ec8dbc0d92da9a33b3858b8c24d091eaaaa50d664123a9d78cc505",
+    "src/code_index/history.rs": "619037a4e657c67326fe6650d76bd6ec6b6c2fd97cbf8aee05929881a358be8d",
+    "scripts/smoke_schema_expressions.py": "f344b8b89dce2ef358a5e05fd053f2644d4243a5d906749a9632083067bd218f",
+    "docs/CODE_HISTORY.md": "3e56d30b5a95d8ec5e45797cf8281fa31e52caef63011d8d304c1cd60c38e83f",
+    "docs/SQL_CODE_ANALYSIS.md": "c76799cfaa374187e62cc81f8613bf0e7dd0bd94e456dfa9d745b6919bd440e0"
+  }
+}

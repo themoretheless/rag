@@ -1,0 +1,13 @@
+{
+  "Cargo.toml": "27db83cf45547fa97cfcc2b94ab1352993dcbf83b4df1b019196ea624ce47251",
+  "Cargo.lock": "cf3f4f4b4c2a4455f3607b69db17eeb4fe7d1b98c4b93470c428d35df0034366",
+  "src/external_db/mod.rs": "15cd7f3adb6ff98156e93afa30fd8b202d797b282a7d79ba4d289fb4b0b64af5",
+  "src/external_db/types.rs": "6baaf25360f68aa1fe353c1465f74acbb1cdef9100a1d40b6fbc26e606021506",
+  "src/external_db/metadata.rs": "c3dd98fc1868afe8c1a8387a917254f908ffe74a40f8ae16f63d213b48d4b88f",
+  "src/external_db/relations.rs": "4109fc720276bc3a8b5741a0334c51dd7887ecb142fec84f9baaac69484efce0",
+  "src/external_db/samples.rs": "274eb4361cc65f68b3518e5a7c18724b2011b13a61591b16b24fda551c8542e7",
+  "src/external_db/compare.rs": "0bdc0b095c637772a009d9e45eba11e8196e720a4426563f6857874b32182016",
+  "scripts/smoke_external_db.py": "6b3582652d1a923120627a9dfc0f6b0eb1d94bd0ac881b4789faee40aed9235f",
+  "scripts/smoke_external_db_runtime.py": "f9b41b29d10aa192e31ec3f305ade5803901fd883cfe921e8d7d7be587d5cebc",
+  "docs/EXTERNAL_DATABASES.md": "2656beab128fb8a729642b6e6d4239126492cd70c34d2d73b299cdca0c2180e1"
+}

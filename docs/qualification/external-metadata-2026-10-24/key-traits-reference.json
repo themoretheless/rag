@@ -1,0 +1,28 @@
+{
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_source_sha256": "c07e18121b6e2c6c6da48e42109b5464d66e601543aeca73f2e72a4b19d8cb2e",
+  "method": "Execute the unchanged reference db_ops.schema function AST with controlled metadata rows and its actual pure db_marks module; no reference database/server execution is claimed.",
+  "input_unique_keys": [
+    [
+      "a",
+      "b"
+    ],
+    [
+      "a\"b"
+    ]
+  ],
+  "reference_unique_columns": [
+    "a",
+    "b",
+    "a\"b"
+  ],
+  "local_field": "column_traits.individually_unique_columns",
+  "local_expected": [
+    "a\"b"
+  ],
+  "local_expected_verified_by": [
+    "external_db::fixture_tests::native_metadata_capture_and_readonly_transactions on PostgreSQL 16 and MySQL 8.4",
+    "scripts/smoke_external_db_runtime.py actual db_table assertions for both aliases"
+  ],
+  "meaning": "The local contract explicitly distinguishes composite membership from individual uniqueness. The reference field lists every participating column. This fixture comparison does not establish full-product superiority."
+}

@@ -1,0 +1,11 @@
+{
+  "src/external_db/write_check.rs": "f2ae5a6ad6cf52037161a901b2828750cc3e077d60292ed206a49c6cde001ee1",
+  "src/external_db/check_expr.rs": "740684b7b186530f0a6ceef9f0d2aaa958dd540f739aa7dc9c0c13a21c5448f2",
+  "src/external_db/mod.rs": "1b13664060397cc5f9241b6c2944ca99e6b5843749668d641e1da1bd391cab53",
+  "src/mcp/facade.rs": "6ead73f1378470653ce46f24c5f9b68d83108829773f95076d1ade460fbc3266",
+  "scripts/smoke_external_db.py": "6b3582652d1a923120627a9dfc0f6b0eb1d94bd0ac881b4789faee40aed9235f",
+  "scripts/smoke_external_db_runtime.py": "03e3f0e08c3187270452b5df911783bc46a18762fc05670cc1328af3a956d598",
+  "docs/SQL_CODE_ANALYSIS.md": "4c5a9379ad69064c379c67733bbfa55b8a5d436406d5cd6502313d4e726e674a",
+  "docs/EXTERNAL_DATABASES.md": "8a91e008cbb576bdc77df457d92d704afca51f6eaa5d264beaa0b951d5a1db15",
+  "docs/RAGRAF_FEATURE_MATRIX.md": "2fbce413bb90291374dbe5a7bac13992b0c93b1c34ee26ac809c32335f8f0255"
+}

@@ -1,0 +1,14 @@
+{
+  "Cargo.toml": "d7795c87ae8b84dc62d0cc1e5fd18eca7dba92a10681f68aa59de8407118a23f",
+  "Cargo.lock": "e2856be3b74ecad7bfdb4e45bccf587fa586eb65669c6f0c8eefb3e29da1a49d",
+  "src/external_db/mod.rs": "2fe599b43913e752e3730d7215948f6ee43fb9c227a7c747612471569443f441",
+  "src/external_db/compare.rs": "32e289861279fe09873de2deb6f0579ebf1ab6d38c65204f45191a8a3eafbb8b",
+  "src/external_db/samples.rs": "4101e5ece34892001de848d9d3d5f9ba04318c5d3fc3a3f1857a1f6f51df9d96",
+  "src/mcp/facade.rs": "2b8162a2a6f74dfdec7ac5af1fc381a22ae3760d25d63d6cdda78419a9efde14",
+  "src/mcp/graph.rs": "58de73da693be0a2fb39df912d4eb40fad2ed6b5634a60d5f099f7edec3ea64b",
+  "src/access.rs": "411eda8dcccbf1736dc323971ccab8e76a347a85dbc9a63eb797b2c0b580fdf8",
+  "src/db/schema.rs": "88f967ca6519073dab8b2ef93d670a001c757d8e3ef88ae9f04e4c59c3c4f01a",
+  "src/lib.rs": "943eb27c3d840a997869191274413391a8ac4919bc28688eb70ab542c1e4528c",
+  "scripts/smoke_external_db.py": "9f186d2c24ee3386f29a1882eb86bc12303d3b76fd5c354d89b5a6da17552ec6",
+  "scripts/smoke_external_db_runtime.py": "c523c3dede3f1253331299a8edf8c5fadea653292c7bf6a19456c03e361f73e7"
+}

@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "protocol": "2024-11-05",
+  "embedding": "mock",
+  "external_database": false,
+  "tools_verified": [
+    "references",
+    "symbol",
+    "dead_code",
+    "sync_sources",
+    "ingest_file"
+  ],
+  "checks": [
+    "tool_schema",
+    "Python_alias_callback",
+    "Rust_import_value",
+    "TS_default_import",
+    "typed_inherited_member_values",
+    "same_name_isolation",
+    "parameter_default_shadowing",
+    "lexical_mode",
+    "stable_pagination",
+    "callback_transitive_liveness",
+    "warm_index_reuse",
+    "stale_input_omitted",
+    "source_sync_reference_refresh"
+  ],
+  "initial_index_rev": 1,
+  "updated_index_rev": 2,
+  "fixture_results": {
+    "py/api.py": {
+      "target": "af1f665c-bc2d-43d2-9d1d-ee00e3e33c45:0:work",
+      "total": 2
+    },
+    "rust/src/api.rs": {
+      "target": "bd8a3a08-adee-4cd4-ba0b-127a35fcd803:0:work",
+      "total": 2
+    },
+    "ts/api.ts": {
+      "target": "813a66d8-c407-454b-9983-209146d01a7e:15:work",
+      "total": 2
+    }
+  }
+}

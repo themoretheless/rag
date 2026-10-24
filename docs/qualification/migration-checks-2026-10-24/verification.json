@@ -1,0 +1,25 @@
+{
+  "index_format": 20,
+  "check_evaluator_version": 1,
+  "library_after_implementation": {
+    "passed": 827,
+    "failed": 0,
+    "ignored": 1
+  },
+  "final_sql_tests": {
+    "passed": 15,
+    "failed": 0
+  },
+  "binary_sha256": {
+    "rag-mcp": "93157f825dfd979301052a6023bd70a9ea30c4648820f7b3a3e9b0b8f6505fa5",
+    "rag_gate": "5d5caee77d3b17f46d403050c462244298b27359b70cea1e01ec1a765cc7de95"
+  },
+  "source_sha256": {
+    "src/code_index/sql.rs": "6f7e42a46c78dbe72a3a6ebbbd2aed4711659a92d37bdcef692e26471d499ce2",
+    "src/external_db/mod.rs": "742c44254da3240c71c460d5f3ecb211ef097cd2fd71179c0c754cb1713ed9a8",
+    "src/external_db/check_expr.rs": "9ceab575112364c425d5d475ea2b185d86a4a77c9e8cbad6cfaf2d36eed33c53",
+    "src/external_db/write_check.rs": "a4b5807d031035e056a12a5d7a3beffbafcef054981f3bdc814591aaca0c8957",
+    "scripts/smoke_migration_checks.py": "92089f003bcccbea8366fae33277d9fa22f49279b81388e27d8bf778a5d4d30e",
+    "docs/SQL_CODE_ANALYSIS.md": "250db5bc7b465171cf853f87f5b5e7af8dc94f9507b2b512c731bbac6507d07e"
+  }
+}

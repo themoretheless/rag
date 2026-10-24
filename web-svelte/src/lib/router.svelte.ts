@@ -5,7 +5,7 @@
  *   /graph?seed= → graph view
  *   /search      → search view
  */
-export type RouteName = 'console' | 'corpus' | 'search' | 'graph' | 'wiki' | 'agents' | 'sync' | 'evaluation' | 'models'
+export type RouteName = 'console' | 'corpus' | 'search' | 'graph' | 'wiki' | 'agents' | 'sync' | 'evaluation' | 'models' | 'resources'
 
 export interface RouteState {
   name: RouteName
@@ -39,7 +39,7 @@ function parseLocation(pathname: string, search: string): Parsed {
     return { redirect: null, state: { name: 'search', pageId: null, path: pathname, query } }
   }
   const simple = pathname.slice(1) as RouteName
-  if (['console', 'corpus', 'agents', 'sync', 'evaluation', 'models'].includes(simple)) {
+  if (['console', 'corpus', 'agents', 'sync', 'evaluation', 'models', 'resources'].includes(simple)) {
     return { redirect: null, state: { name: simple, pageId: null, path: pathname, query } }
   }
   return { redirect: '/console', state: { name: 'console', pageId: null, path: '/console', query: new URLSearchParams() } }

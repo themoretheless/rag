@@ -11,6 +11,7 @@ const TOOLS: &[&str] = &[
     "maintain_organize",
     "maintain_refresh",
     "maintain_compress",
+    "reembed_status",
     "vacuum_store",
     "doctor_repair",
     "cleanup_source_duplicates",

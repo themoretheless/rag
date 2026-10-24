@@ -72,6 +72,12 @@ RAG_EMBEDDING_PROVIDER=mock cargo run --bin eval -- \
 dataset hash and settings names. Optional `--error-labels FILE.jsonl` attaches
 human labels (`wrong_top_hit`, `missing_relevant`, …) to regression rows.
 
+Settings profiles also accept `rerank: "mock"` (deterministic token-overlap
+rerank) and `rewrite: "mock"` (deterministic stub variants fused via RRF,
+mirroring production `rewrite=true`). Mock transforms validate the plumbing
+offline; they make no claim about real LLM rewrite quality. Example:
+`data/eval/settings-hybrid-rewrite-mock-v1.json`.
+
 Gateway (schema 16): `GET /v1/eval/runs`, `POST /v1/eval/runs/compare`,
 `GET|POST /v1/eval/labels` (lease+CAS queue), `GET|POST /v1/eval/traces`,
 `GET|POST /v1/eval/prompts`, `POST /v1/eval/judge`, `POST /v1/eval/online`,
@@ -151,6 +157,24 @@ JSON keeps the existing report fields and adds `resources`,
 fields. Synthetic runs additionally add `corpus.synthetic`; ordinary dataset
 runs omit that field. The historical recommendation field `chunk_threshold`
 remains for JSON compatibility, but is now only a scale observation marker.
+
+## RAG-triad export (`--triad-out`)
+
+`eval --triad-out FILE.json` additionally writes a report that uses the RAG-triad
+metric names for dashboards and CI that standardize on that vocabulary. Only
+measured signals are mapped; everything else is an explicit JSON `null`, and the
+`mapping` array inside the report records the source or the reason for each null:
+
+| Triad metric | Mapping |
+| --- | --- |
+| `context_recall` | mapped from retrieval `recall@k` (graded labels, macro-averaged, top-k) |
+| `context_precision` | `null` — not measured; the evaluator scores ranked lists via recall@k / MRR / nDCG@k, not per-chunk precision |
+| `answer_relevancy` | `null` — the retrieval eval never generates answers |
+| `faithfulness` | `null` in retrieval-only runs; mapped from the answer judge's `faithful` score when a judged answer run is exported (eval feedback runs) |
+
+No metric is fabricated: a triad name with no underlying measurement stays
+null rather than being approximated from an unrelated number.
+
 
 ## Measured threshold-based scale recommendation
 

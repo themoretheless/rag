@@ -1,0 +1,38 @@
+{
+  "status": "passed",
+  "transport": "stdio, authenticated loopback HTTP MCP and actual hook executable",
+  "protocol": "2024-11-05",
+  "embedding": "mock",
+  "external_database": false,
+  "tools_verified": [
+    "gate",
+    "calibrate",
+    "calibration_reports",
+    "task_stats"
+  ],
+  "checks": [
+    "tool_discovery",
+    "warn_default",
+    "fake_index_call_gives_no_credit",
+    "SessionStart_resets_usage_and_escalation",
+    "ask_then_deny",
+    "real_query_allows",
+    "same_length_live_change_denies",
+    "task_scoped_gate_counts",
+    "raw_commands_not_in_stats",
+    "read_role_cannot_mutate_gate_or_calibration",
+    "holdout_metrics_and_small_sample_status",
+    "unlabelled_assertions_not_measurements",
+    "read_role_can_read_reports",
+    "stable_report_cursor",
+    "overlapping_IDs_rejected",
+    "actual_hook_ask_JSON",
+    "actual_hook_deny_exit_2",
+    "hook_uses_live_HTTP_writer",
+    "hook_reopens_database_after_writer_exit",
+    "proposed_command_never_executed"
+  ],
+  "observed_gate_decisions": 6,
+  "selected_threshold": 0.9,
+  "runtime_thresholds_changed": false
+}

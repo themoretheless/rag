@@ -91,14 +91,8 @@ async fn ingest_stub_promote_backlinks_neighbors() {
 
     // --- 1. Ingest A linking to missing B and tagging #idea ---
     let text_a = "Note A discusses [[B]] under the #idea theme.";
-    let (id_a, node_a, edges_a) = ingest_with_graph(
-        &store,
-        &embedder,
-        text_a,
-        "A",
-        "doc://a",
-    )
-    .await;
+    let (id_a, node_a, edges_a) =
+        ingest_with_graph(&store, &embedder, text_a, "A", "doc://a").await;
 
     assert!(!id_a.is_empty());
     assert!(!node_a.is_empty());
@@ -145,32 +139,24 @@ async fn ingest_stub_promote_backlinks_neighbors() {
         "neighbors of A should include tag #idea"
     );
     assert!(
-        view_a
-            .edges
-            .iter()
-            .any(|e| e.source_id == node_a && e.target_id == stub_b_id && e.rel_type == REL_WIKILINK),
+        view_a.edges.iter().any(|e| e.source_id == node_a
+            && e.target_id == stub_b_id
+            && e.rel_type == REL_WIKILINK),
         "expected wikilink A → B, edges={:?}",
         view_a.edges
     );
     assert!(
-        view_a
-            .edges
-            .iter()
-            .any(|e| e.source_id == node_a && e.target_id == tag_idea_id && e.rel_type == REL_TAGGED),
+        view_a.edges.iter().any(|e| e.source_id == node_a
+            && e.target_id == tag_idea_id
+            && e.rel_type == REL_TAGGED),
         "expected tagged A → idea, edges={:?}",
         view_a.edges
     );
 
     // --- 3. Ingest B with title B → promote the stub (stable node id) ---
     let text_b = "I am document B, the target of A's wikilink.";
-    let (id_b, node_b, _edges_b) = ingest_with_graph(
-        &store,
-        &embedder,
-        text_b,
-        "B",
-        "doc://b",
-    )
-    .await;
+    let (id_b, node_b, _edges_b) =
+        ingest_with_graph(&store, &embedder, text_b, "B", "doc://b").await;
 
     assert_eq!(
         node_b, stub_b_id,
@@ -188,7 +174,9 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     assert_eq!(promoted.uri.as_deref(), Some("doc://b"));
 
     // No leftover stub for label B
-    let b_nodes = store.find_nodes_by_label("B").expect("find B after promote");
+    let b_nodes = store
+        .find_nodes_by_label("B")
+        .expect("find B after promote");
     assert!(
         b_nodes.iter().all(|n| n.kind == "document" && n.resolved),
         "B must be a resolved document, not a stub: {:?}",
@@ -216,11 +204,17 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     // --- 5. Neighbors of A still reach promoted B and #idea ---
     let neigh = store.neighbors(&node_a, 1, 50).expect("neighbors of A");
     assert!(
-        neigh.nodes.iter().any(|n| n.id == node_b && n.kind == "document"),
+        neigh
+            .nodes
+            .iter()
+            .any(|n| n.id == node_b && n.kind == "document"),
         "neighbors of A should include promoted document B"
     );
     assert!(
-        neigh.nodes.iter().any(|n| n.id == tag_idea_id && n.kind == "tag"),
+        neigh
+            .nodes
+            .iter()
+            .any(|n| n.id == tag_idea_id && n.kind == "tag"),
         "neighbors of A should still include tag idea"
     );
 
@@ -235,10 +229,20 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     let stats = store.graph_stats().expect("graph_stats");
     assert!(stats.total_nodes >= 3, "at least A, B, idea: {:?}", stats);
     assert!(
-        stats.edges_by_rel_type.get(REL_WIKILINK).copied().unwrap_or(0) >= 1
+        stats
+            .edges_by_rel_type
+            .get(REL_WIKILINK)
+            .copied()
+            .unwrap_or(0)
+            >= 1
     );
     assert!(
-        stats.edges_by_rel_type.get(REL_TAGGED).copied().unwrap_or(0) >= 1
+        stats
+            .edges_by_rel_type
+            .get(REL_TAGGED)
+            .copied()
+            .unwrap_or(0)
+            >= 1
     );
     assert_eq!(
         stats.nodes_by_kind.get("stub").copied().unwrap_or(0),

@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 16;
+pub const SCHEMA_VERSION: i32 = 24;
 
 /// Durable node registry and replication journal. Payloads are intentionally
 /// opaque here: transport persists them before higher layers apply/rebuild.
@@ -209,6 +209,19 @@ pub const CREATE_IDX_SOURCE_MANIFEST_ROOT: &str =
 pub const CREATE_IDX_SOURCE_MANIFEST_DOCUMENT: &str =
     "CREATE INDEX IF NOT EXISTS idx_source_manifest_document ON source_manifest(document_id)";
 
+/// Resumable embedding-migration progress: one row per document whose chunks
+/// were already re-embedded under a given target identity fingerprint. Rows
+/// are cleared when the migration completes and the manifest flips.
+pub const CREATE_REEMBED_PROGRESS: &str = r#"
+CREATE TABLE IF NOT EXISTS reembed_progress (
+  target_fingerprint VARCHAR NOT NULL,
+  document_id VARCHAR NOT NULL,
+  chunks_reembedded BIGINT NOT NULL,
+  completed_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (target_fingerprint, document_id)
+)
+"#;
+
 /// Temporal knowledge-graph facts (MemPalace / Graphiti-lite).
 ///
 /// Open-ended facts leave `valid_to` NULL and `status = 'active'`.
@@ -365,6 +378,42 @@ pub const CREATE_IDX_DOCUMENTS_PINNED: &str =
 /// 5. Creates the schema-v9 filesystem source manifest.
 /// 6. Records [`SCHEMA_VERSION`].
 pub fn migrate(conn: &Connection) -> Result<()> {
+    conn.execute_batch(crate::analysis_tasks::DDL)?;
+    conn.execute_batch(crate::gate::DDL)?;
+    conn.execute_batch(crate::calibration::DDL)?;
+    conn.execute_batch(crate::external_db::DDL)?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS code_index_documents (
+        document_id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL
+    )",
+    )?;
+    conn.execute_batch(r#"
+        CREATE TABLE IF NOT EXISTS code_index_source_blobs (content_hash VARCHAR PRIMARY KEY, content VARCHAR NOT NULL);
+        CREATE TABLE IF NOT EXISTS code_index_revisions (
+            id BIGINT PRIMARY KEY, fingerprint VARCHAR NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT current_timestamp, graph_json VARCHAR NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS code_index_revision_files (
+            index_revision BIGINT NOT NULL, document_id VARCHAR NOT NULL, path VARCHAR NOT NULL,
+            project VARCHAR, document_revision BIGINT NOT NULL, content_hash VARCHAR NOT NULL,
+            analysis_json VARCHAR, PRIMARY KEY(index_revision, document_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_revision_files_project ON code_index_revision_files(index_revision,project);
+    "#)?;
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS code_index_drift (
+            event_id VARCHAR PRIMARY KEY, seq BIGINT UNIQUE NOT NULL,
+            index_revision BIGINT NOT NULL, document_id VARCHAR NOT NULL, path VARCHAR NOT NULL,
+            project VARCHAR, kind VARCHAR NOT NULL, source_kind VARCHAR NOT NULL,
+            indexed_hash VARCHAR, observed_hash VARCHAR,
+            first_seen TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            last_seen TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            acknowledged_at TIMESTAMP, acknowledgement VARCHAR
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_drift_seq ON code_index_drift(seq);
+    "#,
+    )?;
     // Base tables (CREATE IF NOT EXISTS is idempotent).
     conn.execute_batch(
         &[
@@ -403,6 +452,16 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     add_column_best_effort(conn, "chunks", "content_hash", "VARCHAR")?;
     // Additive section metadata; old rows read as an empty object.
     add_column_best_effort(conn, "chunks", "metadata_json", "VARCHAR DEFAULT '{}'")?;
+    // Parent/child hierarchy (schema v17): leaf chunks point at their section
+    // leader (Markdown) or at the first window of their code item. The column
+    // mirrors the `parent_chunk_id` key inside `metadata_json`; writers derive
+    // it at insert time and this backfill covers rows ingested before v17.
+    // Rows without the metadata key keep NULL — lazy backfill on re-ingest.
+    add_column_best_effort(conn, "chunks", "parent_chunk_id", "VARCHAR")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_chunks_parent_chunk_id ON chunks(parent_chunk_id)",
+    )?;
+    backfill_chunk_parent_ids(conn)?;
 
     // NULL identifies pre-v11 edges whose author was never persisted. New writes
     // explicitly distinguish extracted edges from durable user-authored links.
@@ -454,6 +513,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE_SOURCE_MANIFEST,
             CREATE_IDX_SOURCE_MANIFEST_ROOT,
             CREATE_IDX_SOURCE_MANIFEST_DOCUMENT,
+            CREATE_REEMBED_PROGRESS,
             CREATE_SCHEMA_VERSION,
             CREATE_META,
             "CREATE TABLE IF NOT EXISTS search_feedback (id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL)",
@@ -643,6 +703,29 @@ pub fn backfill_graph_edge_origins(conn: &Connection) -> Result<u64> {
     Ok(done)
 }
 
+/// Mirror `metadata_json.parent_chunk_id` into the `parent_chunk_id` column
+/// for rows written before schema v17. Set-based, guarded by a missing count
+/// so healthy stores pay one aggregate per open. Rows whose metadata carries
+/// no parent key stay NULL (lazy backfill on the next re-ingest).
+pub fn backfill_chunk_parent_ids(conn: &Connection) -> Result<u64> {
+    let missing: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM chunks \
+         WHERE parent_chunk_id IS NULL AND metadata_json LIKE '%parent_chunk_id%'",
+        [],
+        |row| row.get(0),
+    )?;
+    if missing == 0 {
+        return Ok(0);
+    }
+    let updated = conn.execute(
+        "UPDATE chunks SET parent_chunk_id = \
+           NULLIF(json_extract_string(TRY_CAST(metadata_json AS JSON), '$.parent_chunk_id'), '') \
+         WHERE parent_chunk_id IS NULL AND metadata_json LIKE '%parent_chunk_id%'",
+        [],
+    )? as u64;
+    Ok(updated)
+}
+
 /// Best-effort `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 ///
 /// Ignores "already exists" / duplicate-column failures so older DuckDB builds
@@ -718,7 +801,7 @@ fn record_schema_version(conn: &Connection) -> Result<()> {
         "#,
         duckdb::params![
             SCHEMA_VERSION,
-            "Eval prompts, answer judge, export/replay; schema v16"
+            "Bounded index-usage gate and labelled threshold calibration reports; schema v23"
         ],
     )?;
 
@@ -811,6 +894,11 @@ mod tests {
             chunks.iter().any(|c| c == "content_hash"),
             "missing chunks.content_hash"
         );
+        assert!(
+            chunks.iter().any(|c| c == "parent_chunk_id"),
+            "missing chunks.parent_chunk_id"
+        );
+        assert!(index_exists(&conn, "idx_chunks_parent_chunk_id"));
 
         for t in [
             "ops_log",
@@ -1058,5 +1146,48 @@ mod tests {
         assert_eq!(predicate, "works_at");
         assert_eq!(object, "Acme");
         assert!(valid_to.is_none());
+    }
+
+    /// Pre-v17 rows carry the parent link only inside `metadata_json`; the
+    /// migrate backfill mirrors it into the column, and re-running migrate
+    /// leaves healthy rows untouched.
+    #[test]
+    fn chunk_parent_backfill_mirrors_metadata_and_stays_lazy() {
+        let conn = open_mem();
+        migrate(&conn).expect("migrate");
+        conn.execute_batch(
+            r#"
+            INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json,
+                                char_start, char_end, created_at, metadata_json)
+            VALUES
+              ('parent', 'd', 0, 'p', '[]', 0, 1, CURRENT_TIMESTAMP, '{}'),
+              ('leaf', 'd', 1, 'l', '[]', 1, 2, CURRENT_TIMESTAMP,
+               '{"parent_chunk_id":"parent","section":"S"}'),
+              ('plain', 'd', 2, 'x', '[]', 2, 3, CURRENT_TIMESTAMP, '{}')
+            "#,
+        )
+        .expect("insert pre-v17 shaped chunks");
+
+        let updated = backfill_chunk_parent_ids(&conn).expect("backfill");
+        assert_eq!(updated, 1, "only the metadata-linked row is mirrored");
+        let linked: Option<String> = conn
+            .query_row(
+                "SELECT parent_chunk_id FROM chunks WHERE id = 'leaf'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read leaf");
+        assert_eq!(linked.as_deref(), Some("parent"));
+        let plain: Option<String> = conn
+            .query_row(
+                "SELECT parent_chunk_id FROM chunks WHERE id = 'plain'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read plain");
+        assert_eq!(plain, None, "rows without the key stay NULL (lazy)");
+        // Idempotent: nothing left to mirror.
+        assert_eq!(backfill_chunk_parent_ids(&conn).expect("re-run"), 0);
+        migrate(&conn).expect("migrate again");
     }
 }

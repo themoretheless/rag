@@ -1,0 +1,18 @@
+{
+  "binary_sha256": "3dfa60afbd64fba79d92b92431a013163c1843588298cb3f0aafce67d881934f",
+  "full_library_after_main_change": {
+    "passed": 811,
+    "failed": 0,
+    "ignored": 1
+  },
+  "final_corpus_tests": {
+    "passed": 5,
+    "failed": 0
+  },
+  "source_sha256": {
+    "src/code_index/corpus.rs": "63553b7530fe591e4938b90fbeaf9ac9a24e9b8043db44b02221120fa087d576",
+    "src/mcp/facade.rs": "252bdf2319db47b741e62c16b92f5c8d4c5f425f3a502773b4f381ea787de797",
+    "scripts/smoke_search_multi.py": "80afca5037ec950c501e5bde38a6eb2c2aea4f6a68b3a502b24e00a4976005ff",
+    "docs/MULTI_SEARCH.md": "119392f4c6d50fb8c0e9aea63f958b99bc99833238ca4adc845cce2c235f43d2"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "library": {
+    "passed": 804,
+    "failed": 0,
+    "ignored": 1
+  },
+  "c_family_unit_fixtures": 11,
+  "grammars": [
+    "tree-sitter-c 0.24.2",
+    "tree-sitter-cpp 0.23.4"
+  ],
+  "index_format": 16,
+  "local_schema_version": 24,
+  "external_capture_format": 4,
+  "runtime_report": "runtime.json",
+  "cross_language_runtime_regressions": [
+    "java-regression.json",
+    "go-regression.json",
+    "references-regression.json"
+  ],
+  "binary_sha256": "4bf29ddc348e550f65812ca56f88e88d0f7ba8ff26cdfcbbb5e459d1ed101181",
+  "compiler_probes": "syntax-only C11/C++17 plus two expected negative cases",
+  "compiled_fixture_code_executed": false,
+  "linker_qualification": false,
+  "production_database_used": false,
+  "existing_server_restarted": false,
+  "deployed": false,
+  "full_goal_complete": false
+}

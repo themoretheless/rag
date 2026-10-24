@@ -38,6 +38,7 @@ pub(super) fn routes() -> Router<HttpState> {
         .route("/v1/rooms", get(rooms))
         .route("/v1/llm-status", get(llm_status))
         .route("/v1/embedding-manifest", get(embedding_manifest))
+        .route("/v1/reembed-status", get(reembed_status))
         .route("/v1/diary", get(diary))
         .route("/v1/kg", get(kg_query))
         .route("/v1/kg/timeline", get(kg_timeline))
@@ -134,6 +135,13 @@ async fn llm_status(State(st): State<HttpState>) -> impl IntoResponse {
     let client = ChatClient::from_config(&st.config).ok();
     let report = diagnostics::llm_status(&st.config, client.as_ref()).await;
     api_ok(json!({"ok": true, "llm": report}))
+}
+
+async fn reembed_status(State(st): State<HttpState>) -> impl IntoResponse {
+    match crate::maintain::reembed_status(&st.store, &st.config) {
+        Ok(status) => api_ok(json!({"ok": true, "status": status})),
+        Err(error) => api_err(error),
+    }
 }
 
 async fn embedding_manifest(State(st): State<HttpState>) -> impl IntoResponse {

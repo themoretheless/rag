@@ -1,0 +1,16 @@
+{
+  "src/gate.rs": "3c8a67db9b87927b06fa507d86600690a44f0122b389a16cf46b8ec40b64e944",
+  "src/calibration.rs": "5b673616f38efc43445c8571365b40e561b997d676c3abd36243a3cb911c0552",
+  "src/bin/rag_gate.rs": "39332b59436340fa7da29dc24ebfeb6d073e96e415421d68f273d7ef4f8372be",
+  "src/analysis_tasks.rs": "8d6af04ce8af5fd09bd0197190e12b4f324206cfc18504525eac67b341c9f69e",
+  "src/code_index.rs": "3cb38437b94e1a8f51852ea8eb2ebfb0f1398726aa18b068f7c725123c34802f",
+  "src/code_index/drift.rs": "e3d585586dbb864c49db04348ec194956d937f68668ff1258eb70953b77ecaed",
+  "src/db/schema.rs": "217520d43dcc2df98e8a388e2c8eedcebdbe7466b0095a456a29752f001bf39e",
+  "src/mcp/facade.rs": "38cd219c2369ab52f920ac392b399436aa0958da14e785cf39f37b1a39918a01",
+  "src/mcp/graph.rs": "2b55fd2164cc6dc328faf2022174a2ce17d5a9a8e4ff5827fa814e50e10e49b9",
+  "src/access.rs": "4ecb0b9d27202d09d1cfa93d26a5464f886659f7e40fbf6db3b5b0d598048a49",
+  "src/lib.rs": "2a6a43469f715804d5bd252e74b54b7632ee5f20ba2de81f2b1f3b1b9c057ad9",
+  "Cargo.toml": "02ff4e6973948816046cca4366ffa33e465f03343260e3f258840411f7e6de4b",
+  "Cargo.lock": "f8dd55b33427fc7593c573be94cfc0ba624eef8f48b05a05a084139e2942dc73",
+  "scripts/smoke_gate_calibration.py": "9d993871ac0dae75cc04e04ace2e86776b7d3651d6c9be7ff5da3c3a7dd34019"
+}

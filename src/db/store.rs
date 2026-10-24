@@ -184,6 +184,35 @@ pub(crate) struct DocumentEmbeddingSample {
     pub embedding: Vec<f32>,
 }
 
+/// Per-connection DuckDB performance tuning, driven by env:
+///
+/// - `RAG_DB_THREADS` — `PRAGMA threads=N`; unset/0 leaves DuckDB's default
+///   (all cores). Lower it to keep bulk scans from pinning every core.
+/// - `RAG_DB_MEMORY_LIMIT` — e.g. `8GB`; bounds DuckDB's buffer manager so
+///   long-lived gateways do not balloon RSS.
+fn apply_performance_pragmas(conn: &Connection) -> Result<()> {
+    if let Some(threads) = std::env::var("RAG_DB_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+    {
+        conn.execute_batch(&format!("PRAGMA threads={threads}"))?;
+    }
+    if let Ok(limit) = std::env::var("RAG_DB_MEMORY_LIMIT") {
+        let limit = limit.trim();
+        // Only accept a tight shape; this string goes into a PRAGMA verbatim.
+        if !limit.is_empty()
+            && limit.len() <= 16
+            && limit
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ' ')
+        {
+            conn.execute_batch(&format!("PRAGMA memory_limit='{limit}'"))?;
+        }
+    }
+    Ok(())
+}
+
 impl Store {
     /// Open (or create) a DuckDB database at `path` and run schema migrations.
     pub fn open(path: &Path) -> Result<Self> {
@@ -194,6 +223,7 @@ impl Store {
         }
 
         let conn = Connection::open(path)?;
+        apply_performance_pragmas(&conn)?;
         schema::migrate(&conn)?;
 
         Ok(Self {
@@ -239,6 +269,7 @@ impl Store {
                 path.display()
             ))
         })?;
+        apply_performance_pragmas(&conn)?;
         let version = schema::current_schema_version(&conn).map_err(|error| {
             AppError::config(format!(
                 "DuckDB '{}' is not a compatible rag-mcp database: {error}",
@@ -2254,6 +2285,15 @@ impl Store {
         super::fts::fts_status(&conn)
     }
 
+    /// Dirty/generation snapshot of the derived FTS index (no refresh).
+    ///
+    /// Powers staleness alerting in status/doctor surfaces and the
+    /// maintenance-loop auto-reindex trigger.
+    pub fn fts_generation_state(&self) -> Result<super::fts::FtsGenerationState> {
+        let conn = self.lock()?;
+        super::fts::fts_generation_state(&conn)
+    }
+
     /// Ensure lexical search is ready (DuckDB BM25 or term-frequency fallback).
     ///
     /// Uses `stemmer` (e.g. `config.fts_stemmer` / `RAG_FTS_STEMMER`). Call after
@@ -2444,6 +2484,91 @@ impl Store {
         insert_chunks_locked(&tx, chunks, &embedding_json)?;
         tx.commit()?;
         Ok(())
+    }
+
+    // --- Resumable embedding migration progress (`reembed_progress`) ---
+
+    /// Documents whose chunks still need re-embedding under `target_fingerprint`,
+    /// paged by document id (`after` = last id of the previous page).
+    pub(crate) fn list_reembed_pending_document_ids(
+        &self,
+        target_fingerprint: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT d.id FROM documents d \
+             WHERE (? IS NULL OR d.id > ?) AND NOT EXISTS ( \
+               SELECT 1 FROM reembed_progress p \
+               WHERE p.target_fingerprint = ? AND p.document_id = d.id \
+             ) \
+             ORDER BY d.id LIMIT ?",
+        )?;
+        let rows = stmt.query_map(
+            params![after, after, target_fingerprint, limit as i64],
+            |row| row.get(0),
+        )?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+        Ok(ids)
+    }
+
+    /// Count documents still pending re-embedding under `target_fingerprint`.
+    pub(crate) fn count_reembed_pending(&self, target_fingerprint: &str) -> Result<usize> {
+        let conn = self.lock()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM documents d \
+             WHERE NOT EXISTS ( \
+               SELECT 1 FROM reembed_progress p \
+               WHERE p.target_fingerprint = ? AND p.document_id = d.id \
+             )",
+            params![target_fingerprint],
+            |row| row.get(0),
+        )?;
+        usize::try_from(count).map_err(|_| AppError::db(format!("invalid pending count: {count}")))
+    }
+
+    /// Count documents already re-embedded under `target_fingerprint`.
+    pub(crate) fn count_reembed_done(&self, target_fingerprint: &str) -> Result<usize> {
+        let conn = self.lock()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM reembed_progress WHERE target_fingerprint = ?",
+            params![target_fingerprint],
+            |row| row.get(0),
+        )?;
+        usize::try_from(count).map_err(|_| AppError::db(format!("invalid done count: {count}")))
+    }
+
+    /// Record one document as re-embedded under `target_fingerprint`. Called
+    /// right after the per-document atomic vector swap; a crash between the
+    /// two simply re-embeds that document on resume (idempotent).
+    pub(crate) fn mark_reembed_done(
+        &self,
+        target_fingerprint: &str,
+        document_id: &str,
+        chunks_reembedded: usize,
+    ) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO reembed_progress \
+             (target_fingerprint, document_id, chunks_reembedded, completed_at) \
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+            params![target_fingerprint, document_id, chunks_reembedded as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Drop progress rows for a completed (or abandoned) migration target.
+    pub(crate) fn clear_reembed_progress(&self, target_fingerprint: &str) -> Result<usize> {
+        let conn = self.lock()?;
+        let removed = conn.execute(
+            "DELETE FROM reembed_progress WHERE target_fingerprint = ?",
+            params![target_fingerprint],
+        )?;
+        Ok(removed)
     }
 
     /// Atomically replace only the embeddings of an unchanged chunk set.
@@ -3425,6 +3550,8 @@ fn upsert_document_cas_locked(
     doc: &Document,
     if_match_revision: Option<i64>,
 ) -> Result<i64> {
+    let normalized = crate::code_index::source::persist(conn, doc)?;
+    let doc = normalized.as_ref();
     let hash = match doc.content_hash.as_deref() {
         Some(h) if !h.is_empty() => h.to_string(),
         _ => content_hash(&doc.content),
@@ -3604,12 +3731,15 @@ fn insert_chunks_locked(
     }
 
     let now = format_ts(Utc::now());
+    // `parent_chunk_id` mirrors the additive metadata key so SQL consumers can
+    // join on the column while the JSON object stays the single source of truth.
     let mut stmt = conn.prepare(
         r#"
         INSERT INTO chunks
-          (id, document_id, chunk_index, content, embedding_json, char_start, char_end, created_at, metadata_json)
+          (id, document_id, chunk_index, content, embedding_json, char_start, char_end, created_at, metadata_json, parent_chunk_id)
         VALUES
-          (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?)
+          (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?,
+           NULLIF(json_extract_string(TRY_CAST(? AS JSON), '$.parent_chunk_id'), ''))
         "#,
     )?;
     for (chunk, embedding_json) in chunks.iter().zip(embedding_json) {
@@ -3622,6 +3752,7 @@ fn insert_chunks_locked(
             chunk.char_start,
             chunk.char_end,
             now.as_str(),
+            chunk.metadata_json,
             chunk.metadata_json,
         ])?;
     }
@@ -5225,6 +5356,7 @@ mod tests {
             embedding_dims: dims,
             chunk_size: 800,
             chunk_overlap: 120,
+            code_chunking: crate::config::CodeChunkingMode::Structural,
             default_top_k: 5,
             ingest_roots: Vec::new(),
             max_context_tokens: 4096,
@@ -5243,6 +5375,25 @@ mod tests {
             tool_surface: crate::mcp::ToolSurface::Full,
             http_bind: None,
             wiki_require_if_match: false,
+            rerank_provider: crate::rerank::RerankProviderKind::Off,
+            rerank_base_url: String::new(),
+            rerank_api_key: String::new(),
+            rerank_model: String::new(),
+            rerank_top_n: 50,
+            rerank_timeout_secs: 30,
+            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
+            query_rewrite_provider: None,
+            query_rewrite_model: None,
+            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            hyde_provider: None,
+            hyde_model: None,
+            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            ingest_url_allow: Vec::new(),
+            ingest_url_timeout_secs: 30,
+            ingest_url_max_bytes: 10 * 1024 * 1024,
+            reembed_batch: 100,
+            fts_stale_generation_threshold: 64,
+            fts_maint_interval_secs: 300,
         }
     }
 

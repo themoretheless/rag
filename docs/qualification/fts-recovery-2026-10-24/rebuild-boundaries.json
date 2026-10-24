@@ -1,0 +1,78 @@
+{
+  "status": "passed",
+  "termination": "parent kills a live child (no Rust or C++ exit handlers)",
+  "prior_fts_checkpointed": true,
+  "phases": [
+    {
+      "chunks_generation": 1,
+      "dirty": true,
+      "extension_available": true,
+      "phase": "dirty"
+    },
+    {
+      "chunks_generation": 1,
+      "dirty": true,
+      "extension_available": true,
+      "phase": "leaf"
+    },
+    {
+      "chunks_generation": 1,
+      "dirty": true,
+      "extension_available": true,
+      "phase": "leaves"
+    },
+    {
+      "chunks_generation": 1,
+      "dirty": true,
+      "extension_available": true,
+      "phase": "schema"
+    },
+    {
+      "chunks_generation": 1,
+      "dirty": true,
+      "extension_available": true,
+      "phase": "built"
+    },
+    {
+      "chunks_generation": 1,
+      "dirty": false,
+      "extension_available": true,
+      "phase": "published"
+    },
+    {
+      "backend": "duckdb_bm25",
+      "extension_available": true,
+      "functions": [
+        [
+          "match_bm25",
+          "macro"
+        ],
+        [
+          "tokenize",
+          "macro"
+        ]
+      ],
+      "phase": "complete",
+      "tables": [
+        "dict",
+        "docs",
+        "fields",
+        "stats",
+        "stopwords",
+        "terms"
+      ]
+    }
+  ],
+  "verified_after_each_reopen": [
+    "raw_document",
+    "base_chunks_and_embedding_vectors",
+    "code_snapshot",
+    "task_label_and_note",
+    "gate_decision",
+    "calibration_report",
+    "dirty_incomplete_generation",
+    "lexical_search",
+    "direct_BM25_SQL"
+  ],
+  "wal_discarded": false
+}

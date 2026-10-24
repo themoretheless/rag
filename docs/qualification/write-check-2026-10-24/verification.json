@@ -1,0 +1,22 @@
+{
+  "library": {
+    "passed": 765,
+    "failed": 0,
+    "ignored": 1
+  },
+  "native_fixture": {
+    "passed": 1,
+    "failed": 0,
+    "servers": [
+      "PostgreSQL 16",
+      "MySQL 8.4"
+    ]
+  },
+  "runtime_report": "runtime.json",
+  "binary_sha256": "f20f8c8c1c4d5fa76956d5cf534783e9e73dd25a04387d1b881f9d1817a92a10",
+  "capture_format": 4,
+  "local_schema_version": 24,
+  "production_database_used": false,
+  "existing_server_restarted": false,
+  "deployed": false
+}

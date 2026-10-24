@@ -54,6 +54,11 @@ pub enum DiversityMode {
 pub enum ContextExpansion {
     Neighbors,
     ParentSection,
+    /// Stored parent/child hierarchy: a hit on a leaf chunk returns its parent
+    /// chunk plus sibling leaves (the full section / code item), deduped when
+    /// several hits share one parent. Chunks with no stored parent keep their
+    /// own body.
+    Parent,
 }
 
 impl ContextExpansion {
@@ -61,8 +66,9 @@ impl ContextExpansion {
         match raw.trim().to_ascii_lowercase().as_str() {
             "neighbors" | "neighboring_chunks" => Ok(Self::Neighbors),
             "parent_section" | "section" => Ok(Self::ParentSection),
+            "parent" | "parent_chunk" | "parent_chunks" => Ok(Self::Parent),
             other => Err(AppError::config(format!(
-                "invalid context_expansion '{other}': expected 'neighbors' or 'parent_section'"
+                "invalid context_expansion '{other}': expected 'neighbors', 'parent_section', or 'parent'"
             ))),
         }
     }
@@ -663,6 +669,8 @@ pub fn attach_context(
     expansion: Option<ContextExpansion>,
     neighbor_chunks: usize,
 ) -> Result<()> {
+    // Parent ids already expanded by an earlier hit (dedup shared parents).
+    let mut expanded_parents: std::collections::HashSet<String> = std::collections::HashSet::new();
     for hit in hits {
         let chunks = store.list_chunks_for_document(&hit.document_id)?;
         let Some(current) = chunks.iter().find(|c| c.id == hit.chunk_id) else {
@@ -688,6 +696,25 @@ pub fn attach_context(
                     heading_path.is_some() && path == heading_path
                 })
                 .collect(),
+            ContextExpansion::Parent => {
+                match chunk_parent_id(current) {
+                    Some(parent_id) if expanded_parents.insert(parent_id.clone()) => {
+                        let family: Vec<&Chunk> = chunks
+                            .iter()
+                            .filter(|c| {
+                                c.id == parent_id
+                                    || chunk_parent_id(c).as_deref() == Some(parent_id.as_str())
+                            })
+                            .collect();
+                        // A dangling parent id (stale link, parent in another
+                        // document) falls back to the hit's own body below.
+                        family
+                    }
+                    // Parent already returned by an earlier hit, or no stored
+                    // parent (pre-v17 rows, single-chunk sections): keep self.
+                    _ => Vec::new(),
+                }
+            }
         };
         let selected = if selected.is_empty() {
             vec![current]
@@ -720,6 +747,15 @@ pub fn attach_context(
 
 fn chunk_section_metadata(chunk: &Chunk) -> (Option<Vec<String>>, Option<String>) {
     section_metadata(&chunk.metadata_json)
+}
+
+/// Stored parent link for the parent/child hierarchy (schema v17); the chunk
+/// metadata JSON carries the key, the column mirrors it for SQL consumers.
+fn chunk_parent_id(chunk: &Chunk) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&chunk.metadata_json)
+        .ok()
+        .and_then(|v| v.get("parent_chunk_id")?.as_str().map(str::to_string))
+        .filter(|v| !v.is_empty())
 }
 
 fn section_metadata(metadata_json: &str) -> (Option<Vec<String>>, Option<String>) {
@@ -1153,6 +1189,7 @@ fn hydrate_vector_hits(
             score_vec: Some(candidate.score),
             score_lex: None,
             score_rrf: None,
+            score_rerank: None,
             snippet: None,
             char_start: Some(chunk.char_start),
             char_end: Some(chunk.char_end),
@@ -1256,6 +1293,7 @@ fn search_lex_tf(
             score_vec: None,
             score_lex: Some(score),
             score_rrf: None,
+            score_rerank: None,
             snippet: None,
             char_start: Some(chunk.char_start),
             char_end: Some(chunk.char_end),
@@ -1484,6 +1522,7 @@ mod tests {
             score_vec: Some(score),
             score_lex: None,
             score_rrf: None,
+            score_rerank: None,
             snippet: None,
             char_start: Some(0),
             char_end: Some(10),
@@ -2566,6 +2605,159 @@ mod tests {
                 assert!(hits[0].snippet.is_none());
             }
         }
+    }
+
+    fn parent_fixture_store() -> (tempfile::TempDir, Store) {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("parent.duckdb")).unwrap();
+        let doc = Document {
+            id: "parent-doc".into(),
+            uri: "rag://parent-doc".into(),
+            title: "Parent document".into(),
+            content: "leader body leaf one leaf two".into(),
+            ..Default::default()
+        };
+        store.upsert_document(&doc).unwrap();
+        let chunk = |id: &str, index: i32, content: &str, metadata: &str| Chunk {
+            id: id.into(),
+            document_id: doc.id.clone(),
+            chunk_index: index,
+            content: content.into(),
+            embedding: vec![1.0, 0.0],
+            char_start: 0,
+            char_end: 1,
+            metadata_json: metadata.into(),
+        };
+        store
+            .insert_chunks(&[
+                chunk("c0", 0, "leader body", "{}"),
+                chunk("c1", 1, "leaf one", r#"{"parent_chunk_id":"c0"}"#),
+                chunk("c2", 2, "leaf two", r#"{"parent_chunk_id":"c0"}"#),
+            ])
+            .unwrap();
+        (root, store)
+    }
+
+    #[test]
+    fn context_expansion_parse_accepts_parent() {
+        assert_eq!(
+            ContextExpansion::parse("parent").unwrap(),
+            ContextExpansion::Parent
+        );
+        assert_eq!(
+            ContextExpansion::parse("parent_chunk").unwrap(),
+            ContextExpansion::Parent
+        );
+        assert!(ContextExpansion::parse("bogus").is_err());
+    }
+
+    /// The insert path mirrors `metadata_json.parent_chunk_id` into the
+    /// schema-v17 column so SQL consumers can join on it.
+    #[test]
+    fn insert_chunks_mirrors_parent_column_from_metadata() {
+        let (_root, store) = parent_fixture_store();
+        let conn = store.lock().unwrap();
+        let linked: Option<String> = conn
+            .query_row(
+                "SELECT parent_chunk_id FROM chunks WHERE id = 'c1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked.as_deref(), Some("c0"));
+        let plain: Option<String> = conn
+            .query_row(
+                "SELECT parent_chunk_id FROM chunks WHERE id = 'c0'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(plain, None);
+    }
+
+    /// `expand=parent`: the first leaf hit returns the whole parent section
+    /// (parent + siblings, source order); a second leaf under the same parent
+    /// keeps its own body — the section text is returned exactly once.
+    #[test]
+    fn expand_parent_returns_section_once_for_shared_parent() {
+        let (_root, store) = parent_fixture_store();
+        let query = SearchQuery {
+            top_k: 3,
+            query_embedding: Some(vec![1.0, 0.0]),
+            mode: SearchMode::Vec,
+            context_expansion: Some(ContextExpansion::Parent),
+            ..Default::default()
+        };
+        let hits = search(&store, &query).unwrap();
+        assert_eq!(hits.len(), 3);
+
+        let first_leaf = hits.iter().find(|h| h.chunk_id == "c1").unwrap();
+        assert!(
+            first_leaf.content.contains("leader body")
+                && first_leaf.content.contains("leaf one")
+                && first_leaf.content.contains("leaf two"),
+            "first leaf expands to the full section: {}",
+            first_leaf.content
+        );
+        let section_chunks = first_leaf.context.as_ref().unwrap();
+        assert_eq!(
+            section_chunks
+                .iter()
+                .map(|c| c.chunk_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c0", "c1", "c2"]
+        );
+
+        let second_leaf = hits.iter().find(|h| h.chunk_id == "c2").unwrap();
+        assert_eq!(
+            second_leaf.content, "leaf two",
+            "shared parent is deduped: later leaf keeps its own body"
+        );
+
+        // The parent chunk itself has no stored parent and stays unchanged.
+        let leader = hits.iter().find(|h| h.chunk_id == "c0").unwrap();
+        assert_eq!(leader.content, "leader body");
+    }
+
+    /// Chunks with no stored parent (NULL column / no metadata key) are
+    /// backward compatible: `expand=parent` keeps their own body.
+    #[test]
+    fn expand_parent_without_parent_keeps_own_body() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("parent-null.duckdb")).unwrap();
+        let doc = Document {
+            id: "solo-doc".into(),
+            uri: "rag://solo".into(),
+            title: "Solo".into(),
+            content: "standalone chunk".into(),
+            ..Default::default()
+        };
+        store.upsert_document(&doc).unwrap();
+        store
+            .insert_chunks(&[Chunk {
+                id: "solo".into(),
+                document_id: doc.id.clone(),
+                chunk_index: 0,
+                content: "standalone chunk".into(),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: 1,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
+        let query = SearchQuery {
+            top_k: 1,
+            query_embedding: Some(vec![1.0, 0.0]),
+            mode: SearchMode::Vec,
+            context_expansion: Some(ContextExpansion::Parent),
+            ..Default::default()
+        };
+        let hits = search(&store, &query).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].content, "standalone chunk");
+        let context = hits[0].context.as_ref().unwrap();
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0].chunk_id, "solo");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! # Preferred path: DuckDB `fts` extension
 //!
 //! 1. `INSTALL fts;` then `LOAD fts;` (INSTALL is best-effort; LOAD is required)
-//! 2. `PRAGMA create_fts_index('chunks', 'id', 'content', stemmer := …, overwrite := 1)`
+//! 2. Tear down the reserved derived catalog in dependency order, then create without overwrite.
 //! 3. Rank with `fts_main_chunks.match_bm25(id, query)`
 //!
 //! The FTS inverted index does **not** update when indexed chunk rows change.
@@ -190,6 +190,28 @@ pub fn chunks_generation(conn: &Connection) -> Result<u64> {
     Ok(read_u64_meta(conn, META_CHUNKS_GENERATION)?.unwrap_or(0))
 }
 
+/// Generation gap between source chunks and the derived FTS index.
+///
+/// `None` when no completed index generation exists yet (never refreshed).
+pub fn fts_generation_gap(state: &FtsGenerationState) -> Option<u64> {
+    state
+        .index_generation
+        .map(|index| state.chunks_generation.saturating_sub(index))
+}
+
+/// Staleness policy for the maintenance loop: a dirty FTS whose generation
+/// gap reaches `threshold` should be reindexed. `threshold == 0` disables
+/// auto-reindex; a dirty index with no completed generation always qualifies.
+pub fn fts_stale_needs_reindex(state: &FtsGenerationState, threshold: u64) -> bool {
+    if threshold == 0 || !state.dirty {
+        return false;
+    }
+    match fts_generation_gap(state) {
+        Some(gap) => gap >= threshold,
+        None => true,
+    }
+}
+
 /// Read the current dirty/generation state without refreshing the index.
 pub fn fts_generation_state(conn: &Connection) -> Result<FtsGenerationState> {
     let recorded_chunks_generation = read_u64_meta(conn, META_CHUNKS_GENERATION)?;
@@ -306,6 +328,8 @@ fn rebuild_fts(conn: &Connection, stemmer: String, chunks_generation: u64) -> Re
     };
 
     publish_refreshed_state(conn, &state, chunks_generation)?;
+    #[cfg(test)]
+    test_fts_crashpoint(conn, "published");
     Ok(state)
 }
 
@@ -458,6 +482,114 @@ pub fn search_bm25_with_stemmer(
 // DuckDB FTS path
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+static FTS_CRASH_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+fn test_fts_crashpoint(conn: &Connection, phase: &str) {
+    if !FTS_CRASH_ARMED.load(std::sync::atomic::Ordering::SeqCst)
+        || std::env::var("RAG_TEST_FTS_CRASH_PHASE").ok().as_deref() != Some(phase)
+    {
+        return;
+    }
+    let path = std::path::PathBuf::from(std::env::var_os("RAG_TEST_FTS_CRASH_DB").unwrap());
+    let state = fts_generation_state(conn).unwrap();
+    std::fs::write(path.with_extension("ready.tmp"),serde_json::to_string(&serde_json::json!({"phase":phase,"extension_available":true,"chunks_generation":state.chunks_generation,"dirty":state.dirty})).unwrap()).unwrap();
+    std::fs::rename(
+        path.with_extension("ready.tmp"),
+        path.with_extension("ready.json"),
+    )
+    .unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+/// Remove only the reserved derived FTS catalog, leaf objects before its schema.
+/// DuckDB's extension overwrite path can log DROP SCHEMA ahead of its dependent
+/// table drops; that WAL cannot replay when the old schema was checkpointed.
+fn drop_derived_fts_catalog(conn: &Connection) -> Result<()> {
+    let mut drops = Vec::new();
+    {
+        let mut stmt=conn.prepare("SELECT DISTINCT function_name,function_type FROM duckdb_functions() WHERE schema_name=? ORDER BY function_name")?;
+        let rows = stmt.query_map(params![FTS_SCHEMA], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (name, kind) = row?;
+            if kind != "macro" {
+                return Err(AppError::fts(
+                    "unsupported object in reserved FTS schema; refusing partial teardown",
+                ));
+            }
+            drops.push(format!(
+                "DROP MACRO {}.{}",
+                quoted_identifier(FTS_SCHEMA),
+                quoted_identifier(&name)
+            ));
+        }
+        let mut stmt=conn.prepare("SELECT table_name,table_type FROM information_schema.tables WHERE table_schema=? ORDER BY CASE WHEN table_type='VIEW' THEN 0 ELSE 1 END,table_name")?;
+        let rows = stmt.query_map(params![FTS_SCHEMA], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (name, kind) = row?;
+            let object = match kind.as_str() {
+                "VIEW" => "VIEW",
+                "BASE TABLE" => "TABLE",
+                _ => return Err(AppError::fts("unsupported relation in reserved FTS schema")),
+            };
+            drops.push(format!(
+                "DROP {object} {}.{}",
+                quoted_identifier(FTS_SCHEMA),
+                quoted_identifier(&name)
+            ));
+        }
+    }
+    // A killed explicit force-rebuild must not leave a partial but logically
+    // clean index. Invalidate only the derived generation, not chunk/vector data.
+    conn.execute(
+        "DELETE FROM meta WHERE key=?",
+        params![META_INDEX_GENERATION],
+    )?;
+    #[cfg(test)]
+    test_fts_crashpoint(conn, "dirty");
+    while !drops.is_empty() {
+        let before = drops.len();
+        let mut remaining = Vec::new();
+        let mut last_error = None;
+        for ddl in drops {
+            if let Err(error) = conn.execute_batch(&ddl) {
+                last_error = Some(error);
+                remaining.push(ddl);
+            } else {
+                #[cfg(test)]
+                test_fts_crashpoint(conn, "leaf");
+            }
+        }
+        if remaining.len() == before {
+            return Err(AppError::fts(format!(
+                "FTS leaf teardown could not resolve dependencies: {}",
+                last_error.unwrap()
+            )));
+        }
+        drops = remaining;
+    }
+    #[cfg(test)]
+    test_fts_crashpoint(conn, "leaves");
+    // No CASCADE: replay must see an already empty schema, and unexpected
+    // dependencies must produce an explicit fallback instead of being discarded.
+    conn.execute_batch(&format!(
+        "DROP SCHEMA IF EXISTS {}",
+        quoted_identifier(FTS_SCHEMA)
+    ))?;
+    #[cfg(test)]
+    test_fts_crashpoint(conn, "schema");
+    Ok(())
+}
+fn quoted_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 fn try_duckdb_fts_index(conn: &Connection, stemmer: &str) -> Result<()> {
     // INSTALL may fail when already installed, offline, or extension repo is
     // unreachable. LOAD is what enables the PRAGMA macros.
@@ -467,19 +599,22 @@ fn try_duckdb_fts_index(conn: &Connection, stemmer: &str) -> Result<()> {
         ));
     }
 
-    // `overwrite = 1` makes ensure/reindex idempotent. Index id = chunks.id,
-    // text field = content only (portable; title/heading can be added later).
+    drop_derived_fts_catalog(conn)?;
+    // The old catalog is empty/removed in replay-safe order. Never ask the
+    // extension to cascade-drop a checkpointed schema through overwrite=1.
     let stopwords = if stemmer == "none" { "none" } else { "english" };
     let pragma = format!(
         "PRAGMA create_fts_index(\
             'chunks', 'id', 'content', \
             stemmer = '{stemmer}', \
             stopwords = '{stopwords}', \
-            overwrite = 1\
+            overwrite = 0\
         );"
     );
     conn.execute_batch(&pragma)
         .map_err(|e| AppError::fts(format!("create_fts_index on chunks failed: {e}")))?;
+    #[cfg(test)]
+    test_fts_crashpoint(conn, "built");
     Ok(())
 }
 
@@ -802,6 +937,32 @@ mod tests {
         (dir, store)
     }
 
+    fn state(chunks: u64, index: Option<u64>, dirty: bool) -> FtsGenerationState {
+        FtsGenerationState {
+            chunks_generation: chunks,
+            index_generation: index,
+            dirty,
+            rebuild_count: 0,
+        }
+    }
+
+    #[test]
+    fn stale_threshold_policy() {
+        // Clean index never reindexes, whatever the threshold.
+        assert!(!fts_stale_needs_reindex(&state(10, Some(10), false), 1));
+        // Disabled threshold never reindexes.
+        assert!(!fts_stale_needs_reindex(&state(100, Some(0), true), 0));
+        // Gap below threshold: not yet.
+        assert!(!fts_stale_needs_reindex(&state(70, Some(10), true), 64));
+        // Gap at threshold: reindex.
+        assert!(fts_stale_needs_reindex(&state(74, Some(10), true), 64));
+        // Dirty with no completed index generation always qualifies.
+        assert!(fts_stale_needs_reindex(&state(1, None, true), 64));
+        // Saturating gap arithmetic: index ahead of chunks is gap zero.
+        assert_eq!(fts_generation_gap(&state(5, Some(9), false)), Some(0));
+        assert_eq!(fts_generation_gap(&state(5, None, true)), None);
+    }
+
     fn seed_docs(store: &Store) {
         let now = Utc::now();
         let docs = [
@@ -892,6 +1053,225 @@ mod tests {
     fn lifecycle(store: &Store) -> FtsGenerationState {
         let conn = store.lock().unwrap();
         fts_generation_state(&conn).unwrap()
+    }
+
+    #[test]
+    fn wal_replay_crash_child() {
+        let Some(path) = std::env::var_os("RAG_TEST_FTS_CRASH_DB") else {
+            return;
+        };
+        let path = std::path::PathBuf::from(path);
+        let store = Store::open(&path).unwrap();
+        let extension_available;
+        {
+            let conn = store.lock().unwrap();
+            extension_available = load_fts_extension(&conn);
+            let state = ensure_fts(&conn).unwrap();
+            if extension_available {
+                assert_eq!(state.backend, FtsBackend::DuckDbBm25);
+            }
+        }
+        // Match production startup: the existing FTS schema is already checkpointed.
+        // Replacing only WAL-created objects does not reproduce the catalog bug.
+        store.checkpoint().unwrap();
+        seed_docs(&store);
+        store
+            .upsert_document(&Document {
+                id: "wal-code".into(),
+                uri: "file:///fixture/main.rs".into(),
+                source_file: Some("/fixture/main.rs".into()),
+                content: "fn preserved() {}".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        store.index_code().unwrap();
+        store
+            .analysis_task_set(
+                "wal",
+                &crate::analysis_tasks::TaskSet {
+                    name: Some("preserved".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store
+            .analysis_note(
+                "wal",
+                "fixture",
+                &crate::analysis_tasks::Note {
+                    text: "committed before crash".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store
+            .analysis_gate(
+                "wal",
+                &crate::gate::Payload {
+                    hook_event_name: "SessionStart".into(),
+                    ..Default::default()
+                },
+                crate::gate::Mode::Warn,
+                &[],
+            )
+            .unwrap();
+        store.calibrate_confidence(&Default::default()).unwrap();
+        FTS_CRASH_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
+        let backend;
+        let (tables, functions) = {
+            let conn = store.lock().unwrap();
+            backend = reindex(&conn).unwrap().backend.as_str().to_string();
+            if extension_available {
+                assert_eq!(backend, "duckdb_bm25");
+            }
+            let mut stmt=conn.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema='fts_main_chunks' ORDER BY table_name").unwrap();
+            let tables = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<duckdb::Result<Vec<_>>>()
+                .unwrap();
+            let mut stmt=conn.prepare("SELECT function_name,function_type FROM duckdb_functions() WHERE schema_name='fts_main_chunks' ORDER BY function_name").unwrap();
+            let functions = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .unwrap()
+                .collect::<duckdb::Result<Vec<_>>>()
+                .unwrap();
+            (tables, functions)
+        };
+        std::fs::write(path.with_extension("ready.tmp"),serde_json::to_string(&serde_json::json!({"phase":"complete","backend":backend,"extension_available":extension_available,"tables":tables,"functions":functions})).unwrap()).unwrap();
+        std::fs::rename(
+            path.with_extension("ready.tmp"),
+            path.with_extension("ready.json"),
+        )
+        .unwrap();
+        // The parent kills this live process. Neither Rust drops nor C++ atexit
+        // handlers may checkpoint away the WAL under test.
+        loop {
+            std::thread::park();
+        }
+    }
+
+    #[test]
+    fn fts_overwrite_wal_replays_after_abrupt_process_exit_without_losing_commits() {
+        for phase in [
+            "dirty",
+            "leaf",
+            "leaves",
+            "schema",
+            "built",
+            "published",
+            "complete",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("crash.duckdb");
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "db::fts::tests::wal_replay_crash_child",
+                    "--nocapture",
+                ])
+                .env("RAG_TEST_FTS_CRASH_DB", &path)
+                .env("RAG_TEST_FTS_CRASH_PHASE", phase)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !path.with_extension("ready.json").exists() {
+                if child.try_wait().unwrap().is_some() {
+                    let out = child.wait_with_output().unwrap();
+                    panic!(
+                        "crash child exited before readiness: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                }
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("crash child readiness timeout");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            child.kill().unwrap();
+            let _ = child.wait_with_output().unwrap();
+            let catalog = std::fs::read_to_string(path.with_extension("ready.json")).unwrap();
+            let checkpoint: serde_json::Value = serde_json::from_str(&catalog).unwrap();
+            let store = Store::open(&path)
+                .unwrap_or_else(|e| panic!("WAL replay failed: {e}; catalog={catalog}"));
+            if checkpoint["extension_available"] == true {
+                assert_eq!(checkpoint["phase"], phase);
+                if let Some(expected) = checkpoint["chunks_generation"].as_u64() {
+                    assert_eq!(lifecycle(&store).chunks_generation, expected);
+                }
+                if !matches!(phase, "published" | "complete") {
+                    assert!(lifecycle(&store).dirty);
+                }
+            }
+            assert_eq!(
+                store.get_document("wal-code").unwrap().unwrap().content,
+                "fn preserved() {}"
+            );
+            assert_eq!(
+                store.analysis_notes("wal", &Default::default()).unwrap()["total_matching"],
+                1
+            );
+            assert_eq!(
+                store
+                    .analysis_task_stats("wal", &Default::default())
+                    .unwrap()["gate"]["decisions"],
+                1
+            );
+            assert_eq!(
+                store.calibration_reports(&Default::default()).unwrap()["items"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert_eq!(store.code_snapshot().unwrap().symbols[0].name, "preserved");
+            let hits = search_bm25(&store, "cat", 10, &LexFilters::default()).unwrap();
+            assert!(!hits.is_empty());
+            {
+                let conn = store.lock().unwrap();
+                let mut stmt = conn
+                    .prepare("SELECT embedding_json FROM chunks ORDER BY id")
+                    .unwrap();
+                let values = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
+                    .unwrap()
+                    .collect::<duckdb::Result<Vec<_>>>()
+                    .unwrap();
+                assert_eq!(values.len(), 4);
+                for value in values {
+                    assert_eq!(
+                        serde_json::from_str::<Vec<f32>>(&value).unwrap(),
+                        vec![0.0; 4]
+                    );
+                }
+                if checkpoint["extension_available"] == true {
+                    let direct: Option<f64> = conn
+                        .query_row(
+                            "SELECT MAX(fts_main_chunks.match_bm25(id,'cat')) FROM chunks",
+                            [],
+                            |r| r.get(0),
+                        )
+                        .unwrap();
+                    assert!(
+                        direct.is_some_and(|score| score > 0.0),
+                        "physical BM25 must work, not just its fallback"
+                    );
+                    assert_eq!(
+                        fts_status(&conn).unwrap().unwrap().backend,
+                        FtsBackend::DuckDbBm25
+                    );
+                }
+            }
+            eprintln!("crash recovery exercised {catalog}");
+            if checkpoint["extension_available"] == false {
+                eprintln!("FTS unavailable; only fallback replay exercised");
+                break;
+            }
+        }
     }
 
     #[test]

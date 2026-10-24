@@ -159,7 +159,7 @@ Frequency = how often the capability appears as a first-class product feature ac
 | Content-hash / dedupe | Med | Missing | **P0** |
 | Scoped search (namespace/wing) | Med | Missing | **P0** wing/room |
 | Delete by source / prune | Med | Partial (delete_document) | **P0** delete_by_source |
-| File watch / sync | Med | Missing | **P1–P2** ops |
+| File watch / sync | Med | Shipped (opt-in `RAG_WATCH_ROOTS` watcher → debounced `sync_sources`) | done |
 | Markdown vault export | Med | Missing | **P1** (Karpathy + Obsidian) |
 | Wiki compile / index.md / log | Low | Missing | **P0** differentiator |
 | Lint orphans / missing links | Low | Missing | **P1** |
@@ -250,7 +250,7 @@ SPEC v1 substrate tools and behaviors stay required forever; P0 only **extends**
 | graph_expand_search | Partial | **P0** (same as SPEC / Graph section) |
 | wake_up / diaries / kg_* | Missing | P1 |
 | sync_sources / repair | Partial | Source sync shipped; broader repair remains |
-| multi-format / watch | Partial | HTML/PDF/code ingest shipped; watcher remains |
+| multi-format / watch | Shipped | HTML/PDF/code ingest and opt-in `RAG_WATCH_ROOTS` watcher shipped |
 | export vault | Missing | P1 |
 | MCP resources/prompts | Missing | P1 |
 | read-only mode | Missing | P2 |

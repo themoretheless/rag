@@ -104,6 +104,9 @@ mod tests {
             .finish();
         assert_eq!(span.name, "search");
         assert!(span.duration_ms >= 0.0);
-        assert_eq!(span.attrs.get("mode").and_then(|v| v.as_str()), Some("hybrid"));
+        assert_eq!(
+            span.attrs.get("mode").and_then(|v| v.as_str()),
+            Some("hybrid")
+        );
     }
 }

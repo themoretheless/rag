@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "sql_executed": false,
+  "checks": [
+    "column_check",
+    "foreign_key",
+    "table_unique",
+    "add_constraint_not_valid",
+    "drop_named_column_constraint",
+    "frozen_constraint_diff",
+    "nested_limits",
+    "dependency_rewrite_diagnostic",
+    "uncertain_write_plan"
+  ]
+}

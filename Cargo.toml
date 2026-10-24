@@ -23,9 +23,14 @@ path = "src/bin/ingest_project.rs"
 name = "ingest_file"
 path = "src/bin/ingest_file.rs"
 
+[[bin]]
+name = "rag_gate"
+path = "src/bin/rag_gate.rs"
+
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
+futures-util = "0.3"
 axum = "0.8"
 blake3 = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -41,6 +46,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Process/system resource telemetry for the /v1/resources endpoint.
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
@@ -48,10 +55,43 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 unicode-normalization = "0.1.25"
+# Pure-Rust (miniz_oxide) zip reading for OOXML (.docx/.xlsx) extraction.
+zip = { version = "6", default-features = false, features = ["deflate"] }
+# XML event parser for OOXML document/styles/sheet parts.
+quick-xml = "0.42"
+# html5ever-based DOM queries for HTML main-content extraction (pure Rust).
+dom_query = "0.27"
+# Optional HF tokenizers backend for token counting: loaded from a local
+# tokenizer.json via RAG_TOKENIZER_JSON; falls back to the calibrated
+# heuristic when unset. crates.io is unreachable, so this stays optional.
+tokenizers = { version = "0.23.2", default-features = false, features = ["onig"], optional = true }
+tree-sitter = "0.27.1"
+tree-sitter-rust = "0.24.2"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-python = "0.25.0"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+sqlparser = { version = "0.63.0", features = ["visitor"] }
+regex = "1.13.1"
+tree-sitter-css = "0.25.0"
+tree-sitter-html = "0.23.2"
+html-escape = "0.2"
+tree-sitter-php = "0.25.1"
+tree-sitter-bash = "0.25.1"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "mysql", "mysql-rsa"] }
+encoding_rs = "=0.8.35"
 
 # Only read by ops::free_space_bytes for the automatic snapshot disk guard.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[features]
+# Exact HF token counting when RAG_TOKENIZER_JSON points at a tokenizer.json;
+# without the env var the calibrated heuristic is used either way.
+default = ["tokenizers"]
 
 [dev-dependencies]
 tempfile = "3"

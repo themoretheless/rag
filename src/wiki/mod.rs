@@ -1757,28 +1757,57 @@ pub(crate) fn review_parent_ids(store: &Store, page: &Document) -> Result<Vec<(S
     if let Some(versions) = wiki_source_versions(page) {
         let mut refs = Vec::new();
         for v in versions {
-            let source = store.get_document(&v.document_id)?.or(store.find_by_uri(&v.uri)?);
-            refs.push(source.map(|d| (d.id, d.uri)).unwrap_or((v.document_id, v.uri)));
+            let source = store
+                .get_document(&v.document_id)?
+                .or(store.find_by_uri(&v.uri)?);
+            refs.push(
+                source
+                    .map(|d| (d.id, d.uri))
+                    .unwrap_or((v.document_id, v.uri)),
+            );
         }
-        refs.sort(); refs.dedup(); return Ok(refs);
+        refs.sort();
+        refs.dedup();
+        return Ok(refs);
     }
     let raws = store.list_documents_by_layer(LAYER_RAW)?;
     let ids = raws.iter().map(|d| (d.id.clone(), d.clone())).collect();
     let uris = raws.iter().map(|d| (d.uri.clone(), d.clone())).collect();
     let mut result: Vec<(String, String)> = linked_raws_for_wiki(store, page, &ids, &uris)?
-        .into_iter().map(|(d, _)| (d.id.clone(), d.uri.clone())).collect();
+        .into_iter()
+        .map(|(d, _)| (d.id.clone(), d.uri.clone()))
+        .collect();
     if let Some(node) = store.find_node_by_document_id(&page.id)? {
         let view = store.neighbors(&node.id, 1, 10000)?;
-        if view.nodes.len() >= 10000 { return Err(AppError::config("review dependency set exceeds graph limit")); }
+        if view.nodes.len() >= 10000 {
+            return Err(AppError::config(
+                "review dependency set exceeds graph limit",
+            ));
+        }
         for edge in &view.edges {
-            if edge.rel_type != "related" { continue; }
-            let other = if edge.source_id == node.id { &edge.target_id } else { &edge.source_id };
-            if let Some(id) = view.nodes.iter().find(|n| &n.id == other).and_then(|n| n.document_id.as_ref()) {
-                if let Some(source) = store.get_document(id)? { result.push((source.id, source.uri)); }
+            if edge.rel_type != "related" {
+                continue;
+            }
+            let other = if edge.source_id == node.id {
+                &edge.target_id
+            } else {
+                &edge.source_id
+            };
+            if let Some(id) = view
+                .nodes
+                .iter()
+                .find(|n| &n.id == other)
+                .and_then(|n| n.document_id.as_ref())
+            {
+                if let Some(source) = store.get_document(id)? {
+                    result.push((source.id, source.uri));
+                }
             }
         }
     }
-    result.sort(); result.dedup(); Ok(result)
+    result.sort();
+    result.dedup();
+    Ok(result)
 }
 
 /// List stale wiki↔raw pairs; optionally recompile unique raw parents via LLM.
@@ -2769,6 +2798,7 @@ mod tests {
             embedding_dims: dims,
             chunk_size: 200,
             chunk_overlap: 20,
+            code_chunking: crate::config::CodeChunkingMode::Structural,
             default_top_k: 5,
             ingest_roots: Vec::new(),
             max_context_tokens: 4096,
@@ -2787,6 +2817,25 @@ mod tests {
             tool_surface: crate::mcp::ToolSurface::Full,
             http_bind: None,
             wiki_require_if_match: false,
+            rerank_provider: crate::rerank::RerankProviderKind::Off,
+            rerank_base_url: String::new(),
+            rerank_api_key: String::new(),
+            rerank_model: String::new(),
+            rerank_top_n: 50,
+            rerank_timeout_secs: 30,
+            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
+            query_rewrite_provider: None,
+            query_rewrite_model: None,
+            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            hyde_provider: None,
+            hyde_model: None,
+            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            ingest_url_allow: Vec::new(),
+            ingest_url_timeout_secs: 30,
+            ingest_url_max_bytes: 10 * 1024 * 1024,
+            reembed_batch: 100,
+            fts_stale_generation_threshold: 64,
+            fts_maint_interval_secs: 300,
         }
     }
 

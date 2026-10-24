@@ -1,0 +1,37 @@
+{
+  "status": "passed",
+  "transport": "stdio and loopback HTTP MCP JSON-RPC",
+  "protocol": "2024-11-05",
+  "embedding": "mock",
+  "external_database": false,
+  "tools_verified": [
+    "task_set",
+    "task_stats",
+    "note",
+    "notes",
+    "symbol"
+  ],
+  "checks": [
+    "tool_discovery",
+    "session_task_label",
+    "unverified_notes",
+    "JSON_tags",
+    "stable_note_cursor",
+    "literal_filter",
+    "real_index_success_and_failure_attribution",
+    "zero_unfinished_calls",
+    "independent_explicit_session_metadata",
+    "empty_task_has_zero_calls",
+    "generation_conflict",
+    "clear_does_not_erase_history",
+    "zero_usage_is_explicit",
+    "HTTP_requires_explicit_task_session",
+    "HTTP_unscoped_call_does_not_inherit_task",
+    "HTTP_metadata_attribution",
+    "HTTP_read_role_cannot_write_note_or_task",
+    "HTTP_read_role_can_read_notes_and_stats"
+  ],
+  "observed_audit_calls": 3,
+  "observed_other_calls": 1,
+  "observed_notes": 2
+}

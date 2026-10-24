@@ -12,11 +12,123 @@ use serde::{Deserialize, Serialize};
 use crate::db::Store;
 
 pub fn wal_warn_bytes() -> u64 {
-    std::env::var("RAG_WAL_WARN_BYTES").ok()
+    std::env::var("RAG_WAL_WARN_BYTES")
+        .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(256 * 1024 * 1024)
 }
+
+// --- Process / system resource telemetry -----------------------------------
+
+/// Point-in-time process and host resource usage for the `/v1/resources`
+/// endpoint and the "Ресурсы" UI tab.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceSnapshot {
+    pub pid: u32,
+    pub uptime_seconds: u64,
+    /// CPU usage of this process in percent; may exceed 100 on multi-core
+    /// hosts (280 % ≈ 2.8 busy cores).
+    pub cpu_percent: f32,
+    pub logical_cpus: usize,
+    /// Tokio multi-thread runtime worker count actually used at startup.
+    pub tokio_worker_threads: usize,
+    pub rss_bytes: u64,
+    pub virtual_bytes: u64,
+    pub system_memory_total: u64,
+    pub system_memory_used: u64,
+    pub load_avg_1m: f64,
+    pub load_avg_5m: f64,
+    pub load_avg_15m: f64,
+    pub sampled_at: DateTime<Utc>,
+}
+
+/// Logical CPUs the tokio runtime was (or will be) sized for.
+///
+/// `RAG_WORKER_THREADS` overrides the default of one worker per logical CPU.
+pub fn worker_threads() -> usize {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    std::env::var("RAG_WORKER_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(logical)
+}
+
+static RESOURCE_SAMPLE: LazyLock<RwLock<Option<ResourceSnapshot>>> =
+    LazyLock::new(|| RwLock::new(None));
+static RESOURCE_SYSTEM: LazyLock<std::sync::Mutex<sysinfo::System>> =
+    LazyLock::new(|| std::sync::Mutex::new(sysinfo::System::new()));
+static RESOURCE_SAMPLER_STARTED: std::sync::Once = std::sync::Once::new();
+
+fn sample_resources() -> ResourceSnapshot {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate};
+    let pid = Pid::from_u32(std::process::id());
+    let mut sys = RESOURCE_SYSTEM.lock().unwrap_or_else(|p| p.into_inner());
+    sys.refresh_memory();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
+    let (cpu_percent, rss_bytes, virtual_bytes) = sys
+        .process(pid)
+        .map(|p| (p.cpu_usage(), p.memory(), p.virtual_memory()))
+        .unwrap_or((0.0, 0, 0));
+    let load = sysinfo::System::load_average();
+    ResourceSnapshot {
+        pid: std::process::id(),
+        uptime_seconds: STARTED.elapsed().as_secs(),
+        cpu_percent,
+        logical_cpus: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
+        tokio_worker_threads: worker_threads(),
+        rss_bytes,
+        virtual_bytes,
+        system_memory_total: sys.total_memory(),
+        system_memory_used: sys.used_memory(),
+        load_avg_1m: load.one,
+        load_avg_5m: load.five,
+        load_avg_15m: load.fifteen,
+        sampled_at: Utc::now(),
+    }
+}
+
+/// Latest sampled resource usage.
+///
+/// CPU percentage is only meaningful across two sysinfo refreshes, so a
+/// background sampler thread refreshes every 2 s; this function never blocks
+/// on sampling and lazily starts the sampler on first use.
+pub fn resource_snapshot() -> ResourceSnapshot {
+    RESOURCE_SAMPLER_STARTED.call_once(|| {
+        std::thread::Builder::new()
+            .name("resource-sampler".into())
+            .spawn(|| loop {
+                let snap = sample_resources();
+                *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap);
+                std::thread::sleep(Duration::from_secs(2));
+            })
+            .ok();
+    });
+    let cached = RESOURCE_SAMPLE
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    match cached {
+        Some(snap) => snap,
+        // First call before the sampler ticked: prime the baseline; CPU reads
+        // 0 % until the second sample, which is expected and self-corrects.
+        None => {
+            let snap = sample_resources();
+            *RESOURCE_SAMPLE.write().unwrap_or_else(|p| p.into_inner()) = Some(snap.clone());
+            snap
+        }
+    }
+}
+
 use crate::error::{AppError, Result};
 
 const BACKUP_PREFIX: &str = "rag-auto-";
@@ -76,41 +188,74 @@ struct RuntimeState {
 }
 
 static STARTED: LazyLock<Instant> = LazyLock::new(Instant::now);
-static RUNTIME: LazyLock<RwLock<RuntimeState>> = LazyLock::new(|| RwLock::new(RuntimeState {
-    phase: "process_start".into(), ready: false, tool_surface: "unknown".into(), http_bind: None,
-    checkpoint_ms: None, fts_init_ms: None, manifest_validation_ms: None, startup_total_ms: None,
-    autosync_enabled: false, autosync_running: false, autosync_last_completed_at: None,
-    autosync_last_error: None, autosync_next_run_at: None, auto_backup_enabled: false,
-    auto_backup_running: false, auto_backup_last_completed_at: None, auto_backup_last_error: None,
-    auto_backup_next_run_at: None, shutdown_checkpointed: false,
-    stale_pid_metadata_detected: false,
-}));
+static RUNTIME: LazyLock<RwLock<RuntimeState>> = LazyLock::new(|| {
+    RwLock::new(RuntimeState {
+        phase: "process_start".into(),
+        ready: false,
+        tool_surface: "unknown".into(),
+        http_bind: None,
+        checkpoint_ms: None,
+        fts_init_ms: None,
+        manifest_validation_ms: None,
+        startup_total_ms: None,
+        autosync_enabled: false,
+        autosync_running: false,
+        autosync_last_completed_at: None,
+        autosync_last_error: None,
+        autosync_next_run_at: None,
+        auto_backup_enabled: false,
+        auto_backup_running: false,
+        auto_backup_last_completed_at: None,
+        auto_backup_last_error: None,
+        auto_backup_next_run_at: None,
+        shutdown_checkpointed: false,
+        stale_pid_metadata_detected: false,
+    })
+});
 static PID_PATH: LazyLock<RwLock<Option<PathBuf>>> = LazyLock::new(|| RwLock::new(None));
 
 pub fn runtime_snapshot() -> RuntimeSnapshot {
-    let state = RUNTIME.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+    let state = RUNTIME
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     RuntimeSnapshot {
-        startup_phase: state.phase, ready: state.ready, pid: std::process::id(),
+        startup_phase: state.phase,
+        ready: state.ready,
+        pid: std::process::id(),
         stale_pid_metadata_detected: state.stale_pid_metadata_detected,
-        uptime_seconds: STARTED.elapsed().as_secs(), version: env!("CARGO_PKG_VERSION").into(),
+        uptime_seconds: STARTED.elapsed().as_secs(),
+        version: env!("CARGO_PKG_VERSION").into(),
         build_commit: option_env!("RAG_BUILD_COMMIT").unwrap_or("unknown").into(),
-        tool_surface: state.tool_surface, http_loopback_only: state.http_bind.as_deref()
-            .is_none_or(|bind| bind.starts_with("127.") || bind.starts_with("[::1]") || bind.starts_with("localhost")),
-        http_bind: state.http_bind, checkpoint_ms: state.checkpoint_ms, fts_init_ms: state.fts_init_ms,
-        manifest_validation_ms: state.manifest_validation_ms, startup_total_ms: state.startup_total_ms,
-        autosync_enabled: state.autosync_enabled, autosync_running: state.autosync_running,
+        tool_surface: state.tool_surface,
+        http_loopback_only: state.http_bind.as_deref().is_none_or(|bind| {
+            bind.starts_with("127.") || bind.starts_with("[::1]") || bind.starts_with("localhost")
+        }),
+        http_bind: state.http_bind,
+        checkpoint_ms: state.checkpoint_ms,
+        fts_init_ms: state.fts_init_ms,
+        manifest_validation_ms: state.manifest_validation_ms,
+        startup_total_ms: state.startup_total_ms,
+        autosync_enabled: state.autosync_enabled,
+        autosync_running: state.autosync_running,
         autosync_last_completed_at: state.autosync_last_completed_at,
-        autosync_last_error: state.autosync_last_error, autosync_next_run_at: state.autosync_next_run_at,
-        auto_backup_enabled: state.auto_backup_enabled, auto_backup_running: state.auto_backup_running,
+        autosync_last_error: state.autosync_last_error,
+        autosync_next_run_at: state.autosync_next_run_at,
+        auto_backup_enabled: state.auto_backup_enabled,
+        auto_backup_running: state.auto_backup_running,
         auto_backup_last_completed_at: state.auto_backup_last_completed_at,
-        auto_backup_last_error: state.auto_backup_last_error, auto_backup_next_run_at: state.auto_backup_next_run_at,
+        auto_backup_last_error: state.auto_backup_last_error,
+        auto_backup_next_run_at: state.auto_backup_next_run_at,
         shutdown_checkpointed: state.shutdown_checkpointed,
     }
 }
 
 pub fn configure_runtime(tool_surface: &str, http_bind: Option<String>) {
-    let mut state = RUNTIME.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-    state.tool_surface = tool_surface.into(); state.http_bind = http_bind;
+    let mut state = RUNTIME
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    state.tool_surface = tool_surface.into();
+    state.http_bind = http_bind;
 }
 
 pub fn set_startup_phase(phase: &str) {
@@ -120,17 +265,36 @@ pub fn set_startup_phase(phase: &str) {
 pub fn set_startup_timing(name: &str, elapsed: Duration) {
     let ms = elapsed.as_millis().min(u64::MAX as u128) as u64;
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
-    match name { "checkpoint" => state.checkpoint_ms = Some(ms), "fts" => state.fts_init_ms = Some(ms),
-        "manifest" => state.manifest_validation_ms = Some(ms), "total" => state.startup_total_ms = Some(ms), _ => {} }
-    let warn_ms = std::env::var("RAG_STARTUP_WARN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(30_000);
-    if ms >= warn_ms { tracing::warn!(phase = name, elapsed_ms = ms, warn_ms, "slow startup phase"); }
+    match name {
+        "checkpoint" => state.checkpoint_ms = Some(ms),
+        "fts" => state.fts_init_ms = Some(ms),
+        "manifest" => state.manifest_validation_ms = Some(ms),
+        "total" => state.startup_total_ms = Some(ms),
+        _ => {}
+    }
+    let warn_ms = std::env::var("RAG_STARTUP_WARN_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30_000);
+    if ms >= warn_ms {
+        tracing::warn!(phase = name, elapsed_ms = ms, warn_ms, "slow startup phase");
+    }
 }
 
-pub fn mark_ready() { let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner()); s.phase = "ready".into(); s.ready = true; }
+pub fn mark_ready() {
+    let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
+    s.phase = "ready".into();
+    s.ready = true;
+}
 pub fn mark_shutdown(checkpointed: bool) {
-    let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner()); s.phase = "shutdown_complete".into(); s.ready = false; s.shutdown_checkpointed = checkpointed;
+    let mut s = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
+    s.phase = "shutdown_complete".into();
+    s.ready = false;
+    s.shutdown_checkpointed = checkpointed;
     drop(s);
-    if let Some(path) = PID_PATH.read().unwrap_or_else(|p| p.into_inner()).as_ref() { let _ = fs::remove_file(path); }
+    if let Some(path) = PID_PATH.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        let _ = fs::remove_file(path);
+    }
 }
 
 pub fn configure_autosync(interval: Duration) {
@@ -141,48 +305,90 @@ pub fn configure_autosync(interval: Duration) {
     set_autosync_next(interval);
 }
 
-pub fn mark_autosync_running() { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).autosync_running = true; }
+pub fn mark_autosync_running() {
+    RUNTIME
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .autosync_running = true;
+}
 pub fn mark_autosync_success(interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
-    state.autosync_running = false; state.autosync_last_completed_at = Some(Utc::now()); state.autosync_last_error = None;
-    state.autosync_next_run_at = Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
+    state.autosync_running = false;
+    state.autosync_last_completed_at = Some(Utc::now());
+    state.autosync_last_error = None;
+    state.autosync_next_run_at =
+        Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
 pub fn mark_autosync_error(error: &str, interval: Duration) {
     let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
-    state.autosync_running = false; state.autosync_last_error = Some(error.into());
-    state.autosync_next_run_at = Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
+    state.autosync_running = false;
+    state.autosync_last_error = Some(error.into());
+    state.autosync_next_run_at =
+        Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
 fn set_autosync_next(interval: Duration) {
-    RUNTIME.write().unwrap_or_else(|p| p.into_inner()).autosync_next_run_at =
+    RUNTIME
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .autosync_next_run_at =
         Some(Utc::now() + chrono::Duration::from_std(interval).unwrap_or_default());
 }
 
 pub fn validate_runtime_paths(db_path: &Path, ingest_roots: &[PathBuf]) -> Result<()> {
     let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
-    if !parent.exists() { fs::create_dir_all(parent)?; }
-    if fs::metadata(parent)?.permissions().readonly() { return Err(AppError::config(format!("database directory is read-only: {}", parent.display()))); }
+    if !parent.exists() {
+        fs::create_dir_all(parent)?;
+    }
+    if fs::metadata(parent)?.permissions().readonly() {
+        return Err(AppError::config(format!(
+            "database directory is read-only: {}",
+            parent.display()
+        )));
+    }
     for root in ingest_roots {
-        if !root.is_dir() { return Err(AppError::config(format!("ingest root is not a readable directory: {}", root.display()))); }
+        if !root.is_dir() {
+            return Err(AppError::config(format!(
+                "ingest root is not a readable directory: {}",
+                root.display()
+            )));
+        }
         // Do not enumerate protected macOS folders during launchd startup: TCC can
         // block a background process indefinitely before the HTTP listener opens.
         // Individual sync/ingest calls still perform and report the real read.
     }
     if let Some(dir) = auto_backup_dir() {
         fs::create_dir_all(&dir)?;
-        if fs::metadata(&dir)?.permissions().readonly() { return Err(AppError::config(format!("auto-backup directory is read-only: {}", dir.display()))); }
+        if fs::metadata(&dir)?.permissions().readonly() {
+            return Err(AppError::config(format!(
+                "auto-backup directory is read-only: {}",
+                dir.display()
+            )));
+        }
     }
-    let pid_path = std::env::var("RAG_PID_FILE").ok().filter(|v| !v.trim().is_empty())
-        .map(PathBuf::from).unwrap_or_else(|| db_path.with_extension("pid"));
-    let stale = fs::read_to_string(&pid_path).ok().map(|v| v.trim() != std::process::id().to_string()).unwrap_or(false);
+    let pid_path = std::env::var("RAG_PID_FILE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| db_path.with_extension("pid"));
+    let stale = fs::read_to_string(&pid_path)
+        .ok()
+        .map(|v| v.trim() != std::process::id().to_string())
+        .unwrap_or(false);
     fs::write(&pid_path, format!("{}\n", std::process::id()))?;
     *PID_PATH.write().unwrap_or_else(|p| p.into_inner()) = Some(pid_path);
-    RUNTIME.write().unwrap_or_else(|p| p.into_inner()).stale_pid_metadata_detected = stale;
+    RUNTIME
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .stale_pid_metadata_detected = stale;
     Ok(())
 }
 
 fn auto_backup_dir() -> Option<PathBuf> {
-    std::env::var("RAG_AUTO_BACKUP_DIR").ok().map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var("RAG_AUTO_BACKUP_DIR")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Snapshot-loop settings, read together so the running loop and the reported
@@ -305,13 +511,17 @@ pub fn spawn_auto_backup(store: Store) {
         let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
         state.auto_backup_enabled = true;
         state.auto_backup_last_completed_at = latest_auto_backup_at(&dir).ok().flatten();
-        state.auto_backup_next_run_at = state.auto_backup_last_completed_at
+        state.auto_backup_next_run_at = state
+            .auto_backup_last_completed_at
             .map(|completed| completed + chrono::Duration::from_std(interval).unwrap_or_default())
             .or_else(|| Some(Utc::now()));
     }
     tokio::spawn(async move {
         loop {
-            RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_running = true;
+            RUNTIME
+                .write()
+                .unwrap_or_else(|p| p.into_inner())
+                .auto_backup_running = true;
             let store = store.clone();
             let dir = dir.clone();
             let result = tokio::task::spawn_blocking(move || {
@@ -325,12 +535,36 @@ pub fn spawn_auto_backup(store: Store) {
                     state.auto_backup_last_error = None;
                     tracing::info!(path = %path.display(), "automatic RAG backup created")
                 }
-                Ok(Ok(None)) => { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_last_error = None; }
-                Ok(Err(error)) => { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_last_error = Some(error.to_string()); tracing::error!(error = %error, "automatic RAG backup failed") }
-                Err(error) => { RUNTIME.write().unwrap_or_else(|p| p.into_inner()).auto_backup_last_error = Some(error.to_string()); tracing::error!(error = %error, "automatic RAG backup task panicked") }
+                Ok(Ok(None)) => {
+                    RUNTIME
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .auto_backup_last_error = None;
+                }
+                Ok(Err(error)) => {
+                    RUNTIME
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .auto_backup_last_error = Some(error.to_string());
+                    tracing::error!(error = %error, "automatic RAG backup failed")
+                }
+                Err(error) => {
+                    RUNTIME
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .auto_backup_last_error = Some(error.to_string());
+                    tracing::error!(error = %error, "automatic RAG backup task panicked")
+                }
             }
-            { let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner()); state.auto_backup_running = false;
-              state.auto_backup_next_run_at = Some(Utc::now() + chrono::Duration::from_std(interval.min(Duration::from_secs(3600))).unwrap_or_default()); }
+            {
+                let mut state = RUNTIME.write().unwrap_or_else(|p| p.into_inner());
+                state.auto_backup_running = false;
+                state.auto_backup_next_run_at = Some(
+                    Utc::now()
+                        + chrono::Duration::from_std(interval.min(Duration::from_secs(3600)))
+                            .unwrap_or_default(),
+                );
+            }
             tokio::time::sleep(interval.min(Duration::from_secs(3600))).await;
         }
     });
@@ -440,7 +674,9 @@ fn list_backups(dir: &Path) -> Result<Vec<(PathBuf, SystemTime)>> {
 }
 
 fn latest_auto_backup_at(dir: &Path) -> Result<Option<DateTime<Utc>>> {
-    Ok(list_backups(dir)?.first().map(|(_, modified)| DateTime::<Utc>::from(*modified)))
+    Ok(list_backups(dir)?
+        .first()
+        .map(|(_, modified)| DateTime::<Utc>::from(*modified)))
 }
 
 #[cfg(test)]
@@ -463,7 +699,9 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        let completed = latest_auto_backup_at(&backups).unwrap().expect("latest backup time");
+        let completed = latest_auto_backup_at(&backups)
+            .unwrap()
+            .expect("latest backup time");
         assert!(completed <= Utc::now());
     }
 
@@ -560,6 +798,9 @@ mod tests {
         fs::write(&pid, "999999\n").unwrap();
         validate_runtime_paths(&db, &[root.path().to_path_buf()]).unwrap();
         assert!(runtime_snapshot().stale_pid_metadata_detected);
-        assert_eq!(fs::read_to_string(pid).unwrap().trim(), std::process::id().to_string());
+        assert_eq!(
+            fs::read_to_string(pid).unwrap().trim(),
+            std::process::id().to_string()
+        );
     }
 }

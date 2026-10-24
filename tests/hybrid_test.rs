@@ -156,10 +156,7 @@ async fn lex_finds_distinctive_keywords() {
         "top lex hit should be xylophone doc, got title={:?} uri={:?}",
         hits[0].document_title, hits[0].document_uri
     );
-    assert!(
-        hits[0].score_lex.is_some(),
-        "lex mode must set score_lex"
-    );
+    assert!(hits[0].score_lex.is_some(), "lex mode must set score_lex");
     assert!(hits[0].score > 0.0);
     let content_lower = hits[0].content.to_lowercase();
     assert!(
@@ -199,14 +196,7 @@ async fn hybrid_finds_distinctive_keywords_with_mock_embeddings() {
         "doc://nebulium",
     )
     .await;
-    let (id_b, _) = ingest_text(
-        &store,
-        &embedder,
-        text_b,
-        "Tomato Soup",
-        "doc://tomato",
-    )
-    .await;
+    let (id_b, _) = ingest_text(&store, &embedder, text_b, "Tomato Soup", "doc://tomato").await;
     assert_ne!(id_a, id_b);
 
     // Mock embeddings are hash-based: exact query text matches doc A embedding.
@@ -279,14 +269,7 @@ async fn diversity_collapse_by_document_limits_chunks() {
         "doc://klystron",
     )
     .await;
-    let (id_garden, _) = ingest_text(
-        &store,
-        &embedder,
-        other,
-        "Garden Tips",
-        "doc://garden",
-    )
-    .await;
+    let (id_garden, _) = ingest_text(&store, &embedder, other, "Garden Tips", "doc://garden").await;
 
     assert!(
         n_kly >= 3,
@@ -308,10 +291,7 @@ async fn diversity_collapse_by_document_limits_chunks() {
     .expect("lex uncapped");
 
     assert!(!uncapped.is_empty());
-    let from_kly_uncapped = uncapped
-        .iter()
-        .filter(|h| h.document_id == id_kly)
-        .count();
+    let from_kly_uncapped = uncapped.iter().filter(|h| h.document_id == id_kly).count();
     assert!(
         from_kly_uncapped >= 2,
         "need multiple klystron chunks before collapse (got {from_kly_uncapped})"
@@ -474,7 +454,8 @@ async fn store_arc_lex_and_hybrid_smoke() {
     assert!(!lex.is_empty());
     assert_eq!(lex[0].document_id, id);
 
-    let emb = embedder.embed_one("Zyzzyva is a tropical American weevil genus used as a distinctive token.");
+    let emb = embedder
+        .embed_one("Zyzzyva is a tropical American weevil genus used as a distinctive token.");
     let hybrid = search(
         store.as_ref(),
         &SearchQuery {

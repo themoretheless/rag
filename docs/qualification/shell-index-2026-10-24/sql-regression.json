@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "embedding": "mock",
+  "production_database_touched": false,
+  "sql_executed": false,
+  "checks": [
+    "migration_create_and_alter",
+    "read_and_write_locations_with_owners",
+    "valid_insert",
+    "unknown_column",
+    "null_rejected",
+    "required_column",
+    "delete",
+    "empty_update",
+    "warm_cache",
+    "stale_schema_indeterminate",
+    "source_sync_refresh"
+  ],
+  "index_rev": 2
+}

@@ -196,6 +196,28 @@ pub struct IngestFileParams {
     pub room: Option<String>,
 }
 
+/// Parameters for `ingest_url` (fetch one web page into the raw layer).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct IngestUrlParams {
+    /// HTTP(S) URL to fetch. Host must match `RAG_INGEST_URL_ALLOW`.
+    pub url: String,
+    /// Optional document title (defaults to the final URL host).
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Optional stable URI (defaults to the final post-redirect URL).
+    #[serde(default)]
+    pub uri: Option<String>,
+    /// Optional metadata as a JSON object string (merged with fetch metadata).
+    #[serde(default)]
+    pub metadata_json: Option<String>,
+    /// Project shelf (MemPalace wing), e.g. `rag` or `loyalty`.
+    #[serde(default)]
+    pub wing: Option<String>,
+    /// Sub-area under wing.
+    #[serde(default)]
+    pub room: Option<String>,
+}
+
 /// Parameters for `sync_sources` (incremental directory ingest).
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct SyncSourcesParams {
@@ -349,7 +371,7 @@ pub struct SearchParams {
     /// Cap retained chunks per document under diversity (default `RAG_MAX_CHUNKS_PER_DOC`).
     #[serde(default)]
     pub max_chunks_per_document: Option<u32>,
-    /// Optional source context: `neighbors` or `parent_section`.
+    /// Optional source context: `neighbors`, `parent_section`, or `parent`.
     #[serde(default)]
     pub context_expansion: Option<String>,
     /// Chunks on each side for neighbor expansion (default 1).
@@ -361,6 +383,21 @@ pub struct SearchParams {
     /// RRF constant `k` in `1 / (k + rank)` for hybrid fusion (default 60).
     #[serde(default)]
     pub rrf_k: Option<f32>,
+    /// When true and `RAG_RERANK_PROVIDER` is configured, rerank the candidate
+    /// pool (`RAG_RERANK_TOP_N`) before returning `top_k` hits. Provider errors
+    /// fall back to the un-reranked ranking. Default false.
+    #[serde(default)]
+    pub rerank: Option<bool>,
+    /// When true, the server asks the chat LLM for query variants and fuses
+    /// per-variant searches with RRF (`RAG_QUERY_REWRITE_*`). LLM errors fall
+    /// back to plain search. Default false.
+    #[serde(default)]
+    pub rewrite: Option<bool>,
+    /// When true, the server embeds an LLM-written hypothetical answer passage
+    /// and fuses it as an extra dense leg (`RAG_HYDE_*`; vec/hybrid only). LLM
+    /// errors fall back to plain search. Default false.
+    #[serde(default)]
+    pub hyde: Option<bool>,
 }
 
 /// Explicit multi-query rewrite/RRF. Callers provide rewrites; no LLM is invoked by default.
@@ -382,6 +419,11 @@ pub struct MultiQuerySearchParams {
     pub source_file: Option<String>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// When true and `RAG_RERANK_PROVIDER` is configured, rerank the fused
+    /// candidate pool before returning `top_k` hits (fallback keeps the fused
+    /// ranking). Default false.
+    #[serde(default)]
+    pub rerank: Option<bool>,
 }
 
 /// One hit passed into `pack_context` (same shape as `search` results).
@@ -400,6 +442,8 @@ pub struct PackHitParams {
     pub score_lex: Option<f32>,
     #[serde(default)]
     pub score_rrf: Option<f32>,
+    #[serde(default)]
+    pub score_rerank: Option<f32>,
     #[serde(default)]
     pub snippet: Option<String>,
     #[serde(default)]
@@ -425,6 +469,7 @@ impl From<PackHitParams> for crate::models::SearchHit {
             score_vec: h.score_vec,
             score_lex: h.score_lex,
             score_rrf: h.score_rrf,
+            score_rerank: h.score_rerank,
             snippet: h.snippet,
             char_start: h.char_start,
             char_end: h.char_end,
@@ -444,7 +489,7 @@ pub struct PackContextParams {
     /// Defaults to `RAG_MAX_CONTEXT_TOKENS`; actual tokenizer counts may differ.
     #[serde(default)]
     pub max_tokens: Option<u32>,
-    /// Optional source context: `neighbors` or `parent_section`.
+    /// Optional source context: `neighbors`, `parent_section`, or `parent`.
     #[serde(default)]
     pub context_expansion: Option<String>,
     /// Chunks on each side for neighbor expansion (default 1).
@@ -1079,6 +1124,11 @@ pub struct SearchWikiParams {
     /// Cap retained chunks per document under diversity (default `RAG_MAX_CHUNKS_PER_DOC`).
     #[serde(default)]
     pub max_chunks_per_document: Option<u32>,
+    /// When true and `RAG_RERANK_PROVIDER` is configured, rerank the candidate
+    /// pool before returning `top_k` hits (fallback keeps the original ranking).
+    /// Default false.
+    #[serde(default)]
+    pub rerank: Option<bool>,
 }
 
 /// One citation attached to a `file_answer` wiki page.

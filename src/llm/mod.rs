@@ -3,6 +3,7 @@
 mod chat;
 mod provider;
 
+pub(crate) use chat::truncate;
 pub use chat::{
     ChatClient, ChatMessage, CompilePage, CompileResult, ConsolidateProposal, LlmStatus,
 };

@@ -1,0 +1,20 @@
+{
+  "library": {
+    "passed": 780,
+    "failed": 0,
+    "ignored": 1
+  },
+  "go_unit_fixtures": 9,
+  "grammar": "tree-sitter-go 0.25.0",
+  "index_format": 14,
+  "local_schema_version": 24,
+  "external_capture_format": 4,
+  "runtime_report": "runtime.json",
+  "cross_language_runtime_regression": "references-regression.json",
+  "binary_sha256": "c5ef3ad270582ae859ba5a677306bf859f357f082a643aefd71721d879d50fc3",
+  "go_compiler_executed": false,
+  "production_database_used": false,
+  "existing_server_restarted": false,
+  "deployed": false,
+  "full_goal_complete": false
+}

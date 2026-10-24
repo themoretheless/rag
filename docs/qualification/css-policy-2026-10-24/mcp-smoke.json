@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "protocol": "2024-11-05",
+  "embedding": "mock",
+  "external_database": false,
+  "tools_verified": [
+    "class_usage",
+    "policy_trace",
+    "sync_sources"
+  ],
+  "checks": [
+    "tool_discovery",
+    "CSS_comment_false_positive",
+    "original_HTML_class_evidence",
+    "missing_class",
+    "static_PHP_callers",
+    "default_deny",
+    "warm_index_reuse",
+    "markup_only_refresh",
+    "default_allow_after_refresh"
+  ],
+  "initial_index_rev": 1,
+  "updated_index_rev": 2
+}

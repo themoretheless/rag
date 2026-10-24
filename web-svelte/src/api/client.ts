@@ -3,6 +3,7 @@ import type {
   DocumentBody,
   GraphView,
   HealthResponse,
+  ResourcesResponse,
   WikiListParams,
   WikiListResponse,
   WikiCreateBody,
@@ -108,6 +109,7 @@ export const api = {
   changeProposal: (body: { action: 'create'; document_id: string } | { action: 'save'; id: string; revision: number; content: string } | { action: 'accept' | 'reject'; id: string; revision: number }) => request<WikiProposal>('/v1/wiki-proposals', { method: 'POST', body: JSON.stringify(body) }),
   wikiReview: () => request<{ items: ReviewEvidence[] }>('/v1/wiki-review'),
   health: () => request<HealthResponse>('/health'),
+  resources: () => request<ResourcesResponse>('/v1/resources'),
 
   /** Ordinary browser links cannot attach Bearer credentials. */
   sourceFile: async (documentId: string) => {

@@ -13,9 +13,35 @@ use rmcp::{transport::stdio, ServiceExt};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     init_tracing();
+    // Worker pool size is configurable (`RAG_WORKER_THREADS`); the default is
+    // one worker per logical CPU. Set it lower to leave headroom for the
+    // desktop when heavy embed/reindex bursts run.
+    let workers = rag_mcp::ops::worker_threads();
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all();
+    if workers != logical {
+        builder.worker_threads(workers);
+    }
+    tracing::info!(
+        worker_threads = workers,
+        logical_cpus = logical,
+        "tokio runtime sizing"
+    );
+    let runtime = builder.build().context("failed to build tokio runtime")?;
+    let result = runtime.block_on(async_main());
+    // Tokio stdin can retain an uncancellable blocking read after the MCP
+    // transport is cancelled. The final database checkpoint already completed;
+    // do not let that idle read prevent a bounded process shutdown.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    result
+}
+
+async fn async_main() -> anyhow::Result<()> {
     let startup_started = Instant::now();
     rag_mcp::ops::set_startup_phase("loading_config");
 
@@ -130,12 +156,17 @@ async fn run_serve_modes(
     config: Config,
 ) -> anyhow::Result<()> {
     rag_mcp::ops::spawn_auto_backup(store.clone());
-    RagServer::new(store.clone(), embedder.clone(), config.clone()).spawn_auto_sync();
+    rag_mcp::diagnostics::spawn_fts_maintenance(store.clone(), config.clone());
+    let server = RagServer::new(store.clone(), embedder.clone(), config.clone());
+    server.clone().spawn_auto_sync();
+    server.spawn_file_watcher();
     let http_only = env_flag("RAG_HTTP_ONLY");
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
     let mcp_http_enabled = env_truthy_default("RAG_MCP_HTTP", true);
 
     let http_bind = config.http_bind.clone();
+    let shutdown = CancellationToken::new();
+    let mut http_task = None;
     if let Some(ref bind_str) = http_bind {
         let addr = http_api::parse_bind(bind_str)
             .context("RAG_HTTP_BIND")?
@@ -146,7 +177,7 @@ async fn run_serve_modes(
                 store.clone(),
                 embedder.clone(),
                 config.clone(),
-                CancellationToken::new(),
+                shutdown.clone(),
             ))
         } else {
             None
@@ -160,23 +191,33 @@ async fn run_serve_modes(
                 "RAG_HTTP_ONLY: HTTP gateway only (no stdio); MCP URL http://{}/mcp",
                 addr
             );
+            let running =
+                http_api::serve_with_shutdown(addr, store_http, mcp_svc, shutdown.clone());
+            tokio::pin!(running);
             tokio::select! {
-                result = http_api::serve(addr, store_http, mcp_svc) => {
-                    result.context("HTTP API server error")?;
-                }
-                signal = shutdown_signal() => {
+                result=&mut running=>{ result.context("HTTP API server error")?; }
+                signal=shutdown_signal()=>{
                     signal.context("shutdown signal handler failed")?;
                     tracing::info!("shutdown signal received");
+                    shutdown.cancel();
+                    match tokio::time::timeout(std::time::Duration::from_secs(10),&mut running).await {
+                        Ok(result)=>result.context("HTTP shutdown error")?,
+                        Err(_)=>tracing::warn!("HTTP shutdown drain exceeded ten seconds"),
+                    }
                 }
             }
             return Ok(());
         }
 
-        tokio::spawn(async move {
-            if let Err(e) = http_api::serve(addr, store_http, mcp_svc).await {
-                tracing::error!(error = %e, "HTTP API exited");
+        let http_shutdown = shutdown.clone();
+        http_task = Some(tokio::spawn(async move {
+            let result =
+                http_api::serve_with_shutdown(addr, store_http, mcp_svc, http_shutdown).await;
+            if let Err(error) = &result {
+                tracing::error!(error=%error,"HTTP API exited");
             }
-        });
+            result
+        }));
     } else if http_only {
         anyhow::bail!("RAG_HTTP_ONLY=true requires RAG_HTTP_BIND (e.g. 127.0.0.1:7432)");
     }
@@ -185,27 +226,51 @@ async fn run_serve_modes(
     let server = RagServer::new(store, embedder, config);
 
     tracing::info!("starting rag-mcp on stdio");
-    match server.serve(stdio()).await {
-        Ok(service) => {
-            service
-                .waiting()
-                .await
-                .context("MCP server terminated with error")?;
+    let stdio_run = async {
+        match server.serve(stdio()).await {
+            Ok(service) => {
+                service
+                    .waiting()
+                    .await
+                    .context("MCP server terminated with error")?;
+            }
+            Err(e) if has_http => {
+                // No MCP client on stdin (manual service start): keep HTTP alive for UI/MCP HTTP.
+                tracing::warn!(
+                    error = %e,
+                    "stdio MCP not connected; HTTP gateway still running (Ctrl+C to stop)"
+                );
+                std::future::pending::<()>().await;
+            }
+            Err(e) => {
+                return Err(e).context("failed to start MCP server on stdio");
+            }
         }
-        Err(e) if has_http => {
-            // No MCP client on stdin (manual service start): keep HTTP alive for UI/MCP HTTP.
-            tracing::warn!(
-                error = %e,
-                "stdio MCP not connected; HTTP gateway still running (Ctrl+C to stop)"
-            );
-            std::future::pending::<()>().await;
+
+        Ok(())
+    };
+    let outcome = tokio::select! {
+        result=stdio_run=>result,
+        signal=shutdown_signal()=>{
+            signal.context("shutdown signal handler failed")?;
+            tracing::info!("shutdown signal received");
+            Ok(())
         }
-        Err(e) => {
-            return Err(e).context("failed to start MCP server on stdio");
+    };
+    shutdown.cancel();
+    if let Some(mut task) = http_task {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), &mut task).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(error))) => tracing::error!(error=%error,"HTTP API exited"),
+            Ok(Err(error)) => tracing::error!(error=%error,"HTTP task failed during shutdown"),
+            Err(_) => {
+                task.abort();
+                let _ = task.await;
+                tracing::warn!("HTTP shutdown drain exceeded ten seconds");
+            }
         }
     }
-
-    Ok(())
+    outcome
 }
 
 async fn shutdown_signal() -> std::io::Result<()> {

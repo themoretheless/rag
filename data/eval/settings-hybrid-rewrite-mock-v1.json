@@ -1,0 +1,6 @@
+{
+  "name": "hybrid-rewrite-mock",
+  "mode": "hybrid",
+  "top_k": 5,
+  "rewrite": "mock"
+}

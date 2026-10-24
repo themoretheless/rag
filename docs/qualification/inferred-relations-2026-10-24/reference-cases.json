@@ -1,0 +1,87 @@
+{
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_source_sha256": "db3a1d426b29ee5c2b5c6f85edd76baf899a561acc0a616051dca3259135a794",
+  "method": "Execute unchanged reference Column/Table classes, naming constants and relation_base/infer_relations function AST with controlled metadata. Local decisions are covered by the named actual tests; this is not a full reference-server or representative-corpus benchmark.",
+  "cases": [
+    {
+      "case": "ordinary_id",
+      "source_column": "user_id",
+      "reference_added": 1,
+      "reference_relations": [
+        [
+          "user_id",
+          "app",
+          "users",
+          "id",
+          "derived",
+          0.4,
+          "вывод по имени колонки user_id"
+        ]
+      ],
+      "local_decision": "inferred with single-key/type evidence",
+      "local_verification": "native PostgreSQL/MySQL fixture and MCP"
+    },
+    {
+      "case": "company_plural",
+      "source_column": "company_id",
+      "reference_added": 0,
+      "reference_relations": [],
+      "local_decision": "inferred: correct company -> companies inflection",
+      "local_verification": "native PostgreSQL/MySQL fixture and MCP"
+    },
+    {
+      "case": "composite_id",
+      "source_column": "user_id",
+      "reference_added": 1,
+      "reference_relations": [
+        [
+          "user_id",
+          "app",
+          "users",
+          "id",
+          "derived",
+          0.4,
+          "вывод по имени колонки user_id"
+        ]
+      ],
+      "local_decision": "withheld; target id not individually unique, diagnostic retained",
+      "local_verification": "external_db::relations::tests::composite_partial_invalid_unknown_and_declared_targets_are_not_fabricated"
+    },
+    {
+      "case": "case_ambiguous",
+      "source_column": "user_id",
+      "reference_added": 1,
+      "reference_relations": [
+        [
+          "user_id",
+          "app",
+          "users",
+          "id",
+          "derived",
+          0.4,
+          "вывод по имени колонки user_id"
+        ]
+      ],
+      "local_decision": "withheld with both candidates, not first-match selection",
+      "local_verification": "external_db::relations::tests::schema_case_and_role_prefix_ambiguity_never_selects_the_first_candidate"
+    },
+    {
+      "case": "plain_word_paid",
+      "source_column": "paid",
+      "reference_added": 1,
+      "reference_relations": [
+        [
+          "paid",
+          "app",
+          "pas",
+          "id",
+          "derived",
+          0.4,
+          "вывод по имени колонки paid"
+        ]
+      ],
+      "local_decision": "not treated as an identifier suffix",
+      "local_verification": "external_db::relations::tests::naming_rules_use_real_keys_and_type_evidence_without_promoting_guesses"
+    }
+  ]
+}

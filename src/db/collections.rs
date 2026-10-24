@@ -35,7 +35,10 @@ impl Store {
         tx.commit()?;
         drop(conn);
         self.get_collection(&collection.id)?.ok_or_else(|| {
-            AppError::not_found(format!("collection not found after create: {}", collection.id))
+            AppError::not_found(format!(
+                "collection not found after create: {}",
+                collection.id
+            ))
         })
     }
 
@@ -65,7 +68,9 @@ impl Store {
                 row_to_collection,
             )
             .ok();
-        let Some(collection) = collection else { return Ok(None) };
+        let Some(collection) = collection else {
+            return Ok(None);
+        };
 
         let mut stmt = conn.prepare(
             r#"SELECT document_id, position, parent_document_id
@@ -138,9 +143,8 @@ impl Store {
         }
         tx.commit()?;
         drop(conn);
-        self.get_collection(id)?.ok_or_else(|| {
-            AppError::not_found(format!("collection not found after update: {id}"))
-        })
+        self.get_collection(id)?
+            .ok_or_else(|| AppError::not_found(format!("collection not found after update: {id}")))
     }
 }
 
@@ -162,7 +166,9 @@ fn validate_metadata(raw: &str) -> Result<()> {
 fn validate_entries(conn: &Connection, entries: &[CollectionEntry]) -> Result<()> {
     let ids: HashSet<&str> = entries.iter().map(|e| e.document_id.trim()).collect();
     if ids.len() != entries.len() || ids.contains("") {
-        return Err(AppError::config("collection document ids must be non-empty and unique"));
+        return Err(AppError::config(
+            "collection document ids must be non-empty and unique",
+        ));
     }
     for entry in entries {
         let exists: i64 = conn.query_row(
@@ -171,7 +177,10 @@ fn validate_entries(conn: &Connection, entries: &[CollectionEntry]) -> Result<()
             |row| row.get(0),
         )?;
         if exists == 0 {
-            return Err(AppError::not_found(format!("document not found: {}", entry.document_id)));
+            return Err(AppError::not_found(format!(
+                "document not found: {}",
+                entry.document_id
+            )));
         }
         if let Some(parent) = entry.parent_document_id.as_deref() {
             if parent == entry.document_id || !ids.contains(parent) {
@@ -220,13 +229,21 @@ fn dependency_order(entries: &[CollectionEntry]) -> (Vec<String>, Vec<String>) {
     loop {
         let next = entries.iter().find(|entry| {
             !emitted.contains(entry.document_id.as_str())
-                && indegree.get(entry.document_id.as_str()).copied().unwrap_or(0) == 0
+                && indegree
+                    .get(entry.document_id.as_str())
+                    .copied()
+                    .unwrap_or(0)
+                    == 0
         });
         let Some(next) = next else { break };
         emitted.insert(next.document_id.as_str());
         ordered.push(next.document_id.clone());
         for candidate in entries {
-            if candidate.depends_on.iter().any(|id| id == &next.document_id) {
+            if candidate
+                .depends_on
+                .iter()
+                .any(|id| id == &next.document_id)
+            {
                 if let Some(value) = indegree.get_mut(candidate.document_id.as_str()) {
                     *value = value.saturating_sub(1);
                 }
@@ -245,14 +262,29 @@ fn dependency_order(entries: &[CollectionEntry]) -> (Vec<String>, Vec<String>) {
     }
 }
 
-fn replace_entries(conn: &Connection, collection_id: &str, entries: &[CollectionEntry]) -> Result<()> {
-    conn.execute("DELETE FROM collection_dependencies WHERE collection_id = ?", params![collection_id])?;
-    conn.execute("DELETE FROM collection_entries WHERE collection_id = ?", params![collection_id])?;
+fn replace_entries(
+    conn: &Connection,
+    collection_id: &str,
+    entries: &[CollectionEntry],
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM collection_dependencies WHERE collection_id = ?",
+        params![collection_id],
+    )?;
+    conn.execute(
+        "DELETE FROM collection_entries WHERE collection_id = ?",
+        params![collection_id],
+    )?;
     for (position, entry) in entries.iter().enumerate() {
         conn.execute(
             r#"INSERT INTO collection_entries
                (collection_id, document_id, position, parent_document_id) VALUES (?, ?, ?, ?)"#,
-            params![collection_id, entry.document_id, position as i32, entry.parent_document_id],
+            params![
+                collection_id,
+                entry.document_id,
+                position as i32,
+                entry.parent_document_id
+            ],
         )?;
         for dependency in &entry.depends_on {
             conn.execute(

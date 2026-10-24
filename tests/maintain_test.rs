@@ -11,14 +11,12 @@ use std::sync::Arc;
 use chrono::Utc;
 use rag_mcp::config::EmbeddingProviderKind;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
-use rag_mcp::models::{
-    Chunk, Document, GraphNode, SearchMode,
-};
+use rag_mcp::models::{Chunk, Document, GraphNode, SearchMode};
 use rag_mcp::util::content_hash;
 use rag_mcp::{
     analyze_corpus, apply_maintenance_plan, heuristic_plan, log_plan, maintain_compress,
-    plan_maintenance, ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions,
-    Config, MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store,
+    plan_maintenance, ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions, Config,
+    MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store,
 };
 use tempfile::TempDir;
 
@@ -41,6 +39,7 @@ fn test_config(db_path: std::path::PathBuf) -> Config {
         embedding_dims: DIMS,
         chunk_size: 200,
         chunk_overlap: 20,
+        code_chunking: rag_mcp::config::CodeChunkingMode::Structural,
         default_top_k: 5,
         ingest_roots: Vec::new(),
         max_context_tokens: 4096,
@@ -58,7 +57,26 @@ fn test_config(db_path: std::path::PathBuf) -> Config {
         maint_near_dup_threshold: 0.92,
         tool_surface: rag_mcp::mcp::ToolSurface::Full,
         http_bind: None,
-            wiki_require_if_match: false,
+        wiki_require_if_match: false,
+        rerank_provider: rag_mcp::rerank::RerankProviderKind::Off,
+        rerank_base_url: String::new(),
+        rerank_api_key: String::new(),
+        rerank_model: String::new(),
+        rerank_top_n: 50,
+        rerank_timeout_secs: 30,
+        query_rewrite_variants: 3,
+        query_rewrite_provider: None,
+        query_rewrite_model: None,
+        query_rewrite_cache_size: 256,
+        hyde_provider: None,
+        hyde_model: None,
+        hyde_cache_size: 256,
+        ingest_url_allow: Vec::new(),
+        ingest_url_timeout_secs: 30,
+        ingest_url_max_bytes: 10 * 1024 * 1024,
+        reembed_batch: 100,
+        fts_stale_generation_threshold: 64,
+        fts_maint_interval_secs: 300,
     }
 }
 
@@ -68,10 +86,7 @@ fn mock_embedder() -> Arc<dyn EmbeddingProvider> {
 
 /// Seed a small fixture corpus: unique raws, an exact-hash twin pair, a wiki page,
 /// and an unresolved stub so analyze has real signals.
-async fn seed_fixture_corpus(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-) -> FixtureIds {
+async fn seed_fixture_corpus(store: &Store, embedder: &Arc<dyn EmbeddingProvider>) -> FixtureIds {
     let now = Utc::now();
     let mock = MockEmbedder::new(DIMS);
 
@@ -251,8 +266,7 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
     );
     assert_eq!(analysis.exact_duplicates[0].count, 2);
     assert!(
-        analysis
-            .exact_duplicates[0]
+        analysis.exact_duplicates[0]
             .document_ids
             .iter()
             .any(|id| id == &ids.twin_a),

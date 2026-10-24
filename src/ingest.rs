@@ -95,6 +95,33 @@ pub struct ReembedDocumentResult {
     pub model: String,
 }
 
+/// Fetch one allowlisted URL over HTTP(S) and ingest it (`ingest_url`).
+///
+/// `uri` defaults to the final post-redirect URL and `title` to the URL; the
+/// final URL is also stored as `source_file` so a later refetch upserts the
+/// same document (content-hash dedup makes unchanged pages a cheap re-write).
+#[derive(Debug, Clone, Default)]
+pub struct IngestUrlCommand {
+    pub url: String,
+    pub title: Option<String>,
+    pub uri: Option<String>,
+    pub metadata_json: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IngestUrlResult {
+    #[serde(flatten)]
+    pub ingest: IngestResult,
+    pub requested_url: String,
+    pub final_url: String,
+    pub http_status: u16,
+    pub content_type: Option<String>,
+    pub bytes: usize,
+    pub format: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct UpdateDocumentCommand {
     pub document_id: String,
@@ -187,6 +214,123 @@ impl<'a> IngestService<'a> {
             immutable: false,
         })
         .await
+    }
+
+    /// Fetch one allowlisted URL and ingest the extracted main content.
+    ///
+    /// Policy: disabled unless `RAG_INGEST_URL_ALLOW` is set; http/https only;
+    /// the allowlist is enforced on both the requested host and the final
+    /// post-redirect host; the body is capped at `ingest_url_max_bytes`.
+    pub async fn ingest_url(
+        &self,
+        fetcher: &dyn crate::web_ingest::UrlFetcher,
+        command: IngestUrlCommand,
+    ) -> Result<IngestUrlResult, AppError> {
+        use crate::web_ingest::{check_final_url, check_url, classify_content_type, PageKind};
+
+        let checked = check_url(&command.url, &self.config.ingest_url_allow)?;
+        let page = fetcher
+            .fetch(checked.url.as_str(), self.config.ingest_url_max_bytes)
+            .await?;
+        // Redirects must not escape the allowlist.
+        let final_checked = check_final_url(&page.final_url, &self.config.ingest_url_allow)?;
+        let final_url = final_checked.url.as_str().to_string();
+
+        let kind = classify_content_type(page.content_type.as_deref(), &final_url)?;
+        let raw_text = String::from_utf8(page.body).map_err(|error| {
+            AppError::config(format!(
+                "ingest_url body for {final_url} is not valid UTF-8: {error}"
+            ))
+        })?;
+        let (text, format) = match kind {
+            PageKind::Html => (crate::file_ingest::html_to_text(&raw_text), "html"),
+            PageKind::Text => (raw_text, "text"),
+        };
+        if text.trim().is_empty() {
+            return Err(AppError::config(format!(
+                "ingest_url extracted no text from {final_url}"
+            )));
+        }
+
+        let uri = command.uri.unwrap_or_else(|| final_url.clone());
+        let base_metadata = match command.metadata_json {
+            Some(metadata) => Some(metadata),
+            None => self.store.find_by_uri(&uri)?.map(|doc| doc.metadata_json),
+        };
+        let fetched_at = Utc::now();
+        let mut additions = serde_json::Map::new();
+        additions.insert("format".into(), serde_json::Value::String(format.into()));
+        additions.insert(
+            "source_url".into(),
+            serde_json::Value::String(final_url.clone()),
+        );
+        additions.insert(
+            "requested_url".into(),
+            serde_json::Value::String(command.url.clone()),
+        );
+        additions.insert(
+            "fetched_at".into(),
+            serde_json::Value::String(fetched_at.to_rfc3339()),
+        );
+        if let Some(content_type) = page.content_type.as_ref() {
+            additions.insert(
+                "http_content_type".into(),
+                serde_json::Value::String(content_type.clone()),
+            );
+        }
+        let metadata_json = merge_metadata(base_metadata, additions).map_err(|error| {
+            AppError::config(format!("metadata_json is not valid JSON: {error}"))
+        })?;
+        let title = command.title.or_else(|| Some(final_checked.host.clone()));
+        let bytes = text.len();
+
+        let ingest = self
+            .ingest(IngestCommand {
+                text,
+                title,
+                uri: Some(uri.clone()),
+                metadata_json: Some(metadata_json),
+                wing: command.wing,
+                room: command.room,
+                source_file: Some(final_url.clone()),
+                layer: "raw".into(),
+                kind: "document".into(),
+                immutable: false,
+            })
+            .await?;
+
+        let _ = self.store.append_ops_log(&OpsLogEntry {
+            id: String::new(),
+            seq: 0,
+            ts: Utc::now(),
+            op: "ingest_url".into(),
+            prefix: Some("INGEST".into()),
+            message: format!("ingested {final_url}"),
+            entity_id: Some(ingest.document_id.clone()),
+            entity_kind: Some("document".into()),
+            payload_json: serde_json::json!({
+                "requested_url": command.url,
+                "final_url": final_url,
+                "http_status": page.status,
+                "content_type": page.content_type,
+                "format": format,
+                "bytes": bytes,
+                "chunk_count": ingest.chunk_count,
+                "op": ingest.op,
+            })
+            .to_string(),
+            agent_name: None,
+        });
+
+        Ok(IngestUrlResult {
+            ingest,
+            requested_url: command.url,
+            final_url,
+            http_status: page.status,
+            content_type: page.content_type,
+            bytes,
+            format: format.into(),
+        })
     }
 
     pub async fn ingest(&self, command: IngestCommand) -> Result<IngestResult, AppError> {
@@ -593,6 +737,38 @@ mod tests {
     use async_trait::async_trait;
 
     use crate::embeddings::MockEmbedder;
+    use crate::web_ingest::{FetchedPage, UrlFetcher};
+
+    struct MockFetcher {
+        page: FetchedPage,
+    }
+
+    #[async_trait]
+    impl UrlFetcher for MockFetcher {
+        async fn fetch(&self, _url: &str, _max_bytes: usize) -> crate::error::Result<FetchedPage> {
+            Ok(self.page.clone())
+        }
+    }
+
+    fn html_page(final_url: &str, html: &str) -> FetchedPage {
+        FetchedPage {
+            final_url: final_url.into(),
+            status: 200,
+            content_type: Some("text/html; charset=utf-8".into()),
+            body: html.as_bytes().to_vec(),
+        }
+    }
+
+    fn url_test_config(db_path: std::path::PathBuf, allow: &[&str]) -> Config {
+        Config {
+            db_path,
+            embedding_dims: 8,
+            chunk_size: 64,
+            chunk_overlap: 8,
+            ingest_url_allow: allow.iter().map(|p| p.to_string()).collect(),
+            ..Config::for_tests()
+        }
+    }
 
     struct FailingEmbedder {
         dims: usize,
@@ -953,5 +1129,159 @@ mod tests {
             document.content.as_str(),
             "update one" | "update two"
         ));
+    }
+
+    #[tokio::test]
+    async fn ingest_url_disabled_without_allowlist() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = test_config(temp.path().join("url-disabled.duckdb"));
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        let fetcher = MockFetcher {
+            page: html_page("https://docs.rs/x", "<p>body</p>"),
+        };
+        let error = IngestService::new(&store, &embedder, &config)
+            .ingest_url(
+                &fetcher,
+                IngestUrlCommand {
+                    url: "https://docs.rs/x".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("disabled without RAG_INGEST_URL_ALLOW");
+        assert!(error.to_string().contains("ingest_url is disabled"));
+        assert!(store.list_documents().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ingest_url_enforces_allowlist_on_request_and_redirect() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = url_test_config(temp.path().join("url-allow.duckdb"), &["docs.rs"]);
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        let service = IngestService::new(&store, &embedder, &config);
+
+        let error = service
+            .ingest_url(
+                &MockFetcher {
+                    page: html_page("https://evil.com/x", "<p>never fetched</p>"),
+                },
+                IngestUrlCommand {
+                    url: "https://evil.com/x".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("request host not allowlisted");
+        assert!(error.to_string().contains("not in RAG_INGEST_URL_ALLOW"));
+
+        // Redirect escaping the allowlist is refused after the fetch.
+        let error = service
+            .ingest_url(
+                &MockFetcher {
+                    page: html_page("https://evil.com/landing", "<p>redirected</p>"),
+                },
+                IngestUrlCommand {
+                    url: "https://docs.rs/redirect-me".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("redirect target not allowlisted");
+        assert!(error.to_string().contains("not in RAG_INGEST_URL_ALLOW"));
+        assert!(store.list_documents().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ingest_url_extracts_html_and_is_searchable_and_deduped() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = url_test_config(temp.path().join("url-ingest.duckdb"), &["docs.rs"]);
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
+        let service = IngestService::new(&store, &embedder, &config);
+        let html = r#"<!DOCTYPE html><html><body>
+            <nav><a href="/">Home</a></nav>
+            <article><h1>Quirky Astrolabe Guide</h1>
+            <p>The astrolabe measures stellar altitude precisely.</p></article>
+            <footer>Copyright</footer></body></html>"#;
+        let fetcher = MockFetcher {
+            page: html_page("https://docs.rs/astrolabe", html),
+        };
+
+        let result = service
+            .ingest_url(
+                &fetcher,
+                IngestUrlCommand {
+                    url: "https://docs.rs/astrolabe".into(),
+                    wing: Some("tests".into()),
+                    room: Some("web".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("ingest url");
+        assert_eq!(result.final_url, "https://docs.rs/astrolabe");
+        assert_eq!(result.format, "html");
+        assert_eq!(result.http_status, 200);
+        assert!(result.ingest.chunk_count > 0);
+
+        let document = store
+            .get_document(&result.ingest.document_id)
+            .unwrap()
+            .expect("document");
+        assert_eq!(document.uri, "https://docs.rs/astrolabe");
+        assert_eq!(
+            document.source_file.as_deref(),
+            Some("https://docs.rs/astrolabe")
+        );
+        assert!(document.content.contains("# Quirky Astrolabe Guide"));
+        assert!(
+            !document.content.contains("Home"),
+            "nav boilerplate dropped"
+        );
+        let metadata: serde_json::Value = serde_json::from_str(&document.metadata_json).unwrap();
+        assert_eq!(metadata["source_url"], "https://docs.rs/astrolabe");
+        assert_eq!(metadata["format"], "html");
+        assert!(metadata["fetched_at"].as_str().is_some());
+
+        // Content is searchable through the lexical path.
+        store.ensure_fts(&config.fts_stemmer).unwrap();
+        let hits = crate::db::search::search(
+            &store,
+            &crate::db::search::SearchQuery {
+                mode: crate::models::SearchMode::Lex,
+                query_text: Some("astrolabe".into()),
+                top_k: 5,
+                fts_stemmer: config.fts_stemmer.clone(),
+                ..crate::db::search::SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            hits.iter().any(|hit| hit.document_id == document.id),
+            "ingested page must be searchable: {hits:?}"
+        );
+
+        // ops_log recorded the fetch.
+        assert!(store
+            .list_ops_log(10)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.op == "ingest_url"));
+
+        // Re-ingest of the same final URL upserts the same document (dedup by uri).
+        let again = service
+            .ingest_url(
+                &fetcher,
+                IngestUrlCommand {
+                    url: "https://docs.rs/astrolabe".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(again.ingest.document_id, document.id);
+        assert_eq!(store.list_documents().unwrap().len(), 1);
     }
 }

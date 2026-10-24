@@ -102,6 +102,10 @@ pub struct SourceSyncJobReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finalization_error: Option<SourceSyncFinalizationError>,
     pub counters: SourceSyncCounters,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_index: Option<crate::code_index::IndexReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_index_error: Option<SourceSyncFinalizationError>,
 }
 
 impl From<SourceSyncReport> for SourceSyncJobReport {
@@ -115,6 +119,8 @@ impl From<SourceSyncReport> for SourceSyncJobReport {
             error_samples: report.errors.into_iter().take(MAX_ERROR_SAMPLES).collect(),
             finalization_error: report.finalization_error,
             counters: report.counters,
+            code_index: report.code_index,
+            code_index_error: report.code_index_error,
         }
     }
 }
@@ -476,13 +482,7 @@ impl JobRegistry {
 
     fn finish_cancelled(&self, id: &str, report: SourceSyncReport) {
         // Cancelled runs may already have committed a prefix; requeue is safe.
-        self.finish(
-            id,
-            JobStatus::Cancelled,
-            Some(report),
-            None,
-            Some(true),
-        );
+        self.finish(id, JobStatus::Cancelled, Some(report), None, Some(true));
     }
 
     fn finish_failed_requeueable(&self, id: &str, error: String) {
@@ -811,6 +811,45 @@ mod tests {
         let finished = wait_for_terminal(&state.jobs, &job.id).await;
         assert_eq!(finished.status, JobStatus::CompletedWithErrors);
         assert_eq!(finished.report.unwrap().error_count, 1);
+    }
+
+    #[tokio::test]
+    async fn code_index_failure_is_completed_with_errors_and_keeps_sources() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("main.rs"), "fn main() {} ").unwrap();
+        let state = state(root.path());
+        state
+            .store
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TABLE code_index_documents")
+            .unwrap();
+        let job = state
+            .jobs
+            .start_source_sync(
+                SyncJobRequest {
+                    path: root.path().display().to_string(),
+                    remove_deleted: false,
+                    wing: Some("jobs-test".into()),
+                    room: None,
+                    max_file_bytes: None,
+                },
+                state.store.clone(),
+                state.embedder.clone(),
+                state.config.clone(),
+            )
+            .unwrap();
+        let finished = wait_for_terminal(&state.jobs, &job.id).await;
+        assert_eq!(finished.status, JobStatus::CompletedWithErrors);
+        let report = finished.report.unwrap();
+        assert_eq!(report.error_count, 1);
+        assert_eq!(report.added_count, 1);
+        assert!(report.finalization_error.is_none());
+        assert!(report.code_index.is_none());
+        let error = report.code_index_error.unwrap();
+        assert_eq!(error.code, "CODE_INDEX_FINALIZATION_FAILED");
+        assert!(error.durable_mutation_committed && error.retryable);
+        assert_eq!(state.store.list_documents().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1193,7 +1232,10 @@ mod tests {
         assert_ne!(body["job"]["id"], "job-old");
         assert_eq!(body["job"]["status"], "queued");
         assert_eq!(body["job"]["requeued_from"], "job-old");
-        assert!(body["resume_limits"].as_str().unwrap().contains("committed"));
+        assert!(body["resume_limits"]
+            .as_str()
+            .unwrap()
+            .contains("committed"));
 
         let finished = wait_for_terminal(&state.jobs, body["job"]["id"].as_str().unwrap()).await;
         assert_eq!(finished.status, JobStatus::Succeeded);

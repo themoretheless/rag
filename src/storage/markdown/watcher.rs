@@ -43,7 +43,9 @@ pub(super) fn watch(
     stop: impl Fn() -> bool,
 ) -> Result<VaultWatchReport, AppError> {
     if config.debounce.is_zero() || config.stop_poll_interval.is_zero() {
-        return Err(AppError::config("markdown watcher intervals must be non-zero"));
+        return Err(AppError::config(
+            "markdown watcher intervals must be non-zero",
+        ));
     }
 
     let (send, receive) = mpsc::channel();
@@ -90,7 +92,10 @@ fn refresh_batch(
     for event in events {
         match event {
             Ok(event) if matches!(event.kind, EventKind::Access(_)) => {}
-            Ok(event) if event.paths.is_empty() || matches!(event.kind, EventKind::Any | EventKind::Other) => {
+            Ok(event)
+                if event.paths.is_empty()
+                    || matches!(event.kind, EventKind::Any | EventKind::Other) =>
+            {
                 ambiguous = true;
             }
             Ok(event) => {
@@ -150,7 +155,10 @@ fn refresh_batch(
     }
 
     let mut ids = BTreeSet::new();
-    if entries.values().any(|entry| !ids.insert(&entry.document_id)) {
+    if entries
+        .values()
+        .any(|entry| !ids.insert(&entry.document_id))
+    {
         storage.reindex()?;
         report.full_reindexes += 1;
         return Ok(());
@@ -165,12 +173,17 @@ fn is_ambiguous_path(root: &Path, path: &Path) -> bool {
     };
     if relative.as_os_str().is_empty()
         || relative.components().any(|component| {
-            matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
         })
     {
         return true;
     }
-    if relative.components().any(|component| component.as_os_str() == OsStr::new(".rag"))
+    if relative
+        .components()
+        .any(|component| component.as_os_str() == OsStr::new(".rag"))
         || relative.file_name().is_some_and(is_temporary)
     {
         return false;
@@ -188,7 +201,9 @@ fn read_sidecar(
         if entry.schema_version != SIDECAR_SCHEMA_VERSION
             || entries.insert(entry.relative_path.clone(), entry).is_some()
         {
-            return Err(AppError::db("markdown sidecar is ambiguous or has the wrong version"));
+            return Err(AppError::db(
+                "markdown sidecar is ambiguous or has the wrong version",
+            ));
         }
     }
     Ok(entries)
@@ -197,8 +212,13 @@ fn read_sidecar(
 fn safe_relative_markdown_path(root: &Path, path: &Path) -> Option<PathBuf> {
     let relative = path.strip_prefix(root).ok()?;
     if relative.components().any(|component| {
-        matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
-    }) || relative.components().any(|component| component.as_os_str() == OsStr::new(".rag"))
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) || relative
+        .components()
+        .any(|component| component.as_os_str() == OsStr::new(".rag"))
         || relative.extension() != Some(OsStr::new("md"))
         || is_temporary(relative.file_name()?)
     {

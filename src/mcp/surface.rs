@@ -50,6 +50,7 @@ static SPINE: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "ingest_raw",
         "ingest_text",
         "ingest_file",
+        "ingest_url",
         "list_sources",
         "get_source",
         "list_documents",
@@ -125,7 +126,7 @@ Optional: file_answer for durable Q&A. Raw layer is immutable (re-ingest to repl
 
 /// Compact spine tool blurb for server instructions.
 pub const SPINE_TOOLS_BLURB: &str = r#"Spine tools (RAG_TOOLS=spine, default):
-L0: ingest_raw, ingest_text, ingest_file, list_sources, get_source, list_documents, get_document
+L0: ingest_raw, ingest_text, ingest_file, ingest_url, list_sources, get_source, list_documents, get_document
 L3: write/update/get/list_wiki_page(s), get/update_schema, read/rebuild_index, append/read_log,
     query_with_index, search_wiki, file_answer, lint_wiki
 L1: search, multi_query_search, pack_context
@@ -141,7 +142,7 @@ mod tests {
     #[test]
     fn spine_is_bounded() {
         let n = spine_tool_names().len();
-        assert!((15..=33).contains(&n), "spine size {n}");
+        assert!((15..=34).contains(&n), "spine size {n}");
         assert!(tool_allowed(ToolSurface::Spine, "search"));
         assert!(tool_allowed(ToolSurface::Spine, "multi_query_search"));
         assert!(tool_allowed(ToolSurface::Spine, "query_with_index"));

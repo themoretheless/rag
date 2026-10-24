@@ -89,6 +89,10 @@ pub struct SourceSyncReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalization_error: Option<SourceSyncFinalizationError>,
     pub counters: SourceSyncCounters,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_index: Option<crate::code_index::IndexReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_index_error: Option<SourceSyncFinalizationError>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -647,12 +651,16 @@ impl<'a> SourceSyncService<'a> {
             let finalization_error = refresh_result.err().map(|error| {
                 source_sync_fts_finalization_failure(&store, durable_mutation_committed, &error)
             });
-            (sync_guard, finalization_error)
+            let code_result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.index_code()))
+                    .unwrap_or_else(|_| {
+                        Err(AppError::config("source-sync code index refresh panicked"))
+                    });
+            (sync_guard, finalization_error, code_result)
         })
         .await;
-        let (sync_guard, finalization_error) = match refresh_task {
-            Ok((guard, None)) => (Some(guard), None),
-            Ok((guard, Some(error))) => (Some(guard), Some(error)),
+        let (sync_guard, finalization_error, code_result) = match refresh_task {
+            Ok((guard, error, code_result)) => (Some(guard), error, code_result),
             Err(error) => {
                 let error = AppError::fts(format!("source-sync FTS refresh task failed: {error}"));
                 (
@@ -662,6 +670,7 @@ impl<'a> SourceSyncService<'a> {
                         durable_mutation_committed,
                         &error,
                     )),
+                    Err(AppError::config("source-sync derived index worker failed")),
                 )
             }
         };
@@ -671,6 +680,26 @@ impl<'a> SourceSyncService<'a> {
                 error: source_sync_finalization_summary(&finalization_error),
             });
             report.finalization_error = Some(finalization_error);
+        }
+        match code_result {
+            Ok(index) => report.code_index = Some(index),
+            Err(error) => {
+                report.errors.push(SourceSyncError {
+                    path: root.display().to_string(),
+                    error: format!("CODE_INDEX_FINALIZATION_FAILED: {error}; source mutations may have committed; retry index_code"),
+                });
+                report.code_index_error = Some(SourceSyncFinalizationError {
+                    code: "CODE_INDEX_FINALIZATION_FAILED".into(),
+                    stage: "refresh_code_index".into(),
+                    durable_mutation_committed,
+                    retryable: true,
+                    // Code queries verify hashes/revisions rather than relying on an FTS dirty marker.
+                    fallback_dirty_marked: false,
+                    dirty_marker_error: None,
+                    ops_log_error: None,
+                    error: error.to_string(),
+                });
+            }
         }
         // Retain the returned guard through terminal progress publication. If
         // this future is dropped while waiting, detached blocking work owns it.
@@ -699,8 +728,18 @@ impl<'a> SourceSyncService<'a> {
         seen.insert(source_file.clone());
         let stamp = source_stamp(&canonical, run.scan_policy)?;
         let existing = run.preloaded.get(&source_file);
+        let preserved_source_ok = crate::code_index::source::is_preserved_html(
+            &*self.store.lock()?,
+            &canonical,
+            existing.and_then(|entry| entry.document_metadata_json.as_deref()),
+        );
         if existing.is_some_and(|entry| {
             manifest_preflight_matches(entry, stamp, &canonical_root)
+                && preserved_source_ok
+                && crate::file_ingest::decoding_metadata_current(
+                    &canonical,
+                    entry.document_metadata_json.as_deref(),
+                )
                 && requested_scope_matches(entry, run.command)
         }) {
             return Ok(PreparedSourceFile::Skipped {
@@ -715,7 +754,13 @@ impl<'a> SourceSyncService<'a> {
         report.counters.extracted = report.counters.extracted.saturating_add(1);
         let hash = content_hash(&extracted.text);
         if let Some(entry) = existing.filter(|entry| {
-            manifest_content_matches(entry, &hash) && requested_scope_matches(entry, run.command)
+            manifest_content_matches(entry, &hash)
+                && preserved_source_ok
+                && crate::code_index::source::same_attachment(
+                    entry.document_metadata_json.as_deref(),
+                    &extracted.metadata,
+                )
+                && requested_scope_matches(entry, run.command)
         }) {
             return Ok(PreparedSourceFile::Skipped {
                 source_file: source_file.clone(),
@@ -1095,7 +1140,10 @@ fn inferred_scope(root: &Path, path: &Path) -> (String, String) {
                 components.next().unwrap_or("root").to_string(),
             );
         }
-        (top_level.to_string(), components.next().unwrap_or("root").to_string())
+        (
+            top_level.to_string(),
+            components.next().unwrap_or("root").to_string(),
+        )
     } else {
         let room = relative
             .parent()
@@ -1120,8 +1168,8 @@ fn belongs_to_dodo_group(root: &Path, path: &Path) -> bool {
 }
 
 fn add_metadata_tag(metadata_json: &str, tag: &str) -> Result<String, AppError> {
-    let mut metadata: serde_json::Value = serde_json::from_str(metadata_json)
-        .map_err(|error| AppError::config(error.to_string()))?;
+    let mut metadata: serde_json::Value =
+        serde_json::from_str(metadata_json).map_err(|error| AppError::config(error.to_string()))?;
     let object = metadata
         .as_object_mut()
         .ok_or_else(|| AppError::config("document metadata must be a JSON object"))?;
@@ -1323,6 +1371,167 @@ mod tests {
             .load_source_manifest_root(Path::new("/vault"))
             .unwrap()
             .contains_key(source));
+    }
+
+    #[tokio::test]
+    async fn source_sync_refreshes_code_index_for_add_change_delete_and_warm_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("main.py"),
+            "from lib import go\ndef main():\n    go()\n",
+        )
+        .unwrap();
+        std::fs::write(root.path().join("lib.py"), "def go():\n    pass\n").unwrap();
+        let config = Config {
+            db_path: db.path().join("code.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
+        let service = SourceSyncService::new(&store, &embedder, &config);
+        let mut command = SourceSyncCommand::new(root.path().to_path_buf());
+        command.remove_deleted = true;
+        let report = service.sync(command.clone()).await.unwrap();
+        assert!(report.errors.is_empty(), "{report:?}");
+        assert_eq!(report.code_index.as_ref().unwrap().indexed, 2);
+        let snap = store.code_snapshot().unwrap();
+        assert!(snap.stale_documents.is_empty());
+        assert_eq!(snap.calls[0].resolution, "resolved_static");
+        let report = service.sync(command.clone()).await.unwrap();
+        assert_eq!(report.code_index.unwrap().unchanged, 2);
+        std::fs::write(root.path().join("lib.py"), "def renamed_go():\n    pass\n").unwrap();
+        let report = service.sync(command.clone()).await.unwrap();
+        assert!(report.errors.is_empty(), "{report:?}");
+        let snap = store.code_snapshot().unwrap();
+        assert!(snap.stale_documents.is_empty());
+        assert_eq!(snap.calls[0].resolution, "unresolved");
+        assert!(snap.symbols.iter().any(|s| s.name == "renamed_go"));
+        std::fs::remove_file(root.path().join("lib.py")).unwrap();
+        let report = service.sync(command).await.unwrap();
+        assert_eq!(report.deleted.len(), 1);
+        let snap = store.code_snapshot().unwrap();
+        assert_eq!(snap.symbols.len(), 1);
+        assert!(snap.unindexed_documents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_blobs() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let file = root.path().join("page.html");
+        let first = "<html><body><article><p>Visible text.</p></article><style>.old {color:red}</style></body></html>";
+        let second = first.replace(".old", ".new-longer");
+        std::fs::write(&file, first).unwrap();
+        let config = Config {
+            db_path: db.path().join("html.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
+        let service = SourceSyncService::new(&store, &embedder, &config);
+        let command = SourceSyncCommand::new(root.path().to_path_buf());
+        let report = service.sync(command.clone()).await.unwrap();
+        assert!(report.errors.is_empty(), "{report:?}");
+        let doc = store.list_documents().unwrap().remove(0);
+        assert!(doc.content.contains("Visible text."));
+        assert!(!doc.content.contains("color:red"));
+        assert!(!doc.metadata_json.contains("code_source_text"));
+        assert_eq!(
+            crate::code_index::source::read(
+                &*store.lock().unwrap(),
+                &doc.content,
+                &doc.metadata_json
+            )
+            .unwrap(),
+            first
+        );
+        std::fs::write(&file, &second).unwrap();
+        let report = service.sync(command.clone()).await.unwrap();
+        assert!(report.errors.is_empty(), "{report:?}");
+        let updated = store.get_document(&doc.id).unwrap().unwrap();
+        assert_eq!(updated.content, doc.content);
+        assert!(updated.revision > doc.revision);
+        assert_eq!(
+            crate::code_index::source::read(
+                &*store.lock().unwrap(),
+                &updated.content,
+                &updated.metadata_json
+            )
+            .unwrap(),
+            second
+        );
+        for corrupt in [false, true] {
+            let hash = crate::util::content_hash(&second);
+            if corrupt {
+                store
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "UPDATE code_index_source_blobs SET content='broken' WHERE content_hash=?",
+                        [&hash],
+                    )
+                    .unwrap();
+            } else {
+                store
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "DELETE FROM code_index_source_blobs WHERE content_hash=?",
+                        [&hash],
+                    )
+                    .unwrap();
+            }
+            let report = service.sync(command.clone()).await.unwrap();
+            assert!(report.errors.is_empty(), "{report:?}");
+            assert_eq!(
+                crate::code_index::source::read(
+                    &*store.lock().unwrap(),
+                    &updated.content,
+                    &updated.metadata_json
+                )
+                .unwrap(),
+                second
+            );
+        }
+        let report = service.sync(command).await.unwrap();
+        assert_eq!(report.counters.extracted, 0);
+    }
+
+    #[tokio::test]
+    async fn source_sync_code_index_failure_retains_committed_sources_and_structured_report() {
+        let root = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("main.rs"), "fn main() {} ").unwrap();
+        let config = Config {
+            db_path: db.path().join("code.duckdb"),
+            ingest_roots: vec![root.path().to_path_buf()],
+            embedding_dims: 16,
+            ..Config::for_tests()
+        };
+        let store = Store::open(&config.db_path).unwrap();
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
+        store
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TABLE code_index_documents")
+            .unwrap();
+        let report = SourceSyncService::new(&store, &embedder, &config)
+            .sync(SourceSyncCommand::new(root.path().to_path_buf()))
+            .await
+            .unwrap();
+        assert_eq!(report.added.len(), 1);
+        assert_eq!(store.list_documents().unwrap().len(), 1);
+        let error = report.code_index_error.as_ref().unwrap();
+        assert_eq!(error.code, "CODE_INDEX_FINALIZATION_FAILED");
+        assert!(error.durable_mutation_committed && error.retryable);
+        assert!(report.code_index.is_none());
+        assert!(report.finalization_error.is_none());
+        assert_eq!(report.errors.len(), 1);
     }
 
     #[tokio::test]

@@ -46,6 +46,33 @@ impl EmbeddingProviderKind {
     }
 }
 
+/// Source-code splitting policy selected via `RAG_CODE_CHUNKING`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CodeChunkingMode {
+    /// Split rust/python/js/ts by top-level items (functions, classes, impl
+    /// blocks) with `symbol` / `symbol_kind` chunk metadata; oversized items
+    /// window-split inside their own span. Other languages fall back to
+    /// window splitting.
+    #[default]
+    Structural,
+    /// Legacy boundary-preferring char windows for every source file.
+    Window,
+}
+
+impl FromStr for CodeChunkingMode {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "structural" | "items" => Ok(Self::Structural),
+            "window" | "legacy" => Ok(Self::Window),
+            other => Err(AppError::config(format!(
+                "invalid RAG_CODE_CHUNKING '{other}': expected 'structural' or 'window'"
+            ))),
+        }
+    }
+}
+
 /// Runtime configuration loaded from environment variables.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -57,6 +84,9 @@ pub struct Config {
     pub embedding_dims: usize,
     pub chunk_size: usize,
     pub chunk_overlap: usize,
+    /// Source-code splitting policy (`RAG_CODE_CHUNKING`: `structural` default
+    /// | `window`). `window` restores the pre-v17 boundary-preferring splitter.
+    pub code_chunking: CodeChunkingMode,
     pub default_top_k: usize,
     /// Path allowlist for `ingest_file` (and later directory/watch). Empty = no roots allowed.
     pub ingest_roots: Vec<PathBuf>,
@@ -96,6 +126,52 @@ pub struct Config {
     /// Env: `RAG_WIKI_REQUIRE_IF_MATCH` (default **false**). Creates may still omit it.
     /// Omit-if-match = last-write-wins when this flag is false.
     pub wiki_require_if_match: bool,
+    /// Rerank backend (`RAG_RERANK_PROVIDER`: off|mock|openai_compat|ollama, default **off**).
+    pub rerank_provider: crate::rerank::RerankProviderKind,
+    /// Rerank API base URL (`RAG_RERANK_BASE_URL`).
+    pub rerank_base_url: String,
+    /// Rerank API key (`RAG_RERANK_API_KEY`; optional for local endpoints).
+    pub rerank_api_key: String,
+    /// Rerank model name (`RAG_RERANK_MODEL`).
+    pub rerank_model: String,
+    /// Candidate pool reranked when `rerank=true` (`RAG_RERANK_TOP_N`, default **50**).
+    pub rerank_top_n: usize,
+    /// HTTP timeout for rerank requests (`RAG_RERANK_TIMEOUT_SECS`, default **30**).
+    pub rerank_timeout_secs: u64,
+    /// Rewrite variants requested when `rewrite=true` (`RAG_QUERY_REWRITE_VARIANTS`, default **3**, cap 8).
+    pub query_rewrite_variants: usize,
+    /// Optional chat provider override for query rewriting (`RAG_QUERY_REWRITE_PROVIDER`; default reuses `RAG_LLM_PROVIDER`).
+    pub query_rewrite_provider: Option<crate::llm::LlmProviderKind>,
+    /// Optional model override for query rewriting (`RAG_QUERY_REWRITE_MODEL`; default reuses `RAG_LLM_MODEL`).
+    pub query_rewrite_model: Option<String>,
+    /// Bounded in-process rewrite cache size (`RAG_QUERY_REWRITE_CACHE_SIZE`, default **256**, 0 disables).
+    pub query_rewrite_cache_size: usize,
+    /// Optional chat provider override for HyDE (`RAG_HYDE_PROVIDER`; default reuses `RAG_LLM_PROVIDER`).
+    pub hyde_provider: Option<crate::llm::LlmProviderKind>,
+    /// Optional model override for HyDE (`RAG_HYDE_MODEL`; default reuses `RAG_LLM_MODEL`).
+    pub hyde_model: Option<String>,
+    /// Bounded in-process HyDE cache size (`RAG_HYDE_CACHE_SIZE`, default **256**, 0 disables).
+    pub hyde_cache_size: usize,
+    /// Host allowlist for `ingest_url` (`RAG_INGEST_URL_ALLOW`, comma-separated
+    /// host patterns; `*.example.com` matches subdomains). Empty = `ingest_url`
+    /// is disabled and refuses every URL with a clear error.
+    pub ingest_url_allow: Vec<String>,
+    /// HTTP timeout for `ingest_url` fetches (`RAG_INGEST_URL_TIMEOUT_SECS`, default **30**).
+    pub ingest_url_timeout_secs: u64,
+    /// Max response bytes accepted by `ingest_url` (`RAG_INGEST_URL_MAX_BYTES`,
+    /// default **10 MiB**). Responses without a bounded body are refused.
+    pub ingest_url_max_bytes: usize,
+    /// Max documents re-embedded per migration batch (`RAG_REEMBED_BATCH`,
+    /// default **100**). Migration batches are resumable; repeat until
+    /// `reembed_status` reports zero pending documents.
+    pub reembed_batch: usize,
+    /// FTS dirty-generation gap that triggers an automatic reindex in the
+    /// maintenance loop (`RAG_FTS_STALE_GENERATION_THRESHOLD`, default **64**;
+    /// **0** disables auto-reindex). Surfaced in `/v1/status`.
+    pub fts_stale_generation_threshold: u64,
+    /// Maintenance-loop interval for FTS staleness checks
+    /// (`RAG_FTS_MAINT_INTERVAL_SECS`, default **300**).
+    pub fts_maint_interval_secs: u64,
 }
 
 impl Default for Config {
@@ -112,6 +188,7 @@ impl Default for Config {
             embedding_dims: 1536,
             chunk_size: 800,
             chunk_overlap: 120,
+            code_chunking: CodeChunkingMode::Structural,
             default_top_k: 5,
             ingest_roots: Vec::new(),
             max_context_tokens: 4096,
@@ -130,6 +207,25 @@ impl Default for Config {
             tool_surface: crate::mcp::ToolSurface::Spine,
             http_bind: None,
             wiki_require_if_match: false,
+            rerank_provider: crate::rerank::RerankProviderKind::Off,
+            rerank_base_url: String::new(),
+            rerank_api_key: String::new(),
+            rerank_model: String::new(),
+            rerank_top_n: 50,
+            rerank_timeout_secs: 30,
+            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
+            query_rewrite_provider: None,
+            query_rewrite_model: None,
+            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            hyde_provider: None,
+            hyde_model: None,
+            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            ingest_url_allow: Vec::new(),
+            ingest_url_timeout_secs: 30,
+            ingest_url_max_bytes: 10 * 1024 * 1024,
+            reembed_batch: 100,
+            fts_stale_generation_threshold: 64,
+            fts_maint_interval_secs: 300,
         }
     }
 }
@@ -183,6 +279,9 @@ impl Config {
         let embedding_dims = parse_usize("RAG_EMBEDDING_DIMS", dims_default)?;
         let chunk_size = parse_usize("RAG_CHUNK_SIZE", "800")?;
         let chunk_overlap = parse_usize("RAG_CHUNK_OVERLAP", "120")?;
+        let code_chunking = env::var("RAG_CODE_CHUNKING")
+            .unwrap_or_else(|_| "structural".to_string())
+            .parse::<CodeChunkingMode>()?;
         let default_top_k = parse_usize("RAG_DEFAULT_TOP_K", "5")?;
 
         let ingest_roots = crate::util::ingest_roots_from_env();
@@ -227,6 +326,55 @@ impl Config {
         }
         let wiki_require_if_match = parse_bool_env("RAG_WIKI_REQUIRE_IF_MATCH", false)?;
 
+        // Rerank stage (opt-in): RAG_RERANK_PROVIDER, RAG_RERANK_MODEL,
+        // RAG_RERANK_BASE_URL, RAG_RERANK_API_KEY, RAG_RERANK_TOP_N,
+        // RAG_RERANK_TIMEOUT_SECS. Default off = zero behavior change.
+        let rerank_provider = env::var("RAG_RERANK_PROVIDER")
+            .unwrap_or_else(|_| "off".to_string())
+            .parse::<crate::rerank::RerankProviderKind>()?;
+        let rerank_base_url =
+            env::var("RAG_RERANK_BASE_URL").unwrap_or_else(|_| match rerank_provider {
+                crate::rerank::RerankProviderKind::Ollama => "http://127.0.0.1:11434".to_string(),
+                _ => String::new(),
+            });
+        let rerank_api_key = env::var("RAG_RERANK_API_KEY").unwrap_or_else(|_| String::new());
+        let rerank_model = env::var("RAG_RERANK_MODEL").unwrap_or_else(|_| String::new());
+        let rerank_top_n = parse_usize("RAG_RERANK_TOP_N", "50")?;
+        let rerank_timeout_secs = parse_u64("RAG_RERANK_TIMEOUT_SECS", "30")?;
+
+        // Server-side query transforms (opt-in per request): rewrite + HyDE.
+        // Both reuse the active RAG_LLM_* chat provider unless overridden.
+        let query_rewrite_variants = parse_usize("RAG_QUERY_REWRITE_VARIANTS", "3")?;
+        let query_rewrite_provider = parse_optional_llm_provider("RAG_QUERY_REWRITE_PROVIDER")?;
+        let query_rewrite_model = env::var("RAG_QUERY_REWRITE_MODEL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let query_rewrite_cache_size = parse_usize("RAG_QUERY_REWRITE_CACHE_SIZE", "256")?;
+        let hyde_provider = parse_optional_llm_provider("RAG_HYDE_PROVIDER")?;
+        let hyde_model = env::var("RAG_HYDE_MODEL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let hyde_cache_size = parse_usize("RAG_HYDE_CACHE_SIZE", "256")?;
+
+        // Web ingestion (ingest_url): disabled unless RAG_INGEST_URL_ALLOW lists
+        // host patterns; bounded by timeout + max response bytes.
+        let ingest_url_allow = env::var("RAG_INGEST_URL_ALLOW")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(str::to_string)
+            .collect();
+        let ingest_url_timeout_secs = parse_u64("RAG_INGEST_URL_TIMEOUT_SECS", "30")?;
+        let ingest_url_max_bytes = parse_usize("RAG_INGEST_URL_MAX_BYTES", "10485760")?;
+
+        // Resumable reembed migration batch bound (documents per run).
+        let reembed_batch = parse_usize("RAG_REEMBED_BATCH", "100")?;
+        let fts_stale_generation_threshold = parse_u64("RAG_FTS_STALE_GENERATION_THRESHOLD", "64")?;
+        let fts_maint_interval_secs = parse_u64("RAG_FTS_MAINT_INTERVAL_SECS", "300")?;
+
         // Local Ollama / LM Studio accept dummy keys; fill empty for ollama or local openai-compat.
         let embedding_api_key = if embedding_api_key.trim().is_empty()
             && (embedding_provider == EmbeddingProviderKind::Ollama
@@ -247,6 +395,7 @@ impl Config {
             embedding_dims,
             chunk_size,
             chunk_overlap,
+            code_chunking,
             default_top_k,
             ingest_roots,
             max_context_tokens,
@@ -265,6 +414,25 @@ impl Config {
             tool_surface,
             http_bind,
             wiki_require_if_match,
+            rerank_provider,
+            rerank_base_url,
+            rerank_api_key,
+            rerank_model,
+            rerank_top_n,
+            rerank_timeout_secs,
+            query_rewrite_variants,
+            query_rewrite_provider,
+            query_rewrite_model,
+            query_rewrite_cache_size,
+            hyde_provider,
+            hyde_model,
+            hyde_cache_size,
+            ingest_url_allow,
+            ingest_url_timeout_secs,
+            ingest_url_max_bytes,
+            reembed_batch,
+            fts_stale_generation_threshold,
+            fts_maint_interval_secs,
         };
         config.validate()?;
         Ok(config)
@@ -384,7 +552,91 @@ impl Config {
             }
         }
 
+        for pattern in &self.ingest_url_allow {
+            let pattern = pattern.trim();
+            if pattern.is_empty()
+                || pattern.contains('/')
+                || pattern.chars().any(char::is_whitespace)
+            {
+                return Err(AppError::config(format!(
+                    "RAG_INGEST_URL_ALLOW entry '{pattern}' must be a bare host pattern (no scheme, path, or whitespace)"
+                )));
+            }
+        }
+        if self.ingest_url_timeout_secs == 0 {
+            return Err(AppError::config(
+                "RAG_INGEST_URL_TIMEOUT_SECS must be greater than 0",
+            ));
+        }
+        if self.ingest_url_max_bytes == 0 {
+            return Err(AppError::config(
+                "RAG_INGEST_URL_MAX_BYTES must be greater than 0",
+            ));
+        }
+        if self.reembed_batch == 0 {
+            return Err(AppError::config("RAG_REEMBED_BATCH must be greater than 0"));
+        }
+
+        use crate::rerank::RerankProviderKind;
+        if self.rerank_provider != RerankProviderKind::Off {
+            if self.rerank_top_n == 0 || self.rerank_top_n > crate::db::search::MAX_TOP_K {
+                return Err(AppError::config(format!(
+                    "RAG_RERANK_TOP_N ({}) must be in 1..={}",
+                    self.rerank_top_n,
+                    crate::db::search::MAX_TOP_K
+                )));
+            }
+            if self.rerank_timeout_secs == 0 {
+                return Err(AppError::config(
+                    "RAG_RERANK_TIMEOUT_SECS must be greater than 0",
+                ));
+            }
+            match self.rerank_provider {
+                RerankProviderKind::Mock => {}
+                RerankProviderKind::OpenAiCompat | RerankProviderKind::Ollama => {
+                    if self.rerank_base_url.trim().is_empty() {
+                        return Err(AppError::config(format!(
+                            "RAG_RERANK_BASE_URL must be non-empty when RAG_RERANK_PROVIDER={}",
+                            self.rerank_provider.as_str()
+                        )));
+                    }
+                    if self.rerank_model.trim().is_empty() {
+                        return Err(AppError::config(format!(
+                            "RAG_RERANK_MODEL must be non-empty when RAG_RERANK_PROVIDER={}",
+                            self.rerank_provider.as_str()
+                        )));
+                    }
+                }
+                RerankProviderKind::Off => unreachable!(),
+            }
+        }
+
+        if self.query_rewrite_variants == 0
+            || self.query_rewrite_variants > crate::query_transform::MAX_REWRITE_VARIANTS
+        {
+            return Err(AppError::config(format!(
+                "RAG_QUERY_REWRITE_VARIANTS ({}) must be in 1..={}",
+                self.query_rewrite_variants,
+                crate::query_transform::MAX_REWRITE_VARIANTS
+            )));
+        }
+
         Ok(())
+    }
+}
+
+/// Parse an optional LLM provider override env var (unset/empty → `None`).
+fn parse_optional_llm_provider(var: &str) -> Result<Option<crate::llm::LlmProviderKind>, AppError> {
+    match env::var(var) {
+        Err(_) => Ok(None),
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                trimmed.parse::<crate::llm::LlmProviderKind>().map(Some)
+            }
+        }
     }
 }
 

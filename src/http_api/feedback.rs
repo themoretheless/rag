@@ -174,7 +174,12 @@ pub(super) fn persist_eval_run(store: &Store, payload: &Value) -> Result<()> {
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    super::payload_kv::upsert_payload(store, super::payload_kv::PayloadTable::EvalRuns, &id, payload)
+    super::payload_kv::upsert_payload(
+        store,
+        super::payload_kv::PayloadTable::EvalRuns,
+        &id,
+        payload,
+    )
 }
 fn score_hits(item: &Feedback, hits: &[Value]) -> (Option<f64>, Option<f64>) {
     if item.no_answer {
@@ -356,11 +361,8 @@ async fn run_one(
         persist_feedback_run(&st.store, &id, &item.search, &result)?;
         return Ok(result);
     }
-    let (search_result, hits) = search_with_body(
-        st.clone(),
-        serde_json::from_value(item.search.clone())?,
-    )
-    .await?;
+    let (search_result, hits) =
+        search_with_body(st.clone(), serde_json::from_value(item.search.clone())?).await?;
     if stale(&st.store, &item)? {
         let result = json!({"id":id,"status":"source_changed"});
         persist_feedback_run(&st.store, &id, &item.search, &result)?;
@@ -420,7 +422,12 @@ async fn run_one(
     persist_feedback_run(&st.store, &id, &item.search, &result)?;
     Ok(result)
 }
-fn persist_feedback_run(store: &Store, question_id: &str, settings: &Value, result: &Value) -> Result<()> {
+fn persist_feedback_run(
+    store: &Store,
+    question_id: &str,
+    settings: &Value,
+    result: &Value,
+) -> Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let payload = json!({
         "kind": "feedback_run",
@@ -495,7 +502,10 @@ mod tests {
         let mut source = st.store.get_document(&doc).unwrap().unwrap();
         source.content = "changed".into();
         st.store.upsert_document(&source).unwrap();
-        assert_eq!(run_one(st, id, None, false).await.unwrap()["status"], "source_changed");
+        assert_eq!(
+            run_one(st, id, None, false).await.unwrap()["status"],
+            "source_changed"
+        );
     }
     #[tokio::test]
     async fn negative_questions_are_not_counted_as_positive_recall() {

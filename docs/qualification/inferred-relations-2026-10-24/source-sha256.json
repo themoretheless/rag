@@ -1,0 +1,9 @@
+{
+  "src/external_db/mod.rs": "f55445954ccfcc3c8f944e4ba7b474b056e0d6eb4125da0e556933565014213f",
+  "src/external_db/relations.rs": "c3b33d1184fe1ae8447721b9a485f588385351388312e018a75b6f55f16ee80c",
+  "src/external_db/compare.rs": "7a73c270e344436caceda0ee19aebb0f3b3b88998d2e1a9f0cb4f18d6bf34f92",
+  "src/mcp/facade.rs": "8bb75c37758fb639317a1659871476fe514a86e6d1037753ac7c63957f563108",
+  "scripts/smoke_external_db.py": "152e29f532beb80b3b3b67056d6135637fb9f4e446f28de86a01afbf109a36be",
+  "scripts/smoke_external_db_runtime.py": "eab39811169325ddfc6543a0325bdbf6ad681657aa44d71790369222cc593901",
+  "docs/EXTERNAL_DATABASES.md": "cc9799f8e4a17703f1f1d8895d9ce8be99ed643f06d2f9d3a7bef3a01697fcfa"
+}

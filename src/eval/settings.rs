@@ -28,6 +28,18 @@ pub struct SearchSettingsProfile {
     pub rrf_k: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recency_half_life_days: Option<f64>,
+    /// Optional rerank stage for A/B eval (`mock` = deterministic token-overlap
+    /// scorer; requires no live rerank endpoint). Expands the candidate pool to
+    /// 50, reranks, then truncates back to `top_k` — same shape as production.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<String>,
+    /// Optional server-side query rewrite for A/B eval (`mock` = deterministic
+    /// stub variants, no live LLM). Mirrors the production `rewrite=true`
+    /// plumbing: one search per variant plus the original, fused with RRF.
+    /// Mock results validate plumbing only — they say nothing about real LLM
+    /// rewrite quality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite: Option<String>,
 }
 
 impl SearchSettingsProfile {
@@ -41,8 +53,6 @@ impl SearchSettingsProfile {
     }
 
     pub fn display_name(&self, fallback: &str) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| fallback.to_string())
+        self.name.clone().unwrap_or_else(|| fallback.to_string())
     }
 }

@@ -59,19 +59,23 @@ fn main() -> Result<()> {
         let chunks = count("chunks")?;
         let nodes = count("graph_nodes")?;
         let edges = count("graph_edges")?;
-        let orphan_chunks: i64 = dst.query_row(
-            "SELECT COUNT(*) FROM chunks c WHERE NOT EXISTS \
+        let orphan_chunks: i64 = dst
+            .query_row(
+                "SELECT COUNT(*) FROM chunks c WHERE NOT EXISTS \
              (SELECT 1 FROM documents d WHERE d.id = c.document_id)",
-            [],
-            |row| row.get(0),
-        ).context("verify orphan chunks")?;
-        let orphan_edges: i64 = dst.query_row(
-            "SELECT COUNT(*) FROM graph_edges e WHERE NOT EXISTS \
+                [],
+                |row| row.get(0),
+            )
+            .context("verify orphan chunks")?;
+        let orphan_edges: i64 = dst
+            .query_row(
+                "SELECT COUNT(*) FROM graph_edges e WHERE NOT EXISTS \
              (SELECT 1 FROM graph_nodes n WHERE n.id = e.source_id) OR NOT EXISTS \
              (SELECT 1 FROM graph_nodes n WHERE n.id = e.target_id)",
-            [],
-            |row| row.get(0),
-        ).context("verify orphan edges")?;
+                [],
+                |row| row.get(0),
+            )
+            .context("verify orphan edges")?;
         if orphan_chunks != 0 || orphan_edges != 0 {
             bail!("rebuilt database failed integrity verification: orphan_chunks={orphan_chunks}, orphan_edges={orphan_edges}");
         }

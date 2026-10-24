@@ -7,6 +7,7 @@
     { name: 'wiki', label: 'Вики', icon: 'wiki', layer: 'l3' }, { name: 'agents', label: 'Агенты', icon: 'agents', layer: 'l4' },
     { name: 'sync', label: 'Синхр.', icon: 'sync' },
     { name: 'evaluation', label: 'Оценка', icon: 'evaluation' },
+    { name: 'resources', label: 'Ресурсы', icon: 'resources' },
   ]
   function open(name: RouteName) {
     if (name === 'wiki') goWiki(); else if (name === 'graph') goGraph(); else if (name === 'search') goSearch(); else go(name)

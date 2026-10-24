@@ -6,8 +6,11 @@
 
 use uuid::Uuid;
 
-use crate::chunking::{code_chunks, from_config, markdown_section_metadata, Chunker};
-use crate::config::Config;
+use crate::chunking::{
+    code_chunks, from_config, is_structural_language, markdown_section_metadata, markdown_sections,
+    structural_code_chunks, Chunker,
+};
+use crate::config::{CodeChunkingMode, Config};
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
 use crate::models::{Chunk, Document};
@@ -27,6 +30,10 @@ struct PreparedChunk {
     char_start: i32,
     char_end: i32,
     metadata_json: String,
+    /// Index of the parent piece within the same document (Markdown section
+    /// leader / first window of an oversized code item). Resolved to a chunk
+    /// id during assembly, when ids exist.
+    parent_index: Option<usize>,
 }
 
 impl PreparedDocumentChunks {
@@ -39,7 +46,9 @@ impl PreparedDocumentChunks {
             document_id,
             pieces,
         } = self;
-        pieces
+        let parent_links: Vec<Option<usize>> =
+            pieces.iter().map(|piece| piece.parent_index).collect();
+        let mut chunks: Vec<Chunk> = pieces
             .into_iter()
             .enumerate()
             .map(|(index, piece)| Chunk {
@@ -54,7 +63,20 @@ impl PreparedDocumentChunks {
                 char_end: piece.char_end,
                 metadata_json: piece.metadata_json,
             })
-            .collect()
+            .collect();
+        // Second pass: resolve parent piece indices to chunk ids and stamp
+        // `parent_chunk_id` into chunk metadata (additive key).
+        let ids: Vec<String> = chunks.iter().map(|chunk| chunk.id.clone()).collect();
+        for (index, chunk) in chunks.iter_mut().enumerate() {
+            let Some(parent_index) = parent_links[index] else {
+                continue;
+            };
+            let Some(parent_id) = ids.get(parent_index) else {
+                continue;
+            };
+            chunk.metadata_json = with_parent_link(&chunk.metadata_json, parent_id);
+        }
+        chunks
     }
 }
 
@@ -63,6 +85,7 @@ pub struct DocumentIndexer<'a> {
     embedder: &'a dyn EmbeddingProvider,
     chunk_size: usize,
     chunk_overlap: usize,
+    code_chunking: CodeChunkingMode,
 }
 
 impl<'a> DocumentIndexer<'a> {
@@ -71,6 +94,7 @@ impl<'a> DocumentIndexer<'a> {
             embedder,
             chunk_size: config.chunk_size,
             chunk_overlap: config.chunk_overlap,
+            code_chunking: config.code_chunking,
         }
     }
 
@@ -152,42 +176,149 @@ impl<'a> DocumentIndexer<'a> {
         Ok(())
     }
 
-    fn normalized_pieces(
-        &self,
-        document: &Document,
-        profile: ChunkingProfile,
-    ) -> Vec<(String, i32, i32)> {
-        if profile == ChunkingProfile::Auto && uses_code_chunking(document) {
-            code_chunks(&document.content, self.chunk_size, self.chunk_overlap)
-        } else {
-            let chunker = from_config(self.chunk_size, self.chunk_overlap);
-            Chunker::chunk(&chunker, &document.content)
-        }
-    }
-
     fn prepare_chunks_with_profile(
         &self,
         document: &Document,
         profile: ChunkingProfile,
     ) -> PreparedDocumentChunks {
-        let pieces = self.normalized_pieces(document, profile);
-        let section_metadata = markdown_section_metadata(&document.content, &pieces);
+        let language = if profile == ChunkingProfile::Auto {
+            document_language(document)
+        } else {
+            None
+        };
+
+        // Code path: structural item splitting for supported languages,
+        // legacy window splitting otherwise. Symbol metadata replaces the
+        // Markdown heading pass for structurally-split files only.
+        if let Some(language) = language.as_deref() {
+            if self.code_chunking == CodeChunkingMode::Structural
+                && is_structural_language(language)
+            {
+                let structural = structural_code_chunks(
+                    &document.content,
+                    language,
+                    self.chunk_size,
+                    self.chunk_overlap,
+                );
+                return PreparedDocumentChunks {
+                    document_id: document.id.clone(),
+                    pieces: structural
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, chunk)| PreparedChunk {
+                            content: chunk.content,
+                            char_start: chunk.char_start,
+                            char_end: chunk.char_end,
+                            metadata_json: symbol_metadata_json(
+                                chunk.symbol.as_deref(),
+                                chunk.symbol_kind,
+                            ),
+                            // Continuation windows of an oversized item link
+                            // to the item's first window.
+                            parent_index: (chunk.parts > 1 && chunk.part > 0)
+                                .then_some(index - chunk.part),
+                        })
+                        .collect(),
+                };
+            }
+            let pieces = code_chunks(&document.content, self.chunk_size, self.chunk_overlap);
+            let section_metadata = markdown_section_metadata(&document.content, &pieces);
+            return PreparedDocumentChunks {
+                document_id: document.id.clone(),
+                pieces: pieces
+                    .into_iter()
+                    .zip(section_metadata)
+                    .map(
+                        |((content, char_start, char_end), metadata_json)| PreparedChunk {
+                            content,
+                            char_start,
+                            char_end,
+                            metadata_json,
+                            parent_index: None,
+                        },
+                    )
+                    .collect(),
+            };
+        }
+
+        let chunker = from_config(self.chunk_size, self.chunk_overlap);
+        let pieces = Chunker::chunk(&chunker, &document.content);
+        let sections = markdown_sections(&document.content, &pieces);
+        let parent_links = markdown_parent_links(&sections);
         PreparedDocumentChunks {
             document_id: document.id.clone(),
             pieces: pieces
                 .into_iter()
-                .zip(section_metadata)
+                .zip(sections)
+                .zip(parent_links)
                 .map(
-                    |((content, char_start, char_end), metadata_json)| PreparedChunk {
-                        content,
-                        char_start,
-                        char_end,
-                        metadata_json,
+                    |(((content, char_start, char_end), (heading_path, section)), parent_index)| {
+                        PreparedChunk {
+                            content,
+                            char_start,
+                            char_end,
+                            metadata_json: if heading_path.is_empty() {
+                                "{}".into()
+                            } else {
+                                serde_json::json!({
+                                    "heading_path": heading_path,
+                                    "section": section,
+                                })
+                                .to_string()
+                            },
+                            parent_index,
+                        }
                     },
                 )
                 .collect(),
         }
     }
+}
+
+/// Group consecutive Markdown pieces under an identical non-empty heading
+/// path: every member after the first links to the section's leading chunk
+/// (designated parent, "search small, return parent").
+fn markdown_parent_links(sections: &[(Vec<String>, Option<String>)]) -> Vec<Option<usize>> {
+    let mut links = Vec::with_capacity(sections.len());
+    let mut current: Option<(Vec<String>, usize)> = None;
+    for (index, (heading_path, section)) in sections.iter().enumerate() {
+        if heading_path.is_empty() || section.is_none() {
+            current = None;
+            links.push(None);
+            continue;
+        }
+        match &current {
+            Some((path, leader)) if path == heading_path => {
+                links.push(Some(*leader));
+            }
+            _ => {
+                current = Some((heading_path.clone(), index));
+                links.push(None);
+            }
+        }
+    }
+    links
+}
+
+/// Chunk metadata for a structurally-split code item (additive keys only).
+fn symbol_metadata_json(symbol: Option<&str>, symbol_kind: Option<&str>) -> String {
+    match (symbol, symbol_kind) {
+        (Some(symbol), Some(kind)) => {
+            serde_json::json!({"symbol": symbol, "symbol_kind": kind}).to_string()
+        }
+        (None, Some(kind)) => serde_json::json!({"symbol_kind": kind}).to_string(),
+        _ => "{}".into(),
+    }
+}
+
+/// Add `parent_chunk_id` to an existing chunk metadata object.
+fn with_parent_link(metadata_json: &str, parent_id: &str) -> String {
+    let mut value = serde_json::from_str::<serde_json::Value>(metadata_json)
+        .ok()
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    value["parent_chunk_id"] = serde_json::Value::String(parent_id.to_string());
+    value.to_string()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -196,10 +327,10 @@ enum ChunkingProfile {
     Plain,
 }
 
-fn uses_code_chunking(document: &Document) -> bool {
+fn document_language(document: &Document) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&document.metadata_json)
         .ok()
-        .is_some_and(|value| value.get("language").is_some())
+        .and_then(|value| value.get("language")?.as_str().map(str::to_string))
 }
 
 fn ensure_vector_count(actual: usize, expected: usize) -> Result<()> {
@@ -244,5 +375,166 @@ mod tests {
             .iter()
             .any(|chunk| chunk.metadata_json.contains("Heading")));
         assert!(chunks.iter().all(|chunk| chunk.embedding.len() == 8));
+    }
+
+    fn code_document(content: &str, language: &str) -> Document {
+        Document {
+            id: "code-doc".into(),
+            content: content.into(),
+            metadata_json: serde_json::json!({"language": language}).to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn metadata(chunk: &Chunk) -> serde_json::Value {
+        serde_json::from_str(&chunk.metadata_json).expect("chunk metadata JSON")
+    }
+
+    #[tokio::test]
+    async fn structural_rust_chunks_carry_symbol_metadata() {
+        let config = Config {
+            embedding_dims: 8,
+            chunk_size: 800,
+            chunk_overlap: 120,
+            ..Config::for_tests()
+        };
+        let embedder = MockEmbedder::new(8);
+        let document = code_document(
+            "fn alpha() -> i32 {\n    1\n}\n\nfn beta() {\n    loop {}\n}\n",
+            "rust",
+        );
+
+        let chunks = DocumentIndexer::new(&embedder, &config)
+            .build_chunks(&document)
+            .await
+            .expect("chunks");
+
+        let alpha = chunks
+            .iter()
+            .find(|c| metadata(c)["symbol"] == "alpha")
+            .expect("alpha chunk");
+        assert_eq!(metadata(alpha)["symbol_kind"], "function");
+        assert!(alpha.content.contains("fn alpha"));
+        assert!(chunks.iter().any(|c| metadata(c)["symbol"] == "beta"));
+        // No parent links: each function fits in one chunk.
+        assert!(chunks
+            .iter()
+            .all(|c| metadata(c).get("parent_chunk_id").is_none()));
+    }
+
+    #[tokio::test]
+    async fn oversized_code_item_parts_link_to_first_part() {
+        let config = Config {
+            embedding_dims: 8,
+            chunk_size: 120,
+            chunk_overlap: 10,
+            ..Config::for_tests()
+        };
+        let embedder = MockEmbedder::new(8);
+        let body = "    let x = 1;\n".repeat(60);
+        let document = code_document(&format!("fn big() {{\n{body}}}\n"), "rust");
+
+        let chunks = DocumentIndexer::new(&embedder, &config)
+            .build_chunks(&document)
+            .await
+            .expect("chunks");
+        let big: Vec<&Chunk> = chunks
+            .iter()
+            .filter(|c| metadata(c)["symbol"] == "big")
+            .collect();
+        assert!(big.len() > 1, "oversized fn splits: {}", big.len());
+        let leader = big[0];
+        assert!(metadata(leader).get("parent_chunk_id").is_none());
+        for part in &big[1..] {
+            assert_eq!(
+                metadata(part)["parent_chunk_id"],
+                serde_json::Value::String(leader.id.clone()),
+                "continuation part links to first part"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn window_mode_preserves_legacy_code_chunking() {
+        let config = Config {
+            embedding_dims: 8,
+            chunk_size: 800,
+            chunk_overlap: 120,
+            code_chunking: CodeChunkingMode::Window,
+            ..Config::for_tests()
+        };
+        let embedder = MockEmbedder::new(8);
+        let document = code_document("fn alpha() {}\nfn beta() {}\n", "rust");
+
+        let chunks = DocumentIndexer::new(&embedder, &config)
+            .build_chunks(&document)
+            .await
+            .expect("chunks");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].metadata_json, "{}");
+    }
+
+    #[tokio::test]
+    async fn markdown_section_members_link_to_section_leader() {
+        let config = Config {
+            embedding_dims: 8,
+            chunk_size: 24,
+            chunk_overlap: 4,
+            ..Config::for_tests()
+        };
+        let embedder = MockEmbedder::new(8);
+        let document = Document {
+            id: "doc".into(),
+            content: "# Alpha\none two three four five six seven eight nine ten\n\n# Beta\nlast chunk here for sure\n"
+                .into(),
+            metadata_json: "{}".into(),
+            ..Default::default()
+        };
+
+        let chunks = DocumentIndexer::new(&embedder, &config)
+            .build_chunks(&document)
+            .await
+            .expect("chunks");
+        assert!(chunks.len() > 2, "multiple chunks: {}", chunks.len());
+
+        // First Alpha chunk is the designated parent for the rest of Alpha.
+        let alpha: Vec<&Chunk> = chunks
+            .iter()
+            .filter(|c| metadata(c)["section"] == "Alpha")
+            .collect();
+        assert!(alpha.len() > 1, "alpha section spans several chunks");
+        let leader = alpha[0];
+        assert!(metadata(leader).get("parent_chunk_id").is_none());
+        for member in &alpha[1..] {
+            assert_eq!(
+                metadata(member)["parent_chunk_id"],
+                serde_json::Value::String(leader.id.clone())
+            );
+        }
+        // Beta is a single-chunk section: no parent.
+        let beta: Vec<&Chunk> = chunks
+            .iter()
+            .filter(|c| metadata(c)["section"] == "Beta")
+            .collect();
+        assert_eq!(beta.len(), 1);
+        assert!(metadata(beta[0]).get("parent_chunk_id").is_none());
+    }
+
+    #[tokio::test]
+    async fn plain_profile_never_splits_structurally() {
+        let config = Config {
+            embedding_dims: 8,
+            chunk_size: 800,
+            chunk_overlap: 120,
+            ..Config::for_tests()
+        };
+        let embedder = MockEmbedder::new(8);
+        let document = code_document("fn alpha() {}\n", "rust");
+
+        let chunks = DocumentIndexer::new(&embedder, &config)
+            .build_plain_chunks(&document)
+            .await
+            .expect("chunks");
+        assert!(chunks.iter().all(|c| metadata(c).get("symbol").is_none()));
     }
 }

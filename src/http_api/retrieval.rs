@@ -16,9 +16,7 @@ use super::{
 use crate::db::search::{attach_context, ContextExpansion};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
-use crate::eval::{
-    source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder,
-};
+use crate::eval::{source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder};
 use crate::mcp::tools::PackHitParams;
 use crate::models::SearchHit;
 use crate::retrieval::{self, SearchCommand, SimilarDocumentsQuery};
@@ -283,13 +281,25 @@ pub(super) struct SearchBody {
     max_context_tokens: Option<usize>,
     #[serde(default)]
     max_chunks_per_document: Option<usize>,
-    /// `neighbors` | `parent_section`.
+    /// `neighbors` | `parent_section` | `parent`.
     #[serde(default)]
     context_expansion: Option<String>,
     #[serde(default)]
     neighbor_chunks: Option<usize>,
     #[serde(default)]
     rrf_k: Option<f32>,
+    /// When true and `RAG_RERANK_PROVIDER` is configured, rerank candidates
+    /// before returning `top_k` hits (fallback keeps un-reranked ranking).
+    #[serde(default)]
+    rerank: Option<bool>,
+    /// When true, the server rewrites the query via the chat LLM and fuses
+    /// per-variant searches with RRF (`RAG_QUERY_REWRITE_*`). Default false.
+    #[serde(default)]
+    rewrite: Option<bool>,
+    /// When true, the server embeds an LLM hypothetical answer passage as an
+    /// extra dense leg (`RAG_HYDE_*`; vec/hybrid only). Default false.
+    #[serde(default)]
+    hyde: Option<bool>,
     #[serde(default)]
     timeout_ms: Option<u64>,
     /// When true, response includes a local retrieval `trace` with spans and source versions.
@@ -335,6 +345,9 @@ pub(super) async fn search_http(
         timeout_ms: body.timeout_ms.or(Some(5_000)),
         fts_stemmer: state.config.fts_stemmer.clone(),
         rrf_k: body.rrf_k,
+        rerank: body.rerank,
+        rewrite: body.rewrite,
+        hyde: body.hyde,
     };
     let resolved_mode =
         match retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode) {
@@ -496,10 +509,7 @@ async fn pack_context_http(
     api_ok(response)
 }
 
-fn source_versions_for_hits(
-    store: &crate::db::Store,
-    hits: &[SearchHit],
-) -> Vec<SourceVersion> {
+fn source_versions_for_hits(store: &crate::db::Store, hits: &[SearchHit]) -> Vec<SourceVersion> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for hit in hits {
@@ -789,6 +799,9 @@ mod tests {
             context_expansion: None,
             neighbor_chunks: None,
             rrf_k: Some(30.0),
+            rerank: None,
+            rewrite: None,
+            hyde: None,
             timeout_ms: Some(1_000),
             include_trace: false,
             persist_trace: false,

@@ -1,0 +1,14 @@
+{
+  "Cargo.toml": "9b683a6c19a7f13e7f8e1597fa372c48e88445a493aec59c4a7c749493deed76",
+  "Cargo.lock": "37abb08946c7a5d8f31c02d7581b22583780153c1d44eecad7daa27201411ace",
+  "src/code_index.rs": "3f52f1d85bfc9ce3d38e033b5760f1ea43088b98d2e5568dfdc793e7b908d1ac",
+  "src/code_index/go.rs": "5de5030eedd5a00246b42dac67440b9e3acbbaed6f56e3dd25455eb04662f3a9",
+  "src/code_index/resolve.rs": "ee6bafe0942c977ccb2eb75396f057f18e66695cbe667177af292bca4b25b20b",
+  "src/code_index/references.rs": "63d383c007d1eb7bd6cc7211242a2273396555598d726a07ad08444385925f7e",
+  "src/code_index/analysis.rs": "b7d9713be6b254f62abb42a854cb4919a53400a961a099ec52331fdbe2d4bcee",
+  "src/file_ingest.rs": "ff911f4fcdfdb4df9d72f415435f85df6ed3c799ef06d862341162242607b870",
+  "scripts/smoke_code_go.py": "fd67decc269441c78cd9f52126b87f8a6e142b976c55f07f02de202ad5dd80a9",
+  "scripts/smoke_code_references.py": "3880af5089e48747b6cc266d3a7c9ba999c896af36f8d4d936dd4f13768162fe",
+  "docs/RAGRAF_PARITY.md": "9dd13708c7e20ab12e7aca5dcfaef712e77bfb9e23891ecb3dd88ce8b207a689",
+  "docs/RAGRAF_FEATURE_MATRIX.md": "0cacb234a7200d6ca59c47e7336b89e21a0fae46b2f60347c2d5509c5dba8664"
+}

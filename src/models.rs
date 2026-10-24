@@ -475,6 +475,15 @@ pub struct SearchExplanation {
     /// RRF constant used for fusion (hybrid only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rrf_k: Option<f32>,
+    /// Rerank stage time (only when `rerank=true` and a provider ran).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank_ms: Option<f64>,
+    /// LLM query-rewrite time (only when `rewrite=true` and variants ran).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_ms: Option<f64>,
+    /// LLM HyDE passage generation time (only when `hyde=true` and it ran).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyde_ms: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deduplication: Option<String>,
 }
@@ -499,6 +508,9 @@ pub struct SearchHit {
     /// Reciprocal rank fusion score when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_rrf: Option<f32>,
+    /// Rerank provider relevance score when `rerank=true` and a provider ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_rerank: Option<f32>,
     /// 1-based rank in the dense candidate list before fusion (vec / hybrid).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank_vec: Option<u32>,
@@ -613,6 +625,23 @@ pub struct StatusReport {
     pub storage_capabilities: Vec<String>,
     pub schema_version: i32,
     pub fts_ready: bool,
+    /// FTS dirty marker (chunk mutations since last completed refresh).
+    #[serde(default)]
+    pub fts_dirty: bool,
+    /// Generations between source chunks and the completed FTS index
+    /// (`None` when the index was never refreshed).
+    #[serde(default)]
+    pub fts_generation_gap: Option<u64>,
+    /// Successful FTS refresh/reindex attempts (diagnostics).
+    #[serde(default)]
+    pub fts_rebuild_count: u64,
+    /// Gap at or above which the maintenance loop auto-reindexes
+    /// (`RAG_FTS_STALE_GENERATION_THRESHOLD`; 0 disables).
+    #[serde(default)]
+    pub fts_stale_threshold: u64,
+    /// True when `fts_dirty` and the gap reaches `fts_stale_threshold`.
+    #[serde(default)]
+    pub fts_stale: bool,
     pub document_count: u64,
     pub chunk_count: u64,
     pub node_count: u64,

@@ -1,0 +1,28 @@
+{
+  "index_format": 20,
+  "library_after_main_change": {
+    "passed": 823,
+    "failed": 0,
+    "ignored": 1
+  },
+  "final_code_index": {
+    "passed": 109,
+    "failed": 0
+  },
+  "history_after_delta_output": {
+    "passed": 8,
+    "failed": 0
+  },
+  "binary_sha256": {
+    "rag-mcp": "9ab56cf88e1deb197b0c8d47a0eedf0b7fdc7e758dab0afc719111416284618b",
+    "rag_gate": "11ada66eedb6f72af7103f072420b4073664d96d900fc0f7bf8e3c5b7552be00"
+  },
+  "source_sha256": {
+    "src/code_index.rs": "00a226cef13b8cc4ff10a0fc9ee5098d790dad336e3a735979e69077c4e660c9",
+    "src/code_index/sql.rs": "10de2a9355ed226d686dba1fd74d4a7718960b396f2b6d7a05463fd1f5d87b20",
+    "src/code_index/history.rs": "a66060ec7fb4cf9d444404e66aae921ee2d1a3a03e78cc4a9a2fe83635b4584a",
+    "scripts/smoke_schema_constraints.py": "ef7344fbedad6cb649630f67c883fa9cb4b2eb8b4b54498ac45aa0bb15551d56",
+    "docs/SQL_CODE_ANALYSIS.md": "be498cdf03509fc0bd92dde9acc925cf1011bfc81696625ece5c242114328424",
+    "docs/CODE_HISTORY.md": "ec97832a18bbb13486a082b3052bbaa4767370eaa96d4ce551429d9f2bcac3da"
+  }
+}

@@ -23,9 +23,12 @@
 //! Tests may construct [`MockEmbedder`] (or another impl) directly as
 //! `Arc<dyn EmbeddingProvider>` without going through the factory.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::Instant;
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 use crate::config::{Config, EmbeddingProviderKind};
 use crate::error::Result;
@@ -57,9 +60,9 @@ pub trait EmbeddingProvider: Send + Sync {
 /// Ollama's `/v1` vs native dialect choice is confined to this arm (via
 /// [`ollama::prefers_openai_compat_path`]); callers never branch on kind for construction.
 pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
-    match config.embedding_provider {
+    let inner = match config.embedding_provider {
         EmbeddingProviderKind::Mock => {
-            Ok(Arc::new(MockEmbedder::new(config.embedding_dims)))
+            Arc::new(MockEmbedder::new(config.embedding_dims)) as Arc<dyn EmbeddingProvider>
         }
         EmbeddingProviderKind::OpenAi => {
             let provider = OpenAiEmbedder::new(
@@ -68,7 +71,7 @@ pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
                 config.embedding_model.clone(),
                 config.embedding_dims,
             )?;
-            Ok(Arc::new(provider))
+            Arc::new(provider) as Arc<dyn EmbeddingProvider>
         }
         EmbeddingProviderKind::Ollama => {
             // Dialect policy for this kind only: OpenAI `/v1/embeddings` when BASE_URL
@@ -80,16 +83,112 @@ pub fn build_provider(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
                     config.embedding_model.clone(),
                     config.embedding_dims,
                 )?;
-                Ok(Arc::new(provider))
+                Arc::new(provider) as Arc<dyn EmbeddingProvider>
             } else {
                 let provider = OllamaEmbedder::new(
                     config.embedding_base_url.clone(),
                     config.embedding_model.clone(),
                     config.embedding_dims,
                 )?;
-                Ok(Arc::new(provider))
+                Arc::new(provider) as Arc<dyn EmbeddingProvider>
             }
         }
+    };
+    Ok(Arc::new(MeteredEmbedder::new(inner)))
+}
+
+// --- Concurrency gate + usage metrics ---------------------------------------
+
+/// Cap on simultaneous `embed` batches across the whole process.
+///
+/// Without a gate, parallel ingest/sync/wiki jobs can fan out unbounded
+/// embedding batches and pin every core. `RAG_EMBED_CONCURRENCY` overrides
+/// the default of half the logical CPUs (clamped to 1..=8).
+pub fn embed_concurrency_limit() -> usize {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    std::env::var("RAG_EMBED_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| (logical / 2).clamp(1, 8))
+}
+
+static EMBED_GATE: LazyLock<Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(embed_concurrency_limit())));
+static EMBED_CALLS: AtomicU64 = AtomicU64::new(0);
+static EMBED_TEXTS: AtomicU64 = AtomicU64::new(0);
+static EMBED_IN_FLIGHT: AtomicU64 = AtomicU64::new(0);
+static EMBED_WAIT_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static EMBED_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static EMBED_LAST_MS: AtomicU64 = AtomicU64::new(0);
+static EMBED_MAX_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Live usage counters for the `/v1/resources` endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct EmbedderStats {
+    pub concurrency_limit: usize,
+    pub in_flight: u64,
+    pub calls_total: u64,
+    pub texts_total: u64,
+    pub wait_ms_total: u64,
+    pub embed_ms_total: u64,
+    pub last_batch_ms: u64,
+    pub max_batch_ms: u64,
+}
+
+pub fn embedder_stats() -> EmbedderStats {
+    EmbedderStats {
+        concurrency_limit: embed_concurrency_limit(),
+        in_flight: EMBED_IN_FLIGHT.load(Ordering::Relaxed),
+        calls_total: EMBED_CALLS.load(Ordering::Relaxed),
+        texts_total: EMBED_TEXTS.load(Ordering::Relaxed),
+        wait_ms_total: EMBED_WAIT_MS_TOTAL.load(Ordering::Relaxed),
+        embed_ms_total: EMBED_MS_TOTAL.load(Ordering::Relaxed),
+        last_batch_ms: EMBED_LAST_MS.load(Ordering::Relaxed),
+        max_batch_ms: EMBED_MAX_MS.load(Ordering::Relaxed),
+    }
+}
+
+/// Decorator around any [`EmbeddingProvider`] that serializes bursts through
+/// [`EMBED_GATE`] and records timing/volume metrics. Installed once in
+/// [`build_provider`]; tests constructing providers directly bypass it.
+pub struct MeteredEmbedder {
+    inner: Arc<dyn EmbeddingProvider>,
+}
+
+impl MeteredEmbedder {
+    pub fn new(inner: Arc<dyn EmbeddingProvider>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for MeteredEmbedder {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let wait_started = Instant::now();
+        let _permit = EMBED_GATE
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| crate::error::AppError::Embeddings("embed gate closed".into()))?;
+        EMBED_WAIT_MS_TOTAL.fetch_add(wait_started.elapsed().as_millis() as u64, Ordering::Relaxed);
+        EMBED_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+        let started = Instant::now();
+        let result = self.inner.embed(texts).await;
+        EMBED_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+        let ms = started.elapsed().as_millis() as u64;
+        EMBED_CALLS.fetch_add(1, Ordering::Relaxed);
+        EMBED_TEXTS.fetch_add(texts.len() as u64, Ordering::Relaxed);
+        EMBED_MS_TOTAL.fetch_add(ms, Ordering::Relaxed);
+        EMBED_LAST_MS.store(ms, Ordering::Relaxed);
+        EMBED_MAX_MS.fetch_max(ms, Ordering::Relaxed);
+        result
+    }
+
+    fn dimensions(&self) -> usize {
+        self.inner.dimensions()
     }
 }
 

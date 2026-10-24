@@ -1,0 +1,28 @@
+{
+  "library": {
+    "passed": 751,
+    "failed": 0,
+    "ignored": 1
+  },
+  "native_fixture": {
+    "passed": 1,
+    "failed": 0,
+    "postgres_major": 16,
+    "mysql_version": "8.4",
+    "expanded_flag_checks": [
+      "nulls_not_distinct",
+      "initially_deferred",
+      "mysql_invisible_prefix_index",
+      "identity_vs_generated_expression",
+      "mysql_default_generated_vs_computed",
+      "composite_vs_individual_uniqueness",
+      "actual_postgresql_identity_mode_drift"
+    ]
+  },
+  "runtime_report": "runtime.json",
+  "capture_format": 2,
+  "local_schema_version": 24,
+  "binary_sha256": "2a55903201d96faba22440c330b9c3bb9f4284e74f304626eca4773380d8f45a",
+  "production_database_used": false,
+  "existing_server_restarted": false
+}
