@@ -1,0 +1,288 @@
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/c_family.rs:282:
+     let id = format!("{}:{}:{}", doc, node.start_byte(), short);
+     let body = node.child_by_field_name("body");
+     out.symbols.push(Symbol {
+-        build_context:None,
++        build_context: None,
+         documentation: None,
+         documentation_examined: false,
+         id: id.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/c_family.rs:667:
+         return;
+     };
+     out.references.push(Reference {
+-        build_context:None,
++        build_context: None,
+         start_byte: node.start_byte(),
+         document_id: doc.into(),
+         path: out.path.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/history.rs:75:
+             indexed.insert(file.id.clone(), doc);
+         }
+     }
+-    let configured=rust_cfg::apply(&mut indexed);
+-    symbols=indexed.values().flat_map(|d|d.symbols.clone()).collect();
++    let configured = rust_cfg::apply(&mut indexed);
++    symbols = indexed.values().flat_map(|d| d.symbols.clone()).collect();
+     for file in &mut files {
+-        if let Some(doc)=indexed.get(&file.id){file.analysis=Some(serde_json::to_string(doc)?);}
++        if let Some(doc) = indexed.get(&file.id) {
++            file.analysis = Some(serde_json::to_string(doc)?);
++        }
+     }
+     let references = resolve::references(&symbols, &indexed);
+     let calls: Vec<_> = references.iter().filter(|r| r.reference.is_call).collect();
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/history.rs:194:
+     Ok(files)
+ }
+ fn symbol_key(s: &Symbol) -> String {
+-    let base=format!("{}::{}::{}", s.document_id, s.qualified_name, s.kind);
+-    s.build_context.as_ref().map_or_else(||base.clone(),|context|format!("{base}::build:{context}"))
++    let base = format!("{}::{}::{}", s.document_id, s.qualified_name, s.kind);
++    s.build_context.as_ref().map_or_else(
++        || base.clone(),
++        |context| format!("{base}::build:{context}"),
++    )
+ }
+ fn symbols(files: &[File]) -> Result<BTreeMap<String, Vec<serde_json::Value>>> {
+     let mut result: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/history.rs:608:
+             .collect::<std::result::Result<_, _>>()?;
+         let limit = q.limit.unwrap_or(100).clamp(1, 500);
+         let schema_diff = schema_changes(&old_graph, &new_graph, q.project.as_deref(), limit);
+-        let mut report=serde_json::json!({"before_format_version":old_graph["format_version"],"after_format_version":new_graph["format_version"],"analysis_format_changed":old_graph["format_version"]!=new_graph["format_version"],"schema_diff":schema_diff,"relations_available":relations_available,"method_relations_available":method_relations_available,"relations_scope":"non_call_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references","relations_added":relation_added.iter().take(limit).collect::<Vec<_>>(),"relations_added_total":relation_added.len(),"relations_removed":relation_removed.iter().take(limit).collect::<Vec<_>>(),"relations_removed_total":relation_removed.len(),"relations_truncated":relation_added.len()>limit||relation_removed.len()>limit,"before":q.before,"after":after,"project":q.project,"files":changes.iter().take(limit).collect::<Vec<_>>(),"file_changes_total":changes.len(),"symbols":symbol_changes.iter().take(limit).collect::<Vec<_>>(),"symbol_changes_total":symbol_changes.len(),"edges_added":added.iter().take(limit).collect::<Vec<_>>(),"edges_added_total":added.len(),"edges_removed":removed.iter().take(limit).collect::<Vec<_>>(),"edges_removed_total":removed.len(),"truncated":changes.len()>limit||symbol_changes.len()>limit||added.len()>limit||removed.len()>limit||relation_added.len()>limit||relation_removed.len()>limit||schema_diff["truncated"]==true,"edge_semantics":"resolved_static_candidate_links","bodies_included":false,"immutable":true});
+-        let contexts=|graph:&serde_json::Value| graph["rust_build_contexts"].as_array().map(|items|items.iter().filter(|item|q.project.as_ref().is_none_or(|p|item["project"]==*p)).cloned().collect::<Vec<_>>());
+-        let old_contexts=contexts(&old_graph);let new_contexts=contexts(&new_graph);
+-        report["rust_build_contexts"]=serde_json::json!({"available":old_contexts.is_some()&&new_contexts.is_some(),"before":old_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"after":new_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"before_total":old_contexts.as_ref().map(Vec::len),"after_total":new_contexts.as_ref().map(Vec::len),"truncated":old_contexts.as_ref().is_some_and(|v|v.len()>50)||new_contexts.as_ref().is_some_and(|v|v.len()>50),"changed":if old_contexts.is_some()&&new_contexts.is_some(){Some(old_contexts!=new_contexts)}else{None}});
++        let mut report = serde_json::json!({"before_format_version":old_graph["format_version"],"after_format_version":new_graph["format_version"],"analysis_format_changed":old_graph["format_version"]!=new_graph["format_version"],"schema_diff":schema_diff,"relations_available":relations_available,"method_relations_available":method_relations_available,"relations_scope":"non_call_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references","relations_added":relation_added.iter().take(limit).collect::<Vec<_>>(),"relations_added_total":relation_added.len(),"relations_removed":relation_removed.iter().take(limit).collect::<Vec<_>>(),"relations_removed_total":relation_removed.len(),"relations_truncated":relation_added.len()>limit||relation_removed.len()>limit,"before":q.before,"after":after,"project":q.project,"files":changes.iter().take(limit).collect::<Vec<_>>(),"file_changes_total":changes.len(),"symbols":symbol_changes.iter().take(limit).collect::<Vec<_>>(),"symbol_changes_total":symbol_changes.len(),"edges_added":added.iter().take(limit).collect::<Vec<_>>(),"edges_added_total":added.len(),"edges_removed":removed.iter().take(limit).collect::<Vec<_>>(),"edges_removed_total":removed.len(),"truncated":changes.len()>limit||symbol_changes.len()>limit||added.len()>limit||removed.len()>limit||relation_added.len()>limit||relation_removed.len()>limit||schema_diff["truncated"]==true,"edge_semantics":"resolved_static_candidate_links","bodies_included":false,"immutable":true});
++        let contexts = |graph: &serde_json::Value| {
++            graph["rust_build_contexts"].as_array().map(|items| {
++                items
++                    .iter()
++                    .filter(|item| q.project.as_ref().is_none_or(|p| item["project"] == *p))
++                    .cloned()
++                    .collect::<Vec<_>>()
++            })
++        };
++        let old_contexts = contexts(&old_graph);
++        let new_contexts = contexts(&new_graph);
++        report["rust_build_contexts"] = serde_json::json!({"available":old_contexts.is_some()&&new_contexts.is_some(),"before":old_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"after":new_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"before_total":old_contexts.as_ref().map(Vec::len),"after_total":new_contexts.as_ref().map(Vec::len),"truncated":old_contexts.as_ref().is_some_and(|v|v.len()>50)||new_contexts.as_ref().is_some_and(|v|v.len()>50),"changed":if old_contexts.is_some()&&new_contexts.is_some(){Some(old_contexts!=new_contexts)}else{None}});
+         Ok(report)
+     }
+ }
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/java.rs:519:
+             site.name.clone()
+         };
+         out.references.push(Reference {
+-            build_context:None,
++            build_context: None,
+             start_byte: node.start_byte(),
+             document_id: doc_id.into(),
+             path: out.path.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/lua.rs:109:
+ ) {
+     let name = terminal(target);
+     out.references.push(Reference {
+-        build_context:None,
++        build_context: None,
+         document_id: doc.into(),
+         path: out.path.clone(),
+         name: text(name, source).into(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/lua.rs:157:
+         );
+         let body = n.child_by_field_name("body");
+         out.symbols.push(Symbol {
+-            build_context:None,
++            build_context: None,
+             documentation: None,
+             documentation_examined: false,
+             id: symbol.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/policy.rs:11:
+     default_behavior: String,
+     diagnostics: Vec<String>,
+ }
+-pub(super) fn remap_build_context(doc:&mut IndexedDocument,ids:&HashMap<String,String>) {
+-    doc.policies.retain_mut(|p|if let Some(id)=ids.get(&p.symbol_id){p.symbol_id=id.clone();true}else{false});
++pub(super) fn remap_build_context(doc: &mut IndexedDocument, ids: &HashMap<String, String>) {
++    doc.policies.retain_mut(|p| {
++        if let Some(id) = ids.get(&p.symbol_id) {
++            p.symbol_id = id.clone();
++            true
++        } else {
++            false
++        }
++    });
+ }
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ struct Decision {
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/resolve.rs:667:
+         .max_by_key(|b| (b.start, b.declared))
+         .and_then(|b| b.target.as_deref())
+ }
+-pub(super) fn visible_import_targets(doc:&IndexedDocument,at:usize)->Vec<&str> {
+-    doc.bindings.iter().filter(|b|b.start<=at&&at<b.end&&b.declared<=at).filter_map(|b|b.target.as_deref()).collect()
++pub(super) fn visible_import_targets(doc: &IndexedDocument, at: usize) -> Vec<&str> {
++    doc.bindings
++        .iter()
++        .filter(|b| b.start <= at && at < b.end && b.declared <= at)
++        .filter_map(|b| b.target.as_deref())
++        .collect()
+ }
+ pub(super) fn references(
+     symbols: &[Symbol],
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/shell.rs:170:
+         diag(out, "SHELL_NESTED_FUNCTION_REGISTRATION_UNVERIFIED");
+     }
+     out.symbols.push(Symbol {
+-        build_context:None,
++        build_context: None,
+         documentation: None,
+         documentation_examined: false,
+         id: id.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/shell.rs:242:
+             format!("export -f {name}")
+         };
+         out.references.push(Reference {
+-            build_context:None,
++            build_context: None,
+             start_byte: node.start_byte(),
+             document_id: doc.into(),
+             path: out.path.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/sql.rs:113:
+     uses: Vec<Use>,
+     diagnostics: Vec<Diagnostic>,
+ }
+-pub(super) fn configure_rust_context(doc:&mut IndexedDocument,ids:&HashMap<String,String>,keep_line:impl Fn(usize)->bool) {
+-    doc.sql.events.retain(|e|keep_line(e.line));
+-    doc.sql.diagnostics.retain(|e|keep_line(e.line));
+-    doc.sql.uses.retain_mut(|u|{
+-        if !keep_line(u.line){return false;}
+-        if let Some(id)=&u.symbol {if let Some(next)=ids.get(id){u.symbol=Some(next.clone());}else{return false;}}
++pub(super) fn configure_rust_context(
++    doc: &mut IndexedDocument,
++    ids: &HashMap<String, String>,
++    keep_line: impl Fn(usize) -> bool,
++) {
++    doc.sql.events.retain(|e| keep_line(e.line));
++    doc.sql.diagnostics.retain(|e| keep_line(e.line));
++    doc.sql.uses.retain_mut(|u| {
++        if !keep_line(u.line) {
++            return false;
++        }
++        if let Some(id) = &u.symbol {
++            if let Some(next) = ids.get(id) {
++                u.symbol = Some(next.clone());
++            } else {
++                return false;
++            }
++        }
+         true
+     });
+ }
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index/status.rs:363:
+                 "docblocks":docblocks,
+                 "embedding_identity":{"available":manifest.is_some(),"matches_config":identity_match,"scope":"corpus_global","provider":manifest.as_ref().map(|m|&m.provider),"model":manifest.as_ref().map(|m|&m.model),"dims":manifest.as_ref().map(|m|m.dims),"configured_dims":config.embedding_dims},
+                 "unmeasured_checks":unmeasured});
+-        let rust_trait_typing=serde_json::json!({"backend":"captured_ast","patterns":["cross_file_impl_owner","generic_impl_substitution","explicit_ufcs","generic_and_where_bounds","dyn_and_impl_trait_declarations","associated_type_projections","default_methods","inherent_precedence","explicit_ambiguity"],"bound_receiver_targets":"trait_declarations_only","runtime_dispatch_verified":false,"compiler_verified":false,"limitations":["full_coherence_and_specialization","higher_ranked_and_generic_associated_types","complete_supertrait_and_trait_argument_inference","macro_cfg_and_target_configuration"]});
+-        let capabilities=serde_json::json!({"languages":languages(),"calls_and_value_references":"conservative_static_candidates","inheritance":"partial_static",
++        let rust_trait_typing = serde_json::json!({"backend":"captured_ast","patterns":["cross_file_impl_owner","generic_impl_substitution","explicit_ufcs","generic_and_where_bounds","dyn_and_impl_trait_declarations","associated_type_projections","default_methods","inherent_precedence","explicit_ambiguity"],"bound_receiver_targets":"trait_declarations_only","runtime_dispatch_verified":false,"compiler_verified":false,"limitations":["full_coherence_and_specialization","higher_ranked_and_generic_associated_types","complete_supertrait_and_trait_argument_inference","macro_cfg_and_target_configuration"]});
++        let capabilities = serde_json::json!({"languages":languages(),"calls_and_value_references":"conservative_static_candidates","inheritance":"partial_static",
+                 "rust_receiver_typing":{"backend":"captured_ast","patterns":["declared_returns","method_chains","async_await","named_fields","arrays_slices_vec","standard_box_arc_rc","local_factory_initializers","explicit_function_type_arguments"],"return_type_context":"declaration_document","runtime_dispatch_verified":false,"compiler_verified":false,"limitations":["complete_trait_solver_and_gats","custom_deref_and_index","macro_and_cfg_expansion","full_compiler_type_inference"]},
+                 "rust_trait_typing":rust_trait_typing,
+                 "sql_schema":"captured_migration_ddl_subset","slice":"bounded_structural_call_graph","cpg":{"available":false,"reason":"backend_not_implemented"},
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:66:
+     pub end_byte: usize,
+     pub revision: i64,
+     pub content_hash: String,
+-    #[serde(default, skip_serializing_if="Option::is_none")]
++    #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub build_context: Option<String>,
+ }
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:83:
+     pub is_call: bool,
+     pub revision: i64,
+     pub content_hash: String,
+-    #[serde(default, skip_serializing_if="Option::is_none")]
++    #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub build_context: Option<String>,
+ }
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:456:
+                 .and_then(|v| v.child_by_field_name("body"))
+         });
+         out.symbols.push(Symbol {
+-            build_context:None,
++            build_context: None,
+             documentation: None,
+             documentation_examined: false,
+             id: id.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:512:
+             last_identifier(target)
+         } {
+             out.references.push(Reference {
+-                build_context:None,
++                build_context: None,
+                 start_byte: node.start_byte(),
+                 document_id: doc.into(),
+                 path: out.path.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:530:
+     if !in_call_target && name_node.is_none() {
+         if let Some((name, expression)) = references::occurrence(node, source, out) {
+             out.references.push(Reference {
+-                build_context:None,
++                build_context: None,
+                 start_byte: node.start_byte(),
+                 document_id: doc.into(),
+                 path: out.path.clone(),
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:803:
+         out.references.extend(cached.references.clone());
+         documents.insert(row.get::<_, String>(0)?, cached);
+     }
+-    let configured=rust_cfg::apply(&mut documents);
+-    out.rust_build_contexts=configured.contexts;
++    let configured = rust_cfg::apply(&mut documents);
++    out.rust_build_contexts = configured.contexts;
+     out.binding_diagnostics.extend(configured.diagnostics);
+-    out.symbols=documents.values().flat_map(|d|d.symbols.clone()).collect();
+-    out.references=documents.values().flat_map(|d|d.references.clone()).collect();
+-    out.policies=documents.values().flat_map(|d|d.policies.clone()).collect();
+-    out.symbols.sort_by(|a,b|a.id.cmp(&b.id));
+-    out.references.sort_by(|a,b|(&a.document_id,a.start_byte,&a.expression).cmp(&(&b.document_id,b.start_byte,&b.expression)));
++    out.symbols = documents.values().flat_map(|d| d.symbols.clone()).collect();
++    out.references = documents
++        .values()
++        .flat_map(|d| d.references.clone())
++        .collect();
++    out.policies = documents
++        .values()
++        .flat_map(|d| d.policies.clone())
++        .collect();
++    out.symbols.sort_by(|a, b| a.id.cmp(&b.id));
++    out.references.sort_by(|a, b| {
++        (&a.document_id, a.start_byte, &a.expression).cmp(&(
++            &b.document_id,
++            b.start_byte,
++            &b.expression,
++        ))
++    });
+     out.binding_diagnostics
+         .extend(shell::diagnostics(&documents));
+     out.sql = sql::snapshot(&documents);
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:878:
+                 serde_json::json!(self.binding_diagnostics),
+             );
+             object.insert("index_rev".into(), serde_json::json!(self.index_revision));
+-            object.insert("rust_build_contexts".into(),serde_json::json!(self.rust_build_contexts.iter().take(50).collect::<Vec<_>>()));
+-            object.insert("rust_build_contexts_total".into(),serde_json::json!(self.rust_build_contexts.len()));
++            object.insert(
++                "rust_build_contexts".into(),
++                serde_json::json!(self.rust_build_contexts.iter().take(50).collect::<Vec<_>>()),
++            );
++            object.insert(
++                "rust_build_contexts_total".into(),
++                serde_json::json!(self.rust_build_contexts.len()),
++            );
+             object.insert(
+                 "view".into(),
+                 serde_json::json!("fresh_subset_of_revision_inputs"),

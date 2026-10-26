@@ -1,0 +1,27 @@
+[
+  {
+    "caller": "inspect",
+    "expression": "c.mark",
+    "target": "*const T::mark"
+  },
+  {
+    "caller": "inspect",
+    "expression": "m.mark",
+    "target": "*mut T::mark"
+  },
+  {
+    "caller": "inspect",
+    "expression": "(m as *const u8).mark",
+    "target": "*const T::mark"
+  },
+  {
+    "caller": "inspect",
+    "expression": "c.again",
+    "target": "*const T::again"
+  },
+  {
+    "caller": "inspect",
+    "expression": "c.again().mark",
+    "target": "*const T::mark"
+  }
+]

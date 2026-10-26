@@ -1,0 +1,71 @@
+{
+  "observed_at_utc": "2026-10-26T01:11:37.436212+00:00",
+  "git_head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "checks": {
+    "focused-final": {
+      "sha256": "bea5fa09509e1870093d414a7683c892bf37d6c407a94c6c9ff376d729dea162",
+      "test_suites": 1,
+      "passed": 9,
+      "failed": 0,
+      "ignored": 0
+    },
+    "workspace": {
+      "sha256": "7e2aa0b85bc1abc88feb2af91c9c42ebcee61ca5a39a8ecedb5ae963922d49c7",
+      "test_suites": 19,
+      "passed": 1491,
+      "failed": 0,
+      "ignored": 1
+    },
+    "workspace-final": {
+      "sha256": "5bcba95e3e8cafa2cbbd581a3d6b257656e91f55f29341ede595e4a8962876f7",
+      "test_suites": 1,
+      "passed": 1242,
+      "failed": 1,
+      "ignored": 1,
+      "known_failure": "code_index::rust_cfg::tests::configured_fields_select_all_raw_alternatives_and_the_active_owner",
+      "shared_checkout_concurrently_edited": true
+    },
+    "clippy-final": {
+      "sha256": "65ef57eef29273eaf06758e5b3d1bf5b4bdc41ca1be98ab58592435f853f0ada",
+      "test_suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    "build-final": {
+      "sha256": "1daf9f2b862729b0fc499b8c5c0f73da144084e8df01c6ba5046f2bc98f90838",
+      "test_suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "source_hashes_observed_after_checks": {
+    "src/code_index.rs": "a94ca48a2fb23f7907df039570998dac590b31e297704809b0b5b137d65c6198",
+    "src/code_index/documentation.rs": "cd1699cb5917a986835bcda8bac0826773ec1f6205972b57c832531c3e200e2a",
+    "src/code_index/php_docblocks.rs": "fe0d8fc0ae986718100f04624371e81607411b1724c8dd7f500b925a00eb9074",
+    "src/code_index/php_docblocks/parser.rs": "25826624e4b26661b60759892e0149edd92a5c88a79eaaea1bfc395b0f1693da",
+    "scripts/smoke_php_parameter_contracts.py": "bc218c6f11f6484f423e926b5ea5ddd0d89f1c0af0ce206358e67a766ce1fc2b",
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b"
+  },
+  "atomic_source_snapshot": false,
+  "copied_binary": {
+    "sha256": "9e91b1fc37cbed2ee28f98692e749e5ceb37cf9b88b50be8a3414cfe3e1cba2f",
+    "bytes": 326815800,
+    "fixed_for_all_MCP_scenarios": true,
+    "scenarios": [
+      "php_parameter_contracts",
+      "table_impact",
+      "literal_impact",
+      "code_documentation",
+      "symbol_nodes",
+      "translation_keys",
+      "non_code_references",
+      "php_routes"
+    ]
+  },
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "whole_RAGRAF_parity_proven": false
+}

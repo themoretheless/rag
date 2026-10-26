@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 4 tests
+test code_index::timings::tests::measurement_write_failure_rolls_back_cache_and_publication ... ok
+test code_index::timings::tests::missing_legacy_and_corrupt_records_are_explicit_without_fabricated_timings ... ok
+test code_index::timings::tests::schema_24_upgrade_preserves_revision_and_global_metrics_are_not_project_timings ... ok
+test code_index::timings::tests::publication_and_noop_runs_are_distinct_persistent_and_do_not_change_revision ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 993 filtered out; finished in 0.29s
+

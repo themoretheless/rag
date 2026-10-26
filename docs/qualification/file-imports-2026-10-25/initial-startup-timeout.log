@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_file_imports.py", line 55, in <module>
+    main()
+    ~~~~^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_file_imports.py", line 21, in main
+    with McpClient(binary, root, source) as mcp:
+         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/mcp_smoke_client.py", line 54, in __enter__
+    self.request("initialize", dict(protocolVersion="2024-11-05", capabilities={},
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                    clientInfo=dict(name="code-intelligence-qualification", version="1")))
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/mcp_smoke_client.py", line 39, in request
+    result = self.incoming.get(timeout=max(.01, deadline - time.monotonic()))
+  File "/opt/homebrew/Cellar/python@3.15/3.15.1/Frameworks/Python.framework/Versions/3.15/lib/python3.15/queue.py", line 209, in get
+    raise Empty
+_queue.Empty

@@ -1,0 +1,103 @@
+Generating SCIP start...
+2026-10-26T02:42:36.532068+04:00 ERROR Config Error(s) error_sink=ConfigErrors([])
+rust-analyzer: Loading discovering sysroot
+rust-analyzer: Loading querying project metadata
+rust-analyzer: Loading cargo metadata: started
+rust-analyzer: Loading cargo metadata: started
+rust-analyzer: Loading cargo metadata: finished
+rust-analyzer: Loading cargo metadata: finished
+rust-analyzer: Loading build script ryu run
+rust-analyzer: Loading build script serde_json run
+rust-analyzer: Loading build script quote run
+rust-analyzer: Loading build script getrandom run
+rust-analyzer: Loading build script serde_core run
+rust-analyzer: Loading build script zmij run
+rust-analyzer: Loading build script serde run
+rust-analyzer: Loading build script proc-macro2 run
+rust-analyzer: Loading build script zerocopy run
+rust-analyzer: Loading build script libc run
+rust-analyzer: Loading build script num-traits run
+rust-analyzer: Loading build script alloca run
+rust-analyzer: Loading proc-macro zerocopy-derive built
+rust-analyzer: Loading proc-macro serde_derive built
+2026-10-26T02:42:44.000314+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2b804) } })
+2026-10-26T02:42:44.000344+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2b804) } })
+2026-10-26T02:42:44.045326+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2ff87) } })
+2026-10-26T02:42:44.045519+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2ff88) } })
+2026-10-26T02:42:44.045536+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2ff88) } })
+2026-10-26T02:42:44.045806+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2ff89) } })
+2026-10-26T02:42:44.045966+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2ff8a) } })
+2026-10-26T02:42:44.045981+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(2ff8a) } })
+2026-10-26T02:42:44.047778+04:00 ERROR Bug: definition at src/f2s_intrinsics.rs:22:10-22:33 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047803+04:00 ERROR Bug: definition at src/f2s_intrinsics.rs:74:7-74:28 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047805+04:00 ERROR Bug: definition at src/common.rs:52:7-52:16 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047806+04:00 ERROR Bug: definition at src/f2s_intrinsics.rs:100:7-100:24 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047809+04:00 ERROR Bug: definition at src/common.rs:74:7-74:21 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047811+04:00 ERROR Bug: definition at src/d2s.rs:30:10-30:30 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047812+04:00 ERROR Bug: definition at src/common.rs:52:7-52:16 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047814+04:00 ERROR Bug: definition at src/d2s.rs:31:10-31:30 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047816+04:00 ERROR Bug: definition at tests/macros/mod.rs:0:0-8:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047817+04:00 ERROR Bug: definition at src/common.rs:74:7-74:21 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047819+04:00 ERROR Bug: definition at src/f2s_intrinsics.rs:23:10-23:29 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047821+04:00 ERROR Bug: definition at src/common.rs:63:7-63:15 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047824+04:00 ERROR Bug: definition at src/parse.rs:3:9-3:14 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047826+04:00 ERROR Bug: definition at src/d2s.rs:0:0-302:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047827+04:00 ERROR Bug: definition at src/parse.rs:0:0-19:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047829+04:00 ERROR Bug: definition at src/parse.rs:4:4-4:17 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047831+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:0:0-89:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047832+04:00 ERROR Bug: definition at src/d2s_full_table.rs:368:11-368:28 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047834+04:00 ERROR Bug: definition at src/d2s_full_table.rs:0:0-696:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047835+04:00 ERROR Bug: definition at src/f2s.rs:0:0-177:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047836+04:00 ERROR Bug: definition at src/d2s_full_table.rs:23:11-23:32 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047838+04:00 ERROR Bug: definition at src/common.rs:0:0-95:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.04784+04:00 ERROR Bug: definition at src/f2s_intrinsics.rs:0:0-113:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047842+04:00 ERROR Bug: definition at src/d2s.rs:0:0-302:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047843+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:0:0-89:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047844+04:00 ERROR Bug: definition at src/parse.rs:5:4-5:16 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047846+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:0:0-89:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047847+04:00 ERROR Bug: definition at src/d2s_full_table.rs:0:0-696:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047849+04:00 ERROR Bug: definition at src/d2s_full_table.rs:0:0-696:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.04785+04:00 ERROR Bug: definition at src/common.rs:0:0-95:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047852+04:00 ERROR Bug: definition at src/f2s.rs:25:10-25:29 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047853+04:00 ERROR Bug: definition at src/d2s_full_table.rs:23:11-23:32 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047855+04:00 ERROR Bug: definition at src/common.rs:0:0-95:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047856+04:00 ERROR Bug: definition at src/common.rs:89:7-89:17 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047857+04:00 ERROR Bug: definition at src/f2s.rs:26:10-26:29 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047859+04:00 ERROR Bug: definition at src/d2s.rs:33:10-33:34 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.04786+04:00 ERROR Bug: definition at src/common.rs:80:7-80:17 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047861+04:00 ERROR Bug: definition at src/parse.rs:6:4-6:18 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047862+04:00 ERROR Bug: definition at src/common.rs:23:7-23:22 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047863+04:00 ERROR Bug: definition at src/d2s_full_table.rs:368:11-368:28 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047865+04:00 ERROR Bug: definition at src/common.rs:74:7-74:21 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047866+04:00 ERROR Bug: definition at src/d2s.rs:34:10-34:30 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047867+04:00 ERROR Bug: definition at src/common.rs:0:0-95:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047871+04:00 ERROR Bug: definition at tests/macros/mod.rs:0:13-0:18 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047873+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:38:14-38:25 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047874+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:55:7-55:29 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047876+04:00 ERROR Bug: definition at src/f2s_intrinsics.rs:43:7-43:32 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047877+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:0:0-89:0 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047878+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:62:7-62:29 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047879+04:00 ERROR Bug: definition at src/f2s_intrinsics.rs:49:7-49:32 should have been in an SCIP document but was not.
+2026-10-26T02:42:44.047881+04:00 ERROR Bug: definition at src/d2s_intrinsics.rs:70:7-70:19 should have been in an SCIP document but was not.
+
+Encountered duplicate scip symbols, indicating an internal rust-analyzer bug. These duplicates are
+included in the output, but this causes information lookup to be ambiguous and so information about
+these symbols presented by downstream tools may be incorrect.
+
+Known rust-analyzer bugs that can cause this:
+
+  * Struct/enum/const/static/impl definitions nested in a function do not mention the function name.
+    See #18771.
+
+Duplicate symbols encountered:
+
+src/buffer/mod.rs:146:14-146:22
+  Duplicate symbol: rust-analyzer cargo ryu 1.0.23 lib/buffer/EXP_MASK.
+
+src/buffer/mod.rs:154:14-154:27
+  Duplicate symbol: rust-analyzer cargo ryu 1.0.23 lib/buffer/MANTISSA_MASK.
+
+src/buffer/mod.rs:155:14-155:23
+  Duplicate symbol: rust-analyzer cargo ryu 1.0.23 lib/buffer/SIGN_MASK.
+
+Generating SCIP finished 7.516592625s

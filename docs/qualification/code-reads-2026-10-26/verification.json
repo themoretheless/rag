@@ -1,0 +1,94 @@
+{
+  "observed_at_utc": "2026-10-26T01:48:21.365966+00:00",
+  "git_head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "native_gates": {
+    "focused-final": {
+      "sha256": "428dbd0fc293993dac5a770c57289e04d4c0abacaa697536362c33e62415d9fb",
+      "suites": 1,
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    "workspace-final": {
+      "sha256": "db54e64b6cfce3298cd31a506883eb615ff762e9e89dc66fa4e4c924fd521eb5",
+      "suites": 19,
+      "passed": 1510,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy-final": {
+      "sha256": "5b6959f626742a9575cada6c29265208fe8dc89372988aa4b03b5918fd5f6b66",
+      "suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    "build-final": {
+      "sha256": "3fb4c357e099ce4d60cdc4fe4308b22f751bb05485809f35137528350af48811",
+      "suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "selected_post_check_source_hashes": {
+    "src/code_index.rs": "da6a0e7c4963da0af6475d2cc270f2f166918f40fcafa089118dd89755ef8e7d",
+    "src/code_index/code_read.rs": "862725eb69e0a5a7e06470ab46ee67b81beb923fbcd73bf877946db95dc25c05",
+    "src/mcp/analysis.rs": "dc4b9d4957b75e8d0f48550e10fa563f5dcea766da66906542671f2745e82116",
+    "scripts/smoke_code_reads.py": "7b8af821877107f4dfd01f9acf555f53f005c48df18d294fabdae1a91b0f715c",
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b"
+  },
+  "atomic_source_snapshot": false,
+  "shared_checkout": true,
+  "copied_executable": {
+    "sha256": "becf23b2f7fe3895f2338cf54891582c36df82a5e4adf26c013eccf58759b4e2",
+    "bytes": 327287496,
+    "fixed_for_all_MCP_scenarios": true,
+    "scenarios": [
+      "code_reads",
+      "code_documentation",
+      "php_parameter_contracts",
+      "csharp_index",
+      "ruby_index",
+      "perl_index",
+      "powershell_index",
+      "client_endpoints"
+    ]
+  },
+  "runtime": {
+    "passed": true,
+    "reference_comparison": {
+      "available": true,
+      "pure_reference_function_only": true,
+      "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+      "multiline_nested_selection_equal": true
+    },
+    "checks": [
+      "legacy_single_symbol",
+      "inclusive_window",
+      "outside_window",
+      "path_nested_dedup",
+      "container_unique_segments",
+      "UTF8_byte_proof",
+      "shared_character_budget",
+      "independent_span_limit",
+      "symbol_IDs_and_missing",
+      "current_chunk_ID_to_source",
+      "project_scope",
+      "no_live_disk_fallback",
+      "stale_exclusion",
+      "sync_refresh",
+      "single_transaction_envelope"
+    ],
+    "versions": {
+      "index_format": 66,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "production_database_touched": false,
+    "source_applications_executed": false,
+    "whole_reference_or_scale_proven": false
+  },
+  "whole_RAGRAF_parity_proven": false
+}

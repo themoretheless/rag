@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1461,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_rust_passed": 52,
+  "final_namespace_regressions_passed": 7,
+  "python_adapter_metric_passed": 3,
+  "strict_clippy": true,
+  "actual_mcp_configurations": 2,
+  "labelled_positive_fixture_calls": 8,
+  "private_call_compiler_error": "E0603",
+  "native_mcp_parity": true,
+  "identical_corpus_inputs_and_labels": true,
+  "artifact_integrity_checks": true,
+  "index_format": 59,
+  "binary_sha256": "5954915eab06d4491570abd9db36d69284fb77e874ddbb9eafd828542b4eabe5",
+  "native_helper_sha256": "ec546b8a70d85c6c430cbef254d26d5430b87884e38bac82ae01e4b10c5b57f2",
+  "source_checkout_frozen": false,
+  "production_database_touched": false,
+  "full_plan_complete": false
+}

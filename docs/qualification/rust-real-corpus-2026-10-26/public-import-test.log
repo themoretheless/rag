@@ -1,0 +1,9 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.66s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 1 test
+test code_index::rust_cfg::tests::conditional_public_imports_select_only_the_active_local_binding ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1179 filtered out; finished in 0.01s
+

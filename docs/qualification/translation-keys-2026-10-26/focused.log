@@ -1,0 +1,26 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0597]: `cursor` does not live long enough
+   --> src/code_index/translation_keys.rs:171:29
+    |
+169 |           let mut cursor = args.walk();
+    |               ---------- binding `cursor` declared here
+170 |           if let Some(argument) = args
+    |  _________________________________-
+171 | |             .named_children(&mut cursor)
+    | |_____________________________^^^^^^^^^^^- a temporary with access to the borrow is created here ...
+    |                               |
+    |                               borrowed value does not live long enough
+...
+186 |       }
+    |       -
+    |       |
+    |       `cursor` dropped here while still borrowed
+    |       ... and the borrow might be used here, when that temporary is dropped and runs the destructor for type `impl ExactSizeIterator + Iterator<Item = tree_sitter::Node<'_>> + '_`
+    |
+help: consider adding semicolon after the expression so its temporaries are dropped sooner, before the local variables declared by the block are dropped
+    |
+185 |         };
+    |          +
+
+For more information about this error, try `rustc --explain E0597`.
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

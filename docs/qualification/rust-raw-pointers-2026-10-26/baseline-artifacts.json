@@ -1,0 +1,17 @@
+{
+  "itoa": {
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-itoa-after/report.json": "84e0f02a96c36d1fa5f58facecf2fd71ad2525e90406c0491bbdcb5f03e2a05d",
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-itoa-after/scored-cases.json": "387cbbdbab586335a6938f670969cb77cbe660f71f992576d75107ead3f5a8e8",
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-itoa-after/oracle-labels.json": "871ec016fc3cf201ee9bfda017653a5de0a146fc85a2ff3fc0b53be9d3925ea1"
+  },
+  "ryu": {
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-ryu-after/report.json": "229daa770114c91a38ef80f72acca6dffbdc87b69f6d99469147d92dcbea323e",
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-ryu-after/scored-cases.json": "fa60d96cc39172c4c82fe2e0cca73924ce37bf8d2c2c1bdf7441728bb122d183",
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-ryu-after/oracle-labels.json": "adfa741d87aedfdd2ceada3297cb1605054b26aa842c242de2d16a26e1902494"
+  },
+  "memchr": {
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-memchr-after/report.json": "5897551d453b503a1ee83d9b720366706998457e20c945ea5a95fe93a7e3102a",
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-memchr-after/scored-cases.json": "bd450631a89e1800ee1557a4dab58024fc150b9e4a4e439f810fb28a3f6eff5b",
+    "docs/qualification/rust-tuple-fields-2026-10-26/controlled-memchr-after/oracle-labels.json": "28405c58fb9976cccae8db48c47e737b5a67c0aa36629eb4b916bbfd4096d885"
+  }
+}

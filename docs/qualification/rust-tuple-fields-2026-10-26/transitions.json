@@ -1,0 +1,151 @@
+{
+  "itoa": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "ryu": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "memchr": {
+    "recovered_sites": 5,
+    "lost_correct_sites": 0,
+    "recovered": [
+      {
+        "path": "src/cow.rs",
+        "range": [
+          55,
+          15,
+          55,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.0.as_slice",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.0.as_slice",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          198,
+          31,
+          198,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          247,
+          31,
+          247,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          330,
+          31,
+          330,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          371,
+          31,
+          371,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.0.byteset.contains",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      }
+    ],
+    "lost": []
+  }
+}

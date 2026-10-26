@@ -1,0 +1,8 @@
+[
+  {"caller":"Worker<'a>::run","expression":"self.finish","target":"Worker<'a>::finish"},
+  {"caller":"check","expression":"worker.copy","target":"Worker<'a>::copy"},
+  {"caller":"check","expression":"worker.copy().finish","target":"Worker<'a>::finish"},
+  {"caller":"inside::exercise","expression":"inline.finish","target":"inside::Item::finish"},
+  {"caller":"root_exercise","expression":"root.finish","target":"Item::finish"},
+  {"caller":"nested::Worker<'a>::run","expression":"self.service.finish","target":"providers::Service::finish"}
+]

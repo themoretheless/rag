@@ -1,0 +1,32 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 60,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "shared_key_no_last_writer_location",
+    "stable_project_scoped_typed_ids",
+    "source_proof_retention_and_full_counts",
+    "reference_target_roundtrips",
+    "exact_id_and_prefixed_FQN_lookup",
+    "namespace_prefix_guards_and_explicit_code_override",
+    "path_scoped_counts_stable_identity",
+    "schema_only_usage_only_and_quoted_tables",
+    "route_alternatives_not_duplicate_uses",
+    "legacy_code_default_and_name_alias",
+    "all_domains_and_counts_before_limit",
+    "literal_contains_not_SQL_or_regex",
+    "source_revision_hash_identity",
+    "body_free_determinism",
+    "invalid_input_rejection",
+    "stored_snapshot_without_filesystem_reads",
+    "stale_exclusion",
+    "sync_replacement"
+  ],
+  "source_code_or_SQL_executed": false,
+  "production_database_touched": false,
+  "runtime_binding_or_catalogue_definitions_proven": false,
+  "representative_quality_scale_or_full_parity_proven": false
+}

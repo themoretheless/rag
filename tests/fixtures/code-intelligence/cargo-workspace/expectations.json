@@ -1,0 +1,10 @@
+{
+  "scope": "Cargo boundary fixture, not representative Rust precision/recall",
+  "calls": [
+    {"file":"app/src/main.rs", "caller":"main", "expression":"crate::work", "targets":["app/src/main.rs"]},
+    {"file":"app/src/main.rs", "caller":"main", "expression":"engine_alias::work", "targets":["engine/code/root.rs"]},
+    {"file":"app/src/main.rs", "caller":"main", "expression":"engine_alias::api::work", "targets":["engine/code/api.rs"]},
+    {"file":"app/tests/check.rs", "caller":"check", "expression":"crate::work", "targets":["app/tests/check.rs"]},
+    {"file":"app/tests/check.rs", "caller":"check", "expression":"fixture_app::work", "targets":["app/src/lib.rs"]}
+  ]
+}

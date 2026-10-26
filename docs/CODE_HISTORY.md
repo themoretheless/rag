@@ -144,3 +144,9 @@ the source revision even when the readable text is unchanged. Source sync repair
 missing or corrupt original-source blobs from the allowlisted file; a missing
 blob otherwise causes an explicit resync error. Portable document-only exports
 must also preserve these source attachments to support original-source analysis.
+
+Translation-key candidates now have a separately frozen capability marker and
+per-document capture coverage. Key relation diffs preserve repeat counts, ignore
+position/equivalent-literal-spelling changes, and exclude legacy or incomplete
+captures from negative comparisons. See
+[translation-key history](TRANSLATION_KEY_REFERENCES.md#immutable-history).

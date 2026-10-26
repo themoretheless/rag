@@ -1,0 +1,42 @@
+{
+  "passed": true,
+  "checks": [
+    "large_single_line_complete_pagination",
+    "changed_page_budget",
+    "cursor_progress",
+    "no_op_sync_preserves_cursor",
+    "foreign_ingest_without_publication_preserves_scoped_cursor",
+    "UTF8_byte_window",
+    "split_UTF8_rejection",
+    "query_conflict",
+    "malformed_cursor",
+    "CSV_array_ID_equivalence",
+    "nested_container_record_and_text_pagination",
+    "no_repeated_bytes_across_pages",
+    "actual_chunk_overlap_pagination",
+    "stale_view_conflict",
+    "republished_view_conflict"
+  ],
+  "large_pages": 3,
+  "nested_pages": 16,
+  "chunk_pages": 2,
+  "actual_chunk_character_ranges": [
+    [
+      0,
+      800
+    ],
+    [
+      680,
+      1480
+    ]
+  ],
+  "actual_chunks_partially_overlap": true,
+  "versions": {
+    "index_format": 68,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "retained_historical_snapshot": false
+}

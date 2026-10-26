@@ -1,0 +1,207 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_hashes": {
+    "src/ragraf/analysis.py": "cd4897ae806e9614c4e5a117a109a1bed8566e6cc3f9ad399c08fc40fe9329fd",
+    "src/ragraf/util.py": "51620448701f99391bd6d7adfb6a424d4f13ced250de927aa7e14ede183fb311"
+  },
+  "workspace_tests": {
+    "passed": 1429,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_tests": 39,
+  "new_native_cases": 4,
+  "grouping_contract_version": 1,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 52,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+    "reference_oracle": "only_five_pinned_pure_functions_on_finite_fixture",
+    "checks": [
+      "reference_group_member_sets",
+      "independent_exact_subgroups",
+      "identical_member_set_deduplication",
+      "dissimilar_same_name_inventory",
+      "directory_case_project_isolation",
+      "numbered_filename_contract",
+      "exact_first_order",
+      "primary_similarity_classification",
+      "disabled_and_budget_unknowns",
+      "member_and_group_caps",
+      "prefix_scope",
+      "body_free_determinism",
+      "sync_reclassification",
+      "default_mode_preserved"
+    ],
+    "production_database_touched": false,
+    "source_code_executed": false,
+    "representative_quality_or_full_parity_proven": false
+  },
+  "regressions": {
+    "duplicate-comparison": {
+      "status": "passed",
+      "versions": {
+        "index_format": 52,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "normalized_unique_line_jaccard",
+        "directional_line_deltas",
+        "rounding",
+        "source_identity",
+        "body_free_output",
+        "determinism",
+        "member_window_scope",
+        "disabled_and_all_phase_limits",
+        "pair_budget",
+        "sync_replaces_metrics"
+      ],
+      "production_database_touched": false,
+      "source_code_executed": false,
+      "full_parity_or_deletion_safety_proven": false
+    },
+    "duplicate-roles": {
+      "status": "passed",
+      "versions": {
+        "index_format": 52,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "duplicate_role_contract_v2",
+        "exact_decoded_text_groups",
+        "target_prefix_keeps_external_source_evidence",
+        "HTML_CSS_resource_usage",
+        "non_code_SVG_identity",
+        "missing_export_file_import",
+        "function_value_reference",
+        "project_isolation",
+        "primary_visible_under_member_limit",
+        "evidence_source_revision_hash_anchors",
+        "deterministic_response",
+        "body_free_metadata",
+        "stale_source_exclusion_before_sync",
+        "source_sync_replacement",
+        "evidence_total_and_cap"
+      ],
+      "production_database_touched": false,
+      "source_code_executed": false,
+      "runtime_liveness_or_deletion_safety_proven": false
+    },
+    "literal-path-roles": {
+      "status": "passed",
+      "versions": {
+        "index_format": 52,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "literal_endpoint_constant",
+        "weaker_unbound_text_role",
+        "exact_unicode_byte_anchor",
+        "cross_project_exclusion",
+        "source_outside_target_prefix",
+        "search_and_duplicate_primary",
+        "deterministic_evidence",
+        "disabled_mode",
+        "decoded_byte_budget",
+        "no_absence_claim",
+        "stale_source_exclusion_before_sync",
+        "sync_replacement",
+        "project_wide_basename_ambiguity",
+        "qualified_path_disambiguation",
+        "unique_source_target_counts",
+        "20_of_26_literal_retention"
+      ],
+      "source_code_executed": false,
+      "production_database_touched": false,
+      "runtime_binding_or_deletion_safety_proven": false
+    },
+    "search-roles": {
+      "status": "passed",
+      "versions": {
+        "index_format": 52,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "search_role_contract_v2",
+        "single_read_transaction_contract",
+        "independent_all_any_query_windows",
+        "external_non_matching_referrer_evidence",
+        "HTML_CSS_resources",
+        "published_SVG_target",
+        "missing_export_import",
+        "bound_function_value",
+        "project_prefix_isolation",
+        "deterministic_family_order",
+        "body_free_role_metadata",
+        "zero_hit_without_role_index",
+        "stale_source_exclusion",
+        "sync_replacement",
+        "total_and_retained_evidence_counts"
+      ],
+      "production_database_touched": false,
+      "source_code_executed": false,
+      "runtime_activity_proven": false
+    },
+    "table-impact": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_sql_executed": false,
+      "checks": [
+        "direct_readers_writers",
+        "ownerless_sql_preserved",
+        "indirect_code_chain",
+        "read_write_filters",
+        "independent_direct_budget",
+        "untruncated_owner_roots",
+        "project_disambiguation",
+        "schema_disambiguation",
+        "qualified_target",
+        "identifier_validation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh"
+      ],
+      "runtime_impact_proven": false
+    }
+  },
+  "isolated_binary": {
+    "sha256": "9b45e8f8bdb413faefdcd9f1acefb2e961bc25a55c8667cd842f8081fffe5e47",
+    "isolated": true
+  },
+  "source_hashes_after_checks": {
+    "src/code_index/corpus.rs": "470a94fa61cde4684f7175a80c99bb99106f623c5fb94bee93db6880a69e5506",
+    "src/code_index/corpus/family_groups.rs": "1bbb3c6158b793a3a0e239ba67e07d5595c9015cfec0b6bd03efc785c347190f",
+    "src/code_index/corpus/primary_comparison.rs": "3536b32051e656b503d5e9b427ab3b7869f1970fc9560f7557a87b0c5d7384ef",
+    "src/code_index.rs": "4ac6041319d1c9198faa03ffe2d49627f4962b9a71c918378dc56139fbdf1ea4",
+    "scripts/smoke_duplicate_families.py": "d3b59ae489feca0b4df3de85fb31d5f5a83ed68065df7fc2b1fd29aa8073c75c",
+    "docs/DUPLICATE_FAMILY_GROUPING.md": "b70ddc6d0d0c96c1ffbdca83bf0019103543901a2b41a06efee9d4984150a680"
+  },
+  "log_hashes": {
+    "focused.log": "1a1dc88667b919edf279a7ef0a9203f6a720bfec30d40df19d9abfa4edd05739",
+    "workspace.log": "6a4353bd9b199ea5fd8bff46b15db62c9b8f3e02a156831ab225e98384c476a1",
+    "clippy.log": "a4d66ca808336b1c867af85443733e8a05724860a8da9fe825c46244a2a22720",
+    "build.log": "8943e99cd76df5f388623680191dc99515c97b3104906a9b1c9a5043d0681d45",
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "runtime.log": "a4af8f8622632094f6349ab78696d8061ea88c3c08016ddb67f8d74abcc7f40e",
+    "duplicate-comparison.log": "acc7b102bb18ba0ec9f2de1012764c11c636c5076cfa7781e5b9b3c27470601c",
+    "duplicate-roles.log": "d17e4d39e9a0ff9e97b18ea44fbb72b689d9540fbac9aec0662c4d308aef6c57",
+    "literal-path-roles.log": "114f854bc8ac96bd08b1d766aeec9d8beb4170ceee4a190d42135794a95053f2",
+    "search-roles.log": "8221cef8d609cec70d3ed8618920d1fcdfec4b917de5ffb52fea9dda44bf1d70",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8"
+  },
+  "qualification_scope": "checked_shared_tree_build_and_isolated_executable_not_frozen_checkout",
+  "source_hashes_are_observational": true,
+  "representative_scale_or_ranking_quality_proven": false,
+  "full_RAGRAF_parity": false,
+  "commit_or_push_performed": false
+}

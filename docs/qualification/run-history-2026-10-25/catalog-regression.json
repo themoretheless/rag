@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "public_schema",
+    "legacy_file_manifest",
+    "registered_before_index",
+    "project_registry",
+    "captured_hashes_not_live_proof",
+    "sync_roots",
+    "project_pages",
+    "captured_drift",
+    "observation_conflict",
+    "cursor_scope_guard",
+    "retained_revision_file_pages",
+    "historical_project_comparison",
+    "metadata_only_file_payload",
+    "parameter_binding"
+  ],
+  "initial_files": 3,
+  "project_page_lengths": [
+    1,
+    1
+  ]
+}

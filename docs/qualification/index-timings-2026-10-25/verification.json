@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "f727a86ea2a42d1bf0f79abc5c21ca2c9c716e97d8afb989ebcf96c41f818059",
+    "src/code_index/timings.rs": "3979bdf4bc099e68c595e821d1124d122e2fe64858b0afbac02d66b581b224bc",
+    "src/code_index/status.rs": "b580d6c7618cd693ee5ebb43d0d033c1ece643f1c6c4c83a60a9c88c932a2649",
+    "src/db/schema.rs": "9d41387330ae67d1bc3da5417e93b59fcd853f1075557880672225385ae93078",
+    "src/mcp/analysis.rs": "9fd040a4d6e787735bc611aff1660b74a9c48664364032d7d6da7b9c7975afd6",
+    "crates/rag-mcp-core/src/lib.rs": "b847c373bff8f8ad00a27bc1b11ed12567e0d9b0b2fe33d3e6dd0409a8d841fc",
+    "scripts/smoke_index_timings.py": "c9f53232840b8f52b4c4856088211de9f0553ca81b82ab9fd6cc4e8c8d58b6cc"
+  },
+  "binary_sha256": "ac7f5322d6cf5fc99f57e6111da1c58447120f03cf11f2d9c11b39f98aea6334",
+  "schema_version": 25,
+  "syntax_index_format": 24,
+  "syntax_format_changed": false,
+  "timing_contract_version": 1,
+  "verification": {
+    "focused_timings": {
+      "command": "cargo test --lib code_index::timings --locked --offline",
+      "passed": 4,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1199,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "lean_ui_client": {
+      "command": "cargo check -p rag-mcp-ui --no-default-features --locked --offline",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "status_regression": "status-regression.json",
+    "catalog_regression": "catalog-regression.json",
+    "routes_regression": "routes-regression.json"
+  },
+  "production_database_touched": false,
+  "production_service_restarted": false,
+  "commit_timing_measured": false,
+  "failure_runs_measured": false,
+  "per_project_timing_measured": false,
+  "representative_benchmark": false,
+  "full_ragraf_parity": false
+}

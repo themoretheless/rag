@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "database_schema": 25,
+  "index_format": 29,
+  "focused_impact_passed": 10,
+  "new_native_regressions": 3,
+  "runtime_impact_proven": false,
+  "full_ragraf_parity": false,
+  "source_sql_executed": false,
+  "production_database_touched": false,
+  "source_sha256": {
+    "src/code_index.rs": "3824e78ec6f275e6cb7093c0a19ad4f9aefcd02b00d75126793891217033a77c",
+    "src/code_index/impact.rs": "a46eb714510e0dc800aa5369115be1a659ecd940ec51a9680b96d4231eb79cfd",
+    "src/code_index/sql.rs": "d0b2da5ae009baa13bfd7091c08f19c137a62f8001d60c02555625cba09d4a61",
+    "src/mcp/analysis.rs": "e81dd96db6361be19d66766d7f7c4457f92a86019de319352f2aef76af9939af",
+    "scripts/smoke_table_impact.py": "199629bc15b913a1a74570f6bed61b3c3c3970a54d22937671c004e31faf22eb",
+    "docs/IMPACT_RELATIONS.md": "6ec612268037c469c9377a085cf057ddc75dfa82fc538c69b59e61e54fab2b9c"
+  },
+  "workspace": {
+    "passed": 1238,
+    "failed": 0,
+    "ignored": 1
+  },
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "logs_sha256": {
+    "focused": "a233dece18b0b2fb893fa911cfcb5d9ccec308533441f2931dab2328336a4aec",
+    "clippy": "3ed24fa84ef6a4827bf7f90a081ff5d868df80c910bcd4612eda19d910bc8bf4",
+    "workspace": "039ef6ac6f24343f83c7f866857572fb5dbb7f74173028d70ba3f1487a8261f9",
+    "build": "4fd91d6fdcce0f687980cf3baa8eb25b4aeafacc811911017d25a7fb6b2223f5"
+  },
+  "binary_sha256": "362cb1ecfcfef8827f7014573ea6cf5ba653bd8e36bf1cb9ea5742783276afbc",
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "impact-files-regression.json": "passed"
+  }
+}

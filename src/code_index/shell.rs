@@ -170,6 +170,10 @@ pub(super) fn collect(
         diag(out, "SHELL_NESTED_FUNCTION_REGISTRATION_UNVERIFIED");
     }
     out.symbols.push(Symbol {
+        build_context: None,
+        documentation: None,
+        documentation_examined: false,
+        parameter_contracts: None,
         id: id.clone(),
         document_id: doc.into(),
         path: out.path.clone(),
@@ -239,6 +243,7 @@ pub(super) fn push_references(
             format!("export -f {name}")
         };
         out.references.push(Reference {
+            build_context: None,
             start_byte: node.start_byte(),
             document_id: doc.into(),
             path: out.path.clone(),

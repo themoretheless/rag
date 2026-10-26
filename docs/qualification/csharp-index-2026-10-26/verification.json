@@ -1,0 +1,86 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_comparison": "inspected_CSharp_extraction_profile_not_executed_compiler_corpus",
+  "workspace_tests": {
+    "passed": 1367,
+    "failed": 0,
+    "ignored": 1
+  },
+  "csharp_native_cases": 13,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 45,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "csharp_capability",
+      "namespaces_owners_symbols",
+      "constructor_and_typed_receivers",
+      "inherited_calls",
+      "alias_static_calls",
+      "project_isolation",
+      "dynamic_mutation_delegate_guards",
+      "main_candidate",
+      "exact_unicode_byte_body",
+      "metadata_body_separation",
+      "transitive_impact",
+      "partial_slice",
+      "cache_equivalence",
+      "stale_exclusion",
+      "source_sync_rebind",
+      "frozen_inheritance_diff"
+    ],
+    "source_code_executed": false,
+    "compiler_or_runtime_dispatch_proven": false,
+    "production_database_touched": false
+  },
+  "isolated_binary": {
+    "sha256": "a1cf9b1c0da2155a460a408ae7b84fcdb498f4fca967a6e5a36a710a059b6eb5",
+    "isolated": true
+  },
+  "clippy_warnings_denied": "passed",
+  "owned_format_edition_2021": "passed",
+  "git_diff_check": "passed",
+  "mcp_scenarios": [
+    "csharp",
+    "ruby",
+    "lua",
+    "table-impact",
+    "file-imports"
+  ],
+  "source_hash_observations_after_checks": {
+    "Cargo.toml": "5d652a129e4f7a4615f828a8a00a8a38e9d16e9ca92592cb48535b5896dc7bad",
+    "Cargo.lock": "be6b234b52267fce7ab59aef4291353c9d0f20c3d642f1929899b92f6aa389e5",
+    "src/code_index.rs": "35b8ff5d2ef7e153e9948f225f5e0106735dd2331648bd0be6dac93273b160f8",
+    "src/code_index/csharp.rs": "c52b793bd4780f51e77c3b3a7711793075417d982a80fa49fbce925acc31c7f2",
+    "src/code_index/resolve.rs": "6bc856fb5855d1d5ddf6122df0d1947924758b799b1780bc4fdae7b75786d293",
+    "src/code_index/inheritance.rs": "f9713ae5f99b413ae2bf6ce1c7e923fa3301d3c9025e6d785c5775870e9d375e",
+    "src/code_index/analysis.rs": "67ee98560f8cec47609bf0a90b1e7cf8b55f800316258ea7c25883c68637b7a9",
+    "src/code_index/status.rs": "bf3bef3efbf7a6521a0c0d75ce4822b7d7ce5946613bef0452d982869ad49056",
+    "src/code_index/history.rs": "2981df31df8b68d9e93d8ac51b4a9fbd861aaa29090676b5ee231061fde08bad",
+    "src/mcp/analysis.rs": "d53ec35a15ba5e6a736d9e2fe8e8952d3c6bfb11b6ebc0e13425cea0476af782",
+    "scripts/smoke_csharp_index.py": "929a777d917350ee1350ae570ceac9dca91fc494e9a903a7ed634e0f98463929",
+    "docs/CSHARP_CODE_ANALYSIS.md": "c719b527c523539428ba3dde27a749854684239c3c83b449b18820afa6ccd9d4",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "0c8345efbe72dd8bfd69d68920bedae4d1d41c31b18da6f696528a789f0fd039"
+  },
+  "log_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "clippy.log": "e93d8983dd742fd437335b47b39699e5e5a9c7454b5c4bf2b5489aa8b989f873",
+    "workspace.log": "018bca505efaeba0f0b73aa6758499e5878cb045a76a02a30101cb1f3a1bebf6",
+    "file-imports.log": "e83d465fbc0cac5f244c87af1898c80bfb13b2d50f2be800bd84ff225a6e23a1",
+    "runtime.log": "43d3fd6c0aeee65a9b63bfd7832d73084752d07cbccdbac838cf9d9af78be4a8",
+    "lua.log": "d92adfea65e69bc60e23bc90e6575d2f588873d800d3d59d2368eb3295efe237",
+    "focused.log": "5c03df4e589820217ebf1b01487adee50c0f8fcb14ff7613a09a062107b60c6c",
+    "ruby.log": "7f597a5edc5d0b260aa52a8e8e9509951936a7cc7d86fdfd0585a2ca89af4873",
+    "build.log": "0a4e3421a753eb3d126452a69070ad3be35bc656fd1a4f099ede0eae4138570f"
+  },
+  "after_check_index_format": 45,
+  "whole_checkout_frozen": false,
+  "representative_quality_or_scale_qualified": false,
+  "compiler_build_runtime_dispatch_proven": false,
+  "full_ragraf_parity_complete": false
+}

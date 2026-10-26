@@ -1,0 +1,12 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.25s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 4 tests
+test code_index::file_imports::tests::ambiguity_and_unsupported_loaders_remain_explicit ... ok
+test code_index::file_imports::tests::python_packages_relative_submodules_and_cross_project_guards ... ok
+test code_index::file_imports::tests::missing_export_and_symbol_free_side_effect_imports_keep_file_edges ... ok
+test code_index::file_imports::tests::file_imports_survive_missing_symbols_and_refresh_with_frozen_history ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1045 filtered out; finished in 0.32s
+

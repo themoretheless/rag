@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "public_tool_description",
+    "literal_fetch_targets",
+    "separate_reference_kind",
+    "explicit_request_method",
+    "spread_method_unknown",
+    "embedded_offsets",
+    "inert_scripts_excluded",
+    "identity_unverified",
+    "no_default_method_inferred",
+    "deterministic_replay",
+    "stale_exclusion",
+    "sync_refresh",
+    "immutable_method_diff",
+    "project_diff_isolation"
+  ],
+  "fetch_references": 4,
+  "markup_references": 1
+}

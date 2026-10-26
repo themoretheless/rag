@@ -113,6 +113,27 @@ pub(super) struct SqlDocument {
     uses: Vec<Use>,
     diagnostics: Vec<Diagnostic>,
 }
+pub(super) fn configure_rust_context(
+    doc: &mut IndexedDocument,
+    ids: &HashMap<String, String>,
+    keep_line: impl Fn(usize) -> bool,
+) {
+    doc.sql.events.retain(|e| keep_line(e.line));
+    doc.sql.diagnostics.retain(|e| keep_line(e.line));
+    doc.sql.uses.retain_mut(|u| {
+        if !keep_line(u.line) {
+            return false;
+        }
+        if let Some(id) = &u.symbol {
+            if let Some(next) = ids.get(id) {
+                u.symbol = Some(next.clone());
+            } else {
+                return false;
+            }
+        }
+        true
+    });
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub line: usize,
@@ -284,7 +305,12 @@ fn sqlish(s: &str) -> bool {
             | "DROP"
             | "TRUNCATE"
             | "MERGE"
-    ) || s.starts_with("--")
+    ) || (keyword == "COPY"
+        && s.get(4..).is_some_and(|tail| {
+            tail.starts_with('(')
+                || (tail.chars().next().is_some_and(char::is_whitespace) && !tail.trim().is_empty())
+        }))
+        || s.starts_with("--")
         || s.starts_with("/*")
 }
 fn diag(out: &mut IndexedDocument, line: usize, code: &str, relevant: bool) {
@@ -368,7 +394,16 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument, owner
                     parse_unit(&sql, node.start_position().row + 1, out, owner, true);
                 }
             } else if [
-                "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DROP ",
+                "SELECT ",
+                "INSERT ",
+                "UPDATE ",
+                "DELETE ",
+                "CREATE ",
+                "ALTER ",
+                "DROP ",
+                "MERGE ",
+                "TRUNCATE ",
+                "COPY ",
             ]
             .iter()
             .any(|prefix| text(node, source).to_uppercase().contains(prefix))
@@ -394,7 +429,16 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument, owner
     if out.java.is_some() && text(node, source).starts_with("\"\"\"") {
         let raw = text(node, source).to_ascii_uppercase();
         if [
-            "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DROP ",
+            "SELECT ",
+            "INSERT ",
+            "UPDATE ",
+            "DELETE ",
+            "CREATE ",
+            "ALTER ",
+            "DROP ",
+            "MERGE ",
+            "TRUNCATE ",
+            "COPY ",
         ]
         .iter()
         .any(|prefix| raw.contains(prefix))
@@ -431,7 +475,16 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument, owner
             );
         }
     } else if [
-        "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DROP ",
+        "SELECT ",
+        "INSERT ",
+        "UPDATE ",
+        "DELETE ",
+        "CREATE ",
+        "ALTER ",
+        "DROP ",
+        "MERGE ",
+        "TRUNCATE ",
+        "COPY ",
     ]
     .iter()
     .any(|prefix| text(node, source).to_uppercase().contains(prefix))
@@ -480,13 +533,104 @@ pub(super) fn finish(source: &str, out: &mut IndexedDocument) {
         }
     }
 }
+fn static_into_ident(id: &ast::Ident) -> bool {
+    id.quote_style.is_some() || !id.value.starts_with(['@', ':', '$'])
+}
+fn into_target(expr: &ast::Expr, output_columns: bool) -> Option<String> {
+    match expr {
+        ast::Expr::Identifier(id) if static_into_ident(id) => Some(ident(id)),
+        ast::Expr::CompoundIdentifier(ids)
+            if !ids.is_empty() && ids.iter().all(static_into_ident) =>
+        {
+            Some(ids.iter().map(ident).collect::<Vec<_>>().join("."))
+        }
+        ast::Expr::Function(f)
+            if output_columns
+                && !f.uses_odbc_syntax
+                && matches!(f.parameters, ast::FunctionArguments::None)
+                && f.filter.is_none()
+                && f.over.is_none()
+                && f.null_treatment.is_none()
+                && f.within_group.is_empty()
+                && f.name
+                    .0
+                    .iter()
+                    .all(|p| p.as_ident().is_some_and(static_into_ident)) =>
+        {
+            if let ast::FunctionArguments::List(args) = &f.args {
+                if !args.args.is_empty() && args.duplicate_treatment.is_none() && args.clauses.is_empty()
+                    && args.args.iter().all(|a|matches!(a,ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(ast::Expr::Identifier(id))) if static_into_ident(id))) {
+                    return Some(name(&f.name));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
 struct Reads {
     scopes: Vec<HashSet<String>>,
     uses: Vec<(String, usize)>,
     cte_uncertain: bool,
+    extra_writes: Vec<(String, usize, &'static str)>,
+    into_uncertain: bool,
 }
 impl Visitor for Reads {
     type Break = ();
+    fn pre_visit_statement(&mut self, statement: &ast::Statement) -> ControlFlow<()> {
+        let (output, operation) = match statement {
+            ast::Statement::Insert(v) => (v.output.as_ref(), "insert_output_into"),
+            ast::Statement::Update(v) => (v.output.as_ref(), "update_output_into"),
+            ast::Statement::Delete(v) => (v.output.as_ref(), "delete_output_into"),
+            ast::Statement::Merge(v)
+                if v.clauses
+                    .iter()
+                    .any(|c| !matches!(c.action, ast::MergeAction::DoNothing { .. })) =>
+            {
+                (v.output.as_ref(), "merge_output_into")
+            }
+            _ => (None, ""),
+        };
+        if let Some(ast::OutputClause::Output {
+            into_table: Some(into),
+            ..
+        }) = output
+        {
+            if into.targets.len() != 1 {
+                self.into_uncertain = true;
+                return ControlFlow::Continue(());
+            }
+            for target in &into.targets {
+                if let Some(table) = into_target(target, true) {
+                    self.extra_writes
+                        .push((table, target.span().start.line as usize, operation));
+                } else {
+                    self.into_uncertain = true;
+                }
+            }
+        }
+        ControlFlow::Continue(())
+    }
+    fn pre_visit_select(&mut self, select: &ast::Select) -> ControlFlow<()> {
+        if let Some(into) = &select.into {
+            if into.targets.len() != 1 {
+                self.into_uncertain = true;
+                return ControlFlow::Continue(());
+            }
+            for target in &into.targets {
+                if let Some(table) = into_target(target, false) {
+                    self.extra_writes.push((
+                        table,
+                        target.span().start.line as usize,
+                        "select_into",
+                    ));
+                } else {
+                    self.into_uncertain = true;
+                }
+            }
+        }
+        ControlFlow::Continue(())
+    }
     fn pre_visit_query(&mut self, q: &ast::Query) -> ControlFlow<()> {
         let aliases = q
             .with
@@ -717,6 +861,10 @@ fn parse_unit(
             ast::Statement::Update(_) => "update",
             ast::Statement::Delete(_) => "delete",
             ast::Statement::Query(_) => "select",
+            ast::Statement::Merge(_) => "merge",
+            ast::Statement::Truncate(_) => "truncate",
+            ast::Statement::Copy { to: true, .. } => "copy_to",
+            ast::Statement::Copy { to: false, .. } => "copy_from",
             _ => "other",
         };
         let mut writes = Vec::new();
@@ -744,14 +892,93 @@ fn parse_unit(
                     }
                 }
             }
+            ast::Statement::Merge(merge) => {
+                if merge
+                    .clauses
+                    .iter()
+                    .any(|c| !matches!(c.action, ast::MergeAction::DoNothing { .. }))
+                {
+                    if let ast::TableFactor::Table {
+                        name: target,
+                        args: None,
+                        ..
+                    } = &merge.table
+                    {
+                        writes.push(name(target));
+                    } else {
+                        diag(out, line, "MERGE_TARGET_UNRESOLVED", false);
+                    }
+                }
+            }
+            ast::Statement::Truncate(truncate) => {
+                for target in &truncate.table_names {
+                    writes.push(name(&target.name));
+                }
+                if truncate
+                    .table_names
+                    .iter()
+                    .any(|t| !t.only || t.has_asterisk)
+                    || matches!(truncate.cascade, Some(ast::CascadeOption::Cascade))
+                {
+                    diag(
+                        out,
+                        line,
+                        "TRUNCATE_DESCENDANTS_OR_CASCADE_UNVERIFIED",
+                        false,
+                    );
+                }
+            }
+            ast::Statement::Copy {
+                source: ast::CopySource::Table { table_name, .. },
+                to: false,
+                ..
+            } => writes.push(name(table_name)),
+            ast::Statement::Copy {
+                source: ast::CopySource::Query(_),
+                to: false,
+                ..
+            } => diag(out, line, "COPY_QUERY_FROM_UNSUPPORTED", false),
             _ => {}
         }
         let mut reads = Reads {
             scopes: vec![],
             uses: vec![],
             cte_uncertain: false,
+            extra_writes: vec![],
+            into_uncertain: false,
         };
         let _ = statement.visit(&mut reads);
+        if let ast::Statement::Copy {
+            source: ast::CopySource::Table { table_name, .. },
+            to: true,
+            ..
+        } = statement
+        {
+            reads
+                .uses
+                .push((name(table_name), table_name.span().start.line as usize));
+        }
+        if reads.into_uncertain {
+            diag(out, line, "SQL_INTO_TARGET_UNRESOLVED", false);
+        }
+        for (table, sql_line, operation) in &reads.extra_writes {
+            let position = base
+                + if physical_lines {
+                    sql_line.saturating_sub(1)
+                } else {
+                    0
+                };
+            out.sql.uses.push(Use {
+                table: table.clone(),
+                mode: "write".into(),
+                operation: (*operation).into(),
+                line: position,
+                symbol: owner.map(str::to_string),
+            });
+            if *operation == "select_into" {
+                diag(out, position, "SELECT_INTO_SCHEMA_UNVERIFIED", relevant);
+            }
+        }
         if reads.cte_uncertain {
             diag(out, line, "CTE_REFERENCES_EXCLUDED_SCOPE_LIMITATION", false);
         }
@@ -777,12 +1004,6 @@ fn parse_unit(
                 line,
                 symbol: owner.map(str::to_string),
             });
-        }
-        if matches!(
-            statement,
-            ast::Statement::Merge { .. } | ast::Statement::Truncate(_)
-        ) {
-            diag(out, line, "UNSUPPORTED_WRITE_OPERATION", false);
         }
     }
 }
@@ -1094,7 +1315,7 @@ pub struct WriteCheck {
     /// Optional literal row values: keys become assigned columns and explicit NULLs are checked.
     pub values: Option<BTreeMap<String, serde_json::Value>>,
 }
-fn canonical(value: &str, single: bool) -> Result<String> {
+pub(super) fn canonical(value: &str, single: bool) -> Result<String> {
     if value.len() > 512 {
         return Err(AppError::config("SQL identifier exceeds 512 bytes"));
     }
@@ -1116,7 +1337,7 @@ fn canonical(value: &str, single: bool) -> Result<String> {
     }
     Ok(name(&object))
 }
-fn table_matches(table: &str, query: &str) -> bool {
+pub(super) fn table_matches(table: &str, query: &str) -> bool {
     if table == query {
         return true;
     }
@@ -1914,6 +2135,220 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result["total"], 1);
+    }
+    #[test]
+    fn sql_merge_reads_target_source_and_subqueries_but_writes_only_mutating_actions() {
+        let snap=snap(&[("/p/merge.sql","MERGE INTO target t USING staging s ON t.id=s.id WHEN MATCHED THEN UPDATE SET value=s.value WHEN NOT MATCHED THEN INSERT (id,value) VALUES (s.id,s.value); MERGE INTO untouched t USING (SELECT * FROM incoming) s ON t.id=s.id WHEN MATCHED THEN DO NOTHING;",None)]);
+        let uses = &snap.sql.usages;
+        for table in ["target", "staging", "untouched", "incoming"] {
+            assert!(
+                uses.iter()
+                    .any(|u| u.table == table && u.mode == "read" && u.operation == "merge"),
+                "{uses:?}"
+            );
+        }
+        assert!(uses
+            .iter()
+            .any(|u| u.table == "target" && u.mode == "write" && u.operation == "merge"));
+        assert!(!uses
+            .iter()
+            .any(|u| u.table == "untouched" && u.mode == "write"));
+        assert!(!snap
+            .sql
+            .diagnostics
+            .iter()
+            .any(|d| d["code"] == "UNSUPPORTED_WRITE_OPERATION"));
+    }
+    #[test]
+    fn sql_truncate_has_explicit_writes_and_copy_direction_is_not_reversed() {
+        let snap=snap(&[("/p/ops.sql","TRUNCATE TABLE ONLY a, ONLY b; COPY inbound FROM '/tmp/not-read.csv'; COPY outbound TO STDOUT; COPY (WITH q AS (SELECT * FROM origin) SELECT * FROM q) TO STDOUT;",None)]);
+        let uses = &snap.sql.usages;
+        for table in ["a", "b"] {
+            assert!(
+                uses.iter()
+                    .any(|u| u.table == table && u.mode == "write" && u.operation == "truncate"),
+                "{uses:?}"
+            );
+            assert!(!uses.iter().any(|u| u.table == table && u.mode == "read"));
+        }
+        assert!(uses
+            .iter()
+            .any(|u| u.table == "inbound" && u.mode == "write" && u.operation == "copy_from"));
+        assert!(!uses
+            .iter()
+            .any(|u| u.table == "inbound" && u.mode == "read"));
+        for table in ["outbound", "origin"] {
+            assert!(
+                uses.iter()
+                    .any(|u| u.table == table && u.mode == "read" && u.operation == "copy_to"),
+                "{uses:?}"
+            );
+            assert!(!uses.iter().any(|u| u.table == table && u.mode == "write"));
+        }
+        assert!(!uses.iter().any(|u| u.table == "q"));
+    }
+    #[test]
+    fn sql_new_operations_keep_static_owner_lines_and_dynamic_exclusions() {
+        let snap = snap(&[
+            (
+                "/p/a.rs",
+                "fn bulk() {\n let q = r#\"COPY export_rows TO STDOUT\"#;\n let label = \"copy\"; let q2 = \"COPY(SELECT * FROM another) TO STDOUT\";\n}\n",
+                None,
+            ),
+            (
+                "/p/a.ts",
+                "function purge(t) { const sql = `TRUNCATE TABLE ${t}`; }",
+                None,
+            ),
+            ("/p/truncate.sql", "TRUNCATE TABLE parent CASCADE;", None),
+        ]);
+        let copy = snap
+            .sql
+            .usages
+            .iter()
+            .find(|u| u.table == "export_rows")
+            .unwrap();
+        assert_eq!(copy.mode, "read");
+        assert_eq!(copy.operation, "copy_to");
+        assert_eq!(copy.evidence.line, 2);
+        assert!(copy.symbol.is_some());
+        assert!(snap
+            .sql
+            .usages
+            .iter()
+            .any(|u| u.table == "another" && u.operation == "copy_to"));
+        assert!(!snap
+            .sql
+            .diagnostics
+            .iter()
+            .any(|d| d["code"] == "SQL_PARSE_ERROR"));
+        assert!(snap
+            .sql
+            .diagnostics
+            .iter()
+            .any(|d| d["code"] == "DYNAMIC_OR_UNSUPPORTED_SQL_LITERAL"));
+        assert!(snap
+            .sql
+            .diagnostics
+            .iter()
+            .any(|d| d["code"] == "TRUNCATE_DESCENDANTS_OR_CASCADE_UNVERIFIED"));
+        assert!(!snap.sql.usages.iter().any(|u| u.table.contains("${")));
+    }
+    #[test]
+    fn sql_merge_output_into_records_secondary_target_and_column_list_without_fake_read() {
+        let snap=snap(&[("/p/merge.sql","MERGE INTO target t USING staging s ON t.id=s.id WHEN MATCHED THEN UPDATE SET value=s.value OUTPUT inserted.id INTO dbo.audit(id);",None)]);
+        assert!(
+            snap.sql
+                .usages
+                .iter()
+                .any(|u| u.table == "target" && u.mode == "write" && u.operation == "merge"),
+            "{:?}",
+            snap.sql
+        );
+        assert!(
+            snap.sql.usages.iter().any(|u| u.table == "dbo.audit"
+                && u.mode == "write"
+                && u.operation == "merge_output_into"),
+            "{:?}",
+            snap.sql
+        );
+        assert!(!snap
+            .sql
+            .usages
+            .iter()
+            .any(|u| u.table == "dbo.audit" && u.mode == "read"));
+        assert!(
+            !snap
+                .sql
+                .diagnostics
+                .iter()
+                .any(|d| d["code"] == "MERGE_OUTPUT_CLAUSE_UNVERIFIED"
+                    || d["code"] == "SQL_INTO_TARGET_UNRESOLVED"),
+            "{:?}",
+            snap.sql
+        );
+    }
+    #[test]
+    fn sql_output_into_covers_insert_update_delete_and_returning_has_no_extra_write() {
+        let snap=snap(&[("/p/output.sql","INSERT INTO target(a) OUTPUT inserted.a INTO insert_log(a) VALUES (1); UPDATE target SET a=2 OUTPUT inserted.a INTO update_log; DELETE FROM target OUTPUT deleted.a INTO delete_log; INSERT INTO plain(a) VALUES (1) RETURNING a;",None)]);
+        for (table, operation) in [
+            ("insert_log", "insert_output_into"),
+            ("update_log", "update_output_into"),
+            ("delete_log", "delete_output_into"),
+        ] {
+            assert!(
+                snap.sql
+                    .usages
+                    .iter()
+                    .any(|u| u.table == table && u.mode == "write" && u.operation == operation),
+                "{table}: {:?}",
+                snap.sql
+            );
+        }
+        assert_eq!(
+            snap.sql
+                .usages
+                .iter()
+                .filter(|u| u.operation.ends_with("output_into"))
+                .count(),
+            3
+        );
+        assert!(!snap
+            .sql
+            .usages
+            .iter()
+            .any(|u| u.table == "plain" && u.operation.ends_with("output_into")));
+    }
+    #[test]
+    fn sql_select_into_preserves_sources_and_quoted_targets_but_not_variables() {
+        let snap=snap(&[("/p/into.sql","SELECT id INTO derived FROM original; WITH q AS (SELECT * FROM base) SELECT id INTO \"Archive\" FROM q; SELECT id INTO @capture FROM original; SELECT id,id INTO first_variable, second_variable FROM original;",None)]);
+        for table in ["derived", "\"Archive\""] {
+            assert!(
+                snap.sql
+                    .usages
+                    .iter()
+                    .any(|u| u.table == table && u.mode == "write" && u.operation == "select_into"),
+                "{:?}",
+                snap.sql
+            );
+            assert!(!snap
+                .sql
+                .usages
+                .iter()
+                .any(|u| u.table == table && u.mode == "read"));
+        }
+        assert!(snap
+            .sql
+            .usages
+            .iter()
+            .any(|u| u.table == "base" && u.mode == "read"));
+        assert!(!snap.sql.usages.iter().any(|u| u.table == "q"
+            || u.table.contains("capture")
+            || u.table.ends_with("_variable")));
+        assert!(snap
+            .sql
+            .diagnostics
+            .iter()
+            .any(|d| d["code"] == "SQL_INTO_TARGET_UNRESOLVED"));
+    }
+    #[test]
+    fn sql_select_into_migration_does_not_invent_complete_projection_schema() {
+        let snap = snap(&[(
+            "/p/migrations/001.sql",
+            "CREATE TABLE known(id INT); SELECT id INTO derived FROM known;",
+            None,
+        )]);
+        assert!(snap
+            .sql
+            .diagnostics
+            .iter()
+            .any(|d| d["code"] == "SELECT_INTO_SCHEMA_UNVERIFIED" && d["schema_relevant"] == true));
+        assert!(!snap.sql.tables.iter().any(|t| t.name == "derived"));
+        assert_eq!(
+            snap.write_check(&check("known", "insert", &["id"]))
+                .unwrap()["status"],
+            "indeterminate"
+        );
     }
     #[test]
     fn sql_static_literals_have_owner_and_source_lines_dynamic_sql_is_not_guessed() {

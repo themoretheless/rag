@@ -1,0 +1,13 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.95s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 5 tests
+test code_index::resource_targets::tests::source_attachment_identity_is_required_and_part_of_revision_fingerprint ... ok
+test code_index::resource_targets::tests::nonparsed_resources_join_file_graph_without_becoming_indexed_code ... ok
+test code_index::resource_targets::tests::corrupt_source_and_inventory_or_table_disagreement_never_qualify_freshness ... ok
+test code_index::resource_targets::tests::changed_resource_is_unavailable_until_publication_and_blocks_negative_liveness ... ok
+test code_index::resource_targets::tests::resource_identity_stays_project_scoped_and_legacy_diffs_skip_unqualified_family ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1061 filtered out; finished in 0.45s
+

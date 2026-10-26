@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 51,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "search_role_contract_v2",
+    "single_read_transaction_contract",
+    "independent_all_any_query_windows",
+    "external_non_matching_referrer_evidence",
+    "HTML_CSS_resources",
+    "published_SVG_target",
+    "missing_export_import",
+    "bound_function_value",
+    "project_prefix_isolation",
+    "deterministic_family_order",
+    "body_free_role_metadata",
+    "zero_hit_without_role_index",
+    "stale_source_exclusion",
+    "sync_replacement",
+    "total_and_retained_evidence_counts"
+  ],
+  "production_database_touched": false,
+  "source_code_executed": false,
+  "runtime_activity_proven": false
+}

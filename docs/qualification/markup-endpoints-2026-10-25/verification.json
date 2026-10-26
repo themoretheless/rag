@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "91f8d341837f8f94d9ace41ffdd955cc0a215c55c097e9f9f86de0909294065d",
+    "src/code_index/analysis.rs": "fe8a8f20c44a56fa74166d51537658a85b6d7e37ea38c2fc39bbe46c98254552",
+    "src/code_index/endpoints.rs": "3cbb1fd1d68af5eba887ef4257596ce78c00ce42236db1b27d24208f30406059",
+    "src/code_index/styles.rs": "f805374864db691393a34d5b58b14df129cdf6c082b8af739053e36ba2f8a3f1",
+    "src/code_index/status.rs": "0fae770df63873f169b93d8ea8fa6f2d5216bd0f3fd770c2c10b7ffaa90db95c",
+    "src/code_index/history.rs": "fd8f032663e5d39447bdb91dfbdfb6a483786564ec7f815b6375c21f357a51a0",
+    "scripts/smoke_markup_endpoints.py": "6905bd08e713a751930f2cf6445a4ca3163afb3d89e56b34427671ebae346785"
+  },
+  "binary_sha256": "bb1380bdc32fff5cec14728800329a81221b8e9905c6ee115387739e93c4ace6",
+  "index_format": 22,
+  "verification": {
+    "focused_code_index": {
+      "command": "cargo test --lib code_index:: --locked --offline",
+      "passed": 134,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1180,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "python_routes_regression": "python-routes-regression.json",
+    "index_status_regression": "index-status-regression.json",
+    "repo_map_regression": "repo-map-regression.json"
+  },
+  "production_database_touched": false,
+  "urls_fetched": false,
+  "source_applications_executed": false,
+  "representative_benchmark": false,
+  "full_route_parity": false,
+  "full_ragraf_parity": false
+}

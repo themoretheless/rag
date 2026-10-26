@@ -1,0 +1,12 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.46s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 4 tests
+test code_index::drift::tests::live_diff_preserves_final_newline_crlf_unicode_and_empty_sides ... ok
+test code_index::drift::tests::live_diff_separates_edits_and_keeps_half_open_coordinates ... ok
+test code_index::drift::tests::live_diff_bounds_cells_and_hunks_without_claiming_full_precision ... ok
+test code_index::drift::tests::live_diff_reconstructs_exhaustive_short_repeated_line_inputs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 970 filtered out; finished in 0.02s
+

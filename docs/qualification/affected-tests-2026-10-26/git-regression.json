@@ -1,0 +1,67 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP",
+  "git_version": "git version 2.54.0 (Apple Git-157)",
+  "index_format": 39,
+  "binary_sha256": "04813f7327ede0e0779d72b5bd0af68afb27c10d9bafa275ba84aad9f68900fe",
+  "changes": {
+    "added": "added",
+    "removed": "removed",
+    "value": "modified"
+  },
+  "labelled_witnesses": [
+    [
+      [
+        "api",
+        "value"
+      ],
+      [
+        "entry",
+        "api",
+        "value"
+      ]
+    ],
+    [
+      [
+        "api",
+        "value"
+      ],
+      [
+        "entry",
+        "api",
+        "value"
+      ]
+    ]
+  ],
+  "fixture_sha256": {
+    "Cargo.lock": "535a443b8558ebf4c6dfa1441d07d1959f82c922613de289c0303c965fe21d72",
+    "Cargo.toml": "849ddc55df7e115bc2c22918246ca7403e30e1b5262435ca2f9f2844f1fb6edf",
+    "expected.json": "f3ebd95ba264872155526299eff056c7ee230262f20c85c8b8512a94e77124c3",
+    "src/lib.rs": "3842c5284bb9a809f6e9a3c5d95085c749007564088e13b3a675b057e66cd7b5",
+    "src/worker.rs": "dfaf47b580b77c99431da562bdd533081211d52f4354f7742015f2826a87e1cd"
+  },
+  "checks": [
+    "staged_vs_working_source_identity",
+    "added_removed_modified",
+    "two_sided_multihop_witnesses",
+    "occurrence_provenance",
+    "index_and_source_not_mutated",
+    "deterministic",
+    "return_depth_seed_budgets",
+    "capture_budget_error",
+    "pinned_commit_comparison",
+    "untracked_sources",
+    "external_filters_not_executed",
+    "unmerged_index_refusal",
+    "typed_scope_validation"
+  ],
+  "persistent_index_used": false,
+  "production_database_touched": false,
+  "production_repository_touched": false,
+  "limitations": [
+    "supported source/manifest formats",
+    "ephemeral native graph",
+    "no runtime or absence proof",
+    "no competitor performance claim"
+  ]
+}

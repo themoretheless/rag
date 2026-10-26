@@ -1,0 +1,169 @@
+{
+  "status": "measured",
+  "binary_sha256": "0d32dafcd3bf697e44473abd867c6150a777cb983d9b315dd77029f5751733a8",
+  "fixture_sha256": "5441588fec087fe809d7229a1f713be25a62814df6e58611b4f89b41901774ef",
+  "pairs": 3,
+  "order": [
+    {
+      "pair": 0,
+      "mode": "full"
+    },
+    {
+      "pair": 0,
+      "mode": "incremental"
+    },
+    {
+      "pair": 1,
+      "mode": "incremental"
+    },
+    {
+      "pair": 1,
+      "mode": "full"
+    },
+    {
+      "pair": 2,
+      "mode": "full"
+    },
+    {
+      "pair": 2,
+      "mode": "incremental"
+    }
+  ],
+  "summary": {
+    "cold_sync": {
+      "ms": {
+        "full": [
+          11971.163125010207,
+          12481.977457995526,
+          17118.855249951594
+        ],
+        "incremental": [
+          12480.568791972473,
+          12836.647499992978,
+          12879.170375003014
+        ]
+      },
+      "medians_ms": {
+        "full": 12481.977457995526,
+        "incremental": 12836.647499992978
+      },
+      "full_over_incremental": 0.9723705085772866,
+      "relative_ranges": {
+        "full": 0.412409984096226,
+        "incremental": 0.03105184457474263
+      },
+      "control_stable": false,
+      "full_control_is_audit_not_ordinary_noop": false
+    },
+    "warm_noop": {
+      "ms": {
+        "full": [
+          7416.967333003413,
+          7792.623291956261,
+          20996.4480829658
+        ],
+        "incremental": [
+          22.30549999512732,
+          21.395834046415985,
+          22.05845800926909
+        ]
+      },
+      "medians_ms": {
+        "full": 7792.623291956261,
+        "incremental": 22.05845800926909
+      },
+      "full_over_incremental": 353.2714430302316,
+      "relative_ranges": {
+        "full": 1.7426071094671627,
+        "incremental": 0.041238873013203774
+      },
+      "control_stable": false,
+      "full_control_is_audit_not_ordinary_noop": true
+    },
+    "body": {
+      "ms": {
+        "full": [
+          7716.575791011564,
+          7855.392750003375,
+          13371.773082995787
+        ],
+        "incremental": [
+          487.44329204782844,
+          493.39079100172967,
+          449.8171249870211
+        ]
+      },
+      "medians_ms": {
+        "full": 7855.392750003375,
+        "incremental": 487.44329204782844
+      },
+      "full_over_incremental": 16.115500773436832,
+      "relative_ranges": {
+        "full": 0.7199127366332884,
+        "incremental": 0.08939227747221329
+      },
+      "control_stable": false,
+      "full_control_is_audit_not_ordinary_noop": false
+    },
+    "signature": {
+      "ms": {
+        "full": [
+          7725.071332999505,
+          7924.876500037499,
+          7815.514208050445
+        ],
+        "incremental": [
+          8165.270292025525,
+          7817.660000000615,
+          7755.240833037533
+        ]
+      },
+      "medians_ms": {
+        "full": 7815.514208050445,
+        "incremental": 7817.660000000615
+      },
+      "full_over_incremental": 0.9997255199189822,
+      "relative_ranges": {
+        "full": 0.025565197851240864,
+        "incremental": 0.05244912914963813
+      },
+      "control_stable": true,
+      "full_control_is_audit_not_ordinary_noop": false
+    },
+    "manifest": {
+      "ms": {
+        "full": [
+          7723.7178750219755,
+          7942.024040967226,
+          7959.7547089797445
+        ],
+        "incremental": [
+          8222.574791987427,
+          7999.321208044421,
+          7742.178833053913
+        ]
+      },
+      "medians_ms": {
+        "full": 7942.024040967226,
+        "incremental": 7999.321208044421
+      },
+      "full_over_incremental": 0.992837246362907,
+      "relative_ranges": {
+        "full": 0.02971998482253688,
+        "incremental": 0.06005459043829984
+      },
+      "control_stable": true,
+      "full_control_is_audit_not_ordinary_noop": false
+    }
+  },
+  "controls_stable": false,
+  "production_speed_qualified": false,
+  "raw_runs_retained": true,
+  "limitations": [
+    "synthetic Cargo workspace",
+    "same binary full-binding control, not competitor comparison",
+    "warm full control deliberately recomputes bindings",
+    "sampled RSS is not an exact peak",
+    "three exploratory pairs do not qualify representative production speed"
+  ]
+}

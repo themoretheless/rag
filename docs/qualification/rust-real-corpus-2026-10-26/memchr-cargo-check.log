@@ -1,0 +1,4 @@
+    Updating crates.io index
+     Locking 9 packages to highest compatible versions
+    Checking memchr v2.8.3 (/private/tmp/rag-real-corpus/pinned/memchr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.37s

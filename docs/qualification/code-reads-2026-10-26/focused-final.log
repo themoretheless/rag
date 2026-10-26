@@ -1,0 +1,15 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 32.87s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 6 tests
+test code_index::code_read::tests::code_read_chunks_validate_unicode_offsets_and_remove_overlap ... ok
+test code_index::code_read::tests::code_read_single_window_unicode_crlf_and_budget ... ok
+test code_index::code_read::tests::code_read_file_nested_and_container_partition_preserves_unique_bytes ... ok
+test code_index::code_read::tests::code_read_path_project_ambiguity_and_stale_exclusion ... ok
+test code_index::code_read::tests::code_read_validation_file_without_symbols_and_shared_budget ... ok
+test code_index::code_read::tests::code_read_segment_cap_and_invalid_chunks_are_explicit ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1255 filtered out; finished in 0.70s
+

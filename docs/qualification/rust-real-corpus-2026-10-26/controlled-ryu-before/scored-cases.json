@@ -1,0 +1,3359 @@
+{
+  "cases": [
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        20,
+        20,
+        20,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            80,
+            7,
+            80,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "log10_pow2",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        20,
+        32,
+        20,
+        42
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            89,
+            7,
+            89,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "log10_pow5",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        20,
+        44,
+        20,
+        52
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "pow5bits",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        22,
+        4,
+        22,
+        21
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            100,
+            7,
+            100,
+            24
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "mul_pow5_div_pow2",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        22,
+        23,
+        22,
+        44
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_inv_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            74,
+            7,
+            74,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "mul_pow5_inv_div_pow2",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        22,
+        46,
+        22,
+        71
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/multiple_of_power_of_2_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            49,
+            7,
+            49,
+            32
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "multiple_of_power_of_2_32",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        22,
+        73,
+        22,
+        98
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/multiple_of_power_of_5_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            43,
+            7,
+            43,
+            32
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "multiple_of_power_of_5_32",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        71,
+        16,
+        71,
+        26
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            80,
+            7,
+            80,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        73,
+        42,
+        73,
+        50
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        75,
+        13,
+        75,
+        34
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_inv_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            74,
+            7,
+            74,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        76,
+        13,
+        76,
+        34
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_inv_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            74,
+            7,
+            74,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        77,
+        13,
+        77,
+        34
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_inv_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            74,
+            7,
+            74,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        82,
+        46,
+        82,
+        54
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        84,
+        17,
+        84,
+        38
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_inv_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            74,
+            7,
+            74,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        90,
+        39,
+        90,
+        64
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/multiple_of_power_of_5_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            43,
+            7,
+            43,
+            32
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        92,
+        39,
+        92,
+        64
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/multiple_of_power_of_5_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            43,
+            7,
+            43,
+            32
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        94,
+        22,
+        94,
+        47
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/multiple_of_power_of_5_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            43,
+            7,
+            43,
+            32
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        98,
+        16,
+        98,
+        26
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            89,
+            7,
+            89,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        101,
+        16,
+        101,
+        24
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        103,
+        13,
+        103,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            100,
+            7,
+            100,
+            24
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        104,
+        13,
+        104,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            100,
+            7,
+            100,
+            24
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        105,
+        13,
+        105,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            100,
+            7,
+            100,
+            24
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        107,
+        32,
+        107,
+        40
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        108,
+        34,
+        108,
+        51
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_pow5_div_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            100,
+            7,
+            100,
+            24
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        123,
+        35,
+        123,
+        60
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/multiple_of_power_of_2_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            49,
+            7,
+            49,
+            32
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        44,
+        4,
+        44,
+        17
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/pow5factor_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            26,
+            3,
+            26,
+            16
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        83,
+        8,
+        83,
+        20
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_shift_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            57,
+            3,
+            57,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        90,
+        12,
+        90,
+        24
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_shift_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            57,
+            3,
+            57,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        104,
+        8,
+        104,
+        20
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_shift_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            57,
+            3,
+            57,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        110,
+        17,
+        110,
+        29
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s_intrinsics/mul_shift_32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s_intrinsics.rs",
+          "range": [
+            57,
+            3,
+            57,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        20,
+        20,
+        20,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            80,
+            7,
+            80,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "log10_pow2",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        20,
+        32,
+        20,
+        42
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            89,
+            7,
+            89,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "log10_pow5",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        20,
+        44,
+        20,
+        52
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "pow5bits",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        24,
+        4,
+        24,
+        9
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "div10",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        24,
+        11,
+        24,
+        17
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            33,
+            7,
+            33,
+            13
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "div100",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        24,
+        19,
+        24,
+        23
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            23,
+            7,
+            23,
+            11
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "div5",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        24,
+        25,
+        24,
+        41
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/mul_shift_all_64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            77,
+            14,
+            77,
+            30
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "mul_shift_all_64",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        24,
+        43,
+        24,
+        65
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/multiple_of_power_of_2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            62,
+            7,
+            62,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "multiple_of_power_of_2",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        24,
+        67,
+        24,
+        89
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/multiple_of_power_of_5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            55,
+            7,
+            55,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "multiple_of_power_of_5",
+          "is_call": false,
+          "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        126,
+        16,
+        126,
+        26
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            80,
+            7,
+            80,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        128,
+        43,
+        128,
+        51
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        131,
+        12,
+        131,
+        28
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/mul_shift_all_64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            77,
+            14,
+            77,
+            30
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        152,
+        69,
+        152,
+        73
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            23,
+            7,
+            23,
+            11
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        154,
+        39,
+        154,
+        61
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/multiple_of_power_of_5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            55,
+            7,
+            55,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        159,
+        39,
+        159,
+        61
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/multiple_of_power_of_5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            55,
+            7,
+            55,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        162,
+        22,
+        162,
+        44
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/multiple_of_power_of_5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            55,
+            7,
+            55,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        167,
+        16,
+        167,
+        26
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log10_pow5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            89,
+            7,
+            89,
+            17
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        170,
+        16,
+        170,
+        24
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/pow5bits().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            63,
+            7,
+            63,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        173,
+        12,
+        173,
+        28
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/mul_shift_all_64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            77,
+            14,
+            77,
+            30
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        207,
+        35,
+        207,
+        57
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/multiple_of_power_of_2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            62,
+            7,
+            62,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        218,
+        27,
+        218,
+        32
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        219,
+        27,
+        219,
+        32
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        224,
+        27,
+        224,
+        32
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        236,
+        31,
+        236,
+        36
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        241,
+        31,
+        241,
+        36
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        242,
+        31,
+        242,
+        36
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        262,
+        24,
+        262,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            33,
+            7,
+            33,
+            13
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        263,
+        24,
+        263,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            33,
+            7,
+            33,
+            13
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        266,
+        28,
+        266,
+        34
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            33,
+            7,
+            33,
+            13
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        279,
+        27,
+        279,
+        32
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        280,
+        27,
+        280,
+        32
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        284,
+        27,
+        284,
+        32
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/div10().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            28,
+            7,
+            28,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        57,
+        4,
+        57,
+        15
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/pow5_factor().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            38,
+            14,
+            38,
+            25
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        85,
+        19,
+        85,
+        31
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/mul_shift_64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            70,
+            7,
+            70,
+            19
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        86,
+        19,
+        86,
+        31
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/mul_shift_64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            70,
+            7,
+            70,
+            19
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        87,
+        4,
+        87,
+        16
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s_intrinsics/mul_shift_64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s_intrinsics.rs",
+          "range": [
+            70,
+            7,
+            70,
+            19
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/common.rs",
+      "range": [
+        75,
+        4,
+        75,
+        13
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/log2_pow5().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            52,
+            7,
+            52,
+            16
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        132,
+        28,
+        132,
+        36
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/format32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/pretty/mod.rs",
+          "range": [
+            158,
+            14,
+            158,
+            22
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "format32",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        132,
+        38,
+        132,
+        46
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/format64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/pretty/mod.rs",
+          "range": [
+            51,
+            14,
+            51,
+            22
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "format64",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        3,
+        21,
+        3,
+        36
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/exponent/write_exponent2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/pretty/exponent.rs",
+          "range": [
+            30,
+            14,
+            30,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "write_exponent2",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        3,
+        38,
+        3,
+        53
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/exponent/write_exponent3().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/pretty/exponent.rs",
+          "range": [
+            4,
+            14,
+            4,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "write_exponent3",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        4,
+        21,
+        4,
+        35
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            27,
+            14,
+            27,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "write_mantissa",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        4,
+        37,
+        4,
+        56
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa_long().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            4,
+            14,
+            4,
+            33
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "write_mantissa_long",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        6,
+        23,
+        6,
+        26
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s/d2d().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/d2s.rs",
+          "range": [
+            90,
+            7,
+            90,
+            10
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "d2d",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        7,
+        17,
+        7,
+        20
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s/f2d().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "import",
+      "expected": [
+        {
+          "path": "src/f2s.rs",
+          "range": [
+            39,
+            7,
+            39,
+            10
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "f2d",
+          "is_call": false,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        69,
+        12,
+        69,
+        15
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s/d2d().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s.rs",
+          "range": [
+            90,
+            7,
+            90,
+            10
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        71,
+        22,
+        71,
+        38
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/d2s/decimal_length17().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/d2s.rs",
+          "range": [
+            37,
+            7,
+            37,
+            23
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        78,
+        8,
+        78,
+        27
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa_long().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            4,
+            14,
+            4,
+            33
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        87,
+        8,
+        87,
+        27
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa_long().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            4,
+            14,
+            4,
+            33
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        99,
+        8,
+        99,
+        27
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa_long().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            4,
+            14,
+            4,
+            33
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        105,
+        29,
+        105,
+        44
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/exponent/write_exponent3().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/exponent.rs",
+          "range": [
+            4,
+            14,
+            4,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        108,
+        8,
+        108,
+        27
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa_long().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            4,
+            14,
+            4,
+            33
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        115,
+        14,
+        115,
+        29
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/exponent/write_exponent3().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/exponent.rs",
+          "range": [
+            4,
+            14,
+            4,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        175,
+        12,
+        175,
+        15
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/f2s/f2d().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/f2s.rs",
+          "range": [
+            39,
+            7,
+            39,
+            10
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        177,
+        25,
+        177,
+        40
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/common/decimal_length9().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/common.rs",
+          "range": [
+            23,
+            7,
+            23,
+            22
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        184,
+        8,
+        184,
+        22
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            27,
+            14,
+            27,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        193,
+        8,
+        193,
+        22
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            27,
+            14,
+            27,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        205,
+        8,
+        205,
+        22
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            27,
+            14,
+            27,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        211,
+        29,
+        211,
+        44
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/exponent/write_exponent2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/exponent.rs",
+          "range": [
+            30,
+            14,
+            30,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        214,
+        8,
+        214,
+        22
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            27,
+            14,
+            27,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        221,
+        14,
+        221,
+        29
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/exponent/write_exponent2().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/exponent.rs",
+          "range": [
+            30,
+            14,
+            30,
+            29
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/pretty/mantissa.rs",
+      "range": [
+        23,
+        4,
+        23,
+        18
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/mantissa/write_mantissa().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mantissa.rs",
+          "range": [
+            27,
+            14,
+            27,
+            28
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/buffer/mod.rs",
+      "range": [
+        50,
+        17,
+        50,
+        30
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/buffer/impl#[Buffer]format_finite().",
+      "kinds": [
+        26
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/buffer/mod.rs",
+          "range": [
+            71,
+            11,
+            71,
+            24
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/buffer/mod.rs",
+      "range": [
+        139,
+        13,
+        139,
+        21
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/format32().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mod.rs",
+          "range": [
+            158,
+            14,
+            158,
+            22
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "raw::format32",
+          "is_call": true,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    },
+    {
+      "path": "src/buffer/mod.rs",
+      "range": [
+        168,
+        13,
+        168,
+        21
+      ],
+      "symbol": "rust-analyzer cargo ryu 1.0.23 lib/pretty/format64().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/pretty/mod.rs",
+          "range": [
+            51,
+            14,
+            51,
+            22
+          ]
+        }
+      ],
+      "observed_candidates": [],
+      "observed_definitions": [],
+      "observations": [
+        {
+          "expression": "raw::format64",
+          "is_call": true,
+          "basis": "shadowed_or_external",
+          "resolution": "unresolved"
+        }
+      ],
+      "expected_definition_extracted": false,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact": false
+    }
+  ],
+  "metrics": {
+    "labelled_sites": 95,
+    "local_positive_sites": 95,
+    "external_negative_sites": 0,
+    "true_positive": 0,
+    "false_positive": 0,
+    "false_negative": 95,
+    "precision": null,
+    "recall": 0.0,
+    "exact_sites": 0,
+    "exact_site_rate": 0.0
+  },
+  "metrics_by_syntax": {
+    "direct_call": {
+      "labelled_sites": 71,
+      "local_positive_sites": 71,
+      "external_negative_sites": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 71,
+      "precision": null,
+      "recall": 0.0,
+      "exact_sites": 0,
+      "exact_site_rate": 0.0
+    },
+    "import": {
+      "labelled_sites": 24,
+      "local_positive_sites": 24,
+      "external_negative_sites": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 24,
+      "precision": null,
+      "recall": 0.0,
+      "exact_sites": 0,
+      "exact_site_rate": 0.0
+    }
+  }
+}

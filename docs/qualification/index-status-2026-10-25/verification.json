@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_commit_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index/status.rs": "c4af1e39e2dc81711da63ad340d826621c73698753be28aba5313f5d7995e873",
+    "src/code_index.rs": "63553df20efdd221a5c5434deb5ce02c4c6f8e645645a096f53b8e0a99717555",
+    "src/code_index/styles.rs": "22a32fa0873cd1caf7298297b03891e39b73a2353a67be99cfadcb9ae9f040e8",
+    "src/db/store.rs": "221e5146f00aaed5126e1a8ee16a11895304094c56223dacff8400149d914e5d",
+    "src/db/store/manifest.rs": "8ace8b75144e7711353bd2c2a5788f09d4da95a3cbd1137fb33b7954e6ca650a",
+    "src/mcp/analysis.rs": "a80fa48f739e0877e7cdd9169208665c0ace6c68238cb0851756575082186ab4",
+    "scripts/smoke_index_status.py": "8672ee7a2b04d84c47cf7cd423c1eb89a2d51c9e30cca8f53da4ebe42660ac8c"
+  },
+  "binary_sha256": "33a38e17959b7954bf4040aefe7e37a68a47df3025529f3f3e4a8a9cb1de7621",
+  "verification": {
+    "focused_status_tests": {
+      "command": "cargo test --lib code_index::status --locked --offline",
+      "passed": 6,
+      "failed": 0
+    },
+    "workspace_tests": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1173,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": {
+      "command": "cargo fmt --all -- --check",
+      "passed": true
+    },
+    "diff_check": true,
+    "binary_build": {
+      "command": "cargo build --bin rag-mcp --locked --offline",
+      "passed": true
+    },
+    "mcp_status": "runtime.json",
+    "mcp_repo_map": "repo-map-regression.json",
+    "mcp_explicit_defaults": "explicit-defaults-regression.json"
+  },
+  "production_database_touched": false,
+  "index_format_changed": false,
+  "full_ragraf_parity": false,
+  "representative_benchmark": false
+}

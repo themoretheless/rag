@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "checks": [
+    "css_import",
+    "html_stylesheet",
+    "html_script",
+    "entity_query_fragment",
+    "transitive_impact",
+    "base_url_guard",
+    "project_guard",
+    "call_mode_separation",
+    "depth_limit",
+    "dead_file_protection",
+    "stale_bridge_exclusion",
+    "sync_replaces_resources",
+    "no_source_bodies"
+  ],
+  "versions": {
+    "index_format": 49,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "runtime_resource_proven": false
+}

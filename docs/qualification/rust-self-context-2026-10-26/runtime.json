@@ -1,0 +1,790 @@
+{
+  "status": "passed",
+  "binary_sha256": "708dd03fed1b2a1b30c1319bd7a24429abe76e723d312107e498bbecd5359227",
+  "index_format": 60,
+  "labels": [
+    {
+      "caller": "Worker<'a>::run",
+      "expression": "self.finish",
+      "target": "Worker<'a>::finish"
+    },
+    {
+      "caller": "check",
+      "expression": "worker.copy",
+      "target": "Worker<'a>::copy"
+    },
+    {
+      "caller": "check",
+      "expression": "worker.copy().finish",
+      "target": "Worker<'a>::finish"
+    },
+    {
+      "caller": "inside::exercise",
+      "expression": "inline.finish",
+      "target": "inside::Item::finish"
+    },
+    {
+      "caller": "root_exercise",
+      "expression": "root.finish",
+      "target": "Item::finish"
+    },
+    {
+      "caller": "nested::Worker<'a>::run",
+      "expression": "self.service.finish",
+      "target": "providers::Service::finish"
+    }
+  ],
+  "selected": [
+    {
+      "expected": {
+        "caller": "Worker<'a>::run",
+        "expression": "self.finish",
+        "target": "Worker<'a>::finish"
+      },
+      "edge": {
+        "candidates": [
+          "c4059aa2-ff51-4890-95c4-e37ddd7e295d:72:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:122:run@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "column": 14,
+          "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+          "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+          "expression": "self.finish",
+          "is_call": true,
+          "line": 9,
+          "name": "finish",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 157
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+        "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+        "documentation_examined": true,
+        "end_byte": 117,
+        "end_line": 7,
+        "id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:72:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "kind": "function_item",
+        "name": "finish",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+        "qualified_name": "Worker<'a>::finish",
+        "revision": 1,
+        "signature": "pub fn finish(&self) -> u32",
+        "start_byte": 72,
+        "start_line": 5
+      }
+    },
+    {
+      "expected": {
+        "caller": "check",
+        "expression": "worker.copy",
+        "target": "Worker<'a>::copy"
+      },
+      "edge": {
+        "candidates": [
+          "c4059aa2-ff51-4890-95c4-e37ddd7e295d:181:copy@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:251:check@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "column": 12,
+          "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+          "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+          "expression": "worker.copy",
+          "is_call": true,
+          "line": 16,
+          "name": "copy",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 297
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+        "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+        "documentation_examined": true,
+        "end_byte": 248,
+        "end_line": 13,
+        "id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:181:copy@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "kind": "function_item",
+        "name": "copy",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+        "qualified_name": "Worker<'a>::copy",
+        "revision": 1,
+        "signature": "pub fn copy(&self) -> Self",
+        "start_byte": 181,
+        "start_line": 11
+      }
+    },
+    {
+      "expected": {
+        "caller": "check",
+        "expression": "worker.copy().finish",
+        "target": "Worker<'a>::finish"
+      },
+      "edge": {
+        "candidates": [
+          "c4059aa2-ff51-4890-95c4-e37ddd7e295d:72:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:251:check@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "column": 19,
+          "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+          "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+          "expression": "worker.copy().finish",
+          "is_call": true,
+          "line": 16,
+          "name": "finish",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 297
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+        "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+        "documentation_examined": true,
+        "end_byte": 117,
+        "end_line": 7,
+        "id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:72:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "kind": "function_item",
+        "name": "finish",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+        "qualified_name": "Worker<'a>::finish",
+        "revision": 1,
+        "signature": "pub fn finish(&self) -> u32",
+        "start_byte": 72,
+        "start_line": 5
+      }
+    },
+    {
+      "expected": {
+        "caller": "inside::exercise",
+        "expression": "inline.finish",
+        "target": "inside::Item::finish"
+      },
+      "edge": {
+        "candidates": [
+          "c4059aa2-ff51-4890-95c4-e37ddd7e295d:529:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:593:exercise@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "column": 16,
+          "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+          "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+          "expression": "inline.finish",
+          "is_call": true,
+          "line": 37,
+          "name": "finish",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 640
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+        "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+        "documentation_examined": true,
+        "end_byte": 582,
+        "end_line": 34,
+        "id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:529:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "kind": "function_item",
+        "name": "finish",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+        "qualified_name": "inside::Item::finish",
+        "revision": 1,
+        "signature": "pub fn finish(&self) -> u32",
+        "start_byte": 529,
+        "start_line": 32
+      }
+    },
+    {
+      "expected": {
+        "caller": "root_exercise",
+        "expression": "root.finish",
+        "target": "Item::finish"
+      },
+      "edge": {
+        "candidates": [
+          "c4059aa2-ff51-4890-95c4-e37ddd7e295d:356:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:404:root_exercise@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "column": 10,
+          "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+          "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+          "expression": "root.finish",
+          "is_call": true,
+          "line": 26,
+          "name": "finish",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 450
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+        "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+        "documentation_examined": true,
+        "end_byte": 401,
+        "end_line": 23,
+        "id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:356:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "kind": "function_item",
+        "name": "finish",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+        "qualified_name": "Item::finish",
+        "revision": 1,
+        "signature": "pub fn finish(&self) -> u32",
+        "start_byte": 356,
+        "start_line": 21
+      }
+    },
+    {
+      "expected": {
+        "caller": "nested::Worker<'a>::run",
+        "expression": "self.service.finish",
+        "target": "providers::Service::finish"
+      },
+      "edge": {
+        "candidates": [
+          "c4059aa2-ff51-4890-95c4-e37ddd7e295d:824:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:1039:run@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "column": 26,
+          "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+          "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+          "expression": "self.service.finish",
+          "is_call": true,
+          "line": 62,
+          "name": "finish",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 1078
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+        "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+        "documentation_examined": true,
+        "end_byte": 877,
+        "end_line": 52,
+        "id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:824:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+        "kind": "function_item",
+        "name": "finish",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+        "qualified_name": "providers::Service::finish",
+        "revision": 1,
+        "signature": "pub fn finish(&self) -> u32",
+        "start_byte": 824,
+        "start_line": 50
+      }
+    }
+  ],
+  "results": {
+    "Worker<'a>::run": {
+      "binding_diagnostics": [],
+      "index_rev": 1,
+      "items": [
+        {
+          "candidates": [
+            "c4059aa2-ff51-4890-95c4-e37ddd7e295d:72:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:122:run@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "column": 14,
+            "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+            "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+            "expression": "self.finish",
+            "is_call": true,
+            "line": 9,
+            "name": "finish",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 157
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        }
+      ],
+      "matched_symbols": 1,
+      "parse_errors": [],
+      "resolution": "conservative_static_bindings",
+      "rust_build_contexts": [
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 0,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "066335e715fef2c29986fba8d0249cf4de837259619d26e68dcf8e4cd13a0333",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "lib",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        }
+      ],
+      "rust_build_contexts_total": 1,
+      "stale_documents": [],
+      "total": 1,
+      "truncated": false,
+      "unindexed_documents": [],
+      "view": "fresh_subset_of_revision_inputs"
+    },
+    "check": {
+      "binding_diagnostics": [],
+      "index_rev": 1,
+      "items": [
+        {
+          "candidates": [
+            "c4059aa2-ff51-4890-95c4-e37ddd7e295d:181:copy@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:251:check@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "column": 12,
+            "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+            "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+            "expression": "worker.copy",
+            "is_call": true,
+            "line": 16,
+            "name": "copy",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 297
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "c4059aa2-ff51-4890-95c4-e37ddd7e295d:72:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:251:check@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "column": 19,
+            "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+            "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+            "expression": "worker.copy().finish",
+            "is_call": true,
+            "line": 16,
+            "name": "finish",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 297
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        }
+      ],
+      "matched_symbols": 1,
+      "parse_errors": [],
+      "resolution": "conservative_static_bindings",
+      "rust_build_contexts": [
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 0,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "066335e715fef2c29986fba8d0249cf4de837259619d26e68dcf8e4cd13a0333",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "lib",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        }
+      ],
+      "rust_build_contexts_total": 1,
+      "stale_documents": [],
+      "total": 2,
+      "truncated": false,
+      "unindexed_documents": [],
+      "view": "fresh_subset_of_revision_inputs"
+    },
+    "inside::exercise": {
+      "binding_diagnostics": [],
+      "index_rev": 1,
+      "items": [
+        {
+          "candidates": [
+            "c4059aa2-ff51-4890-95c4-e37ddd7e295d:529:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:593:exercise@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "column": 16,
+            "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+            "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+            "expression": "inline.finish",
+            "is_call": true,
+            "line": 37,
+            "name": "finish",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 640
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        }
+      ],
+      "matched_symbols": 1,
+      "parse_errors": [],
+      "resolution": "conservative_static_bindings",
+      "rust_build_contexts": [
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 0,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "066335e715fef2c29986fba8d0249cf4de837259619d26e68dcf8e4cd13a0333",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "lib",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        }
+      ],
+      "rust_build_contexts_total": 1,
+      "stale_documents": [],
+      "total": 1,
+      "truncated": false,
+      "unindexed_documents": [],
+      "view": "fresh_subset_of_revision_inputs"
+    },
+    "root_exercise": {
+      "binding_diagnostics": [],
+      "index_rev": 1,
+      "items": [
+        {
+          "candidates": [
+            "c4059aa2-ff51-4890-95c4-e37ddd7e295d:356:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:404:root_exercise@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "column": 10,
+            "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+            "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+            "expression": "root.finish",
+            "is_call": true,
+            "line": 26,
+            "name": "finish",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 450
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        }
+      ],
+      "matched_symbols": 1,
+      "parse_errors": [],
+      "resolution": "conservative_static_bindings",
+      "rust_build_contexts": [
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 0,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "066335e715fef2c29986fba8d0249cf4de837259619d26e68dcf8e4cd13a0333",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "lib",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        }
+      ],
+      "rust_build_contexts_total": 1,
+      "stale_documents": [],
+      "total": 1,
+      "truncated": false,
+      "unindexed_documents": [],
+      "view": "fresh_subset_of_revision_inputs"
+    },
+    "nested::Worker<'a>::run": {
+      "binding_diagnostics": [],
+      "index_rev": 1,
+      "items": [
+        {
+          "candidates": [
+            "c4059aa2-ff51-4890-95c4-e37ddd7e295d:824:finish@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "build_context": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "caller": "c4059aa2-ff51-4890-95c4-e37ddd7e295d:1039:run@804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+            "column": 26,
+            "content_hash": "cf1d3b4884d7e2fe6c600b03454eb7b59ab1ea0d53928677c505e85a545bc5b3",
+            "document_id": "c4059aa2-ff51-4890-95c4-e37ddd7e295d",
+            "expression": "self.service.finish",
+            "is_call": true,
+            "line": 62,
+            "name": "finish",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 1078
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        }
+      ],
+      "matched_symbols": 1,
+      "parse_errors": [],
+      "resolution": "conservative_static_bindings",
+      "rust_build_contexts": [
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "804c1088e391fb4bbce59d097eb487bf8229b208a286b10da8a94f4d1808a507",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 0,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "066335e715fef2c29986fba8d0249cf4de837259619d26e68dcf8e4cd13a0333",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "lib",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        }
+      ],
+      "rust_build_contexts_total": 1,
+      "stale_documents": [],
+      "total": 1,
+      "truncated": false,
+      "unindexed_documents": [],
+      "view": "fresh_subset_of_revision_inputs"
+    }
+  },
+  "initial_index": {
+    "indexed": 2,
+    "unchanged": 0,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": true,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "f6e60218-695a-4325-a970-5c3c652cd992",
+      "lock_wait_ms": 0.001083,
+      "source_load_decode_ms": 2.7275,
+      "cache_parse_serialize_ms": 11.711208000000001,
+      "cache_replace_ms": 7.482625,
+      "revision_publish_ms": 39.963041999999994,
+      "transaction_body_ms": 62.290583,
+      "before_metrics_write_ms": 62.291875,
+      "documents_loaded": 2,
+      "cache_hits": 0,
+      "cache_misses": 2,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 2,
+      "documents_resolved": 2,
+      "documents_reused": 0,
+      "reference_sites_resolved": 54,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 1,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 1,
+      "dependency_inputs_hashed": 2,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": false,
+      "resolution_ms": 6.666583999999999,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 67.312292,
+      "commit_ms": 1.4890420000000002,
+      "metrics_write_ms": 3.5310829999999997,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 149684224
+    }
+  },
+  "no_op_index": {
+    "indexed": 0,
+    "unchanged": 2,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": false,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "10ff22a7-f9e1-4758-a5cd-db086dcdafb8",
+      "lock_wait_ms": 0.000292,
+      "source_load_decode_ms": 1.794,
+      "cache_parse_serialize_ms": 1.271584,
+      "cache_replace_ms": 0.001708,
+      "revision_publish_ms": 2.039958,
+      "transaction_body_ms": 5.4197500000000005,
+      "before_metrics_write_ms": 5.420167,
+      "documents_loaded": 2,
+      "cache_hits": 2,
+      "cache_misses": 0,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 0,
+      "documents_resolved": 0,
+      "documents_reused": 0,
+      "reference_sites_resolved": 0,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 0,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 0,
+      "dependency_inputs_hashed": 0,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": true,
+      "resolution_ms": 0.0,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 9.894667,
+      "commit_ms": 0.910625,
+      "metrics_write_ms": 3.563291,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 154566656
+    }
+  },
+  "compiler_command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--manifest-path",
+    "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources/Cargo.toml",
+    "--no-default-features"
+  ],
+  "compiler_exit": 0,
+  "compiler_stdout": "\nrunning 1 test\ntest owner_identity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+  "compiler_stderr": "   Compiling fixture-self-context v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/sources)\nwarning: field `data` is never read\n  --> src/lib.rs:57:9\n   |\n56 |     pub struct Worker<'a> {\n   |                ------ field in this struct\n57 |         data: &'a [u8],\n   |         ^^^^\n   |\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `fixture-self-context` (lib) generated 1 warning\nwarning: `fixture-self-context` (lib test) generated 1 warning (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-self-context-sez5avc1/cargo-target/debug/build/fixture-self-context/91b2d0f2b679fa9e/out/fixture_self_context-91b2d0f2b679fa9e)\n   Doc-tests fixture_self_context\n",
+  "production_database_touched": false,
+  "limitations": [
+    "captured declaration types; no full generic/lifetime solver or compiler/runtime proof"
+  ]
+}

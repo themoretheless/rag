@@ -12,6 +12,28 @@ pub(super) struct Binding {
     declared: usize,
     #[serde(default)]
     hoisted: bool,
+    #[serde(default)]
+    rust_namespace: bool,
+    #[serde(default)]
+    rust_extern: bool,
+    #[serde(default)]
+    declaration_at: Option<usize>,
+}
+pub(super) fn configure_rust_bindings(
+    doc: &mut IndexedDocument,
+    decision: impl Fn(usize) -> Option<bool>,
+) {
+    doc.bindings.retain_mut(|binding| {
+        match decision(binding.declaration_at.unwrap_or(binding.declared)) {
+            Some(false) => false,
+            Some(true) => true,
+            None => {
+                binding.target = None;
+                binding.ty = None;
+                true
+            }
+        }
+    });
 }
 fn binding_scope(node: Node) -> (usize, usize) {
     let mut parent = node.parent();
@@ -26,6 +48,7 @@ fn binding_scope(node: Node) -> (usize, usize) {
                 | "arrow_function"
                 | "method_definition"
                 | "class_body"
+                | "mod_item"
         ) {
             return (p.start_byte(), p.end_byte());
         }
@@ -55,6 +78,13 @@ fn add(
         Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx")
     );
     out.bindings.push(Binding {
+        rust_extern: out.path.ends_with(".rs") && node.kind() == "extern_crate_declaration",
+        rust_namespace: out.path.ends_with(".rs")
+            && matches!(
+                node.kind(),
+                "use_declaration" | "extern_crate_declaration" | "type_item"
+            ),
+        declaration_at: Some(node.start_byte()),
         hoisted: js && node.kind() == "variable_declarator",
         local: local.into(),
         target,
@@ -77,14 +107,13 @@ fn import_items(out: &mut IndexedDocument, node: Node, prefix: &str, items: &str
         } else {
             original.rsplit("::").next().unwrap_or(original)
         };
-        add(
-            out,
-            node,
-            alias,
-            Some(format!("{prefix}{original}")),
-            None,
-            false,
-        );
+        let target = format!("{prefix}{original}");
+        let target = if out.path.ends_with(".rs") {
+            super::rust_cargo::inline_relative_path(out, node.start_byte(), &target)
+        } else {
+            target
+        };
+        add(out, node, alias, Some(target), None, false);
     }
 }
 fn rust_use(out: &mut IndexedDocument, node: Node, prefix: &str, body: &str) {
@@ -192,6 +221,23 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument) {
         "use_declaration" => {
             if let Some((_, body)) = raw.split_once("use ") {
                 rust_use(out, node, "", body.trim().trim_end_matches(';'));
+            }
+        }
+        "extern_crate_declaration" if out.path.ends_with(".rs") => {
+            if let Some(name) = node.child_by_field_name("name") {
+                let alias = node.child_by_field_name("alias").unwrap_or(name);
+                let name = text(name, source);
+                let target = if matches!(name, "std" | "alloc") {
+                    format!("\0extern_crate::{name}")
+                } else {
+                    format!("\0unverified_extern_crate::{name}")
+                };
+                // Preserve the existing captured-Cargo path for an unrenamed
+                // nonstandard extern. Renamed unknown crates must not resolve
+                // against an unrelated local namespace with a similar name.
+                if matches!(name, "std" | "alloc") || text(alias, source) != name {
+                    add(out, node, text(alias, source), Some(target), None, false);
+                }
             }
         }
         "import_statement" if out.path.ends_with(".py") => {
@@ -392,7 +438,7 @@ pub(super) fn import_local_at(
     }
     last == Some(node.start_byte())
 }
-fn normalized(path: &Path) -> String {
+pub(super) fn normalized(path: &Path) -> String {
     let mut result = PathBuf::new();
     for c in path.components() {
         match c {
@@ -405,7 +451,7 @@ fn normalized(path: &Path) -> String {
     }
     result.to_string_lossy().replace('\\', "/")
 }
-fn module_paths(current: &str, module: &str) -> Vec<String> {
+pub(super) fn module_paths(current: &str, module: &str) -> Vec<String> {
     let current = Path::new(current);
     let parent = current.parent().unwrap_or(Path::new(""));
     if current.extension().is_some_and(|e| e == "rs") {
@@ -481,6 +527,11 @@ fn rust_imported<'a>(
     module: &str,
     name: &str,
 ) -> Vec<&'a Symbol> {
+    if let Some(found) =
+        super::rust_cargo::imported(symbols, documents, current, module, name, allow_methods)
+    {
+        return found;
+    }
     let path = Path::new(current);
     let Some(root) = path
         .ancestors()
@@ -554,7 +605,7 @@ fn effective_type<'a>(doc: &'a IndexedDocument, at: usize, initial: &'a str) -> 
                     && b.target.is_none()
                     && b.start <= at
                     && at < b.end
-                    && b.declared <= at
+                    && (b.rust_namespace || b.declared <= at)
             })
             .max_by_key(|b| (b.start, b.declared))
         {
@@ -573,6 +624,23 @@ fn imported_with_methods<'a>(
     member: Option<&str>,
     allow_methods: bool,
 ) -> Vec<&'a Symbol> {
+    if let Some(external) = target
+        .strip_prefix("\0extern_crate::")
+        .filter(|_| path.ends_with(".rs"))
+    {
+        return member
+            .map(|member| {
+                super::rust_cargo::external_member(
+                    symbols,
+                    documents,
+                    path,
+                    external,
+                    member,
+                    allow_methods,
+                )
+            })
+            .unwrap_or_default();
+    }
     let Some((module, item)) = target.rsplit_once("::") else {
         return vec![];
     };
@@ -657,18 +725,85 @@ pub(super) fn import_target<'a>(
     doc.bindings
         .iter()
         .filter(|b| {
-            b.local == name && b.target.is_some() && b.start <= at && at < b.end && b.declared <= at
+            b.local == name
+                && b.target.is_some()
+                && b.start <= at
+                && at < b.end
+                && (b.rust_namespace || b.declared <= at)
         })
         .max_by_key(|b| (b.start, b.declared))
         .and_then(|b| b.target.as_deref())
+}
+pub(super) fn visible_import_targets(doc: &IndexedDocument, at: usize) -> Vec<&str> {
+    doc.bindings
+        .iter()
+        .filter(|b| b.start <= at && at < b.end && (b.rust_namespace || b.declared <= at))
+        .filter_map(|b| b.target.as_deref())
+        .collect()
+}
+pub(super) fn unknown_rust_namespace(doc: &IndexedDocument, name: &str, at: usize) -> bool {
+    let imports: Vec<_> = doc
+        .bindings
+        .iter()
+        .filter(|b| b.rust_namespace && b.local == name && b.start <= at && at < b.end)
+        .collect();
+    let Some(scope) = imports.iter().map(|b| b.start).max() else {
+        return false;
+    };
+    let imports: Vec<_> = imports.into_iter().filter(|b| b.start == scope).collect();
+    imports.len() != 1 || (imports[0].target.is_none() && imports[0].ty.is_none())
+}
+pub(super) fn unverified_standard_extern(doc: &IndexedDocument, name: &str) -> bool {
+    let entries: Vec<_> = doc
+        .bindings
+        .iter()
+        .filter(|b| b.rust_extern && b.start == 0 && b.local == name)
+        .collect();
+    entries.len() > 1
+        || entries.first().is_some_and(|b| {
+            b.target
+                .as_deref()
+                .and_then(|t| t.strip_prefix("\0extern_crate::"))
+                != Some(name)
+        })
 }
 pub(super) fn references(
     symbols: &[Symbol],
     documents: &HashMap<String, IndexedDocument>,
 ) -> Vec<CallEdge> {
+    references_selected(symbols, documents, None)
+}
+pub(super) fn references_selected(
+    symbols: &[Symbol],
+    documents: &HashMap<String, IndexedDocument>,
+    selected: Option<&HashSet<String>>,
+) -> Vec<CallEdge> {
     let mut result = vec![];
-    for doc in documents.values() {
+    for (id, doc) in documents
+        .iter()
+        .filter(|(id, _)| selected.is_none_or(|set| set.contains(*id)))
+    {
+        if doc.powershell.is_some() {
+            result.extend(super::powershell::resolve_document(documents, doc));
+            continue;
+        }
+        if doc.perl.is_some() {
+            result.extend(super::perl::resolve_document(documents, doc));
+            continue;
+        }
+        if doc.csharp.is_some() {
+            result.extend(super::csharp::resolve_document(documents, doc));
+            continue;
+        }
+        if doc.ruby.is_some() {
+            result.extend(super::ruby::resolve_document(symbols, documents, id, doc));
+            continue;
+        }
         for r in &doc.references {
+            if doc.lua.is_some() {
+                result.push(super::lua::resolve(doc, r));
+                continue;
+            }
             if doc.shell.is_some() {
                 result.push(super::shell::resolve(symbols, documents, doc, r));
                 continue;
@@ -695,6 +830,10 @@ pub(super) fn references(
                 });
                 continue;
             }
+            if let Some(edge) = super::rust_semantics::resolve(symbols, documents, doc, r) {
+                result.push(edge);
+                continue;
+            }
             let caller = symbols.iter().find(|s| Some(&s.id) == r.caller.as_ref());
             let expr = r.expression.replace("::<", "<");
             let expr = expr.split('<').next().unwrap_or(&expr);
@@ -707,7 +846,7 @@ pub(super) fn references(
                     b.local == head
                         && b.start <= r.start_byte
                         && r.start_byte < b.end
-                        && (b.hoisted || b.declared <= r.start_byte)
+                        && (b.hoisted || b.rust_namespace || b.declared <= r.start_byte)
                 })
                 .max_by_key(|b| (b.start, b.declared));
             let mut candidates: Vec<&Symbol> = vec![];
@@ -760,7 +899,7 @@ pub(super) fn references(
                                     && b.target.is_some()
                                     && b.start <= r.start_byte
                                     && r.start_byte < b.end
-                                    && b.declared <= r.start_byte
+                                    && (b.rust_namespace || b.declared <= r.start_byte)
                             })
                             .max_by_key(|b| (b.start, b.declared))
                         {
@@ -837,13 +976,13 @@ pub(super) fn references(
                 reason = "qualified";
                 if candidates.is_empty() {
                     let module = segments[..segments.len() - 1].join("::");
-                    candidates = imported(
-                        symbols,
-                        documents,
-                        &doc.path,
-                        &format!("{module}::{}", r.name),
-                        None,
-                    );
+                    let target = format!("{module}::{}", r.name);
+                    let target = if doc.path.ends_with(".rs") {
+                        super::rust_cargo::inline_relative_path(doc, r.start_byte, &target)
+                    } else {
+                        target
+                    };
+                    candidates = imported(symbols, documents, &doc.path, &target, None);
                     reason = "module_path";
                 }
             } else {
@@ -892,6 +1031,9 @@ pub(super) fn references(
                 }
             }
             // Do not cross project boundaries or fall back to unrelated same-name files.
+            if doc.path.ends_with(".rs") && r.is_call {
+                candidates.retain(|s| s.kind != "mod_item");
+            }
             candidates.retain(|s| {
                 documents
                     .get(&s.document_id)

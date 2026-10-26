@@ -1,0 +1,13 @@
+{
+  "reference_revision": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "fixture_adapter": "owned in-memory SQLite; centrality unavailable fallback",
+  "extracted_source_sha256": "c69268954c964b83b941cdcd2692e7d6f99202681dfee8f0d00ccc61920fcc88",
+  "first_entry_over_budget": {
+    "chars_used": 924,
+    "budget_chars": 400,
+    "budget_ok": false,
+    "files_included": 1
+  },
+  "component_prefix_false_positive": true,
+  "scope": "controlled reference rendering/filter contracts only; no representative ranking or performance claim"
+}

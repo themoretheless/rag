@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-26",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "shared_working_tree_snapshot",
+  "versions": {
+    "index_format": 40,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checkout_index_format_after_checks": 41,
+  "new_native_regressions": 6,
+  "workspace": {
+    "passed": 1335,
+    "failed": 0,
+    "ignored": 1
+  },
+  "workspace_command": "cargo test --workspace --offline",
+  "clippy": "passed --workspace --all-targets --offline -- -D warnings",
+  "owned_file_format": "passed",
+  "diff_check": "passed",
+  "binary": {
+    "sha256": "644709d748f1944fae0373a0368087c607ce6cbd8bd0ac04351ce2b801312d1d",
+    "isolated_copy": true
+  },
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "responsive-regression.json": "passed",
+    "resource-targets-regression.json": "passed",
+    "parsed-resources-regression.json": "passed",
+    "table-impact-regression.json": "passed",
+    "dead-files-regression.json": "passed"
+  },
+  "source_sha256_after_checks": {
+    "Cargo.toml": "c648c20549b0a076c148741d1bef2a42726e4cf80d109d01f73f6c9e6871dc99",
+    "Cargo.lock": "2cef8965594272fd8f071512e0990714e7de8a36e2b1ae16e1d3acd852a5db1c",
+    "src/code_index/file_resources.rs": "30f3186e3c2ad92449d1e70580ddd9550acfd49c26bcbf7f0ec3e5e82047a1e8",
+    "src/code_index/file_resources/inline_style.rs": "25cc1d965b9082600e2b893c860fab6ef871b7d014e771e109867067911375f4",
+    "src/code_index/history.rs": "864f83ff01b90e381f6e75c8bb0f047c5985c071c7e4d9d8a06a241ce26559ac",
+    "src/code_index.rs": "2a937c94c78cab61bffb0b5a8a78ec4be2305fc4303f4222a259dbcc9dd25de5",
+    "scripts/smoke_inline_styles.py": "19be7d1c27cfa086f9b433a11b7c69e084421c200c9d1731ce21422d96ecbc01",
+    "scripts/smoke_file_imports.py": "2f288c49172f92dac2460f92b39c4e3be724829fc67c5f5c593895d672787ba5",
+    "docs/INLINE_STYLE_RESOURCE_RELATIONS.md": "7eb14a3c5c77170299739668b7a54e0293700de0f1c28c5ec3f23c0c77108f37",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "6dcb39284aa7fca644ea4c5b88755bea5219a38abed8feb4a6a46b4ea15982c0"
+  },
+  "logs_sha256": {
+    "format.log": "c9cdb35a68dd54f8075c32fe174e8a340c2a1c2d08d1aea159d1819b7e16e308",
+    "smoke_dead_files.py.log": "805d41d10064b91aa339639845cf94c16c96d5d59e5f21cc0395cbda7f6541be",
+    "smoke_responsive_resources.py.log": "b72368bf545cd84facf87f30721276a32b0999c7ac9c5d2e5f0e853aaa478bc3",
+    "workspace-initial.log": "01adc79e3fc0d42b55232f25e8dbe82cb3d5d1f734090e11fbb231d34a702195",
+    "smoke_table_impact.py.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "clippy.log": "69276a69792edba79825b7ab9fa7c94aa5dd9a5f778c86aae1410a4e2ad46937",
+    "workspace.log": "8be258b49e027d13b3d0dcd6c53d096231d75f1144736ebc7b56632465ba31f8",
+    "clippy-initial.log": "33ada7224c4344a6c26a92916374d458e92b579fad3489bd21c250b66c80055a",
+    "smoke_inline_styles.py.log": "c2a871e86c5727c229a7880cd95709fa1537e779aa61fa269ae378b2d8aa9527",
+    "smoke_file_resources.py.log": "61282e6eb9478202f14f4d8da55923b20cb9fcfcfda0962709669c4f4a74d28c",
+    "focused.log": "1a45951dc0c61daec2312ea71bbe96ef5b5beec8d2d7f859857c1bb9da890992",
+    "smoke_resource_targets.py.log": "1c6eb6a837eb29da34cf07bb0a45f948f49299f518436d4f4af62491abb88b9e",
+    "build.log": "2c2f981b8b1a327e3ac7c0a6270a5b76c5b97e5f05ef0971041d628051503151"
+  },
+  "full_ragraf_parity": false,
+  "browser_or_cascade_proven": false,
+  "full_css_property_validity_verified": false,
+  "representative_quality_or_scale_qualified": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "source_sql_executed": false,
+  "concurrency_note": "The isolated MCP executable and its observed version identify the qualified runtime. The active shared checkout may have advanced independently; source hashes are observations after checks, not a frozen whole-checkout build attestation.",
+  "remaining": [
+    "escaped_computed_and_framework_css",
+    "css_property_validity_cascade_and_rendering",
+    "full_namespace_deployment_uri_resolution",
+    "raw_binary_image_fidelity",
+    "representative_precision_recall_scale"
+  ]
+}

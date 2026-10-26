@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "b16778bac1c0d13e5ad7a1160cd332d67373e9c2fac1b000510d04d73049e6fd",
+    "src/code_index/catalog.rs": "8e8519b2d4ccaa081340e63a9acb331b3acbf42fcc11405fc57339ded201d6e0",
+    "src/code_index/drift.rs": "ea6c777d89d6947b507c9078e289cfc7e0633d27d8fd1198a929ed59312d075b",
+    "src/mcp/analysis.rs": "4614c7fbed3029e80b1e44fe35009f85d12e8875ae5702087f707f2b390c3e63",
+    "crates/rag-mcp-ui/src/gateway.rs": "17ac953c8ee469afdf44aabe9b5f4fa68ec2758c3239015983e2725b5ed9c92c",
+    "scripts/smoke_catalog.py": "f7ea9d9549b403720996971d698886d79d51b27265fcee900c0a60a682159190"
+  },
+  "binary_sha256": "15ae66a014608d8f77cc5e6d3bca6b238611fca30fc2f3048c67276c0d7954a0",
+  "index_format": 24,
+  "index_format_changed": false,
+  "query_contract_version": 1,
+  "verification": {
+    "focused_catalog": {
+      "command": "cargo test --lib code_index::catalog --locked --offline",
+      "passed": 5,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1195,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "routes_regression": "routes-regression.json",
+    "index_status_regression": "index-status-regression.json",
+    "gateway_repeat_regression": "gateway-repeats.json"
+  },
+  "initial_workspace_failures": {
+    "count": 2,
+    "artifact": "initial-workspace-failure.txt",
+    "cause": "accepted test socket inherited nonblocking mode; WouldBlock before headers",
+    "controlled_reproduction": "socket-probe.json",
+    "test_fixture_fixed": true,
+    "production_gateway_changed": false
+  },
+  "production_database_touched": false,
+  "filesystem_verified": false,
+  "config_identity_verified": false,
+  "representative_benchmark": false,
+  "full_catalog_parity": false,
+  "full_ragraf_parity": false
+}

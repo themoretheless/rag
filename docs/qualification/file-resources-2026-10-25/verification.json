@@ -1,0 +1,77 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "source_state": "shared_working_tree_snapshot",
+  "versions": {
+    "index_format": 35,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "new_native_regressions": 6,
+  "workspace": {
+    "passed": 1304,
+    "failed": 0,
+    "ignored": 1
+  },
+  "workspace_test_command": "cargo test --workspace",
+  "clippy": "passed --workspace --all-targets -- -D warnings",
+  "owned_file_format": "passed",
+  "diff_check": "passed",
+  "binary": {
+    "sha256": "5d1e43cce957e46a22445eb209f3c2a12c948d33434810baa94cf6fc6874bfc2",
+    "isolated_copy": true
+  },
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "module-import-regression.json": "passed",
+    "table-impact-regression.json": "passed",
+    "dead-files-regression.json": "passed"
+  },
+  "source_sha256_after_checks": {
+    "src/code_index/file_resources.rs": "c95259b21f9d50bfb7a37df47e70f7903a3e8dcbe33cdb6735d96fbf3abf9a72",
+    "src/code_index/styles.rs": "a25245b31d4db02a821be50390cf783e43d89af3fedbdbece7a2591cd78182d6",
+    "src/code_index/file_impact.rs": "4f9cc53ec09974307996d364877daefee1196388ed4eaaf9c6ff40345e5d015a",
+    "src/code_index/impact.rs": "995411095ec8fd29548658f55435683ac230e079d97a6b0fa83f60469b176c1f",
+    "src/code_index/dead_files.rs": "d02c3fd42b12cccfab976418b01889d513aac859987a6fa977fd4cce3146eed1",
+    "src/code_index/history.rs": "6b457b47f048fdf12c7f7e7f57785ee0c5d37dec6eb66cc1d3f7d56f82389081",
+    "src/code_index.rs": "b0ad8c5ab117a06336d0af8b7b0d27fbdc4999b3c6953edda1f271b3afb74aa9",
+    "src/code_index/resolve.rs": "d1a68d0d1eb0008f51cea0cf619190a3e0011c111d2f22739f47d563d44fb4c3",
+    "src/code_index/git_impact/capture.rs": "ecfd812aea708f7cf56f852bce1fd2d4b640da237e08eb459151625464bec1bb",
+    "scripts/smoke_file_resources.py": "63df13612ba0a42ec2c0ca957aecee8af63707acc72d8d05eba006210d27e020",
+    "scripts/smoke_file_imports.py": "2f288c49172f92dac2460f92b39c4e3be724829fc67c5f5c593895d672787ba5",
+    "docs/FILE_RESOURCE_RELATIONS.md": "273ada29e895f3c833f485ef21b6673ffbcea3ede3e61239e2089ccd5c7eef2b",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "9e1f5266fb46c63950fe6b45b1c0ca21b3093c11bd4d8293dacb7cc21149b531"
+  },
+  "logs_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "smoke_dead_files.py.log": "2a8d593ab94c4e19ca25639ba6e50614b8979eaeeb7bc8a3e252a96bfe9e3660",
+    "focused-initial.log": "9abc74a5456d05d1d63d810411dc81f3e6d42efb4a6da0ecb4d983081eb24bee",
+    "smoke_table_impact.py.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "concurrent-lifetime-incomplete.log": "29fef11466c8e5278dd4019979e980f82eaf713529a8d9021e2d94e5d1899831",
+    "clippy.log": "a6c6c7405a8d1ae4e9baec40130915dccffc01ae7e2ff6fb593891da32287704",
+    "diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "workspace.log": "3a2b590afcf7f01fd7ebcfa3e197b83ccad9820582147a0333ddc137cf900cb9",
+    "clippy-initial.log": "353fcd414e119973aaec3d10dab0aed8a283d01be1087522cbaf8e7d1a1c4d16",
+    "focused-five-cases.log": "f685e162d7394340e0e911ac1a902b0bdf1028582af150407324faf0d9a6cc0e",
+    "smoke_file_resources.py.log": "5ef9080d876ec7cd40966da2c16ef94a63e92b19929acd6ce978dcdea0e19753",
+    "smoke_file_imports.py.log": "2c3042ac3c02c0c62bc65c86a656570ddd793cf623df4f5614997847f6ce6100",
+    "concurrent-module-incomplete.log": "f6dbb707d61d2d4b09f23a673dcb1cdef6b34976153fb5493601c85161b93401",
+    "build.log": "ae9194779285d04a45cb1ce1f658f6f7d25f4d55453bcb7d554064f8f0a75710"
+  },
+  "full_ragraf_parity": false,
+  "runtime_resource_proven": false,
+  "representative_quality_or_scale_qualified": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "source_sql_executed": false,
+  "workspace_snapshot_note": "Workspace passed before the behavior-preserving Git capture if/else Clippy fix; final Clippy and MCP executable include that fix. Another user-owned chat continues editing this checkout.",
+  "remaining": [
+    "nonindexable_or_binary_assets",
+    "deployment_web_root_and_base_url_resolution",
+    "dynamic_framework_preprocessor_links",
+    "srcset_css_image_set_inline_style_attributes",
+    "unsupported_modern_css_grammar",
+    "representative_precision_recall_scale"
+  ]
+}

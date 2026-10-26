@@ -198,7 +198,12 @@ pub(super) fn query(
                 b["expression"].as_str(),
             ))
     });
-    serde_json::json!({"items":items.iter().take(limit).collect::<Vec<_>>(),"total":items.len(),"truncated":items.len()>limit,
+    let overrides: Vec<_> = snapshot
+        .overrides
+        .iter()
+        .filter(|e| mode == "bound" && e.candidates.iter().any(|id| ids.contains(id.as_str())))
+        .collect();
+    serde_json::json!({"method_relations":{"items":overrides.iter().take(limit).collect::<Vec<_>>(),"total":overrides.len(),"truncated":overrides.len()>limit,"kind":"override_candidate","semantic_override_proven":false},"items":items.iter().take(limit).collect::<Vec<_>>(),"total":items.len(),"truncated":items.len()>limit,
         "matched_symbols":selected.len(),"reference_mode":mode,"references_are_lexical":mode=="lexical",
         "resolution":"conservative_static_bindings","runtime_dispatch_proven":false,
         "stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors,

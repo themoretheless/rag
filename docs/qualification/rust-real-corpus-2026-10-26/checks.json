@@ -1,0 +1,14 @@
+{
+  "workspace_checkpoint": {
+    "passed": 1417,
+    "ignored": 1,
+    "final": false
+  },
+  "final_focused_rust_passed": 40,
+  "strict_clippy": true,
+  "python_tests_passed": 3,
+  "native_mcp_parity": true,
+  "identical_inputs_and_labels": true,
+  "full_plan_complete": false,
+  "source_checkout_frozen": false
+}

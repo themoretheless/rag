@@ -1,0 +1,10 @@
+Diff in /Users/themoretheless/Documents/Sources/rag/src/code_index.rs:39:
+ pub use routes::{RouteKind, RouteQuery};
+ pub mod status;
+ pub use repo_map::RepoMapQuery;
+-mod resolve;
+ mod resolution_cache;
++mod resolve;
+ pub use resolution_cache::IndexOptions;
+ mod shell;
+ pub(crate) mod source;

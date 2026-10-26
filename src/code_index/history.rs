@@ -4,7 +4,7 @@ use duckdb::Connection;
 use rmcp::schemars;
 use std::collections::{BTreeMap, BTreeSet};
 
-type SourceRow = (String, String, String, i64, Option<String>);
+type SourceRow = (String, String, String, i64, Option<String>, bool);
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct File {
     pub(super) id: String,
@@ -33,14 +33,15 @@ pub(super) fn publish(
     conn: &Connection,
     docs: &[SourceRow],
     analyses: &[(String, String)],
-) -> Result<(i64, bool)> {
+    force_full: bool,
+) -> Result<(i64, bool, rag_mcp_core::IndexResolutionStats)> {
     let payloads: HashMap<_, _> = analyses
         .iter()
         .map(|(id, p)| (id.as_str(), p.as_str()))
         .collect();
     let mut files: Vec<_> = docs
         .iter()
-        .map(|(id, path, source, rev, project)| File {
+        .map(|(id, path, source, rev, project, _)| File {
             id: id.clone(),
             path: path.clone(),
             project: project.clone(),
@@ -51,7 +52,16 @@ pub(super) fn publish(
         })
         .collect();
     files.sort_by(|a, b| a.id.cmp(&b.id));
-    let fingerprint = content_hash(&serde_json::to_string(&(INDEX_FORMAT_VERSION, &files))?);
+    let source_file_ids: BTreeSet<_> = docs
+        .iter()
+        .filter(|(_, _, _, _, _, source_file)| *source_file)
+        .map(|(id, _, _, _, _, _)| id.as_str())
+        .collect();
+    let fingerprint = content_hash(&serde_json::to_string(&(
+        INDEX_FORMAT_VERSION,
+        &files,
+        &source_file_ids,
+    ))?);
     let current: Option<(i64, String)> = conn
         .query_row(
             "SELECT id,fingerprint FROM code_index_revisions ORDER BY id DESC LIMIT 1",
@@ -59,10 +69,15 @@ pub(super) fn publish(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    if let Some((id, ref previous)) = current {
-        if previous == &fingerprint {
-            return Ok((id, false));
-        }
+    let unchanged = current
+        .as_ref()
+        .is_some_and(|(_, previous)| previous == &fingerprint);
+    if unchanged && !force_full {
+        return Ok((
+            current.as_ref().unwrap().0,
+            false,
+            resolution_cache::noop_stats(),
+        ));
     }
     // A return to earlier content is a new chronological revision, not a time rewind.
     let revision = current.as_ref().map_or(1, |v| v.0 + 1);
@@ -75,9 +90,60 @@ pub(super) fn publish(
             indexed.insert(file.id.clone(), doc);
         }
     }
-    let references = resolve::references(&symbols, &indexed);
+    let configured = rust_cfg::apply(&mut indexed);
+    symbols = indexed.values().flat_map(|d| d.symbols.clone()).collect();
+    for file in &mut files {
+        if let Some(doc) = indexed.get(&file.id) {
+            file.analysis = Some(serde_json::to_string(doc)?);
+        }
+    }
+    let previous = if let Some((id, _)) = &current {
+        Some(frozen_graph(conn, *id)?)
+    } else {
+        None
+    };
+    let mut resolved = resolution_cache::resolve(
+        &symbols,
+        &indexed,
+        previous.as_ref().and_then(|v| v.get("resolution_cache")),
+        force_full,
+    )?;
+    if unchanged {
+        let mut old = previous.as_ref().unwrap()["references"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        old.sort_by_key(serde_json::Value::to_string);
+        let mut full: Vec<_> = resolved
+            .edges
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<_, _>>()?;
+        full.sort_by_key(serde_json::Value::to_string);
+        if old != full {
+            return Err(AppError::Invalid("full binding recomputation differs from immutable revision; cache equivalence failed".into()));
+        }
+        resolved.stats.equivalent_to_existing = Some(true);
+        return Ok((current.as_ref().unwrap().0, false, resolved.stats));
+    }
+    let references = resolved.edges;
     let calls: Vec<_> = references.iter().filter(|r| r.reference.is_call).collect();
-    let graph = serde_json::json!({"references":references,"calls":calls,"inheritance":inheritance::edges(&symbols,&indexed),"entrypoints":analysis::entrypoints(&symbols,&indexed),"sql":sql::snapshot(&indexed),"format_version":INDEX_FORMAT_VERSION});
+    let targets: Vec<_> = files
+        .iter()
+        .filter(|f| source_file_ids.contains(f.id.as_str()) && !indexable(&f.path))
+        .map(|f| {
+            resource_targets::ResourceTarget::frozen(
+                &f.id,
+                &f.path,
+                f.project.clone(),
+                f.revision,
+                f.hash.clone(),
+            )
+        })
+        .collect();
+    let graph = serde_json::json!({"client_endpoints_format":1,"translation_keys_format":1,"translation_keys":translation_keys::snapshot(&indexed),"powershell_syntax_format":1,"perl_syntax_format":1,"csharp_syntax_format":1,"ruby_syntax_format":1,"inline_style_resources_format":1,"responsive_resources_format":1,"file_resource_targets":targets,"file_resources":file_resources::edges_with_targets(&indexed,&targets),"file_imports":file_imports::edges(&indexed),"references":references,"calls":calls,"inheritance":inheritance::edges(&symbols,&indexed),"overrides":inheritance::overrides(&symbols,&indexed),"entrypoints":analysis::entrypoints(&symbols,&indexed),"sql":sql::snapshot(&indexed),"rust_build_contexts":configured.contexts,"format_version":INDEX_FORMAT_VERSION});
+    let mut graph = graph;
+    graph["resolution_cache"] = resolved.cache;
     conn.execute(
         "INSERT INTO code_index_revisions(id,fingerprint,graph_json) VALUES (?,?,?)",
         params![revision, fingerprint, serde_json::to_string(&graph)?],
@@ -154,7 +220,7 @@ pub(super) fn publish(
             }
         }
     }
-    Ok((revision, true))
+    Ok((revision, true, resolved.stats))
 }
 fn files_at(conn: &Connection, rev: i64) -> Result<Vec<File>> {
     files(conn, rev, None)
@@ -189,7 +255,11 @@ pub(super) fn files(conn: &Connection, rev: i64, project: Option<&str>) -> Resul
     Ok(files)
 }
 fn symbol_key(s: &Symbol) -> String {
-    format!("{}::{}::{}", s.document_id, s.qualified_name, s.kind)
+    let base = format!("{}::{}::{}", s.document_id, s.qualified_name, s.kind);
+    s.build_context.as_ref().map_or_else(
+        || base.clone(),
+        |context| format!("{base}::build:{context}"),
+    )
 }
 fn symbols(files: &[File]) -> Result<BTreeMap<String, Vec<serde_json::Value>>> {
     let mut result: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
@@ -414,7 +484,73 @@ fn schema_changes(
     let new_diagnostics = diagnostics(after);
     serde_json::json!({"available":true,"items":items.iter().take(limit).collect::<Vec<_>>(),"total":items.len(),"truncated":items.len()>limit || items.iter().any(|v|v["columns_truncated"]==true||v["evidence_truncated"]==true||v["constraints_truncated"]==true)||old_diagnostics.len()>limit||new_diagnostics.len()>limit,"scope":"derived_table_columns_and_completeness","expression_changes_available":expressions_available,"constraint_changes_available":constraints_available,"expression_comparison":"canonical_sql_ast_text_not_semantic_equivalence","before_diagnostics":old_diagnostics.iter().take(limit).collect::<Vec<_>>(),"after_diagnostics":new_diagnostics.iter().take(limit).collect::<Vec<_>>(),"before_diagnostics_total":old_diagnostics.len(),"after_diagnostics_total":new_diagnostics.len(),"replay_performed":false,"live_database_verified":false})
 }
-fn relations(graph: &serde_json::Value, files: &[File]) -> Result<BTreeSet<String>> {
+fn translation_comparison(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+    before_files: &[File],
+    after_files: &[File],
+    limit: usize,
+) -> (HashSet<String>, serde_json::Value) {
+    let available = before["translation_keys_format"] == 1 && after["translation_keys_format"] == 1;
+    if !available {
+        return (
+            HashSet::new(),
+            serde_json::json!({"available":false,"reason":"legacy_missing_translation_key_capture","absence_proven":false}),
+        );
+    }
+    let all_before: HashSet<_> = before_files.iter().map(|f| f.id.as_str()).collect();
+    let all_after: HashSet<_> = after_files.iter().map(|f| f.id.as_str()).collect();
+    let qualified = |g: &serde_json::Value| {
+        g["translation_keys"]["coverage"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|c| c["complete"] == true)
+            .filter_map(|c| c["document_id"].as_str().map(str::to_owned))
+            .collect::<HashSet<_>>()
+    };
+    let before_ok = qualified(before);
+    let after_ok = qualified(after);
+    let relevant: BTreeSet<_> = before_files
+        .iter()
+        .chain(after_files)
+        .filter(|f| translation_keys::supported(&f.path))
+        .map(|f| f.id.as_str())
+        .collect();
+    let mut eligible = HashSet::new();
+    let mut excluded = Vec::new();
+    for id in relevant {
+        if (!all_before.contains(id) || before_ok.contains(id))
+            && (!all_after.contains(id) || after_ok.contains(id))
+        {
+            eligible.insert(id.to_string());
+        } else {
+            excluded.push(id);
+        }
+    }
+    let report = serde_json::json!({"available":true,"eligible_documents":eligible.len(),"excluded_documents":excluded.iter().take(limit).collect::<Vec<_>>(),"excluded_documents_total":excluded.len(),"excluded_documents_truncated":excluded.len()>limit,"complete_for_supported_documents":excluded.is_empty(),"comparison":"source_owner_key_syntax_kind_and_occurrence_count_ignore_position_only_changes","absence_proven":false});
+    (eligible, report)
+}
+struct RelationCoverage {
+    client_endpoints: bool,
+    translation_documents: HashSet<String>,
+    overrides: bool,
+    file_imports: bool,
+    file_resources: bool,
+    resource_targets: bool,
+    responsive: bool,
+    css_urls: bool,
+    inline_styles: bool,
+    ruby: bool,
+    csharp: bool,
+    perl: bool,
+    powershell: bool,
+}
+fn relations(
+    graph: &serde_json::Value,
+    files: &[File],
+    coverage: &RelationCoverage,
+) -> Result<BTreeSet<String>> {
     let mut keys = HashMap::new();
     let ids: HashSet<_> = files.iter().map(|f| f.id.as_str()).collect();
     for file in files {
@@ -426,6 +562,99 @@ fn relations(graph: &serde_json::Value, files: &[File]) -> Result<BTreeSet<Strin
         }
     }
     let mut out = BTreeSet::new();
+    let mut key_counts = BTreeMap::<String, usize>::new();
+    for occurrence in graph["translation_keys"]["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let Some(document) = occurrence["document_id"]
+            .as_str()
+            .filter(|id| ids.contains(id) && coverage.translation_documents.contains(*id))
+        else {
+            continue;
+        };
+        let owner = occurrence["owner"].as_str().and_then(|id| keys.get(id));
+        let key = serde_json::to_string(
+            &serde_json::json!({"kind":"uses_key","source_document":document,"project":occurrence["project"],"owner":owner,"target_key":occurrence["key"],"usage_kind":occurrence["usage_kind"],"syntax":occurrence["syntax"],"runtime_binding_proven":false}),
+        )?;
+        *key_counts.entry(key).or_default() += 1;
+    }
+    for (key, count) in key_counts {
+        let mut value: serde_json::Value = serde_json::from_str(&key)?;
+        value["occurrences"] = count.into();
+        out.insert(serde_json::to_string(&value)?);
+    }
+    if coverage.file_imports {
+        for e in graph["file_imports"].as_array().into_iter().flatten() {
+            if e["kind"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("powershell_"))
+                && !coverage.powershell
+            {
+                continue;
+            }
+            if e["kind"].as_str().is_some_and(|s| s.starts_with("perl_")) && !coverage.perl {
+                continue;
+            }
+            if e["kind"].as_str().is_some_and(|s| s.starts_with("ruby_")) && !coverage.ruby {
+                continue;
+            }
+            let Some(source) = e["document_id"].as_str().filter(|id| ids.contains(id)) else {
+                continue;
+            };
+            for target in e["candidates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str())
+                .filter(|id| ids.contains(id))
+            {
+                out.insert(serde_json::to_string(&serde_json::json!({"kind":"file_import_candidate","source":source,"target":target,"module":e["module"],"import_kind":e["kind"],"resolution":e["resolution"]}))?);
+            }
+        }
+    }
+    if coverage.file_resources {
+        let parsed_ids: HashSet<_> = files
+            .iter()
+            .filter(|f| f.analysis.is_some())
+            .map(|f| f.id.as_str())
+            .collect();
+        for e in graph["file_resources"].as_array().into_iter().flatten() {
+            if e["inline"].is_object() && !coverage.inline_styles {
+                continue;
+            }
+            if e["choice"].is_object() && !coverage.responsive {
+                continue;
+            }
+            if e["reference_kind"] == "css:url" && !coverage.css_urls {
+                continue;
+            }
+            let Some(source) = e["document_id"].as_str().filter(|id| ids.contains(id)) else {
+                continue;
+            };
+            for target in e["candidates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str())
+                .filter(|id| ids.contains(id))
+            {
+                if !coverage.resource_targets && !parsed_ids.contains(target) {
+                    continue;
+                }
+                let mut key = serde_json::json!({"kind":"file_resource_candidate","source":source,"target":target,"url":e["target"],"reference_kind":e["reference_kind"],"resolution":e["resolution"]});
+                if e["choice"].is_object() {
+                    let c = &e["choice"];
+                    key["choice"] = serde_json::json!({"syntax":c["syntax"],"descriptors":c["descriptors"],"descriptors_hash":c["descriptors_hash"],"descriptors_truncated":c["descriptors_truncated"],"type_hint":c["type_hint"],"descriptor_validation":c["descriptor_validation"]});
+                }
+                if e["inline"].is_object() {
+                    key["inline"] = serde_json::json!({"property":e["inline"]["property"],"property_hash":e["inline"]["property_hash"],"property_truncated":e["inline"]["property_truncated"],"css_reference_kind":e["inline"]["css_reference_kind"]});
+                }
+                out.insert(serde_json::to_string(&key)?);
+            }
+        }
+    }
     for edge in graph["references"]
         .as_array()
         .into_iter()
@@ -452,6 +681,18 @@ fn relations(graph: &serde_json::Value, files: &[File]) -> Result<BTreeSet<Strin
         }
     }
     for edge in graph["inheritance"].as_array().into_iter().flatten() {
+        if edge["relation"] == "powershell_base_type_candidate" && !coverage.powershell {
+            continue;
+        }
+        if edge["relation"] == "perl_parent_package_candidate" && !coverage.perl {
+            continue;
+        }
+        if edge["relation"] == "csharp_base_type_candidate" && !coverage.csharp {
+            continue;
+        }
+        if edge["relation"] == "ruby_superclass_candidate" && !coverage.ruby {
+            continue;
+        }
         let Some(derived) = edge["derived"].as_str().and_then(|id| keys.get(id)) else {
             continue;
         };
@@ -465,7 +706,51 @@ fn relations(graph: &serde_json::Value, files: &[File]) -> Result<BTreeSet<Strin
             out.insert(serde_json::to_string(&serde_json::json!({"kind":"inheritance","source":derived,"target":target,"relation":edge["relation"],"resolution":edge["resolution"],"hierarchy_status":edge["hierarchy_status"]}))?);
         }
     }
+    for edge in graph["overrides"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|_| coverage.overrides)
+    {
+        let Some(derived) = edge["derived"].as_str().and_then(|id| keys.get(id)) else {
+            continue;
+        };
+        for target in edge["candidates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .filter_map(|id| keys.get(id))
+        {
+            out.insert(serde_json::to_string(&serde_json::json!({"kind":"method_override_candidate","source":derived,"target":target,"resolution":edge["resolution"],"semantic_override_proven":false}))?);
+        }
+    }
     for entry in graph["entrypoints"].as_array().into_iter().flatten() {
+        if entry["kind"] == "http_route_candidate" && entry["symbol_id"].is_null() {
+            if let Some(document) = entry["document_id"].as_str().filter(|id| ids.contains(id)) {
+                out.insert(serde_json::to_string(&serde_json::json!({
+                    "kind":"unbound_route_registration", "source_document":document,
+                    "route":entry["route"], "method":entry["method"],
+                    "handler_expression":entry["handler_expression"], "resolution":entry["resolution"]
+                }))?);
+            }
+        }
+        if entry["kind"] == "http_endpoint_reference" {
+            if entry["reference_kind"]
+                .as_str()
+                .is_some_and(|k| k.starts_with("js:jquery:") || k.starts_with("js:axios:"))
+                && !coverage.client_endpoints
+            {
+                continue;
+            }
+            if let Some(document) = entry["document_id"].as_str().filter(|id| ids.contains(id)) {
+                out.insert(serde_json::to_string(&serde_json::json!({
+                    "kind":"endpoint_reference", "source_document":document,
+                    "target":entry["route"], "reference_kind":entry["reference_kind"],
+                    "resolution":entry["resolution"], "request_method":entry["request_method"]
+                }))?);
+            }
+        }
         if let Some(symbol) = entry["symbol_id"].as_str().and_then(|id| keys.get(id)) {
             out.insert(serde_json::to_string(&serde_json::json!({"kind":"entrypoint","source":symbol,"entrypoint_kind":entry["kind"],"route":entry["route"],"method":entry["method"],"resolution":entry["resolution"]}))?);
         }
@@ -539,13 +824,56 @@ impl Store {
                 .iter()
                 .all(|k| g[*k].is_array())
         });
+        let method_relations_available =
+            old_graph["overrides"].is_array() && new_graph["overrides"].is_array();
+        let file_import_relations_available =
+            old_graph["file_imports"].is_array() && new_graph["file_imports"].is_array();
+        let file_resource_relations_available =
+            old_graph["file_resources"].is_array() && new_graph["file_resources"].is_array();
+        let resource_target_relations_available = old_graph["file_resource_targets"].is_array()
+            && new_graph["file_resource_targets"].is_array();
+        let responsive_resource_relations_available = old_graph["responsive_resources_format"] == 1
+            && new_graph["responsive_resources_format"] == 1;
+        let css_url_classification_comparable =
+            old_graph["responsive_resources_format"] == new_graph["responsive_resources_format"];
+        let inline_style_relations_available = old_graph["inline_style_resources_format"] == 1
+            && new_graph["inline_style_resources_format"] == 1;
+        let ruby_relations_available =
+            old_graph["ruby_syntax_format"] == 1 && new_graph["ruby_syntax_format"] == 1;
+        let csharp_relations_available =
+            old_graph["csharp_syntax_format"] == 1 && new_graph["csharp_syntax_format"] == 1;
+        let perl_relations_available =
+            old_graph["perl_syntax_format"] == 1 && new_graph["perl_syntax_format"] == 1;
+        let powershell_relations_available = old_graph["powershell_syntax_format"] == 1
+            && new_graph["powershell_syntax_format"] == 1;
+        let limit = q.limit.unwrap_or(100).clamp(1, 500);
+        let (translation_documents, translation_key_comparison) =
+            translation_comparison(&old_graph, &new_graph, &before_files, &after_files, limit);
+        let translation_key_relations_available = translation_key_comparison["available"] == true;
+        let client_endpoint_relations_available =
+            old_graph["client_endpoints_format"] == 1 && new_graph["client_endpoints_format"] == 1;
+        let relation_coverage = RelationCoverage {
+            client_endpoints: client_endpoint_relations_available,
+            translation_documents,
+            overrides: method_relations_available,
+            file_imports: file_import_relations_available,
+            file_resources: file_resource_relations_available,
+            resource_targets: resource_target_relations_available,
+            responsive: responsive_resource_relations_available,
+            css_urls: css_url_classification_comparable,
+            inline_styles: inline_style_relations_available,
+            ruby: ruby_relations_available,
+            csharp: csharp_relations_available,
+            perl: perl_relations_available,
+            powershell: powershell_relations_available,
+        };
         let old_relations = if relations_available {
-            relations(&old_graph, &before_files)?
+            relations(&old_graph, &before_files, &relation_coverage)?
         } else {
             BTreeSet::new()
         };
         let new_relations = if relations_available {
-            relations(&new_graph, &after_files)?
+            relations(&new_graph, &after_files, &relation_coverage)?
         } else {
             BTreeSet::new()
         };
@@ -557,11 +885,21 @@ impl Store {
             .difference(&new_relations)
             .map(|s| serde_json::from_str::<serde_json::Value>(s))
             .collect::<std::result::Result<_, _>>()?;
-        let limit = q.limit.unwrap_or(100).clamp(1, 500);
         let schema_diff = schema_changes(&old_graph, &new_graph, q.project.as_deref(), limit);
-        Ok(
-            serde_json::json!({"before_format_version":old_graph["format_version"],"after_format_version":new_graph["format_version"],"analysis_format_changed":old_graph["format_version"]!=new_graph["format_version"],"schema_diff":schema_diff,"relations_available":relations_available,"relations_scope":"non_call_candidates_inheritance_and_symbol_entrypoints","relations_added":relation_added.iter().take(limit).collect::<Vec<_>>(),"relations_added_total":relation_added.len(),"relations_removed":relation_removed.iter().take(limit).collect::<Vec<_>>(),"relations_removed_total":relation_removed.len(),"relations_truncated":relation_added.len()>limit||relation_removed.len()>limit,"before":q.before,"after":after,"project":q.project,"files":changes.iter().take(limit).collect::<Vec<_>>(),"file_changes_total":changes.len(),"symbols":symbol_changes.iter().take(limit).collect::<Vec<_>>(),"symbol_changes_total":symbol_changes.len(),"edges_added":added.iter().take(limit).collect::<Vec<_>>(),"edges_added_total":added.len(),"edges_removed":removed.iter().take(limit).collect::<Vec<_>>(),"edges_removed_total":removed.len(),"truncated":changes.len()>limit||symbol_changes.len()>limit||added.len()>limit||removed.len()>limit||relation_added.len()>limit||relation_removed.len()>limit||schema_diff["truncated"]==true,"edge_semantics":"resolved_static_candidate_links","bodies_included":false,"immutable":true}),
-        )
+        let mut report = serde_json::json!({"before_format_version":old_graph["format_version"],"after_format_version":new_graph["format_version"],"analysis_format_changed":old_graph["format_version"]!=new_graph["format_version"],"schema_diff":schema_diff,"relations_available":relations_available,"client_endpoint_relations_available":client_endpoint_relations_available,"method_relations_available":method_relations_available,"file_import_relations_available":file_import_relations_available,"file_resource_relations_available":file_resource_relations_available,"resource_target_relations_available":resource_target_relations_available,"responsive_resource_relations_available":responsive_resource_relations_available,"inline_style_relations_available":inline_style_relations_available,"ruby_relations_available":ruby_relations_available,"csharp_relations_available":csharp_relations_available,"perl_relations_available":perl_relations_available,"powershell_relations_available":powershell_relations_available,"css_url_classification_comparable":css_url_classification_comparable,"translation_key_relations_available":translation_key_relations_available,"translation_key_comparison":translation_key_comparison,"relations_scope":"uses_key_candidates_non_call_candidates_file_import_candidates_file_resource_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references","relations_added":relation_added.iter().take(limit).collect::<Vec<_>>(),"relations_added_total":relation_added.len(),"relations_removed":relation_removed.iter().take(limit).collect::<Vec<_>>(),"relations_removed_total":relation_removed.len(),"relations_truncated":relation_added.len()>limit||relation_removed.len()>limit,"before":q.before,"after":after,"project":q.project,"files":changes.iter().take(limit).collect::<Vec<_>>(),"file_changes_total":changes.len(),"symbols":symbol_changes.iter().take(limit).collect::<Vec<_>>(),"symbol_changes_total":symbol_changes.len(),"edges_added":added.iter().take(limit).collect::<Vec<_>>(),"edges_added_total":added.len(),"edges_removed":removed.iter().take(limit).collect::<Vec<_>>(),"edges_removed_total":removed.len(),"truncated":changes.len()>limit||symbol_changes.len()>limit||added.len()>limit||removed.len()>limit||relation_added.len()>limit||relation_removed.len()>limit||schema_diff["truncated"]==true,"edge_semantics":"resolved_static_candidate_links","bodies_included":false,"immutable":true});
+        let contexts = |graph: &serde_json::Value| {
+            graph["rust_build_contexts"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| q.project.as_ref().is_none_or(|p| item["project"] == *p))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+        };
+        let old_contexts = contexts(&old_graph);
+        let new_contexts = contexts(&new_graph);
+        report["rust_build_contexts"] = serde_json::json!({"available":old_contexts.is_some()&&new_contexts.is_some(),"before":old_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"after":new_contexts.as_ref().map(|v|v.iter().take(50).collect::<Vec<_>>()),"before_total":old_contexts.as_ref().map(Vec::len),"after_total":new_contexts.as_ref().map(Vec::len),"truncated":old_contexts.as_ref().is_some_and(|v|v.len()>50)||new_contexts.as_ref().is_some_and(|v|v.len()>50),"changed":if old_contexts.is_some()&&new_contexts.is_some(){Some(old_contexts!=new_contexts)}else{None}});
+        Ok(report)
     }
 }
 
@@ -578,6 +916,168 @@ mod tests {
             title: path.into(),
             ..Default::default()
         }
+    }
+    #[test]
+    fn frozen_method_relations_diff_and_legacy_missing_coverage_are_explicit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("overrides.duckdb")).unwrap();
+        let mut d = doc(
+            "a",
+            "/p/models.py",
+            "class Base:\n    def work(self): pass\nclass Child(Base):\n    def work(self): pass\n",
+        );
+        store.upsert_document(&d).unwrap();
+        store.index_code().unwrap();
+        assert_eq!(
+            frozen_graph(&store.lock().unwrap(), 1).unwrap()["overrides"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        d.content = "class Base:\n    def work(self): pass\nclass Child(Base): pass\n".into();
+        store.upsert_document(&d).unwrap();
+        store.index_code().unwrap();
+        let q = DiffQuery {
+            before: 1,
+            after: Some(2),
+            project: None,
+            limit: None,
+        };
+        let result = store.code_index_diff(&q).unwrap();
+        assert_eq!(result["method_relations_available"], true);
+        assert!(result["relations_removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "method_override_candidate"));
+        let mut graph = frozen_graph(&store.lock().unwrap(), 1).unwrap();
+        graph.as_object_mut().unwrap().remove("overrides");
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
+                [graph.to_string()],
+            )
+            .unwrap();
+        let legacy = store.code_index_diff(&q).unwrap();
+        assert_eq!(legacy["method_relations_available"], false);
+        assert!(!legacy["relations_removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "method_override_candidate"));
+    }
+    #[test]
+    fn translation_key_history_ignores_offsets_but_keeps_counts_and_legacy_gaps() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("key-history.duckdb")).unwrap();
+        let mut view = doc("view", "/p/view.html", "%{key} %{key}");
+        view.wing = Some("p".into());
+        let mut code = doc(
+            "code",
+            "/p/render.php",
+            "<?php function render(){Translate('key');}",
+        );
+        code.wing = Some("p".into());
+        for d in [&view, &code] {
+            store.upsert_document(d).unwrap();
+        }
+        store.index_code().unwrap();
+        let before = frozen_graph(&store.lock().unwrap(), 1).unwrap();
+        view.content = format!("\n\n{}", view.content);
+        code.content = format!("\n{}", code.content);
+        for d in [&view, &code] {
+            store.upsert_document(d).unwrap();
+        }
+        store.index_code().unwrap();
+        let diff = store
+            .code_index_diff(&DiffQuery {
+                before: 1,
+                after: Some(2),
+                project: Some("p".into()),
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(diff["translation_key_relations_available"], true);
+        assert!(
+            !diff["relations_added"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(diff["relations_removed"].as_array().unwrap())
+                .any(|r| r["kind"] == "uses_key"),
+            "{diff}"
+        );
+        view.content = "%{key}".into();
+        store.upsert_document(&view).unwrap();
+        store.index_code().unwrap();
+        let q = DiffQuery {
+            before: 2,
+            after: Some(3),
+            project: Some("p".into()),
+            limit: None,
+        };
+        let changed = store.code_index_diff(&q).unwrap();
+        assert!(changed["relations_added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "uses_key" && r["occurrences"] == 1));
+        assert!(changed["relations_removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "uses_key" && r["occurrences"] == 2));
+        let mut legacy = frozen_graph(&store.lock().unwrap(), 2).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("translation_keys_format");
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE code_index_revisions SET graph_json=? WHERE id=2",
+                [legacy.to_string()],
+            )
+            .unwrap();
+        let unknown = store.code_index_diff(&q).unwrap();
+        assert_eq!(unknown["translation_key_relations_available"], false);
+        assert!(!unknown["relations_removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "uses_key"));
+        assert_eq!(frozen_graph(&store.lock().unwrap(), 1).unwrap(), before);
+    }
+    #[test]
+    fn limited_translation_captures_are_not_compared_as_complete_negative_facts() {
+        let file = File {
+            id: "a".into(),
+            path: "/p/view.html".into(),
+            project: Some("p".into()),
+            revision: 1,
+            hash: "hash".into(),
+            source: String::new(),
+            analysis: None,
+        };
+        let before = serde_json::json!({"translation_keys_format":1,"translation_keys":{"coverage":[{"document_id":"a","complete":true}]}});
+        let after = serde_json::json!({"translation_keys_format":1,"translation_keys":{"coverage":[{"document_id":"a","complete":false}]}});
+        let (eligible, report) = translation_comparison(
+            &before,
+            &after,
+            std::slice::from_ref(&file),
+            std::slice::from_ref(&file),
+            10,
+        );
+        assert!(eligible.is_empty());
+        assert_eq!(report["excluded_documents_total"], 1);
+        assert_eq!(report["complete_for_supported_documents"], false);
+        let (eligible, _) =
+            translation_comparison(&before, &before, std::slice::from_ref(&file), &[], 10);
+        assert!(eligible.contains("a"));
     }
     #[test]
     fn frozen_schema_and_relations_diff_ignore_line_moves_and_project_diagnostics() {
@@ -910,6 +1410,66 @@ mod tests {
         let history = store.code_index_history(&HistoryQuery::default()).unwrap();
         assert_eq!(history["items"].as_array().unwrap().len(), 1);
         assert_eq!(store.code_snapshot().unwrap().stale_documents, vec!["a"]);
+    }
+    #[test]
+    fn client_endpoints_history_is_frozen_and_guards_legacy_capture() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("clients.duckdb")).unwrap();
+        store
+            .upsert_document(&doc(
+                "client",
+                "/p/client.js",
+                "$.ajax({url:'/target',method:'GET'});",
+            ))
+            .unwrap();
+        store.index_code().unwrap();
+        store
+            .upsert_document(&doc(
+                "client",
+                "/p/client.js",
+                "$.ajax({url:'/target',method:'POST'});",
+            ))
+            .unwrap();
+        store.index_code().unwrap();
+        let q = DiffQuery {
+            before: 1,
+            after: Some(2),
+            project: None,
+            limit: None,
+        };
+        let diff = store.code_index_diff(&q).unwrap();
+        assert_eq!(diff["client_endpoint_relations_available"], true);
+        assert!(diff["relations_added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["reference_kind"] == "js:jquery:ajax" && r["request_method"] == "POST"));
+        assert!(diff["relations_removed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["request_method"] == "GET"));
+        let mut graph = frozen_graph(&store.lock().unwrap(), 1).unwrap();
+        graph
+            .as_object_mut()
+            .unwrap()
+            .remove("client_endpoints_format");
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE code_index_revisions SET graph_json=? WHERE id=1",
+                [graph.to_string()],
+            )
+            .unwrap();
+        let legacy = store.code_index_diff(&q).unwrap();
+        assert_eq!(legacy["client_endpoint_relations_available"], false);
+        assert!(!legacy["relations_added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(legacy["relations_removed"].as_array().unwrap())
+            .any(|r| r["reference_kind"] == "js:jquery:ajax"));
     }
 }
 

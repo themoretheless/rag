@@ -1,0 +1,27 @@
+Generating SCIP start...
+2026-10-26T02:42:28.059266+04:00 ERROR Config Error(s) error_sink=ConfigErrors([])
+rust-analyzer: Loading discovering sysroot
+rust-analyzer: Loading querying project metadata
+rust-analyzer: Loading cargo metadata: started
+rust-analyzer: Loading cargo metadata: started
+rust-analyzer: Loading cargo metadata:     Blocking waiting for file lock on package cache
+rust-analyzer: Loading cargo metadata: finished
+rust-analyzer: Loading cargo metadata: finished
+rust-analyzer: Loading build script serde_json run
+rust-analyzer: Loading build script quote run
+rust-analyzer: Loading build script zmij run
+rust-analyzer: Loading build script serde_core run
+rust-analyzer: Loading build script serde run
+rust-analyzer: Loading build script proc-macro2 run
+rust-analyzer: Loading build script zerocopy run
+rust-analyzer: Loading build script libc run
+rust-analyzer: Loading build script num-traits run
+rust-analyzer: Loading build script alloca run
+rust-analyzer: Loading proc-macro zerocopy-derive built
+rust-analyzer: Loading proc-macro serde_derive built
+2026-10-26T02:42:35.274797+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(274f2) } })
+2026-10-26T02:42:35.274856+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(274f2) } })
+2026-10-26T02:42:35.285761+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(274f5) } })
+2026-10-26T02:42:35.285979+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(274f5) } })
+2026-10-26T02:42:35.285996+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(274f5) } })
+Generating SCIP finished 7.230439917s

@@ -1,0 +1,24 @@
+    Checking symbol-path-fixture v0.1.0 (/Users/themoretheless/Documents/Sources/rag/tests/fixtures/code-intelligence/symbol-paths)
+warning: function `value` is never used
+ --> src/lib.rs:6:4
+  |
+6 | fn value() { let _callback = finish; }
+  |    ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `duplicate` is never used
+ --> src/lib.rs:7:16
+  |
+7 | mod a { pub fn duplicate() {} }
+  |                ^^^^^^^^^
+
+warning: function `duplicate` is never used
+ --> src/lib.rs:8:16
+  |
+8 | mod b { pub fn duplicate() {} }
+  |                ^^^^^^^^^
+
+warning: `symbol-path-fixture` (lib test) generated 3 warnings (3 duplicates)
+warning: `symbol-path-fixture` (lib) generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s

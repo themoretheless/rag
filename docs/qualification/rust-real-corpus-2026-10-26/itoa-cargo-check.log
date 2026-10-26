@@ -1,0 +1,4 @@
+    Updating crates.io index
+     Locking 53 packages to highest compatible versions
+    Checking itoa v1.0.18 (/private/tmp/rag-real-corpus/pinned/itoa)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.32s

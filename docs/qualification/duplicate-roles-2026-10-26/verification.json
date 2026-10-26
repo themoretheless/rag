@@ -1,0 +1,82 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_comparison": "inspected_duplicate_primary_evidence_contract_not_representative_quality_benchmark",
+  "role_contract_version": 2,
+  "workspace_tests": {
+    "passed": 1403,
+    "failed": 0,
+    "ignored": 1
+  },
+  "corpus_native_cases": 11,
+  "new_duplicate_role_regressions": 5,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 48,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "duplicate_role_contract_v2",
+      "exact_decoded_text_groups",
+      "target_prefix_keeps_external_source_evidence",
+      "HTML_CSS_resource_usage",
+      "non_code_SVG_identity",
+      "missing_export_file_import",
+      "function_value_reference",
+      "project_isolation",
+      "primary_visible_under_member_limit",
+      "evidence_source_revision_hash_anchors",
+      "deterministic_response",
+      "body_free_metadata",
+      "stale_source_exclusion_before_sync",
+      "source_sync_replacement",
+      "evidence_total_and_cap"
+    ],
+    "production_database_touched": false,
+    "source_code_executed": false,
+    "runtime_liveness_or_deletion_safety_proven": false
+  },
+  "isolated_binary": {
+    "sha256": "5bf5c21f4e29ade51107108c72641dc3e882ba56ea47648c23d5c20422c6b578",
+    "isolated": true
+  },
+  "clippy_warnings_denied": "passed",
+  "owned_format_edition_2021": "passed",
+  "git_diff_check": "passed",
+  "mcp_scenarios": [
+    "duplicate-roles",
+    "file-imports",
+    "file-resources",
+    "resource-targets",
+    "inline-styles",
+    "table-impact"
+  ],
+  "source_hash_observations_after_checks": {
+    "src/code_index.rs": "5e4b5ff323f3a5aed427478b9eb267754fea77b3d0c303f77c00b712b5d624fc",
+    "src/code_index/corpus.rs": "c15d09f3391515701c0e60cf12a43e215a7b3d71ded95f0e380b9be23ab233c6",
+    "scripts/smoke_duplicate_roles.py": "39f21598d531630794f57e799cecc89f295d68ed0afd45ad6cfddd90c2c88a50",
+    "docs/DUPLICATE_ROLE_EVIDENCE.md": "d15999a3652e4c5beb96039aacd48df3f0a28894bd7852e2006f36a797d6f574",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "cb0b63ff9f589477087bfbb6589532118f2bf943927d867f540be42432d72d40"
+  },
+  "log_sha256": {
+    "file-resources.log": "2393a0ccf063a239d853c873bac040f5117f5483d0ac483673c01f6d2dde307f",
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "inline-styles.log": "0e164572b1652f7e21d7ba126e86636fb1504f17d27507c14e5f0ab4bb617124",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "clippy.log": "09549c5d097d858e28417b5c8ff998782c782d5ad4ee9b8155dfb84173343753",
+    "workspace.log": "751fef656be70c7e5460df67fb80e7c5b74dfd60caec548230bb4ac9ee683404",
+    "file-imports.log": "94674cfcea3b46f3033611115540401db98fbb9b0688601c56c442797a26c64c",
+    "resource-targets.log": "923fd9f998721fbdbce3762593fb03ced3f9bc07a5cdc110cd8942d53d960d26",
+    "runtime.log": "4cd212d39bb528c6ef22a011ea515312bd33da7f9630a3bedfdc57866d457145",
+    "focused.log": "1b127d4110b162c12643db29d94d8eb65dc618641c16e7f0b18ba206db21fa8b",
+    "build.log": "5ec75b0cd3e0f8a52bea1fc90b4ead02421d4ea138301470a0eed5a1848e046b"
+  },
+  "after_check_index_format": 48,
+  "extraction_format_changed_by_this_role_extension": false,
+  "whole_checkout_frozen": false,
+  "representative_ranking_quality_or_scale_qualified": false,
+  "runtime_liveness_or_deletion_safety_proven": false,
+  "full_ragraf_parity_complete": false
+}

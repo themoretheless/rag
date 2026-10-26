@@ -1,0 +1,12 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 02s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 3 tests
+test code_index::translation_keys::tests::placeholder_occurrences_preserve_repeats_unicode_offsets_and_exact_key_case ... ok
+test code_index::translation_keys::tests::php_literal_calls_keep_owners_and_exclude_dynamic_interpolated_and_composed_keys ... ok
+test code_index::translation_keys::tests::capture_limits_are_explicit_without_false_completeness ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1196 filtered out; finished in 0.06s
+

@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "checks": [
+    "separate_hunks",
+    "no_out_of_range_source_text",
+    "idempotent_drift_event",
+    "final_newline",
+    "crlf",
+    "restored_source",
+    "bounded_fallback",
+    "body_budget",
+    "read_preserves_index_revision",
+    "sync_refresh",
+    "frozen_revision_comparison"
+  ],
+  "hunk_contract_version": 1
+}

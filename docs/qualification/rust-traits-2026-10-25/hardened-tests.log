@@ -1,0 +1,28 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.98s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 20 tests
+test code_index::rust_semantics::tests::rust_generic_parameter_shadows_concrete_same_name_type ... ok
+test code_index::rust_semantics::tests::rust_impls_resolve_across_files_without_same_named_owner_fallback ... ok
+test code_index::rust_semantics::tests::rust_associated_functions_are_not_instance_methods ... ok
+test code_index::rust_semantics::tests::rust_return_chains_target_exact_owner_and_preserve_inner_calls ... ok
+test code_index::rust_semantics::tests::rust_generic_impl_substitutes_method_returns_and_fields ... ok
+test code_index::rust_semantics::tests::rust_custom_wrappers_and_unawaited_unknowns_do_not_gain_std_dispatch ... ok
+test code_index::rust_semantics::tests::rust_branch_reassignment_invalidates_outer_initializer ... ok
+test code_index::rust_semantics::tests::rust_async_requires_await_and_explicit_generic_substitution ... ok
+test code_index::rust_semantics::tests::rust_local_factory_inference_aliases_and_shadowing ... ok
+test code_index::rust_semantics::tests::rust_bounds_dyn_and_impl_trait_link_declarations_not_runtime_implementors ... ok
+test code_index::rust_semantics::tests::rust_fields_arrays_and_pointers_keep_receiver_ownership ... ok
+test code_index::rust_semantics::tests::rust_inherent_impl_from_another_cargo_target_is_not_a_method_candidate ... ok
+test code_index::rust_semantics::tests::rust_enclosing_generic_and_destructured_values_block_same_named_globals ... ok
+test code_index::rust_semantics::tests::rust_associated_projections_default_returns_and_generic_bounds ... ok
+test code_index::rust_semantics::tests::rust_return_type_is_resolved_in_declaration_document ... ok
+test code_index::rust_semantics::tests::rust_ufcs_disambiguates_traits_and_inherent_method_wins_member_lookup ... ok
+test code_index::rust_semantics::tests::rust_trait_ambiguity_remains_explicit_and_associated_return_uses_selected_impl ... ok
+test code_index::rust_semantics::tests::rust_where_bound_impl_requires_evidence_and_trait_alias_is_visible ... ok
+test code_index::rust_semantics::tests::rust_format_31_payload_is_stale_and_refreshable_not_a_decode_failure ... ok
+test code_index::rust_semantics::tests::rust_exhausted_impl_search_never_publishes_a_partial_unique_target ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1009 filtered out; finished in 2.73s
+

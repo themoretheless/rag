@@ -47,6 +47,11 @@ pub struct StyleSnapshot {
     diagnostics: Vec<serde_json::Value>,
     documents: Vec<serde_json::Value>,
 }
+impl StyleSnapshot {
+    pub(super) fn fact_count(&self) -> usize {
+        self.facts.len()
+    }
+}
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct ClassQuery {
     /// Exact CSS class token. One optional leading dot is accepted.
@@ -57,7 +62,7 @@ pub struct ClassQuery {
     /// Maximum classes and total evidence sites returned (1..500, default 200).
     pub limit: Option<usize>,
 }
-fn position(out: &mut IndexedDocument, source: &str, offset: usize) -> (usize, usize) {
+pub(super) fn position(out: &mut IndexedDocument, source: &str, offset: usize) -> (usize, usize) {
     if out.styles.line_starts.is_empty() {
         out.styles.line_starts.push(0);
         out.styles.line_starts.extend(
@@ -204,6 +209,7 @@ fn css_walk(
         problem(out, 1, "STYLE_TREE_DEPTH_EXCEEDED");
         return;
     }
+    super::file_resources::css(node, fragment, full, base, out);
     if node.kind() == "class_selector" {
         if let Some(name) = children(node)
             .into_iter()
@@ -277,6 +283,12 @@ fn html_walk(node: Node, source: &str, out: &mut IndexedDocument, depth: usize) 
         problem(out, 1, "STYLE_TREE_DEPTH_EXCEEDED");
         return Ok(());
     }
+    super::endpoints::collect_markup(node, source, out);
+    if matches!(node.kind(), "script_element" | "style_element") {
+        if let Some(tag) = children(node).into_iter().find(|n| n.kind() == "start_tag") {
+            super::endpoints::collect_markup(tag, source, out);
+        }
+    }
     if node.kind() == "style_element" {
         let tag = children(node).into_iter().find(|n| n.kind() == "start_tag");
         let mut unsupported = false;
@@ -317,6 +329,9 @@ fn html_walk(node: Node, source: &str, out: &mut IndexedDocument, depth: usize) 
         return Ok(());
     }
     if node.kind() == "script_element" {
+        if !super::endpoints::javascript_script(node, source) {
+            return Ok(());
+        }
         // Embedded JavaScript uses the same AST collector; no calls/SQL are inferred here.
         for raw in children(node)
             .into_iter()
@@ -432,6 +447,7 @@ pub(super) fn parse_markup(source: &str, out: &mut IndexedDocument) -> Result<()
         out.parse_errors = true;
         problem(out, 1, "MARKUP_PARSE_ERROR");
     }
+    super::file_resources::markup(tree.root_node(), source, out);
     html_walk(tree.root_node(), source, out, 0)
 }
 fn static_js(node: Node, source: &str) -> Option<String> {
@@ -479,6 +495,7 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument) {
 }
 fn collect_js(node: Node, fragment: &str, full: &str, base: usize, out: &mut IndexedDocument) {
     let (line, _) = position(out, full, base + node.start_byte());
+    super::endpoints::collect_fetch(node, fragment, line, base + node.start_byte(), out);
     if node.kind() == "jsx_attribute" {
         let cs = children(node);
         let name = cs.first().map(|n| text(*n, fragment)).unwrap_or("");

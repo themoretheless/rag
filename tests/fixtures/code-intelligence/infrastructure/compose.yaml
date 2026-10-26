@@ -1,0 +1,7 @@
+services:
+  api:
+    image: demo/api:v1
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime

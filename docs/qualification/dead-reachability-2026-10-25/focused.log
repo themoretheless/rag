@@ -1,0 +1,13 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.56s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 4 tests
+test code_index::dead_code::tests::dead_candidates_are_not_hidden_by_bound_same_names_or_other_projects ... ok
+test code_index::dead_code::tests::unresolved_same_project_roots_protect_their_callees_without_proving_liveness ... ok
+test code_index::dead_code::tests::unresolved_calls_guard_callees_and_candidate_pages_are_deterministic ... ok
+test code_index::dead_code::tests::live_base_members_protect_override_candidates_and_their_callees ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1013 filtered out; finished in 0.01s
+

@@ -1,0 +1,18 @@
+Generating SCIP start...
+2026-10-26T02:42:45.667063+04:00 ERROR Config Error(s) error_sink=ConfigErrors([])
+rust-analyzer: Loading discovering sysroot
+rust-analyzer: Loading querying project metadata
+rust-analyzer: Loading cargo metadata: started
+rust-analyzer: Loading cargo metadata: started
+rust-analyzer: Loading cargo metadata: finished
+rust-analyzer: Loading cargo metadata: finished
+rust-analyzer: Loading build script getrandom run
+rust-analyzer: Loading build script libc run
+2026-10-26T02:42:48.494074+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(17c73) } })
+2026-10-26T02:42:48.498748+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(1de38) } })
+2026-10-26T02:42:48.498827+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(1de38) } })
+2026-10-26T02:42:48.620295+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(1de37) } })
+2026-10-26T02:42:48.620334+04:00 ERROR Encountered enclosing definition with no name def=Module(Module { id: ModuleIdLt { [salsa id]: Id(1de37) } })
+2026-10-26T02:42:48.6253+04:00 ERROR Bug: definition at src/memmem/searcher.rs:31:9-31:14 should have been in an SCIP document but was not.
+2026-10-26T02:42:48.625318+04:00 ERROR Bug: definition at src/memmem/searcher.rs:439:9-439:14 should have been in an SCIP document but was not.
+Generating SCIP finished 2.961146291s

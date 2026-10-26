@@ -1,0 +1,1 @@
+{"report": "docs/qualification/incremental-resolution-2026-10-26/paired-controls/pair-1-incremental.json", "timings": [{"case": "cold_sync", "ms": 12836.647499992978}, {"case": "warm_noop", "ms": 21.395834046415985}, {"case": "body", "ms": 493.39079100172967}, {"case": "signature", "ms": 7817.660000000615}, {"case": "manifest", "ms": 7999.321208044421}]}

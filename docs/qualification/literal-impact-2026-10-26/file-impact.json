@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "checks": [
+    "ownerless_module_dependency",
+    "transitive_file_callers",
+    "call_mode_separation",
+    "depth_limit",
+    "item_limit",
+    "document_id_target",
+    "mixed_target_rejected",
+    "warm_reuse",
+    "stale_bridge_excluded",
+    "sync_refresh",
+    "no_source_bodies"
+  ],
+  "runtime_impact_proven": false
+}

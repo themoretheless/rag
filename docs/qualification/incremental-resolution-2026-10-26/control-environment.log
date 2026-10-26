@@ -1,0 +1,12 @@
+2026-10-25T21:12:51.755488+00:00
+  737     1   0.0 /Users/themoretheless/.local/bin/rag-mcp
+85951 85931  98.6 /Users/themoretheless/.rustup/toolchains/1.89.0-aarch64-apple-darwin/bin/rustc
+86366 86365 100.9 /private/tmp/rag-resolution-qualified-bin/rag-mcp
+2026-10-25T21:13:54.311061+00:00
+  737     1   0.0 /Users/themoretheless/.local/bin/rag-mcp
+89472 89470  99.0 /private/tmp/rag-resolution-qualified-bin/rag-mcp
+2026-10-25T21:15:22.346768+00:00
+  737     1   0.0 /Users/themoretheless/.local/bin/rag-mcp
+91012 91011  99.4 /private/tmp/rag-resolution-qualified-bin/rag-mcp
+95528 90679  97.8 /Users/themoretheless/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc
+95720 90648   0.0 /Users/themoretheless/Documents/Sources/rag/target/debug/build/rag-mcp/f6f7f7bac557d8d6/out/file_ingest_test-f6f7f7bac557d8d6

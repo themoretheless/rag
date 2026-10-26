@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 51,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "literal_endpoint_constant",
+    "weaker_unbound_text_role",
+    "exact_unicode_byte_anchor",
+    "cross_project_exclusion",
+    "source_outside_target_prefix",
+    "search_and_duplicate_primary",
+    "deterministic_evidence",
+    "disabled_mode",
+    "decoded_byte_budget",
+    "no_absence_claim",
+    "stale_source_exclusion_before_sync",
+    "sync_replacement",
+    "project_wide_basename_ambiguity",
+    "qualified_path_disambiguation",
+    "unique_source_target_counts",
+    "20_of_26_literal_retention"
+  ],
+  "source_code_executed": false,
+  "production_database_touched": false,
+  "runtime_binding_or_deletion_safety_proven": false
+}

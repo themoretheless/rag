@@ -1,0 +1,19 @@
+[package]
+name = "fixture-rust-cfg"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[features]
+default = ["slow"]
+slow = []
+fast = ["leaf"]
+leaf = []
+
+[package.metadata.rag.graph]
+version = 1
+target_kind = "lib"
+features = ["fast"]
+default_features = false
+cfg_flags = []

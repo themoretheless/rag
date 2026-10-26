@@ -1,0 +1,23 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 27.12s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 5 tests
+
+thread 'code_index::file_resources::tests::url_unknowns_duplicates_comments_and_css_conditions_never_guess_files' (66259319) panicked at src/code_index/file_resources.rs:292:17:
+/p/style.css
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test code_index::file_resources::tests::resource_ambiguity_project_and_parse_errors_are_preserved ... ok
+test code_index::file_resources::tests::html_base_affects_earlier_attributes_and_inline_css_with_full_offsets ... ok
+test code_index::file_resources::tests::url_unknowns_duplicates_comments_and_css_conditions_never_guess_files ... FAILED
+test code_index::file_resources::tests::html_and_css_literals_keep_resource_edges_without_symbols ... ok
+test code_index::file_resources::tests::resource_impact_dead_files_refresh_and_frozen_legacy_diff ... ok
+
+failures:
+
+failures:
+    code_index::file_resources::tests::url_unknowns_duplicates_comments_and_css_conditions_never_guess_files
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 1049 filtered out; finished in 0.33s
+
+error: test failed, to rerun pass `--lib`

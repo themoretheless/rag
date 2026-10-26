@@ -1,0 +1,34 @@
+{
+  "status": "passed",
+  "workspace_command": "cargo test --workspace",
+  "workspace_exit_code": 0,
+  "workspace_tests_passed": 1329,
+  "workspace_tests_failed": 0,
+  "workspace_tests_ignored": 1,
+  "clippy_command": "cargo clippy --lib --tests -- -D warnings",
+  "clippy_exit_code": 0,
+  "build_command": "cargo build --bin rag-mcp",
+  "build_exit_code": 0,
+  "compiler_command": "cargo check --manifest-path tests/fixtures/code-intelligence/affected-tests/Cargo.toml --all-targets --offline --target-dir /tmp/rag-affected-tests-fixture-target",
+  "compiler_exit_code": 0,
+  "mcp_runner": "scripts/smoke_affected_tests.py",
+  "executed_suggested_commands": 7,
+  "executed_tests_per_command": 1,
+  "worktree_frozen": false,
+  "production_binary_replaced": false,
+  "full_goal_complete": false,
+  "runtime_reports": {
+    "runtime.json": "passed",
+    "git-regression.json": "passed",
+    "path-regression.json": "passed",
+    "config-regression.json": "passed"
+  },
+  "binary_sha256": "04813f7327ede0e0779d72b5bd0af68afb27c10d9bafa275ba84aad9f68900fe",
+  "index_format": 39,
+  "owned_source_sha256": {
+    "src/code_index/affected_tests.rs": "2a8231cfc97483037cc316880f9a5dbf5521b4f687d1c24aec9b1c832fda4529",
+    "src/code_index/rust_cargo.rs": "a7add6a52ef7e02dc977a43fb5ef345f630271bc7fae8c4fdfe86ef799ee4ed0",
+    "src/code_index/rust_cfg.rs": "701f4a970de001ba7d413a25e7336d73a2dfb0fe344a312c44d13383b7c8af8f",
+    "scripts/smoke_affected_tests.py": "eadbfb63cbf216fb05fa72e6b9b8b8bd66d2771fc794d0745596263fd6df06ba"
+  }
+}

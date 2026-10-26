@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "bf80f1c38ee183cbe56ebb2dd90907a70031c24d2c62617f7e55728f7d2b7b8b",
+    "src/code_index/documentation.rs": "bb57545ed10f5440a6a26ba82543b9df8cd9ad8a8b4468fde4bb214ac7da6a6e",
+    "src/code_index/status.rs": "11e52f6b374e685436fe37420a449ffe1c65e00387b19c3778f0e3d2d5436fad",
+    "src/code_index/c_family.rs": "9372cdfe75a9d65f946da184998a72bbd0cb751ed3976b30361b104fcd78330a",
+    "src/code_index/shell.rs": "61af9e1498bf7836d0b11be7d15d12a28a54c75e282b13c0c9f6983149955991",
+    "src/code_index/lua.rs": "517b71e9feb76f8cf930f99f4e2634d0f4b69c40803877a3d6e7849b5faf4ea0",
+    "scripts/smoke_code_documentation.py": "f86bb19d1601a55170031279f31be5df9b2ba44573cc8feb3e6ddc6b1b833a2d",
+    "scripts/smoke_sql_bulk_usage.py": "ec3815dc51f2475bd95ff7d59ecbcebe55643436a204e5d9009e8a8ec06f7776"
+  },
+  "binary_sha256": "37c6c064956f4383fdbb23db42fb6a975164d1e1573e93fbf9d5162580de7d24",
+  "schema_version": 25,
+  "syntax_index_format": 27,
+  "verification": {
+    "focused_documentation": {
+      "command": "cargo test --lib code_index::documentation --locked --offline",
+      "passed": 6,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1215,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "status_regression": "status-regression.json",
+    "sql_regression": "sql-regression.json",
+    "lua_regression": "lua-regression.json"
+  },
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "compiler_rendered_documentation_verified": false,
+  "full_language_documentation_coverage": false,
+  "representative_benchmark": false,
+  "full_ragraf_parity": false
+}

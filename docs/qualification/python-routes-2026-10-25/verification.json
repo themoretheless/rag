@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "57acd5de72a5e7461da76e7eb31065d5ddc24361e3fc4816229fff3edc9ef1d5",
+    "src/code_index/analysis.rs": "0eef404f42def9b8a8758ad5142060579fc10898011a807d93c3dd0ddfc02f8e",
+    "scripts/smoke_python_routes.py": "57679ee72584fd848fc0f57c0eef196dee16b71718448816d0dd54451cc9b52c"
+  },
+  "binary_sha256": "a74ad765511a828dd7a90904be51d47b5a5c3e627e357a98d7dea202b50db502",
+  "index_format": 21,
+  "verification": {
+    "focused_analysis": {
+      "passed": 5,
+      "failed": 0,
+      "command": "cargo test --lib code_index::analysis --locked --offline"
+    },
+    "workspace": {
+      "passed": 1175,
+      "failed": 0,
+      "ignored": 1,
+      "command": "cargo test --workspace --locked --offline"
+    },
+    "clippy": {
+      "passed": true,
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings"
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "mcp_index_status_regression": "index-status-regression.json",
+    "mcp_repo_map_regression": "repo-map-regression.json"
+  },
+  "production_database_touched": false,
+  "representative_benchmark": false,
+  "full_route_parity": false,
+  "full_ragraf_parity": false
+}

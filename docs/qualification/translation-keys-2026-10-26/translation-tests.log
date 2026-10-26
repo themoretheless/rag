@@ -1,0 +1,12 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0583]: file not found for module `reexports`
+ --> src/code_index/rust_cargo.rs:6:1
+  |
+6 | mod reexports;
+  | ^^^^^^^^^^^^^^
+  |
+  = help: to create the module `reexports`, create file "src/code_index/rust_cargo/reexports.rs" or "src/code_index/rust_cargo/reexports/mod.rs"
+  = note: if there is a `mod reexports` elsewhere in the crate already, import it with `use crate::...` instead
+
+For more information about this error, try `rustc --explain E0583`.
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

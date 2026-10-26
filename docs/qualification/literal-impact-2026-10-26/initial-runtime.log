@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_literal_impact.py", line 104, in <module>
+    main()
+    ~~~~^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_literal_impact.py", line 96, in main
+    assert updated["direct_total"] == 2 and updated["direct_owner_symbols"] == 2 and affected(updated) == {"serve", "alternate_caller", "main"}, updated
+                                                                                     ~~~~~~~~^^^^^^^^^
+  File "/Users/themoretheless/Documents/Sources/rag/scripts/smoke_literal_impact.py", line 38, in affected
+    return {names[i["symbol_id"]] for i in result["items"]}
+            ~~~~~^^^^^^^^^^^^^^^^
+KeyError: 'd373e45a-8cf1-4e90-95f0-710a79d33078:119:alternate_caller'

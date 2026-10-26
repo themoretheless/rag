@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "database_schema": 25,
+  "index_format": 28,
+  "workspace": {
+    "passed": 1219,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_sql_passed": 12,
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "full_sql_parity": false,
+  "full_ragraf_parity": false,
+  "source_sql_executed": false,
+  "production_database_touched": false,
+  "projection_schema_inferred": false,
+  "representative_quality_qualified": false,
+  "logs_sha256": {
+    "focused": "604b8f278dfc70e0539e3850522b67f75967d151937f297ec9418415167b9667",
+    "clippy": "3f7a315d6081eb7c0266920dddd2ccfa6de0b0e156ba7719add1ed1ce5992858",
+    "workspace": "5a07965f0eca7316d7f641288ce5e90e75769bc878dc88ae6e305c96afc56ebc",
+    "build": "bea169a83a3f04f34b8c3733764987e3aef03f91b381b2cda1cc43a871a078c5"
+  },
+  "source_sha256": {
+    "src/code_index.rs": "5db995652943b396d264ffd291f1a99cf44cfca51c24b0c419237b6e84f2d2f0",
+    "src/code_index/sql.rs": "ceb079188598fa0f622c95f7d8035d681fe1671ebba65ef80e8c01c30f8f1555",
+    "scripts/smoke_sql_output_usage.py": "84f584864f4f8e0049b584dcda2e070fede345eaf18b4c20dbeaf413f0c00cbc",
+    "scripts/smoke_code_documentation.py": "fd8860d2dd863930d6e5d1173f83f1227765f67f23a41648ac0eeaaf777b63da",
+    "docs/SQL_OUTPUT_USAGE.md": "569526162cda82123393a103e8994cbbf6c45011c92faa6ff3eac28152bdae89"
+  },
+  "binary_sha256": "57a6791233b7bb779cb8bccc23372398d0d92ce359d2cd251d1bd45f75e5034a",
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "bulk-regression.json": "passed",
+    "documentation-regression.json": "passed"
+  }
+}

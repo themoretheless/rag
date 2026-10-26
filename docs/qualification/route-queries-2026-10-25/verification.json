@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "b5bd71344c965f8382cc6cebd1092820f6df31f03bab6e5f8fd02c5090195fbf",
+    "src/code_index/routes.rs": "8dc111fb926682ccc70e76e25d2c128c1a55ea109728e37aad242d94ceb81415",
+    "src/mcp/analysis.rs": "e1f0d12912f9c8dc0124bf15e5622eb0f1bdc41538abd64f1b6ae05506890d4b",
+    "scripts/smoke_route_queries.py": "ea6fd15f220916f21f7ca4e4d90f8c95f620bfbe83f980de093602fe4e28e342"
+  },
+  "binary_sha256": "6854af5938f51946e2b11128e005bfd357f24c4537c269e9fa3197a583da2994",
+  "index_format": 24,
+  "query_contract_version": 1,
+  "index_format_changed": false,
+  "verification": {
+    "focused_routes": {
+      "command": "cargo test --lib code_index::routes --locked --offline",
+      "passed": 3,
+      "failed": 0
+    },
+    "focused_code_index": {
+      "command": "cargo test --lib code_index:: --locked --offline",
+      "passed": 144,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1190,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "php_regression": "php-regression.json",
+    "fetch_regression": "fetch-regression.json",
+    "markup_regression": "markup-regression.json",
+    "index_status_regression": "index-status-regression.json"
+  },
+  "production_database_touched": false,
+  "representative_benchmark": false,
+  "full_routes_parity": false,
+  "full_ragraf_parity": false
+}

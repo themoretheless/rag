@@ -1,0 +1,15 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0621]: explicit lifetime required in the type of `docs`
+    --> src/code_index/rust_cargo.rs:1013:5
+     |
+1013 |     Some(found)
+     |     ^^^^^^^^^^^ lifetime `'a` required
+     |
+help: add explicit lifetime `'a` to the type of `docs`
+     |
+ 854 -     docs: &HashMap<String, IndexedDocument>,
+ 854 +     docs: &'a std::collections::HashMap<std::string::String, code_index::IndexedDocument>,
+     |
+
+For more information about this error, try `rustc --explain E0621`.
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

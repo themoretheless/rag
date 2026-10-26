@@ -1,0 +1,8 @@
+[package]
+name = "infrastructure-fixture"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "api"
+path = "src/main.rs"

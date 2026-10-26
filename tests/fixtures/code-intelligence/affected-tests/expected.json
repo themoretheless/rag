@@ -1,0 +1,7 @@
+{
+  "seed": "api",
+  "references_tests": ["callback_value", "external_case", "ignored_case", "integration_case", "nested_case", "unit_alias", "unit_direct"],
+  "calls_tests": ["external_case", "ignored_case", "integration_case", "nested_case", "unit_alias", "unit_direct"],
+  "not_tests": ["misleading_doc", "consume", "production_only"],
+  "integration_cargo_target": "with-hyphen"
+}

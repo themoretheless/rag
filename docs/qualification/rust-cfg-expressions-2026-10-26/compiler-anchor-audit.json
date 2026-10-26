@@ -1,0 +1,1465 @@
+{
+  "status": "measured",
+  "command": [
+    "cargo",
+    "rustc",
+    "--offline",
+    "--manifest-path",
+    "/private/tmp/rag-real-corpus/pinned/ryu/Cargo.toml",
+    "--lib",
+    "--target",
+    "aarch64-apple-darwin",
+    "--",
+    "-Zunpretty=hir-tree"
+  ],
+  "compiler": "rustc 1.101.0-nightly (4ebd25825 2026-10-15)\nbinary: rustc\ncommit-hash: 4ebd258257737d5b7635c116fa7d281627a7e937\ncommit-date: 2026-10-15\nhost: aarch64-apple-darwin\nrelease: 1.101.0-nightly\nLLVM version: 23.1.4\n",
+  "compiler_exit": 0,
+  "hir_sha256": "0d7a87d5dfa6e16300b1be4478068fc13366daf60f2a2de98d6914090cc9cd6c",
+  "input_sha256": {
+    "Cargo.toml": "9b8c115f45bbbb44df03eae6aa112969730ff6a921eb31c2d129a25eade61e65",
+    "src/buffer/mod.rs": "e29fea93a1af8e3a25e2045489f4264cf50e708c0b2edfcb51ec95582e63fcd0",
+    "src/common.rs": "cae347e97fc30c50a964f80425e8c3e69ece2b8ab81f9b81b9baa7fcec64a001",
+    "src/d2s.rs": "f2612785ebe510c935b979dc5f66f6b8c818ca8a4cf0364ce1fe1d41fea39592",
+    "src/d2s_full_table.rs": "9b0186acbc6d65dc55c17e16125be707a2bfb920d22b35d33234b4cc38566a36",
+    "src/d2s_intrinsics.rs": "bbf15472f4299942312e80a992cbc2f47f85f17ed193f24084534434dbfb26e7",
+    "src/d2s_small_table.rs": "db3bbe4002d816785b0ee233c330f19fa7002f31dab47dc6f67b266996fe3ae4",
+    "src/digit_table.rs": "02351ca54cb8cb3679f635115dd094f32fd91750e9f66103c1ee9ec3db507072",
+    "src/f2s.rs": "ace23f2d4459055bbb8544c2efc09753fec27ff3ce44648e8015e8aff5696b0c",
+    "src/f2s_intrinsics.rs": "4667c34aab7637f2330df7bbd4c178c0ba1dd5854ff15b9a36a96fd5f527fb66",
+    "src/lib.rs": "ec6dc1b2b40fa14a9af5185991c1bebab3b6dc1f0947a81020a376eade8dae1c",
+    "src/parse.rs": "7f8aa7e007caf5dcb03abdc4238157724bb742d0823a3b8a01646fa1f1129154",
+    "src/pretty/exponent.rs": "87b2a2625bf43bf987f8b84f35ffe554853f9af5b850dac1c8b8810c9a4399ca",
+    "src/pretty/mantissa.rs": "1301cd5d35e7cbcedacad36c296893a94dfa7154ebe4146d6466769ed67934b4",
+    "src/pretty/mod.rs": "49b0701a2f7b896e3ff23221761a48b4445a048d9ae63207d8934ff1969de795",
+    "src/s2d.rs": "5637c35a1dc0979f69ef434d8e1c8a9da40e54820cbd12081c795da5aff04fb4",
+    "src/s2f.rs": "0c46a7dd17b93d5b44c3ed05396289aba9c8e96757364722eb470090ebbcada5",
+    "src/tests.rs": "4c1bfe1e7e6515779528dddcfd53ba3f6333618132e53a9c675b2bca69e9f8b0"
+  },
+  "scored_cases_sha256": "ee24fa22614becf940039c44eeb83853fa2b1fdd49c1a9e742587a28ddfd56b9",
+  "rag_binary_sha256": "1f8de5815a3fc3a08c6f54fe318f9da41e781a71a74c64e4b71e9b6d72e259ae",
+  "direct_call_sites": 71,
+  "corroborated_sites": 68,
+  "unverified_sites": 3,
+  "corroborated_subset_metrics": {
+    "labelled_sites": 68,
+    "local_positive_sites": 68,
+    "external_negative_sites": 0,
+    "true_positive": 66,
+    "false_positive": 0,
+    "false_negative": 2,
+    "precision": 1.0,
+    "recall": 0.9705882352941176,
+    "exact_sites": 66,
+    "exact_site_rate": 0.9705882352941176
+  },
+  "cases": [
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        71,
+        16,
+        71,
+        26
+      ],
+      "compiler_path_anchors": [
+        [
+          71,
+          16,
+          26
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        73,
+        42,
+        73,
+        50
+      ],
+      "compiler_path_anchors": [
+        [
+          73,
+          42,
+          50
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        75,
+        13,
+        75,
+        34
+      ],
+      "compiler_path_anchors": [
+        [
+          75,
+          13,
+          34
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        76,
+        13,
+        76,
+        34
+      ],
+      "compiler_path_anchors": [
+        [
+          76,
+          13,
+          34
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        77,
+        13,
+        77,
+        34
+      ],
+      "compiler_path_anchors": [
+        [
+          77,
+          13,
+          34
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        82,
+        46,
+        82,
+        54
+      ],
+      "compiler_path_anchors": [
+        [
+          82,
+          46,
+          54
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        84,
+        17,
+        84,
+        38
+      ],
+      "compiler_path_anchors": [
+        [
+          84,
+          17,
+          38
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        90,
+        39,
+        90,
+        64
+      ],
+      "compiler_path_anchors": [
+        [
+          90,
+          39,
+          64
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        92,
+        39,
+        92,
+        64
+      ],
+      "compiler_path_anchors": [
+        [
+          92,
+          39,
+          64
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        94,
+        22,
+        94,
+        47
+      ],
+      "compiler_path_anchors": [
+        [
+          94,
+          22,
+          47
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        98,
+        16,
+        98,
+        26
+      ],
+      "compiler_path_anchors": [
+        [
+          98,
+          16,
+          26
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        101,
+        16,
+        101,
+        24
+      ],
+      "compiler_path_anchors": [
+        [
+          101,
+          16,
+          24
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        103,
+        13,
+        103,
+        30
+      ],
+      "compiler_path_anchors": [
+        [
+          103,
+          13,
+          30
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        104,
+        13,
+        104,
+        30
+      ],
+      "compiler_path_anchors": [
+        [
+          104,
+          13,
+          30
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        105,
+        13,
+        105,
+        30
+      ],
+      "compiler_path_anchors": [
+        [
+          105,
+          13,
+          30
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        107,
+        32,
+        107,
+        40
+      ],
+      "compiler_path_anchors": [
+        [
+          107,
+          32,
+          40
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        108,
+        34,
+        108,
+        51
+      ],
+      "compiler_path_anchors": [
+        [
+          108,
+          34,
+          51
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s.rs",
+      "range": [
+        123,
+        35,
+        123,
+        60
+      ],
+      "compiler_path_anchors": [
+        [
+          123,
+          35,
+          60
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        44,
+        4,
+        44,
+        17
+      ],
+      "compiler_path_anchors": [
+        [
+          44,
+          4,
+          17
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        83,
+        8,
+        83,
+        20
+      ],
+      "compiler_path_anchors": [],
+      "status": "unverified_anchor",
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        90,
+        12,
+        90,
+        24
+      ],
+      "compiler_path_anchors": [
+        [
+          90,
+          12,
+          24
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        104,
+        8,
+        104,
+        20
+      ],
+      "compiler_path_anchors": [],
+      "status": "unverified_anchor",
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1
+    },
+    {
+      "path": "src/f2s_intrinsics.rs",
+      "range": [
+        110,
+        17,
+        110,
+        29
+      ],
+      "compiler_path_anchors": [
+        [
+          110,
+          17,
+          29
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        126,
+        16,
+        126,
+        26
+      ],
+      "compiler_path_anchors": [
+        [
+          126,
+          16,
+          26
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        128,
+        43,
+        128,
+        51
+      ],
+      "compiler_path_anchors": [
+        [
+          128,
+          43,
+          51
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        131,
+        12,
+        131,
+        28
+      ],
+      "compiler_path_anchors": [
+        [
+          131,
+          12,
+          28
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        152,
+        69,
+        152,
+        73
+      ],
+      "compiler_path_anchors": [
+        [
+          152,
+          69,
+          73
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        154,
+        39,
+        154,
+        61
+      ],
+      "compiler_path_anchors": [
+        [
+          154,
+          39,
+          61
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        159,
+        39,
+        159,
+        61
+      ],
+      "compiler_path_anchors": [
+        [
+          159,
+          39,
+          61
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        162,
+        22,
+        162,
+        44
+      ],
+      "compiler_path_anchors": [
+        [
+          162,
+          22,
+          44
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        167,
+        16,
+        167,
+        26
+      ],
+      "compiler_path_anchors": [
+        [
+          167,
+          16,
+          26
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        170,
+        16,
+        170,
+        24
+      ],
+      "compiler_path_anchors": [
+        [
+          170,
+          16,
+          24
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        173,
+        12,
+        173,
+        28
+      ],
+      "compiler_path_anchors": [
+        [
+          173,
+          12,
+          28
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        207,
+        35,
+        207,
+        57
+      ],
+      "compiler_path_anchors": [
+        [
+          207,
+          35,
+          57
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        218,
+        27,
+        218,
+        32
+      ],
+      "compiler_path_anchors": [
+        [
+          218,
+          27,
+          32
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        219,
+        27,
+        219,
+        32
+      ],
+      "compiler_path_anchors": [
+        [
+          219,
+          27,
+          32
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        224,
+        27,
+        224,
+        32
+      ],
+      "compiler_path_anchors": [
+        [
+          224,
+          27,
+          32
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        236,
+        31,
+        236,
+        36
+      ],
+      "compiler_path_anchors": [
+        [
+          236,
+          31,
+          36
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        241,
+        31,
+        241,
+        36
+      ],
+      "compiler_path_anchors": [
+        [
+          241,
+          31,
+          36
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        242,
+        31,
+        242,
+        36
+      ],
+      "compiler_path_anchors": [
+        [
+          242,
+          31,
+          36
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        262,
+        24,
+        262,
+        30
+      ],
+      "compiler_path_anchors": [
+        [
+          262,
+          24,
+          30
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        263,
+        24,
+        263,
+        30
+      ],
+      "compiler_path_anchors": [
+        [
+          263,
+          24,
+          30
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        266,
+        28,
+        266,
+        34
+      ],
+      "compiler_path_anchors": [
+        [
+          266,
+          28,
+          34
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        279,
+        27,
+        279,
+        32
+      ],
+      "compiler_path_anchors": [
+        [
+          279,
+          27,
+          32
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        280,
+        27,
+        280,
+        32
+      ],
+      "compiler_path_anchors": [
+        [
+          280,
+          27,
+          32
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s.rs",
+      "range": [
+        284,
+        27,
+        284,
+        32
+      ],
+      "compiler_path_anchors": [
+        [
+          284,
+          27,
+          32
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        57,
+        4,
+        57,
+        15
+      ],
+      "compiler_path_anchors": [
+        [
+          57,
+          4,
+          15
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        85,
+        19,
+        85,
+        31
+      ],
+      "compiler_path_anchors": [
+        [
+          85,
+          19,
+          31
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        86,
+        19,
+        86,
+        31
+      ],
+      "compiler_path_anchors": [
+        [
+          86,
+          19,
+          31
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/d2s_intrinsics.rs",
+      "range": [
+        87,
+        4,
+        87,
+        16
+      ],
+      "compiler_path_anchors": [
+        [
+          87,
+          4,
+          16
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/common.rs",
+      "range": [
+        75,
+        4,
+        75,
+        13
+      ],
+      "compiler_path_anchors": [
+        [
+          75,
+          4,
+          13
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        69,
+        12,
+        69,
+        15
+      ],
+      "compiler_path_anchors": [
+        [
+          69,
+          12,
+          15
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        71,
+        22,
+        71,
+        38
+      ],
+      "compiler_path_anchors": [
+        [
+          71,
+          17,
+          38
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        78,
+        8,
+        78,
+        27
+      ],
+      "compiler_path_anchors": [
+        [
+          78,
+          8,
+          27
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        87,
+        8,
+        87,
+        27
+      ],
+      "compiler_path_anchors": [
+        [
+          87,
+          8,
+          27
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        99,
+        8,
+        99,
+        27
+      ],
+      "compiler_path_anchors": [
+        [
+          99,
+          8,
+          27
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        105,
+        29,
+        105,
+        44
+      ],
+      "compiler_path_anchors": [
+        [
+          105,
+          29,
+          44
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        108,
+        8,
+        108,
+        27
+      ],
+      "compiler_path_anchors": [
+        [
+          108,
+          8,
+          27
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        115,
+        14,
+        115,
+        29
+      ],
+      "compiler_path_anchors": [
+        [
+          115,
+          14,
+          29
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        175,
+        12,
+        175,
+        15
+      ],
+      "compiler_path_anchors": [
+        [
+          175,
+          12,
+          15
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        177,
+        25,
+        177,
+        40
+      ],
+      "compiler_path_anchors": [
+        [
+          177,
+          17,
+          40
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        184,
+        8,
+        184,
+        22
+      ],
+      "compiler_path_anchors": [
+        [
+          184,
+          8,
+          22
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        193,
+        8,
+        193,
+        22
+      ],
+      "compiler_path_anchors": [
+        [
+          193,
+          8,
+          22
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        205,
+        8,
+        205,
+        22
+      ],
+      "compiler_path_anchors": [
+        [
+          205,
+          8,
+          22
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        211,
+        29,
+        211,
+        44
+      ],
+      "compiler_path_anchors": [
+        [
+          211,
+          29,
+          44
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        214,
+        8,
+        214,
+        22
+      ],
+      "compiler_path_anchors": [
+        [
+          214,
+          8,
+          22
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mod.rs",
+      "range": [
+        221,
+        14,
+        221,
+        29
+      ],
+      "compiler_path_anchors": [
+        [
+          221,
+          14,
+          29
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/pretty/mantissa.rs",
+      "range": [
+        23,
+        4,
+        23,
+        18
+      ],
+      "compiler_path_anchors": [
+        [
+          23,
+          4,
+          18
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/buffer/mod.rs",
+      "range": [
+        50,
+        17,
+        50,
+        30
+      ],
+      "compiler_path_anchors": [],
+      "status": "unverified_anchor",
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0
+    },
+    {
+      "path": "src/buffer/mod.rs",
+      "range": [
+        139,
+        13,
+        139,
+        21
+      ],
+      "compiler_path_anchors": [
+        [
+          139,
+          8,
+          21
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1
+    },
+    {
+      "path": "src/buffer/mod.rs",
+      "range": [
+        168,
+        13,
+        168,
+        21
+      ],
+      "compiler_path_anchors": [
+        [
+          168,
+          8,
+          21
+        ]
+      ],
+      "status": "corroborated_source_anchor",
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1
+    }
+  ],
+  "limitations": [
+    "exact lexical HIR path anchors only; methods/macros/non-ASCII may be unverified",
+    "missing HIR anchor does not prove inactive or invalid code",
+    "source activity corroboration only; target labels still come from SCIP",
+    "nightly HIR debug format tied to the recorded compiler"
+  ]
+}

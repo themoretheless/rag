@@ -1,0 +1,17 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 51.59s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 9 tests
+test code_index::php_docblocks::tests::php_contract_adjacent_only_and_cache_guard ... ok
+test code_index::php_docblocks::tests::php_contract_nested_quoted_generic_and_source ... ok
+test code_index::php_docblocks::tests::php_contract_binding_and_dialect_evidence ... ok
+test code_index::php_docblocks::tests::php_contract_shape_limits_are_explicit ... ok
+test code_index::php_docblocks::tests::php_contract_tuples_rest_and_constants ... ok
+test code_index::php_docblocks::tests::php_contract_invalid_does_not_publish_partial_shape ... ok
+test code_index::php_docblocks::tests::php_contract_methods_promotion_and_parse_errors ... ok
+test code_index::php_docblocks::tests::php_contract_tag_and_type_budgets ... ok
+test code_index::php_docblocks::tests::php_contract_full_doc_independent_of_excerpt ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1235 filtered out; finished in 0.01s
+

@@ -1,0 +1,18 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 34s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 9 tests
+test code_index::history::tests::limited_translation_captures_are_not_compared_as_complete_negative_facts ... ok
+test code_index::translation_keys::tests::placeholder_occurrences_preserve_repeats_unicode_offsets_and_exact_key_case ... ok
+test code_index::translation_keys::tests::php_literal_calls_keep_owners_and_exclude_dynamic_interpolated_and_composed_keys ... ok
+test code_index::translation_keys::tests::php_quoted_escapes_unicode_and_literal_dollars_are_decoded_not_guessed ... ok
+test code_index::c_family::tests::static_definitions_in_other_translation_units_or_projects_are_not_external_targets ... ok
+test code_index::translation_keys::tests::capture_limits_are_explicit_without_false_completeness ... ok
+test code_index::translation_keys::cache_tests::missing_per_document_capability_is_stale_even_with_current_global_format ... ok
+test code_index::translation_keys::query_tests::key_query_links_template_and_php_candidates_with_project_freshness_and_count_guards ... ok
+test code_index::history::tests::translation_key_history_ignores_offsets_but_keeps_counts_and_legacy_gaps ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1201 filtered out; finished in 0.36s
+

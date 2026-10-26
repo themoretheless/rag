@@ -1,0 +1,38 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.23s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 17 tests
+test file_ingest::tests::supported_extensions_include_office_formats ... ok
+test file_ingest::tests::is_supported_source_accepts_docs_and_code_case_insensitively ... ok
+test file_ingest::tests::pdf_quality_warning_flags_sparse_multipage_output ... ok
+test file_ingest::tests::pdf_quality_warning_flags_empty_and_garbled ... ok
+test file_ingest::tests::merge_metadata_keeps_existing_keys_and_adds_new_ones ... ok
+test file_ingest::tests::text_decoding_boms_legacy_heuristics_and_invalid_input ... ok
+test file_ingest::tests::svg_is_discovered_as_text_without_rendering_or_losing_markup ... ok
+test file_ingest::tests::source_byte_capture_separates_decoded_text_from_original_encoding ... ok
+test file_ingest::tests::extract_file_rejects_binary_and_missing_files_and_decodes_legacy_text ... ok
+test file_ingest::tests::extract_file_tags_format_language_and_source_path ... ok
+test file_ingest::tests::html_extract_handles_fragment_without_body ... ok
+test file_ingest::tests::html_extract_drops_boilerplate_and_prefers_article ... ok
+test file_ingest::tests::html_extract_renders_tables_and_entities ... ok
+test file_ingest::tests::extract_file_strips_html_markup_scripts_and_entities ... ok
+test file_ingest::tests::extraction_refreshes_encoding_metadata_and_preserves_html_source ... ok
+test file_ingest::tests::xlsx_capture_and_original_source_error_paths ... FAILED
+test file_ingest::tests::office_capture_hashes_original_archive_and_uses_stable_snapshot ... ok
+
+failures:
+
+---- file_ingest::tests::xlsx_capture_and_original_source_error_paths stdout ----
+
+thread 'file_ingest::tests::xlsx_capture_and_original_source_error_paths' (69074421) panicked at src/file_ingest/tests.rs:365:41:
+called `Result::unwrap()` on an `Err` value: Office { path: "/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/.tmpsJKMwo/source.xlsx", format: "xlsx", message: "missing xl/workbook.xml: specified file not found in archive" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    file_ingest::tests::xlsx_capture_and_original_source_error_paths
+
+test result: FAILED. 16 passed; 1 failed; 0 ignored; 0 measured; 1167 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`

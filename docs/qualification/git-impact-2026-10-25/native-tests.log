@@ -1,0 +1,7 @@
+Excerpt from current cargo test --workspace; see workspace-tests.log for full output.
+test code_index::git_impact::tests::manifest_only_feature_switch_changes_context_and_binding ... ok
+test code_index::git_impact::tests::allowlist_revisions_and_external_filters_are_guarded ... ok
+test code_index::git_impact::tests::parse_errors_and_absent_sparse_sources_do_not_claim_symbol_deletion ... ok
+test code_index::git_impact::tests::added_removed_untracked_and_ambiguous_definitions_are_explicit ... ok
+test code_index::git_impact::tests::capture_and_output_limits_are_never_silent_partial_graphs ... ok
+test code_index::git_impact::tests::working_staged_and_commit_sources_are_distinct_and_pinned ... ok

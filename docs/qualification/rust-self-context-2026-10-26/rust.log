@@ -1,0 +1,64 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 47.73s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 56 tests
+test code_index::rust_cargo::tests::cargo_module_ambiguity_and_required_features_are_not_resolved ... ok
+test code_index::rust_cargo::tests::cargo_inherited_dependency_is_relative_to_workspace ... ok
+test code_index::rust_cargo::tests::cargo_custom_crate_name_and_nested_workspace_boundary ... ok
+test code_index::rust_cargo::tests::cargo_follows_declared_modules_and_path_attributes_only ... ok
+test code_index::rust_cargo::tests::cargo_resolves_renamed_path_dependency_and_custom_lib_root ... ok
+test code_index::rust_cargo::reexports::tests::named_grouped_multihop_reexports_preserve_exact_targets_and_inline_scope ... ok
+test code_index::rust_cargo::tests::cargo_separates_lib_binary_and_integration_test_roots ... ok
+test code_index::rust_cargo::reexports::tests::glob_reexports_preserve_ambiguity_hide_private_items_and_handle_cycles ... ok
+test code_index::rust_cargo::reexports::tests::exhausted_reexport_depth_clears_other_glob_candidates ... ok
+test code_index::rust_cargo::reexports::tests::restricted_exports_do_not_cross_crate_boundaries_or_widen_private_targets ... ok
+test code_index::rust_cargo::reexports::tests::module_aliases_check_the_base_visibility_before_public_children ... ok
+test code_index::rust_cargo::tests::cargo_missing_invalid_and_conditional_boundaries_do_not_fall_back ... ok
+test code_index::rust_cfg::tests::conditional_argument_return_syntax_does_not_publish_unprojected_policy ... ok
+test code_index::rust_cfg::tests::cfg_unknowns_and_unknown_configuration_keys_do_not_guess ... ok
+test code_index::rust_cargo::reexports::tests::reexports_cannot_import_associated_or_function_local_items_or_private_glob_bases ... ok
+test code_index::rust_cfg::tests::three_valued_predicates_preserve_false_and_true_short_circuits ... ok
+test code_index::rust_cfg::tests::compiler_target_feature_sets_larger_than_32_are_admitted_with_a_finite_limit ... ok
+test code_index::rust_cfg::tests::explicit_features_select_symbols_modules_and_callers_in_one_target ... ok
+test code_index::rust_cfg::tests::conditional_attributes_preserve_inactive_items_and_gate_active_unknown_expansions ... ok
+test code_index::rust_cfg::tests::empty_compiler_cfg_values_are_valid_but_empty_flag_and_feature_names_are_not ... ok
+test code_index::rust_cfg::tests::duplicate_manifest_identity_never_reports_an_available_configuration ... ok
+test code_index::rust_semantics::tests::macro_token_arguments_do_not_fall_back_to_recursive_or_same_name_bindings ... ok
+test code_index::rust_cfg::tests::conditional_public_imports_select_only_the_active_local_binding ... ok
+test code_index::rust_semantics::tests::rust_associated_functions_are_not_instance_methods ... ok
+test code_index::rust_cargo::reexports::tests::unknown_cfg_and_duplicate_exports_never_publish_a_partial_unique_target ... ok
+test code_index::rust_cfg::tests::conditional_statement_blocks_keep_only_active_body_calls ... ok
+test code_index::rust_cfg::tests::default_features_and_context_identity_change_without_rust_source_change ... ok
+test code_index::rust_cfg::tests::invalid_configuration_does_not_publish_permission_or_sql_facts ... ok
+test code_index::rust_semantics::tests::rust_bounds_dyn_and_impl_trait_link_declarations_not_runtime_implementors ... ok
+test code_index::rust_cfg::tests::test_overlay_preserves_feature_imports_for_actual_configuration_evaluation ... ok
+test code_index::rust_cfg::tests::configured_argument_expressions_filter_calls_without_blocking_the_file ... ok
+test code_index::rust_semantics::tests::rust_branch_reassignment_invalidates_outer_initializer ... ok
+test code_index::rust_semantics::tests::rust_inherent_impl_from_another_cargo_target_is_not_a_method_candidate ... ok
+test code_index::rust_cfg::tests::unknown_argument_mutations_invalidate_receiver_typing_but_disabled_ones_do_not ... ok
+test code_index::rust_semantics::tests::rust_impl_types_resolve_in_inline_module_not_same_named_root ... ok
+test code_index::rust_semantics::tests::rust_impls_resolve_across_files_without_same_named_owner_fallback ... ok
+test code_index::rust_semantics::tests::rust_associated_projections_default_returns_and_generic_bounds ... ok
+test code_index::rust_semantics::tests::rust_generic_parameter_shadows_concrete_same_name_type ... ok
+test code_index::rust_semantics::tests::rust_generic_impl_substitutes_method_returns_and_fields ... ok
+test code_index::rust_semantics::tests::rust_return_type_is_resolved_in_declaration_document ... ok
+test code_index::rust_semantics::tests::rust_enclosing_generic_and_destructured_values_block_same_named_globals ... ok
+test code_index::rust_semantics::tests::rust_nested_items_cannot_inherit_self_and_unknown_generic_fields_do_not_guess ... ok
+test code_index::rust_semantics::tests::rust_custom_wrappers_and_unawaited_unknowns_do_not_gain_std_dispatch ... ok
+test code_index::rust_semantics::tests::rust_async_requires_await_and_explicit_generic_substitution ... ok
+test code_index::rust_semantics::tests::rust_fields_arrays_and_pointers_keep_receiver_ownership ... ok
+test code_index::rust_semantics::tests::rust_return_chains_target_exact_owner_and_preserve_inner_calls ... ok
+test code_index::rust_semantics::tests::rust_self_uses_captured_lifetime_impl_type_and_preserves_self_returns ... ok
+test code_index::rust_semantics::tests::rust_self_fields_use_super_paths_from_the_field_declaration_module ... ok
+test code_index::rust_semantics::tests::rust_ufcs_disambiguates_traits_and_inherent_method_wins_member_lookup ... ok
+test code_index::rust_semantics::tests::rust_where_bound_impl_requires_evidence_and_trait_alias_is_visible ... ok
+test code_index::rust_semantics::tests::rust_trait_ambiguity_remains_explicit_and_associated_return_uses_selected_impl ... ok
+test code_index::rust_semantics::tests::rust_local_factory_inference_aliases_and_shadowing ... ok
+test code_index::rust_semantics::tests::rust_format_31_payload_is_stale_and_refreshable_not_a_decode_failure ... ok
+test code_index::rust_cfg::tests::configured_history_and_manifest_only_switch_reuse_raw_extraction ... ok
+test code_index::rust_cargo::tests::cargo_manifest_only_updates_rebind_and_stale_boundary_blocks_links ... ok
+test code_index::rust_semantics::tests::rust_exhausted_impl_search_never_publishes_a_partial_unique_target ... ok
+
+test result: ok. 56 passed; 0 failed; 0 ignored; 0 measured; 1165 filtered out; finished in 0.60s
+

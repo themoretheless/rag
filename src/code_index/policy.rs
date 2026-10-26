@@ -11,6 +11,16 @@ pub(super) struct PolicySpec {
     default_behavior: String,
     diagnostics: Vec<String>,
 }
+pub(super) fn remap_build_context(doc: &mut IndexedDocument, ids: &HashMap<String, String>) {
+    doc.policies.retain_mut(|p| {
+        if let Some(id) = ids.get(&p.symbol_id) {
+            p.symbol_id = id.clone();
+            true
+        } else {
+            false
+        }
+    });
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Decision {
     line: usize,

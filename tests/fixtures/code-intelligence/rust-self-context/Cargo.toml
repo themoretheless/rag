@@ -1,0 +1,12 @@
+[package]
+name = "fixture-self-context"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[package.metadata.rag.graph]
+version = 1
+target_kind = "lib"
+features = []
+default_features = false

@@ -1,0 +1,117 @@
+{
+  "observed_at_utc": "2026-10-26T01:26:59.910750+00:00",
+  "git_head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "native_gates": {
+    "new-tests": {
+      "sha256": "bfa0d53ac6734f130f064e209d9b165c7e6e68c38008df610c04214c2fb82dd0",
+      "suites": 1,
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    "focused-final": {
+      "sha256": "b90d1c42d8d0b2269109fb463d69dd559fb0167cc0b7d547135eb00cab1e0025",
+      "suites": 1,
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    "workspace": {
+      "sha256": "c9a82ce5c186b5c6306535a6ff34a26415299fbfc40d4d91ed4d585214672a98",
+      "suites": 19,
+      "passed": 1501,
+      "failed": 0,
+      "ignored": 1
+    },
+    "workspace-final": {
+      "sha256": "c9055f5b0b5c9dd96a4ebf8530b5233d578787e4e7f26932006e2301264ffea0",
+      "suites": 19,
+      "passed": 1502,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy-final": {
+      "sha256": "951dbb6891f1b9f22a419526e00cf6da86b6aa7d373a5f265db24d0100b2952c",
+      "suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    "build-final": {
+      "sha256": "8439ec586a4a5e9d9be0cbdc123fef813c7deda63348b54aa3ef8af4614f4989",
+      "suites": 0,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "post_check_selected_source_hashes": {
+    "src/code_index.rs": "aaa9003aeafe968055b90ba1e2bc76fc5c2d24169b1635f5a3b07d6513a89587",
+    "src/code_index/endpoints.rs": "c59521bfab2bb19b0ca493713c135baccbc19de7bd77539a8ca7625835fe8c74",
+    "src/code_index/endpoints/clients.rs": "2e9b8795a13e6a5c3a91f463bc3dc546ed09e635c11f4ed166ed0d99643d615f",
+    "src/code_index/analysis.rs": "ab3e1cdd4f02558902bbace933346d0cf511e1da71d257e07bc4872f0c4625d9",
+    "src/code_index/history.rs": "097c2816e9802fb9ec85a7ac413aa2d0fbb07fc531739aab9e485d3bea64313b",
+    "src/code_index/routes.rs": "f9d51486f6bc106b1df60321a2d028d34649dd9f86cfc29a7d745ce7d5b1a11a",
+    "src/code_index/non_code_references.rs": "72434d663ffdf6efbca77edb215372959656c8358c528da98a3a089e6e25898a",
+    "src/code_index/literal_impact.rs": "e10840c835eb76224531d084febafabf9c415d79a457afe2a7be7995e15ce9bc",
+    "src/mcp/analysis.rs": "000e5edbf9198d49e0e3a803f6594a1f5ae18091473ecda8571ed10b55353adf",
+    "scripts/smoke_client_endpoints.py": "983ea2ca4029174d5be8d942bb5835bc960ac90a3409d57a26be31cd482544a7",
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b"
+  },
+  "source_hashes_atomic": false,
+  "shared_checkout": true,
+  "copied_executable": {
+    "sha256": "63ae59470536a65c2dd96b5c272ce15060d5920d581fdcbfc5e09c93ca74d8fa",
+    "bytes": 326867288,
+    "fixed_for_all_MCP_scenarios": true,
+    "scenarios": [
+      "client_endpoints",
+      "fetch_endpoints",
+      "route_queries",
+      "non_code_references",
+      "literal_impact",
+      "symbol_nodes",
+      "php_parameter_contracts",
+      "table_impact"
+    ]
+  },
+  "runtime": {
+    "passed": true,
+    "reference_comparison": {
+      "available": true,
+      "pure_reference_regex_only": true,
+      "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+      "reference_false_hits_on_controlled_comment_and_string_fixture": [
+        "/string",
+        "/comment"
+      ],
+      "local_false_hits": 0
+    },
+    "checks": [
+      "jquery_and_axios_syntax",
+      "method_basis",
+      "conflict_and_dynamic_guards",
+      "inline_utf8_source_offsets",
+      "method_and_kind_filters",
+      "references_basis",
+      "literal_impact_owner_and_callers",
+      "warm_cache",
+      "stale_exclusion",
+      "sync_refresh",
+      "frozen_method_diff",
+      "project_isolation"
+    ],
+    "versions": {
+      "index_format": 64,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "client_library_or_runtime_request_proven": false,
+    "production_database_touched": false,
+    "source_applications_executed": false
+  },
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "whole_RAGRAF_parity_proven": false
+}

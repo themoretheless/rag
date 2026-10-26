@@ -1,0 +1,16 @@
+    Checking rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0106]: missing lifetime specifier
+   --> src/code_index/file_resources/responsive.rs:254:78
+    |
+254 | fn literal_url<'a>(node: Node<'_>, source: &'a str) -> Option<(&'a str, Node<'_>)> {
+    |                          --------          -------                           ^^ expected named lifetime parameter
+    |
+    = help: this function's return type contains a borrowed value, but the signature does not say whether it is borrowed from `node` or `source`
+help: consider using the `'a` lifetime
+    |
+254 - fn literal_url<'a>(node: Node<'_>, source: &'a str) -> Option<(&'a str, Node<'_>)> {
+254 + fn literal_url<'a>(node: Node<'_>, source: &'a str) -> Option<(&'a str, Node<'a>)> {
+    |
+
+For more information about this error, try `rustc --explain E0106`.
+error: could not compile `rag-mcp` (lib) due to 1 previous error

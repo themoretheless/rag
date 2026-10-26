@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "shared_working_tree_snapshot",
+  "focused_dead_reachability_passed": 4,
+  "focused_analysis_passed": 8,
+  "new_native_regressions": 4,
+  "full_ragraf_parity": false,
+  "runtime_dispatch_proven": false,
+  "deletion_safe": false,
+  "source_applications_executed": false,
+  "production_database_touched": false,
+  "source_sha256": {
+    "src/code_index/dead_code.rs": "a0f0b8f5e2cccc77200ae4cafd2cacf51b456ee867bdf24abbf92123efed0c9f",
+    "src/code_index/analysis.rs": "b0b1e0ec2197b7541506859e12925ac855acaf6a036d1c707733ab8200b5af79",
+    "scripts/smoke_dead_code.py": "cee936498a50b9882da3b4b03e1cb2a83b20b43a0dac4e29ee7056c110e5841c",
+    "docs/DEAD_CODE_REACHABILITY.md": "7eb4c84ae57fa3b97a55182043f36df6a997099b9335eb1c1eed213e2f2d59a4"
+  },
+  "index_format": 31,
+  "database_schema": 25,
+  "workspace": {
+    "passed": 1267,
+    "failed": 0,
+    "ignored": 1
+  },
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "logs_sha256": {
+    "focused": "fa3c89848d3dcfbd31c70311051e6c5e452713797f59e1b328c38e5290109504",
+    "analysis": "da0025949a091165dfbd58e4db086d97499e939960fadae06c75d3c1005e1642",
+    "clippy": "d01488f74cd572cee85ad3319b971d84da4252bd8bc6075d1b519b00506521dc",
+    "workspace": "5c0ce74615beeb35c58df7c6db097586d1a4cf5595827cdf1c5bb72f48452905",
+    "build": "8a48a78c05f2c28e7159573776c1be4aadfb5fe29ced10279726783cd4a58475"
+  },
+  "runtime_binary_sha256": "676397578865f0ba56cbfba81364a9e9a8653b6a660b212b817567c2245c766d",
+  "runtime_binary_isolated": true,
+  "whole_shared_workspace_frozen": false,
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "method-regression.json": "passed",
+    "impact-regression.json": "passed"
+  },
+  "post_test_formatting": "cargo fmt module-declaration ordering"
+}

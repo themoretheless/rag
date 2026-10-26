@@ -1,0 +1,15 @@
+{
+  "sha256": "e240be9aa65206503701528318b36e05cfe33e761895728f0b331a1e59650c58",
+  "bytes": 327494216,
+  "fixed_for_all_MCP_scenarios": true,
+  "scenarios": [
+    "code_cursors",
+    "code_reads",
+    "code_documentation",
+    "php_parameter_contracts",
+    "client_endpoints",
+    "table_impact",
+    "route_queries",
+    "non_code_references"
+  ]
+}

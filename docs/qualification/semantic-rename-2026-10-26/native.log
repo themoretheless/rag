@@ -1,0 +1,13 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.00s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/5ded5753db3c8ad7/out/rag_mcp-5ded5753db3c8ad7)
+
+running 5 tests
+test code_index::rename::tests::stale_unedited_input_and_wrong_token_never_mutate_sources ... ok
+test code_index::rename::tests::preview_is_exact_and_apply_preserves_backups_and_requires_refresh ... ok
+test code_index::rename::tests::replacement_failure_rolls_back_and_conflicting_editor_change_is_preserved ... ok
+test code_index::rename::tests::paths_permissions_and_source_encoding_are_checked ... ok
+test code_index::rename::tests::collisions_unknown_occurrences_aliases_and_trait_families_block ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1112 filtered out; finished in 1.29s
+

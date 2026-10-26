@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "public_schema",
+    "legacy_empty_arguments",
+    "legacy_missing_arguments",
+    "filters_before_limit",
+    "literal_substring",
+    "separate_methods",
+    "kind_and_category",
+    "complete_nonoverlapping_pages",
+    "token_required",
+    "query_mismatch_rejected",
+    "project_isolation",
+    "stale_view_without_revision_rejected",
+    "parameter_binding"
+  ],
+  "alpha_total": 5,
+  "page_lengths": [
+    2,
+    2,
+    1
+  ]
+}

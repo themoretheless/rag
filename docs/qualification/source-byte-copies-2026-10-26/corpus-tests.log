@@ -1,0 +1,51 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 37.13s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 42 tests
+test code_index::corpus::primary_comparison::tests::rounding_matches_binary_float_decimal_ties ... ok
+test code_index::corpus::source_bytes::tests::capture_requires_current_fingerprint_version_algorithm_digest_and_length ... ok
+test code_index::corpus::family_groups::tests::incomplete_never_claims_dissimilar_family ... ok
+test code_index::corpus::primary_comparison::tests::pair_budget_and_unique_file_cache ... ok
+test code_index::corpus::primary_comparison::tests::python_lines_unicode_crlf_and_trim ... ok
+test code_index::corpus::primary_comparison::tests::empty_and_disjoint_sets ... ok
+test code_index::corpus::source_bytes::pair_tests::byte_identity_is_independent_of_text_and_guards_inconsistent_lengths_and_projects ... ok
+test code_index::corpus::primary_comparison::tests::limits_publish_null_metrics_and_no_partial_counts ... ok
+test code_index::corpus::primary_comparison::tests::directional_deltas_rounding_and_body_free_provenance ... ok
+test code_index::corpus::family_groups::tests::reference_numbered_path_keys_preserve_directory_case_and_nonnumber_suffixes ... ok
+test code_index::corpus::tests::duplicate_primary_comparison_uses_returned_window_and_current_text ... ok
+test code_index::corpus::tests::approximate_families_have_threshold_evidence_and_explicit_work_cap ... ok
+test code_index::corpus::tests::independent_query_windows_and_families_preserve_scope_and_limits ... ok
+test code_index::corpus::tests::captured_byte_copy_groups_omit_legacy_and_invalidate_changed_text_metadata ... ok
+test code_index::corpus::tests::duplicate_family_limits_do_not_manufacture_same_name_classification ... ok
+test code_index::corpus::tests::duplicate_family_inventory_keeps_independent_exact_and_dissimilar_groups ... ok
+test code_index::corpus::tests::literal_path_roles_find_endpoint_constants_outside_target_scope ... ok
+test code_index::corpus::tests::duplicate_evidence_counts_and_bounded_retention_are_order_independent ... ok
+test code_index::corpus::tests::duplicate_resource_target_identity_and_parsed_target_fingerprints_are_required ... ok
+test code_index::corpus::tests::exact_and_numbered_copies_have_static_liveness_evidence_and_no_delete_claim ... ok
+test code_index::corpus::tests::duplicate_primary_remains_in_member_window_and_counts_break_role_ties ... ok
+test code_index::corpus::tests::scoped_corpus_body_reads_cross_parameter_batches_without_losing_order ... ok
+test code_index::corpus::tests::corpus_read_transaction_keeps_roles_consistent_across_a_concurrent_publication ... ok
+test code_index::corpus::tests::literal_path_boundaries_reject_substrings_unrelated_paths_and_external_urls ... ok
+test code_index::corpus::tests::literal_path_basename_uniqueness_uses_the_whole_project_inventory ... ok
+test code_index::corpus::tests::duplicate_roles_include_imports_and_resources_from_outside_target_prefix ... ok
+test http_api::wiki::tests::review_queue_empty_corpus_is_success ... ok
+test code_index::corpus::tests::duplicate_roles_include_function_values_and_drop_stale_sources ... ok
+test retrieval::tests::search_timeout_cancels_embedding_and_releases_the_corpus_lane ... ok
+test code_index::corpus::tests::multi_search_exact_conjunction_regex_scope_utf8_and_no_chunks_needed ... ok
+test mcp::facade::tests::vector_search_holds_corpus_guard_across_async_embedding ... ok
+test code_index::corpus::tests::search_scopes_index_reads_and_skips_role_index_for_empty_windows ... ok
+test mcp::facade::tests::status_and_doctor_empty_corpus ... ok
+test code_index::corpus::tests::source_encoding_labels_require_matching_decoded_source_fingerprint ... ok
+test maintain::analyze::tests::analyze_empty_corpus ... ok
+test code_index::corpus::tests::literal_path_scan_reports_budgets_disabled_mode_and_stale_sources ... ok
+test code_index::corpus::tests::search_roles_include_imports_resources_and_sources_outside_target_prefix ... ok
+test code_index::corpus::tests::search_family_roles_use_bound_values_and_omit_stale_callers_and_targets ... ok
+test code_index::corpus::tests::search_resource_roles_exclude_unindexed_and_stale_sources_and_targets ... ok
+test db::search::tests::active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly ... ok
+test wiki::tests::maintenance_wiki_writes_reuse_only_the_explicit_corpus_lease ... ok
+test code_index::corpus::tests::literal_path_scan_caps_retention_but_keeps_complete_unique_source_counts ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 1144 filtered out; finished in 1.38s
+

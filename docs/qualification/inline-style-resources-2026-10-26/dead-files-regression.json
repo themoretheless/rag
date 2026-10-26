@@ -1,0 +1,27 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "checks": [
+    "literal_refutation_from_preserved_html",
+    "suffix_boundary",
+    "ambiguous_basename_not_bound",
+    "project_isolation",
+    "known_incoming_protection",
+    "shebang_protection",
+    "no_source_body_disclosure",
+    "literal_byte_budget_unknown",
+    "candidate_budget_unknown",
+    "stable_results",
+    "warm_reuse",
+    "stale_project_indeterminate",
+    "sync_refresh"
+  ],
+  "deletion_safe": false,
+  "versions": {
+    "index_format": 40,
+    "package": "0.1.0",
+    "store_schema": 25
+  }
+}

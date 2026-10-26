@@ -1,0 +1,17 @@
+{
+  "itoa": {
+    "docs/qualification/rust-self-context-2026-10-26/controlled-itoa-after/report.json": "5fcd1d4eecfe35415003afca0d2a3f3560938075573b3714ca372771244dab1a",
+    "docs/qualification/rust-self-context-2026-10-26/controlled-itoa-after/scored-cases.json": "bbccec2dcb61a2e91f795eda63aa43534945494aec9d588e0cb4192caa0a7b13",
+    "docs/qualification/rust-self-context-2026-10-26/controlled-itoa-after/oracle-labels.json": "871ec016fc3cf201ee9bfda017653a5de0a146fc85a2ff3fc0b53be9d3925ea1"
+  },
+  "ryu": {
+    "docs/qualification/rust-self-context-2026-10-26/controlled-ryu-after/report.json": "a89a350a05ee99273ff349f5a55d5b984772eead27dab5f94821c4c1ca4995bf",
+    "docs/qualification/rust-self-context-2026-10-26/controlled-ryu-after/scored-cases.json": "0a4e5d0ee614dc7c971dd3c175387498962f17b9b9bb830f03ce71bc0a423148",
+    "docs/qualification/rust-self-context-2026-10-26/controlled-ryu-after/oracle-labels.json": "adfa741d87aedfdd2ceada3297cb1605054b26aa842c242de2d16a26e1902494"
+  },
+  "memchr": {
+    "docs/qualification/rust-self-context-2026-10-26/controlled-memchr-after/report.json": "ba69e8d1193acd014390fd9e81c9fa8377f69684a7f3f39c657bbf33e8a9fc3f",
+    "docs/qualification/rust-self-context-2026-10-26/controlled-memchr-after/scored-cases.json": "6c5b3ec2fcc57b55d858930848bcc57e6306ba1867b72c3a53c7aaf3fffad637",
+    "docs/qualification/rust-self-context-2026-10-26/controlled-memchr-after/oracle-labels.json": "28405c58fb9976cccae8db48c47e737b5a67c0aa36629eb4b916bbfd4096d885"
+  }
+}

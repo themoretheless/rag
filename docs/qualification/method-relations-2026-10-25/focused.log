@@ -1,0 +1,15 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.97s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 7 tests
+test code_index::inheritance::tests::method_relations_do_not_cross_identical_paths_in_different_projects ... ok
+test code_index::inheritance::tests::c3_diamond_order_cycles_and_unknown_bases ... ok
+test code_index::inheritance::tests::method_relations_respect_c3_and_do_not_guess_unknown_or_blocked_bases ... ok
+test code_index::inheritance::tests::method_relations_bind_imports_and_keep_reference_windows_separate ... ok
+test code_index::inheritance::tests::python_super_skips_override_and_rust_trait_defaults ... ok
+test code_index::inheritance::tests::method_relations_link_nearest_declared_member_without_a_call ... ok
+test code_index::inheritance::tests::inherited_methods_imported_bases_and_overrides ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 972 filtered out; finished in 0.01s
+

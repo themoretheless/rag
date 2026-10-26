@@ -373,6 +373,8 @@ pub(crate) fn index_tool(name: &str) -> bool {
             | "code"
             | "repo_map"
             | "impact"
+            | "trace_path"
+            | "affected_tests"
             | "inheritance"
             | "entrypoints"
             | "routes"
@@ -408,6 +410,7 @@ pub(crate) fn evidence_count(value: &Value) -> Option<i64> {
         "tables",
         "entrypoints",
         "routes",
+        "paths",
     ] {
         if let Some(a) = value.get(key).and_then(Value::as_array) {
             return Some(a.len() as i64);

@@ -251,85 +251,87 @@ pub fn tool_group(tool: &str) -> &'static str {
 /// Group for every registered MCP tool; `None` only for unknown names.
 /// `mcp::facade` tests assert each registered tool has an entry here.
 pub fn explicit_tool_group(tool: &str) -> Option<&'static str> {
-    let group = match tool {
-        "catalog" | "freshness" | "live_read" | "drift_report" | "drift_ack" | "index_status"
-        | "search_multi" | "duplicates" | "index_revisions" | "diff" | "policy_trace"
-        | "class_usage" | "db_refresh" | "db_schema" | "db_table" | "db_relations" | "db_drift"
-        | "db_cross" | "db_sample" | "schema" | "table_usage" | "write_check" | "entrypoints"
-        | "routes" | "dead_code" | "slice" | "inheritance" | "code" | "repo_map" | "impact"
-        | "index_code" | "symbol" | "references" | "callers" | "callees" => "graph",
-        "calibrate" | "calibration_reports" | "gate" => "maintain",
-        "task_set" | "note" | "notes" | "task_stats" => "memory",
-        "ingest_url" => "ingest",
-        "reembed_status" => "ops",
+    let group =
+        match tool {
+            "catalog" | "freshness" | "live_read" | "drift_report" | "drift_ack"
+            | "index_status" | "search_multi" | "duplicates" | "index_revisions" | "diff"
+            | "policy_trace" | "class_usage" | "db_refresh" | "db_schema" | "db_table"
+            | "db_relations" | "db_drift" | "db_cross" | "db_sample" | "schema" | "table_usage"
+            | "write_check" | "entrypoints" | "routes" | "dead_code" | "slice" | "inheritance"
+            | "code" | "repo_map" | "impact" | "trace_path" | "detect_changes"
+            | "affected_tests" | "infrastructure" | "rename" | "apply_rename" | "index_code"
+            | "symbol" | "references" | "callers" | "callees" => "graph",
+            "calibrate" | "calibration_reports" | "gate" => "maintain",
+            "task_set" | "note" | "notes" | "task_stats" => "memory",
+            "ingest_url" => "ingest",
+            "reembed_status" => "ops",
 
-        "search" | "multi_query_search" | "query_with_index" | "search_wiki" | "pack_context"
-        | "find_similar" | "expand_chunks" | "multi_get" | "get_document" | "get_source"
-        | "list_documents" | "list_sources" | "check_duplicate" => "search",
-        "get_graph"
-        | "get_neighbors"
-        | "get_backlinks"
-        | "find_node"
-        | "graph_expand_search"
-        | "link_nodes"
-        | "create_tunnel"
-        | "list_tunnels"
-        | "delete_tunnel"
-        | "follow_tunnels"
-        | "find_tunnels"
-        | "graph_stats"
-        | "export_graph_snapshot" => "graph",
-        "write_wiki_page" | "update_wiki_page" | "get_wiki_page" | "list_wiki_pages"
-        | "file_answer" | "read_index" | "update_index_entry" | "rebuild_index" | "get_schema"
-        | "update_schema" | "lint_wiki" | "refresh_stale_wiki" | "compile_source"
-        | "consolidate" => "wiki",
-        "ingest_text"
-        | "ingest_file"
-        | "ingest_raw"
-        | "sync_sources"
-        | "add_drawer"
-        | "delete_document"
-        | "delete_by_source"
-        | "update_document_meta"
-        | "reembed_document" => "ingest",
-        "kg_add" | "kg_query" | "kg_invalidate" | "kg_supersede" | "kg_timeline" | "kg_stats" => {
-            "kg"
-        }
-        "diary_write"
-        | "diary_read"
-        | "wake_up"
-        | "checkpoint"
-        | "append_log"
-        | "read_log"
-        | "list_recent_ops"
-        | "memories_filed_away"
-        | "list_memory_lifecycle_candidates"
-        | "consolidate_memory_items"
-        | "archive_memory_items" => "memory",
-        "analyze_corpus"
-        | "plan_maintenance"
-        | "apply_maintenance_plan"
-        | "maintain_organize"
-        | "maintain_refresh"
-        | "maintain_compress" => "maintain",
-        "collection_create" | "collection_get" | "collection_list" | "collection_update" => {
-            "collections"
-        }
-        "backup_db" | "export_bundle" | "export_vault" | "import_bundle" => "recovery",
-        "cleanup_source_duplicates"
-        | "doctor"
-        | "doctor_repair"
-        | "get_embedding_manifest"
-        | "get_taxonomy"
-        | "list_rooms"
-        | "list_wings"
-        | "llm_status"
-        | "reconnect"
-        | "stats"
-        | "status"
-        | "vacuum_store" => "ops",
-        _ => return None,
-    };
+            "search" | "multi_query_search" | "query_with_index" | "search_wiki"
+            | "pack_context" | "find_similar" | "expand_chunks" | "multi_get" | "get_document"
+            | "get_source" | "list_documents" | "list_sources" | "check_duplicate" => "search",
+            "get_graph"
+            | "get_neighbors"
+            | "get_backlinks"
+            | "find_node"
+            | "graph_expand_search"
+            | "link_nodes"
+            | "create_tunnel"
+            | "list_tunnels"
+            | "delete_tunnel"
+            | "follow_tunnels"
+            | "find_tunnels"
+            | "graph_stats"
+            | "export_graph_snapshot" => "graph",
+            "write_wiki_page" | "update_wiki_page" | "get_wiki_page" | "list_wiki_pages"
+            | "file_answer" | "read_index" | "update_index_entry" | "rebuild_index"
+            | "get_schema" | "update_schema" | "lint_wiki" | "refresh_stale_wiki"
+            | "compile_source" | "consolidate" => "wiki",
+            "ingest_text"
+            | "ingest_file"
+            | "ingest_raw"
+            | "sync_sources"
+            | "add_drawer"
+            | "delete_document"
+            | "delete_by_source"
+            | "update_document_meta"
+            | "reembed_document" => "ingest",
+            "kg_add" | "kg_query" | "kg_invalidate" | "kg_supersede" | "kg_timeline"
+            | "kg_stats" => "kg",
+            "diary_write"
+            | "diary_read"
+            | "wake_up"
+            | "checkpoint"
+            | "append_log"
+            | "read_log"
+            | "list_recent_ops"
+            | "memories_filed_away"
+            | "list_memory_lifecycle_candidates"
+            | "consolidate_memory_items"
+            | "archive_memory_items" => "memory",
+            "analyze_corpus"
+            | "plan_maintenance"
+            | "apply_maintenance_plan"
+            | "maintain_organize"
+            | "maintain_refresh"
+            | "maintain_compress" => "maintain",
+            "collection_create" | "collection_get" | "collection_list" | "collection_update" => {
+                "collections"
+            }
+            "backup_db" | "export_bundle" | "export_vault" | "import_bundle" => "recovery",
+            "cleanup_source_duplicates"
+            | "doctor"
+            | "doctor_repair"
+            | "get_embedding_manifest"
+            | "get_taxonomy"
+            | "list_rooms"
+            | "list_wings"
+            | "llm_status"
+            | "reconnect"
+            | "stats"
+            | "status"
+            | "vacuum_store" => "ops",
+            _ => return None,
+        };
     Some(group)
 }
 

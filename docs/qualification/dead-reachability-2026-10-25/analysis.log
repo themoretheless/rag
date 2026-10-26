@@ -1,0 +1,16 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.40s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 8 tests
+test code_index::analysis::tests::markup_occurrences_and_same_path_document_identities_are_distinct ... ok
+test code_index::analysis::tests::php_route_inventory_does_not_guess_handler_bindings ... ok
+test code_index::analysis::tests::markup_endpoints_do_not_bind_handlers_or_create_liveness_roots ... ok
+test code_index::analysis::tests::python_route_methods_do_not_partially_trust_dynamic_collections ... ok
+test code_index::analysis::tests::reachability_dead_candidates_and_callbacks ... ok
+test code_index::analysis::tests::structural_slices_are_bounded_directional_deterministic_and_body_free ... ok
+test code_index::analysis::tests::routes_retain_decorators_imported_handlers_and_unknown_handlers ... ok
+test code_index::analysis::tests::python_decorator_methods_are_literal_deduplicated_and_span_bound ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1009 filtered out; finished in 0.01s
+

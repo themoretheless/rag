@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "database_schema": 25,
+  "index_format": 28,
+  "focused_live_diff_passed": 4,
+  "focused_drift_passed": 8,
+  "exhaustive_reconstruction_pairs": 961,
+  "full_ragraf_parity": false,
+  "representative_scale_qualified": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "source_sha256": {
+    "src/code_index/drift.rs": "83ac890d3abc0c74f302323e07225f588ddaa30b1a622d2e3332cd4a264a18ef",
+    "scripts/smoke_live_hunks.py": "d8adff0a5cb9f74cbf963864639ddbc5f03993db2936ff8b5cd1a38fbb010f4a",
+    "docs/LIVE_READ_DIFF.md": "a7479f4d4663b99066379b5e1f7b5fec24ac17aadbae3ad872aa3aa8efdcb04e"
+  },
+  "workspace": {
+    "passed": 1223,
+    "failed": 0,
+    "ignored": 1
+  },
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "logs_sha256": {
+    "focused": "777a838a679887a5a3a021443a0a106e428226d24058ea6aeba441435d063c9e",
+    "drift": "d7e9c9ba18cc4308d33f9e04b46481f5ff31687aff69ad9137776b57c4906e65",
+    "clippy": "7ee6d3cdecb2981da1ac63111d98514d6b4276c836f624f696b44602975feb65",
+    "workspace": "8a8594215fa06bb37f06815f842d2e41463439f8886c789ea6960851514fa45f",
+    "build": "59b7a32a07211a22ccd89f8a0778a890dfa5596d029393dd01a4efea2009caee"
+  },
+  "binary_sha256": "fd220bf8901d750b92ce52e0fae7ffc700a08383078f8a0bcd158e85b7759bba",
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "encoding-regression.json": "passed"
+  }
+}

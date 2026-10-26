@@ -1,0 +1,158 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP",
+  "scope": "Rust trait fixture, not representative compiler or runtime dispatch accuracy",
+  "binary_sha256": "b8b3fa6f23447e6e5dd092e596ec8ecc68fb2eb62d86b824d6fffffc1ef38fd1",
+  "index_format": 33,
+  "labelled_calls": [
+    {
+      "caller": "concrete",
+      "expression": "user.save",
+      "target_path": "src/implementations.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/implementations.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "concrete",
+      "expression": "user.render",
+      "target_path": "src/implementations.rs",
+      "target": "User::render",
+      "actual": [
+        [
+          "src/implementations.rs",
+          "User::render"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "concrete",
+      "expression": "user.provide().save",
+      "target_path": "src/implementations.rs",
+      "target": "Other::save",
+      "actual": [
+        [
+          "src/implementations.rs",
+          "Other::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "concrete",
+      "expression": "wrapped.get().save",
+      "target_path": "src/implementations.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/implementations.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "concrete",
+      "expression": "<User as VisibleRender>::render",
+      "target_path": "src/implementations.rs",
+      "target": "User::render",
+      "actual": [
+        [
+          "src/implementations.rs",
+          "User::render"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "concrete",
+      "expression": "user.default_action",
+      "target_path": "src/contracts.rs",
+      "target": "Defaulted::default_action",
+      "actual": [
+        [
+          "src/contracts.rs",
+          "Defaulted::default_action"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "bounded",
+      "expression": "value.render",
+      "target_path": "src/contracts.rs",
+      "target": "Render::render",
+      "actual": [
+        [
+          "src/contracts.rs",
+          "Render::render"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "dynamic",
+      "expression": "value.render",
+      "target_path": "src/contracts.rs",
+      "target": "Render::render",
+      "actual": [
+        [
+          "src/contracts.rs",
+          "Render::render"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "projection",
+      "expression": "selected::<User>().save",
+      "target_path": "src/implementations.rs",
+      "target": "Other::save",
+      "actual": [
+        [
+          "src/implementations.rs",
+          "Other::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "caller": "projection",
+      "expression": "item.save",
+      "target_path": "src/implementations.rs",
+      "target": "Other::save",
+      "actual": [
+        [
+          "src/implementations.rs",
+          "Other::save"
+        ]
+      ],
+      "wrong_targets": 0
+    }
+  ],
+  "checks": [
+    "cross_file_impl_owner",
+    "generic_impl_return",
+    "trait_import_alias",
+    "explicit_ufcs",
+    "default_method",
+    "generic_bound_declaration",
+    "dyn_trait_declaration",
+    "associated_projection",
+    "warm_reuse",
+    "stale_impl_exclusion",
+    "declarations_survive_stale_impl",
+    "associated_type_only_rebinding",
+    "frozen_history"
+  ],
+  "production_database_touched": false,
+  "runtime_dispatch_verified": false,
+  "representative_quality_measured": false,
+  "competitor_comparison_performed": false
+}

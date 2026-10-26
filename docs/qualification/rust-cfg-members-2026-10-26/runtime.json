@@ -1,0 +1,1127 @@
+{
+  "status": "passed",
+  "index_format": 66,
+  "binary_sha256": "120940eeb0290e804d6c223032c3ea0ac1f56bf0a732654efabe7ec915353e32",
+  "transport": "actual stdio MCP",
+  "runs": [
+    {
+      "phase": "fast",
+      "selected": [
+        {
+          "expected": {
+            "caller": "Holder::run",
+            "expression": "self.item.value",
+            "target": "Fast::value"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:120:value@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:385:run@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "column": 19,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "self.item.value",
+              "is_call": true,
+              "line": 25,
+              "name": "value",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 420
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_ast_receiver_type"
+          },
+          "target": {
+            "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 165,
+            "end_line": 8,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:120:value@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "kind": "function_item",
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "Fast::value",
+            "revision": 1,
+            "signature": "pub fn value(&self) -> u32",
+            "start_byte": 120,
+            "start_line": 6
+          }
+        },
+        {
+          "expected": {
+            "caller": "make",
+            "expression": "fast",
+            "target": "fast"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:447:fast@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:509:make@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "column": 15,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "fast",
+              "is_call": true,
+              "line": 38,
+              "name": "fast",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 595
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "lexical"
+          },
+          "target": {
+            "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 477,
+            "end_line": 31,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:447:fast@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "kind": "function_item",
+            "name": "fast",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "fast",
+            "revision": 1,
+            "signature": "fn fast() -> Fast",
+            "start_byte": 447,
+            "start_line": 29
+          }
+        },
+        {
+          "expected": {
+            "caller": "standard",
+            "expression": "values[0].value",
+            "target": "Fast::value"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:120:value@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:672:standard@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "column": 15,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "values[0].value",
+              "is_call": true,
+              "line": 45,
+              "name": "value",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 743
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_ast_receiver_type"
+          },
+          "target": {
+            "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 165,
+            "end_line": 8,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:120:value@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "kind": "function_item",
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "Fast::value",
+            "revision": 1,
+            "signature": "pub fn value(&self) -> u32",
+            "start_byte": 120,
+            "start_line": 6
+          }
+        },
+        {
+          "expected": {
+            "caller": "call_live",
+            "expression": "live",
+            "target": "live"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:895:live@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:908:call_live@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "column": 5,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "live",
+              "is_call": true,
+              "line": 54,
+              "name": "live",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 933
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "lexical"
+          },
+          "target": {
+            "build_context": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 907,
+            "end_line": 52,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:895:live@7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "kind": "function_item",
+            "name": "live",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "live",
+            "revision": 1,
+            "signature": "fn live()",
+            "start_byte": 895,
+            "start_line": 52
+          }
+        }
+      ],
+      "index_report": {
+        "indexed": 2,
+        "unchanged": 0,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "02b41fe2-2277-4e0a-8e36-9b153dfe620f",
+          "lock_wait_ms": 0.00041600000000000003,
+          "source_load_decode_ms": 2.3730420000000003,
+          "cache_parse_serialize_ms": 11.089125,
+          "cache_replace_ms": 22.64025,
+          "revision_publish_ms": 69.122,
+          "transaction_body_ms": 106.847375,
+          "before_metrics_write_ms": 106.847875,
+          "documents_loaded": 2,
+          "cache_hits": 0,
+          "cache_misses": 2,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 2,
+          "documents_resolved": 2,
+          "documents_reused": 0,
+          "reference_sites_resolved": 29,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 1,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 2,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": false,
+          "resolution_ms": 3.509167,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 111.45041599999999,
+          "commit_ms": 2.458084,
+          "metrics_write_ms": 2.143875,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 140656640
+        }
+      },
+      "warm_index": {
+        "indexed": 0,
+        "unchanged": 2,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "92c96662-96a0-4aa3-ace4-27858d510d42",
+          "lock_wait_ms": 0.000583,
+          "source_load_decode_ms": 2.121459,
+          "cache_parse_serialize_ms": 1.240542,
+          "cache_replace_ms": 0.001791,
+          "revision_publish_ms": 1.994458,
+          "transaction_body_ms": 5.746583,
+          "before_metrics_write_ms": 5.747292,
+          "documents_loaded": 2,
+          "cache_hits": 2,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 0,
+          "documents_resolved": 0,
+          "documents_reused": 0,
+          "reference_sites_resolved": 0,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 0,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 0,
+          "dependency_inputs_hashed": 0,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": true,
+          "resolution_ms": 0.0,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 8.962167,
+          "commit_ms": 1.222291,
+          "metrics_write_ms": 1.9924169999999999,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 145784832
+        }
+      },
+      "stale": null,
+      "diff": null,
+      "compiler_command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/Cargo.toml",
+        "--no-default-features",
+        "--features",
+        "fast"
+      ],
+      "compiler_exit": 0,
+      "compiler_stdout": "\nrunning 1 test\ntest tests::field_identity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "compiler_stderr": "   Compiling fixture-cfg-members v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources)\nwarning: function `slow` is never used\n  --> src/lib.rs:32:4\n   |\n32 | fn slow() -> Slow {\n   |    ^^^^\n   |\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: function `unused` is never used\n  --> src/lib.rs:60:8\n   |\n60 |     fn unused(#[cfg(feature = \"fast\")] _value: u8) {}\n   |        ^^^^^^\n\nwarning: `fixture-cfg-members` (lib) generated 1 warning\nwarning: `fixture-cfg-members` (lib test) generated 2 warnings (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.25s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/cargo-target/debug/build/fixture-cfg-members/efe6754b21c2aedb/out/fixture_cfg_members-efe6754b21c2aedb)\n   Doc-tests fixture_cfg_members\n"
+    },
+    {
+      "phase": "slow",
+      "selected": [
+        {
+          "expected": {
+            "caller": "Holder::run",
+            "expression": "self.item.value",
+            "target": "Slow::value"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:201:value@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:385:run@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "column": 19,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "self.item.value",
+              "is_call": true,
+              "line": 25,
+              "name": "value",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 420
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_ast_receiver_type"
+          },
+          "target": {
+            "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 246,
+            "end_line": 14,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:201:value@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "kind": "function_item",
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "Slow::value",
+            "revision": 1,
+            "signature": "pub fn value(&self) -> u32",
+            "start_byte": 201,
+            "start_line": 12
+          }
+        },
+        {
+          "expected": {
+            "caller": "make",
+            "expression": "slow",
+            "target": "slow"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:478:slow@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:509:make@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "column": 15,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "slow",
+              "is_call": true,
+              "line": 40,
+              "name": "slow",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 655
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "lexical"
+          },
+          "target": {
+            "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 508,
+            "end_line": 34,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:478:slow@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "kind": "function_item",
+            "name": "slow",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "slow",
+            "revision": 1,
+            "signature": "fn slow() -> Slow",
+            "start_byte": 478,
+            "start_line": 32
+          }
+        },
+        {
+          "expected": {
+            "caller": "standard",
+            "expression": "values[0].value",
+            "target": "Fast::value"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:120:value@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:672:standard@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "column": 15,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "values[0].value",
+              "is_call": true,
+              "line": 45,
+              "name": "value",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 743
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_ast_receiver_type"
+          },
+          "target": {
+            "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 165,
+            "end_line": 8,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:120:value@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "kind": "function_item",
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "Fast::value",
+            "revision": 1,
+            "signature": "pub fn value(&self) -> u32",
+            "start_byte": 120,
+            "start_line": 6
+          }
+        },
+        {
+          "expected": {
+            "caller": "call_live",
+            "expression": "live",
+            "target": "live"
+          },
+          "edge": {
+            "candidates": [
+              "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:895:live@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:908:call_live@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "column": 5,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "live",
+              "is_call": true,
+              "line": 54,
+              "name": "live",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 933
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "lexical"
+          },
+          "target": {
+            "build_context": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+            "documentation_examined": true,
+            "end_byte": 907,
+            "end_line": 52,
+            "id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:895:live@c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "kind": "function_item",
+            "name": "live",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+            "qualified_name": "live",
+            "revision": 1,
+            "signature": "fn live()",
+            "start_byte": 895,
+            "start_line": 52
+          }
+        }
+      ],
+      "index_report": {
+        "indexed": 1,
+        "unchanged": 1,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "47059d76-17e6-4d6d-b4ce-e1bd453dd9d7",
+          "lock_wait_ms": 0.000292,
+          "source_load_decode_ms": 8.183459000000001,
+          "cache_parse_serialize_ms": 28.375167,
+          "cache_replace_ms": 5.3520829999999995,
+          "revision_publish_ms": 46.772666,
+          "transaction_body_ms": 89.79724999999999,
+          "before_metrics_write_ms": 89.79775,
+          "documents_loaded": 2,
+          "cache_hits": 1,
+          "cache_misses": 1,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 2,
+          "documents_resolved": 2,
+          "documents_reused": 0,
+          "reference_sites_resolved": 32,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 1,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 2,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 3.3653340000000003,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 99.108125,
+          "commit_ms": 5.4370829999999994,
+          "metrics_write_ms": 3.872833,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 153911296
+        }
+      },
+      "warm_index": {
+        "indexed": 0,
+        "unchanged": 2,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": false,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "042e977a-dcd7-4d56-a58c-9cce57ffe4af",
+          "lock_wait_ms": 0.001333,
+          "source_load_decode_ms": 1.955334,
+          "cache_parse_serialize_ms": 1.21225,
+          "cache_replace_ms": 0.0014160000000000002,
+          "revision_publish_ms": 1.579834,
+          "transaction_body_ms": 5.103584000000001,
+          "before_metrics_write_ms": 5.105083,
+          "documents_loaded": 2,
+          "cache_hits": 2,
+          "cache_misses": 0,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 0,
+          "documents_resolved": 0,
+          "documents_reused": 0,
+          "reference_sites_resolved": 0,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 0,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 0,
+          "dependency_inputs_hashed": 0,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": true,
+          "resolution_ms": 0.0,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 8.857833000000001,
+          "commit_ms": 1.796292,
+          "metrics_write_ms": 1.956209,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 155156480
+        }
+      },
+      "stale": {
+        "binding_diagnostics": [
+          {
+            "code": "RUST_MANIFEST_BOUNDARY_UNVERIFIED",
+            "document_id": "019cde7a-d6bd-4257-94d9-f2ea0368652c",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/Cargo.toml"
+          },
+          {
+            "code": "RUST_BUILD_MANIFEST_UNVERIFIED",
+            "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db"
+          }
+        ],
+        "index_rev": 1,
+        "items": [
+          {
+            "candidates": [],
+            "provenance": "derived",
+            "reference": {
+              "caller": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db:385:run",
+              "column": 19,
+              "content_hash": "cc4237f696b8a5c243233e27b9143f814cab35c230a1b35441a34f343b52ff9f",
+              "document_id": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db",
+              "expression": "self.item.value",
+              "is_call": true,
+              "line": 25,
+              "name": "value",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 420
+            },
+            "resolution": "unresolved",
+            "resolution_basis": "RUST_BUILD_MANIFEST_UNVERIFIED"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [],
+        "rust_build_contexts_total": 0,
+        "stale_documents": [
+          "019cde7a-d6bd-4257-94d9-f2ea0368652c"
+        ],
+        "total": 1,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "diff": {
+        "after": 2,
+        "after_format_version": 66,
+        "analysis_format_changed": false,
+        "before": 1,
+        "before_format_version": 66,
+        "bodies_included": false,
+        "client_endpoint_relations_available": true,
+        "csharp_relations_available": true,
+        "css_url_classification_comparable": true,
+        "edge_semantics": "resolved_static_candidate_links",
+        "edges_added": [
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::run::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::value::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::call_live::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::live::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::slow::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::value::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+        ],
+        "edges_added_total": 4,
+        "edges_removed": [
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::run::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::value::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::call_live::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::live::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::fast::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+          "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73 -> 8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::value::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+        ],
+        "edges_removed_total": 4,
+        "file_changes_total": 1,
+        "file_import_relations_available": true,
+        "file_resource_relations_available": true,
+        "files": [
+          {
+            "after": {
+              "hash": "1864634084e927c5e9f314557a06d2401fd39ed562cd17754d9dd52364f90e38",
+              "id": "019cde7a-d6bd-4257-94d9-f2ea0368652c",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/Cargo.toml",
+              "project": "fixture",
+              "revision": 2
+            },
+            "before": {
+              "hash": "6d1f65e412bba8c381547e7a608752949e83ccd682d347fc5ca7c3a3381591ad",
+              "id": "019cde7a-d6bd-4257-94d9-f2ea0368652c",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/Cargo.toml",
+              "project": "fixture",
+              "revision": 1
+            },
+            "kind": "changed"
+          }
+        ],
+        "immutable": true,
+        "inline_style_relations_available": true,
+        "method_relations_available": true,
+        "perl_relations_available": true,
+        "powershell_relations_available": true,
+        "project": "fixture",
+        "relations_added": [
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::value::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::run::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::value::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::call_live::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::<module>",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::<module>",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::<module>",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::fast::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::slow::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          }
+        ],
+        "relations_added_total": 14,
+        "relations_available": true,
+        "relations_removed": [
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::value::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::run::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::value::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::call_live::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "entrypoint_kind": "public_api",
+            "kind": "entrypoint",
+            "method": null,
+            "resolution": "resolved_static",
+            "route": null,
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::<module>",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::<module>",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::<module>",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::fast::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::slow::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "non_call_reference",
+            "resolution": "resolved_static",
+            "source": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+            "target": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          }
+        ],
+        "relations_removed_total": 14,
+        "relations_scope": "uses_key_candidates_non_call_candidates_file_import_candidates_file_resource_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references",
+        "relations_truncated": false,
+        "resource_target_relations_available": true,
+        "responsive_resource_relations_available": true,
+        "ruby_relations_available": true,
+        "rust_build_contexts": {
+          "after": [
+            {
+              "available": true,
+              "cfg_flags": [],
+              "cfg_flags_total": 0,
+              "cfg_flags_truncated": false,
+              "cfg_values": {},
+              "cfg_values_truncated": false,
+              "compiler_verified": false,
+              "configuration_id": "c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942",
+              "default_features": false,
+              "dependency_feature_forwarding_verified": true,
+              "disabled_conditions": 7,
+              "excluded_source_files": 0,
+              "features": [],
+              "features_total": 0,
+              "features_truncated": false,
+              "manifest_hash": "1864634084e927c5e9f314557a06d2401fd39ed562cd17754d9dd52364f90e38",
+              "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/Cargo.toml",
+              "manifest_revision": 2,
+              "multi_target_instantiation": false,
+              "project": "fixture",
+              "scope": "one_explicit_compilation_target_per_package",
+              "target_kind": "lib",
+              "target_name": null,
+              "target_triple": null,
+              "unknown_conditions": 0
+            }
+          ],
+          "after_total": 1,
+          "available": true,
+          "before": [
+            {
+              "available": true,
+              "cfg_flags": [],
+              "cfg_flags_total": 0,
+              "cfg_flags_truncated": false,
+              "cfg_values": {},
+              "cfg_values_truncated": false,
+              "compiler_verified": false,
+              "configuration_id": "7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73",
+              "default_features": false,
+              "dependency_feature_forwarding_verified": true,
+              "disabled_conditions": 6,
+              "excluded_source_files": 0,
+              "features": [
+                "fast"
+              ],
+              "features_total": 1,
+              "features_truncated": false,
+              "manifest_hash": "6d1f65e412bba8c381547e7a608752949e83ccd682d347fc5ca7c3a3381591ad",
+              "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/Cargo.toml",
+              "manifest_revision": 1,
+              "multi_target_instantiation": false,
+              "project": "fixture",
+              "scope": "one_explicit_compilation_target_per_package",
+              "target_kind": "lib",
+              "target_name": null,
+              "target_triple": null,
+              "unknown_conditions": 0
+            }
+          ],
+          "before_total": 1,
+          "changed": true,
+          "truncated": false
+        },
+        "schema_diff": {
+          "after_diagnostics": [],
+          "after_diagnostics_total": 0,
+          "available": true,
+          "before_diagnostics": [],
+          "before_diagnostics_total": 0,
+          "constraint_changes_available": true,
+          "expression_changes_available": true,
+          "expression_comparison": "canonical_sql_ast_text_not_semantic_equivalence",
+          "items": [],
+          "live_database_verified": false,
+          "replay_performed": false,
+          "scope": "derived_table_columns_and_completeness",
+          "total": 0,
+          "truncated": false
+        },
+        "symbol_changes_total": 24,
+        "symbols": [
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::value::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Fast::value::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::run::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::run::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Holder::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::struct_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::struct_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::value::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::Slow::value::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::call_live::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::call_live::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::fast::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::fast::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::live::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::live::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::make::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::slow::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::slow::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          },
+          {
+            "kind": "removed",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:7e4d507112ad9928e9669a72cd4329169561c9e396bf53e0b09fc645dda1bc73"
+          },
+          {
+            "kind": "added",
+            "symbol_key": "8a5bf67b-7100-44dc-a2c0-e4a7beea90db::standard::function_item::build:c32f0a72b6650d1c0b8ee3faa95f97b5984a983a3f144e94da6e7677ed134942"
+          }
+        ],
+        "translation_key_comparison": {
+          "absence_proven": false,
+          "available": true,
+          "comparison": "source_owner_key_syntax_kind_and_occurrence_count_ignore_position_only_changes",
+          "complete_for_supported_documents": true,
+          "eligible_documents": 0,
+          "excluded_documents": [],
+          "excluded_documents_total": 0,
+          "excluded_documents_truncated": false
+        },
+        "translation_key_relations_available": true,
+        "truncated": false
+      },
+      "compiler_command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources/Cargo.toml",
+        "--no-default-features"
+      ],
+      "compiler_exit": 0,
+      "compiler_stdout": "\nrunning 1 test\ntest tests::field_identity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "compiler_stderr": "   Compiling fixture-cfg-members v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/sources)\nwarning: function `fast` is never used\n  --> src/lib.rs:29:4\n   |\n29 | fn fast() -> Fast {\n   |    ^^^^\n   |\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `fixture-cfg-members` (lib) generated 1 warning\nwarning: function `unused` is never used\n  --> src/lib.rs:60:8\n   |\n60 |     fn unused(#[cfg(feature = \"fast\")] _value: u8) {}\n   |        ^^^^^^\n\nwarning: `fixture-cfg-members` (lib test) generated 2 warnings (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-members-5itwmgzm/cargo-target/debug/build/fixture-cfg-members/79c650305aa90b8a/out/fixture_cfg_members-79c650305aa90b8a)\n   Doc-tests fixture_cfg_members\n"
+    }
+  ],
+  "production_database_touched": false,
+  "limitations": [
+    "captured configuration and named-field subset, not full compiler/macro/layout proof"
+  ]
+}

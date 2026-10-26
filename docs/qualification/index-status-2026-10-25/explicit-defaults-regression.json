@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "migration_sql_executed": false,
+  "checks": [
+    "explicit_default_insert",
+    "explicit_default_update",
+    "values_count",
+    "count_mismatch",
+    "nullable_default_null",
+    "unknown_implicit_default",
+    "unknown_generated_default",
+    "duplicate_defaults",
+    "delete_default_rejected",
+    "literal_default_conflict",
+    "alter_default_refresh"
+  ]
+}

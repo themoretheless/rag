@@ -1,0 +1,12 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 35.80s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 4 tests
+test code_index::dead_files::tests::stored_markup_refutes_used_files_without_exposing_text_or_inventing_usage ... ok
+test code_index::dead_files::tests::budgets_keep_positive_refutations_but_never_report_unchecked_absence ... ok
+test code_index::dead_files::tests::graph_links_and_script_entrypoints_are_protected_and_stale_graphs_are_unknown ... ok
+test code_index::dead_files::tests::projects_and_ambiguous_basenames_do_not_create_false_literal_bindings ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1033 filtered out; finished in 0.37s
+

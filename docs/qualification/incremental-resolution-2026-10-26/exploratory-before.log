@@ -1,0 +1,1 @@
+{"report": "/tmp/rag-index-before.json", "timings": [{"case": "cold_sync", "ms": 12029.660542029887}, {"case": "warm_noop", "ms": 106.9722090032883}, {"case": "body", "ms": 7433.208749978803}, {"case": "signature", "ms": 7717.137917003129}, {"case": "manifest", "ms": 7551.671207998879}]}

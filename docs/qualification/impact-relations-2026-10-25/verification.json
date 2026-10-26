@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "database_schema": 25,
+  "index_format": 29,
+  "focused_impact_passed": 5,
+  "legacy_impact_passed": 1,
+  "new_native_regressions": 5,
+  "runtime_impact_proven": false,
+  "full_ragraf_parity": false,
+  "representative_quality_qualified": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "source_sha256": {
+    "src/code_index.rs": "118a2ce38170a631630181f22a098223337a19b07488ee8d243b82f4b1d3eb22",
+    "src/code_index/impact.rs": "49fac0d38e486d1304084be2c0f9ef6cce4d887cd2e9d0ab159444434e416390",
+    "src/mcp/analysis.rs": "97195cc99d9c55c9f8c2580dae50e2ba66cfa10e3a49e6069d39c67e8918da8d",
+    "scripts/smoke_impact_relations.py": "5a058473f105b1bb8a58f9a5926c86757b576eb459eb466bef37df9e7ca501e6",
+    "docs/IMPACT_RELATIONS.md": "23db7ad401255b94b1d533d92fb7fc7fbe15910dda7022adb493845d3fb852d9"
+  },
+  "workspace": {
+    "passed": 1233,
+    "failed": 0,
+    "ignored": 1
+  },
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "logs_sha256": {
+    "focused": "863f25b1598b8d3058fc6fb995c031e594389608f5854459d0bbb59dc6da03e4",
+    "legacy": "4def5c5879d8e26ddaca5d1e882ab82302accd9a36d8b99c45b043d4c1b00b8e",
+    "clippy": "65710ea56529ad15502ab447224a313acef1825de7525952430d487d5dc0a56d",
+    "workspace": "8eff9b75781935c4462960aa77af2ae88ee21daf4b59a78e542bed5dad9ba9d9",
+    "build": "4a61252bb29721e3913dde0a66980c9ed790efd6c33cb330e980f0edda7dcaf7"
+  },
+  "binary_sha256": "577d8302f29964257aa74cf42923b31da137ad4ed0dd3b50838a94d6f7f185b0",
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "method-regression.json": "passed"
+  }
+}

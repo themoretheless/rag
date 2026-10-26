@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 40,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "picture_srcset",
+    "preload_imagesrcset",
+    "css_image_set_string_and_url",
+    "source_choice_evidence",
+    "data_url_commas",
+    "invalid_descriptors",
+    "mime_not_file",
+    "base_guard",
+    "project_guard",
+    "call_mode_separation",
+    "dead_file_guard",
+    "descriptor_diff",
+    "line_move_no_semantic_churn",
+    "frozen_diff",
+    "stale_exclusion_and_sync",
+    "no_source_bodies"
+  ],
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "browser_selection_proven": false
+}

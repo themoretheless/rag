@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "public_schema",
+    "central_file_first",
+    "deterministic_replay",
+    "project_isolation",
+    "component_prefix",
+    "strict_payload_character_budget",
+    "estimated_token_budget",
+    "empty_tiny_budget",
+    "scoped_stale_and_unindexed_coverage"
+  ],
+  "ranking_nodes": 3,
+  "ranking_edges": 1
+}

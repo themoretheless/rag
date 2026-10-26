@@ -1,0 +1,20 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.12s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 12 tests
+test code_index::sql::tests::sql_merge_output_into_records_secondary_target_and_column_list_without_fake_read ... ok
+test code_index::sql::tests::sql_merge_reads_target_source_and_subqueries_but_writes_only_mutating_actions ... ok
+test code_index::sql::tests::sql_truncate_has_explicit_writes_and_copy_direction_is_not_reversed ... ok
+test code_index::sql::tests::sql_output_into_covers_insert_update_delete_and_returning_has_no_extra_write ... ok
+test code_index::sql::tests::sql_select_into_preserves_sources_and_quoted_targets_but_not_variables ... ok
+test code_index::sql::tests::sql_table_usage_tracks_joins_ctes_subqueries_insert_update_delete ... ok
+test code_index::sql::tests::sql_qualified_table_renames_and_escaped_literal_locations ... ok
+test code_index::sql::tests::sql_select_into_migration_does_not_invent_complete_projection_schema ... ok
+test code_index::sql::tests::sql_migrations_replay_alters_defaults_renames_drops_and_rollback_markers ... ok
+test code_index::sql::tests::sql_partial_schema_ambiguous_projects_and_quoted_names_fail_closed ... ok
+test code_index::sql::tests::sql_new_operations_keep_static_owner_lines_and_dynamic_exclusions ... ok
+test code_index::sql::tests::sql_static_literals_have_owner_and_source_lines_dynamic_sql_is_not_guessed ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 958 filtered out; finished in 0.01s
+

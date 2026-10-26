@@ -223,7 +223,23 @@ pub(super) fn edges(
     docs: &HashMap<String, IndexedDocument>,
 ) -> Vec<InheritanceEdge> {
     let mut result = Vec::new();
-    for doc in docs.values() {
+    for (id, doc) in docs {
+        if doc.powershell.is_some() {
+            result.extend(super::powershell::edges(docs, doc));
+            continue;
+        }
+        if doc.perl.is_some() {
+            result.extend(super::perl::edges(docs, doc));
+            continue;
+        }
+        if doc.csharp.is_some() {
+            result.extend(super::csharp::edges(docs, doc));
+            continue;
+        }
+        if doc.ruby.is_some() {
+            result.extend(super::ruby::edges(docs, id, doc));
+            continue;
+        }
         if doc.c_family.is_some() {
             result.extend(super::c_family::edges(symbols, docs, doc));
             continue;
@@ -274,6 +290,126 @@ pub(super) fn edges(
     result.sort_by(|a, b| (&a.path, a.line, &a.derived).cmp(&(&b.path, b.line, &b.derived)));
     result
 }
+/// Declaration-to-declaration evidence, distinct from a call or source occurrence.
+#[derive(Debug, Serialize)]
+pub struct OverrideEdge {
+    pub derived: String,
+    pub owner: String,
+    pub candidates: Vec<String>,
+    pub document_id: String,
+    pub path: String,
+    pub line: usize,
+    pub revision: i64,
+    pub content_hash: String,
+    pub resolution: &'static str,
+    pub resolution_basis: &'static str,
+    pub semantic_override_proven: bool,
+}
+pub(super) fn overrides(
+    symbols: &[Symbol],
+    docs: &HashMap<String, IndexedDocument>,
+) -> Vec<OverrideEdge> {
+    let mut result = Vec::new();
+    for ty in symbols
+        .iter()
+        .filter(|s| matches!(s.kind.as_str(), "class_definition" | "class_declaration"))
+    {
+        let Some(doc) = docs.get(&ty.document_id) else {
+            continue;
+        };
+        if !matches!(
+            std::path::Path::new(&doc.path)
+                .extension()
+                .and_then(|x| x.to_str()),
+            Some("py" | "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx")
+        ) || doc.parse_errors
+        {
+            continue;
+        }
+        if symbols
+            .iter()
+            .filter(|s| {
+                s.document_id == ty.document_id
+                    && s.qualified_name == ty.qualified_name
+                    && is_type(s)
+            })
+            .count()
+            != 1
+        {
+            continue;
+        }
+        let Some(order) = mro(&ty.id, symbols, docs, &mut HashSet::new(), &mut 4096) else {
+            continue;
+        };
+        for method in symbols.iter().filter(|s| {
+            s.document_id == ty.document_id
+                && s.qualified_name
+                    .rsplit_once("::")
+                    .is_some_and(|(owner, _)| owner == ty.qualified_name)
+                && matches!(
+                    s.kind.as_str(),
+                    "function_definition" | "method_definition" | "method_signature"
+                )
+                && s.name != "constructor"
+        }) {
+            if doc.blocked_members.contains(&method.qualified_name) {
+                continue;
+            }
+            for base in order.iter().skip(1) {
+                let Some(base_doc) = docs.get(&base.document_id) else {
+                    break;
+                };
+                if base_doc.project != doc.project || base_doc.parse_errors {
+                    break;
+                }
+                let qualified = format!("{}::{}", base.qualified_name, method.name);
+                if base_doc.blocked_members.contains(&qualified) {
+                    break;
+                }
+                let mut targets: Vec<_> = symbols
+                    .iter()
+                    .filter(|s| {
+                        s.document_id == base.document_id
+                            && s.qualified_name == qualified
+                            && matches!(
+                                s.kind.as_str(),
+                                "function_definition" | "method_definition" | "method_signature"
+                            )
+                    })
+                    .map(|s| s.id.clone())
+                    .collect();
+                targets.sort();
+                targets.dedup();
+                if targets.is_empty() {
+                    continue;
+                }
+                result.push(OverrideEdge {
+                    derived: method.id.clone(),
+                    owner: ty.id.clone(),
+                    resolution: if targets.len() == 1 {
+                        "unique_static_candidate"
+                    } else {
+                        "ambiguous_static_candidates"
+                    },
+                    candidates: targets,
+                    document_id: method.document_id.clone(),
+                    path: method.path.clone(),
+                    line: method.start_line,
+                    revision: method.revision,
+                    content_hash: method.content_hash.clone(),
+                    resolution_basis: "same_name_member_in_nearest_complete_static_mro",
+                    semantic_override_proven: false,
+                });
+                break;
+            }
+        }
+    }
+    result.sort_by(|a, b| {
+        (&a.document_id, a.line, &a.derived).cmp(&(&b.document_id, b.line, &b.derived))
+    });
+    result
+}
+
 fn mro<'a>(
     id: &str,
     symbols: &'a [Symbol],
@@ -430,9 +566,105 @@ mod tests {
         CodeSnapshot {
             calls: resolve::calls(&symbols, &documents),
             inheritance: edges(&symbols, &documents),
+            overrides: overrides(&symbols, &documents),
             symbols,
             ..Default::default()
         }
+    }
+    #[test]
+    fn method_relations_do_not_cross_identical_paths_in_different_projects() {
+        let mut docs = HashMap::new();
+        let mut symbols = Vec::new();
+        for (id, project, source) in [
+            ("a", "alpha", "class Base:\n    def work(self): pass\n"),
+            (
+                "b",
+                "alpha",
+                "class Child(Base):\n    def work(self): pass\n",
+            ),
+            ("c", "beta", "class Base:\n    def work(self): pass\n"),
+        ] {
+            let mut d = parse(id, "/same/models.py", source, 1).unwrap();
+            d.project = Some(project.into());
+            symbols.extend(d.symbols.clone());
+            docs.insert(id.into(), d);
+        }
+        let links = overrides(&symbols, &docs);
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|s| s.id == links[0].candidates[0])
+                .unwrap()
+                .document_id,
+            "a"
+        );
+    }
+    #[test]
+    fn method_relations_link_nearest_declared_member_without_a_call() {
+        for (path,source) in [
+            ("/p/a.py","class A:\n    def work(self): pass\nclass B(A):\n    def work(self): pass\nclass C(B):\n    def work(self): pass\n"),
+            ("/p/a.ts","class A { work() {} } class B extends A { work() {} } class C extends B { work() {} }"),
+            ("/p/a.js","class A { work() {} } class B extends A { work() {} } class C extends B { work() {} }")
+        ] {
+            let snap=snapshot(&[(path,source)]);
+            assert_eq!(snap.overrides.len(),2,"{path}: {:?}",snap.overrides);
+            for (derived,base) in [("B::work","A::work"),("C::work","B::work")] {
+                let id=&snap.symbols.iter().find(|s|s.qualified_name==derived).unwrap().id;
+                let e=snap.overrides.iter().find(|e|&e.derived==id).unwrap();
+                assert_eq!(e.candidates.len(),1);assert!(!e.semantic_override_proven);
+                assert_eq!(snap.symbols.iter().find(|s|s.id==e.candidates[0]).unwrap().qualified_name,base);
+            }
+            let q=CodeQuery{symbol:Some("A::work".into()),..Default::default()};
+            assert_eq!(snap.query("inheritance",&q)["method_relations"]["total"],1);
+            assert_eq!(snap.query("references",&q)["method_relations"]["total"],1);
+        }
+    }
+    #[test]
+    fn method_relations_respect_c3_and_do_not_guess_unknown_or_blocked_bases() {
+        let snap=snapshot(&[("/p/a.py","class A:\n    def work(self): pass\nclass B(A): pass\nclass C(A):\n    def work(self): pass\nclass D(B,C):\n    def work(self): pass\n")]);
+        let d = &snap
+            .symbols
+            .iter()
+            .find(|s| s.qualified_name == "D::work")
+            .unwrap()
+            .id;
+        let edge = snap.overrides.iter().find(|e| &e.derived == d).unwrap();
+        assert_eq!(
+            snap.symbols
+                .iter()
+                .find(|s| s.id == edge.candidates[0])
+                .unwrap()
+                .qualified_name,
+            "C::work"
+        );
+        for source in [
+            "class A(Missing):\n    def work(self): pass\nclass B(A):\n    def work(self): pass\n",
+            "class A:\n    work=unknown\nclass B(A):\n    def work(self): pass\n",
+            "class A:\n    @property\n    def work(self): pass\nclass B(A):\n    def work(self): pass\n",
+            "class A(B):\n    def work(self): pass\nclass B(A):\n    def work(self): pass\n",
+        ] {assert!(snapshot(&[("/p/a.py",source)]).overrides.is_empty(),"{source}");}
+    }
+    #[test]
+    fn method_relations_bind_imports_and_keep_reference_windows_separate() {
+        let snap=snapshot(&[("/p/base.py","class Base:\n    def work(self): pass\n"),("/p/main.py","from base import Base as Parent\nclass Child(Parent):\n    def work(self): pass\nclass Other(Parent):\n    def work(self): pass\n")]);
+        assert_eq!(snap.overrides.len(), 2);
+        let q = CodeQuery {
+            symbol: Some("Base::work".into()),
+            limit: Some(1),
+            ..Default::default()
+        };
+        let r = snap.query("references", &q);
+        assert_eq!(r["method_relations"]["total"], 2);
+        assert_eq!(r["method_relations"]["truncated"], true);
+        let lexical = snap.query(
+            "references",
+            &CodeQuery {
+                reference_mode: Some("lexical".into()),
+                ..q
+            },
+        );
+        assert_eq!(lexical["method_relations"]["total"], 0);
     }
     #[test]
     fn inherited_methods_imported_bases_and_overrides() {

@@ -1,0 +1,16 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 21s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 7 tests
+test code_index::rust_cargo::reexports::tests::named_grouped_multihop_reexports_preserve_exact_targets_and_inline_scope ... ok
+test code_index::rust_cargo::reexports::tests::exhausted_reexport_depth_clears_other_glob_candidates ... ok
+test code_index::rust_cargo::reexports::tests::glob_reexports_preserve_ambiguity_hide_private_items_and_handle_cycles ... ok
+test code_index::rust_cargo::reexports::tests::restricted_exports_do_not_cross_crate_boundaries_or_widen_private_targets ... ok
+test code_index::rust_cargo::reexports::tests::module_aliases_check_the_base_visibility_before_public_children ... ok
+test code_index::rust_cargo::reexports::tests::reexports_cannot_import_associated_or_function_local_items_or_private_glob_bases ... ok
+test code_index::rust_cargo::reexports::tests::unknown_cfg_and_duplicate_exports_never_publish_a_partial_unique_target ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1205 filtered out; finished in 0.01s
+

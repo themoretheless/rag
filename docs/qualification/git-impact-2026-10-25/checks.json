@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "workspace_command": "cargo test --workspace",
+  "workspace_exit_code": 0,
+  "workspace_tests_passed": 1310,
+  "workspace_tests_failed": 0,
+  "workspace_tests_ignored": 1,
+  "clippy_command": "cargo clippy --lib --tests -- -D warnings",
+  "clippy_exit_code": 0,
+  "build_command": "cargo build --bin rag-mcp",
+  "build_exit_code": 0,
+  "compiler_command": "cargo check --manifest-path tests/fixtures/code-intelligence/git-impact/Cargo.toml --all-targets --offline --target-dir /tmp/rag-git-impact-fixture-target",
+  "compiler_exit_code": 0,
+  "mcp_runner": "scripts/smoke_git_impact.py",
+  "worktree_frozen": false,
+  "production_binary_replaced": false,
+  "full_goal_complete": false,
+  "runtime_reports": {
+    "runtime.json": "passed",
+    "path-regression.json": "passed",
+    "config-regression.json": "passed"
+  },
+  "owned_source_sha256": {
+    "src/code_index/git_impact.rs": "acbbf100ab52fef9b8ee42b2e7e902917565a2c028b4282e43e42cb2e5a07a18",
+    "src/code_index/git_impact/capture.rs": "09df6ccb4e358a2ad6f70767ac3ca8c9fa2bef866a74e4ba501d56af70ecf698",
+    "scripts/smoke_git_impact.py": "36f9d4b7e1b4ec05274b9ae4f6dc4db3c27fb9932c12e835b1de400f18ff97e2"
+  }
+}

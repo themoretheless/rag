@@ -1,0 +1,146 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP",
+  "index_format": 39,
+  "binary_sha256": "04813f7327ede0e0779d72b5bd0af68afb27c10d9bafa275ba84aad9f68900fe",
+  "labelled_tests": [
+    "callback_value",
+    "external_case",
+    "ignored_case",
+    "integration_case",
+    "nested_case",
+    "unit_alias",
+    "unit_direct"
+  ],
+  "executed_commands": [
+    {
+      "test": "external_case",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-affected-tests-af33zs0v/sources/Cargo.toml",
+        "--lib",
+        "external_case"
+      ],
+      "exit_code": 0,
+      "executed_tests": 1,
+      "stdout_sha256": "c6ec31b4286b47f70cc4b604b1959dae836c597ce1eb42015ed95c6c742c7abd"
+    },
+    {
+      "test": "unit_alias",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-affected-tests-af33zs0v/sources/Cargo.toml",
+        "--lib",
+        "unit_alias"
+      ],
+      "exit_code": 0,
+      "executed_tests": 1,
+      "stdout_sha256": "a77164630f266bb3c990784fc86b911262e653e637ebb5b87498d23532f19240"
+    },
+    {
+      "test": "unit_direct",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-affected-tests-af33zs0v/sources/Cargo.toml",
+        "--lib",
+        "unit_direct"
+      ],
+      "exit_code": 0,
+      "executed_tests": 1,
+      "stdout_sha256": "c747bd72b2d2ccd12b82614b27d636a1be5c4743ffeb93f223988e28ccb48566"
+    },
+    {
+      "test": "callback_value",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-affected-tests-af33zs0v/sources/Cargo.toml",
+        "--lib",
+        "callback_value"
+      ],
+      "exit_code": 0,
+      "executed_tests": 1,
+      "stdout_sha256": "7ff97b6885031f54d038b2151a6c0822d8f80732391532c801dd175127c308d0"
+    },
+    {
+      "test": "ignored_case",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-affected-tests-af33zs0v/sources/Cargo.toml",
+        "--lib",
+        "ignored_case",
+        "--",
+        "--ignored"
+      ],
+      "exit_code": 0,
+      "executed_tests": 1,
+      "stdout_sha256": "1fd62cb189b91c1d74cf67c896ce96adff681e5d0ffd5f5a95d066a2c27e6fa8"
+    },
+    {
+      "test": "nested_case",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-affected-tests-af33zs0v/sources/Cargo.toml",
+        "--lib",
+        "nested_case"
+      ],
+      "exit_code": 0,
+      "executed_tests": 1,
+      "stdout_sha256": "42f77897eb6aec96bd69a6107d2d2fa559a4c3aae0454e8d509ebce8a687c297"
+    },
+    {
+      "test": "integration_case",
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-affected-tests-af33zs0v/sources/Cargo.toml",
+        "--test",
+        "with-hyphen",
+        "integration_case"
+      ],
+      "exit_code": 0,
+      "executed_tests": 1,
+      "stdout_sha256": "527570ef296b2b1b8714d44792d40e000bada3cfed85a5353fbd26867a54d581"
+    }
+  ],
+  "fixture_sha256": {
+    "Cargo.lock": "e74cca94d921b4b7c14f486900fe65bf634e56748fb58de008a65a02dca7ed30",
+    "Cargo.toml": "d98b2b6d0f9e00a191eac17f15e4efd67b3054cfe1c80d043c1f9aebc5ecd517",
+    "expected.json": "4514f89b82103dfc2e29f481b9037d5eb23c4705be4eb745345394e3904987fc",
+    "src/external_tests.rs": "21f89bdb7979ba4bf153264f156a3079db529bea2d7a9ef50a28d495dc3f9f52",
+    "src/lib.rs": "5b3e01f8dea5d291544faf949273c2c820781095f6647ac8f7be85966f17726a",
+    "src/worker.rs": "bec2f43ba3fcc719a02a845a49a1f2eb532b4ab64d2c666f893b5d6b5dfa709a",
+    "tests/with-hyphen.rs": "b399852c8dc05395c6e40e8e476a887f8b16b25aa8d2f1b41d1c27d14d1eab56"
+  },
+  "checks": [
+    "unit_alias_and_super_paths",
+    "cfg_test_external_module",
+    "integration_hyphen_target",
+    "callback_reference",
+    "ignored_test_execution",
+    "all_suggested_commands_execute_one_test",
+    "multihop_witnesses",
+    "calls_vs_references",
+    "depth_result_work_limits",
+    "direct_changed_test",
+    "typed_input",
+    "captured_source_semantics",
+    "stale_exclusion_refresh",
+    "git_before_after_test_recommendations"
+  ],
+  "production_database_touched": false,
+  "safe_to_skip_unlisted_tests": false,
+  "runtime_coverage_measured": false
+}

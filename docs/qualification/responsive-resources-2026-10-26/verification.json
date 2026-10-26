@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-26",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "shared_working_tree_snapshot",
+  "versions": {
+    "index_format": 38,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "new_native_regressions": 7,
+  "workspace": {
+    "passed": 1328,
+    "failed": 0,
+    "ignored": 1
+  },
+  "workspace_command": "cargo test --workspace",
+  "clippy": "passed --workspace --all-targets -- -D warnings",
+  "owned_file_format": "passed",
+  "diff_check": "passed",
+  "binary": {
+    "sha256": "74350f73355a358566b5448e708906af223da22d24fa128da8e609ed24a47a44",
+    "isolated_copy": true
+  },
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "resource-targets-regression.json": "passed",
+    "parsed-resources-regression.json": "passed",
+    "module-imports-regression.json": "passed",
+    "table-impact-regression.json": "passed",
+    "dead-files-regression.json": "passed"
+  },
+  "source_sha256_after_checks": {
+    "src/code_index/file_resources.rs": "20bc0b8f84874b8a9bc62501b1820dd38e47233d7d62b44bfe35ac0f6de44193",
+    "src/code_index/file_resources/responsive.rs": "112ff29d5fcdb378f7d7bf5d50c03a4c233a71cfff822e5dcc56c77e38a5bf89",
+    "src/code_index/history.rs": "d6c0ecbe33b3a428fa0a634cdb35620bd57bd2e501e8dfd4bc3d7325677d82d3",
+    "src/code_index.rs": "50ed406cfd5e0931c05d7dc9cba36c65bb3157296e122ac81e2c49fca9801854",
+    "scripts/smoke_responsive_resources.py": "494d01bb987e8faf2bc5479ae3a3d4687520a1ab0c093a8a699b0cb5fdc0dbeb",
+    "scripts/smoke_file_imports.py": "2f288c49172f92dac2460f92b39c4e3be724829fc67c5f5c593895d672787ba5",
+    "docs/RESPONSIVE_RESOURCE_RELATIONS.md": "653af0cf0440a0a53471cd9c5ae074aa758fab230829f50270e9a263269e6bd7",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "874e72d478be554107045cc30cf9e27726cce745720cc196f8fae58bc2c9338b"
+  },
+  "logs_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "smoke_dead_files.py.log": "eede59814d7bf20cbd2a941f37afd96ddf70db017e1f7de135af23952a98e382",
+    "smoke_responsive_resources.py.log": "38007100a2aaf538b1f1c6509b33bd5664564304bade63d594d691a91fe050f3",
+    "smoke_table_impact.py.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "clippy.log": "980f40f615998eda4cbb9f86413449f424aef2b8f6006bef5b8640b78852502a",
+    "workspace.log": "2cfb37e2a67a4135d2a2bb26a6a78130f6bb0ac52ca173dd5ed00d87f5ad15ca",
+    "focused-six-cases.log": "048c04617882c7f8cc22c0f0779b4add6df9e3ad589a31bc17d48c1aeec19065",
+    "check-initial.log": "09be10a95ef1ff0c9e90164882a0d90fca5ac7ff173021af319cb51f15bad57e",
+    "smoke_file_resources.py.log": "a22aae3e7d0eed402f2990fc604405090ec49fcc0130d67044914230b43eb98b",
+    "smoke_file_imports.py.log": "7ef5afd4cb95bf19075f792a41c2a46262bc1170cbeecc55675de50757887336",
+    "focused.log": "1f84f229b00f725e059d2c30f2b3bc82d6c29764c72c135251bba098c45d8503",
+    "smoke_resource_targets.py.log": "0d11826b61c9fdeb190782266108c10cb855ef1d85f0ae6773ba4dd8e82d11b0",
+    "build.log": "39135eb5cb6a681c9f4e5a4ad7e9bafb36883546a65f987f1d0184aca2952ddd"
+  },
+  "full_ragraf_parity": false,
+  "browser_selection_proven": false,
+  "full_css_validity_verified": false,
+  "representative_quality_or_scale_qualified": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "source_sql_executed": false,
+  "concurrent_format_note": "The extension began at format 37; concurrent configured-import work advanced the shared-tree runtime to format 38. Actual MCP versions and isolated executable hash are authoritative.",
+  "remaining": [
+    "browser_viewport_sizes_media_and_type_selection",
+    "full_css_validity_and_variable_substitution",
+    "generated_image_functions",
+    "jsx_dynamic_framework_links",
+    "escaped_css_and_encoded_local_paths",
+    "raw_binary_image_decoding",
+    "representative_precision_recall_scale"
+  ]
+}

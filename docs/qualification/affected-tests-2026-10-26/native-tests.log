@@ -1,0 +1,7 @@
+Excerpt from current cargo test --workspace; full output in workspace-tests.log.
+test code_index::affected_tests::tests::unit_external_integration_and_callback_tests_have_real_witnesses ... ok
+test code_index::affected_tests::tests::command_vectors_preserve_hyphen_targets_ignore_and_custom_harness ... ok
+test code_index::affected_tests::tests::test_attribute_names_are_exact_and_never_inferred_from_doc_strings ... ok
+test code_index::affected_tests::tests::direct_test_seeds_limits_and_stale_inputs_cannot_authorize_ci_omissions ... ok
+test code_index::affected_tests::tests::test_cfg_imports_do_not_bind_the_later_inactive_production_alias ... ok
+test code_index::affected_tests::tests::project_isolation_ambiguity_and_test_cfg_symbol_identity_are_explicit ... ok

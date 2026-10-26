@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "cp1251_search_and_symbols",
+    "utf8_search",
+    "bom_utf8",
+    "bom_utf16",
+    "cp1252",
+    "preserved_html",
+    "encoding_basis",
+    "raw_byte_fingerprint",
+    "warm_no_extraction",
+    "encoding_only_sync_refresh",
+    "live_legacy_and_bom",
+    "decoded_vs_raw_checksums",
+    "gate_original_byte_budget",
+    "malformed_input_unknown"
+  ]
+}

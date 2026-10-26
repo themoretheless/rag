@@ -1,0 +1,11 @@
+{
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-itoa-after/report.json": "4f422daaa92dd093e4b1ed5fa33424448f3e6814aabd9ad3b6f62ea6b827c9e8",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-itoa-after/scored-cases.json": "ae77e63a37d035a3180c31095f883c305ed5d351e98fcecf5e5085c99e1db9b8",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-itoa-after/oracle-labels.json": "871ec016fc3cf201ee9bfda017653a5de0a146fc85a2ff3fc0b53be9d3925ea1",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-ryu-after/report.json": "55675097cf974e1fb4fd1038d1eb8c7590c30554da6e27c30cfc60201a954945",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-ryu-after/scored-cases.json": "66c27d74e81c97bc5b978199121b44e5439b8adb1ca67136298d588c009c0e4f",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-ryu-after/oracle-labels.json": "adfa741d87aedfdd2ceada3297cb1605054b26aa842c242de2d16a26e1902494",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-memchr-after/report.json": "a5502d24934372e97cf803664e16600e867a439448ac084d8797d72a03601be5",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-memchr-after/scored-cases.json": "7c801b196b00073f299e2ba5626bc261eab9a7f07cda536a69924a08e625666d",
+  "docs/qualification/rust-real-corpus-2026-10-26/controlled-memchr-after/oracle-labels.json": "28405c58fb9976cccae8db48c47e737b5a67c0aa36629eb4b916bbfd4096d885"
+}

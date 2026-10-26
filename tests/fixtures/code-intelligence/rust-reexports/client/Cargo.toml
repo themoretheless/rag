@@ -1,0 +1,13 @@
+[package]
+name = "fixture-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+engine = { package = "fixture-engine", path = "../engine" }
+
+[package.metadata.rag.graph]
+version = 1
+target_kind = "bin"
+features = []
+default_features = false

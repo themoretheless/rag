@@ -1,0 +1,14 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 45.18s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 5 tests
+test code_index::paths::tests::endpoints_projects_and_stale_bridges_never_guess ... ok
+test code_index::paths::tests::paths_are_breadth_first_deterministic_and_preserve_each_occurrence ... ok
+test code_index::paths::tests::ambiguous_edges_require_opt_in_and_cannot_cross_project ... ok
+test code_index::paths::tests::inheritance_and_override_paths_retain_candidate_semantics ... ok
+test code_index::paths::tests::budgets_depth_reverse_and_value_relations_are_explicit ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1044 filtered out; finished in 0.25s
+

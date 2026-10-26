@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "0b67857749e14f045722eba2a84f33be0885e3eed93d69a8ca0fc6b429d25ccb",
+    "src/code_index/php_routes.rs": "9d354712d15a7381f0464a47154b21632acf1ade1b345c9830746a961c97e5e8",
+    "src/code_index/analysis.rs": "c6d873e634ad7aec626c40b41926a1cd6c13731ff0cd535fd876e59ca63dc398",
+    "src/code_index/history.rs": "20b13089e4e676c084df06f8677082de25458460a404628f64cc2c3ca321a6b4",
+    "src/mcp/analysis.rs": "b9415df643b81a156352af0d9a3807c16af6fc85135a6cda46dc3c132de20016",
+    "scripts/smoke_php_routes.py": "6f8cbfb1d821e314ca41cf387d8db32da529e318813cd1be18b03872faa50996"
+  },
+  "binary_sha256": "7fb538034319a9e359a8aef8a81d62c23f0370e157078f117051601ee5c3c6bd",
+  "index_format": 24,
+  "verification": {
+    "focused_code_index": {
+      "command": "cargo test --lib code_index:: --locked --offline",
+      "passed": 141,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1187,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "fetch_regression": "fetch-regression.json",
+    "markup_regression": "markup-regression.json",
+    "python_routes_regression": "python-routes-regression.json",
+    "index_status_regression": "index-status-regression.json"
+  },
+  "production_database_touched": false,
+  "php_code_executed": false,
+  "framework_identity_verified": false,
+  "representative_benchmark": false,
+  "full_php_route_parity": false,
+  "full_ragraf_parity": false
+}

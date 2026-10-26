@@ -1,0 +1,87 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP",
+  "scope": "Cargo boundary fixture, not representative Rust precision/recall",
+  "binary_sha256": "b8b3fa6f23447e6e5dd092e596ec8ecc68fb2eb62d86b824d6fffffc1ef38fd1",
+  "index_format": 33,
+  "production_database_touched": false,
+  "source_build_scripts_executed": false,
+  "labelled_calls": [
+    {
+      "file": "app/src/main.rs",
+      "caller": "main",
+      "expression": "crate::work",
+      "targets": [
+        "app/src/main.rs"
+      ],
+      "actual": [
+        "app/src/main.rs"
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "file": "app/src/main.rs",
+      "caller": "main",
+      "expression": "engine_alias::work",
+      "targets": [
+        "engine/code/root.rs"
+      ],
+      "actual": [
+        "engine/code/root.rs"
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "file": "app/src/main.rs",
+      "caller": "main",
+      "expression": "engine_alias::api::work",
+      "targets": [
+        "engine/code/api.rs"
+      ],
+      "actual": [
+        "engine/code/api.rs"
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "file": "app/tests/check.rs",
+      "caller": "check",
+      "expression": "crate::work",
+      "targets": [
+        "app/tests/check.rs"
+      ],
+      "actual": [
+        "app/tests/check.rs"
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "file": "app/tests/check.rs",
+      "caller": "check",
+      "expression": "fixture_app::work",
+      "targets": [
+        "app/src/lib.rs"
+      ],
+      "actual": [
+        "app/src/lib.rs"
+      ],
+      "wrong_targets": 0
+    }
+  ],
+  "cargo_targets": 5,
+  "checks": [
+    "target_roots",
+    "custom_library_root",
+    "renamed_workspace_dependency",
+    "wrong_owner_negatives",
+    "warm_reuse",
+    "stale_workspace_blocks_inherited_dependency",
+    "manifest_only_rebinding",
+    "frozen_history"
+  ],
+  "cold_sync_ms": 777.398916950915,
+  "before_revision": 1,
+  "after_revision": 2,
+  "representative_quality_measured": false,
+  "competitor_comparison_performed": false
+}

@@ -1,0 +1,16 @@
+    Blocking waiting for file lock on package cache
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 8 tests
+test code_index::drift::tests::live_diff_separates_edits_and_keeps_half_open_coordinates ... ok
+test code_index::drift::tests::live_diff_preserves_final_newline_crlf_unicode_and_empty_sides ... ok
+test code_index::drift::tests::live_diff_bounds_cells_and_hunks_without_claiming_full_precision ... ok
+test code_index::drift::tests::live_diff_reconstructs_exhaustive_short_repeated_line_inputs ... ok
+test code_index::drift::tests::missing_disallowed_and_malformed_sources_never_report_fresh ... ok
+test code_index::drift::tests::publication_drift_has_stable_cursors_and_ack_requires_write_role ... ok
+test code_index::drift::tests::live_files_are_bounded_and_drift_ack_is_atomic_persistent_and_idempotent ... ok
+test code_index::drift::tests::encoded_live_sources_compare_decoded_text_and_expose_raw_evidence ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 966 filtered out; finished in 0.83s
+

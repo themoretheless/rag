@@ -1,0 +1,6 @@
+[workspace]
+members = ["app", "engine", "other"]
+resolver = "2"
+
+[workspace.dependencies]
+engine_alias = { package = "fixture-engine", path = "engine" }

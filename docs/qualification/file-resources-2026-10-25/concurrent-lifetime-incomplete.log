@@ -1,0 +1,13 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error: lifetime may not live long enough
+   --> src/code_index/git_impact.rs:338:13
+    |
+322 |         let values = |ids: &[String], g: &Graph| {
+    |                                          -     - return type of closure is Vec<(&'2 String, &Option<String>)>
+    |                                          |
+    |                                          let's call the lifetime of this reference `'1`
+...
+338 |             values
+    |             ^^^^^^ returning this value requires that `'1` must outlive `'2`
+
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

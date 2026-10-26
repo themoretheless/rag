@@ -1,0 +1,428 @@
+{
+  "status": "passed",
+  "binary_sha256": "9afbb477667f8eee914785421011e05ed0b19e7a380f120090f72aec3d18d48d",
+  "index_format": 67,
+  "labels": [
+    {
+      "caller": "inspect",
+      "expression": "pair.0.value",
+      "target": "User::value"
+    },
+    {
+      "caller": "inspect",
+      "expression": "pair.1.value",
+      "target": "Other::value"
+    },
+    {
+      "caller": "inspect",
+      "expression": "outer.0.0.value",
+      "target": "User::value"
+    },
+    {
+      "caller": "inspect",
+      "expression": "outer.0.1.value",
+      "target": "Other::value"
+    }
+  ],
+  "selected": [
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "pair.0.value",
+        "target": "User::value"
+      },
+      "edge": {
+        "candidates": [
+          "7915a47c-edce-46f0-9194-3b201de37d72:47:value"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+          "column": 13,
+          "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+          "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+          "expression": "pair.0.value",
+          "is_call": true,
+          "line": 8,
+          "name": "value",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 269
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+        "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+        "documentation_examined": true,
+        "end_byte": 79,
+        "end_line": 3,
+        "id": "7915a47c-edce-46f0-9194-3b201de37d72:47:value",
+        "kind": "function_item",
+        "name": "value",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+        "qualified_name": "User::value",
+        "revision": 1,
+        "signature": "pub fn value(&self) -> u8",
+        "start_byte": 47,
+        "start_line": 3
+      }
+    },
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "pair.1.value",
+        "target": "Other::value"
+      },
+      "edge": {
+        "candidates": [
+          "7915a47c-edce-46f0-9194-3b201de37d72:95:value"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+          "column": 29,
+          "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+          "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+          "expression": "pair.1.value",
+          "is_call": true,
+          "line": 8,
+          "name": "value",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 285
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+        "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+        "documentation_examined": true,
+        "end_byte": 127,
+        "end_line": 4,
+        "id": "7915a47c-edce-46f0-9194-3b201de37d72:95:value",
+        "kind": "function_item",
+        "name": "value",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+        "qualified_name": "Other::value",
+        "revision": 1,
+        "signature": "pub fn value(&self) -> u8",
+        "start_byte": 95,
+        "start_line": 4
+      }
+    },
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "outer.0.0.value",
+        "target": "User::value"
+      },
+      "edge": {
+        "candidates": [
+          "7915a47c-edce-46f0-9194-3b201de37d72:47:value"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+          "column": 48,
+          "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+          "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+          "expression": "outer.0.0.value",
+          "is_call": true,
+          "line": 8,
+          "name": "value",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 301
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+        "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+        "documentation_examined": true,
+        "end_byte": 79,
+        "end_line": 3,
+        "id": "7915a47c-edce-46f0-9194-3b201de37d72:47:value",
+        "kind": "function_item",
+        "name": "value",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+        "qualified_name": "User::value",
+        "revision": 1,
+        "signature": "pub fn value(&self) -> u8",
+        "start_byte": 47,
+        "start_line": 3
+      }
+    },
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "outer.0.1.value",
+        "target": "Other::value"
+      },
+      "edge": {
+        "candidates": [
+          "7915a47c-edce-46f0-9194-3b201de37d72:95:value"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+          "column": 67,
+          "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+          "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+          "expression": "outer.0.1.value",
+          "is_call": true,
+          "line": 8,
+          "name": "value",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 320
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+        "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+        "documentation_examined": true,
+        "end_byte": 127,
+        "end_line": 4,
+        "id": "7915a47c-edce-46f0-9194-3b201de37d72:95:value",
+        "kind": "function_item",
+        "name": "value",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+        "qualified_name": "Other::value",
+        "revision": 1,
+        "signature": "pub fn value(&self) -> u8",
+        "start_byte": 95,
+        "start_line": 4
+      }
+    }
+  ],
+  "results": {
+    "inspect": {
+      "binding_diagnostics": [],
+      "index_rev": 1,
+      "items": [
+        {
+          "candidates": [
+            "7915a47c-edce-46f0-9194-3b201de37d72:47:value"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+            "column": 13,
+            "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+            "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+            "expression": "pair.0.value",
+            "is_call": true,
+            "line": 8,
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 269
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "7915a47c-edce-46f0-9194-3b201de37d72:95:value"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+            "column": 29,
+            "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+            "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+            "expression": "pair.1.value",
+            "is_call": true,
+            "line": 8,
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 285
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "7915a47c-edce-46f0-9194-3b201de37d72:47:value"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+            "column": 48,
+            "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+            "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+            "expression": "outer.0.0.value",
+            "is_call": true,
+            "line": 8,
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 301
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "7915a47c-edce-46f0-9194-3b201de37d72:95:value"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "7915a47c-edce-46f0-9194-3b201de37d72:202:inspect",
+            "column": 67,
+            "content_hash": "eaa62caef66de824077cc41a2b3d82dce433735cb2894aba3ada1356f7adec0e",
+            "document_id": "7915a47c-edce-46f0-9194-3b201de37d72",
+            "expression": "outer.0.1.value",
+            "is_call": true,
+            "line": 8,
+            "name": "value",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 320
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        }
+      ],
+      "matched_symbols": 1,
+      "parse_errors": [],
+      "resolution": "conservative_static_bindings",
+      "rust_build_contexts": [],
+      "rust_build_contexts_total": 0,
+      "stale_documents": [],
+      "total": 4,
+      "truncated": false,
+      "unindexed_documents": [],
+      "view": "fresh_subset_of_revision_inputs"
+    }
+  },
+  "initial_index": {
+    "indexed": 2,
+    "unchanged": 0,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": true,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "58da1631-8e8d-4688-b4f2-e9c24ebd3739",
+      "lock_wait_ms": 8.3e-05,
+      "source_load_decode_ms": 1.631792,
+      "cache_parse_serialize_ms": 4.295917,
+      "cache_replace_ms": 4.927207999999999,
+      "revision_publish_ms": 12.752042,
+      "transaction_body_ms": 23.795040999999998,
+      "before_metrics_write_ms": 23.795166,
+      "documents_loaded": 2,
+      "cache_hits": 0,
+      "cache_misses": 2,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 2,
+      "documents_resolved": 2,
+      "documents_reused": 0,
+      "reference_sites_resolved": 27,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 1,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 1,
+      "dependency_inputs_hashed": 2,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": false,
+      "resolution_ms": 2.38625,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 27.289041,
+      "commit_ms": 1.528917,
+      "metrics_write_ms": 1.9646249999999998,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 157122560
+    }
+  },
+  "no_op_index": {
+    "indexed": 0,
+    "unchanged": 2,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": false,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "6c7b1be1-8ec5-497a-9599-df76c89161df",
+      "lock_wait_ms": 0.000125,
+      "source_load_decode_ms": 1.4082910000000002,
+      "cache_parse_serialize_ms": 0.8468749999999999,
+      "cache_replace_ms": 0.001375,
+      "revision_publish_ms": 1.4794999999999998,
+      "transaction_body_ms": 3.8708750000000003,
+      "before_metrics_write_ms": 3.8710839999999997,
+      "documents_loaded": 2,
+      "cache_hits": 2,
+      "cache_misses": 0,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 0,
+      "documents_resolved": 0,
+      "documents_reused": 0,
+      "reference_sites_resolved": 0,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 0,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 0,
+      "dependency_inputs_hashed": 0,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": true,
+      "resolution_ms": 0.0,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 6.356375,
+      "commit_ms": 0.631542,
+      "metrics_write_ms": 1.853583,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 161218560
+    }
+  },
+  "compiler_command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--manifest-path",
+    "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources/Cargo.toml",
+    "--no-default-features"
+  ],
+  "compiler_exit": 0,
+  "compiler_stdout": "\nrunning 1 test\ntest tests::tuple_owner_identity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+  "compiler_stderr": "   Compiling rust-tuple-fields-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/sources)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-tuple-fields-d47rojfj/cargo-target/debug/build/rust-tuple-fields-fixture/800529fd30b15069/out/rust_tuple_fields_fixture-800529fd30b15069)\n   Doc-tests rust_tuple_fields_fixture\n",
+  "production_database_touched": false,
+  "limitations": [
+    "unconditional tuple struct layouts only; conditional slots and enum payloads remain unverified"
+  ]
+}

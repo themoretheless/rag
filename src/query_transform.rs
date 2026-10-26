@@ -311,6 +311,9 @@ mod tests {
     use super::*;
     use crate::llm::LlmProviderKind;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    // These tests reset shared process-wide caches. Holding one async guard
+    // prevents another test from clearing a cache between the two lookups.
+    static CACHE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     struct StubLlm {
         reply: String,
@@ -368,6 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn rewrite_caches_by_query_and_identity() {
+        let _cache_guard = CACHE_TEST_LOCK.lock().await;
         clear_caches_for_tests();
         let llm = StubLlm::new("v1\nv2\nv3");
         let config = test_config();
@@ -384,6 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn rewrite_errors_when_llm_fails_or_returns_nothing_usable() {
+        let _cache_guard = CACHE_TEST_LOCK.lock().await;
         clear_caches_for_tests();
         let config = test_config();
         assert!(rewrite_queries(&FailingLlm, &config, "q").await.is_err());
@@ -393,6 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn hyde_trims_and_caches_passage() {
+        let _cache_guard = CACHE_TEST_LOCK.lock().await;
         clear_caches_for_tests();
         let long = "x".repeat(MAX_HYDE_CHARS * 2);
         let llm = StubLlm::new(&long);
@@ -405,6 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn hyde_rejects_empty_passage() {
+        let _cache_guard = CACHE_TEST_LOCK.lock().await;
         clear_caches_for_tests();
         let llm = StubLlm::new("   ");
         assert!(hyde_passage(&llm, &test_config(), "q2").await.is_err());

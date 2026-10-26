@@ -1,0 +1,6 @@
+{
+  "changes": {"value": "modified", "removed": "removed", "added": "added"},
+  "witnesses": [["api", "value"], ["entry", "api", "value"]],
+  "staged_worker": "pub fn value() -> i32 { 2 }\npub fn added() {}\n",
+  "working_worker": "pub fn value() -> i32 { 3 }\npub fn added() {}\n"
+}

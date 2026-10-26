@@ -10,13 +10,16 @@ use rmcp::{tool, tool_router, ErrorData as McpError};
 impl RagServer {
     #[tool(
         name = "catalog",
-        description = "List an immutable revision source manifest with checksums and syntax coverage. RAG_TOOLS=full."
+        description = "List immutable source-manifest pages, corpus-global committed index-run history (view=runs), or a project registry with captured corpus hashes, sync roots and explicit unverified freshness. Cursor pins revision and filters; project pages reject changed observations. No live filesystem reads. RAG_TOOLS=full."
     )]
     pub(super) async fn catalog(
         &self,
-        Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
+        Parameters(params): Parameters<crate::code_index::CatalogQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_catalog(&params).map_err(Self::map_err)?)
+        let store = self.store.clone();
+        let result =
+            crate::util::run_blocking("catalog", move || store.code_catalog_query(&params)).await?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "freshness",
@@ -75,14 +78,21 @@ impl RagServer {
     }
     #[tool(
         name = "index_status",
-        description = "Code-index revision, graph/SQL coverage and explicit static-analysis degradation. RAG_TOOLS=full."
+        description = "Versioned index capabilities and measured quality: project-scoped freshness, static bindings and bounded chunk/vector diagnostics. Never treats an empty or unmeasured corpus as healthy; does not repair or read live sources. RAG_TOOLS=full."
     )]
-    pub(super) async fn index_status(&self) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(
-            &serde_json::json!({"index_rev":snapshot.index_revision,"symbols":snapshot.symbols.len(),"calls":snapshot.calls.len(),"unresolved_calls":snapshot.calls.iter().filter(|c|c.resolution!="resolved_static").count(),"sql_tables":snapshot.sql.tables.len(),"stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors,"capability":"static_syntax_bindings","runtime_dispatch_verified":false,"data_flow_slicing":false}),
-        )
+    pub(super) async fn index_status(
+        &self,
+        Parameters(params): Parameters<crate::code_index::status::StatusQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let config = self.config.clone();
+        let result = crate::util::run_blocking("index_status", move || {
+            store.code_index_status(&params, &config)
+        })
+        .await?;
+        Self::json_result(&result)
     }
+
     #[tool(
         name = "search_multi",
         description = "Find literal or regex queries over complete stored documents, with all/any matching, independent per-query result windows, line evidence and project-isolated filename families. Family roles carry fresh static call/reference/entrypoint evidence; runtime activity remains unverified. Captured source encodings include detection basis and byte hashes; legacy choices are heuristic. No chunk-boundary misses. RAG_TOOLS=full."
@@ -431,23 +441,53 @@ impl RagServer {
     }
     #[tool(
         name = "routes",
-        description = "List statically recognized Flask/FastAPI decorators, Express-style registrations and Axum route/get(handler) candidates. RAG_TOOLS=full; reports incomplete coverage."
+        description = "List static Python/Express/Axum/PHP registrations separately from literal markup/fetch/jQuery/Axios endpoint references. References do not prove handlers or runtime requests; request_method and its explicit-option or client-name candidate basis are separate. Includes source revision/hash/offset; exact project/path, literal URL and separate method filters; pagination requires a view token after offset 0. RAG_TOOLS=full."
     )]
     pub(super) async fn routes(
         &self,
-        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+        Parameters(params): Parameters<crate::code_index::RouteQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(&snapshot.query("routes", &params))
+        let store = self.store.clone();
+        let result =
+            crate::util::run_blocking("routes", move || store.code_routes(&params)).await?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "dead_code",
-        description = "List routines not reachable from known roots, excluding value references. Candidates only; never proof that deletion is safe. RAG_TOOLS=full; reports incomplete coverage."
+        description = "dead_code_view=routines (default) lists routine candidates; files checks known incoming links/entrypoints plus bounded literal path mentions in stored source documents, with refuted and not_checked evidence. Routines outside possible static reachability, preserving bound values, project-scoped unresolved-name roots and inherited method candidates. Candidates only; never proof that deletion is safe. RAG_TOOLS=full; reports incomplete coverage."
     )]
     pub(super) async fn dead_code(
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
+        match params.dead_code_view.as_deref().unwrap_or("routines") {
+            "files" => {
+                let store = self.store.clone();
+                let result = crate::util::run_blocking("dead_code_files", move || {
+                    store.code_dead_files(&params)
+                })
+                .await?;
+                return Self::json_result(&result);
+            }
+            "routines" => {
+                if params.dead_code_project.is_some()
+                    || params.dead_code_max_candidates.is_some()
+                    || params.dead_code_max_documents.is_some()
+                    || params.dead_code_max_bytes.is_some()
+                {
+                    return Err(McpError::invalid_params(
+                        "project/scan budgets require dead_code_view=files",
+                        None,
+                    ));
+                }
+            }
+            _ => {
+                return Err(McpError::invalid_params(
+                    "dead_code_view must be routines or files",
+                    None,
+                ))
+            }
+        }
         let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
         Self::json_result(&snapshot.query("dead_code", &params))
     }
@@ -463,8 +503,98 @@ impl RagServer {
         Self::json_result(&snapshot.query("slice", &params))
     }
     #[tool(
+        name = "trace_path",
+        description = "Find bounded simple symbol-to-symbol paths over captured calls, bound references or inheritance candidates. Exact project and endpoint paths disambiguate names; forward/back/both traversal, per-step source evidence and explicit work/depth/result limits. Fresh static graph only; absence and runtime reachability are never proven. RAG_TOOLS=full."
+    )]
+    pub(super) async fn trace_path(
+        &self,
+        Parameters(params): Parameters<crate::code_index::PathQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("trace_path", move || {
+            let snapshot = store.code_snapshot_in_project(params.project.as_deref())?;
+            Ok::<_, crate::error::AppError>(snapshot.trace_path(&params))
+        })
+        .await?;
+        Self::json_result(&result)
+    }
+    #[tool(
+        name = "detect_changes",
+        description = "Read-only allowlisted Git change impact: working_tree=index to working files (plus untracked supported sources), staged=HEAD to index, all=HEAD to working files, commits=explicit before/after. Pins Git objects, builds two bounded native source graphs and maps added/removed/modified/configuration/binding-changed symbols with two-sided incoming evidence paths. Revalidates index and working source hashes; no checkout, filters, source/index mutation or stored-index freshness assumption. RAG_TOOLS=full; static supported-source scope and incomplete runtime impact are explicit."
+    )]
+    pub(super) async fn detect_changes(
+        &self,
+        Parameters(params): Parameters<crate::code_index::GitImpactQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let roots = self.config.ingest_roots.clone();
+        let result = crate::util::run_blocking("detect_changes", move || {
+            crate::code_index::git_diff_impact(&params, &roots)
+        })
+        .await?;
+        Self::json_result(&result)
+    }
+    #[tool(
+        name = "infrastructure",
+        description = "Read a bounded captured configuration graph: Compose build/image declarations, Kubernetes namespace/selector/workload/container/image candidates, Docker stages/COPY/literal startup/Cargo targets and literal GitHub Actions build/script commands. Exact source revision/hash/byte evidence and bounded directed paths; latest view excludes stale stored inputs, explicit revision reads frozen sources. Cross-project image links require explicit linked_projects. No filesystem, cluster, Docker, shell or compiler execution; no runtime/coverage/absence proof. RAG_TOOLS=full."
+    )]
+    pub(super) async fn infrastructure(
+        &self,
+        Parameters(params): Parameters<crate::code_index::InfrastructureQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let result =
+            crate::util::run_blocking("infrastructure", move || store.code_infrastructure(&params))
+                .await?;
+        Self::json_result(&result)
+    }
+    #[tool(
+        name = "rename",
+        description = "Preview exact source-bound Rust symbol rename edits without writing. Requires a project, fresh captured graph and allowlisted UTF-8 sources. Unknown occurrences, aliases, trait families, collisions and unsupported forms block application. Returns a token pinning all captured input hashes; external/generated/dynamic references are not proven complete. RAG_TOOLS=full."
+    )]
+    pub(super) async fn rename(
+        &self,
+        Parameters(params): Parameters<crate::code_index::RenameQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let roots = self.config.ingest_roots.clone();
+        let result =
+            crate::util::run_blocking("rename", move || store.code_rename_preview(&params, &roots))
+                .await?;
+        Self::json_result(&result)
+    }
+    #[tool(
+        name = "apply_rename",
+        description = "ADMIN filesystem mutation: recompute a reviewed Rust rename preview and require its exact plan_token before applying. Revalidates all captured source/provider/manifest hashes, preserves same-directory original backups and a recovery journal, rolls back ordinary failures without overwriting detected concurrent edits. Multi-file writes are not crash-atomic. Does not ingest, compile or refresh the index. RAG_TOOLS=full."
+    )]
+    pub(super) async fn apply_rename(
+        &self,
+        Parameters(params): Parameters<crate::code_index::RenameApply>,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let roots = self.config.ingest_roots.clone();
+        let result = crate::util::run_blocking("apply_rename", move || {
+            store.code_rename_apply(&params, &roots)
+        })
+        .await?;
+        Self::json_result(&result)
+    }
+    #[tool(
+        name = "affected_tests",
+        description = "Find statically related test entrypoints from unique changed symbol selectors in a fresh project-scoped cfg(test) graph overlay. Retains per-step source witnesses and command argv suggestions for captured Cargo targets/Python candidates. Explicit depth/result/work bounds, ambiguity and stale inputs. Coverage is incomplete: unlisted tests are never safe to skip; full-suite candidates are recommended. Read-only source/index; RAG_TOOLS=full."
+    )]
+    pub(super) async fn affected_tests(
+        &self,
+        Parameters(params): Parameters<crate::code_index::AffectedTestsQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let result =
+            crate::util::run_blocking("affected_tests", move || store.code_affected_tests(&params))
+                .await?;
+        Self::json_result(&result)
+    }
+    #[tool(
         name = "inheritance",
-        description = "List indexed extends/implements relations with base targets and unresolved/ambiguous evidence. Class method lookup uses conservative C3 order; dynamic dispatch is not guaranteed. RAG_TOOLS=full."
+        description = "List indexed extends/implements relations plus separate Python/JS/TS same-name inherited method candidates; semantic overrides are not proven. Base targets retain unresolved/ambiguous evidence. Class method lookup uses conservative C3 order; dynamic dispatch is not guaranteed. RAG_TOOLS=full."
     )]
     pub(super) async fn inheritance(
         &self,
@@ -475,64 +605,80 @@ impl RagServer {
     }
     #[tool(
         name = "code",
-        description = "Explicitly read the body of one indexed symbol. Ambiguous names return candidate definitions without bodies. Requires index_code and RAG_TOOLS=full."
+        description = "Read stored source by symbol, exact path/document or symbol/chunk IDs. Project disambiguation, inclusive line/exclusive byte windows, nested-span partitioning, shared character/segment budgets and view-checked continuation cursors. entry_ids accepts arrays or comma/whitespace text. One read transaction; no filesystem reads. Requires index_code and RAG_TOOLS=full."
     )]
     pub(super) async fn code(
         &self,
-        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+        Parameters(params): Parameters<crate::code_index::CodeReadQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_body(&params).map_err(Self::map_err)?)
+        Self::json_result(&self.store.code_read(&params).map_err(Self::map_err)?)
     }
     #[tool(
         name = "repo_map",
-        description = "Return a map of indexed definitions within budget_chars; reports truncation and incomplete coverage. Requires index_code and RAG_TOOLS=full."
+        description = "Return a compact ranked definition map scoped by project and component-aware path_prefix, within budget_chars and optional estimated budget_tokens. Only fresh bindings affect ranking; reports omissions and scoped coverage. Requires index_code and RAG_TOOLS=full."
     )]
     pub(super) async fn repo_map(
         &self,
-        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+        Parameters(params): Parameters<crate::code_index::RepoMapQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(&snapshot.query("repo_map", &params))
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("repo_map", move || {
+            let snapshot = store.code_snapshot_in_project(params.project.as_deref())?;
+            Ok::<_, crate::error::AppError>(snapshot.repo_map(&params))
+        })
+        .await?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "impact",
-        description = "Traverse callers of selected symbols up to depth. Links use conservative static bindings; unresolved and dynamic dependencies are not proven. Requires index_code and RAG_TOOLS=full."
+        description = "Traverse incoming dependencies of selected symbols up to depth. impact_relations=calls (default), references (also bound value/type uses), or all (also inheritance and override candidates). Optional impact_file or impact_document_id selects a file dependency graph, including ownerless bound occurrences (default references). Optional impact_table/impact_project/impact_table_mode selects direct SQL readers/writers plus their incoming code dependencies. Optional impact_key or impact_route selects literal key/URL occurrences plus separate multi-root code and file dependencies (default references); impact_route_kind filters registration/endpoint/all. Handler candidates never become source owners or seeds. Ambiguous table identities require disambiguation. Each result retains its relation/evidence; runtime impact is not proven. Requires index_code and RAG_TOOLS=full."
     )]
     pub(super) async fn impact(
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(&snapshot.query("impact", &params))
+        let store = self.store.clone();
+        let result = crate::util::run_blocking("impact", move || {
+            let snapshot = store.code_snapshot_in_project(params.impact_project.as_deref())?;
+            Ok::<_, crate::error::AppError>(snapshot.query("impact", &params))
+        })
+        .await?;
+        Self::json_result(&result)
     }
     #[tool(
         name = "index_code",
-        description = "Build or refresh the persistent tree-sitter symbol and call index from ingested Rust/Python/JS/TS/Go/Java/C/C++/Bash/sh and basic PHP sources, plus supported SQL/markup inputs. Go module facts use captured go.mod. No filesystem reads; unchanged parses are reused and limitations reported. RAG_TOOLS=full."
+        description = "Build or refresh the persistent tree-sitter symbol and call index from ingested Rust/Python/JS/TS/Go/Java/C/C++/Bash/sh/Lua/Ruby/C#/Perl/PowerShell and basic PHP sources, plus supported SQL/markup inputs. Captured go.mod and Cargo.toml provide partial module/crate/target/path-dependency boundaries. Rust AST typing adds declared-return chains, await, fields, collection elements and standard pointer wrappers; full traits/features/cfg/macros remain unverified. No filesystem reads; unchanged parses are reused and limitations reported. RAG_TOOLS=full."
     )]
-    pub(super) async fn index_code(&self) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.index_code().map_err(Self::map_err)?)
+    pub(super) async fn index_code(
+        &self,
+        Parameters(options): Parameters<crate::code_index::IndexOptions>,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.store.clone();
+        let report = crate::util::run_blocking("index_code", move || {
+            store.index_code_with_options(&options)
+        })
+        .await?;
+        Self::json_result(&report)
     }
     #[tool(
         name = "symbol",
-        description = "Find syntax definitions with source path, lines, signature, document revision and content hash. Requires index_code and RAG_TOOLS=full. Stale documents are omitted and reported."
+        description = "Find code definitions (default), or set symbol_kind=translation_key/table/route/all for shared captured identities. project scopes facts; symbol or name selects exact ID/name/FQN, match_mode=contains enables literal substring. Shared nodes have no fake definition path; bounded source proofs and reference_target provide navigation. Requires index_code and RAG_TOOLS=full."
     )]
     pub(super) async fn symbol(
         &self,
-        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+        Parameters(params): Parameters<crate::code_index::SymbolQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(&snapshot.query("symbol", &params))
+        Self::json_result(&self.store.code_symbols(&params).map_err(Self::map_err)?)
     }
     #[tool(
         name = "references",
-        description = "Find references bound to indexed definitions through static imports, aliases, lexical scopes and known receiver types, including callbacks and type uses. Ambiguous candidates remain explicit. reference_mode=lexical retains name-only search. Requires index_code and RAG_TOOLS=full. Stale documents are omitted and reported."
+        description = "Find static symbol references, or select a SQL table, exact route URL or translation key. Table references retain readers/writers and ownerless SQL; route registrations and client URL mentions stay separate. project scopes identity and freshness; ambiguous schemas/projects require disambiguation. Symbol reference_mode=lexical retains name-only matches. Translation key candidates link literal PHP translator calls and template placeholders without proving runtime evaluation. No runtime binding proof. Requires index_code and RAG_TOOLS=full."
     )]
     pub(super) async fn references(
         &self,
-        Parameters(params): Parameters<crate::code_index::CodeQuery>,
+        Parameters(params): Parameters<crate::code_index::ReferenceQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
-        Self::json_result(&snapshot.query("references", &params))
+        Self::json_result(&self.store.code_references(&params).map_err(Self::map_err)?)
     }
     #[tool(
         name = "callers",

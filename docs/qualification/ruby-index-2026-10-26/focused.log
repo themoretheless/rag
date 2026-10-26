@@ -1,0 +1,17 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 19s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/0e01ae9351add28c/out/rag_mcp-0e01ae9351add28c)
+
+running 8 tests
+test code_index::ruby::tests::ruby_bare_values_method_parentheses_endless_defs_and_eigenclass_defs_have_source_evidence ... ok
+test code_index::ruby::tests::ruby_nesting_and_absolute_constants_do_not_guess_qualified_outer_lexical_scope ... ok
+test code_index::ruby::tests::ruby_reopened_methods_mutations_constant_writes_and_constructor_overrides_remain_explicit ... ok
+test code_index::ruby::tests::ruby_parameters_reassignments_control_flow_and_block_shadows_do_not_invent_receiver_types ... ok
+test code_index::ruby::tests::ruby_dynamic_loads_unknown_receivers_and_parse_errors_do_not_guess_bindings ... ok
+test code_index::ruby::tests::ruby_require_relative_superclass_and_project_scopes_preserve_captured_candidates ... ok
+test code_index::ruby::tests::ruby_owner_and_receiver_kinds_distinguish_instance_class_and_top_level_methods ... ok
+test code_index::ruby::integration_tests::ruby_index_cache_refresh_body_and_immutable_import_history_are_qualified ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1090 filtered out; finished in 0.39s
+

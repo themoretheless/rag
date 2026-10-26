@@ -1,0 +1,27 @@
+{
+  "status": "passed",
+  "workspace_command": "cargo test --workspace",
+  "workspace_exit_code": 0,
+  "workspace_tests_passed": 1298,
+  "workspace_tests_failed": 0,
+  "workspace_tests_ignored": 1,
+  "clippy_command": "cargo clippy --lib --tests -- -D warnings",
+  "clippy_exit_code": 0,
+  "build_command": "cargo build --bin rag-mcp",
+  "build_exit_code": 0,
+  "compiler_command": "cargo check --manifest-path tests/fixtures/code-intelligence/symbol-paths/Cargo.toml --all-targets --offline --target-dir /tmp/rag-symbol-path-fixture-target",
+  "compiler_exit_code": 0,
+  "mcp_runner": "scripts/smoke_symbol_paths.py",
+  "runtime_status": "passed",
+  "config_regression_status": "passed",
+  "worktree_frozen": false,
+  "production_database_touched_by_runners": false,
+  "production_binary_replaced": false,
+  "full_goal_complete": false,
+  "owned_source_sha256": {
+    "src/code_index/paths.rs": "381cb46dda3dce54cc0ac0613d25ec277bb3aeecd4e96255643c52c93bee2a88",
+    "src/code_index/rust_cfg.rs": "8d59b984b16c76a7a2b6451a77d198275a4018fa6c03948dd130873216faab28",
+    "scripts/smoke_symbol_paths.py": "d1fba48dd96b3e72ca8e6e21d3b5c9c66a0f5a3eff3b3e82b9da1ad1f279eb60",
+    "scripts/mcp_smoke_client.py": "78f44eb3b5812426c7d78f0d3f919258c5e7a732c071de17dc73716a2dff3309"
+  }
+}

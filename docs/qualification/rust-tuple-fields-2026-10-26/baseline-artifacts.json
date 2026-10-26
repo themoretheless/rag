@@ -1,0 +1,17 @@
+{
+  "itoa": {
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-itoa-after/report.json": "e4b2774b6b8fede6fcec8a4efd493c9d13b304ca809b8c19d2c63d1d93dd8703",
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-itoa-after/scored-cases.json": "db454dbd18e4d74e4cba2c04d081a3009cff189d35fc7cd2211529c8d735f191",
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-itoa-after/oracle-labels.json": "871ec016fc3cf201ee9bfda017653a5de0a146fc85a2ff3fc0b53be9d3925ea1"
+  },
+  "ryu": {
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-ryu-after/report.json": "72726bd7871f11d429547d3fcfcc4ada53ccb1a3373d4c3e42c845d09f552049",
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-ryu-after/scored-cases.json": "ed75250a51ff5f65dc7e9be94f36a9e43a9f991ee54a5078d735acc28125763f",
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-ryu-after/oracle-labels.json": "adfa741d87aedfdd2ceada3297cb1605054b26aa842c242de2d16a26e1902494"
+  },
+  "memchr": {
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-memchr-after/report.json": "29841fe7ef3b767ef62d339cc97507b2b6f31b510eeb72271dae6f9ae7f4fb1d",
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-memchr-after/scored-cases.json": "194f00f89a51898b28222e58b9a8050bb9fab853d1c7f3bd6827099d2c1ee79f",
+    "docs/qualification/rust-cfg-members-2026-10-26/controlled-memchr-after/oracle-labels.json": "28405c58fb9976cccae8db48c47e737b5a67c0aa36629eb4b916bbfd4096d885"
+  }
+}

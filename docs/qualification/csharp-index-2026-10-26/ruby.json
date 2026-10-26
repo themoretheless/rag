@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 45,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "ruby_capability",
+    "module_class_instance_singleton_definitions",
+    "owner_local_constructor_calls",
+    "required_superclass_methods",
+    "project_isolation",
+    "parameter_reassignment_mixin_guards",
+    "parallel_loop_rescue_local_bindings",
+    "constructor_hook_and_instance_state",
+    "exact_unicode_byte_body",
+    "metadata_body_separation",
+    "partial_slice",
+    "require_relative_file_impact",
+    "full_cache_equivalence",
+    "stale_exclusion",
+    "sync_rebind",
+    "frozen_import_diff"
+  ],
+  "production_database_touched": false,
+  "ruby_code_executed": false,
+  "runtime_dispatch_proven": false
+}

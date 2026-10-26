@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "source_sql_executed": false,
+  "checks": [
+    "merge_read_write",
+    "truncate_only_explicit_write",
+    "copy_direction",
+    "query_copy_reads",
+    "literal_owner_line",
+    "dynamic_target_excluded",
+    "project_isolation",
+    "warm_reuse",
+    "stale_exclusion",
+    "source_sync_refresh",
+    "unsupported_write_check_not_validated"
+  ],
+  "write_operations": [
+    "copy_from",
+    "merge",
+    "truncate"
+  ],
+  "read_operations": [
+    "copy_to",
+    "merge"
+  ]
+}

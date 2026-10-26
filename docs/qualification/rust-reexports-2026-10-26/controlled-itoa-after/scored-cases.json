@@ -1,0 +1,462 @@
+{
+  "cases": [
+    {
+      "path": "src/lib.rs",
+      "range": [
+        344,
+        36,
+        344,
+        48
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/div_rem_1e16().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            449,
+            3,
+            449,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:16313:div_rem_1e16@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          449,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "div_rem_1e16",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        349,
+        12,
+        349,
+        21
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/enc_16lsd().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            407,
+            3,
+            407,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:14509:enc_16lsd@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          407,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "enc_16lsd::<{ u128::MAX_STR_LEN - 16 }>",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        352,
+        32,
+        352,
+        44
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/div_rem_1e16().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            449,
+            3,
+            449,
+            15
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:16313:div_rem_1e16@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          449,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "div_rem_1e16",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        357,
+        16,
+        357,
+        25
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/enc_16lsd().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            407,
+            3,
+            407,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:14509:enc_16lsd@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          407,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "enc_16lsd::<{ u128::MAX_STR_LEN - 32 }>",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        370,
+        33,
+        370,
+        42
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/divmod100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            230,
+            3,
+            230,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:7620:divmod100@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          230,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "divmod100",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        383,
+        31,
+        383,
+        40
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/divmod100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            230,
+            3,
+            230,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:7620:divmod100@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          230,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "divmod100",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        416,
+        29,
+        416,
+        38
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/divmod100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            230,
+            3,
+            230,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:7620:divmod100@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          230,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "divmod100",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        430,
+        25,
+        430,
+        34
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/divmod100().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/lib.rs",
+          "range": [
+            230,
+            3,
+            230,
+            12
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "03b93932-6158-4517-8367-bf2bba66ef80:7620:divmod100@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/lib.rs",
+          230,
+          3
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "divmod100",
+          "is_call": true,
+          "basis": "lexical",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    },
+    {
+      "path": "src/lib.rs",
+      "range": [
+        462,
+        25,
+        462,
+        30
+      ],
+      "symbol": "rust-analyzer cargo itoa 1.0.18 lib/u128_ext/mulhi().",
+      "kinds": [
+        17
+      ],
+      "syntax_class": "direct_call",
+      "expected": [
+        {
+          "path": "src/u128_ext.rs",
+          "range": [
+            6,
+            14,
+            6,
+            19
+          ]
+        }
+      ],
+      "observed_candidates": [
+        "6a3103a3-9d09-4e5c-afe5-ea4097b6a5f8:184:mulhi@87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093"
+      ],
+      "observed_definitions": [
+        [
+          "src/u128_ext.rs",
+          6,
+          14
+        ]
+      ],
+      "observations": [
+        {
+          "expression": "u128_ext::mulhi",
+          "is_call": true,
+          "basis": "module_path",
+          "resolution": "resolved_static"
+        }
+      ],
+      "expected_definition_extracted": true,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact": true
+    }
+  ],
+  "metrics": {
+    "labelled_sites": 9,
+    "local_positive_sites": 9,
+    "external_negative_sites": 0,
+    "true_positive": 9,
+    "false_positive": 0,
+    "false_negative": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "exact_sites": 9,
+    "exact_site_rate": 1.0
+  },
+  "metrics_by_syntax": {
+    "direct_call": {
+      "labelled_sites": 9,
+      "local_positive_sites": 9,
+      "external_negative_sites": 0,
+      "true_positive": 9,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "exact_sites": 9,
+      "exact_site_rate": 1.0
+    }
+  }
+}

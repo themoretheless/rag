@@ -1,0 +1,51 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 27.55s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 43 tests
+test mcp::facade::audit_tests::unknown_tool_audit_lineage_never_retains_the_requested_name ... ok
+test mcp::facade::audit_tests::audit_action_keeps_lineage_and_omits_content ... ok
+test mcp::error::tests::config_maps_to_invalid_params_and_busy_carries_retry_data ... ok
+test mcp::error::tests::conflict_and_invalid_input_are_distinguishable_by_data_code ... ok
+test mcp::facade::tests::busy_error_is_structured_retryable_and_resource_safe ... ok
+test mcp::facade::audit_tests::aggregate_report_failures_are_not_telemetry_successes ... ok
+test mcp::facade::audit_tests::result_hint_exposes_only_bounded_counts ... ok
+test mcp::facade::tests::dropped_blocking_waiter_keeps_transferred_mutation_guard ... ok
+test mcp::facade::audit_tests::known_disabled_tool_records_sanitized_failed_lineage_and_metrics ... ok
+test mcp::facade::tests::every_registered_tool_has_an_explicit_telemetry_group ... ok
+test mcp::facade::tests::every_registered_tool_has_an_explicit_access_policy ... ok
+test mcp::facade::tests::legacy_reembed_preflight_rejects_oversized_vectors_before_provider_call ... ok
+test mcp::facade::task_scope_tests::task_context_is_unique_per_server_and_explicit_for_shared_http ... ok
+test mcp::facade::tests::doctor_detects_manifest_dim_mismatch_and_roots ... ok
+test mcp::facade::tests::maintenance_max_docs_never_exceeds_configured_boundary ... ok
+test mcp::facade::tests::ingest_raw_list_sources_get_source_immutable ... ok
+test mcp::facade::tests::kg_store_roundtrip_via_server ... ok
+test mcp::facade::tests::recovery_jsonl_requires_one_typed_manifest_before_documents ... ok
+test mcp::facade::tests::ingest_file_respects_allowlist ... ok
+test mcp::facade::tests::check_duplicate_and_delete_by_source_tools ... ok
+test mcp::facade::tests::llm_status_reports_config_and_unreachable_when_no_server ... ok
+test mcp::facade::tests::multi_query_search_fails_busy_before_embedding_any_rewrite ... ok
+test mcp::facade::tests::bulk_maintenance_apply_paths_refuse_active_guarded_search ... ok
+test mcp::facade::tests::pack_context_mcp_enforces_complete_context_budget ... ok
+test mcp::facade::tests::list_wings_rooms_taxonomy_and_status_wings ... ok
+test mcp::surface::tests::parse_surface ... ok
+test mcp::surface::tests::spine_is_bounded ... ok
+test mcp::wiki::limit_tests::clamp_limit_defaults_and_bounds ... ok
+test mcp::facade::tests::legacy_bundle_requires_opt_in_and_reembeds_before_import ... ok
+test mcp::facade::tests::delete_by_source_preview_matches_archived_and_tombstone_apply_scope ... ok
+test mcp::facade::tests::dropped_apply_request_leaves_owned_mutation_workflow_running ... ok
+test mcp::facade::tests::delete_by_source_finalization_failure_returns_committed_report ... ok
+test mcp::facade::tests::vector_search_holds_corpus_guard_across_async_embedding ... ok
+test mcp::facade::tests::status_and_doctor_empty_corpus ... ok
+test mcp::facade::tests::retrieval_helpers_multi_get_expand_and_find_similar ... ok
+test mcp::facade::tests::single_reembed_refuses_identity_migration_until_full_reembed ... ok
+test mcp::facade::tests::status_ready_for_search_after_ingest ... ok
+test mcp::facade::tests::import_bundle_finishes_with_generation_clean_fts ... ok
+test mcp::facade::tests::recovery_tools_refuse_oversized_io_without_publishing_an_artifact ... ok
+test mcp::facade::tests::add_drawer_check_duplicate_delete_by_source ... ok
+test mcp::facade::tests::update_document_meta_skips_reembed_unless_content_changes ... ok
+test mcp::facade::tests::cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_lane ... ok
+test mcp::facade::tests::doctor_repair_rebuilds_missing_chunks ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 962 filtered out; finished in 1.30s
+

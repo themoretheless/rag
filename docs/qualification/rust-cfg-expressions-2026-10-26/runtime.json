@@ -1,0 +1,879 @@
+{
+  "status": "passed",
+  "binary_sha256": "1f8de5815a3fc3a08c6f54fe318f9da41e781a71a74c64e4b71e9b6d72e259ae",
+  "transport": "actual stdio MCP",
+  "runs": [
+    {
+      "fast": true,
+      "expected": "left::selected",
+      "observed_entry_targets": [
+        "sink",
+        "left::selected"
+      ],
+      "body_calls": {
+        "binding_diagnostics": [],
+        "index_rev": 1,
+        "items": [
+          {
+            "candidates": [
+              "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:15:selected@5a5f69ec3130ee3d3201b7c52b3c0fab1e24ea7df4d34a15bac0f074857a8703"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "5a5f69ec3130ee3d3201b7c52b3c0fab1e24ea7df4d34a15bac0f074857a8703",
+              "caller": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:639:body_branch@5a5f69ec3130ee3d3201b7c52b3c0fab1e24ea7df4d34a15bac0f074857a8703",
+              "column": 15,
+              "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+              "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+              "expression": "left::selected",
+              "is_call": true,
+              "line": 43,
+              "name": "selected",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+              "revision": 1,
+              "start_byte": 712
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "qualified"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "5a5f69ec3130ee3d3201b7c52b3c0fab1e24ea7df4d34a15bac0f074857a8703",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 3,
+            "excluded_source_files": 0,
+            "features": [
+              "fast"
+            ],
+            "features_total": 1,
+            "features_truncated": false,
+            "manifest_hash": "f8ae7266292a2aa30204600754671c3a8eb6026aaef88a94578bb205b1af7e10",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 1,
+        "stale_documents": [],
+        "total": 1,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "index_report": {
+        "indexed": 2,
+        "unchanged": 0,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "8d9947fe-5b80-4887-8a7c-cb567f913d65",
+          "lock_wait_ms": 0.0011250000000000001,
+          "source_load_decode_ms": 6.047875,
+          "cache_parse_serialize_ms": 22.213041,
+          "cache_replace_ms": 10.193041,
+          "revision_publish_ms": 60.73675,
+          "transaction_body_ms": 99.964833,
+          "before_metrics_write_ms": 99.966167,
+          "documents_loaded": 2,
+          "cache_hits": 0,
+          "cache_misses": 2,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 2,
+          "documents_resolved": 2,
+          "documents_reused": 0,
+          "reference_sites_resolved": 25,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 1,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 2,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": false,
+          "resolution_ms": 5.2710420000000004,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 113.509667,
+          "commit_ms": 4.042,
+          "metrics_write_ms": 9.500791,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 149454848
+        }
+      },
+      "affected_tests": {
+        "absence_proven": false,
+        "ambiguous_candidates_included": true,
+        "ambiguous_reference_sites": 0,
+        "binding_diagnostics": [],
+        "binding_diagnostics_total": 0,
+        "commands_require_matching_captured_sources": true,
+        "coverage_complete": false,
+        "depth_limited": false,
+        "fallback_commands": [
+          {
+            "argv": [
+              "cargo",
+              "test",
+              "--manifest-path",
+              "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+              "--workspace",
+              "--all-targets"
+            ],
+            "configuration_review_required": true,
+            "executed": false,
+            "kind": "cargo_full_suite_candidate"
+          }
+        ],
+        "fallback_commands_truncated": false,
+        "fallback_manifests_total": 1,
+        "filesystem_freshness_checked": false,
+        "index_rev": 1,
+        "items": [
+          {
+            "commands": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--manifest-path",
+                  "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+                  "--lib",
+                  "--no-default-features",
+                  "--features",
+                  "fast",
+                  "config_test"
+                ],
+                "configuration_review_required": true,
+                "cwd": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources",
+                "executed": false,
+                "filter_applied": true,
+                "filter_mode": "substring",
+                "kind": "cargo_test",
+                "manifest": {
+                  "content_hash": "f8ae7266292a2aa30204600754671c3a8eb6026aaef88a94578bb205b1af7e10",
+                  "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+                  "project": "fixture",
+                  "revision": 1
+                },
+                "target_kind": "lib",
+                "target_name": "fixture-cfg-arguments",
+                "test_source_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c"
+              }
+            ],
+            "commands_total": 1,
+            "commands_truncated": false,
+            "entrypoint": {
+              "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+              "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+              "handler_expression": null,
+              "kind": "test_function",
+              "line": 32,
+              "method": null,
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+              "project": "fixture",
+              "provenance": "derived",
+              "resolution": "resolved_static",
+              "revision": 1,
+              "route": null,
+              "start_byte": 462,
+              "symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2"
+            },
+            "path": {
+              "complete_to_seed": true,
+              "steps": [
+                {
+                  "evidence": {
+                    "candidates": [
+                      "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:15:selected@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2"
+                    ],
+                    "provenance": "derived",
+                    "reference": {
+                      "build_context": "bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                      "caller": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                      "column": 20,
+                      "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                      "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                      "expression": "selected",
+                      "is_call": true,
+                      "line": 34,
+                      "name": "selected",
+                      "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                      "revision": 1,
+                      "start_byte": 525
+                    },
+                    "resolution": "resolved_static",
+                    "resolution_basis": "import"
+                  },
+                  "relation": "call",
+                  "source_symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                  "target_symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:15:selected@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2"
+                }
+              ],
+              "symbols": [
+                {
+                  "build_context": "bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                  "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                  "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                  "documentation_examined": true,
+                  "end_byte": 637,
+                  "end_line": 38,
+                  "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                  "kind": "function_item",
+                  "name": "config_test",
+                  "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                  "qualified_name": "config_test",
+                  "revision": 1,
+                  "signature": "fn config_test()",
+                  "start_byte": 462,
+                  "start_line": 32
+                },
+                {
+                  "build_context": "bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                  "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                  "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                  "documentation_examined": true,
+                  "end_byte": 58,
+                  "end_line": 4,
+                  "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:15:selected@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                  "kind": "function_item",
+                  "name": "selected",
+                  "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                  "qualified_name": "left::selected",
+                  "revision": 1,
+                  "signature": "pub fn selected() -> u32",
+                  "start_byte": 15,
+                  "start_line": 2
+                }
+              ]
+            },
+            "reason": "static_dependency",
+            "seed_symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:15:selected@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+            "symbol": {
+              "build_context": "bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+              "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+              "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+              "documentation_examined": true,
+              "end_byte": 637,
+              "end_line": 38,
+              "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+              "kind": "function_item",
+              "name": "config_test",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+              "qualified_name": "config_test",
+              "revision": 1,
+              "signature": "fn config_test()",
+              "start_byte": 462,
+              "start_line": 32
+            }
+          }
+        ],
+        "limitations": [
+          "static relationships only; generated/dynamic/unsupported tests may be absent",
+          "unknown cfg stays uncertain; explicit features/target retain captured scope",
+          "test executors and build success are not verified by this query",
+          "Rust commands use substring filters; custom harness commands are unfiltered",
+          "no historical command is safe to run against a different source state"
+        ],
+        "limits": {
+          "depth": 10,
+          "tests": 100,
+          "work": 50000
+        },
+        "observed_test_entrypoints": 1,
+        "parse_errors": [],
+        "parse_errors_total": 0,
+        "recommendation": "run_full_suite_for_relevant_build_configurations; listed commands are investigation candidates",
+        "related_tests_total_in_examined_graph": 1,
+        "runtime_coverage_measured": false,
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [
+              "test"
+            ],
+            "cfg_flags_total": 1,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 3,
+            "excluded_source_files": 0,
+            "features": [
+              "fast"
+            ],
+            "features_total": 1,
+            "features_truncated": false,
+            "manifest_hash": "f8ae7266292a2aa30204600754671c3a8eb6026aaef88a94578bb205b1af7e10",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 1,
+        "safe_to_skip_unlisted_tests": false,
+        "seeds": [
+          {
+            "build_context": "bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+            "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+            "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+            "documentation_examined": true,
+            "end_byte": 58,
+            "end_line": 4,
+            "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:15:selected@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+            "kind": "function_item",
+            "name": "selected",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+            "qualified_name": "left::selected",
+            "revision": 1,
+            "signature": "pub fn selected() -> u32",
+            "start_byte": 15,
+            "start_line": 2
+          }
+        ],
+        "selectors": [
+          {
+            "candidates": [
+              {
+                "build_context": "bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                "documentation_examined": true,
+                "end_byte": 58,
+                "end_line": 4,
+                "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:15:selected@bc0988f904858e7f10a26390d537381fd7f62ced111a9552207b00214651edd2",
+                "kind": "function_item",
+                "name": "selected",
+                "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                "qualified_name": "left::selected",
+                "revision": 1,
+                "signature": "pub fn selected() -> u32",
+                "start_byte": 15,
+                "start_line": 2
+              }
+            ],
+            "selector": "left::selected",
+            "test_context_id_remapped": false,
+            "total": 1,
+            "truncated": false
+          }
+        ],
+        "stale_documents": [],
+        "stale_documents_total": 0,
+        "status": "related_tests",
+        "test_discovery_complete": false,
+        "truncated": false,
+        "unindexed_documents": [],
+        "unindexed_documents_total": 0,
+        "unresolved_reference_sites": 18,
+        "view": "test_cfg_overlay_of_fresh_captured_inputs",
+        "work": 36,
+        "work_exhausted": false
+      },
+      "command": {
+        "argv": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+          "--lib",
+          "--no-default-features",
+          "--features",
+          "fast",
+          "config_test"
+        ],
+        "configuration_review_required": true,
+        "cwd": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources",
+        "executed": false,
+        "filter_applied": true,
+        "filter_mode": "substring",
+        "kind": "cargo_test",
+        "manifest": {
+          "content_hash": "f8ae7266292a2aa30204600754671c3a8eb6026aaef88a94578bb205b1af7e10",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+          "project": "fixture",
+          "revision": 1
+        },
+        "target_kind": "lib",
+        "target_name": "fixture-cfg-arguments",
+        "test_source_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c"
+      },
+      "command_exit": 0,
+      "stdout": "\nrunning 1 test\ntest config_test ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling fixture-cfg-arguments v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources)\nwarning: function `selected` is never used\n --> src/lib.rs:7:12\n  |\n7 |     pub fn selected() -> u32 {\n  |            ^^^^^^^^\n  |\n  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `fixture-cfg-arguments` (lib test) generated 1 warning\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/cargo-target/debug/build/fixture-cfg-arguments/07a22f344c7de43f/out/fixture_cfg_arguments-07a22f344c7de43f)\n"
+    },
+    {
+      "fast": false,
+      "expected": "right::selected",
+      "observed_entry_targets": [
+        "sink",
+        "right::selected"
+      ],
+      "body_calls": {
+        "binding_diagnostics": [],
+        "index_rev": 2,
+        "items": [
+          {
+            "candidates": [
+              "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:77:selected@e0d84bde7ba14efe62180bfc321929a2a2c05fc487dce2508dcdae24fb986048"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "e0d84bde7ba14efe62180bfc321929a2a2c05fc487dce2508dcdae24fb986048",
+              "caller": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:639:body_branch@e0d84bde7ba14efe62180bfc321929a2a2c05fc487dce2508dcdae24fb986048",
+              "column": 16,
+              "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+              "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+              "expression": "right::selected",
+              "is_call": true,
+              "line": 47,
+              "name": "selected",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+              "revision": 2,
+              "start_byte": 783
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "qualified"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "e0d84bde7ba14efe62180bfc321929a2a2c05fc487dce2508dcdae24fb986048",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 3,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "5771459781bc84dd47986eaa7d602424aa88b5c3cf241335fa10eaa9c4a83f15",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+            "manifest_revision": 2,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 1,
+        "stale_documents": [],
+        "total": 1,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "index_report": {
+        "indexed": 2,
+        "unchanged": 0,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "ed90be00-ff49-488c-a1ba-9acfbabd97a1",
+          "lock_wait_ms": 0.000917,
+          "source_load_decode_ms": 2.3981250000000003,
+          "cache_parse_serialize_ms": 8.738667,
+          "cache_replace_ms": 32.875208,
+          "revision_publish_ms": 101.35179099999999,
+          "transaction_body_ms": 145.76049999999998,
+          "before_metrics_write_ms": 145.761583,
+          "documents_loaded": 2,
+          "cache_hits": 0,
+          "cache_misses": 2,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 2,
+          "documents_resolved": 2,
+          "documents_reused": 0,
+          "reference_sites_resolved": 28,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 1,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 1,
+          "dependency_inputs_hashed": 2,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 10.126833,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 150.392458,
+          "commit_ms": 2.084,
+          "metrics_write_ms": 2.5467079999999997,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 179666944
+        }
+      },
+      "affected_tests": {
+        "absence_proven": false,
+        "ambiguous_candidates_included": true,
+        "ambiguous_reference_sites": 0,
+        "binding_diagnostics": [],
+        "binding_diagnostics_total": 0,
+        "commands_require_matching_captured_sources": true,
+        "coverage_complete": false,
+        "depth_limited": false,
+        "fallback_commands": [
+          {
+            "argv": [
+              "cargo",
+              "test",
+              "--manifest-path",
+              "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+              "--workspace",
+              "--all-targets"
+            ],
+            "configuration_review_required": true,
+            "executed": false,
+            "kind": "cargo_full_suite_candidate"
+          }
+        ],
+        "fallback_commands_truncated": false,
+        "fallback_manifests_total": 1,
+        "filesystem_freshness_checked": false,
+        "index_rev": 2,
+        "items": [
+          {
+            "commands": [
+              {
+                "argv": [
+                  "cargo",
+                  "test",
+                  "--manifest-path",
+                  "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+                  "--lib",
+                  "--no-default-features",
+                  "config_test"
+                ],
+                "configuration_review_required": true,
+                "cwd": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources",
+                "executed": false,
+                "filter_applied": true,
+                "filter_mode": "substring",
+                "kind": "cargo_test",
+                "manifest": {
+                  "content_hash": "5771459781bc84dd47986eaa7d602424aa88b5c3cf241335fa10eaa9c4a83f15",
+                  "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+                  "project": "fixture",
+                  "revision": 2
+                },
+                "target_kind": "lib",
+                "target_name": "fixture-cfg-arguments",
+                "test_source_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c"
+              }
+            ],
+            "commands_total": 1,
+            "commands_truncated": false,
+            "entrypoint": {
+              "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+              "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+              "handler_expression": null,
+              "kind": "test_function",
+              "line": 32,
+              "method": null,
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+              "project": "fixture",
+              "provenance": "derived",
+              "resolution": "resolved_static",
+              "revision": 2,
+              "route": null,
+              "start_byte": 462,
+              "symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924"
+            },
+            "path": {
+              "complete_to_seed": true,
+              "steps": [
+                {
+                  "evidence": {
+                    "candidates": [
+                      "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:77:selected@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924"
+                    ],
+                    "provenance": "derived",
+                    "reference": {
+                      "build_context": "cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                      "caller": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                      "column": 20,
+                      "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                      "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                      "expression": "selected",
+                      "is_call": true,
+                      "line": 34,
+                      "name": "selected",
+                      "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                      "revision": 2,
+                      "start_byte": 525
+                    },
+                    "resolution": "resolved_static",
+                    "resolution_basis": "import"
+                  },
+                  "relation": "call",
+                  "source_symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                  "target_symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:77:selected@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924"
+                }
+              ],
+              "symbols": [
+                {
+                  "build_context": "cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                  "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                  "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                  "documentation_examined": true,
+                  "end_byte": 637,
+                  "end_line": 38,
+                  "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                  "kind": "function_item",
+                  "name": "config_test",
+                  "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                  "qualified_name": "config_test",
+                  "revision": 2,
+                  "signature": "fn config_test()",
+                  "start_byte": 462,
+                  "start_line": 32
+                },
+                {
+                  "build_context": "cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                  "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                  "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                  "documentation_examined": true,
+                  "end_byte": 120,
+                  "end_line": 9,
+                  "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:77:selected@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                  "kind": "function_item",
+                  "name": "selected",
+                  "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                  "qualified_name": "right::selected",
+                  "revision": 2,
+                  "signature": "pub fn selected() -> u32",
+                  "start_byte": 77,
+                  "start_line": 7
+                }
+              ]
+            },
+            "reason": "static_dependency",
+            "seed_symbol_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:77:selected@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+            "symbol": {
+              "build_context": "cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+              "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+              "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+              "documentation_examined": true,
+              "end_byte": 637,
+              "end_line": 38,
+              "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:462:config_test@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+              "kind": "function_item",
+              "name": "config_test",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+              "qualified_name": "config_test",
+              "revision": 2,
+              "signature": "fn config_test()",
+              "start_byte": 462,
+              "start_line": 32
+            }
+          }
+        ],
+        "limitations": [
+          "static relationships only; generated/dynamic/unsupported tests may be absent",
+          "unknown cfg stays uncertain; explicit features/target retain captured scope",
+          "test executors and build success are not verified by this query",
+          "Rust commands use substring filters; custom harness commands are unfiltered",
+          "no historical command is safe to run against a different source state"
+        ],
+        "limits": {
+          "depth": 10,
+          "tests": 100,
+          "work": 50000
+        },
+        "observed_test_entrypoints": 1,
+        "parse_errors": [],
+        "parse_errors_total": 0,
+        "recommendation": "run_full_suite_for_relevant_build_configurations; listed commands are investigation candidates",
+        "related_tests_total_in_examined_graph": 1,
+        "runtime_coverage_measured": false,
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [
+              "test"
+            ],
+            "cfg_flags_total": 1,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 3,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "5771459781bc84dd47986eaa7d602424aa88b5c3cf241335fa10eaa9c4a83f15",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+            "manifest_revision": 2,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 1,
+        "safe_to_skip_unlisted_tests": false,
+        "seeds": [
+          {
+            "build_context": "cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+            "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+            "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+            "documentation_examined": true,
+            "end_byte": 120,
+            "end_line": 9,
+            "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:77:selected@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+            "kind": "function_item",
+            "name": "selected",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+            "qualified_name": "right::selected",
+            "revision": 2,
+            "signature": "pub fn selected() -> u32",
+            "start_byte": 77,
+            "start_line": 7
+          }
+        ],
+        "selectors": [
+          {
+            "candidates": [
+              {
+                "build_context": "cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                "content_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c",
+                "document_id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde",
+                "documentation_examined": true,
+                "end_byte": 120,
+                "end_line": 9,
+                "id": "05b0320f-de6c-4eef-8b5c-ebf7d688dfde:77:selected@cf1ebc5b7c563a7fdbba5e0d54e774fd3d082f776afd042b1eaa06fe4a783924",
+                "kind": "function_item",
+                "name": "selected",
+                "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/src/lib.rs",
+                "qualified_name": "right::selected",
+                "revision": 2,
+                "signature": "pub fn selected() -> u32",
+                "start_byte": 77,
+                "start_line": 7
+              }
+            ],
+            "selector": "right::selected",
+            "test_context_id_remapped": false,
+            "total": 1,
+            "truncated": false
+          }
+        ],
+        "stale_documents": [],
+        "stale_documents_total": 0,
+        "status": "related_tests",
+        "test_discovery_complete": false,
+        "truncated": false,
+        "unindexed_documents": [],
+        "unindexed_documents_total": 0,
+        "unresolved_reference_sites": 21,
+        "view": "test_cfg_overlay_of_fresh_captured_inputs",
+        "work": 39,
+        "work_exhausted": false
+      },
+      "command": {
+        "argv": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+          "--lib",
+          "--no-default-features",
+          "config_test"
+        ],
+        "configuration_review_required": true,
+        "cwd": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources",
+        "executed": false,
+        "filter_applied": true,
+        "filter_mode": "substring",
+        "kind": "cargo_test",
+        "manifest": {
+          "content_hash": "5771459781bc84dd47986eaa7d602424aa88b5c3cf241335fa10eaa9c4a83f15",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources/Cargo.toml",
+          "project": "fixture",
+          "revision": 2
+        },
+        "target_kind": "lib",
+        "target_name": "fixture-cfg-arguments",
+        "test_source_hash": "33fba615b80ed72a916645df65846885fc010439f0145831b63bc71556782f3c"
+      },
+      "command_exit": 0,
+      "stdout": "\nrunning 1 test\ntest config_test ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling fixture-cfg-arguments v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/sources)\nwarning: function `selected` is never used\n --> src/lib.rs:2:12\n  |\n2 |     pub fn selected() -> u32 {\n  |            ^^^^^^^^\n  |\n  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `fixture-cfg-arguments` (lib test) generated 1 warning\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-cfg-arguments-p2gq8klk/cargo-target/debug/build/fixture-cfg-arguments/043cdb4f3f7de6ed/out/fixture_cfg_arguments-043cdb4f3f7de6ed)\n"
+    }
+  ],
+  "production_database_touched": false,
+  "limitations": [
+    "fixture qualification, not compiler-complete cfg or runtime call graph"
+  ]
+}

@@ -1,0 +1,396 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_contract_inspected": "op_symbol/_symbol_rows and shared placeholder node no-last-writer-location contract; no full reference application execution",
+  "reference_files_sha256": {
+    "src/ragraf/facade.py": "95322f11fd8d4f74fce8078eb171fbe4fdc1c054d753e002ff9de537a5d52f83",
+    "src/ragraf/extract/php_ast.py": "b2c0d84cbba98fd65dd2ade0bf693514a4afbdde46d992bba32e4ae0574a34d4"
+  },
+  "workspace_tests": {
+    "passed": 1466,
+    "failed": 0,
+    "ignored": 1
+  },
+  "new_native_cases": 5,
+  "query_contract_version": 1,
+  "identity_algorithm": "BLAKE3_structured_domain_project_name_version1",
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 59,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "shared_key_no_last_writer_location",
+      "stable_project_scoped_typed_ids",
+      "source_proof_retention_and_full_counts",
+      "reference_target_roundtrips",
+      "exact_id_and_prefixed_FQN_lookup",
+      "namespace_prefix_guards_and_explicit_code_override",
+      "path_scoped_counts_stable_identity",
+      "schema_only_usage_only_and_quoted_tables",
+      "route_alternatives_not_duplicate_uses",
+      "legacy_code_default_and_name_alias",
+      "all_domains_and_counts_before_limit",
+      "literal_contains_not_SQL_or_regex",
+      "source_revision_hash_identity",
+      "body_free_determinism",
+      "invalid_input_rejection",
+      "stored_snapshot_without_filesystem_reads",
+      "stale_exclusion",
+      "sync_replacement"
+    ],
+    "source_code_or_SQL_executed": false,
+    "production_database_touched": false,
+    "runtime_binding_or_catalogue_definitions_proven": false,
+    "representative_quality_scale_or_full_parity_proven": false
+  },
+  "regressions": {
+    "non-code-references": {
+      "status": "passed",
+      "versions": {
+        "index_format": 59,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "queries_relation",
+        "symbol_owners_and_ownerless_files",
+        "read_write_and_source_filters",
+        "counts_before_result_limit",
+        "project_and_schema_disambiguation_before_filters",
+        "schema_only_observed_target",
+        "quoted_identifiers",
+        "registration_vs_endpoint_relations",
+        "separate_registration_request_methods",
+        "handler_alternatives_not_fake_owners_or_duplicate_occurrences",
+        "literal_URL_identity",
+        "project_scoped_legacy_symbol_mode",
+        "identity_hash_revision_evidence",
+        "body_free_determinism",
+        "mixed_target_and_invalid_argument_rejection",
+        "stale_source_exclusion",
+        "sync_replacement"
+      ],
+      "production_database_touched": false,
+      "source_code_or_SQL_executed": false,
+      "runtime_database_or_router_binding_proven": false,
+      "full_RAGRAF_parity_or_representative_quality_proven": false
+    },
+    "translation-keys": {
+      "status": "passed",
+      "versions": {
+        "index_format": 59,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+      "reference_execution": "only_placeholder_regex_and_pure_extractor_on_fixed_template",
+      "checks": [
+        "template_PHP_shared_key_target",
+        "qualified_case_insensitive_translator_name_candidates",
+        "PHP_owner_and_PHTML_file_evidence",
+        "literal_key_case_and_space_identity",
+        "120_unicode_characters_not_120_bytes",
+        "dynamic_interpolation_concat_named_member_exclusion_and_static_escape_decoding",
+        "UTF8_byte_line_anchors",
+        "reference_placeholder_key_line_sets",
+        "repeated_occurrences_preserved",
+        "project_disambiguation_before_path",
+        "independent_result_cap",
+        "explicit_4096_occurrence_limit",
+        "invalid_and_mixed_target_rejection",
+        "position_and_equivalent_literal_spelling_history_stability",
+        "stale_exclusion",
+        "sync_replaces_keys",
+        "immutable_historical_diff",
+        "incomplete_capture_diff_exclusion"
+      ],
+      "production_database_touched": false,
+      "source_code_or_SQL_executed": false,
+      "translator_or_template_runtime_binding_proven": false,
+      "representative_quality_scale_or_full_parity_proven": false
+    },
+    "table-impact": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_sql_executed": false,
+      "checks": [
+        "direct_readers_writers",
+        "ownerless_sql_preserved",
+        "indirect_code_chain",
+        "read_write_filters",
+        "independent_direct_budget",
+        "untruncated_owner_roots",
+        "project_disambiguation",
+        "schema_disambiguation",
+        "qualified_target",
+        "identifier_validation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh"
+      ],
+      "runtime_impact_proven": false
+    },
+    "method-relations": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_applications_executed": false,
+      "checks": [
+        "imported_base_method",
+        "independent_relation_budget",
+        "source_provenance",
+        "class_and_method_navigation",
+        "no_call_fabrication",
+        "project_isolation",
+        "lexical_mode_separation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh",
+        "frozen_relation_diff",
+        "no_source_bodies"
+      ],
+      "semantic_override_proven": false,
+      "removed_method_candidates": 2
+    },
+    "rust-receivers": {
+      "status": "passed",
+      "transport": "stdio MCP",
+      "scope": "Rust receiver fixture; not representative language precision/recall",
+      "binary_sha256": "4671bebc333ba4fbead65af1338065b0358f9df383d4223bfc5823707381ce26",
+      "index_format": 59,
+      "labelled_calls": [
+        {
+          "expression": "service.user().save",
+          "target_path": "src/lib.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "service.other().save",
+          "target_path": "src/lib.rs",
+          "target": "Other::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "Other::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "(service.user_async().await).save",
+          "target_path": "src/lib.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "service.typed::<User>().save",
+          "target_path": "src/lib.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "container.user.save",
+          "target_path": "src/lib.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "container.other.save",
+          "target_path": "src/lib.rs",
+          "target": "Other::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "Other::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "users[0].save",
+          "target_path": "src/lib.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "others[0].save",
+          "target_path": "src/lib.rs",
+          "target": "Other::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "Other::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "shared.save",
+          "target_path": "src/lib.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "boxed.save",
+          "target_path": "src/lib.rs",
+          "target": "Other::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "Other::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "inferred.save",
+          "target_path": "src/lib.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/lib.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        },
+        {
+          "expression": "remote::factory().save",
+          "target_path": "src/remote.rs",
+          "target": "User::save",
+          "actual": [
+            [
+              "src/remote.rs",
+              "User::save"
+            ]
+          ],
+          "wrong_targets": 0
+        }
+      ],
+      "checks": [
+        "exact_owner_and_path",
+        "nested_call_identity",
+        "await",
+        "explicit_generic_return",
+        "field_types",
+        "array_and_vec_elements",
+        "standard_wrappers",
+        "local_factory",
+        "foreign_return_type_context",
+        "warm_reuse",
+        "stale_provider_exclusion",
+        "return_signature_only_rebinding",
+        "frozen_history"
+      ],
+      "production_database_touched": false,
+      "compiler_verified_by_runner": false,
+      "representative_quality_measured": false,
+      "competitor_comparison_performed": false
+    },
+    "perl-index": {
+      "status": "passed",
+      "versions": {
+        "index_format": 59,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "perl_capability",
+        "packages_subroutines_variables",
+        "qualified_and_parent_method_calls",
+        "project_isolation",
+        "normalized_hash_variable_reference",
+        "dynamic_import_object_guards",
+        "exact_unicode_body",
+        "metadata_body_separation",
+        "inheritance_candidates",
+        "package_identity_file_impact",
+        "static_sql_owner_table_impact",
+        "partial_slice",
+        "full_resolution_equivalence",
+        "stale_exclusion",
+        "source_sync",
+        "frozen_parent_diff"
+      ],
+      "perl_code_executed": false,
+      "INC_or_runtime_dispatch_proven": false,
+      "production_database_touched": false
+    }
+  },
+  "isolated_binary": {
+    "sha256": "4671bebc333ba4fbead65af1338065b0358f9df383d4223bfc5823707381ce26",
+    "isolated": true
+  },
+  "source_hashes_after_checks": {
+    "src/code_index.rs": "d9c1a71232552c75de41acf2cfff0b3d20e75849a0236c394300671f61ef0f50",
+    "src/code_index/symbol_nodes.rs": "324628eee0b3dcb50e877a335a839d336a0311517992c9e2b50a4b4dd8916644",
+    "src/mcp/analysis.rs": "34eafec2d65ebc8bed2126ef4cef95ce3638533d4713877d5ed1aac2cda8c13a",
+    "scripts/smoke_symbol_nodes.py": "9956f9b85447612a307ab32b8c32fa1302b7812b2cf78c378f3e4ffe4a6cf71b",
+    "docs/SHARED_SYMBOL_NODES.md": "62590ae93c8742ee652dcb4af77025b25475a9458d25fd1e0267898fb512482a",
+    "docs/TRANSLATION_KEY_REFERENCES.md": "c4c41d806ed2d17f168646639167e7439d2d59da0f05a5b42240d28a1e94f998",
+    "docs/NON_CODE_REFERENCES.md": "5b821db3bcace41df8ee9889b23ec165c53245c337077166ce0bf8bfa6860d23"
+  },
+  "observed_source_index_format_after_checks": 60,
+  "log_hashes": {
+    "build.log": "4916581686da97a2e6d2276c12046c6d784d1a890ab041fc2867ba1fdbe172ef",
+    "clippy.log": "6d276e09c11c325b586b2abfb60dda79e4acaa858b7ec3eab13d169537b46e0f",
+    "final-focused.log": "3cd4fc0305eb01fedaaa9bba48efcc42d94714184f84c003655cbc2ef1640915",
+    "focused.log": "3a7ac86af8dda6cda2fb5b0e2995b532e159a91baff742e32861e57b1669b7c4",
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "method-relations.log": "cbbd7c617a0eec4991ecac835554723f269a3e036f36e024872eb124dd12f879",
+    "non-code-references.log": "16f34cb3cb1e573a200f697164a5754c85b14a95df1fad9b23316779ae1e6af3",
+    "perl-index.log": "fc672337741dc1608348abab98651cc14e3c31a7aa800322c92f75e150225c87",
+    "runtime.log": "994411b8a94f9c746d5e7ffc7c7a0ec1f39880ef38970d9f80804b7e56be775e",
+    "rust-receivers.log": "60a7c71a377f2408c3ab17d9a3f8e39539f08505454550db07c7ee5bd93a4810",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "translation-keys.log": "45270519c77129f545c50cf890ed86919f5930ea1cb08e538f0ca10458dc0da8",
+    "workspace.log": "f1e7e7cb88c0b3c9fce49cba725a2c52313f1c92de58a7122548858aadbc1790"
+  },
+  "initial_failure_retained": "first focused run preceded prefix-kind inference patch after edit-assertion failure; final focused four and final workspace five cases passed",
+  "qualification_scope": "checked_shared_tree_build_and_isolated_executable_not_frozen_checkout",
+  "source_hashes_are_observational": true,
+  "representative_scale_or_ranking_quality_proven": false,
+  "full_RAGRAF_parity": false,
+  "commit_or_push_performed": false
+}

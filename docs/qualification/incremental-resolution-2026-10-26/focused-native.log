@@ -1,0 +1,26 @@
+   Compiling tempfile v3.27.0
+   Compiling tree-sitter-ruby v0.23.1
+   Compiling rag-mcp-core v0.1.0 (/Users/themoretheless/Documents/Sources/rag/crates/rag-mcp-core)
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+warning: field `docs` is never read
+   --> src/code_index/ruby.rs:594:5
+    |
+593 | struct Resolver<'a> {
+    |        -------- field in this struct
+594 |     docs: &'a HashMap<String, IndexedDocument>,
+    |     ^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rag-mcp` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.98s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/ca0f815798f87547/out/rag_mcp-ca0f815798f87547)
+
+running 4 tests
+test code_index::resolution_cache::tests::new_missing_and_manifest_providers_invalidate_without_prior_edges ... ok
+test code_index::resolution_cache::tests::corrupt_cache_and_mixed_language_inputs_fall_back_to_full_facts ... ok
+test code_index::resolution_cache::tests::package_body_reuses_clients_and_signature_invalidates_dependents_only ... ok
+test code_index::resolution_cache::tests::committed_cache_roundtrip_forced_equivalence_and_completion_are_explicit ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1086 filtered out; finished in 0.30s
+

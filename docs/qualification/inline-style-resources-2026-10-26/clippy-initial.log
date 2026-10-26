@@ -1,0 +1,18 @@
+    Blocking waiting for file lock on build directory
+    Checking rag-mcp-markup v0.1.0 (/Users/themoretheless/Documents/Sources/rag/crates/rag-mcp-markup)
+    Checking rag-mcp-core v0.1.0 (/Users/themoretheless/Documents/Sources/rag/crates/rag-mcp-core)
+    Checking rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error[E0599]: no method named `fact_count` found for struct `code_index::styles::StyleDocument` in the current scope
+   --> src/code_index/file_resources/inline_style.rs:242:31
+    |
+242 |         assert_eq!(out.styles.fact_count(), 0);
+    |                               ^^^^^^^^^^ method not found in `code_index::styles::StyleDocument`
+    |
+   ::: src/code_index/styles.rs:12:1
+    |
+ 12 | pub(super) struct StyleDocument {
+    | ------------------------------- method `fact_count` not found for this struct
+
+    Checking rag-mcp-ui v0.1.0 (/Users/themoretheless/Documents/Sources/rag/crates/rag-mcp-ui)
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

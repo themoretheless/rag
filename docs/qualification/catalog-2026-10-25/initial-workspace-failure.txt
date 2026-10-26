@@ -1,0 +1,28 @@
+
+failures:
+
+---- gateway::tests::authenticated_requests_do_not_follow_redirects stdout ----
+
+thread '<unnamed>' (60338735) panicked at crates/rag-mcp-ui/src/gateway.rs:342:54:
+called `Result::unwrap()` on an `Err` value: Os { code: 35, kind: WouldBlock, message: "Resource temporarily unavailable" }
+
+thread 'gateway::tests::authenticated_requests_do_not_follow_redirects' (60338723) panicked at crates/rag-mcp-ui/src/gateway.rs:358:14:
+called `Result::unwrap()` on an `Err` value: "RAG gateway request failed"
+
+---- gateway::tests::bearer_token_is_sent_only_in_the_authorization_header stdout ----
+
+thread '<unnamed>' (60338736) panicked at crates/rag-mcp-ui/src/gateway.rs:342:54:
+called `Result::unwrap()` on an `Err` value: Os { code: 35, kind: WouldBlock, message: "Resource temporarily unavailable" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'gateway::tests::bearer_token_is_sent_only_in_the_authorization_header' (60338725) panicked at crates/rag-mcp-ui/src/gateway.rs:358:14:
+called `Result::unwrap()` on an `Err` value: "RAG gateway request failed"
+
+
+failures:
+    gateway::tests::authenticated_requests_do_not_follow_redirects
+    gateway::tests::bearer_token_is_sent_only_in_the_authorization_header
+
+test result: FAILED. 146 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.80s
+
+error: test failed, to rerun pass `-p rag-mcp-ui --bin rag-mcp-ui`

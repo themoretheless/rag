@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "checks": [
+    "bound_identity_not_global_name",
+    "cross_project_unknown_names_isolated",
+    "unresolved_roots_protect_callees",
+    "override_candidates_protect_callees",
+    "no_call_fabrication",
+    "deletion_never_proven",
+    "warm_reuse",
+    "stale_exclusion",
+    "sync_refresh",
+    "bounded_stable_candidates"
+  ],
+  "runtime_dispatch_proven": false,
+  "versions": {
+    "index_format": 33,
+    "package": "0.1.0",
+    "store_schema": 25
+  }
+}

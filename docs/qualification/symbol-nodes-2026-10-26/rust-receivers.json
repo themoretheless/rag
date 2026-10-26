@@ -1,0 +1,172 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP",
+  "scope": "Rust receiver fixture; not representative language precision/recall",
+  "binary_sha256": "4671bebc333ba4fbead65af1338065b0358f9df383d4223bfc5823707381ce26",
+  "index_format": 59,
+  "labelled_calls": [
+    {
+      "expression": "service.user().save",
+      "target_path": "src/lib.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "service.other().save",
+      "target_path": "src/lib.rs",
+      "target": "Other::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "Other::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "(service.user_async().await).save",
+      "target_path": "src/lib.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "service.typed::<User>().save",
+      "target_path": "src/lib.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "container.user.save",
+      "target_path": "src/lib.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "container.other.save",
+      "target_path": "src/lib.rs",
+      "target": "Other::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "Other::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "users[0].save",
+      "target_path": "src/lib.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "others[0].save",
+      "target_path": "src/lib.rs",
+      "target": "Other::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "Other::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "shared.save",
+      "target_path": "src/lib.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "boxed.save",
+      "target_path": "src/lib.rs",
+      "target": "Other::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "Other::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "inferred.save",
+      "target_path": "src/lib.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/lib.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    },
+    {
+      "expression": "remote::factory().save",
+      "target_path": "src/remote.rs",
+      "target": "User::save",
+      "actual": [
+        [
+          "src/remote.rs",
+          "User::save"
+        ]
+      ],
+      "wrong_targets": 0
+    }
+  ],
+  "checks": [
+    "exact_owner_and_path",
+    "nested_call_identity",
+    "await",
+    "explicit_generic_return",
+    "field_types",
+    "array_and_vec_elements",
+    "standard_wrappers",
+    "local_factory",
+    "foreign_return_type_context",
+    "warm_reuse",
+    "stale_provider_exclusion",
+    "return_signature_only_rebinding",
+    "frozen_history"
+  ],
+  "production_database_touched": false,
+  "compiler_verified_by_runner": false,
+  "representative_quality_measured": false,
+  "competitor_comparison_performed": false
+}

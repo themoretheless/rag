@@ -1,0 +1,59 @@
+{
+  "status": "supported_Rust_subset_qualified",
+  "full_goal_complete": false,
+  "compiler_rename_complete": false,
+  "binary_sha256": "abd2c80c7825844abd21321077070e7ddf6a6bb8e3ad04b25e8e0b77a804963e",
+  "index_format": 45,
+  "source_checkout_frozen": false,
+  "workspace": {
+    "passed": 1367,
+    "failed": 0,
+    "ignored": 1,
+    "exit_code": 0,
+    "log": "workspace.log"
+  },
+  "strict_library_test_clippy": {
+    "exit_code": 0,
+    "log": "clippy.log"
+  },
+  "native_safety_tests": 5,
+  "reviewed_runtime_edits": 4,
+  "changed_runtime_files": 3,
+  "compiler_fixture_before_after_passed": true,
+  "mcp_reports": {
+    "runtime.json": "passed",
+    "roles.json": "passed",
+    "resolution-regression.json": "passed",
+    "tests-regression.json": "passed"
+  },
+  "auth_roles": [
+    "read",
+    "write",
+    "admin"
+  ],
+  "rollback_injection_qualified": true,
+  "concurrent_edit_conflict_preservation_qualified": true,
+  "crash_atomic": false,
+  "automatic_crash_recovery": false,
+  "windows_qualified": false,
+  "production_binary_replaced": false,
+  "qualification_opened_production_database": false,
+  "limitations": [
+    "Captured Rust forms only; aliases/trait families/macros/intermediate paths and alternate configurations may block",
+    "No external/generated/dynamic reference completeness or representative rename precision/recall",
+    "No atomic CAS against uncooperative editors",
+    "Source checkout includes concurrent C# baseline work; binary is frozen"
+  ],
+  "artifact_sha256": {
+    "README.md": "88427bf14792f40afe63aa284e814f6406f6547952724c530f6e9fbd6e57478e",
+    "build.log": "1d1c62b460869a818fcfe265b31706cb79d37da7d2924a4080ff0c5d1f99ec7a",
+    "clippy.log": "36d4400266f56909c1f6993a859521929aa99de478b3f19a358a194aeda8536d",
+    "commands.log": "43cee5866b8d125a1d02c8a6e159aa1ad06c9316d796bf1c9bfbd3c8dd6e5303",
+    "native.log": "02d61931f1fbb0a121fb8760c27aa4521d79ea9b0a4d5253fa21b078ae1f802b",
+    "resolution-regression.json": "964f2d78e46e43bd012c2dcacc5d65b45226c5efe2f89c65d36a0657a87fefe5",
+    "roles.json": "71abf2e0e8b0dcc659703167b232fd84ec9fd60821f1e0a7c0818a79795b4168",
+    "runtime.json": "55017fd325b5b17b33819d4b6ae7e374eb66bffa1262e830fcecbe0f8eb8f325",
+    "tests-regression.json": "9dd97d023926f13331c0589dd0f4903aa4f38668af2f9523cfbd0652b31dfa56",
+    "workspace.log": "7bb8bfca0f1dad5eac613e7bfc1ebfb6736aa0d95edf0bbb3284534f44ad4e8a"
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "status": "bounded_qualification_passed",
+  "full_goal_complete": false,
+  "requirement_8_complete": false,
+  "binary_sha256": "0d32dafcd3bf697e44473abd867c6150a777cb983d9b315dd77029f5751733a8",
+  "index_format": 42,
+  "workspace": {
+    "passed": 1347,
+    "failed": 0,
+    "ignored": 1,
+    "log": "workspace.log",
+    "exit_code": 0
+  },
+  "strict_library_test_clippy": "finished",
+  "build": "finished",
+  "mcp_reports": {
+    "runtime.json": "passed",
+    "tests-regression.json": "passed",
+    "git-regression.json": "passed",
+    "config-regression.json": "passed",
+    "trait-regression.json": "passed"
+  },
+  "full_equivalence_audits": [
+    "cold",
+    "body",
+    "signature",
+    "manifest"
+  ],
+  "executed_test_commands": 7,
+  "exploratory_fixture_hash_equal": true,
+  "exploratory_cargo_checks": [
+    [
+      {
+        "case": "cold",
+        "exit_code": 0
+      },
+      {
+        "case": "body",
+        "exit_code": 0
+      },
+      {
+        "case": "signature",
+        "exit_code": 0
+      },
+      {
+        "case": "manifest",
+        "exit_code": 0
+      }
+    ],
+    [
+      {
+        "case": "cold",
+        "exit_code": 0
+      },
+      {
+        "case": "body",
+        "exit_code": 0
+      },
+      {
+        "case": "signature",
+        "exit_code": 0
+      },
+      {
+        "case": "manifest",
+        "exit_code": 0
+      }
+    ]
+  ],
+  "paired_controls": {
+    "pairs": 3,
+    "controls_stable": false,
+    "environment_isolated": false,
+    "rejected_as_production_speed_evidence": true,
+    "summary": "paired-controls/summary.json"
+  },
+  "production_speed_qualified": false,
+  "competitor_comparison_complete": false,
+  "production_binary_replaced": false,
+  "qualification_opened_production_database": false,
+  "source_checkout_frozen": false,
+  "limitations": [
+    "Concurrent compiler/test processes observed; raw controls retained",
+    "Debug synthetic workload, not representative release performance",
+    "Runtime completion includes commit; persisted v1 ledger does not",
+    "Full equivalence audits compare bindings, not compiler semantics or all graph families",
+    "Remaining original plan requirements stay active"
+  ],
+  "artifact_sha256": {
+    "README.md": "7957e8b3980115747fbe33543c4ac5b2fcdd23f4d2776e1c33ed2c2ad0b0555b",
+    "build.log": "7a1c21ad80dc95133a14649da3802f009feba022fe15241c49ccb146566232c2",
+    "clippy.log": "7f1b6fcb9d322d9b12d42e5be540177666798b663bf791595ee3440ed48ef27b",
+    "commands.log": "a8ab3192a1879c4a38c3795302b253e255fdba4d01088d10864fdbb44d7772d3",
+    "config-regression.json": "b0f95920835cb61934fe3f7c339084436fe7f173a28018cc6048c073dd10bb63",
+    "control-environment.log": "4e5c850a60edd8d347246d6d5b6c03ab59ea9c0c3f88cfadb8e5fc6b8b48f914",
+    "exploratory-after.json": "1c596f5e6a778300657d391648c416b881d9e403a7f276ef45cc41adbb76055b",
+    "exploratory-after.log": "9b7999badf2d75416d53e65a69dea64d0f3e1312db4a4c34f35d1010e15fb339",
+    "exploratory-before.json": "b3e40631325592c2aa6b9b272e5dfe3400072b13a6bf771d0a8da5cd242b7f01",
+    "exploratory-before.log": "ad32b2e3a7ecb75f95c17c8a3b7d27ae1f1b6659944e5e756e51f1a265f9bee7",
+    "focused-native.log": "dd619c764392903219d4e598d454c6dfbce54a65d004a56c4c4eca1e72f2cf5d",
+    "git-regression.json": "9989d7a1ae07737b5a04a27decc7c5a90fdca6fb4d13eecae4402fe63594f83a",
+    "paired-controls/pair-0-full.json": "2fa6cbde307bef8c0f5ca8f28236990d3468d4de5237bb58ebd3990ad291dc0b",
+    "paired-controls/pair-0-full.log": "a9e7c349d87142332d83f32f5e1069ef0f4e444c6cfc63a2b01a37db6f0336bd",
+    "paired-controls/pair-0-incremental.json": "349d2bb50c63fd2c0b3e1f321601d98156404070dff47611b3b94cc4b6d51335",
+    "paired-controls/pair-0-incremental.log": "98393613f11faee9566462f033701ae84ecafa0eed5c92646f9d4f64d1f052dc",
+    "paired-controls/pair-1-full.json": "ade3ac3cd1e720fa7da13513ac510ecc6dc9b67b4da29c00582fea81e55ea13c",
+    "paired-controls/pair-1-full.log": "2645f69aacfedecbf7d0d0e0f9284893e4e313d52a92276f0947f3a5dcaa474c",
+    "paired-controls/pair-1-incremental.json": "d0202aac0329453db32ca93558384f859ee52c1af5215951793b79e994c3d29a",
+    "paired-controls/pair-1-incremental.log": "9aaf99858ab159ff601bae89fba9a2a854bbb01c9d923b549bed880f18e80e11",
+    "paired-controls/pair-2-full.json": "d9f22445454da4dd18d05730af5a18720e34635dab52a28ea081bba8089cd42f",
+    "paired-controls/pair-2-full.log": "e77ec455103f63728176f6c1f7038de39d1c9d650edfd5a240c42bf56fe4748a",
+    "paired-controls/pair-2-incremental.json": "655cd7dd6f8d6c572b8ba5f756f7e97e143669b26ff6a1ca7d146d28b27b657c",
+    "paired-controls/pair-2-incremental.log": "d2ae93620c7446eb63b78dc5df27a3cc63a94b1d1218b1000924a884dda20866",
+    "paired-controls/summary.json": "eb7e3f826ca5ac0f6104c299b1e7d8afbc300bac7970242f98a2d1ef43d36bc1",
+    "paired-run.log": "49154c3463300fbd8a7322f0ae23551ea14730ad6da39ba95033d32813bc6523",
+    "runtime.json": "4948b1dee67548a0f7f4c8525e5244bad5b47ae7767cf6869dcbfa562833d59a",
+    "tests-regression.json": "f89dcc2eaa7df6722505f75bbb8d0fca7b116296d8a4c777fd7fa780ce6d5d4f",
+    "trait-regression.json": "e585941160b39a227575deb5cfe3b180f965eeab191d2cd7559aa9c1fbc3c6c6",
+    "workspace.log": "d707391efde1cda9583f527d0bcc7d0117e5f0f4233a34875efc53605eaa10cb"
+  }
+}

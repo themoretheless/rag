@@ -1,0 +1,714 @@
+{
+  "status": "measured",
+  "metrics": {
+    "labelled_sites": 9,
+    "local_positive_sites": 9,
+    "external_negative_sites": 0,
+    "true_positive": 9,
+    "false_positive": 0,
+    "false_negative": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "exact_sites": 9,
+    "exact_site_rate": 1.0
+  },
+  "metrics_by_syntax": {
+    "direct_call": {
+      "labelled_sites": 9,
+      "local_positive_sites": 9,
+      "external_negative_sites": 0,
+      "true_positive": 9,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "exact_sites": 9,
+      "exact_site_rate": 1.0
+    }
+  },
+  "oracle_sha256": "3490cd8bfd6366e81a18a4626c0eb90e7bf88bc302d13736bb4b6d641b729e84",
+  "input_sha256": {
+    "Cargo.toml": "3727dc5bf842fd5a6b100a3dae94b5dfcb4ec33f20dd8f2eceac3d175d782101",
+    "src/lib.rs": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f",
+    "src/u128_ext.rs": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+  },
+  "label_cases_sha256": "2fe19d1a4c4f155ea0c93b722841bfe3a7b9a183b6e1c3aadffa2ed3f81f9e1b",
+  "binary_sha256": "1f8de5815a3fc3a08c6f54fe318f9da41e781a71a74c64e4b71e9b6d72e259ae",
+  "native_capture_sha256": "bc556080036bb5b74a2655a99fe6197f6b3f0cf1636d7f18c8c12fef5010516a",
+  "native_snapshot_sha256": "9229fa94430aa689163f5a7a7990b83cb6a6723b3e267d0ab52086d143ba1d94",
+  "source": "/private/tmp/rag-real-corpus/pinned/itoa",
+  "index_status": {
+    "calls": 61,
+    "capabilities": {
+      "calls_and_value_references": "conservative_static_candidates",
+      "cpg": {
+        "available": false,
+        "reason": "backend_not_implemented"
+      },
+      "data_flow_slicing": false,
+      "graph_compute": {
+        "backend": "native_cpu",
+        "gpu_available": false,
+        "reason": "no_graph_gpu_backend",
+        "scope": "structural_graph_operations"
+      },
+      "inheritance": "partial_static",
+      "languages": [
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "rust"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "python"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "javascript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "typescript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "tsx"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "go"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "java"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "lua"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "ruby"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "csharp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "perl"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "powershell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "c"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "cpp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "php"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "shell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "css"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "html"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "sqlparser",
+          "language": "sql"
+        }
+      ],
+      "representative_precision_recall_verified": false,
+      "runtime_dispatch_verified": false,
+      "rust_receiver_typing": {
+        "backend": "captured_ast",
+        "compiler_verified": false,
+        "limitations": [
+          "complete_trait_solver_and_gats",
+          "custom_deref_and_index",
+          "macro_and_cfg_expansion",
+          "full_compiler_type_inference"
+        ],
+        "patterns": [
+          "declared_returns",
+          "method_chains",
+          "async_await",
+          "named_fields",
+          "arrays_slices_vec",
+          "standard_box_arc_rc",
+          "local_factory_initializers",
+          "explicit_function_type_arguments"
+        ],
+        "return_type_context": "declaration_document",
+        "runtime_dispatch_verified": false
+      },
+      "rust_trait_typing": {
+        "backend": "captured_ast",
+        "bound_receiver_targets": "trait_declarations_only",
+        "compiler_verified": false,
+        "limitations": [
+          "full_coherence_and_specialization",
+          "higher_ranked_and_generic_associated_types",
+          "complete_supertrait_and_trait_argument_inference",
+          "macro_cfg_and_target_configuration"
+        ],
+        "patterns": [
+          "cross_file_impl_owner",
+          "generic_impl_substitution",
+          "explicit_ufcs",
+          "generic_and_where_bounds",
+          "dyn_and_impl_trait_declarations",
+          "associated_type_projections",
+          "default_methods",
+          "inherent_precedence",
+          "explicit_ambiguity"
+        ],
+        "runtime_dispatch_verified": false
+      },
+      "slice": "bounded_structural_call_graph",
+      "sql_schema": "captured_migration_ddl_subset"
+    },
+    "capability": "static_syntax_bindings",
+    "cargo_targets": [
+      {
+        "cfg_evaluated": false,
+        "compiler_verified": false,
+        "complete": false,
+        "features_evaluated": false,
+        "kind": "lib",
+        "macro_expansion": false,
+        "manifest_hash": "2b0f3478f5ad00073d774b21ce88acc66ce9631f5d020306930a3ae5148db5fc",
+        "manifest_path": "/private/tmp/rag-real-corpus/pinned/itoa/Cargo.toml",
+        "manifest_revision": 1,
+        "member_paths": [
+          "/private/tmp/rag-real-corpus/pinned/itoa/src/lib.rs",
+          "/private/tmp/rag-real-corpus/pinned/itoa/src/u128_ext.rs"
+        ],
+        "member_paths_truncated": false,
+        "name": "itoa",
+        "observed_member_paths_total": 2,
+        "package": "itoa",
+        "project": "corpus",
+        "required_features_unselected": false,
+        "root_path": "/private/tmp/rag-real-corpus/pinned/itoa/src/lib.rs",
+        "scope": "captured_source_syntax",
+        "target_id": "9d4af9585350a2cb69a524fd962021aeb1c064bdbeffb276c79cd782711ce542"
+      }
+    ],
+    "cargo_targets_total": 1,
+    "cargo_targets_truncated": false,
+    "contract_version": 1,
+    "coverage": {
+      "available": true,
+      "evidence_limit": 50,
+      "evidence_truncated": false,
+      "extensions": {
+        "rs": 2,
+        "toml": 1
+      },
+      "fresh_documents": 3,
+      "indexable_documents": 3,
+      "parse_error_count": 0,
+      "source_documents": 3,
+      "stale_count": 0,
+      "unindexed_count": 0,
+      "unsupported_extension_categories": 0,
+      "unsupported_extensions_truncated": false,
+      "unsupported_is_not_parse_failure": true,
+      "unsupported_source_extensions": {}
+    },
+    "data_flow_slicing": false,
+    "filesystem_verified": false,
+    "index_rev": 1,
+    "observation_consistency": "single_read_transaction",
+    "observation_ms": 93.390292,
+    "parse_errors": [],
+    "policy_decisions": 10,
+    "project": "corpus",
+    "quality": {
+      "binding_diagnostic_code_count": 0,
+      "binding_diagnostic_codes_truncated": false,
+      "binding_diagnostic_counts": {},
+      "chunks": {
+        "byte_budget_exhausted": false,
+        "bytes_inspected": 32489,
+        "dimension_mismatches": 0,
+        "dimensions": {
+          "16": 58
+        },
+        "examples": [],
+        "examples_truncated": false,
+        "invalid_vectors": 0,
+        "large_vectors_unmeasured": 0,
+        "long_text_unmeasured": 0,
+        "max_content_chars": 791,
+        "max_estimated_tokens": 232,
+        "norm_max": 1.000000107702755,
+        "norm_min": 0.9999998860814715,
+        "norm_p50": 0.9999999928111893,
+        "oversized_estimated_tokens": 0,
+        "problem_rows": 0,
+        "sample_truncated": false,
+        "sampled": 58,
+        "tokenized": 58,
+        "total": 58,
+        "unit_norm_vectors": 58,
+        "valid_vectors": 58,
+        "zero_vectors": 0
+      },
+      "docblocks": {
+        "available": true,
+        "compiler_or_rendered_semantics_verified": false,
+        "coverage": 0.3333333333333333,
+        "documented_symbols": 6,
+        "examined_symbols": 18,
+        "full_language_coverage_verified": false,
+        "observed_doc_facts": 6,
+        "scope": "supported_syntax_forms_in_fresh_scoped_symbols",
+        "truncated_segment_lists": 0,
+        "truncated_texts": 0,
+        "uninspected_symbols": 1
+      },
+      "embedding_identity": {
+        "available": true,
+        "configured_dims": 16,
+        "dims": 16,
+        "matches_config": true,
+        "model": "text-embedding-3-small",
+        "provider": "mock",
+        "scope": "corpus_global"
+      },
+      "exhaustive": false,
+      "fresh_code_files_without_definitions": 0,
+      "healthy": null,
+      "manifest_error_code": null,
+      "observed_checks_passed": true,
+      "problems": [],
+      "reference_resolution_counts": {
+        "resolved_static": 26,
+        "unresolved": 477
+      },
+      "sample_policy": {
+        "byte_budget": 4194304,
+        "limit": 128,
+        "max_chunk_tokens": 4096,
+        "max_text_chars": 16384,
+        "max_vector_bytes": 65536,
+        "order": "chunk_id",
+        "threshold_calibrated": false,
+        "token_counts_estimated": true
+      },
+      "signatures": {
+        "available": true,
+        "empty": 0,
+        "max_chars": 77,
+        "nonempty": 19,
+        "parameter_type_coverage": null,
+        "truncation_verified": false
+      },
+      "snapshot_error_code": null,
+      "unmeasured_checks": [
+        "semantic_precision_recall",
+        "runtime_dispatch",
+        "full_docblock_coverage",
+        "complete_parameter_types",
+        "index_commit_timing",
+        "index_failure_runs",
+        "per_project_index_timings"
+      ]
+    },
+    "resource_targets": {
+      "diagnostics": {
+        "binary_decoding_proven": false,
+        "fresh_targets": 0,
+        "hash_semantics": "decoded_stored_source_text",
+        "items": [],
+        "live_filesystem_checked": false,
+        "targets_total": 0,
+        "total": 0,
+        "truncated": false
+      },
+      "inventory_available": true,
+      "syntax_indexed": false
+    },
+    "retrieval": {
+      "lexical": {
+        "backend": "duckdb_bm25",
+        "chunks_generation": 3,
+        "configured": true,
+        "dirty": true,
+        "generation_gap": 3,
+        "index_generation": 0,
+        "rebuild_count": 1,
+        "scope": "corpus_global"
+      }
+    },
+    "runtime_dispatch_verified": false,
+    "rust_build_contexts": [
+      {
+        "available": true,
+        "cfg_flags": [
+          "debug_assertions",
+          "overflow_checks",
+          "target_has_atomic",
+          "target_has_atomic_load_store",
+          "target_has_reliable_f128",
+          "target_has_reliable_f16",
+          "target_has_reliable_f16_math",
+          "target_has_reliable_f16b",
+          "target_has_threads",
+          "target_thread_local",
+          "ub_checks",
+          "unix"
+        ],
+        "cfg_flags_total": 12,
+        "cfg_flags_truncated": false,
+        "cfg_values": {
+          "fmt_debug": [
+            "full"
+          ],
+          "panic": [
+            "unwind"
+          ],
+          "relocation_model": [
+            "pic"
+          ],
+          "target_abi": [
+            ""
+          ],
+          "target_arch": [
+            "aarch64"
+          ],
+          "target_endian": [
+            "little"
+          ],
+          "target_env": [
+            ""
+          ],
+          "target_family": [
+            "unix"
+          ],
+          "target_feature": [
+            "aes",
+            "crc",
+            "dit",
+            "dotprod",
+            "dpb",
+            "dpb2",
+            "fcma",
+            "fhm"
+          ],
+          "target_has_atomic": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_load_store": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_primitive_alignment": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_object_format": [
+            "mach-o"
+          ],
+          "target_os": [
+            "macos"
+          ],
+          "target_pointer_width": [
+            "64"
+          ],
+          "target_vendor": [
+            "apple"
+          ]
+        },
+        "cfg_values_truncated": true,
+        "compiler_verified": false,
+        "configuration_id": "87d69f5cd5b76168c0429a7a1468e77eebf02869734e93fdc14e0ed9a05cf093",
+        "default_features": true,
+        "dependency_feature_forwarding_verified": true,
+        "disabled_conditions": 2,
+        "excluded_source_files": 0,
+        "features": [],
+        "features_total": 0,
+        "features_truncated": false,
+        "manifest_hash": "2b0f3478f5ad00073d774b21ce88acc66ce9631f5d020306930a3ae5148db5fc",
+        "manifest_path": "/private/tmp/rag-real-corpus/pinned/itoa/Cargo.toml",
+        "manifest_revision": 1,
+        "multi_target_instantiation": false,
+        "project": "corpus",
+        "scope": "one_explicit_compilation_target_per_package",
+        "target_kind": "lib",
+        "target_name": null,
+        "target_triple": "aarch64-apple-darwin",
+        "unknown_conditions": 0
+      }
+    ],
+    "rust_build_contexts_total": 1,
+    "rust_build_contexts_truncated": false,
+    "sql_tables": 0,
+    "sql_usages": 0,
+    "stage_timings": {
+      "available": true,
+      "commit_measured": false,
+      "embedding_fts_measured": false,
+      "index_rev": 1,
+      "latest_successful_run": {
+        "index_rev": 1,
+        "metrics": {
+          "before_metrics_write_ms": 240.027834,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "cache_parse_serialize_ms": 161.995583,
+          "cache_replace_ms": 9.226583,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 3,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.00025,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 66.760875,
+          "run_id": "88080d9b-d5bd-4556-9b6d-39c1089484d0",
+          "source_load_decode_ms": 1.858916,
+          "transaction_body_ms": 240.0275,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-25 23:30:04.626369",
+        "revision_created": true,
+        "run_id": "88080d9b-d5bd-4556-9b6d-39c1089484d0",
+        "seq": 1
+      },
+      "mcp_queue_wait_measured": false,
+      "metrics_write_measured": false,
+      "publication_run": {
+        "index_rev": 1,
+        "metrics": {
+          "before_metrics_write_ms": 240.027834,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "cache_parse_serialize_ms": 161.995583,
+          "cache_replace_ms": 9.226583,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 3,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.00025,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 66.760875,
+          "run_id": "88080d9b-d5bd-4556-9b6d-39c1089484d0",
+          "source_load_decode_ms": 1.858916,
+          "transaction_body_ms": 240.0275,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-25 23:30:04.626369",
+        "revision_created": true,
+        "run_id": "88080d9b-d5bd-4556-9b6d-39c1089484d0",
+        "seq": 1
+      },
+      "reason": null,
+      "scope": "corpus_global",
+      "successful_committed_runs_only": true
+    },
+    "stale_documents": [],
+    "state": "observed_checks_passed",
+    "style_facts": 0,
+    "symbols": 19,
+    "unindexed_documents": [],
+    "unresolved_calls": 49,
+    "versions": {
+      "index_format": 54,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "view": "current_captured_sources_and_fresh_subset_of_revision_inputs"
+  },
+  "sync": {
+    "input_recipe": "Cargo.toml plus every src/**/*.rs; default-feature library workload",
+    "inputs": [
+      "Cargo.toml",
+      "src/lib.rs",
+      "src/u128_ext.rs"
+    ],
+    "ingested": 3,
+    "code_index": {
+      "indexed": 3,
+      "unchanged": 0,
+      "unsupported": 0,
+      "parse_errors": [],
+      "index_revision": 1,
+      "revision_created": true,
+      "stage_timings": {
+        "contract_version": 1,
+        "run_id": "88080d9b-d5bd-4556-9b6d-39c1089484d0",
+        "lock_wait_ms": 0.00025,
+        "source_load_decode_ms": 1.858916,
+        "cache_parse_serialize_ms": 161.995583,
+        "cache_replace_ms": 9.226583,
+        "revision_publish_ms": 66.760875,
+        "transaction_body_ms": 240.0275,
+        "before_metrics_write_ms": 240.02783399999998,
+        "documents_loaded": 3,
+        "cache_hits": 0,
+        "cache_misses": 3,
+        "unsupported_documents": 0,
+        "parse_error_documents": 0,
+        "commit_included": false,
+        "metrics_write_included": false,
+        "embedding_fts_included": false
+      },
+      "resolution": {
+        "contract_version": 1,
+        "documents_total": 3,
+        "documents_resolved": 3,
+        "documents_reused": 0,
+        "reference_sites_resolved": 503,
+        "reference_sites_reused": 0,
+        "rust_package_scopes": 2,
+        "project_fallback_scopes": 0,
+        "empty_reference_documents": 1,
+        "dependency_inputs_hashed": 6,
+        "invalid_cache_entries": 0,
+        "forced_full": false,
+        "cache_available": false,
+        "no_resolution_required": false,
+        "resolution_ms": 27.2545,
+        "equivalent_to_existing": null
+      },
+      "completion": {
+        "contract_version": 1,
+        "native_total_ms": 244.607792,
+        "commit_ms": 2.035292,
+        "metrics_write_ms": 2.544167,
+        "commit_included": true,
+        "process_lifetime_peak_rss_bytes": 151437312
+      }
+    }
+  },
+  "sync_mcp_round_trip_ms": 495.60604203725234,
+  "mcp_requests": [
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/itoa/src/lib.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 25,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/itoa/src/u128_ext.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 1,
+      "truncated": false
+    }
+  ],
+  "labelled_native_mcp_parity": true,
+  "parity_sites": 9,
+  "native_counts": {
+    "symbols": 19,
+    "references": 503,
+    "bound_references": 503
+  },
+  "oracle_exclusions": {
+    "oracle_symbol_kind_unavailable": 457,
+    "non_callable_symbol_kind": 246,
+    "outside_library_source": 10
+  },
+  "production_database_touched": false,
+  "limitations": [
+    "SCIP correspondence is not compiler/runtime proof",
+    "src callable reference subset, not whole-program recall",
+    "ambiguous/generated oracle anchors excluded with counts",
+    "uncontrolled debug sync timing is diagnostic only"
+  ]
+}

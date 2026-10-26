@@ -1,0 +1,692 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "workspace_tests": {
+    "passed": 1435,
+    "failed": 0,
+    "ignored": 1
+  },
+  "new_native_cases": 6,
+  "focused_corpus_tests": 42,
+  "source_capture_contract_version": 1,
+  "source_byte_identity_contract_version": 1,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 53,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "actual_raw_sha256_partition_oracle",
+      "UTF8_BOM_UTF16_LE_BE_windows1251",
+      "DOCX_and_XLSX_captured_archive_bytes",
+      "same_text_different_archive_compression",
+      "actual_PDF_extraction",
+      "digest_and_byte_count_evidence",
+      "decoded_text_vs_source_bytes",
+      "project_prefix_isolation",
+      "stored_snapshot_without_live_reads",
+      "BOM_only_sync_replacement",
+      "legacy_capture_upgrade_on_sync",
+      "mismatched_text_capture_repair_on_sync",
+      "member_group_caps_independent_of_text_comparison_budget",
+      "body_free_determinism"
+    ],
+    "production_database_touched": false,
+    "source_code_or_SQL_executed": false,
+    "current_filesystem_equality_or_deletion_safety_proven": false,
+    "representative_scale_or_full_parity_proven": false
+  },
+  "regressions": {
+    "duplicate-families": {
+      "status": "passed",
+      "versions": {
+        "index_format": 53,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+      "reference_oracle": "only_five_pinned_pure_functions_on_finite_fixture",
+      "checks": [
+        "reference_group_member_sets",
+        "independent_exact_subgroups",
+        "identical_member_set_deduplication",
+        "dissimilar_same_name_inventory",
+        "directory_case_project_isolation",
+        "numbered_filename_contract",
+        "exact_first_order",
+        "primary_similarity_classification",
+        "disabled_and_budget_unknowns",
+        "member_and_group_caps",
+        "prefix_scope",
+        "body_free_determinism",
+        "sync_reclassification",
+        "default_mode_preserved"
+      ],
+      "production_database_touched": false,
+      "source_code_executed": false,
+      "representative_quality_or_full_parity_proven": false
+    },
+    "duplicate-comparison": {
+      "status": "passed",
+      "versions": {
+        "index_format": 53,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "normalized_unique_line_jaccard",
+        "directional_line_deltas",
+        "rounding",
+        "source_identity",
+        "body_free_output",
+        "determinism",
+        "member_window_scope",
+        "disabled_and_all_phase_limits",
+        "pair_budget",
+        "sync_replaces_metrics"
+      ],
+      "production_database_touched": false,
+      "source_code_executed": false,
+      "full_parity_or_deletion_safety_proven": false
+    },
+    "duplicate-roles": {
+      "status": "passed",
+      "versions": {
+        "index_format": 53,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "duplicate_role_contract_v2",
+        "exact_decoded_text_groups",
+        "target_prefix_keeps_external_source_evidence",
+        "HTML_CSS_resource_usage",
+        "non_code_SVG_identity",
+        "missing_export_file_import",
+        "function_value_reference",
+        "project_isolation",
+        "primary_visible_under_member_limit",
+        "evidence_source_revision_hash_anchors",
+        "deterministic_response",
+        "body_free_metadata",
+        "stale_source_exclusion_before_sync",
+        "source_sync_replacement",
+        "evidence_total_and_cap"
+      ],
+      "production_database_touched": false,
+      "source_code_executed": false,
+      "runtime_liveness_or_deletion_safety_proven": false
+    },
+    "search-roles": {
+      "status": "passed",
+      "versions": {
+        "index_format": 53,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "search_role_contract_v2",
+        "single_read_transaction_contract",
+        "independent_all_any_query_windows",
+        "external_non_matching_referrer_evidence",
+        "HTML_CSS_resources",
+        "published_SVG_target",
+        "missing_export_import",
+        "bound_function_value",
+        "project_prefix_isolation",
+        "deterministic_family_order",
+        "body_free_role_metadata",
+        "zero_hit_without_role_index",
+        "stale_source_exclusion",
+        "sync_replacement",
+        "total_and_retained_evidence_counts"
+      ],
+      "production_database_touched": false,
+      "source_code_executed": false,
+      "runtime_activity_proven": false
+    },
+    "literal-path-roles": {
+      "status": "passed",
+      "versions": {
+        "index_format": 53,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "literal_endpoint_constant",
+        "weaker_unbound_text_role",
+        "exact_unicode_byte_anchor",
+        "cross_project_exclusion",
+        "source_outside_target_prefix",
+        "search_and_duplicate_primary",
+        "deterministic_evidence",
+        "disabled_mode",
+        "decoded_byte_budget",
+        "no_absence_claim",
+        "stale_source_exclusion_before_sync",
+        "sync_replacement",
+        "project_wide_basename_ambiguity",
+        "qualified_path_disambiguation",
+        "unique_source_target_counts",
+        "20_of_26_literal_retention"
+      ],
+      "source_code_executed": false,
+      "production_database_touched": false,
+      "runtime_binding_or_deletion_safety_proven": false
+    },
+    "table-impact": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_sql_executed": false,
+      "checks": [
+        "direct_readers_writers",
+        "ownerless_sql_preserved",
+        "indirect_code_chain",
+        "read_write_filters",
+        "independent_direct_budget",
+        "untruncated_owner_roots",
+        "project_disambiguation",
+        "schema_disambiguation",
+        "qualified_target",
+        "identifier_validation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh"
+      ],
+      "runtime_impact_proven": false
+    },
+    "file-imports": {
+      "status": "passed",
+      "checks": [
+        "missing_export_file_edge",
+        "side_effect_import",
+        "reexport",
+        "no_fabricated_calls",
+        "dead_file_guard",
+        "stale_exclusion",
+        "sync_removes_edge",
+        "dead_file_candidate_restored",
+        "no_source_bodies"
+      ],
+      "index_status": {
+        "calls": 1,
+        "capabilities": {
+          "calls_and_value_references": "conservative_static_candidates",
+          "cpg": {
+            "available": false,
+            "reason": "backend_not_implemented"
+          },
+          "data_flow_slicing": false,
+          "graph_compute": {
+            "backend": "native_cpu",
+            "gpu_available": false,
+            "reason": "no_graph_gpu_backend",
+            "scope": "structural_graph_operations"
+          },
+          "inheritance": "partial_static",
+          "languages": [
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "rust"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "python"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "javascript"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "typescript"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "tsx"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "go"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "java"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "lua"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "ruby"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "csharp"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "perl"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "powershell"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "c"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "cpp"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "php"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "shell"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "css"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "tree-sitter",
+              "language": "html"
+            },
+            {
+              "available": true,
+              "binding_qualification": "partial_static",
+              "compiler_semantics_verified": false,
+              "engine": "sqlparser",
+              "language": "sql"
+            }
+          ],
+          "representative_precision_recall_verified": false,
+          "runtime_dispatch_verified": false,
+          "rust_receiver_typing": {
+            "backend": "captured_ast",
+            "compiler_verified": false,
+            "limitations": [
+              "complete_trait_solver_and_gats",
+              "custom_deref_and_index",
+              "macro_and_cfg_expansion",
+              "full_compiler_type_inference"
+            ],
+            "patterns": [
+              "declared_returns",
+              "method_chains",
+              "async_await",
+              "named_fields",
+              "arrays_slices_vec",
+              "standard_box_arc_rc",
+              "local_factory_initializers",
+              "explicit_function_type_arguments"
+            ],
+            "return_type_context": "declaration_document",
+            "runtime_dispatch_verified": false
+          },
+          "rust_trait_typing": {
+            "backend": "captured_ast",
+            "bound_receiver_targets": "trait_declarations_only",
+            "compiler_verified": false,
+            "limitations": [
+              "full_coherence_and_specialization",
+              "higher_ranked_and_generic_associated_types",
+              "complete_supertrait_and_trait_argument_inference",
+              "macro_cfg_and_target_configuration"
+            ],
+            "patterns": [
+              "cross_file_impl_owner",
+              "generic_impl_substitution",
+              "explicit_ufcs",
+              "generic_and_where_bounds",
+              "dyn_and_impl_trait_declarations",
+              "associated_type_projections",
+              "default_methods",
+              "inherent_precedence",
+              "explicit_ambiguity"
+            ],
+            "runtime_dispatch_verified": false
+          },
+          "slice": "bounded_structural_call_graph",
+          "sql_schema": "captured_migration_ddl_subset"
+        },
+        "capability": "static_syntax_bindings",
+        "cargo_targets": [],
+        "cargo_targets_total": 0,
+        "cargo_targets_truncated": false,
+        "contract_version": 1,
+        "coverage": {
+          "available": true,
+          "evidence_limit": 50,
+          "evidence_truncated": false,
+          "extensions": {
+            "js": 1,
+            "py": 2,
+            "ts": 1
+          },
+          "fresh_documents": 4,
+          "indexable_documents": 4,
+          "parse_error_count": 0,
+          "source_documents": 4,
+          "stale_count": 0,
+          "unindexed_count": 0,
+          "unsupported_extension_categories": 0,
+          "unsupported_extensions_truncated": false,
+          "unsupported_is_not_parse_failure": true,
+          "unsupported_source_extensions": {}
+        },
+        "data_flow_slicing": false,
+        "filesystem_verified": false,
+        "index_rev": 2,
+        "observation_consistency": "single_read_transaction",
+        "observation_ms": 94.993875,
+        "parse_errors": [],
+        "policy_decisions": 0,
+        "project": null,
+        "quality": {
+          "binding_diagnostic_code_count": 0,
+          "binding_diagnostic_codes_truncated": false,
+          "binding_diagnostic_counts": {},
+          "chunks": {
+            "byte_budget_exhausted": false,
+            "bytes_inspected": 845,
+            "dimension_mismatches": 0,
+            "dimensions": {
+              "16": 4
+            },
+            "examples": [],
+            "examples_truncated": false,
+            "invalid_vectors": 0,
+            "large_vectors_unmeasured": 0,
+            "long_text_unmeasured": 0,
+            "max_content_chars": 59,
+            "max_estimated_tokens": 18,
+            "norm_max": 0.9999999654361788,
+            "norm_min": 0.9999999070258385,
+            "norm_p50": 0.9999999403343787,
+            "oversized_estimated_tokens": 0,
+            "problem_rows": 0,
+            "sample_truncated": false,
+            "sampled": 4,
+            "tokenized": 4,
+            "total": 4,
+            "unit_norm_vectors": 4,
+            "valid_vectors": 4,
+            "zero_vectors": 0
+          },
+          "docblocks": {
+            "available": false,
+            "compiler_or_rendered_semantics_verified": false,
+            "coverage": null,
+            "documented_symbols": 0,
+            "examined_symbols": 0,
+            "full_language_coverage_verified": false,
+            "observed_doc_facts": 0,
+            "scope": "supported_syntax_forms_in_fresh_scoped_symbols",
+            "truncated_segment_lists": 0,
+            "truncated_texts": 0,
+            "uninspected_symbols": 0
+          },
+          "embedding_identity": {
+            "available": true,
+            "configured_dims": 16,
+            "dims": 16,
+            "matches_config": true,
+            "model": "text-embedding-3-small",
+            "provider": "mock",
+            "scope": "corpus_global"
+          },
+          "exhaustive": false,
+          "fresh_code_files_without_definitions": 4,
+          "healthy": null,
+          "manifest_error_code": null,
+          "observed_checks_passed": true,
+          "problems": [],
+          "reference_resolution_counts": {
+            "unresolved": 2
+          },
+          "sample_policy": {
+            "byte_budget": 4194304,
+            "limit": 128,
+            "max_chunk_tokens": 4096,
+            "max_text_chars": 16384,
+            "max_vector_bytes": 65536,
+            "order": "chunk_id",
+            "threshold_calibrated": false,
+            "token_counts_estimated": true
+          },
+          "signatures": {
+            "available": true,
+            "empty": 0,
+            "max_chars": null,
+            "nonempty": 0,
+            "parameter_type_coverage": null,
+            "truncation_verified": false
+          },
+          "snapshot_error_code": null,
+          "unmeasured_checks": [
+            "semantic_precision_recall",
+            "runtime_dispatch",
+            "full_docblock_coverage",
+            "complete_parameter_types",
+            "index_commit_timing",
+            "index_failure_runs",
+            "per_project_index_timings",
+            "supported_docblock_coverage"
+          ]
+        },
+        "resource_targets": {
+          "diagnostics": {
+            "binary_decoding_proven": false,
+            "fresh_targets": 0,
+            "hash_semantics": "decoded_stored_source_text",
+            "items": [],
+            "live_filesystem_checked": false,
+            "targets_total": 0,
+            "total": 0,
+            "truncated": false
+          },
+          "inventory_available": true,
+          "syntax_indexed": false
+        },
+        "retrieval": {
+          "lexical": {
+            "backend": "duckdb_bm25",
+            "chunks_generation": 5,
+            "configured": true,
+            "dirty": false,
+            "generation_gap": 0,
+            "index_generation": 5,
+            "rebuild_count": 3,
+            "scope": "corpus_global"
+          }
+        },
+        "runtime_dispatch_verified": false,
+        "rust_build_contexts": [],
+        "rust_build_contexts_total": 0,
+        "rust_build_contexts_truncated": false,
+        "sql_tables": 0,
+        "sql_usages": 0,
+        "stage_timings": {
+          "available": true,
+          "commit_measured": false,
+          "embedding_fts_measured": false,
+          "index_rev": 2,
+          "latest_successful_run": {
+            "index_rev": 2,
+            "metrics": {
+              "before_metrics_write_ms": 48.515166,
+              "cache_hits": 3,
+              "cache_misses": 1,
+              "cache_parse_serialize_ms": 0.8017500000000001,
+              "cache_replace_ms": 3.941125,
+              "commit_included": false,
+              "contract_version": 1,
+              "documents_loaded": 4,
+              "embedding_fts_included": false,
+              "lock_wait_ms": 0.001208,
+              "metrics_write_included": false,
+              "parse_error_documents": 0,
+              "revision_publish_ms": 41.574917000000006,
+              "run_id": "732d26e9-d051-4553-bfe2-429914ae9757",
+              "source_load_decode_ms": 1.904791,
+              "transaction_body_ms": 48.513542,
+              "unsupported_documents": 0
+            },
+            "recorded_at": "2026-10-25 23:23:02.214715",
+            "revision_created": true,
+            "run_id": "732d26e9-d051-4553-bfe2-429914ae9757",
+            "seq": 2
+          },
+          "mcp_queue_wait_measured": false,
+          "metrics_write_measured": false,
+          "publication_run": {
+            "index_rev": 2,
+            "metrics": {
+              "before_metrics_write_ms": 48.515166,
+              "cache_hits": 3,
+              "cache_misses": 1,
+              "cache_parse_serialize_ms": 0.8017500000000001,
+              "cache_replace_ms": 3.941125,
+              "commit_included": false,
+              "contract_version": 1,
+              "documents_loaded": 4,
+              "embedding_fts_included": false,
+              "lock_wait_ms": 0.001208,
+              "metrics_write_included": false,
+              "parse_error_documents": 0,
+              "revision_publish_ms": 41.574917000000006,
+              "run_id": "732d26e9-d051-4553-bfe2-429914ae9757",
+              "source_load_decode_ms": 1.904791,
+              "transaction_body_ms": 48.513542,
+              "unsupported_documents": 0
+            },
+            "recorded_at": "2026-10-25 23:23:02.214715",
+            "revision_created": true,
+            "run_id": "732d26e9-d051-4553-bfe2-429914ae9757",
+            "seq": 2
+          },
+          "reason": null,
+          "scope": "corpus_global",
+          "successful_committed_runs_only": true
+        },
+        "stale_documents": [],
+        "state": "observed_checks_passed",
+        "style_facts": 0,
+        "symbols": 0,
+        "unindexed_documents": [],
+        "unresolved_calls": 1,
+        "versions": {
+          "index_format": 53,
+          "package": "0.1.0",
+          "store_schema": 25
+        },
+        "view": "current_captured_sources_and_fresh_subset_of_revision_inputs"
+      },
+      "production_database_touched": false,
+      "source_applications_executed": false
+    }
+  },
+  "isolated_binary": {
+    "sha256": "ad4fa8d091f4fcf1807c8de4e3af693d85506a926662c5b9f297325e8f4fcba2",
+    "isolated": true
+  },
+  "source_hashes_after_checks": {
+    "Cargo.toml": "3ac449f72872ac529d8863dc561b3084ba29eebe9e3e4d118ce56113215329c1",
+    "src/file_ingest.rs": "c4d899e2f1f07a4e91c7cb75998b1db6a7b1bc9abf79edcb1becf9613a8e40a8",
+    "src/file_ingest/capture.rs": "e78563519e1811b71cb36f363bf6cb5a8905b75807cbc0114a2e0a0bd247a06e",
+    "src/file_ingest/tests.rs": "319dd568db525a933325c2595a05fd43e232e0aa294b7492549c7b90c1c75cf1",
+    "src/source_sync.rs": "1ec74ee4aabc3d6f1ec5bdd91f7f3b7a3055a9f272b0df194a135028828d9765",
+    "src/code_index/source.rs": "e849fcf703f2b402bbb461ce85aa6bc61a13a63d188aa500c1f9044ab2edf2d0",
+    "src/code_index/corpus.rs": "7bf2b4bcc59d3c6848d95b58da62a1cbbea0c5b52e41df3696ed2ff14d36fd2a",
+    "src/code_index/corpus/source_bytes.rs": "2e962aca81ea28591e4149d774b447312d1f2397d5e8a90fc67d8f6e2873b177",
+    "src/code_index/corpus/family_groups.rs": "12903ddd5cbb314c783b89042b9c0e320721621db87b20ba42e27837bfbad958",
+    "src/code_index/corpus/primary_comparison.rs": "b2ff914d93f8b403d7b1c946b7f4ffadc2580288b508c6ae008b343653e450a2",
+    "src/code_index.rs": "8cc64b11ffc7baad465ad54425db11dba3d7d787887d332d2c4669dae207ae05",
+    "scripts/smoke_source_byte_copies.py": "ffbe2e4e1af1900658150419998576d9d816e8aa6e5cca8455ed500bd03c527e",
+    "docs/SOURCE_BYTE_DUPLICATES.md": "5d73ec52a81219f8d98a49d90ca175f6543b3eda6d7d8a8679e2fcb18c1cecc1"
+  },
+  "log_hashes": {
+    "ingest-tests-initial.log": "0e0b0cb08e40af0f06949d61b0fc92728960e43fe186696b88e467668c3ecebe",
+    "corpus-tests.log": "d5546f71948ad95c858fc3dcba250d2e0b930b18843fb31321b702a3b80c6369",
+    "workspace.log": "3eb48f9c2f3f7653b4ad470dfffe0312161e44cbd6898f8f3ff568b0e5138ea5",
+    "clippy.log": "f568d46196fe98a57e89ed5a9d9c8964555819e5cd92b32873f6e5e5f30ac772",
+    "build.log": "c69122634af0fcffe63990396b93352b21c7d0abee7d5464fd90aa9993754f73",
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "runtime.log": "e213a66ca9029b98eb81f596d6927c418e362b3ea76636609eb11be3479bf335",
+    "duplicate-families.log": "4fffaa0d568f96ab005fd3af4bbc56b54d4e32ac85c5ccc3d85b4f5c8e1df053",
+    "duplicate-comparison.log": "980fdd86279db67c4fb68571b787db80364fa13185cc4d3187365e0a43b6817e",
+    "duplicate-roles.log": "306f9634419519509bd04a2535fc1ee422c5574228dba0b1f66d944f36e520cb",
+    "search-roles.log": "908424d375e67c590ff38d28225008416439b18ebc8eaae8b2d9ad63a84c56e4",
+    "literal-path-roles.log": "e211645c83da10dee91cd5260b4cd1fc6f82a2d85fe98078711e20920baf50eb",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "file-imports.log": "9df2deccae9f4d63aa3f785a6a8617272359f7bcbd8ebe34a1d9af26f058c44c"
+  },
+  "initial_failure": "retained_initial_ingest_log_had_incomplete_XLSX_test_archive_missing_workbook_fixed_fixture_then_all_six_new_cases_passed_in_workspace",
+  "qualification_scope": "checked_shared_tree_build_and_isolated_executable_not_frozen_checkout",
+  "source_hashes_are_observational": true,
+  "representative_scale_or_ranking_quality_proven": false,
+  "full_RAGRAF_parity": false,
+  "commit_or_push_performed": false
+}

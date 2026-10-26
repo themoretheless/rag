@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "database_schema": 25,
+  "index_format": 29,
+  "focused_file_impact_passed": 4,
+  "existing_impact_passed": 10,
+  "new_native_regressions": 4,
+  "runtime_impact_proven": false,
+  "full_ragraf_parity": false,
+  "source_applications_executed": false,
+  "production_database_touched": false,
+  "source_sha256": {
+    "src/code_index.rs": "e742cf17bd0553a1658f4e4cb129b8482466f50fa4e789561150fe19058f505b",
+    "src/code_index/impact.rs": "ddac475ac2fc54f9ab5b2cf4237521aaee89c1327426ed7aa97b20e96622ed65",
+    "src/code_index/file_impact.rs": "3d3cd3a3482044a4862c0768d121a97a0ef8f920383be441221035c7a431ff1c",
+    "src/mcp/analysis.rs": "2304555d77705105e9f113b7c7fe7902b2bfff4f6ac2df5d6b79454ee964c78c",
+    "scripts/smoke_file_impact.py": "c2769e6c336251991489e58ae75e318f4ca413c94f22cbdd1c5a1dcce5197cf4",
+    "docs/IMPACT_RELATIONS.md": "4e88f8b2b3565341764ef7c1ae10e18e18423d54035ec84f1755163ba61cd593"
+  },
+  "workspace": {
+    "passed": 1242,
+    "failed": 0,
+    "ignored": 1
+  },
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "logs_sha256": {
+    "focused": "ce5bed37288e6cc2f5a02807538f837a068252bebc9bc0099390cff17f443c81",
+    "regression": "b15a98834e0b4415e771ba9d17d97e889767b7c3c1abcbf9a5bc9c65717b27d8",
+    "clippy": "e126edd112021ddc859089ec19423acd9ea76ff445cbf552258a4cb2e9150379",
+    "workspace": "bcc173d13144b2d548278cd192aca97e99fcb919ab062829655d80141d41da7b",
+    "build": "09aa8eea4ed8f795416119fc166d6582e02b89c3609b87b5ed3e2f5deaea6f93"
+  },
+  "binary_sha256": "2e78c9a91a4194db81eddf177198c178f770c01538c562a90d2aa587901b7fac",
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "table-regression.json": "passed",
+    "symbol-regression.json": "passed"
+  }
+}

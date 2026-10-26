@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "e5c687f406a5b24a11171e43c45cedad3e44fcf1471d661044c3e943742d69fb",
+    "src/code_index/sql.rs": "5a5f0a5271d42defaf209ec0e872529047b98c087b685212409562e14688362b",
+    "scripts/smoke_sql_bulk_usage.py": "0266bcc98580dcf87f2033ebc7b93f1bf32af96c1aeea68381e5efddfc7dc29a",
+    "scripts/smoke_code_lua.py": "9d40b37a0094193221bd7bba57fb1beb8968a686adfd13a3dd8e9a0f24d3d476"
+  },
+  "binary_sha256": "3a08ab3736b60c6c89450508ecd31da94ae255c09c31d94507a2828a17dedac3",
+  "schema_version": 25,
+  "syntax_index_format": 26,
+  "verification": {
+    "focused_sql": {
+      "command": "cargo test --lib code_index::sql::tests::sql_ --locked --offline",
+      "passed": 8,
+      "failed": 0,
+      "new_tests": 3
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1209,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "defaults_regression": "defaults-regression.json",
+    "lua_regression": "lua-regression.json",
+    "timings_regression": "timings-regression.json"
+  },
+  "production_database_touched": false,
+  "source_sql_executed": false,
+  "bulk_write_schema_validation": false,
+  "secondary_target_inference": false,
+  "representative_benchmark": false,
+  "full_sql_parity": false,
+  "full_ragraf_parity": false
+}

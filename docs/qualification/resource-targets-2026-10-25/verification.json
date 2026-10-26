@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "shared_working_tree_snapshot",
+  "versions": {
+    "index_format": 36,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "new_native_regressions": 6,
+  "workspace": {
+    "passed": 1316,
+    "failed": 0,
+    "ignored": 1
+  },
+  "workspace_command": "cargo test --workspace",
+  "clippy": "passed --workspace --all-targets -- -D warnings",
+  "owned_file_format": "passed",
+  "diff_check": "passed",
+  "binary": {
+    "sha256": "ee801c1afbd22fc5b79b9f48b1312dd297d28e1a97cd035d614d4fa1aa4a8d30",
+    "isolated_copy": true
+  },
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "parsed-resources-regression.json": "passed",
+    "module-imports-regression.json": "passed",
+    "table-impact-regression.json": "passed",
+    "dead-files-regression.json": "passed"
+  },
+  "source_sha256_after_checks": {
+    "src/code_index/resource_targets.rs": "3af605cacb5ad8b31fa154e0f8fca1aaab26429c428058a2164ff8c041885110",
+    "src/code_index/file_resources.rs": "32215f4cf45c2eab883678150fbd1a7d9e9564d760b7813f5eef28d3f2443c36",
+    "src/code_index/file_impact.rs": "3e08feb72626f2d9882bece13e65e4aa9a55d29eacb2dcce9cf1de4e4a16c088",
+    "src/code_index/dead_files.rs": "1f43f6ebcd117cbbd684a1b078ad9b45f63c21350fb5cd2ec954d22befcabb06",
+    "src/code_index/history.rs": "99b5a944e27cb6c79789bd2db653dda0b331f601b11771ba8fd8b91e4fed245a",
+    "src/code_index/status.rs": "7c4d9dc8e2714069c1ce8f12b6bcd743d80232ffdf60a8b17f4ad6e6f4fe1c41",
+    "src/code_index.rs": "d8c6aad654feeff56d20cdd57f5bebe29f203efc94b20a8c29b74e4b59dc9a80",
+    "src/mcp/analysis.rs": "5236b26ddceaafacb5d271620ae6ad03bb471c64fd2b75b8a0c5b170e418a649",
+    "src/file_ingest.rs": "432545ece8f3309f82df99be325fe3cf8483027d8518f07a47f86a5d4ac3f0dc",
+    "src/file_ingest/tests.rs": "9b7ea45dd0b43d6ebe485a70222f83e86a0232ad11dd59b5fb6fe71608aa6d17",
+    "scripts/smoke_resource_targets.py": "1829116acab6e6a01c0ba5897749c70e2178fba02196800f0e96ea58d88b9f98",
+    "scripts/smoke_file_imports.py": "2f288c49172f92dac2460f92b39c4e3be724829fc67c5f5c593895d672787ba5",
+    "docs/RESOURCE_TARGET_IDENTITIES.md": "977836d771e2fbbf0dfcb591bd28c293e01ba775578d4f94c27556914648dd24",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "1865b2458d6f52faa1a91711d8ce7041cfa3e441578fc544dc9ebfb079c660fc"
+  },
+  "logs_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "smoke_dead_files.py.log": "61e951ba7e8442a328200afa2c226f18bdb98b27476f87dc70f1715e98b19879",
+    "focused-initial.log": "972c9571093732c648cc9b2c313c011542859ccaac7f37f7497da1a93b184e82",
+    "smoke_table_impact.py.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "clippy.log": "92728be908f705589af5f59959584df4ef779ebfc486f0e9f6171594221cada2",
+    "workspace.log": "31e45d6ea0f5d8c5665e022a869ef68457290808abf0a09490a289134c3da19c",
+    "smoke_file_resources.py.log": "b37ca2898026930ab4d72d2ce618a6ebf3158d3f8c890b52d5241259c283ac57",
+    "smoke_file_imports.py.log": "e2135af5fdaef8b5207c24d8f5cbb59cc69569e65f6d65b8bcd0e110bcf70dc5",
+    "focused.log": "bbdc18d946e2ce937929200202577f6831e306d6fd692df10e7a04c6dcb5ad8a",
+    "smoke_resource_targets.py.log": "80ec4280217a48f13527b7dd5ff9d7f3830c1997c71428ec6ec5ef9d18c37df9",
+    "build.log": "2540836a112a0268ef6bfea7bf69095d619ffde0ae02949771c01483052ac25f"
+  },
+  "full_ragraf_parity": false,
+  "representative_quality_or_scale_qualified": false,
+  "raw_binary_assets_qualified": false,
+  "live_filesystem_verified": false,
+  "source_applications_executed": false,
+  "source_sql_executed": false,
+  "production_database_touched": false,
+  "remaining": [
+    "unregistered_assets",
+    "raw_binary_byte_fidelity_and_decoding",
+    "live_deployment_and_browser_url_resolution",
+    "dynamic_or_framework_links",
+    "representative_precision_recall_scale_and_total_query_resources"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP",
+  "binary_sha256": "0ace426dd4dd6402e79100b7efae21f7f4b6c4e2655c03d302827135ad1f4ae6",
+  "index_format": 35,
+  "fixture_sha256": {
+    "Cargo.lock": "232bc94ce8d20b90fbfa3d7cf8066574b3f3f412075b0314f6f4a52eb275b6da",
+    "Cargo.toml": "ed14c4b24e77104c0406e25aa29b47a9ca5b5bccfae6fac1bc23d93bd23c0838",
+    "expected.json": "c9086d33af4c8b33787ec21fb9ba0e6fac03cd09fbc97dd6a9a78e2b9c57d135",
+    "src/lib.rs": "fbccd8d2299d8c335d4028f59db5bb7d71b38ffa765de3aaa05a953d9c4232ad",
+    "src/worker.rs": "5b80ff22a43ab0cc6b97128e8ee2b519413aab8bc4ef2f485c07f2803dad336a"
+  },
+  "labelled_paths": 2,
+  "paths": [
+    [
+      "start",
+      "left",
+      "bridge",
+      "finish"
+    ],
+    [
+      "start",
+      "right",
+      "bridge",
+      "finish"
+    ]
+  ],
+  "production_database_touched": false,
+  "checks": [
+    "exact_occurrence_provenance",
+    "deterministic",
+    "typed_relation_validation",
+    "depth_budget",
+    "work_budget",
+    "result_budget",
+    "reverse",
+    "ambiguous_endpoints",
+    "exact_id_disambiguation",
+    "value_reference",
+    "project_isolation",
+    "captured_inputs",
+    "stale_bridge_exclusion",
+    "refresh_rebinding"
+  ],
+  "limitations": [
+    "static graph only",
+    "no absence proof",
+    "no representative corpus quality or speed claim"
+  ]
+}

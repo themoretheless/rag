@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "working_tree_snapshot",
+  "database_schema": 25,
+  "index_format": 30,
+  "focused_catalog_passed": 9,
+  "focused_timings_passed": 4,
+  "new_native_regressions": 4,
+  "full_ragraf_parity": false,
+  "failed_runs_available": false,
+  "per_project_timings_available": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "source_sha256": {
+    "src/code_index/catalog.rs": "b869288199fc985a25b28abdb3af54d0c1de38bcaf1b40c64a1c387a019d7a94",
+    "src/code_index/timings.rs": "481796cd966bc9ae2dc151fa2cf0fd39fee30b6d19c1b6ba67b406643eeb3675",
+    "src/mcp/analysis.rs": "84444274673ed58230f4e8996f382d4555e8ce60c407f2929cbfd6c6d681f9a1",
+    "scripts/smoke_run_history.py": "1781d65a1871f1d8e2a70709936b071535f2eedaba5b3a834a170b4aeb077602",
+    "docs/CODE_CATALOG.md": "48904867747c29e4f77d302fcd59907e9f8a2fb261944e4939c7c7310aa272dc"
+  },
+  "workspace": {
+    "passed": 1254,
+    "failed": 0,
+    "ignored": 1
+  },
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "logs_sha256": {
+    "catalog": "0d300c7efbd260b63c1e15c240b1190e1ea98610d393d4b84419f4c5363cf546",
+    "timings": "fd387cb8007115452e91bae1468afc413eada261250a9b267e0bd72cafa8e038",
+    "workspace": "2965a3251dbc32d380f36c46b337c76c8f3dfa10a4780c2b6b5e436efa173669",
+    "clippy": "a16685927daa0790a2b357e2b56df170e7bad259186d3c802d6d441422dfd0cf",
+    "build": "0341169ad53e31e92f2f3c3c1bbaaa0438e6e2c90ba86493fd27b095eff162ae",
+    "initial-workspace-attempt": "1ca271a7d16e4a12899d9967edf0a18f644a398b75bdd0780afffd54ad06db1f",
+    "intermediate-workspace-attempt": "154ab97b416cc3b6fb7e152276b39baae998e4f86bdf1bd980fe76878663609c"
+  },
+  "binary_sha256": "33e32e87d582ef7b5d7b81ce9652cd8285ba1613b2c467465ebcb22fc717db0f",
+  "runtime_binary_unchanged_during_final_gate": true,
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "catalog-regression.json": "passed",
+    "timings-regression.json": "passed"
+  },
+  "native_sources_unchanged_during_final_test": true,
+  "post_test_formatting_only_files": [
+    "src/code_index.rs",
+    "src/code_index/resolve.rs"
+  ],
+  "prior_attempts_superseded": [
+    "concurrent Cargo dependency addition before doctest",
+    "compiled Cargo regression preceded its corrected source"
+  ]
+}

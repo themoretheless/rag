@@ -1,0 +1,19 @@
+{
+  "scope":"Rust receiver fixture; not representative language precision/recall",
+  "caller":"exercise",
+  "path":"src/lib.rs",
+  "calls":[
+    {"expression":"service.user().save", "target_path":"src/lib.rs", "target":"User::save"},
+    {"expression":"service.other().save", "target_path":"src/lib.rs", "target":"Other::save"},
+    {"expression":"(service.user_async().await).save", "target_path":"src/lib.rs", "target":"User::save"},
+    {"expression":"service.typed::<User>().save", "target_path":"src/lib.rs", "target":"User::save"},
+    {"expression":"container.user.save", "target_path":"src/lib.rs", "target":"User::save"},
+    {"expression":"container.other.save", "target_path":"src/lib.rs", "target":"Other::save"},
+    {"expression":"users[0].save", "target_path":"src/lib.rs", "target":"User::save"},
+    {"expression":"others[0].save", "target_path":"src/lib.rs", "target":"Other::save"},
+    {"expression":"shared.save", "target_path":"src/lib.rs", "target":"User::save"},
+    {"expression":"boxed.save", "target_path":"src/lib.rs", "target":"Other::save"},
+    {"expression":"inferred.save", "target_path":"src/lib.rs", "target":"User::save"},
+    {"expression":"remote::factory().save", "target_path":"src/remote.rs", "target":"User::save"}
+  ]
+}

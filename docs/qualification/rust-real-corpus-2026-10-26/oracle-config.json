@@ -1,0 +1,14 @@
+{
+  "cargo": {
+    "allTargets": false,
+    "cfgs": [
+      "!test",
+      "!miri"
+    ],
+    "features": [],
+    "target": "aarch64-apple-darwin"
+  },
+  "procMacro": {
+    "enable": false
+  }
+}

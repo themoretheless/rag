@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "src/code_index.rs": "aebeaaea1e4b996d29dd228bd5ea7d9687fed1f8065432ad0f7989a7b71f38f5",
+    "src/code_index/endpoints.rs": "bba58e00934dd634574585edebb3b7d506f9d83dc1072aa497cdf1dc07343e62",
+    "src/code_index/styles.rs": "0f9282823b65eddbd0de598eb2812733432992d4b1ee5fdc0c469a848e7876d0",
+    "src/code_index/analysis.rs": "a0cd24e3dbfb43ff8aafb0fe7b40e0785ba998f2058826dd332838473c8b0ad3",
+    "src/code_index/history.rs": "83cd5a57aa7c06ed1d799fa03c4a0581adcac6c20d72bd350f7db99e4e4dbfb9",
+    "src/mcp/analysis.rs": "618de2ad303d14cd0b46dce3efe8581c4375b6cb0ae38bd1317303e772f2f910",
+    "scripts/smoke_fetch_endpoints.py": "e28feca563b69502384ebfa23e09e72b9551b14ad96cb63fc20734e9b0c4e522"
+  },
+  "binary_sha256": "024412c4914296bb80eb6b9fa22ea7b29126b9a08b5a379b6178f91ee7077a9b",
+  "index_format": 23,
+  "verification": {
+    "focused_code_index": {
+      "command": "cargo test --lib code_index:: --locked --offline",
+      "passed": 137,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1183,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "markup_regression": "markup-regression.json",
+    "python_routes_regression": "python-routes-regression.json",
+    "index_status_regression": "index-status-regression.json",
+    "repo_map_regression": "repo-map-regression.json"
+  },
+  "production_database_touched": false,
+  "urls_fetched": false,
+  "source_applications_executed": false,
+  "representative_benchmark": false,
+  "full_endpoint_parity": false,
+  "full_ragraf_parity": false
+}

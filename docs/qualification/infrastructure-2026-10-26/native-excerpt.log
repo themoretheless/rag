@@ -1,0 +1,9 @@
+Rows extracted from the final 351-test code-index.log; not a separate invocation.
+test code_index::infrastructure::tests::yaml_ast_handles_blocks_flows_and_rejects_duplicate_alias_and_invalid_forms ... ok
+test code_index::infrastructure::tests::docker_stage_limit_rejects_overflow_without_publishing_a_partial_stage ... ok
+test code_index::infrastructure::tests::service_image_multistage_executable_code_paths_have_exact_source_support ... ok
+test code_index::infrastructure::tests::duplicate_resources_unpublished_sources_and_standalone_context_are_explicit ... ok
+test code_index::infrastructure::tests::stale_bridge_and_manifest_are_excluded_but_frozen_revision_is_retained ... ok
+test code_index::infrastructure::tests::cross_project_images_require_explicit_scope_and_path_limits_remain_visible ... ok
+test code_index::infrastructure::tests::dynamic_invalid_and_unmodeled_container_forms_never_keep_old_code_binding ... ok
+test code_index::rename::tests::captured_docs_and_configuration_keep_guards_without_becoming_rust_rename_blockers ... ok

@@ -1,0 +1,421 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP",
+  "binary_sha256": "abd2c80c7825844abd21321077070e7ddf6a6bb8e3ad04b25e8e0b77a804963e",
+  "index_format": 45,
+  "preview": {
+    "applied": false,
+    "blockers": [],
+    "blockers_total": 0,
+    "blockers_truncated": false,
+    "candidates": [
+      {
+        "content_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1",
+        "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+        "documentation_examined": true,
+        "end_byte": 65,
+        "end_line": 2,
+        "id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2:43:value",
+        "kind": "function_item",
+        "name": "value",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "qualified_name": "value",
+        "revision": 1,
+        "signature": "pub fn value()->i32",
+        "start_byte": 43,
+        "start_line": 2
+      }
+    ],
+    "candidates_total": 1,
+    "changes": [
+      {
+        "document_id": "8ddcfd40-fb9b-42db-ac51-3c6f1d500e95",
+        "edits": [
+          {
+            "end_byte": 167,
+            "evidence": "module_path",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 162
+          }
+        ],
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/lib.rs",
+        "source_hash": "20a1096e423f665ffd3bf375529eb5ca7d9103a34a28cf1386324214e0237a42"
+      },
+      {
+        "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+        "edits": [
+          {
+            "end_byte": 55,
+            "evidence": "definition",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 50
+          }
+        ],
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "source_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1"
+      },
+      {
+        "document_id": "cc694819-8c16-4c01-a97b-5ea7afcd3bb2",
+        "edits": [
+          {
+            "end_byte": 35,
+            "evidence": "module_path",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 30
+          },
+          {
+            "end_byte": 85,
+            "evidence": "module_path",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 80
+          }
+        ],
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/client.rs",
+        "source_hash": "d42b1bf68a8b2715c0addb6ff7808c38d3e96b5010d241c1b5eb6c83a70c768c"
+      }
+    ],
+    "compiler_verified": false,
+    "contract_version": 1,
+    "coverage_complete": false,
+    "edits_total": 4,
+    "guards": [
+      {
+        "document_id": "26879a5a-251b-4fd0-a831-c4816ba46e64",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/Cargo.toml",
+        "source_hash": "de4c990bf1f2886480e09182d2e6b4ab44196d5d5167452fa8582fb97aa797a0"
+      },
+      {
+        "document_id": "8ddcfd40-fb9b-42db-ac51-3c6f1d500e95",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/lib.rs",
+        "source_hash": "20a1096e423f665ffd3bf375529eb5ca7d9103a34a28cf1386324214e0237a42"
+      },
+      {
+        "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "source_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1"
+      },
+      {
+        "document_id": "cc694819-8c16-4c01-a97b-5ea7afcd3bb2",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/client.rs",
+        "source_hash": "d42b1bf68a8b2715c0addb6ff7808c38d3e96b5010d241c1b5eb6c83a70c768c"
+      }
+    ],
+    "index_revision": 1,
+    "limitations": [
+      "external consumers, generated sources and dynamic strings are outside captured coverage",
+      "unknown identifier occurrences block instead of textual replacement",
+      "macros, trait method families, module/file moves and non-Rust sources are unsupported",
+      "multi-file application has a recovery journal and rollback; it is not a crash-atomic filesystem transaction"
+    ],
+    "new_name": "compute",
+    "plan_token": "47c5c1f06ff07a1a49bade525076aef4c24aaea8d1ab0d6c21e941eb4b58300c",
+    "project": "rename",
+    "scope": "captured Rust symbols and statically bound occurrences; all captured project inputs revalidated",
+    "status": "preview",
+    "symbol": {
+      "content_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1",
+      "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+      "documentation_examined": true,
+      "end_byte": 65,
+      "end_line": 2,
+      "id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2:43:value",
+      "kind": "function_item",
+      "name": "value",
+      "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+      "qualified_name": "value",
+      "revision": 1,
+      "signature": "pub fn value()->i32",
+      "start_byte": 43,
+      "start_line": 2
+    }
+  },
+  "applied": {
+    "applied": true,
+    "backups_retained": true,
+    "blockers": [],
+    "blockers_total": 0,
+    "blockers_truncated": false,
+    "candidates": [
+      {
+        "content_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1",
+        "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+        "documentation_examined": true,
+        "end_byte": 65,
+        "end_line": 2,
+        "id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2:43:value",
+        "kind": "function_item",
+        "name": "value",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "qualified_name": "value",
+        "revision": 1,
+        "signature": "pub fn value()->i32",
+        "start_byte": 43,
+        "start_line": 2
+      }
+    ],
+    "candidates_total": 1,
+    "changes": [
+      {
+        "document_id": "8ddcfd40-fb9b-42db-ac51-3c6f1d500e95",
+        "edits": [
+          {
+            "end_byte": 167,
+            "evidence": "module_path",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 162
+          }
+        ],
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/lib.rs",
+        "source_hash": "20a1096e423f665ffd3bf375529eb5ca7d9103a34a28cf1386324214e0237a42"
+      },
+      {
+        "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+        "edits": [
+          {
+            "end_byte": 55,
+            "evidence": "definition",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 50
+          }
+        ],
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "source_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1"
+      },
+      {
+        "document_id": "cc694819-8c16-4c01-a97b-5ea7afcd3bb2",
+        "edits": [
+          {
+            "end_byte": 35,
+            "evidence": "module_path",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 30
+          },
+          {
+            "end_byte": 85,
+            "evidence": "module_path",
+            "new_text": "compute",
+            "old_text": "value",
+            "start_byte": 80
+          }
+        ],
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/client.rs",
+        "source_hash": "d42b1bf68a8b2715c0addb6ff7808c38d3e96b5010d241c1b5eb6c83a70c768c"
+      }
+    ],
+    "compiler_check_required": true,
+    "compiler_verified": false,
+    "contract_version": 1,
+    "coverage_complete": false,
+    "edits_total": 4,
+    "guards": [
+      {
+        "document_id": "26879a5a-251b-4fd0-a831-c4816ba46e64",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/Cargo.toml",
+        "source_hash": "de4c990bf1f2886480e09182d2e6b4ab44196d5d5167452fa8582fb97aa797a0"
+      },
+      {
+        "document_id": "8ddcfd40-fb9b-42db-ac51-3c6f1d500e95",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/lib.rs",
+        "source_hash": "20a1096e423f665ffd3bf375529eb5ca7d9103a34a28cf1386324214e0237a42"
+      },
+      {
+        "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "source_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1"
+      },
+      {
+        "document_id": "cc694819-8c16-4c01-a97b-5ea7afcd3bb2",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/client.rs",
+        "source_hash": "d42b1bf68a8b2715c0addb6ff7808c38d3e96b5010d241c1b5eb6c83a70c768c"
+      }
+    ],
+    "index_refresh_required": true,
+    "index_revision": 1,
+    "journal": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/.rag-rename-c672bfd0-1980-4115-9c11-a0bddf89d5eb.json",
+    "limitations": [
+      "external consumers, generated sources and dynamic strings are outside captured coverage",
+      "unknown identifier occurrences block instead of textual replacement",
+      "macros, trait method families, module/file moves and non-Rust sources are unsupported",
+      "multi-file application has a recovery journal and rollback; it is not a crash-atomic filesystem transaction"
+    ],
+    "new_name": "compute",
+    "plan_token": "47c5c1f06ff07a1a49bade525076aef4c24aaea8d1ab0d6c21e941eb4b58300c",
+    "project": "rename",
+    "scope": "captured Rust symbols and statically bound occurrences; all captured project inputs revalidated",
+    "status": "applied",
+    "symbol": {
+      "content_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1",
+      "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+      "documentation_examined": true,
+      "end_byte": 65,
+      "end_line": 2,
+      "id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2:43:value",
+      "kind": "function_item",
+      "name": "value",
+      "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+      "qualified_name": "value",
+      "revision": 1,
+      "signature": "pub fn value()->i32",
+      "start_byte": 43,
+      "start_line": 2
+    }
+  },
+  "journal": {
+    "committed_files": [
+      0,
+      1,
+      2
+    ],
+    "contract_version": 1,
+    "files": [
+      {
+        "backup": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/.rag-rename-c672bfd0-1980-4115-9c11-a0bddf89d5eb-0.bak",
+        "new_hash": "0c1512d498d61628be202c57ba9b2f0b13ff4cb9c3c18c824200a30bd1eb6032",
+        "old_hash": "20a1096e423f665ffd3bf375529eb5ca7d9103a34a28cf1386324214e0237a42",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/lib.rs",
+        "staged": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/.rag-rename-c672bfd0-1980-4115-9c11-a0bddf89d5eb-0.new"
+      },
+      {
+        "backup": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/.rag-rename-c672bfd0-1980-4115-9c11-a0bddf89d5eb-1.bak",
+        "new_hash": "d0e68190a0ed182381b92f54735fe51b9c231684a091e38e56f9cecc4064da2c",
+        "old_hash": "0c1d98eaf41580fe636adfb983c4518f4d2917aa3a9557b3992a29929ace41a1",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "staged": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/.rag-rename-c672bfd0-1980-4115-9c11-a0bddf89d5eb-1.new"
+      },
+      {
+        "backup": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/.rag-rename-c672bfd0-1980-4115-9c11-a0bddf89d5eb-2.bak",
+        "new_hash": "7aae7841c5a9249df084419d51a834795f33709babfb7ca47a8b4242b43e5d83",
+        "old_hash": "d42b1bf68a8b2715c0addb6ff7808c38d3e96b5010d241c1b5eb6c83a70c768c",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/client.rs",
+        "staged": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/.rag-rename-c672bfd0-1980-4115-9c11-a0bddf89d5eb-2.new"
+      }
+    ],
+    "operation": "c672bfd0-1980-4115-9c11-a0bddf89d5eb",
+    "plan_token": "47c5c1f06ff07a1a49bade525076aef4c24aaea8d1ab0d6c21e941eb4b58300c",
+    "rollback_conflicts": [],
+    "status": "applied"
+  },
+  "compiler": [
+    {
+      "case": "before",
+      "exit_code": 0,
+      "stdout": "\nrunning 1 test\ntest tests::works ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling rename-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/cargo-target/debug/build/rename-fixture/73a1463ad8f300f8/out/rename_fixture-73a1463ad8f300f8)\n   Doc-tests rename_fixture\n"
+    },
+    {
+      "case": "after",
+      "exit_code": 0,
+      "stdout": "\nrunning 1 test\ntest tests::works ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling rename-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/cargo-target/debug/build/rename-fixture/73a1463ad8f300f8/out/rename_fixture-73a1463ad8f300f8)\n   Doc-tests rename_fixture\n"
+    }
+  ],
+  "refreshed_calls": {
+    "binding_diagnostics": [],
+    "index_rev": 2,
+    "items": [
+      {
+        "candidates": [
+          "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2:43:compute"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "cc694819-8c16-4c01-a97b-5ea7afcd3bb2:0:run",
+          "column": 31,
+          "content_hash": "7aae7841c5a9249df084419d51a834795f33709babfb7ca47a8b4242b43e5d83",
+          "document_id": "cc694819-8c16-4c01-a97b-5ea7afcd3bb2",
+          "expression": "crate::api::compute",
+          "is_call": true,
+          "line": 1,
+          "name": "compute",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/client.rs",
+          "revision": 2,
+          "start_byte": 18
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "module_path"
+      }
+    ],
+    "matched_symbols": 1,
+    "parse_errors": [],
+    "resolution": "conservative_static_bindings",
+    "rust_build_contexts": [],
+    "rust_build_contexts_total": 0,
+    "stale_documents": [],
+    "total": 1,
+    "truncated": false,
+    "unindexed_documents": [],
+    "view": "fresh_subset_of_revision_inputs"
+  },
+  "refreshed_symbol": {
+    "binding_diagnostics": [],
+    "index_rev": 2,
+    "items": [
+      {
+        "content_hash": "d0e68190a0ed182381b92f54735fe51b9c231684a091e38e56f9cecc4064da2c",
+        "document_id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2",
+        "documentation_examined": true,
+        "end_byte": 67,
+        "end_line": 2,
+        "id": "cb9e0895-f15a-4bbf-875a-eecfdd9a88a2:43:compute",
+        "kind": "function_item",
+        "name": "compute",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rename-pu985k72/sources/src/api.rs",
+        "qualified_name": "compute",
+        "revision": 2,
+        "signature": "pub fn compute()->i32",
+        "start_byte": 43,
+        "start_line": 2
+      }
+    ],
+    "matched_symbols": 1,
+    "parse_errors": [],
+    "resolution": "conservative_static_bindings",
+    "rust_build_contexts": [],
+    "rust_build_contexts_total": 0,
+    "stale_documents": [],
+    "total": 1,
+    "truncated": false,
+    "unindexed_documents": [],
+    "view": "fresh_subset_of_revision_inputs"
+  },
+  "fixture_sha256_before": {
+    "Cargo.toml": "693075ee83a9d89b85e1dbb8a46dc25964ebe115d7fc8c5b583a6548f20d1c51",
+    "src/lib.rs": "302399c323fe74de783d3870a89a1b70921f51510ab4494a32082579683a017b",
+    "src/api.rs": "e8a14297e7601307390c908b6fd5f6550880f8f275b2466aab7bf7272dbabc5f",
+    "src/client.rs": "1896758bbb084823d7ccb12c38779317c13f014df019cf097b5c49f2f6a93303"
+  },
+  "fixture_sha256_after": {
+    "Cargo.toml": "693075ee83a9d89b85e1dbb8a46dc25964ebe115d7fc8c5b583a6548f20d1c51",
+    "src/lib.rs": "16a72ef615b4fa97f4b8bd906f12b89fc2d039d17292d72ae53722bc6299403f",
+    "src/api.rs": "e400f4d7277b55cecbded6c7f482dc4176fb31e59ce3d0de3f6473a9328adc23",
+    "src/client.rs": "cab948a3c869b629237841155291ebd42ecf2974469f4a4301424aa2538c4445"
+  },
+  "production_database_touched": false,
+  "checks": [
+    "deterministic_nonmutating_preview",
+    "four_exact_declaration_call_test_spans",
+    "unicode_byte_offsets",
+    "wrong_token_refusal",
+    "unedited_provider_guard_refusal",
+    "reviewed_apply",
+    "original_backups",
+    "comments_strings_preserved",
+    "before_after_compiler_test_execution",
+    "stale_after_apply",
+    "reingest_binding_refresh",
+    "preview_rejects_apply_parameter"
+  ],
+  "limitations": [
+    "bounded captured Rust graph; not compiler rename completeness",
+    "no external/generated/dynamic consumer proof",
+    "multi-file journal is not crash-atomic",
+    "stdio uses local authority; HTTP role matrix is tested separately"
+  ]
+}

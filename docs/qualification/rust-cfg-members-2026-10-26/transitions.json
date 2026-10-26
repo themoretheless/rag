@@ -1,0 +1,1373 @@
+{
+  "itoa": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "ryu": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "memchr": {
+    "recovered_sites": 52,
+    "lost_correct_sites": 0,
+    "recovered": [
+      {
+        "path": "src/lib.rs",
+        "range": [
+          203,
+          4,
+          203,
+          10
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memchr",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memchr",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          203,
+          12,
+          203,
+          19
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memchr2",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memchr2",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          203,
+          21,
+          203,
+          33
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memchr2_iter",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memchr2_iter",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          203,
+          35,
+          203,
+          42
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memchr3",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memchr3",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          203,
+          44,
+          203,
+          56
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memchr3_iter",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memchr3_iter",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          203,
+          58,
+          203,
+          69
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memchr_iter",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memchr_iter",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          204,
+          4,
+          204,
+          11
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memrchr",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memrchr",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          204,
+          13,
+          204,
+          21
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memrchr2",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memrchr2",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          204,
+          23,
+          204,
+          36
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memrchr2_iter",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memrchr2_iter",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          204,
+          38,
+          204,
+          46
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memrchr3",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memrchr3",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          204,
+          48,
+          204,
+          61
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memrchr3_iter",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memrchr3_iter",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/lib.rs",
+        "range": [
+          204,
+          63,
+          204,
+          75
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "memrchr_iter",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "memrchr_iter",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          53,
+          26,
+          53,
+          45
+        ],
+        "syntax_class": "value_or_other",
+        "before": [
+          {
+            "expression": "searcher_kind_empty",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher_kind_empty",
+            "is_call": false,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          61,
+          26,
+          61,
+          48
+        ],
+        "syntax_class": "value_or_other",
+        "before": [
+          {
+            "expression": "searcher_kind_one_byte",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher_kind_one_byte",
+            "is_call": false,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          134,
+          19,
+          134,
+          35
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "do_packed_search",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "do_packed_search",
+            "is_call": true,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          137,
+          37,
+          137,
+          55
+        ],
+        "syntax_class": "value_or_other",
+        "before": [
+          {
+            "expression": "searcher_kind_neon",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher_kind_neon",
+            "is_call": false,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          138,
+          36,
+          138,
+          43
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "prefilter.is_none",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "prefilter.is_none",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          144,
+          32,
+          144,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "prefilter.is_none",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "prefilter.is_none",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          183,
+          33,
+          183,
+          54
+        ],
+        "syntax_class": "value_or_other",
+        "before": [
+          {
+            "expression": "searcher_kind_two_way",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher_kind_two_way",
+            "is_call": false,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          194,
+          26,
+          194,
+          62
+        ],
+        "syntax_class": "value_or_other",
+        "before": [
+          {
+            "expression": "searcher_kind_two_way_with_prefilter",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher_kind_two_way_with_prefilter",
+            "is_call": false,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          323,
+          18,
+          323,
+          25
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "rabinkarp::is_fast",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "rabinkarp::is_fast",
+            "is_call": true,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          324,
+          27,
+          324,
+          31
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "searcher.rabinkarp.find",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher.rabinkarp.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          344,
+          18,
+          344,
+          25
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "rabinkarp::is_fast",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "rabinkarp::is_fast",
+            "is_call": true,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          345,
+          27,
+          345,
+          31
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "searcher.rabinkarp.find",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher.rabinkarp.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          432,
+          27,
+          432,
+          31
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "searcher.rabinkarp.find",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "searcher.rabinkarp.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          503,
+          23,
+          503,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "crate::memrchr",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "crate::memrchr",
+            "is_call": true,
+            "basis": "module_path",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          506,
+          30,
+          506,
+          37
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "rabinkarp::is_fast",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "rabinkarp::is_fast",
+            "is_call": true,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          507,
+          35,
+          507,
+          40
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.rabinkarp.rfind",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.rabinkarp.rfind",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          626,
+          33,
+          626,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "pair.index1",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "pair.index1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          634,
+          23,
+          634,
+          46
+        ],
+        "syntax_class": "value_or_other",
+        "before": [
+          {
+            "expression": "prefilter_kind_fallback",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "prefilter_kind_fallback",
+            "is_call": false,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          690,
+          35,
+          690,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "finder.pair",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "finder.pair",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          690,
+          42,
+          690,
+          48
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "finder.pair().index1",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "finder.pair().index1",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          693,
+          18,
+          693,
+          37
+        ],
+        "syntax_class": "value_or_other",
+        "before": [
+          {
+            "expression": "prefilter_kind_neon",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "prefilter_kind_neon",
+            "is_call": false,
+            "basis": "lexical",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          731,
+          13,
+          731,
+          17
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "crate::arch::all::memchr::One::new(self.rarest_byte)\n            .find",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "crate::arch::all::memchr::One::new(self.rarest_byte)\n            .find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          859,
+          14,
+          859,
+          25
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "strat.find_simple",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "strat.find_simple",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          924,
+          16,
+          924,
+          24
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.is_inert",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.is_inert",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          927,
+          16,
+          927,
+          21
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.skips",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.skips",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          930,
+          65,
+          930,
+          70
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.skips",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.skips",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          968,
+          35,
+          968,
+          39
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.prestrat.find",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.prestrat.find",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          969,
+          22,
+          969,
+          28
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.prestate.update",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.prestate.update",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/memmem/searcher.rs",
+        "range": [
+          976,
+          22,
+          976,
+          34
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.prestate.is_effective",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.prestate.is_effective",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          30,
+          16,
+          30,
+          25
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "is_prefix",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "is_prefix",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          30,
+          27,
+          30,
+          36
+        ],
+        "syntax_class": "import",
+        "before": [
+          {
+            "expression": "is_suffix",
+            "is_call": false,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "is_suffix",
+            "is_call": false,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          137,
+          13,
+          137,
+          32
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.find_with_prefilter",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.find_with_prefilter",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          158,
+          21,
+          158,
+          35
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.find_small_imp",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.find_small_imp",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          161,
+          21,
+          161,
+          35
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.find_large_imp",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.find_large_imp",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          307,
+          21,
+          307,
+          36
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.rfind_small_imp",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.rfind_small_imp",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          310,
+          21,
+          310,
+          36
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.rfind_large_imp",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.rfind_large_imp",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          450,
+          12,
+          450,
+          21
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "is_suffix",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "is_suffix",
+            "is_call": true,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          473,
+          12,
+          473,
+          21
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "is_prefix",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "is_prefix",
+            "is_call": true,
+            "basis": "import",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          523,
+          23,
+          523,
+          26
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "kind.cmp",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "kind.cmp",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/twoway.rs",
+        "range": [
+          562,
+          23,
+          562,
+          26
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "kind.cmp",
+            "is_call": true,
+            "basis": "RUST_CFG_NESTED_SEMANTICS_UNMODELED",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "kind.cmp",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      }
+    ],
+    "lost": []
+  }
+}

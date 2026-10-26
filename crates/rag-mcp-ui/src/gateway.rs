@@ -333,6 +333,9 @@ mod tests {
                     Err(error) => panic!("could not accept test request: {error}"),
                 }
             };
+            // Accepted sockets may inherit O_NONBLOCK on BSD/macOS. Wait for
+            // headers under the timeout instead of racing the client's write.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();

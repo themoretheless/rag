@@ -1,0 +1,19 @@
+{
+  "fast": {
+    "engine::api::run": ["engine/src/internal.rs", "fast_work"],
+    "engine::recursive::globbed": ["engine/src/internal.rs", "globbed"],
+    "engine::internal_entry": ["engine/src/lib.rs", "internal_entry"],
+    "engine::api::Task::make": ["engine/src/internal.rs", "Worker::make"]
+  },
+  "slow": {
+    "engine::api::run": ["engine/src/internal.rs", "slow_work"],
+    "engine::recursive::globbed": ["engine/src/internal.rs", "globbed"],
+    "engine::internal_entry": ["engine/src/lib.rs", "internal_entry"],
+    "engine::api::Task::make": ["engine/src/internal.rs", "Worker::make"]
+  },
+  "private_call": {
+    "expression": "engine::api::restricted",
+    "expected_candidates": [],
+    "compiler_error": "E0603"
+  }
+}

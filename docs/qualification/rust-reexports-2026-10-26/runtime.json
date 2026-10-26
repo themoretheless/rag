@@ -1,0 +1,1331 @@
+{
+  "status": "passed",
+  "binary_sha256": "5954915eab06d4491570abd9db36d69284fb77e874ddbb9eafd828542b4eabe5",
+  "index_format": 59,
+  "transport": "actual stdio MCP",
+  "runs": [
+    {
+      "feature": "fast",
+      "index_report": {
+        "indexed": 6,
+        "unchanged": 0,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 1,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "c3b0ddbb-b639-40fb-afc0-4ad97a1912d5",
+          "lock_wait_ms": 0.0006659999999999999,
+          "source_load_decode_ms": 1.927459,
+          "cache_parse_serialize_ms": 15.326125,
+          "cache_replace_ms": 12.758000000000001,
+          "revision_publish_ms": 34.509791,
+          "transaction_body_ms": 64.687667,
+          "before_metrics_write_ms": 64.68837500000001,
+          "documents_loaded": 6,
+          "cache_hits": 0,
+          "cache_misses": 6,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 6,
+          "documents_resolved": 6,
+          "documents_reused": 0,
+          "reference_sites_resolved": 22,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 3,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 3,
+          "dependency_inputs_hashed": 16,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": false,
+          "no_resolution_required": false,
+          "resolution_ms": 6.787708,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 68.407041,
+          "commit_ms": 1.365542,
+          "metrics_write_ms": 2.352792,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 165265408
+        }
+      },
+      "calls": {
+        "binding_diagnostics": [],
+        "index_rev": 1,
+        "items": [
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:0:fast_work@5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 18,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::api::run",
+              "is_call": true,
+              "line": 2,
+              "name": "run",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 16
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          },
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:74:globbed@5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 24,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::recursive::globbed",
+              "is_call": true,
+              "line": 3,
+              "name": "globbed",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 40
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          },
+          {
+            "candidates": [
+              "020639d0-78a3-4c33-9fee-57d17b376922:483:internal_entry@5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 13,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::internal_entry",
+              "is_call": true,
+              "line": 4,
+              "name": "internal_entry",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 74
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          },
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:162:make@5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 24,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::api::Task::make",
+              "is_call": true,
+              "line": 5,
+              "name": "make",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 104
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_ast_receiver_type"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 0,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "72cf71e397142524c71bcd28964a62cdce155038466f531327068fcfb1498988",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "bin",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          },
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 2,
+            "excluded_source_files": 0,
+            "features": [
+              "fast"
+            ],
+            "features_total": 1,
+            "features_truncated": false,
+            "manifest_hash": "127099ff010224cb67f18dc35ca52bf0e3b343e05bfa3fecac1f86a4db05f1be",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 2,
+        "stale_documents": [],
+        "total": 4,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "expected": {
+        "engine::api::run": [
+          "engine/src/internal.rs",
+          "fast_work"
+        ],
+        "engine::recursive::globbed": [
+          "engine/src/internal.rs",
+          "globbed"
+        ],
+        "engine::internal_entry": [
+          "engine/src/lib.rs",
+          "internal_entry"
+        ],
+        "engine::api::Task::make": [
+          "engine/src/internal.rs",
+          "Worker::make"
+        ]
+      },
+      "observed": {
+        "engine::api::run": [
+          "engine/src/internal.rs",
+          "fast_work"
+        ],
+        "engine::recursive::globbed": [
+          "engine/src/internal.rs",
+          "globbed"
+        ],
+        "engine::internal_entry": [
+          "engine/src/lib.rs",
+          "internal_entry"
+        ],
+        "engine::api::Task::make": [
+          "engine/src/internal.rs",
+          "Worker::make"
+        ]
+      },
+      "internal_call": {
+        "binding_diagnostics": [],
+        "index_rev": 1,
+        "items": [
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:94:restricted@5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+              "caller": "020639d0-78a3-4c33-9fee-57d17b376922:483:internal_entry@5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+              "column": 10,
+              "content_hash": "0701a45c716850e268317932030e75ff8c864c93b282376411c8635413902a78",
+              "document_id": "020639d0-78a3-4c33-9fee-57d17b376922",
+              "expression": "api::restricted",
+              "is_call": true,
+              "line": 25,
+              "name": "restricted",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/src/lib.rs",
+              "revision": 1,
+              "start_byte": 513
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 0,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "72cf71e397142524c71bcd28964a62cdce155038466f531327068fcfb1498988",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "bin",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          },
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 2,
+            "excluded_source_files": 0,
+            "features": [
+              "fast"
+            ],
+            "features_total": 1,
+            "features_truncated": false,
+            "manifest_hash": "127099ff010224cb67f18dc35ca52bf0e3b343e05bfa3fecac1f86a4db05f1be",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 2,
+        "stale_documents": [],
+        "total": 1,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "compiler_command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/Cargo.toml",
+        "--workspace",
+        "--no-default-features",
+        "--features",
+        "fixture-engine/fast"
+      ],
+      "compiler_exit": 0,
+      "compiler_stdout": "\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest selected_export ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "compiler_stderr": "   Compiling fixture-engine v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine)\nwarning: unused import: `crate::recursive::*`\n  --> engine/src/lib.rs:21:13\n   |\n21 |     pub use crate::recursive::*;\n   |             ^^^^^^^^^^^^^^^^^^^\n   |\n   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: function `slow_work` is never used\n --> engine/src/internal.rs:4:8\n  |\n4 | pub fn slow_work() -> u32 {\n  |        ^^^^^^^^^\n  |\n  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `fixture-engine` (lib) generated 2 warnings (run `cargo fix --lib -p fixture-engine` to apply 1 suggestion)\n   Compiling fixture-client v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client)\nwarning: `fixture-engine` (lib test) generated 2 warnings (2 duplicates)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.49s\n     Running unittests src/main.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/cargo-target/debug/build/fixture-client/c0edf9c5ec52f6bf/out/fixture_client-c0edf9c5ec52f6bf)\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/cargo-target/debug/build/fixture-engine/5697864a138b6a18/out/fixture_engine-5697864a138b6a18)\n   Doc-tests fixture_engine\n"
+    },
+    {
+      "feature": "slow",
+      "index_report": {
+        "indexed": 1,
+        "unchanged": 5,
+        "unsupported": 0,
+        "parse_errors": [],
+        "index_revision": 2,
+        "revision_created": true,
+        "stage_timings": {
+          "contract_version": 1,
+          "run_id": "4fc09470-c8d9-4eb7-a3da-63cd9b8a782f",
+          "lock_wait_ms": 4.2e-05,
+          "source_load_decode_ms": 1.575,
+          "cache_parse_serialize_ms": 1.1525839999999998,
+          "cache_replace_ms": 2.626959,
+          "revision_publish_ms": 38.191042,
+          "transaction_body_ms": 43.711208,
+          "before_metrics_write_ms": 43.711334,
+          "documents_loaded": 6,
+          "cache_hits": 5,
+          "cache_misses": 1,
+          "unsupported_documents": 0,
+          "parse_error_documents": 0,
+          "commit_included": false,
+          "metrics_write_included": false,
+          "embedding_fts_included": false
+        },
+        "resolution": {
+          "contract_version": 1,
+          "documents_total": 6,
+          "documents_resolved": 4,
+          "documents_reused": 2,
+          "reference_sites_resolved": 24,
+          "reference_sites_reused": 0,
+          "rust_package_scopes": 3,
+          "project_fallback_scopes": 0,
+          "empty_reference_documents": 3,
+          "dependency_inputs_hashed": 16,
+          "invalid_cache_entries": 0,
+          "forced_full": false,
+          "cache_available": true,
+          "no_resolution_required": false,
+          "resolution_ms": 5.100875,
+          "equivalent_to_existing": null
+        },
+        "completion": {
+          "contract_version": 1,
+          "native_total_ms": 47.151042,
+          "commit_ms": 1.591666,
+          "metrics_write_ms": 1.847625,
+          "commit_included": true,
+          "process_lifetime_peak_rss_bytes": 199770112
+        }
+      },
+      "calls": {
+        "binding_diagnostics": [],
+        "index_rev": 2,
+        "items": [
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:37:slow_work@400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 18,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::api::run",
+              "is_call": true,
+              "line": 2,
+              "name": "run",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 16
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          },
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:74:globbed@400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 24,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::recursive::globbed",
+              "is_call": true,
+              "line": 3,
+              "name": "globbed",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 40
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          },
+          {
+            "candidates": [
+              "020639d0-78a3-4c33-9fee-57d17b376922:483:internal_entry@400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 13,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::internal_entry",
+              "is_call": true,
+              "line": 4,
+              "name": "internal_entry",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 74
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          },
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:162:make@400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+              "column": 24,
+              "content_hash": "040fbfe41032186ad2218a50e2dd3eb8f9e65f798c7c0d18f07b793d15648bc9",
+              "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+              "expression": "engine::api::Task::make",
+              "is_call": true,
+              "line": 5,
+              "name": "make",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+              "revision": 1,
+              "start_byte": 104
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "rust_ast_receiver_type"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 0,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "72cf71e397142524c71bcd28964a62cdce155038466f531327068fcfb1498988",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "bin",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          },
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 2,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "25ef86568f6f363ee15f7a9ab209ba515469b4c1bc9d7bdf2ca797a23b1bb8df",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+            "manifest_revision": 2,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 2,
+        "stale_documents": [],
+        "total": 4,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "expected": {
+        "engine::api::run": [
+          "engine/src/internal.rs",
+          "slow_work"
+        ],
+        "engine::recursive::globbed": [
+          "engine/src/internal.rs",
+          "globbed"
+        ],
+        "engine::internal_entry": [
+          "engine/src/lib.rs",
+          "internal_entry"
+        ],
+        "engine::api::Task::make": [
+          "engine/src/internal.rs",
+          "Worker::make"
+        ]
+      },
+      "observed": {
+        "engine::api::run": [
+          "engine/src/internal.rs",
+          "slow_work"
+        ],
+        "engine::recursive::globbed": [
+          "engine/src/internal.rs",
+          "globbed"
+        ],
+        "engine::internal_entry": [
+          "engine/src/lib.rs",
+          "internal_entry"
+        ],
+        "engine::api::Task::make": [
+          "engine/src/internal.rs",
+          "Worker::make"
+        ]
+      },
+      "internal_call": {
+        "binding_diagnostics": [],
+        "index_rev": 2,
+        "items": [
+          {
+            "candidates": [
+              "08c6a4d4-6e7b-4999-a475-cce420544202:94:restricted@400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+            ],
+            "provenance": "derived",
+            "reference": {
+              "build_context": "400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+              "caller": "020639d0-78a3-4c33-9fee-57d17b376922:483:internal_entry@400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+              "column": 10,
+              "content_hash": "0701a45c716850e268317932030e75ff8c864c93b282376411c8635413902a78",
+              "document_id": "020639d0-78a3-4c33-9fee-57d17b376922",
+              "expression": "api::restricted",
+              "is_call": true,
+              "line": 25,
+              "name": "restricted",
+              "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/src/lib.rs",
+              "revision": 1,
+              "start_byte": 513
+            },
+            "resolution": "resolved_static",
+            "resolution_basis": "module_path"
+          }
+        ],
+        "matched_symbols": 1,
+        "parse_errors": [],
+        "resolution": "conservative_static_bindings",
+        "rust_build_contexts": [
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 0,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "72cf71e397142524c71bcd28964a62cdce155038466f531327068fcfb1498988",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml",
+            "manifest_revision": 1,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "bin",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          },
+          {
+            "available": true,
+            "cfg_flags": [],
+            "cfg_flags_total": 0,
+            "cfg_flags_truncated": false,
+            "cfg_values": {},
+            "cfg_values_truncated": false,
+            "compiler_verified": false,
+            "configuration_id": "400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+            "default_features": false,
+            "dependency_feature_forwarding_verified": true,
+            "disabled_conditions": 2,
+            "excluded_source_files": 0,
+            "features": [],
+            "features_total": 0,
+            "features_truncated": false,
+            "manifest_hash": "25ef86568f6f363ee15f7a9ab209ba515469b4c1bc9d7bdf2ca797a23b1bb8df",
+            "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+            "manifest_revision": 2,
+            "multi_target_instantiation": false,
+            "project": "fixture",
+            "scope": "one_explicit_compilation_target_per_package",
+            "target_kind": "lib",
+            "target_name": null,
+            "target_triple": null,
+            "unknown_conditions": 0
+          }
+        ],
+        "rust_build_contexts_total": 2,
+        "stale_documents": [],
+        "total": 1,
+        "truncated": false,
+        "unindexed_documents": [],
+        "view": "fresh_subset_of_revision_inputs"
+      },
+      "compiler_command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/Cargo.toml",
+        "--workspace",
+        "--no-default-features"
+      ],
+      "compiler_exit": 0,
+      "compiler_stdout": "\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest selected_export ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "compiler_stderr": "   Compiling fixture-engine v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine)\nwarning: unused import: `crate::recursive::*`\n  --> engine/src/lib.rs:21:13\n   |\n21 |     pub use crate::recursive::*;\n   |             ^^^^^^^^^^^^^^^^^^^\n   |\n   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: function `fast_work` is never used\n --> engine/src/internal.rs:1:8\n  |\n1 | pub fn fast_work() -> u32 {\n  |        ^^^^^^^^^\n  |\n  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `fixture-engine` (lib) generated 2 warnings (run `cargo fix --lib -p fixture-engine` to apply 1 suggestion)\n   Compiling fixture-client v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client)\nwarning: `fixture-engine` (lib test) generated 2 warnings (2 duplicates)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s\n     Running unittests src/main.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/cargo-target/debug/build/fixture-client/adc50a2a08f9dbcf/out/fixture_client-adc50a2a08f9dbcf)\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/cargo-target/debug/build/fixture-engine/4750c3035de3d191/out/fixture_engine-4750c3035de3d191)\n   Doc-tests fixture_engine\n"
+    }
+  ],
+  "diff": {
+    "after": 2,
+    "after_format_version": 59,
+    "analysis_format_changed": false,
+    "before": 1,
+    "before_format_version": 59,
+    "bodies_included": false,
+    "csharp_relations_available": true,
+    "css_url_classification_comparable": true,
+    "edge_semantics": "resolved_static_candidate_links",
+    "edges_added": [
+      "020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d -> 08c6a4d4-6e7b-4999-a475-cce420544202::restricted::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+      "020639d0-78a3-4c33-9fee-57d17b376922::selected_export::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d -> 08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 08c6a4d4-6e7b-4999-a475-cce420544202::Worker::make::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+    ],
+    "edges_added_total": 6,
+    "edges_removed": [
+      "020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2 -> 08c6a4d4-6e7b-4999-a475-cce420544202::restricted::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+      "020639d0-78a3-4c33-9fee-57d17b376922::selected_export::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2 -> 08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 08c6a4d4-6e7b-4999-a475-cce420544202::Worker::make::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+      "43543d9f-0ee1-435b-a626-4dcdaabe8c93::main::function_item::build:8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8 -> 08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+    ],
+    "edges_removed_total": 6,
+    "file_changes_total": 1,
+    "file_import_relations_available": true,
+    "file_resource_relations_available": true,
+    "files": [
+      {
+        "after": {
+          "hash": "25ef86568f6f363ee15f7a9ab209ba515469b4c1bc9d7bdf2ca797a23b1bb8df",
+          "id": "b7a53aa5-085d-49db-9b68-2d67c5f7e670",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+          "project": "fixture",
+          "revision": 2
+        },
+        "before": {
+          "hash": "127099ff010224cb67f18dc35ca52bf0e3b343e05bfa3fecac1f86a4db05f1be",
+          "id": "b7a53aa5-085d-49db-9b68-2d67c5f7e670",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+          "project": "fixture",
+          "revision": 1
+        },
+        "kind": "changed"
+      }
+    ],
+    "immutable": true,
+    "inline_style_relations_available": true,
+    "method_relations_available": true,
+    "perl_relations_available": true,
+    "powershell_relations_available": true,
+    "project": "fixture",
+    "relations_added": [
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::make::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "entrypoint_kind": "test_function",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::selected_export::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::struct_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::restricted::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::ring::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::stage::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::<module>",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::struct_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      }
+    ],
+    "relations_added_total": 12,
+    "relations_available": true,
+    "relations_removed": [
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::make::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "entrypoint_kind": "public_api",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "entrypoint_kind": "test_function",
+        "kind": "entrypoint",
+        "method": null,
+        "resolution": "resolved_static",
+        "route": null,
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::selected_export::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::struct_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::restricted::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::ring::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "020639d0-78a3-4c33-9fee-57d17b376922::stage::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "non_call_reference",
+        "resolution": "resolved_static",
+        "source": "08c6a4d4-6e7b-4999-a475-cce420544202::<module>",
+        "target": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::struct_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      }
+    ],
+    "relations_removed_total": 12,
+    "relations_scope": "uses_key_candidates_non_call_candidates_file_import_candidates_file_resource_candidates_inheritance_method_override_candidates_entrypoints_unbound_routes_and_endpoint_references",
+    "relations_truncated": false,
+    "resource_target_relations_available": true,
+    "responsive_resource_relations_available": true,
+    "ruby_relations_available": true,
+    "rust_build_contexts": {
+      "after": [
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 0,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "72cf71e397142524c71bcd28964a62cdce155038466f531327068fcfb1498988",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "bin",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        },
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 2,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "25ef86568f6f363ee15f7a9ab209ba515469b4c1bc9d7bdf2ca797a23b1bb8df",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+          "manifest_revision": 2,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "lib",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        }
+      ],
+      "after_total": 2,
+      "available": true,
+      "before": [
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 0,
+          "excluded_source_files": 0,
+          "features": [],
+          "features_total": 0,
+          "features_truncated": false,
+          "manifest_hash": "72cf71e397142524c71bcd28964a62cdce155038466f531327068fcfb1498988",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "bin",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        },
+        {
+          "available": true,
+          "cfg_flags": [],
+          "cfg_flags_total": 0,
+          "cfg_flags_truncated": false,
+          "cfg_values": {},
+          "cfg_values_truncated": false,
+          "compiler_verified": false,
+          "configuration_id": "5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2",
+          "default_features": false,
+          "dependency_feature_forwarding_verified": true,
+          "disabled_conditions": 2,
+          "excluded_source_files": 0,
+          "features": [
+            "fast"
+          ],
+          "features_total": 1,
+          "features_truncated": false,
+          "manifest_hash": "127099ff010224cb67f18dc35ca52bf0e3b343e05bfa3fecac1f86a4db05f1be",
+          "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+          "manifest_revision": 1,
+          "multi_target_instantiation": false,
+          "project": "fixture",
+          "scope": "one_explicit_compilation_target_per_package",
+          "target_kind": "lib",
+          "target_name": null,
+          "target_triple": null,
+          "unknown_conditions": 0
+        }
+      ],
+      "before_total": 2,
+      "changed": true,
+      "truncated": false
+    },
+    "schema_diff": {
+      "after_diagnostics": [],
+      "after_diagnostics_total": 0,
+      "available": true,
+      "before_diagnostics": [],
+      "before_diagnostics_total": 0,
+      "constraint_changes_available": true,
+      "expression_changes_available": true,
+      "expression_comparison": "canonical_sql_ast_text_not_semantic_equivalence",
+      "items": [],
+      "live_database_verified": false,
+      "replay_performed": false,
+      "scope": "derived_table_columns_and_completeness",
+      "total": 0,
+      "truncated": false
+    },
+    "symbol_changes_total": 26,
+    "symbols": [
+      {
+        "kind": "added",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::api::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::internal::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::internal::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::internal_entry::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::recursive::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::recursive::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::ring::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::ring::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::selected_export::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::selected_export::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::stage::mod_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "020639d0-78a3-4c33-9fee-57d17b376922::stage::mod_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::make::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::make::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::struct_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::Worker::struct_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::fast_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::globbed::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::restricted::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::restricted::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      },
+      {
+        "kind": "added",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d"
+      },
+      {
+        "kind": "removed",
+        "symbol_key": "08c6a4d4-6e7b-4999-a475-cce420544202::slow_work::function_item::build:5d6348eb77917c1423f67a8217ead6f9a08c15cf20c321e763a89dae237ce0b2"
+      }
+    ],
+    "translation_key_comparison": {
+      "absence_proven": false,
+      "available": true,
+      "comparison": "source_owner_key_syntax_kind_and_occurrence_count_ignore_position_only_changes",
+      "complete_for_supported_documents": true,
+      "eligible_documents": 0,
+      "excluded_documents": [],
+      "excluded_documents_total": 0,
+      "excluded_documents_truncated": false
+    },
+    "translation_key_relations_available": true,
+    "truncated": false
+  },
+  "denied_call": {
+    "binding_diagnostics": [],
+    "index_rev": 3,
+    "items": [
+      {
+        "candidates": [],
+        "provenance": "derived",
+        "reference": {
+          "build_context": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+          "caller": "43543d9f-0ee1-435b-a626-4dcdaabe8c93:0:main@8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+          "column": 24,
+          "content_hash": "3b92446210afd57d4ed9386fbcd8ce7a4fb42c2fcb01f7da12ca884799779511",
+          "document_id": "43543d9f-0ee1-435b-a626-4dcdaabe8c93",
+          "expression": "engine::api::restricted",
+          "is_call": true,
+          "line": 1,
+          "name": "restricted",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs",
+          "revision": 2,
+          "start_byte": 10
+        },
+        "resolution": "unresolved",
+        "resolution_basis": "module_path"
+      }
+    ],
+    "matched_symbols": 1,
+    "parse_errors": [],
+    "resolution": "conservative_static_bindings",
+    "rust_build_contexts": [
+      {
+        "available": true,
+        "cfg_flags": [],
+        "cfg_flags_total": 0,
+        "cfg_flags_truncated": false,
+        "cfg_values": {},
+        "cfg_values_truncated": false,
+        "compiler_verified": false,
+        "configuration_id": "8592468b809d2b949c585daa67522342554479fb864ff4c6e3a1def004a761c8",
+        "default_features": false,
+        "dependency_feature_forwarding_verified": true,
+        "disabled_conditions": 0,
+        "excluded_source_files": 0,
+        "features": [],
+        "features_total": 0,
+        "features_truncated": false,
+        "manifest_hash": "72cf71e397142524c71bcd28964a62cdce155038466f531327068fcfb1498988",
+        "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml",
+        "manifest_revision": 1,
+        "multi_target_instantiation": false,
+        "project": "fixture",
+        "scope": "one_explicit_compilation_target_per_package",
+        "target_kind": "bin",
+        "target_name": null,
+        "target_triple": null,
+        "unknown_conditions": 0
+      },
+      {
+        "available": true,
+        "cfg_flags": [],
+        "cfg_flags_total": 0,
+        "cfg_flags_truncated": false,
+        "cfg_values": {},
+        "cfg_values_truncated": false,
+        "compiler_verified": false,
+        "configuration_id": "400823e6ed61446531196f922e25512dad02c84b7302efd23f635675b8e5132d",
+        "default_features": false,
+        "dependency_feature_forwarding_verified": true,
+        "disabled_conditions": 2,
+        "excluded_source_files": 0,
+        "features": [],
+        "features_total": 0,
+        "features_truncated": false,
+        "manifest_hash": "25ef86568f6f363ee15f7a9ab209ba515469b4c1bc9d7bdf2ca797a23b1bb8df",
+        "manifest_path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml",
+        "manifest_revision": 2,
+        "multi_target_instantiation": false,
+        "project": "fixture",
+        "scope": "one_explicit_compilation_target_per_package",
+        "target_kind": "lib",
+        "target_name": null,
+        "target_triple": null,
+        "unknown_conditions": 0
+      }
+    ],
+    "rust_build_contexts_total": 2,
+    "stale_documents": [],
+    "total": 1,
+    "truncated": false,
+    "unindexed_documents": [],
+    "view": "fresh_subset_of_revision_inputs"
+  },
+  "rejected_compiler_command": [
+    "cargo",
+    "check",
+    "--offline",
+    "--manifest-path",
+    "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/Cargo.toml",
+    "--workspace",
+    "--no-default-features",
+    "--message-format=json"
+  ],
+  "compiler_errors": [
+    "unused_imports",
+    "dead_code",
+    "E0603"
+  ],
+  "rejected_stdout": "{\"reason\":\"compiler-message\",\"package_id\":\"path+file:///private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine#fixture-engine@0.1.0\",\"manifest_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml\",\"target\":{\"kind\":[\"lib\"],\"crate_types\":[\"lib\"],\"name\":\"fixture_engine\",\"src_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/src/lib.rs\",\"edition\":\"2021\",\"doc\":true,\"doctest\":true,\"test\":true},\"message\":{\"rendered\":\"warning: unused import: `crate::recursive::*`\\n  --> engine/src/lib.rs:21:13\\n   |\\n21 |     pub use crate::recursive::*;\\n   |             ^^^^^^^^^^^^^^^^^^^\\n   |\\n   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\\n\\n\",\"$message_type\":\"diagnostic\",\"children\":[{\"children\":[],\"code\":null,\"level\":\"note\",\"message\":\"`#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\",\"rendered\":null,\"spans\":[]},{\"children\":[],\"code\":null,\"level\":\"help\",\"message\":\"remove the whole `use` item\",\"rendered\":null,\"spans\":[{\"byte_end\":479,\"byte_start\":451,\"column_end\":33,\"column_start\":5,\"expansion\":null,\"file_name\":\"engine/src/lib.rs\",\"is_primary\":true,\"label\":null,\"line_end\":21,\"line_start\":21,\"suggested_replacement\":\"\",\"suggestion_applicability\":\"MachineApplicable\",\"text\":[{\"highlight_end\":33,\"highlight_start\":5,\"text\":\"    pub use crate::recursive::*;\"}]}]}],\"level\":\"warning\",\"message\":\"unused import: `crate::recursive::*`\",\"spans\":[{\"byte_end\":478,\"byte_start\":459,\"column_end\":32,\"column_start\":13,\"expansion\":null,\"file_name\":\"engine/src/lib.rs\",\"is_primary\":true,\"label\":null,\"line_end\":21,\"line_start\":21,\"suggested_replacement\":null,\"suggestion_applicability\":null,\"text\":[{\"highlight_end\":32,\"highlight_start\":13,\"text\":\"    pub use crate::recursive::*;\"}]}],\"code\":{\"code\":\"unused_imports\",\"explanation\":null}}}\n{\"reason\":\"compiler-message\",\"package_id\":\"path+file:///private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine#fixture-engine@0.1.0\",\"manifest_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml\",\"target\":{\"kind\":[\"lib\"],\"crate_types\":[\"lib\"],\"name\":\"fixture_engine\",\"src_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/src/lib.rs\",\"edition\":\"2021\",\"doc\":true,\"doctest\":true,\"test\":true},\"message\":{\"rendered\":\"warning: function `fast_work` is never used\\n --> engine/src/internal.rs:1:8\\n  |\\n1 | pub fn fast_work() -> u32 {\\n  |        ^^^^^^^^^\\n  |\\n  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\\n\\n\",\"$message_type\":\"diagnostic\",\"children\":[{\"children\":[],\"code\":null,\"level\":\"note\",\"message\":\"`#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\",\"rendered\":null,\"spans\":[]}],\"level\":\"warning\",\"message\":\"function `fast_work` is never used\",\"spans\":[{\"byte_end\":16,\"byte_start\":7,\"column_end\":17,\"column_start\":8,\"expansion\":null,\"file_name\":\"engine/src/internal.rs\",\"is_primary\":true,\"label\":null,\"line_end\":1,\"line_start\":1,\"suggested_replacement\":null,\"suggestion_applicability\":null,\"text\":[{\"highlight_end\":17,\"highlight_start\":8,\"text\":\"pub fn fast_work() -> u32 {\"}]}],\"code\":{\"code\":\"dead_code\",\"explanation\":null}}}\n{\"reason\":\"compiler-artifact\",\"package_id\":\"path+file:///private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine#fixture-engine@0.1.0\",\"manifest_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/Cargo.toml\",\"target\":{\"kind\":[\"lib\"],\"crate_types\":[\"lib\"],\"name\":\"fixture_engine\",\"src_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine/src/lib.rs\",\"edition\":\"2021\",\"doc\":true,\"doctest\":true,\"test\":true},\"profile\":{\"opt_level\":\"0\",\"debuginfo\":2,\"debug_assertions\":true,\"overflow_checks\":true,\"test\":false},\"features\":[],\"filenames\":[\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/cargo-target/debug/build/fixture-engine/6495d8a61274298f/out/libfixture_engine-6495d8a61274298f.rmeta\"],\"executable\":null,\"fresh\":false}\n{\"reason\":\"compiler-message\",\"package_id\":\"path+file:///private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client#fixture-client@0.1.0\",\"manifest_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml\",\"target\":{\"kind\":[\"bin\"],\"crate_types\":[\"bin\"],\"name\":\"fixture-client\",\"src_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs\",\"edition\":\"2021\",\"doc\":true,\"doctest\":false,\"test\":true},\"message\":{\"rendered\":\"error[E0603]: function `restricted` is private\\n  --> client/src/main.rs:1:24\\n   |\\n 1 | fn main(){engine::api::restricted();}\\n   |                        ^^^^^^^^^^ private function\\n   |\\nnote: the function `restricted` is defined here\\n  --> engine/src/lib.rs:12:20\\n   |\\n12 |     pub(crate) use crate::internal::restricted;\\n   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^\\n\\n\",\"$message_type\":\"diagnostic\",\"children\":[{\"children\":[],\"code\":null,\"level\":\"note\",\"message\":\"the function `restricted` is defined here\",\"rendered\":null,\"spans\":[{\"byte_end\":298,\"byte_start\":271,\"column_end\":47,\"column_start\":20,\"expansion\":null,\"file_name\":\"engine/src/lib.rs\",\"is_primary\":true,\"label\":null,\"line_end\":12,\"line_start\":12,\"suggested_replacement\":null,\"suggestion_applicability\":null,\"text\":[{\"highlight_end\":47,\"highlight_start\":20,\"text\":\"    pub(crate) use crate::internal::restricted;\"}]}]}],\"level\":\"error\",\"message\":\"function `restricted` is private\",\"spans\":[{\"byte_end\":33,\"byte_start\":23,\"column_end\":34,\"column_start\":24,\"expansion\":null,\"file_name\":\"client/src/main.rs\",\"is_primary\":true,\"label\":\"private function\",\"line_end\":1,\"line_start\":1,\"suggested_replacement\":null,\"suggestion_applicability\":null,\"text\":[{\"highlight_end\":34,\"highlight_start\":24,\"text\":\"fn main(){engine::api::restricted();}\"}]}],\"code\":{\"code\":\"E0603\",\"explanation\":\"A private item was used outside its scope.\\n\\nErroneous code example:\\n\\n```compile_fail,E0603\\nmod foo {\\n    const PRIVATE: u32 = 0x_a_bad_1dea_u32; // This const is private, so we\\n                                            // can't use it outside of the\\n                                            // `foo` module.\\n}\\n\\nprintln!(\\\"const value: {}\\\", foo::PRIVATE); // error: constant `PRIVATE`\\n                                                  //        is private\\n```\\n\\nIn order to fix this error, you need to make the item public by using the `pub`\\nkeyword. Example:\\n\\n```\\nmod foo {\\n    pub const PRIVATE: u32 = 0x_a_bad_1dea_u32; // We set it public by using the\\n                                                // `pub` keyword.\\n}\\n\\nprintln!(\\\"const value: {}\\\", foo::PRIVATE); // ok!\\n```\\n\"}}}\n{\"reason\":\"compiler-message\",\"package_id\":\"path+file:///private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client#fixture-client@0.1.0\",\"manifest_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/Cargo.toml\",\"target\":{\"kind\":[\"bin\"],\"crate_types\":[\"bin\"],\"name\":\"fixture-client\",\"src_path\":\"/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client/src/main.rs\",\"edition\":\"2021\",\"doc\":true,\"doctest\":false,\"test\":true},\"message\":{\"rendered\":\"For more information about this error, try `rustc --explain E0603`.\\n\",\"$message_type\":\"diagnostic\",\"children\":[],\"level\":\"failure-note\",\"message\":\"For more information about this error, try `rustc --explain E0603`.\",\"spans\":[],\"code\":null}}\n{\"reason\":\"build-finished\",\"success\":false}\n",
+  "rejected_stderr": "    Checking fixture-engine v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/engine)\n    Checking fixture-client v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-reexports-59aw63fu/sources/client)\nerror: could not compile `fixture-client` (bin \"fixture-client\") due to 1 previous error\n",
+  "production_database_touched": false,
+  "limitations": [
+    "captured Cargo-local static candidates; not full compiler namespace or runtime proof"
+  ]
+}

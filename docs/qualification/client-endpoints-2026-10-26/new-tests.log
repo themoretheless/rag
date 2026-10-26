@@ -1,0 +1,16 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 52s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 7 tests
+test code_index::endpoints::clients::tests::client_endpoints_uncertain_method_does_not_erase_known_url ... ok
+test code_index::endpoints::clients::tests::client_endpoints_uncertain_url_and_unrelated_methods_are_excluded ... ok
+test code_index::endpoints::clients::tests::client_endpoints_selector_size_and_language_boundaries ... ok
+test code_index::endpoints::clients::tests::client_endpoints_inline_scripts_keep_original_offsets_and_no_inert_data ... ok
+test code_index::endpoints::clients::tests::client_endpoints_jquery_literal_and_settings_forms ... ok
+test code_index::endpoints::clients::tests::client_endpoints_axios_configs_aliases_and_data_positions ... ok
+test code_index::history::tests::client_endpoints_history_is_frozen_and_guards_legacy_capture ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1245 filtered out; finished in 0.22s
+

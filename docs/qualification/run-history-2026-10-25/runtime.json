@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "checks": [
+    "empty_history",
+    "publication_and_noop_runs",
+    "validated_metrics",
+    "pinned_pages_across_appends",
+    "limit_change",
+    "new_revision_visible_to_fresh_query",
+    "revision_filter",
+    "read_only_history",
+    "project_filter_rejected",
+    "cursor_view_guard",
+    "no_source_bodies"
+  ],
+  "scope": "corpus_global",
+  "failed_runs_available": false,
+  "versions": {
+    "index_format": 30,
+    "package": "0.1.0",
+    "store_schema": 25
+  }
+}

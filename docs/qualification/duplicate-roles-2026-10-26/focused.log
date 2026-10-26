@@ -1,0 +1,19 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 16s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 10 tests
+test code_index::corpus::tests::approximate_families_have_threshold_evidence_and_explicit_work_cap ... ok
+test code_index::corpus::tests::multi_search_exact_conjunction_regex_scope_utf8_and_no_chunks_needed ... ok
+test code_index::corpus::tests::independent_query_windows_and_families_preserve_scope_and_limits ... ok
+test code_index::corpus::tests::source_encoding_labels_require_matching_decoded_source_fingerprint ... ok
+test code_index::corpus::tests::exact_and_numbered_copies_have_static_liveness_evidence_and_no_delete_claim ... ok
+test code_index::corpus::tests::duplicate_resource_target_identity_and_parsed_target_fingerprints_are_required ... ok
+test code_index::corpus::tests::duplicate_roles_include_imports_and_resources_from_outside_target_prefix ... ok
+test code_index::corpus::tests::duplicate_evidence_counts_and_bounded_retention_are_order_independent ... ok
+test code_index::corpus::tests::duplicate_roles_include_function_values_and_drop_stale_sources ... ok
+test code_index::corpus::tests::search_family_roles_use_bound_values_and_omit_stale_callers_and_targets ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1143 filtered out; finished in 0.50s
+

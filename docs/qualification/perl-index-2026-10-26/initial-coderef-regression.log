@@ -1,0 +1,32 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.38s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/8df0e4ce1470cb9b/out/rag_mcp-8df0e4ce1470cb9b)
+
+running 10 tests
+test code_index::perl::tests::perl_signature_parameters_and_anonymous_sub_bodies_are_inventoried ... ok
+test code_index::perl::tests::perl_parent_package_methods_import_files_and_project_isolation ... ok
+test code_index::perl::tests::perl_forward_declarations_lexical_subs_and_duplicate_definitions ... ok
+test code_index::perl::tests::perl_dynamic_receivers_imports_eval_and_symbol_table_mutation_fail_closed ... ok
+test code_index::perl::tests::perl_package_blocks_restore_lexical_package_and_explicit_calls ... ok
+test code_index::perl::tests::perl_initializer_reads_outer_binding_and_reference_access_keeps_scalar_sigil ... ok
+test code_index::perl::tests::perl_variables_distinguish_scalar_array_hash_and_lexical_shadowing ... ok
+test code_index::perl::tests::perl_function_values_and_modern_class_methods_remain_distinct ... FAILED
+test code_index::perl::tests::perl_nested_receivers_have_distinct_anchors_and_exclude_argument_bodies ... ok
+test code_index::perl::tests::perl_store_body_cache_refresh_and_frozen_legacy_relations ... ok
+
+failures:
+
+---- code_index::perl::tests::perl_function_values_and_modern_class_methods_remain_distinct stdout ----
+
+thread 'code_index::perl::tests::perl_function_values_and_modern_class_methods_remain_distinct' (67998982) panicked at src/code_index/perl.rs:1163:9:
+assertion failed: s.edges.iter().filter(|e|
+            e.reference.name == "<coderef>").all(|e| e.candidates.is_empty())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    code_index::perl::tests::perl_function_values_and_modern_class_methods_remain_distinct
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 1118 filtered out; finished in 0.36s
+
+error: test failed, to rerun pass `--lib`

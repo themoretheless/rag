@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "index_format": 32,
+  "workspace_run_before_final_budget_and_legacy_hardening": {
+    "passed": 1276,
+    "ignored": 1
+  },
+  "current_hardened_receiver_trait_suite": {
+    "passed": 20,
+    "ignored": 0
+  },
+  "clippy_command": "cargo clippy --lib --tests --locked --offline -- -D warnings",
+  "source_sha256": {
+    "src/code_index.rs": "3ba491720a8f2829b3057d77bac5c07ff402922a1ccdd82efa0629a07b6d51e5",
+    "src/code_index/resolve.rs": "e1f5d151f2395642df0be6df75a7207eb6241dfd9a0ea601e76b9831a629010e",
+    "src/code_index/rust_cargo.rs": "7d4ec94e900276c5194110be4ae05536b18b2c5872f5f74365a85a250d881890",
+    "src/code_index/rust_semantics.rs": "a14ff1fda7fedbd00ae919834782d0a953ac008eebc6706dbed1c438ed9d528f",
+    "src/code_index/rust_semantics/traits.rs": "516d73b99ec2b0c889f40bbb415b470e48653a98f90a7eb144d20a5895005c81",
+    "src/code_index/status.rs": "3c9a2b43e5fa03967fcac2e7bd676d2cd50546d6bf3a26eb046f5c00b173707a",
+    "scripts/smoke_rust_traits.py": "8cdbdef5805cf4aa49f0fdeccbff583a65940f0ef0c242a0ca5538fb258b864b"
+  },
+  "scope": "Bounded AST semantics and fixture qualification, not whole-goal completion",
+  "representative_quality_measured": false
+}

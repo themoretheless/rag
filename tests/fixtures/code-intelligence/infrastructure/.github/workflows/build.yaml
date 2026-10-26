@@ -1,0 +1,8 @@
+name: captured-build
+on: push
+jobs:
+  image-build:
+    steps:
+      - run: |
+          docker build -f Dockerfile -t demo/api:v1 --target runtime .
+      - run: ./scripts/check.sh

@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 24;
+pub const SCHEMA_VERSION: i32 = 25;
 
 /// Durable node registry and replication journal. Payloads are intentionally
 /// opaque here: transport persists them before higher layers apply/rebuild.
@@ -416,6 +416,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             analysis_json VARCHAR, PRIMARY KEY(index_revision, document_id)
         );
         CREATE INDEX IF NOT EXISTS idx_code_revision_files_project ON code_index_revision_files(index_revision,project);
+        CREATE TABLE IF NOT EXISTS code_index_runs (
+            seq BIGINT PRIMARY KEY, run_id VARCHAR UNIQUE NOT NULL,
+            index_revision BIGINT NOT NULL, revision_created BOOLEAN NOT NULL,
+            recorded_at TIMESTAMP NOT NULL DEFAULT current_timestamp, metrics_json VARCHAR NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_index_runs_revision ON code_index_runs(index_revision,seq);
+
     "#)?;
     conn.execute_batch(
         r#"

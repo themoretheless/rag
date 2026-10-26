@@ -1,0 +1,16 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.35s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 9 tests
+test code_index::catalog::tests::metadata_mentions_and_nonstring_fields_follow_source_reader_fallback ... ok
+test code_index::catalog::tests::preserved_markup_hashes_match_original_source_not_readable_body ... ok
+test code_index::catalog::tests::run_history_rejects_wrong_filters_revision_and_replaced_anchors ... ok
+test code_index::catalog::tests::run_history_reports_invalid_and_oversized_metrics_without_decoding_bodies ... ok
+test code_index::catalog::tests::project_pages_distinguish_null_names_and_guard_current_observations ... ok
+test code_index::catalog::tests::projects_report_registered_drift_removed_and_unassigned_without_false_live_checks ... ok
+test code_index::catalog::tests::run_history_pins_append_only_pages_across_noops_and_new_revisions ... ok
+test code_index::catalog::tests::frozen_pages_pin_revision_and_read_metadata_without_decoding_payloads ... ok
+test code_index::catalog::tests::run_history_empty_and_persisted_views_are_read_only ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 988 filtered out; finished in 0.26s
+

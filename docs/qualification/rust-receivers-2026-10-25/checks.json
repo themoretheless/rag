@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "workspace_command": "cargo test --workspace --locked --offline",
+  "tests_passed": 1268,
+  "tests_ignored": 1,
+  "clippy_command": "cargo clippy --lib --tests --locked --offline -- -D warnings",
+  "source_sha256": {
+    "src/code_index.rs": "f1709207f0633e7a317ebb5bb221d224c3a6118d92118b441583583d4face742",
+    "src/code_index/resolve.rs": "486a2a8ac25f58970eec57b4511d2afca6ab425a443fb0e83e8c5d6c4447d8c6",
+    "src/code_index/rust_semantics.rs": "0bac16bcf1c022fbf43dca10bd790890f1d13b45dedd08c0a258bb846bfafd59",
+    "src/code_index/status.rs": "cb9c4d4000f71a8c25858da1ccfa20fbd342bac50e23128370c4196665bf1135",
+    "src/mcp/analysis.rs": "5489d53d803802dafad60767dbf77ee3110b4b6e0236927f6bc0be42fdd2c2c9",
+    "scripts/mcp_smoke_client.py": "953417c46cc419f4d652a9d1b2a20e8638d379c2efd78464bdfeaf6beafba3a5",
+    "scripts/smoke_rust_receivers.py": "1c8b2eaf02beba25aceb96daa23a4fcfb8c2e4e6d4e129d920980c5bba6c7dcc"
+  },
+  "scope": "Receiver AST facts and labelled MCP fixture; not whole-plan acceptance",
+  "index_format": 31,
+  "labelled_mcp_calls": 12,
+  "representative_quality_measured": false
+}

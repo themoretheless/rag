@@ -1,0 +1,13 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 26s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 4 tests
+test code_index::non_code_references::tests::table_identity_disambiguation_precedes_access_and_source_filters ... ok
+test code_index::non_code_references::tests::route_literals_keep_registrations_separate_from_client_mentions_and_projects ... ok
+test code_index::non_code_references::tests::sql_target_retains_owners_ownerless_uses_and_independent_counts ... ok
+test code_index::non_code_references::tests::symbol_compatibility_project_scope_and_stale_noncode_exclusion ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1191 filtered out; finished in 0.30s
+

@@ -84,8 +84,15 @@ project metadata alone never makes names resolve globally.
 Not yet resolved: runtime dispatch, wildcard imports, re-export chains, CommonJS,
 external package metadata, tsconfig aliases, Python runtime import paths, Rust
 macro/cfg expansion, arbitrary return-type inference, complex/generic/union types,
-dynamic dispatch and arbitrary alias assignments. Rust modules use conventional
-`src` layout; `#[path]` and separate binary crate roots need manifest support.
+dynamic dispatch and arbitrary alias assignments. Without captured manifests,
+Rust modules retain the conventional `src` layout fallback. Captured `Cargo.toml`
+now adds partial target roots, declared modules, ordinary `#[path]`, custom crate
+names and renamed/inherited path dependencies; see [Rust Cargo graph](RUST_CARGO_GRAPH.md).
+Feature/cfg configuration, full Cargo semantics and compiler-grade resolution remain open.
+Rust member calls now support a qualified AST subset of declared-return chains,
+await, named fields, array/slice/Vec elements, standard Box/Arc/Rc and explicit
+generic return arguments; see [receiver typing](RUST_RECEIVER_TYPES.md). This does
+not close arbitrary inference, traits/generic impls or the broader quality gates.
 Constructor-shaped Python assignments are a syntax heuristic, not a runtime
 guarantee. Class bodies retain lexical ownership rather than a runtime execution
 model. Bound references reuse these conservative binding rules. Import declarations
@@ -396,3 +403,137 @@ new source evidence in history. [C/C++ qualification](qualification/c-family-ind
 contains library checks, actual MCP stale-header/rebinding cases and independent
 Clang syntax-only positive/negative probes. This does not close the full feature
 matrix or establish deployment.
+
+### Ruby syntax transfer
+
+[Ruby code analysis](RUBY_CODE_ANALYSIS.md) adds captured `.rb` declarations, owner-qualified method/constant candidates, conservative constructor locals, require-relative file scopes, single-superclass candidates and frozen/cache/sync integration. This closes part of the remaining language gap; runtime dispatch, framework and full language qualification remain open.
+
+### C# syntax transfer
+
+[The C# index](CSHARP_CODE_ANALYSIS.md) now captures namespaces, type/member declarations, calls and base syntax, with conservative namespace/alias/type/arity candidates. Source sync, stale guards, impact, cache equivalence and frozen base history are integrated. Compiler/build/overload/runtime conformance and the remaining language matrix stay open.
+
+### Perl syntax and variables transfer
+
+[Perl code intelligence](PERL_CODE_ANALYSIS.md) uses the maintained grammar for package/sub/class/method syntax and scalar/array/hash declarations and references. Captured package/lexical calls, single-parent candidates and package-file relations integrate with source sync, stale guards, impact, cache equivalence and immutable history. INC/exports, dynamic/runtime/experimental forms and complete parity remain open.
+
+### PowerShell syntax transfer
+
+[PowerShell code intelligence](POWERSHELL_CODE_ANALYSIS.md) adds functions/classes/methods/properties/enums, captured case-insensitive command scopes, literal source-load relations and static/this/single-base candidates. Source sync, stale guards, impact, cache equivalence and immutable history are integrated. Ambient session/alias/scope/export, full language/runtime behavior and complete parity remain open.
+
+### Duplicate candidate role evidence
+
+[Duplicate role contract 2](DUPLICATE_ROLE_EVIDENCE.md) extends primary-candidate ranking with bound values/types, module imports and HTML/CSS resource candidates. Source and target fingerprint/project guards, non-code published identity, complete evidence counts, deterministic bounded retention and primary visibility under member limits are integrated. Runtime activity, representative ranking/scale and complete parity remain open.
+
+### Search family roles and coherent observations
+
+[Search role evidence](SEARCH_ROLE_EVIDENCE.md) now includes captured imports/resources and non-code identities outside target prefixes. Search and duplicates share a scoped corpus/index read transaction, retain independent evidence counts/caps and validate source fingerprints. A cloned-connection source/cache/history publication case qualifies read-view coherence; global ranking, runtime usage, representative scale and complete parity remain open.
+
+### Literal path mention roles
+
+[Literal path role evidence](LITERAL_PATH_ROLE_EVIDENCE.md) now supplements search/duplicate rankings with exact stored-text mentions such as JS endpoint constants. Same-project published identities, global basename guards, path/URL boundaries, typed-pair suppression and explicit work/retention budgets preserve uncertainty. Runtime path binding, representative quality/scale and complete parity remain open.
+
+### Duplicate member comparison (2026-10-26)
+
+Returned duplicate members now include normalized unique-line Jaccard against
+the selected primary and both directional unique-line deltas. The phase has
+independent pair/byte/line budgets, explicit null metrics for unchecked pairs,
+source identities and body-free output. It runs after returned group/member
+limits and does not change token-trigram grouping. See
+[DUPLICATE_PRIMARY_COMPARISON.md](DUPLICATE_PRIMARY_COMPARISON.md) and
+[qualification](qualification/duplicate-comparison-2026-10-26/README.md).
+Full RAGRAF parity, runtime binding/deletion safety and representative quality
+and scale remain open.
+
+### Independent duplicate family inventory (2026-10-26)
+
+`duplicates(grouping="exact_and_name_families")` now inventories directory- and
+case-sensitive numbered filename families even with dissimilar content, alongside
+independent exact stored-text partitions. Proper exact subgroups remain visible;
+only identical member sets suppress redundant family groups. Returned families
+classify as `family`, `same_name` or explicit `not_checked`, with bounded primary
+comparison coverage and unrounded threshold decisions. The default component
+view remains available. See [contract](DUPLICATE_FAMILY_GROUPING.md) and
+[qualification](qualification/duplicate-families-2026-10-26/README.md).
+Representative corpus quality/scale, broader runtime roles and full parity remain
+unverified; classification does not imply semantic equivalence or deletion safety.
+
+### Captured source-byte duplicate identity (2026-10-26)
+
+`duplicates(grouping="source_byte_copies")` adds project-scoped captured BLAKE3
+source digest/length partitions, separately from decoded/extracted text copies.
+All duplicate modes expose qualified capture evidence or explicit unknowns per
+member. Text decoding and PDF/OOXML extraction now bind to exactly the captured
+input; binary document extractors read a temporary snapshot. Source sync upgrades
+legacy metadata and refreshes byte-only changes with unchanged decoded text.
+[Contract](SOURCE_BYTE_DUPLICATES.md),
+[qualification](qualification/source-byte-copies-2026-10-26/README.md).
+Direct byte comparison, current filesystem equality, arbitrary binary ingestion,
+representative scale and full RAGRAF parity remain unverified.
+
+### Non-code reference targets (2026-10-26)
+
+`references` now accepts explicit SQL table or literal URL targets in addition to
+existing symbols. Project-scoped snapshots, schema/project ambiguity before
+filters, captured read/write owner or ownerless-file evidence, and separately
+qualified route registrations/client mentions cover previously absent target
+kinds. Handler alternatives at one registration are grouped and do not become
+fake source owners or runtime dispatch proof. Counts precede output limits;
+stale facts remain excluded. [Contract](NON_CODE_REFERENCES.md),
+[qualification](qualification/non-code-references-2026-10-26/README.md).
+Translation keys, remaining non-code kinds, broader surfaces and representative
+quality/scale remain open; this does not close the full parity goal.
+
+### Translation-key references (2026-10-26)
+
+Persisted `uses_key` candidates now link raw PHP/PHTML/HTML placeholders with
+literal PHP translator-name calls through `references(key=..., project=...)`.
+Exact decoded keys, quote-aware static PHP escapes, UTF-8 source provenance,
+per-project identity and explicit capture limits improve the reference's raw
+stripping/line-dedup behavior. Frozen relations preserve repeat counts, ignore
+position/literal-spelling churn and refuse fabricated comparisons against
+legacy or incomplete captures. [Contract](TRANSLATION_KEY_REFERENCES.md),
+[qualification](qualification/translation-keys-2026-10-26/README.md).
+Catalogue/locale/framework resolution, dynamic/named PHP forms, broader formats,
+shared-key symbol listing, remaining surfaces, representative quality/scale and
+full parity remain open.
+
+### Shared captured symbol nodes (2026-10-26)
+
+`symbol` now exposes typed translation-key, SQL table and URL identities alongside
+its unchanged default code-definition view. Project-scoped stable IDs, prefix/name
+lookups, literal contains selection, source-window counts and independently bounded
+proofs provide discoverable navigation through `reference_target`. Shared nodes
+have no invented last-writer definition location; schema/use-only tables and
+route handler alternatives remain explicit. [Contract](SHARED_SYMBOL_NODES.md),
+[qualification](qualification/symbol-nodes-2026-10-26/README.md).
+Catalogue/framework binding, unresolved external placeholders, broader domains
+and surfaces, ranking/scale and full parity remain unverified.
+
+### Literal target impact and invalid-source traversal guard (2026-10-26)
+
+`impact_key`/`impact_route` connect captured key/URL syntax to separate bounded
+code and multi-root file graphs, keeping ownerless templates and all seed roots
+before output caps. Route handlers remain alternatives, never fake source owners.
+Shared symbol nodes provide impact selectors. A reproduced JS parse-error bridge
+is now excluded in the common symbol walker; SQL schema-only identities also
+participate in disambiguation before source/access filters.
+[Contract](LITERAL_TARGET_IMPACT.md),
+[qualification](qualification/literal-impact-2026-10-26/README.md).
+Runtime binding/impact, unsupported import/ownership forms, broader surfaces and
+representative quality/scale remain unproven; full parity remains open.
+
+### PHPDoc parameter contracts
+
+PHP/PHTML named callable symbols now retain structured stated parameter contracts, nested/optional shapes, AST parameter binding and explicit unsupported/ambiguous/limited evidence. See [contract and remaining boundaries](PHP_PARAMETER_CONTRACTS.md). Runtime type checking, inherited contracts, dialect precedence and semantic contract diffs remain open; this does not close whole-product parity.
+
+### Client HTTP endpoint syntax
+
+[Qualified contract](CLIENT_ENDPOINT_REFERENCES.md) extends fetch evidence with AST jQuery/Axios URL candidates, explicit method basis and legacy-aware immutable relations. Runtime client identity/defaults, library instances, XHR and relative URL resolution remain open.
+
+### Stored code read windows and ID navigation
+
+[Contract](CODE_READS.md) adds project-scoped file/document/ID reads, inclusive line windows and shared text budgets. Nested/partially overlapping source intervals are returned once, and chunk IDs require exact current source mapping. One read transaction binds selection to source identity. Broader source-mode/style/transformed-chunk and scale acceptance remains open.
+
+### Complete traversal of bounded source reads
+
+[Source cursors](CODE_SOURCE_PAGINATION.md) resume record/character/segment pages against a checked current view. UTF-8 byte windows and delimited IDs extend navigation; canonical partitions preserve unique bytes across pages. This improves large/single-line source reads while leaving historical snapshots, other source modes, styles and representative scale open.

@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1445,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_rust_passed": 45,
+  "python_adapter_metric_tests_passed": 3,
+  "strict_clippy": true,
+  "compiler_feature_configurations": 2,
+  "executed_suggested_tests": 2,
+  "artifact_integrity_checks": true,
+  "native_mcp_parity": true,
+  "identical_corpus_inputs_and_labels": true,
+  "index_format": 54,
+  "binary_sha256": "1f8de5815a3fc3a08c6f54fe318f9da41e781a71a74c64e4b71e9b6d72e259ae",
+  "source_checkout_frozen": false,
+  "production_database_touched": false,
+  "full_plan_complete": false
+}

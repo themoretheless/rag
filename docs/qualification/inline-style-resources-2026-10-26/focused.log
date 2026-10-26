@@ -1,0 +1,14 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.68s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/a6281236c3730100/out/rag_mcp-a6281236c3730100)
+
+running 6 tests
+test code_index::file_resources::inline_style::tests::inline_urls_keep_decoded_values_and_original_multibyte_attribute_anchor ... ok
+test code_index::file_resources::inline_style::tests::declaration_list_recovery_does_not_treat_rules_or_at_rules_as_inline_resources ... ok
+test code_index::file_resources::inline_style::tests::inline_responsive_images_keep_choice_evidence_without_synthetic_offsets ... ok
+test code_index::file_resources::inline_style::tests::duplicate_template_and_base_contexts_do_not_choose_arbitrary_targets ... ok
+test code_index::file_resources::inline_style::tests::byte_depth_and_property_evidence_limits_are_explicit_and_leave_neighbors_usable ... ok
+test code_index::file_resources::inline_style::tests::inline_resource_impact_liveness_refresh_and_frozen_property_diffs ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1080 filtered out; finished in 0.41s
+

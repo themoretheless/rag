@@ -1,0 +1,14 @@
+{
+  "fast": [
+    {"caller":"Holder::run","expression":"self.item.value","target":"Fast::value"},
+    {"caller":"make","expression":"fast","target":"fast"},
+    {"caller":"standard","expression":"values[0].value","target":"Fast::value"},
+    {"caller":"call_live","expression":"live","target":"live"}
+  ],
+  "slow": [
+    {"caller":"Holder::run","expression":"self.item.value","target":"Slow::value"},
+    {"caller":"make","expression":"slow","target":"slow"},
+    {"caller":"standard","expression":"values[0].value","target":"Fast::value"},
+    {"caller":"call_live","expression":"live","target":"live"}
+  ]
+}

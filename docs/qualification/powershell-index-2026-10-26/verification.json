@@ -1,0 +1,97 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_comparison": "inspected_PowerShell_profile_not_runspace_conformance",
+  "grammar": "tree-sitter-pwsh 0.38.1",
+  "workspace_tests": {
+    "passed": 1397,
+    "failed": 0,
+    "ignored": 1
+  },
+  "powershell_native_cases": 13,
+  "literal_using_quote_grammar_failure_reproduced_and_adapted": true,
+  "MCP_input_fixture_unchanged_between_red_and_green": true,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 48,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "powershell_capability",
+      "functions_classes_methods",
+      "case_insensitive_commands",
+      "literal_dot_source_functions",
+      "using_module_type_scope",
+      "instance_and_static_inherited_calls",
+      "project_isolation",
+      "alias_dynamic_guards",
+      "exact_unicode_body",
+      "body_comment_metadata_separation",
+      "transitive_symbol_and_file_impact",
+      "partial_slice",
+      "entrypoint_candidates",
+      "full_resolution_equivalence",
+      "stale_exclusion",
+      "sync_rebind",
+      "frozen_base_and_load_diff"
+    ],
+    "powershell_code_executed": false,
+    "runspace_or_runtime_dispatch_proven": false,
+    "production_database_touched": false
+  },
+  "isolated_binary": {
+    "sha256": "fe33df51e64b3e1640bf6ff4873db1b927b7b88c80ca40ce183f9f5b2b0e073f",
+    "isolated": true
+  },
+  "clippy_warnings_denied": "passed",
+  "owned_format_edition_2021": "passed",
+  "git_diff_check": "passed",
+  "mcp_scenarios": [
+    "powershell",
+    "perl",
+    "csharp",
+    "ruby",
+    "lua",
+    "table-impact",
+    "file-imports"
+  ],
+  "source_hash_observations_after_checks": {
+    "Cargo.toml": "5241a9cfe7ef4d4161ad759ce9d42478da257ef243353c45701cb7d02a8428a6",
+    "Cargo.lock": "bec738712304fba10e5fc85af59ca588df50024c39b85c70fadcc9665266363b",
+    "src/code_index.rs": "0aef964039a506c01895cfd17ff1d761911b3575fff0952b7d49e2216bdc2b57",
+    "src/code_index/powershell.rs": "def3bab1c637a861a3223355453b43ccb1936c2c06e653e61c3a3bd4c5f4e024",
+    "src/code_index/resolve.rs": "c5f7cf0ed1db48b5e2b43323bbbf3832b8c7c2d24460f1894959ef222334e885",
+    "src/code_index/inheritance.rs": "607c48596257bf8122c4011a0bfa41a3f46c42c8f369f126d0dde614168cdea2",
+    "src/code_index/analysis.rs": "9e7ef78fbe207b07cc1aa0c11f6e4c319a4e49cd3664528116f35638faef18e7",
+    "src/code_index/status.rs": "79d611b5ae445e34f9684bc2390134d9e4e11dd910dea77272702329a25969d5",
+    "src/code_index/history.rs": "abc858d7ff89a078b3da9197c028a3a7a7a4dc34c2ce9a62d072146b9bf4ddba",
+    "src/code_index/file_imports.rs": "39c0ba6342fc3638c496ce1cf4126e79b319ce2dac84c5285e98b84958ec9aa8",
+    "src/mcp/analysis.rs": "2136fc59f886195f558fe5a6a6b2c81001dff6a7f613e26497b7568e4aecd07a",
+    "scripts/smoke_powershell_index.py": "d5607a4483d590cb1a20159013a69066a230ff180a0a332884960d3e2ea35fb7",
+    "docs/POWERSHELL_CODE_ANALYSIS.md": "49b26a66f95421b6e3ac71d4bccb0f81da7149fa8e00baab6a6e4de598e1864e",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "e35af2ff09efad31a767b5bf4d74d37b41c4774fcf6e021115de91275719d08a"
+  },
+  "log_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "csharp.log": "3d5db40885356279d365c32d415213d19c3d3dcb1dccee4a6e1a6a2a11f86c39",
+    "clippy.log": "c49fc03cb5fc68254be343e1ccd08c72e282d959f7a0bb34c37e852cc76fcf7c",
+    "workspace.log": "aa92169a1956f851b06ba4cdd5b741df72776a0f6ed50e97620d8d385ceae180",
+    "file-imports.log": "987451ace1baa6ba205c5b352a6d4e04068c10093964e8a08782b46b2700e4c7",
+    "grammar-info.log": "db8ff61e7030296084b52b1ad76806b13675cec10c857dfa59feffd4575d846e",
+    "runtime.log": "9d4d7b5b9759f39d5de6137dc98e27a88944e93e55a32e1b330bc53d5644d41a",
+    "initial-parser-probe.log": "193dc3a9db94de420c0478ec3619f2f5ab28557d1da64dc931e7de705dfd7bc3",
+    "lua.log": "d92adfea65e69bc60e23bc90e6575d2f588873d800d3d59d2368eb3295efe237",
+    "initial-runtime.log": "74609e8bebf413da11fcd6d556669cb088e778b00ef8c5beffc8d6215a13ce12",
+    "ruby.log": "bffa75a6a5d0d2903219ae662bd49e9497c505adf2b12cb784c14b84dac55481",
+    "perl.log": "936455b801e2a612691a12a3f731c65d9c342152ed11b261a86df18cd5cf73b1",
+    "build.log": "3547d08fd7d895edfd264249dfd2d84a046ca48e0a2cb87d751468ff18f9aeca"
+  },
+  "after_check_index_format": 48,
+  "whole_checkout_frozen": false,
+  "representative_quality_or_scale_qualified": false,
+  "runspace_or_runtime_dispatch_proven": false,
+  "full_ragraf_parity_complete": false
+}

@@ -282,6 +282,10 @@ fn add_symbol(
     let id = format!("{}:{}:{}", doc, node.start_byte(), short);
     let body = node.child_by_field_name("body");
     out.symbols.push(Symbol {
+        build_context: None,
+        documentation: None,
+        documentation_examined: false,
+        parameter_contracts: None,
         id: id.clone(),
         document_id: doc.into(),
         path: out.path.clone(),
@@ -664,6 +668,7 @@ pub(super) fn push_new(
         return;
     };
     out.references.push(Reference {
+        build_context: None,
         start_byte: node.start_byte(),
         document_id: doc.into(),
         path: out.path.clone(),

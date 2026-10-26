@@ -1,0 +1,18 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.40s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 10 tests
+test code_index::impact::tests::impact_rejects_cross_project_structural_edges_even_with_colliding_paths ... ok
+test code_index::impact::tests::table_impact_requires_project_and_qualified_identity_when_ambiguous ... ok
+test code_index::impact::tests::table_impact_preserves_quoted_identifiers_and_rejects_mixed_or_invalid_targets ... ok
+test code_index::impact::tests::impact_bound_edges_stay_inside_binding_projects ... ok
+test code_index::impact::tests::impact_file_summaries_do_not_merge_identical_paths_across_projects ... ok
+test code_index::impact::tests::impact_bound_values_propagate_into_callers_without_inventing_calls ... ok
+test code_index::impact::tests::impact_file_summaries_group_document_identity_and_count_only_returned_symbols ... ok
+test code_index::impact::tests::impact_all_includes_override_candidates_and_class_dependencies ... ok
+test code_index::impact::tests::impact_cycles_depth_limits_and_result_caps_are_independent_and_stable ... ok
+test code_index::impact::tests::table_impact_keeps_direct_ownerless_uses_and_traverses_readers_writers ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 979 filtered out; finished in 0.01s
+

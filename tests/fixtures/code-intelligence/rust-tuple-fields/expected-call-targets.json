@@ -1,0 +1,22 @@
+[
+  {
+    "caller": "inspect",
+    "expression": "pair.0.value",
+    "target": "User::value"
+  },
+  {
+    "caller": "inspect",
+    "expression": "pair.1.value",
+    "target": "Other::value"
+  },
+  {
+    "caller": "inspect",
+    "expression": "outer.0.0.value",
+    "target": "User::value"
+  },
+  {
+    "caller": "inspect",
+    "expression": "outer.0.1.value",
+    "target": "Other::value"
+  }
+]

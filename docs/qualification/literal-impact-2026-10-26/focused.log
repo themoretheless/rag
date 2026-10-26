@@ -1,0 +1,13 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 48.23s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 5 tests
+test code_index::literal_impact::tests::mixed_targets_and_misplaced_modes_are_rejected_without_traversal ... ok
+test code_index::literal_impact::tests::sql_impact_identity_includes_schema_only_candidates_before_source_and_access_filters ... ok
+test code_index::literal_impact::tests::key_impact_seeds_all_php_owners_and_ownerless_template_files_before_limits ... ok
+test code_index::literal_impact::tests::route_impact_seeds_source_owners_not_registered_handler_candidates ... ok
+test code_index::literal_impact::tests::literal_identity_disambiguation_precedes_path_kind_and_stale_bridges_are_excluded ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1221 filtered out; finished in 0.84s
+

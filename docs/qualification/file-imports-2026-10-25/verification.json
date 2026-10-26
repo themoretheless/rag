@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "shared_working_tree_snapshot",
+  "new_native_regressions": 4,
+  "index_versions": {
+    "index_format": 34,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "source_sha256_after_checks": {
+    "src/code_index/file_imports.rs": "6aebba98dd1dff863e4069ef376b90fbfb3ab317820084844716e2ed24640a0c",
+    "src/code_index/file_impact.rs": "1341b26bbc4159b1c2bd1baa0c65a47404c9a612eeb35a360575fe41c2854125",
+    "src/code_index/impact.rs": "d76f975bb9ec6b11e75416e02f327ee43bf1eb2c80a0d02efe08db9c7157ca96",
+    "src/code_index/dead_files.rs": "3d42aa7ce44a9365f270f2ca0a9b56a24da93f953c2169bd47dd6b21d642839f",
+    "src/code_index/history.rs": "d28d27aff411450b5ee84e4417db465be017444bace380cbec5039b4b83af7c6",
+    "src/code_index.rs": "0d3abf6483c6630bc6006d46e5786919794396b8d77534dfa6c384307e5d54fc",
+    "src/code_index/resolve.rs": "65c59ccfb3fc5aac5df6ac2949f73b20961e31600b4b87d54af5d9004088dd48",
+    "src/access.rs": "ec8a03c485fb65a75593d4587b5f46ba3210de5b95acf973c96c9babe882332f",
+    "src/telemetry.rs": "8f90fa79f07decbfec7ed3eea757b2cd6120d4bf24973935435fbc63e6445e4b",
+    "scripts/smoke_file_imports.py": "2f288c49172f92dac2460f92b39c4e3be724829fc67c5f5c593895d672787ba5",
+    "docs/FILE_IMPORT_RELATIONS.md": "5aa03c723aaebd723528126c4bd090ecda64a386411e65c61601428272901339"
+  },
+  "binary": {
+    "sha256": "d4f8d00c6d8b0917db6d8e653f09006807a6494dc1a129fa836541d01f6ea3d5",
+    "isolated_copy": true
+  },
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "table-impact-regression.json": "passed",
+    "file-impact-regression.json": "passed",
+    "dead-files-regression.json": "passed"
+  },
+  "clippy": "passed --workspace --all-targets -- -D warnings",
+  "owned_file_format": "passed",
+  "diff_check": "passed",
+  "workspace": {
+    "passed": 1298,
+    "failed": 0,
+    "ignored": 1
+  },
+  "initial_workspace_failure": "trace_path missing access policy and telemetry group; registrations added",
+  "initial_runtime_attempt": "initialize timeout at 60s before any feature assertions; new runner cold initialization deadline 180s",
+  "source_applications_executed": false,
+  "source_sql_executed": false,
+  "production_database_touched": false,
+  "full_ragraf_parity": false,
+  "runtime_import_proven": false,
+  "representative_quality_or_scale_qualified": false,
+  "workspace_test_command": "cargo test --workspace",
+  "logs_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "smoke_dead_files.py.log": "070e095b112c0ec7dd1a7ad05329ee74bc49a286835dbabe0e7a7bcda3a8746d",
+    "smoke_file_impact.py.log": "ce9894850e5469558f42ae1329b1fab45b3840115ddf9f19efdf45c73382779c",
+    "workspace-initial.log": "99be74a1551dc1782a397ca8fad52b88aff35e32b2217714846b6987c2fc6ab0",
+    "smoke_table_impact.py.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "clippy.log": "7fd63282459ab4e921a7f91140c4d70fb1470aa709fa8c4a1db2926e68405973",
+    "diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "workspace.log": "7aeb71cc336e5dcebc8b3176a22b648f69e1914fb6a516bafe0f7e3843302ddf",
+    "smoke_file_imports.py.log": "8cdc3c4b26cd9833114db428d9454677863ed6abd41ea9ed883779e5bcbe493c",
+    "initial-startup-timeout.log": "6fc22439755339a8e20622da1e7d995064abece821b87f1cef8003ccd95b7a21",
+    "focused.log": "5f88c2ef8d68e447e63066c070e9d090ac3d81aa56200d0b40d878cae383e93c",
+    "build.log": "2dc644826d39ff2e52c0f433b1c381bafe6d3bd65fde54aee3ec7823a1e395b8"
+  }
+}

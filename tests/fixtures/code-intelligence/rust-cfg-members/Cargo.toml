@@ -1,0 +1,15 @@
+[package]
+name = "fixture-cfg-members"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[features]
+fast = []
+
+[package.metadata.rag.graph]
+version = 1
+target_kind = "lib"
+features = ["fast"]
+default_features = false

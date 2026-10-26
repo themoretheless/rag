@@ -1,0 +1,12 @@
+{
+  "namespace_selector": ["kubernetes_service:public-api", "kubernetes_workload:api-deployment"],
+  "forbidden_selector_targets": ["kubernetes_workload:wrong-namespace"],
+  "service_to_main_kinds": ["kubernetes_service", "kubernetes_workload", "container", "image", "dockerfile", "docker_stage", "executable", "source_file", "code_symbol"],
+  "required_relations": ["selector_maps_to", "defines_container", "uses_image", "declared_build_recipe", "selects_build_stage", "default_execution_candidate", "references_source_file", "defines_entrypoint_candidate"],
+  "build_job": "ci_job:image-build",
+  "docker_stage": "runtime",
+  "executable": "/app/api",
+  "code_symbol": "main",
+  "supporting_docker_lines": [3, 4, 7],
+  "execution_line": 8
+}

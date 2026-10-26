@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "shared_working_tree_snapshot",
+  "database_schema": 25,
+  "index_format": 33,
+  "workspace": {
+    "passed": 1286,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_file_cases_passed": 4,
+  "focused_routine_cases_passed": 4,
+  "new_native_regressions": 4,
+  "clippy": "passed with -D warnings",
+  "owned_source_format": "passed",
+  "workspace_format": "unqualified concurrent Rust build-context formatting changes",
+  "diff_check": "passed",
+  "whole_shared_workspace_frozen": false,
+  "runtime_binary_isolated": true,
+  "runtime_binary_sha256": "9b7788f92f15bd8e46820244c19fcac4ddb7fcecc72df386d35afb113eb9eb26",
+  "full_ragraf_parity": false,
+  "deletion_safe": false,
+  "runtime_usage_proven": false,
+  "source_applications_executed": false,
+  "production_database_touched": false,
+  "literal_budget_excludes_graph_and_metadata_loading": true,
+  "source_sha256": {
+    "src/code_index/dead_files.rs": "425e295cd6b9e63c8c41ad0be062f950699805b10ac9a5d10d0cde2e3c7412b0",
+    "src/code_index/analysis.rs": "5471786275022d0419e2751efe8e8e5f0a873edbe48cb006395668913276bc4c",
+    "src/mcp/analysis.rs": "67a79b06b01107d1f7bbc35f5ca12aa4f8aec1d03a5f340b086f8ba0841e185c",
+    "scripts/smoke_dead_files.py": "a709cc0e84a96d23e961fce191961e1032810c72cf491843b01290d5f8ec1a42",
+    "docs/DEAD_FILES.md": "4c8cf4a7ab201c3c13cd0afba18f26e06c2334ea1c8457ce7dafb03c9bf0052b"
+  },
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "routines-regression.json": "passed",
+    "file-impact-regression.json": "passed"
+  },
+  "logs_sha256": {
+    "focused": "25d95428e378cbebb3dfe396dba1a167b5eab1a4bbcb7bd698e1b5770a67eb0d",
+    "routines": "91efc56850475696ce17cb8831a92c55921f0342d1267d63dd7c4149b84d0393",
+    "clippy": "3f711dfd96d9b44f8cfb25f870c312cf7ed48b7501875a0bde0b0d5bec9ce5a8",
+    "workspace": "81a85486416c882424c14fc75920e5db573bb35de8b8af5bd3783dfefbd2f535",
+    "build": "001968c71ebe54d5e81f12b568f6a638ae55170f840bca7eec6c76a3ee8cd927"
+  }
+}

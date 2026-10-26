@@ -1,5 +1,6 @@
 //! Safe, format-aware file extraction for the ingest entry points.
 
+mod capture;
 use std::path::Path;
 use std::process::Command;
 
@@ -45,7 +46,13 @@ pub struct ExtractedFile {
 /// Whether the extension is one `extract_file` can read (Markdown, text,
 /// HTML, PDF or a known source-code language).
 pub fn is_supported_source(path: &Path) -> bool {
-    if path.file_name().is_some_and(|n| n == "go.mod") {
+    if path.file_name().is_some_and(|n| {
+        n == "go.mod"
+            || n == "Dockerfile"
+            || n == "Containerfile"
+            || n.to_string_lossy().starts_with("Dockerfile.")
+            || n.to_string_lossy().starts_with("Containerfile.")
+    }) {
         return true;
     }
     path.extension()
@@ -74,12 +81,19 @@ pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
         Some("md" | "markdown") => "markdown",
         _ => "text",
     };
+    let snapshot = if matches!(format, "pdf" | "docx" | "xlsx") {
+        Some(capture::Snapshot::read(path)?)
+    } else {
+        None
+    };
+    let read_path = snapshot.as_ref().map_or(path, |s| s.path());
     let mut original_html: Option<String> = None;
     let mut decoding = Map::new();
     let mut warnings: Vec<String> = Vec::new();
     let text = match format {
         "pdf" => {
-            let (text, warning) = extract_pdf(path)?;
+            let (text, warning) =
+                extract_pdf(read_path).map_err(|e| capture::source_error(e, path))?;
             if let Some(warning) = warning {
                 tracing::warn!(path = %path.display(), "{warning}");
                 warnings.push(warning);
@@ -87,11 +101,14 @@ pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
             text
         }
         "docx" => {
-            let (text, heading_count) = crate::ooxml::extract_docx(path)?;
+            let (text, heading_count) = crate::ooxml::extract_docx(read_path)
+                .map_err(|e| capture::source_error(e, path))?;
             tracing::debug!(path = %path.display(), heading_count, "extracted docx");
             text
         }
-        "xlsx" => crate::ooxml::extract_xlsx(path)?,
+        "xlsx" => {
+            crate::ooxml::extract_xlsx(read_path).map_err(|e| capture::source_error(e, path))?
+        }
         _ => {
             let bytes = std::fs::read(path).map_err(|source| FileIngestError::Read {
                 path: path.display().to_string(),
@@ -109,6 +126,7 @@ pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
                 serde_json::json!(crate::util::content_hash(&text)),
             );
             decoding.insert("source_decoding_version".into(), serde_json::json!(1));
+            decoding.insert("source_bytes_count".into(), serde_json::json!(bytes.len()));
             if format == "html" {
                 let readable = html_to_text(&text);
                 original_html = Some(text);
@@ -119,6 +137,24 @@ pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
         }
     };
 
+    if let Some(snapshot) = &snapshot {
+        decoding.insert("source_bytes_hash".into(), serde_json::json!(snapshot.hash));
+        decoding.insert(
+            "source_bytes_count".into(),
+            serde_json::json!(snapshot.bytes),
+        );
+    }
+    decoding.insert("source_capture_version".into(), serde_json::json!(1));
+    decoding.insert(
+        "source_bytes_hash_algorithm".into(),
+        serde_json::json!("blake3"),
+    );
+    decoding.insert(
+        "source_text_hash".into(),
+        serde_json::json!(crate::util::content_hash(
+            original_html.as_deref().unwrap_or(&text)
+        )),
+    );
     let mut metadata = decoding;
     if let Some(original) = original_html {
         metadata.insert(
@@ -169,6 +205,9 @@ pub fn merge_metadata(
                     | "source_bytes_hash"
                     | "source_text_hash"
                     | "source_decoding_version"
+                    | "source_capture_version"
+                    | "source_bytes_hash_algorithm"
+                    | "source_bytes_count"
             ) {
                 object.insert(key, addition);
             } else {
@@ -210,7 +249,7 @@ fn source_language(ext: &str) -> Option<&'static str> {
         "swift" => "swift",
         "kt" | "kts" => "kotlin",
         "scala" => "scala",
-        "pl" | "pm" => "perl",
+        "pl" | "pm" | "t" => "perl",
         "ps1" | "psm1" | "psd1" => "powershell",
         "phtml" => "php",
         "sh" | "bash" | "zsh" => "shell",
@@ -223,8 +262,9 @@ fn source_language(ext: &str) -> Option<&'static str> {
         "svelte" => "svelte",
         "toml" => "toml",
         "yaml" | "yml" => "yaml",
+        "dockerfile" => "dockerfile",
         "json" => "json",
-        "xml" => "xml",
+        "xml" | "svg" => "xml",
         "css" | "scss" | "sass" | "less" => "css",
         _ => return None,
     })
@@ -334,20 +374,39 @@ pub(crate) fn decode_text(
     Ok((text, encoding, basis))
 }
 
-pub(crate) fn decoding_metadata_current(path: &Path, metadata: Option<&str>) -> bool {
-    if path
+pub(crate) fn decoding_metadata_current(
+    path: &Path,
+    metadata: Option<&str>,
+    stored_text_hash: Option<&str>,
+) -> bool {
+    let binary_document = path
         .extension()
         .and_then(|s| s.to_str())
-        .is_some_and(|s| matches!(s.to_ascii_lowercase().as_str(), "pdf" | "docx" | "xlsx"))
-    {
-        return true;
-    }
+        .is_some_and(|s| matches!(s.to_ascii_lowercase().as_str(), "pdf" | "docx" | "xlsx"));
     metadata
         .and_then(|s| serde_json::from_str::<Value>(s).ok())
         .is_some_and(|v| {
-            v["source_decoding_version"] == 1
+            let html = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| matches!(s.to_ascii_lowercase().as_str(), "html" | "htm"));
+            let expected = if html {
+                v["code_source_hash"].as_str()
+            } else {
+                stored_text_hash
+            };
+            expected.is_some()
+                && v["source_text_hash"].as_str() == expected
+                && v["source_capture_version"] == 1
+                && v["source_bytes_hash_algorithm"] == "blake3"
+                && v["source_bytes_count"].as_u64().is_some()
                 && v["source_text_hash"].is_string()
-                && v["source_bytes_hash"].is_string()
+                && v["source_bytes_hash"].as_str().is_some_and(|h| {
+                    h.len() == 64
+                        && h.bytes()
+                            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+                })
+                && (binary_document || v["source_decoding_version"] == 1)
         })
 }
 

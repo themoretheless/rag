@@ -3,6 +3,8 @@ use super::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RouteSpec {
     pub handler: String,
+    #[serde(default)]
+    pub binding_unverified: bool,
     pub route: String,
     pub method: String,
     pub line: usize,
@@ -11,6 +13,11 @@ pub(super) struct RouteSpec {
 }
 #[derive(Debug, Serialize)]
 pub struct EntryPoint {
+    pub document_id: String,
+    pub start_byte: usize,
+    pub project: Option<String>,
+    pub revision: i64,
+    pub content_hash: String,
     pub symbol_id: Option<String>,
     pub resolution: String,
     pub handler_expression: Option<String>,
@@ -20,6 +27,12 @@ pub struct EntryPoint {
     pub path: String,
     pub line: usize,
     pub provenance: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_method_basis: Option<String>,
 }
 fn route_literal(node: Node, source: &str) -> Option<String> {
     if !matches!(
@@ -55,10 +68,67 @@ fn function_name(node: Node, source: &str) -> Option<String> {
         None
     }
 }
+// Only literal Python decorator method collections are trusted. Dynamic members,
+// splats and invalid/empty collections retain the conservative ANY candidate.
+fn decorator_methods(args: &[Node], source: &str) -> Option<Vec<String>> {
+    let keywords: Vec<_> = args
+        .iter()
+        .filter(|n| {
+            n.kind() == "keyword_argument"
+                && n.child_by_field_name("name")
+                    .is_some_and(|n| text(n, source) == "methods")
+        })
+        .collect();
+    if keywords.len() != 1 {
+        return None;
+    }
+    let value = keywords[0].child_by_field_name("value")?;
+    if !matches!(value.kind(), "list" | "tuple" | "set") {
+        return None;
+    }
+    let mut cursor = value.walk();
+    let mut methods = std::collections::BTreeSet::new();
+    for item in value.named_children(&mut cursor) {
+        if item.kind() == "comment" {
+            continue;
+        }
+        if item.kind() != "string" {
+            return None;
+        }
+        let raw = text(item, source);
+        // No interpolation, escapes, concatenation or prefix-dependent decoding.
+        let quote = raw.as_bytes().first().copied()?;
+        if !matches!(quote, b'\'' | b'"') || raw.as_bytes().last() != Some(&quote) {
+            return None;
+        }
+        let method = raw.get(1..raw.len().checked_sub(1)?)?.to_ascii_uppercase();
+        if !matches!(
+            method.as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "TRACE" | "CONNECT"
+        ) {
+            return None;
+        }
+        methods.insert(method);
+        if methods.len() > 16 {
+            return None;
+        }
+    }
+    (!methods.is_empty()).then(|| methods.into_iter().collect())
+}
 fn collect_route(node: Node, source: &str, handler: Option<&str>, out: &mut IndexedDocument) {
     let Some(function) = node.child_by_field_name("function") else {
         return;
     };
+    // Known client-name syntax is not also an Express-style registration.
+    // This exclusion does not prove that the client identifier is library-bound.
+    if handler.is_none()
+        && function.kind() == "member_expression"
+        && function.child_by_field_name("object").is_some_and(|n| {
+            n.kind() == "identifier" && matches!(text(n, source), "$" | "jQuery" | "axios")
+        })
+    {
+        return;
+    }
     let Some(name) = last_identifier(function).map(|n| text(n, source)) else {
         return;
     };
@@ -79,17 +149,26 @@ fn collect_route(node: Node, source: &str, handler: Option<&str>, out: &mut Inde
         "head" => "HEAD",
         "options" => "OPTIONS",
         "all" | "route" => "ANY",
+        "api_route" if handler.is_some() => "ANY",
         _ => return,
     };
     let line = node.start_position().row + 1;
     if let Some(handler) = handler {
-        out.routes.push(RouteSpec {
-            handler: handler.into(),
-            route: path,
-            method: method.into(),
-            line,
-            start: node.start_byte(),
-        });
+        let methods = if matches!(name, "route" | "api_route") {
+            decorator_methods(&args, source).unwrap_or_else(|| vec!["ANY".into()])
+        } else {
+            vec![method.into()]
+        };
+        for method in methods {
+            out.routes.push(RouteSpec {
+                binding_unverified: false,
+                handler: handler.into(),
+                route: path.clone(),
+                method,
+                line,
+                start: node.start_byte(),
+            });
+        }
         return;
     }
     // Express-style registration with a named handler, or Axum .route(path,get(handler)).
@@ -97,6 +176,7 @@ fn collect_route(node: Node, source: &str, handler: Option<&str>, out: &mut Inde
     for arg in args.iter().skip(1) {
         if let Some(handler) = function_name(*arg, source) {
             out.routes.push(RouteSpec {
+                binding_unverified: false,
                 handler,
                 route: path.clone(),
                 method: method.into(),
@@ -119,6 +199,7 @@ fn collect_route(node: Node, source: &str, handler: Option<&str>, out: &mut Inde
                 };
                 if let Some(handler) = a.named_child(0).and_then(|n| function_name(n, source)) {
                     out.routes.push(RouteSpec {
+                        binding_unverified: false,
                         handler,
                         route: path.clone(),
                         method: verb.into(),
@@ -131,6 +212,7 @@ fn collect_route(node: Node, source: &str, handler: Option<&str>, out: &mut Inde
     }
     if out.routes.len() == before && args.len() > 1 {
         out.routes.push(RouteSpec {
+            binding_unverified: false,
             handler: "?anonymous_or_dynamic_handler".into(),
             route: path,
             method: method.into(),
@@ -140,18 +222,33 @@ fn collect_route(node: Node, source: &str, handler: Option<&str>, out: &mut Inde
     }
 }
 pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument) {
+    if matches!(out.path.rsplit('.').next(), Some("php" | "phtml")) {
+        super::php_routes::collect(node, source, out);
+    }
     if node.kind() == "function_item" {
         let mut previous = node.prev_named_sibling();
         while let Some(attribute) = previous {
+            if matches!(attribute.kind(), "line_comment" | "block_comment") {
+                previous = attribute.prev_named_sibling();
+                continue;
+            }
             if attribute.kind() != "attribute_item" {
                 break;
             }
-            let raw = text(attribute, source);
-            if raw.contains("[test]")
-                || raw.contains("[tokio::test")
-                || raw.contains("[async_std::test")
-            {
+            let name = attribute
+                .named_child(0)
+                .and_then(|n| n.named_child(0))
+                .map(|n| text(n, source).split_whitespace().collect::<String>());
+            if name.as_deref().is_some_and(|n| {
+                matches!(
+                    n.trim_start_matches("::"),
+                    "test" | "tokio::test" | "async_std::test"
+                )
+            }) {
                 out.test_definitions.insert(node.start_byte());
+            }
+            if name.as_deref() == Some("ignore") {
+                out.ignored_test_definitions.insert(node.start_byte());
             }
             previous = attribute.prev_named_sibling();
         }
@@ -178,6 +275,18 @@ pub(super) fn collect(node: Node, source: &str, out: &mut IndexedDocument) {
         }
     }
     if matches!(node.kind(), "call_expression" | "call") {
+        // Python decorators are handled once with the definition's exact span.
+        // Generic registration would turn keyword arguments into fake handlers.
+        let mut parent = node.parent();
+        while let Some(ancestor) = parent {
+            if ancestor.kind() == "decorator" {
+                return;
+            }
+            if matches!(ancestor.kind(), "block" | "module") {
+                break;
+            }
+            parent = ancestor.parent();
+        }
         collect_route(node, source, None, out);
     }
 }
@@ -190,7 +299,15 @@ pub(super) fn entrypoints(
         let exports: HashSet<_> = doc.exports.values().map(String::as_str).collect();
         for symbol in symbols.iter().filter(|s| s.document_id == *id) {
             let owner = symbol.qualified_name.split("::").next().unwrap_or("");
-            let kind = if doc.shell.is_some() {
+            let kind = if doc.powershell.is_some() {
+                super::powershell::entrypoint(doc, symbol)
+            } else if doc.perl.is_some() {
+                super::perl::entrypoint(doc, symbol)
+            } else if doc.csharp.is_some() {
+                super::csharp::entrypoint(doc, symbol)
+            } else if doc.ruby.is_some() {
+                super::ruby::entrypoint(doc, symbol)
+            } else if doc.shell.is_some() {
                 super::shell::entrypoint(doc, symbol)
             } else if doc.c_family.is_some() {
                 super::c_family::entrypoint(doc, symbol)
@@ -215,6 +332,11 @@ pub(super) fn entrypoints(
             };
             if let Some(kind) = kind {
                 entries.push(EntryPoint {
+                    document_id: id.clone(),
+                    project: doc.project.clone(),
+                    revision: doc.revision,
+                    content_hash: doc.hash.clone(),
+                    start_byte: symbol.start_byte,
                     symbol_id: Some(symbol.id.clone()),
                     resolution: "resolved_static".into(),
                     handler_expression: None,
@@ -224,11 +346,37 @@ pub(super) fn entrypoints(
                     path: symbol.path.clone(),
                     line: symbol.start_line,
                     provenance: "derived",
+                    reference_kind: None,
+                    request_method: None,
+                    request_method_basis: None,
                 });
             }
         }
+        for endpoint in &doc.endpoints {
+            entries.push(EntryPoint {
+                document_id: id.clone(),
+                project: doc.project.clone(),
+                revision: doc.revision,
+                content_hash: doc.hash.clone(),
+                start_byte: endpoint.start_byte,
+                symbol_id: None,
+                resolution: "unbound_reference".into(),
+                handler_expression: None,
+                kind: "http_endpoint_reference".into(),
+                route: Some(endpoint.target.clone()),
+                method: None,
+                path: doc.path.clone(),
+                line: endpoint.line,
+                provenance: "syntax",
+                reference_kind: Some(endpoint.reference_kind.clone()),
+                request_method: endpoint.request_method.clone(),
+                request_method_basis: endpoint.request_method_basis.clone(),
+            });
+        }
         for route in &doc.routes {
-            let mut targets: Vec<_> = if let Some(span) = route.handler.strip_prefix('@') {
+            let mut targets: Vec<_> = if route.binding_unverified {
+                vec![]
+            } else if let Some(span) = route.handler.strip_prefix('@') {
                 let start = span.split(':').next().and_then(|s| s.parse::<usize>().ok());
                 symbols
                     .iter()
@@ -258,6 +406,11 @@ pub(super) fn entrypoints(
             });
             if targets.is_empty() {
                 entries.push(EntryPoint {
+                    document_id: id.clone(),
+                    project: doc.project.clone(),
+                    revision: doc.revision,
+                    content_hash: doc.hash.clone(),
+                    start_byte: route.start,
                     symbol_id: None,
                     resolution: "unresolved".into(),
                     handler_expression: Some(route.handler.clone()),
@@ -267,6 +420,9 @@ pub(super) fn entrypoints(
                     path: doc.path.clone(),
                     line: route.line,
                     provenance: "derived",
+                    reference_kind: None,
+                    request_method: None,
+                    request_method_basis: None,
                 });
             }
             let resolution = if targets.len() == 1 {
@@ -276,6 +432,11 @@ pub(super) fn entrypoints(
             };
             for symbol in targets {
                 entries.push(EntryPoint {
+                    document_id: id.clone(),
+                    project: doc.project.clone(),
+                    revision: doc.revision,
+                    content_hash: doc.hash.clone(),
+                    start_byte: route.start,
                     symbol_id: Some(symbol.id.clone()),
                     resolution: resolution.into(),
                     handler_expression: Some(route.handler.clone()),
@@ -285,27 +446,67 @@ pub(super) fn entrypoints(
                     path: doc.path.clone(),
                     line: route.line,
                     provenance: "derived",
+                    reference_kind: None,
+                    request_method: None,
+                    request_method_basis: None,
                 });
             }
         }
     }
     entries.sort_by(|a, b| {
-        (&a.path, a.line, &a.symbol_id, &a.route).cmp(&(&b.path, b.line, &b.symbol_id, &b.route))
+        (
+            &a.path,
+            &a.document_id,
+            a.line,
+            a.start_byte,
+            &a.symbol_id,
+            &a.route,
+            &a.method,
+            &a.reference_kind,
+            &a.request_method,
+        )
+            .cmp(&(
+                &b.path,
+                &b.document_id,
+                b.line,
+                b.start_byte,
+                &b.symbol_id,
+                &b.route,
+                &b.method,
+                &b.reference_kind,
+                &b.request_method,
+            ))
     });
     entries.dedup_by(|a, b| {
-        a.symbol_id == b.symbol_id
+        a.document_id == b.document_id
+            && a.start_byte == b.start_byte
+            && a.symbol_id == b.symbol_id
             && a.kind == b.kind
             && a.route == b.route
             && a.method == b.method
+            && a.reference_kind == b.reference_kind
+            && a.request_method == b.request_method
             && a.path == b.path
             && a.line == b.line
     });
     entries
 }
-fn callable(s: &Symbol) -> bool {
+pub(super) fn callable(s: &Symbol) -> bool {
     matches!(
         s.kind.as_str(),
-        "function_item"
+        "function_statement"
+            | "class_method_definition"
+            | "subroutine_declaration_statement"
+            | "method_declaration_statement"
+            | "anonymous_subroutine_expression"
+            | "anonymous_method_expression"
+            | "phaser_statement"
+            | "local_function_statement"
+            | "destructor_declaration"
+            | "operator_declaration"
+            | "method"
+            | "singleton_method"
+            | "function_item"
             | "function_definition"
             | "function_declaration"
             | "generator_function_declaration"
@@ -321,6 +522,11 @@ impl CodeSnapshot {
         if !matches!(op, "entrypoints" | "routes" | "dead_code" | "slice") {
             return None;
         }
+        if op == "dead_code" && q.dead_code_view.as_deref().is_some_and(|v| v != "routines") {
+            return Some(
+                serde_json::json!({"error":"file dead-code view requires Store::code_dead_files; allowed views are routines and files","items":[]}),
+            );
+        }
         let limit = q.limit.unwrap_or(50).clamp(1, 500);
         let selected: HashSet<_> = self
             .symbols
@@ -333,7 +539,18 @@ impl CodeSnapshot {
             })
             .map(|s| s.id.as_str())
             .collect();
-        let incomplete = !self.stale_documents.is_empty()
+        let incomplete = self.binding_diagnostics.iter().any(|d| {
+            matches!(
+                d["code"].as_str(),
+                Some(
+                    "LUA_TABLE_IMPORT_ENV_AND_RUNTIME_BINDING_UNVERIFIED"
+                        | "RUBY_RUNTIME_MIXINS_VISIBILITY_METAPROGRAMMING_AND_LOAD_ORDER_UNVERIFIED"
+                        | "CSHARP_BUILD_OVERLOAD_RUNTIME_SEMANTICS_UNVERIFIED"
+                        | "PERL_INC_EXPORTS_SYMBOL_TABLE_MRO_AND_RUNTIME_UNVERIFIED"
+                        | "POWERSHELL_SESSION_ALIAS_SCOPE_EXPORT_AND_RUNTIME_UNVERIFIED"
+                )
+            )
+        }) || !self.stale_documents.is_empty()
             || !self.unindexed_documents.is_empty()
             || !self.parse_errors.is_empty()
             || self.calls.iter().any(|c| c.resolution != "resolved_static")
@@ -367,62 +584,27 @@ impl CodeSnapshot {
                     .collect::<Vec<_>>(),
                 entries.len(),
                 entries.len() > limit,
-                serde_json::json!({}),
+                serde_json::json!({
+                    "route_semantics":"static_registrations_and_separate_markup_url_references",
+                    "method_semantics":"explicit_syntax_or_ANY_unknown",
+                    "implicit_head_options_inferred":false,
+                    "framework_identity_verified":false,
+                    "runtime_registration_verified":false,
+                    "endpoint_references_prove_handler":false,
+                    "endpoint_targets":"root_relative_literal_markup_fetch_jquery_axios_urls",
+                    "fetch_identity_verified":false,
+                    "client_library_identity_verified":false,
+                    "client_method_alias_semantics":"name_shaped_candidate_not_runtime_method",
+                    "client_defaults_interceptors_and_ajax_setup_resolved":false,
+                    "fetch_default_method_inferred":false,
+                    "php_handler_binding_verified":false,
+                    "route_path_semantics":"declared_literal_not_effective_mount_path",
+                    "php_group_prefix_resolved":false,
+                    "endpoint_urls_fetched":false
+                }),
             )
         } else if op == "dead_code" {
-            let mut reachable: HashSet<String> = self
-                .entrypoints
-                .iter()
-                .filter_map(|e| e.symbol_id.clone())
-                .collect();
-            for call in self.calls.iter().filter(|c| c.reference.caller.is_none()) {
-                reachable.extend(call.candidates.iter().cloned());
-            }
-            // A callback/type/member value can make its target and the target's
-            // callees live even without a direct call at the reference site.
-            for reference in self
-                .bound_references
-                .iter()
-                .filter(|r| !r.reference.is_call)
-            {
-                reachable.extend(reference.candidates.iter().cloned());
-            }
-            let mut todo: Vec<_> = reachable.iter().cloned().collect();
-            let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
-            for c in &self.calls {
-                if let Some(caller) = &c.reference.caller {
-                    adjacency
-                        .entry(caller)
-                        .or_default()
-                        .extend(c.candidates.iter().map(String::as_str));
-                }
-            }
-            while let Some(id) = todo.pop() {
-                if let Some(targets) = adjacency.get(id.as_str()) {
-                    for target in targets {
-                        if reachable.insert((*target).into()) {
-                            todo.push((*target).into());
-                        }
-                    }
-                }
-            }
-            let value_names: HashSet<_> = self
-                .references
-                .iter()
-                .filter(|r| !r.is_call)
-                .map(|r| r.name.as_str())
-                .collect();
-            let candidates: Vec<_> = self
-                .symbols
-                .iter()
-                .filter(|s| {
-                    selected.contains(s.id.as_str())
-                        && callable(s)
-                        && !reachable.contains(&s.id)
-                        && !value_names.contains(s.name.as_str())
-                })
-                .collect();
-            (candidates.iter().take(limit).map(|s|serde_json::json!({"symbol":s,"reason":"not_reachable_from_known_entrypoints","provenance":"derived","deletion_safe":false})).collect(),candidates.len(),candidates.len()>limit,serde_json::json!({"reachable_symbols":reachable.len(),"candidate_only":true,"external_usage_unknown":true}))
+            dead_code::candidates(self, &selected, limit)
         } else {
             let direction = q.direction.as_deref().unwrap_or("back");
             if !matches!(direction, "back" | "forward" | "both") {
@@ -511,6 +693,8 @@ impl CodeSnapshot {
                 serde_json::json!({"edges":edges,"direction":direction,"structural_only":true,"edge_limit":2000,"edges_total":edges_total,"edges_truncated":edges_total>2000,"depth_limited":depth_limited}),
             )
         };
+        let incomplete = incomplete
+            || (op == "dead_code" && extra["unresolved_name_roots"].as_u64().unwrap_or(0) > 0);
         Some(
             serde_json::json!({"items":items,"total":total,"truncated":truncated,"detail":extra,"analysis_incomplete":incomplete,"static_analysis_only":true,"stale_documents":self.stale_documents,"unindexed_documents":self.unindexed_documents,"parse_errors":self.parse_errors}),
         )
@@ -584,6 +768,114 @@ mod tests {
             .unwrap()
             .iter()
             .all(|r| r["symbol_id"].is_string()));
+    }
+    #[test]
+    fn python_decorator_methods_are_literal_deduplicated_and_span_bound() {
+        let snap = snapshot(&[("/p/routes.py", "@app.route('/multi', methods=['post', 'GET', 'GET'])\ndef handler(): pass\n@app.api_route('/api', methods=('PATCH', 'DELETE'))\ndef handler(): pass\n@app.route('/dynamic', methods=['GET', verb])\ndef dynamic(): pass\n@app.route('/empty', methods=[])\ndef empty(): pass\n@app.route('/escaped', methods=['G\\x45T'])\ndef escaped(): pass\n@app.get('/fixed', response_model=Result)\ndef fixed(): pass\n")]);
+        let routes = snap.query("routes", &CodeQuery::default());
+        let items = routes["items"].as_array().unwrap();
+        assert_eq!(items.len(), 8, "{routes}");
+        let methods = |path: &str| -> Vec<&str> {
+            items
+                .iter()
+                .filter(|r| r["route"] == path)
+                .map(|r| r["method"].as_str().unwrap())
+                .collect()
+        };
+        assert_eq!(methods("/multi"), vec!["GET", "POST"]);
+        assert_eq!(methods("/api"), vec!["DELETE", "PATCH"]);
+        for path in ["/dynamic", "/empty", "/escaped"] {
+            assert_eq!(methods(path), vec!["ANY"]);
+        }
+        assert_eq!(methods("/fixed"), vec!["GET"]);
+        assert!(
+            items.iter().all(|r| r["resolution"] == "resolved_static"),
+            "{routes}"
+        );
+        let first = items.iter().find(|r| r["route"] == "/multi").unwrap();
+        let second = items.iter().find(|r| r["route"] == "/api").unwrap();
+        assert_ne!(first["symbol_id"], second["symbol_id"]);
+    }
+    #[test]
+    fn python_route_methods_do_not_partially_trust_dynamic_collections() {
+        let snap = snapshot(&[("/p/routes.py", "@app.api_route('/set', methods={'post', 'GET'})\ndef a(): pass\n@app.route('/splat', methods=['GET', *extra])\ndef b(): pass\n@app.route('/scalar', methods='POST')\ndef c(): pass\n@app.route('/invalid', methods=['GET', 'BOGUS'])\ndef d(): pass\n@app.route('/fstring', methods=[f'GET'])\ndef e(): pass\n@app.route('/concat', methods=['G' 'ET'])\ndef f(): pass\n@app.route('/default')\ndef g(): pass\n")]);
+        let result = snap.query("routes", &CodeQuery::default());
+        let items = result["items"].as_array().unwrap();
+        assert_eq!(items.len(), 8, "{result}");
+        for path in [
+            "/splat", "/scalar", "/invalid", "/fstring", "/concat", "/default",
+        ] {
+            let rows: Vec<_> = items.iter().filter(|r| r["route"] == path).collect();
+            assert_eq!(rows.len(), 1, "{result}");
+            assert_eq!(rows[0]["method"], "ANY", "{result}");
+        }
+        assert_eq!(result["detail"]["runtime_registration_verified"], false);
+    }
+    #[test]
+    fn markup_endpoints_do_not_bind_handlers_or_create_liveness_roots() {
+        let snap = snapshot(&[
+            (
+                "/p/view.html",
+                "<form action='/save'><input formaction='/other'></form><img src='/save'>",
+            ),
+            ("/p/api.py", "def save(): pass\n"),
+        ]);
+        let result = snap.query("routes", &CodeQuery::default());
+        assert_eq!(result["total"], 3, "{result}");
+        assert!(result["items"].as_array().unwrap().iter().all(|r| r["kind"]
+            == "http_endpoint_reference"
+            && r["symbol_id"].is_null()
+            && r["method"].is_null()
+            && r["resolution"] == "unbound_reference"));
+        let roots = snap.query("entrypoints", &CodeQuery::default());
+        assert_eq!(roots["total"], 0, "{roots}");
+        let dead = snap.query("dead_code", &CodeQuery::default());
+        assert_eq!(dead["total"], 1, "{dead}");
+        let scoped = snap.query(
+            "routes",
+            &CodeQuery {
+                path: Some("/p/api.py".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(scoped["total"], 0);
+    }
+    #[test]
+    fn markup_occurrences_and_same_path_document_identities_are_distinct() {
+        let snap = snapshot(&[
+            ("/p/a.html", "<img src='/same'><img src='/same'>"),
+            ("/p/a.html", "<img src='/same'>"),
+        ]);
+        let result = snap.query("routes", &CodeQuery::default());
+        assert_eq!(result["total"], 3, "{result}");
+        let ids: HashSet<_> = result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["document_id"].as_str().unwrap(),
+                    r["start_byte"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(ids.len(), 3);
+    }
+    #[test]
+    fn php_route_inventory_does_not_guess_handler_bindings() {
+        let snap = snapshot(&[("/p/routes.php", "<?php function show() { return 1; } Route::get('/read', 'show'); Route::match(['GET','POST'], '/multi', [Controller::class, 'save']);")]);
+        let routes = snap.query("routes", &CodeQuery::default());
+        assert_eq!(routes["total"], 3, "{routes}");
+        assert!(routes["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["symbol_id"].is_null() && r["resolution"] == "unresolved"));
+        assert_eq!(routes["detail"]["php_handler_binding_verified"], false);
+        let roots = snap.query("entrypoints", &CodeQuery::default());
+        assert_eq!(roots["total"], 0, "{roots}");
+        let dead = snap.query("dead_code", &CodeQuery::default());
+        assert_eq!(dead["total"], 1, "{dead}");
     }
     #[test]
     fn reachability_dead_candidates_and_callbacks() {

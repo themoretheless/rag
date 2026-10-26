@@ -1,0 +1,16 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 08s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/3db69d2fd16a95be/out/rag_mcp-3db69d2fd16a95be)
+
+running 7 tests
+test code_index::file_resources::responsive::tests::descriptors_are_bounded_but_full_descriptor_hash_and_inline_offsets_are_preserved ... ok
+test code_index::file_resources::responsive::tests::rejected_image_set_options_do_not_leak_generic_urls_or_condition_links ... ok
+test code_index::file_resources::responsive::tests::css_image_sets_keep_string_and_url_images_without_type_hint_false_links ... ok
+test code_index::file_resources::responsive::tests::srcset_tokenizer_preserves_url_commas_and_skips_invalid_descriptor_groups ... ok
+test code_index::file_resources::responsive::tests::html_srcset_sources_and_preloads_capture_choices_and_original_attribute_span ... ok
+test code_index::file_resources::responsive::tests::invalid_or_duplicate_srcset_attributes_and_template_urls_never_bind ... ok
+test code_index::file_resources::responsive::integration_tests::responsive_choices_drive_impact_liveness_and_immutable_descriptor_diffs ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1072 filtered out; finished in 2.56s
+

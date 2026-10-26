@@ -1,0 +1,11 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded tree-sitter-pwsh v0.38.1
+tree-sitter-pwsh #incremental #parsing #tree-sitter #powershell #pwsh
+PowerShell grammar for tree-sitter
+version: 0.38.1
+license: MIT
+rust-version: unknown
+documentation: https://docs.rs/tree-sitter-pwsh/0.38.1
+repository: https://github.com/wharflab/tree-sitter-powershell
+crates.io: https://crates.io/crates/tree-sitter-pwsh/0.38.1

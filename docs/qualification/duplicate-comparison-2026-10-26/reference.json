@@ -1,0 +1,54 @@
+{
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "analysis_sha256": "cd4897ae806e9614c4e5a117a109a1bed8566e6cc3f9ad399c08fc40fe9329fd",
+  "scope": "only_two_pinned_pure_metric_functions_executed_no_ingested_source",
+  "cases": [
+    {
+      "name": "empty",
+      "similarity": 1.0,
+      "only_here": 0,
+      "only_primary": 0
+    },
+    {
+      "name": "one_empty",
+      "similarity": 0.0,
+      "only_here": 1,
+      "only_primary": 0
+    },
+    {
+      "name": "reordered",
+      "similarity": 1.0,
+      "only_here": 0,
+      "only_primary": 0
+    },
+    {
+      "name": "directional",
+      "similarity": 0.333,
+      "only_here": 0,
+      "only_primary": 2
+    },
+    {
+      "name": "third",
+      "similarity": 0.333,
+      "only_here": 1,
+      "only_primary": 1
+    },
+    {
+      "name": "unicode",
+      "similarity": 1.0,
+      "only_here": 0,
+      "only_primary": 0
+    }
+  ],
+  "rounding": [
+    {
+      "value": 0.0625,
+      "rounded": 0.062
+    },
+    {
+      "value": 0.0125,
+      "rounded": 0.013
+    }
+  ],
+  "representative_quality_proven": false
+}

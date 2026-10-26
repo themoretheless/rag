@@ -32,6 +32,7 @@ name = "rag_gate"
 path = "src/bin/rag_gate.rs"
 
 [dependencies]
+tempfile = "3"
 rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
 rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
 anyhow = "1"
@@ -74,6 +75,8 @@ dom_query = "0.27"
 tokenizers = { version = "0.23.2", default-features = false, features = ["onig"], optional = true }
 tree-sitter = "0.27.1"
 tree-sitter-rust = "0.24.2"
+tree-sitter-yaml = "0.7.2"
+toml_edit = { version = "0.25.13", default-features = false, features = ["parse"] }
 tree-sitter-go = "0.25.0"
 tree-sitter-java = "0.23.5"
 tree-sitter-c = "0.24.2"
@@ -84,10 +87,16 @@ tree-sitter-typescript = "0.23.2"
 sqlparser = { version = "0.63.0", features = ["visitor"] }
 regex = "1.13.1"
 tree-sitter-css = "0.25.0"
+cssparser = "0.36.0"
 tree-sitter-html = "0.23.2"
 html-escape = "0.2"
 tree-sitter-php = "0.25.1"
 tree-sitter-bash = "0.25.1"
+tree-sitter-lua = "0.5.0"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-c-sharp = "0.23.5"
+ts-parser-perl = "2.0.0"
+tree-sitter-pwsh = "0.38.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "mysql", "mysql-rsa"] }
 encoding_rs = "=0.8.35"
 
@@ -101,7 +110,6 @@ libc = "0.2"
 default = ["tokenizers"]
 
 [dev-dependencies]
-tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
 
 # Debug info dominates build output: every test and binary target statically

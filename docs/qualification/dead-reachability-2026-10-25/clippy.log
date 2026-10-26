@@ -1,0 +1,4 @@
+    Blocking waiting for file lock on build directory
+    Checking rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Checking rag-mcp-ui v0.1.0 (/Users/themoretheless/Documents/Sources/rag/crates/rag-mcp-ui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.73s

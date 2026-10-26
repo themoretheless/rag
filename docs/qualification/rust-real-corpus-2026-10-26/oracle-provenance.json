@@ -1,0 +1,9 @@
+{
+  "release": "2026-10-19",
+  "asset": "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-19/rust-analyzer-aarch64-apple-darwin.gz",
+  "asset_sha256": "eedad08a96f7bf92afd0890463787337d17591ea2e3df216033c6bc3ccc9d802",
+  "scip_schema": "https://raw.githubusercontent.com/sourcegraph/scip/main/scip.proto",
+  "syntax_source": "same rust-analyzer parse --json per src/**/*.rs",
+  "raw_cache": "/tmp/rag-real-corpus/pinned",
+  "raw_cache_durable": false
+}

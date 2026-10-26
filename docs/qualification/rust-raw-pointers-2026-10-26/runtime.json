@@ -1,0 +1,498 @@
+{
+  "status": "passed",
+  "binary_sha256": "172bde2c302ede19df0247c6b907d1710c9dc6013f1646a6e71cb23a35cbb91d",
+  "index_format": 68,
+  "labels": [
+    {
+      "caller": "inspect",
+      "expression": "c.mark",
+      "target": "*const T::mark"
+    },
+    {
+      "caller": "inspect",
+      "expression": "m.mark",
+      "target": "*mut T::mark"
+    },
+    {
+      "caller": "inspect",
+      "expression": "(m as *const u8).mark",
+      "target": "*const T::mark"
+    },
+    {
+      "caller": "inspect",
+      "expression": "c.again",
+      "target": "*const T::again"
+    },
+    {
+      "caller": "inspect",
+      "expression": "c.again().mark",
+      "target": "*const T::mark"
+    }
+  ],
+  "selected": [
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "c.mark",
+        "target": "*const T::mark"
+      },
+      "edge": {
+        "candidates": [
+          "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+          "column": 8,
+          "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+          "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+          "expression": "c.mark",
+          "is_call": true,
+          "line": 5,
+          "name": "mark",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 299
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+        "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+        "documentation_examined": true,
+        "end_byte": 118,
+        "end_line": 2,
+        "id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark",
+        "kind": "function_item",
+        "name": "mark",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+        "qualified_name": "*const T::mark",
+        "revision": 1,
+        "signature": "fn mark(self) -> u8",
+        "start_byte": 92,
+        "start_line": 2
+      }
+    },
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "m.mark",
+        "target": "*mut T::mark"
+      },
+      "edge": {
+        "candidates": [
+          "c0cfedf8-5348-41f7-8dc7-d10786e5959b:179:mark"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+          "column": 18,
+          "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+          "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+          "expression": "m.mark",
+          "is_call": true,
+          "line": 5,
+          "name": "mark",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 309
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+        "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+        "documentation_examined": true,
+        "end_byte": 205,
+        "end_line": 3,
+        "id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:179:mark",
+        "kind": "function_item",
+        "name": "mark",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+        "qualified_name": "*mut T::mark",
+        "revision": 1,
+        "signature": "fn mark(self) -> u8",
+        "start_byte": 179,
+        "start_line": 3
+      }
+    },
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "(m as *const u8).mark",
+        "target": "*const T::mark"
+      },
+      "edge": {
+        "candidates": [
+          "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+          "column": 43,
+          "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+          "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+          "expression": "(m as *const u8).mark",
+          "is_call": true,
+          "line": 5,
+          "name": "mark",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 319
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+        "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+        "documentation_examined": true,
+        "end_byte": 118,
+        "end_line": 2,
+        "id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark",
+        "kind": "function_item",
+        "name": "mark",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+        "qualified_name": "*const T::mark",
+        "revision": 1,
+        "signature": "fn mark(self) -> u8",
+        "start_byte": 92,
+        "start_line": 2
+      }
+    },
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "c.again",
+        "target": "*const T::again"
+      },
+      "edge": {
+        "candidates": [
+          "c0cfedf8-5348-41f7-8dc7-d10786e5959b:119:again"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+          "column": 53,
+          "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+          "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+          "expression": "c.again",
+          "is_call": true,
+          "line": 5,
+          "name": "again",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 344
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+        "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+        "documentation_examined": true,
+        "end_byte": 150,
+        "end_line": 2,
+        "id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:119:again",
+        "kind": "function_item",
+        "name": "again",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+        "qualified_name": "*const T::again",
+        "revision": 1,
+        "signature": "fn again(self) -> Self",
+        "start_byte": 119,
+        "start_line": 2
+      }
+    },
+    {
+      "expected": {
+        "caller": "inspect",
+        "expression": "c.again().mark",
+        "target": "*const T::mark"
+      },
+      "edge": {
+        "candidates": [
+          "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark"
+        ],
+        "provenance": "derived",
+        "reference": {
+          "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+          "column": 61,
+          "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+          "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+          "expression": "c.again().mark",
+          "is_call": true,
+          "line": 5,
+          "name": "mark",
+          "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+          "revision": 1,
+          "start_byte": 344
+        },
+        "resolution": "resolved_static",
+        "resolution_basis": "rust_ast_receiver_type"
+      },
+      "target": {
+        "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+        "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+        "documentation_examined": true,
+        "end_byte": 118,
+        "end_line": 2,
+        "id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark",
+        "kind": "function_item",
+        "name": "mark",
+        "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+        "qualified_name": "*const T::mark",
+        "revision": 1,
+        "signature": "fn mark(self) -> u8",
+        "start_byte": 92,
+        "start_line": 2
+      }
+    }
+  ],
+  "results": {
+    "inspect": {
+      "binding_diagnostics": [],
+      "index_rev": 1,
+      "items": [
+        {
+          "candidates": [
+            "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+            "column": 8,
+            "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+            "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+            "expression": "c.mark",
+            "is_call": true,
+            "line": 5,
+            "name": "mark",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 299
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "c0cfedf8-5348-41f7-8dc7-d10786e5959b:179:mark"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+            "column": 18,
+            "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+            "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+            "expression": "m.mark",
+            "is_call": true,
+            "line": 5,
+            "name": "mark",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 309
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+            "column": 43,
+            "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+            "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+            "expression": "(m as *const u8).mark",
+            "is_call": true,
+            "line": 5,
+            "name": "mark",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 319
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "c0cfedf8-5348-41f7-8dc7-d10786e5959b:119:again"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+            "column": 53,
+            "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+            "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+            "expression": "c.again",
+            "is_call": true,
+            "line": 5,
+            "name": "again",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 344
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        },
+        {
+          "candidates": [
+            "c0cfedf8-5348-41f7-8dc7-d10786e5959b:92:mark"
+          ],
+          "provenance": "derived",
+          "reference": {
+            "caller": "c0cfedf8-5348-41f7-8dc7-d10786e5959b:240:inspect",
+            "column": 61,
+            "content_hash": "13be871980c60134b1e1170ed0036d95325d280f188ed1734cb3c434b508e6cc",
+            "document_id": "c0cfedf8-5348-41f7-8dc7-d10786e5959b",
+            "expression": "c.again().mark",
+            "is_call": true,
+            "line": 5,
+            "name": "mark",
+            "path": "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/src/lib.rs",
+            "revision": 1,
+            "start_byte": 344
+          },
+          "resolution": "resolved_static",
+          "resolution_basis": "rust_ast_receiver_type"
+        }
+      ],
+      "matched_symbols": 1,
+      "parse_errors": [],
+      "resolution": "conservative_static_bindings",
+      "rust_build_contexts": [],
+      "rust_build_contexts_total": 0,
+      "stale_documents": [],
+      "total": 5,
+      "truncated": false,
+      "unindexed_documents": [],
+      "view": "fresh_subset_of_revision_inputs"
+    }
+  },
+  "initial_index": {
+    "indexed": 2,
+    "unchanged": 0,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": true,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "37d4d140-977c-4ec2-a04f-0adda58bee54",
+      "lock_wait_ms": 0.001042,
+      "source_load_decode_ms": 7.09475,
+      "cache_parse_serialize_ms": 5.802917,
+      "cache_replace_ms": 11.689708999999999,
+      "revision_publish_ms": 39.150125,
+      "transaction_body_ms": 64.13924999999999,
+      "before_metrics_write_ms": 64.140375,
+      "documents_loaded": 2,
+      "cache_hits": 0,
+      "cache_misses": 2,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 2,
+      "documents_resolved": 2,
+      "documents_reused": 0,
+      "reference_sites_resolved": 22,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 1,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 1,
+      "dependency_inputs_hashed": 2,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": false,
+      "resolution_ms": 5.822458,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 72.108875,
+      "commit_ms": 4.4683329999999994,
+      "metrics_write_ms": 3.4998329999999997,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 150421504
+    }
+  },
+  "no_op_index": {
+    "indexed": 0,
+    "unchanged": 2,
+    "unsupported": 0,
+    "parse_errors": [],
+    "index_revision": 1,
+    "revision_created": false,
+    "stage_timings": {
+      "contract_version": 1,
+      "run_id": "3c5ef688-c013-4fb5-b3f0-4e2953d80c68",
+      "lock_wait_ms": 0.000709,
+      "source_load_decode_ms": 3.4979999999999998,
+      "cache_parse_serialize_ms": 0.913625,
+      "cache_replace_ms": 0.001583,
+      "revision_publish_ms": 1.886875,
+      "transaction_body_ms": 6.748334,
+      "before_metrics_write_ms": 6.749125,
+      "documents_loaded": 2,
+      "cache_hits": 2,
+      "cache_misses": 0,
+      "unsupported_documents": 0,
+      "parse_error_documents": 0,
+      "commit_included": false,
+      "metrics_write_included": false,
+      "embedding_fts_included": false
+    },
+    "resolution": {
+      "contract_version": 1,
+      "documents_total": 0,
+      "documents_resolved": 0,
+      "documents_reused": 0,
+      "reference_sites_resolved": 0,
+      "reference_sites_reused": 0,
+      "rust_package_scopes": 0,
+      "project_fallback_scopes": 0,
+      "empty_reference_documents": 0,
+      "dependency_inputs_hashed": 0,
+      "invalid_cache_entries": 0,
+      "forced_full": false,
+      "cache_available": false,
+      "no_resolution_required": true,
+      "resolution_ms": 0.0,
+      "equivalent_to_existing": null
+    },
+    "completion": {
+      "contract_version": 1,
+      "native_total_ms": 30.186874999999997,
+      "commit_ms": 0.920042,
+      "metrics_write_ms": 22.517625,
+      "commit_included": true,
+      "process_lifetime_peak_rss_bytes": 154697728
+    }
+  },
+  "compiler_command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--manifest-path",
+    "/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources/Cargo.toml",
+    "--no-default-features"
+  ],
+  "compiler_exit": 0,
+  "compiler_stdout": "\nrunning 1 test\ntest tests::pointer_owner_identity ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+  "compiler_stderr": "   Compiling rust-raw-pointer-fixture v0.1.0 (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/sources)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.33s\n     Running unittests src/lib.rs (/private/var/folders/jx/ps1h62vx3gdgly_ddwly4mqr0000gn/T/rag-rust-raw-pointers-871n2m5a/cargo-target/debug/build/rust-raw-pointer-fixture/bb1cfac798a3b3bc/out/rust_raw_pointer_fixture-bb1cfac798a3b3bc)\n   Doc-tests rust_raw_pointer_fixture\n",
+  "production_database_touched": false,
+  "limitations": [
+    "captured pointer types and extension traits; no dereference execution or complete compiler inference"
+  ]
+}

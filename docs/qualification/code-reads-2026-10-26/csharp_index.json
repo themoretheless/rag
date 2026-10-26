@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 66,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "csharp_capability",
+    "namespaces_owners_symbols",
+    "constructor_and_typed_receivers",
+    "inherited_calls",
+    "alias_static_calls",
+    "project_isolation",
+    "dynamic_mutation_delegate_guards",
+    "main_candidate",
+    "exact_unicode_byte_body",
+    "metadata_body_separation",
+    "transitive_impact",
+    "partial_slice",
+    "cache_equivalence",
+    "stale_exclusion",
+    "source_sync_rebind",
+    "frozen_inheritance_diff"
+  ],
+  "source_code_executed": false,
+  "compiler_or_runtime_dispatch_proven": false,
+  "production_database_touched": false
+}

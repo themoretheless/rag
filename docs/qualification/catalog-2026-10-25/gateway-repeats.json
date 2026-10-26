@@ -1,0 +1,8 @@
+{
+  "status": "passed",
+  "rounds": 20,
+  "total_test_executions": 260,
+  "binary_sha256": "b5f91a56791bd63ac8ba3559eddcf58f289f426a233f7d20863b547a2dccc122",
+  "filter": "gateway::tests::",
+  "test_threads": 2
+}

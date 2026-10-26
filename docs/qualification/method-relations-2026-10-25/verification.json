@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "database_schema": 25,
+  "index_format": 29,
+  "focused_inheritance_passed": 7,
+  "focused_history_passed": 8,
+  "new_native_regressions": 5,
+  "semantic_override_proven": false,
+  "full_ragraf_parity": false,
+  "representative_quality_qualified": false,
+  "production_database_touched": false,
+  "source_applications_executed": false,
+  "source_sha256": {
+    "src/code_index.rs": "4dc83e7a6caeb666cdd35ccc2c889e71dac0a5965876131cc1be51ff0f387622",
+    "src/code_index/inheritance.rs": "58b96e413e4b791ea736c2b638c3e8327680cd6634cad49d07fbd0cee47a4fe3",
+    "src/code_index/references.rs": "2cd5eb7ef74715b18a8972b83b1b837792a5df31493963d443c66ad612d14589",
+    "src/code_index/history.rs": "fbb6ea732dfaaa6917f61003f900f4d009d6a83556296982f568cb094611c0fd",
+    "src/mcp/analysis.rs": "d74e76c7ff3861ad1a95fb33f07aab9549583e527e05c3ec4a8e0587db1578fc",
+    "scripts/smoke_method_relations.py": "fd7a7ad59a064b16b1a92fbdb43a4859ed2e9faa349ff43024de6aa54b7c4f24",
+    "scripts/smoke_sql_output_usage.py": "24919e67c9f2ebacce779a7afba75908842feaff86892b68b0a210bfd6b0fd51",
+    "docs/METHOD_RELATIONS.md": "d6bfe69f0f035588ca80aaeaa745f743f52b13d704c930981fb75365d33118ca"
+  },
+  "workspace": {
+    "passed": 1228,
+    "failed": 0,
+    "ignored": 1
+  },
+  "clippy": "passed with -D warnings",
+  "format_and_diff_check": "passed",
+  "logs_sha256": {
+    "focused": "a0ddc3dac4983340919bf3958824fa950d44bb46d7a07c747713160ddd264f67",
+    "history": "cce529ceda2f6d49efbb7567db6df3e1ac44fd7215fde9c0ef90f762206df814",
+    "clippy": "8f85b5e7814d148be1167a326da737a7764545eb264ea5d3e06e27998dd87798",
+    "workspace": "99e356f774eef2b91cc22844be9455904405d23cc4a707e532cc9bd9daf2ab01",
+    "build": "d49d12fffab2cb57e4f480f3413764b0bf36a412f334a2782cea9a94f49f43bd"
+  },
+  "binary_sha256": "2618193e85e60e05d25de6f88d08f6af20731bfd4ef0424c43a5948a0b084894",
+  "stdio_mcp": {
+    "runtime.json": "passed",
+    "live-hunks-regression.json": "passed",
+    "sql-output-regression.json": "passed"
+  }
+}

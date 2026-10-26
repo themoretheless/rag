@@ -98,6 +98,9 @@ pub(crate) fn same_attachment(
         "source_encoding",
         "source_encoding_basis",
         "source_decoding_version",
+        "source_capture_version",
+        "source_bytes_hash_algorithm",
+        "source_bytes_count",
     ]
     .iter()
     .all(|key| old.as_ref().and_then(|m| m.get(*key)) == new.get(*key))

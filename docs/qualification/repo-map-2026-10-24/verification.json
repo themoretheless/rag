@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-24",
+  "base_revision": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_sha256": {
+    "src/code_index.rs": "20cb0a8791b6cd5b019b71781e9183605be4f16e3d47b2a88b7de35b526a660b",
+    "src/code_index/repo_map.rs": "12cf9be73c6b7ed30f79719fb1496e62a8a1b86b899ceb0d77299225a17c3ab2",
+    "src/mcp/analysis.rs": "50c28b224d42e3c3323b144b711d3a4e00dc35f7f4abd206c0a55d66f84af5f7",
+    "scripts/smoke_repo_map.py": "09f0ce4d083a57228f19262bc3d7c830f1c36c41c30633c990d05ce8e0a1ab4d",
+    "scripts/compare_repo_map_contracts.py": "e09b3f1272a68ef6693a001c05acee7a11cd331a9e94eab138befc0f594adb25"
+  },
+  "binary_sha256": "662352925edb53cf06c5c32ad69e386cf3b6d51a1b402163421ff527a49d52bd",
+  "tests": {
+    "command": "cargo test --workspace --locked --offline",
+    "passed": 1167,
+    "failed": 0,
+    "ignored": 1
+  },
+  "workspace_clippy_warnings_denied": true,
+  "formatting_passed": true,
+  "mcp_runtime_passed": true,
+  "controlled_reference_contracts_passed": true,
+  "production_database_touched": false,
+  "index_format_changed": false,
+  "full_feature_parity_verified": false,
+  "representative_quality_or_scale_benchmark": false
+}

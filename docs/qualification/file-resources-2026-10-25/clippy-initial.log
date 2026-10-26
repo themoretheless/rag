@@ -1,0 +1,23 @@
+    Blocking waiting for file lock on build directory
+    Checking rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+error: this method chain can be written more clearly with `if .. else ..`
+  --> src/code_index/git_impact/capture.rs:76:17
+   |
+76 | /                 std::env::consts::OS
+77 | |                     .eq("windows")
+78 | |                     .then_some("NUL")
+79 | |                     .unwrap_or("/dev/null"),
+   | |___________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#obfuscated_if_else
+   = note: `-D clippy::obfuscated-if-else` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::obfuscated_if_else)]`
+help: try
+   |
+76 ~                 if std::env::consts::OS
+77 ~                     .eq("windows") { "NUL" } else { "/dev/null" },
+   |
+
+error: could not compile `rag-mcp` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `rag-mcp` (lib test) due to 1 previous error

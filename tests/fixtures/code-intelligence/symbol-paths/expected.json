@@ -1,0 +1,10 @@
+{
+  "from": "start",
+  "to": "finish",
+  "paths": [
+    ["start", "left", "bridge", "finish"],
+    ["start", "right", "bridge", "finish"]
+  ],
+  "value_reference": ["value", "finish"],
+  "stale_bridge_document": "src/worker.rs"
+}

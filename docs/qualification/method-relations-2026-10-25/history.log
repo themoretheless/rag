@@ -1,0 +1,15 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 8 tests
+test code_index::history::tests::missing_historical_schema_does_not_invent_a_replayed_snapshot ... ok
+test code_index::history::tests::late_publication_failure_rolls_back_current_cache_and_revision_together ... ok
+test code_index::history::tests::frozen_constraints_diff_and_legacy_coverage_are_explicit ... ok
+test code_index::history::tests::schema_diff_captures_expression_only_changes_and_marks_legacy_coverage ... ok
+test code_index::history::tests::deleting_every_document_makes_a_new_chronological_empty_revision ... ok
+test code_index::history::tests::frozen_method_relations_diff_and_legacy_missing_coverage_are_explicit ... ok
+test code_index::history::tests::frozen_schema_and_relations_diff_ignore_line_moves_and_project_diagnostics ... ok
+test code_index::history::tests::immutable_history_reuses_noop_and_content_blobs_and_diffs_semantic_links ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 971 filtered out; finished in 0.34s
+

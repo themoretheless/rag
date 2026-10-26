@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "source_state": "base_plus_uncommitted_working_tree",
+  "source_sha256": {
+    "Cargo.toml": "9cbcc882fb301180c1fb22c6a45145ba39337ca24cedf6449d5d727e860a9de4",
+    "Cargo.lock": "5ef711309cb46e7da7126b570cd727bc84398630b75617dc65fc58147c06f3af",
+    "src/code_index.rs": "4dda233426a2d9f397d758e617c317201e2c65b37e46849e294c675d86bbd737",
+    "src/code_index/lua.rs": "ed0b4a8ab54ec75832ac56c5cc0707780ebdc9059aa56723c204c32a815b8f8a",
+    "src/code_index/resolve.rs": "3a7aafd39bed1d4864317bb03f2855c794945245f93c71583072d97305825cf7",
+    "src/code_index/analysis.rs": "6ba78ee6d46d6e667be75e3fbf8c4fd82036863aac729be7a53d93b64b06629a",
+    "src/code_index/status.rs": "f3c24b0a12c1cd8edeb440dc653aeef4580730dd429c83e5aaddf92740826e4d",
+    "scripts/smoke_code_lua.py": "2e6f506e661aee96030223d147030454c8b89aafabf6e8bafc77f8568789b280",
+    "scripts/smoke_index_timings.py": "64160ffa3bef053cf1ab1767289a0f2c2d29b4992ebb9916d563364a1d4183d0"
+  },
+  "binary_sha256": "47b6ad78c488ce0e29d983601c9756a565cabb297a00e8414a3be78a93512be4",
+  "schema_version": 25,
+  "syntax_index_format": 25,
+  "grammar": "tree-sitter-lua 0.5.0",
+  "unrelated_lockfile_versions_changed": false,
+  "verification": {
+    "focused_lua": {
+      "command": "cargo test --lib code_index::lua --locked --offline",
+      "passed": 7,
+      "failed": 0
+    },
+    "workspace": {
+      "command": "cargo test --workspace --locked --offline",
+      "passed": 1206,
+      "failed": 0,
+      "ignored": 1
+    },
+    "clippy": {
+      "command": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+      "passed": true
+    },
+    "formatting": true,
+    "diff_check": true,
+    "binary_build": true,
+    "mcp": "runtime.json",
+    "status_regression": "status-regression.json",
+    "timings_regression": "timings-regression.json",
+    "go_regression": "go-regression.json"
+  },
+  "production_database_touched": false,
+  "lua_code_executed": false,
+  "lua_compiler_verified": false,
+  "runtime_dispatch_verified": false,
+  "representative_benchmark": false,
+  "full_lua_parity": false,
+  "full_ragraf_parity": false
+}

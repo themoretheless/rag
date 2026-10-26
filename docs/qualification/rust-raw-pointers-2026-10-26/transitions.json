@@ -1,0 +1,1165 @@
+{
+  "itoa": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "ryu": {
+    "recovered_sites": 0,
+    "lost_correct_sites": 0,
+    "recovered": [],
+    "lost": []
+  },
+  "memchr": {
+    "recovered_sites": 44,
+    "lost_correct_sites": 0,
+    "recovered": [
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          163,
+          15,
+          163,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          207,
+          15,
+          207,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          244,
+          15,
+          244,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          511,
+          15,
+          511,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          555,
+          15,
+          555,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          797,
+          15,
+          797,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/aarch64/neon/memchr.rs",
+        "range": [
+          843,
+          15,
+          843,
+          23
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/packedpair.rs",
+        "range": [
+          246,
+          19,
+          246,
+          27
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/packedpair.rs",
+        "range": [
+          312,
+          8,
+          312,
+          16
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "cur.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "cur.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          154,
+          22,
+          154,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          168,
+          50,
+          168,
+          58
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          224,
+          41,
+          224,
+          49
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          265,
+          22,
+          265,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          276,
+          34,
+          276,
+          42
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          356,
+          22,
+          356,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          365,
+          50,
+          365,
+          58
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          504,
+          22,
+          504,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          518,
+          50,
+          518,
+          58
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          562,
+          41,
+          562,
+          49
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          603,
+          22,
+          603,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          614,
+          34,
+          614,
+          42
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          776,
+          22,
+          776,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          790,
+          50,
+          790,
+          58
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          844,
+          41,
+          844,
+          49
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          885,
+          22,
+          885,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          896,
+          34,
+          896,
+          42
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          1103,
+          26,
+          1103,
+          34
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/generic/memchr.rs",
+        "range": [
+          1103,
+          63,
+          1103,
+          71
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "self.start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "self.start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/rabinkarp.rs",
+        "range": [
+          156,
+          24,
+          156,
+          32
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "hend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "hend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/rabinkarp.rs",
+        "range": [
+          157,
+          24,
+          157,
+          32
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "nend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "nend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/rabinkarp.rs",
+        "range": [
+          254,
+          24,
+          254,
+          32
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "hend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "hend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/rabinkarp.rs",
+        "range": [
+          255,
+          24,
+          255,
+          32
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "nend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "nend.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          135,
+          22,
+          135,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          153,
+          43,
+          153,
+          51
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          205,
+          22,
+          205,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          215,
+          34,
+          215,
+          42
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          445,
+          22,
+          445,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          463,
+          43,
+          463,
+          51
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          511,
+          22,
+          511,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          521,
+          34,
+          521,
+          42
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          709,
+          22,
+          709,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          727,
+          43,
+          727,
+          51
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "start.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          775,
+          22,
+          775,
+          30
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.distance",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      },
+      {
+        "path": "src/arch/all/memchr.rs",
+        "range": [
+          785,
+          34,
+          785,
+          42
+        ],
+        "syntax_class": "direct_call",
+        "before": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "unresolved"
+          }
+        ],
+        "after": [
+          {
+            "expression": "end.as_usize",
+            "is_call": true,
+            "basis": "rust_ast_receiver_type",
+            "resolution": "resolved_static"
+          }
+        ]
+      }
+    ],
+    "lost": []
+  }
+}

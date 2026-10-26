@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "reference_comparison": {
+    "available": true,
+    "pure_reference_regex_only": true,
+    "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+    "reference_false_hits_on_controlled_comment_and_string_fixture": [
+      "/string",
+      "/comment"
+    ],
+    "local_false_hits": 0
+  },
+  "checks": [
+    "jquery_and_axios_syntax",
+    "method_basis",
+    "conflict_and_dynamic_guards",
+    "inline_utf8_source_offsets",
+    "method_and_kind_filters",
+    "references_basis",
+    "literal_impact_owner_and_callers",
+    "warm_cache",
+    "stale_exclusion",
+    "sync_refresh",
+    "frozen_method_diff",
+    "project_isolation"
+  ],
+  "versions": {
+    "index_format": 64,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "client_library_or_runtime_request_proven": false,
+  "production_database_touched": false,
+  "source_applications_executed": false
+}

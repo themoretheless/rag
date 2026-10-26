@@ -1,0 +1,22 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.06s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/5ded5753db3c8ad7/out/rag_mcp-5ded5753db3c8ad7)
+
+running 13 tests
+test code_index::csharp::tests::csharp_generic_and_unsupported_binding_shapes_cannot_fall_through_to_global_types ... ok
+test code_index::csharp::tests::csharp_property_field_and_local_namespace_shadows_do_not_become_static_calls ... ok
+test code_index::csharp::tests::csharp_nested_local_function_preserves_captured_value_shadow ... ok
+test code_index::csharp::tests::csharp_inherited_fields_and_unknown_bases_prevent_type_receiver_guesses ... ok
+test code_index::csharp::tests::csharp_declarations_cover_reference_profile_and_exact_unicode_spans ... ok
+test code_index::csharp::tests::csharp_global_using_and_explicit_constructor_links_are_captured ... ok
+test code_index::csharp::tests::csharp_type_receivers_inherited_members_and_project_scopes ... ok
+test code_index::csharp::tests::csharp_namespace_usings_aliases_and_arity_preserve_ambiguity ... ok
+test code_index::csharp::tests::csharp_unknown_shadowed_mutated_optional_generic_and_conditional_calls_fail_closed ... ok
+test code_index::csharp::tests::csharp_duplicate_types_and_using_collisions_remain_unresolved_or_ambiguous ... ok
+test code_index::csharp::tests::csharp_namespace_relative_imports_precede_outer_types_and_absolute_aliases ... ok
+test code_index::csharp::tests::csharp_unknown_receivers_do_not_copy_argument_bodies_and_nested_calls_remain ... ok
+test code_index::csharp::tests::csharp_store_freshness_history_body_and_full_resolution_equivalence ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1105 filtered out; finished in 0.43s
+

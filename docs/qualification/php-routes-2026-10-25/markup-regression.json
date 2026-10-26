@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "literal_markup_targets",
+    "entity_decoding",
+    "separate_reference_kind",
+    "no_liveness_root",
+    "source_provenance",
+    "deterministic_replay",
+    "stale_exclusion",
+    "sync_refresh",
+    "immutable_diff",
+    "project_diff_isolation",
+    "status_not_empty",
+    "line_move_is_not_relation_change"
+  ],
+  "initial_references": 4,
+  "refreshed_references": 1
+}

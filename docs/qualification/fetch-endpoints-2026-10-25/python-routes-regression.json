@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "literal_methods",
+    "dynamic_any",
+    "same_name_span_binding",
+    "no_keyword_fake_handlers",
+    "deterministic_replay",
+    "stale_exclusion",
+    "sync_refresh"
+  ],
+  "initial_routes": 4,
+  "refreshed_routes": 2
+}

@@ -1,0 +1,848 @@
+{
+  "status": "measured",
+  "metrics": {
+    "labelled_sites": 95,
+    "local_positive_sites": 95,
+    "external_negative_sites": 0,
+    "true_positive": 93,
+    "false_positive": 0,
+    "false_negative": 2,
+    "precision": 1.0,
+    "recall": 0.9789473684210527,
+    "exact_sites": 93,
+    "exact_site_rate": 0.9789473684210527
+  },
+  "metrics_by_syntax": {
+    "direct_call": {
+      "labelled_sites": 71,
+      "local_positive_sites": 71,
+      "external_negative_sites": 0,
+      "true_positive": 69,
+      "false_positive": 0,
+      "false_negative": 2,
+      "precision": 1.0,
+      "recall": 0.971830985915493,
+      "exact_sites": 69,
+      "exact_site_rate": 0.971830985915493
+    },
+    "import": {
+      "labelled_sites": 24,
+      "local_positive_sites": 24,
+      "external_negative_sites": 0,
+      "true_positive": 24,
+      "false_positive": 0,
+      "false_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "exact_sites": 24,
+      "exact_site_rate": 1.0
+    }
+  },
+  "oracle_sha256": "80264f8f07e92623c191b11950651793f14397f73d84e925e54bacbfbdab9de8",
+  "input_sha256": {
+    "Cargo.toml": "9b8c115f45bbbb44df03eae6aa112969730ff6a921eb31c2d129a25eade61e65",
+    "src/buffer/mod.rs": "e29fea93a1af8e3a25e2045489f4264cf50e708c0b2edfcb51ec95582e63fcd0",
+    "src/common.rs": "cae347e97fc30c50a964f80425e8c3e69ece2b8ab81f9b81b9baa7fcec64a001",
+    "src/d2s.rs": "f2612785ebe510c935b979dc5f66f6b8c818ca8a4cf0364ce1fe1d41fea39592",
+    "src/d2s_full_table.rs": "9b0186acbc6d65dc55c17e16125be707a2bfb920d22b35d33234b4cc38566a36",
+    "src/d2s_intrinsics.rs": "bbf15472f4299942312e80a992cbc2f47f85f17ed193f24084534434dbfb26e7",
+    "src/d2s_small_table.rs": "db3bbe4002d816785b0ee233c330f19fa7002f31dab47dc6f67b266996fe3ae4",
+    "src/digit_table.rs": "02351ca54cb8cb3679f635115dd094f32fd91750e9f66103c1ee9ec3db507072",
+    "src/f2s.rs": "ace23f2d4459055bbb8544c2efc09753fec27ff3ce44648e8015e8aff5696b0c",
+    "src/f2s_intrinsics.rs": "4667c34aab7637f2330df7bbd4c178c0ba1dd5854ff15b9a36a96fd5f527fb66",
+    "src/lib.rs": "ec6dc1b2b40fa14a9af5185991c1bebab3b6dc1f0947a81020a376eade8dae1c",
+    "src/parse.rs": "7f8aa7e007caf5dcb03abdc4238157724bb742d0823a3b8a01646fa1f1129154",
+    "src/pretty/exponent.rs": "87b2a2625bf43bf987f8b84f35ffe554853f9af5b850dac1c8b8810c9a4399ca",
+    "src/pretty/mantissa.rs": "1301cd5d35e7cbcedacad36c296893a94dfa7154ebe4146d6466769ed67934b4",
+    "src/pretty/mod.rs": "49b0701a2f7b896e3ff23221761a48b4445a048d9ae63207d8934ff1969de795",
+    "src/s2d.rs": "5637c35a1dc0979f69ef434d8e1c8a9da40e54820cbd12081c795da5aff04fb4",
+    "src/s2f.rs": "0c46a7dd17b93d5b44c3ed05396289aba9c8e96757364722eb470090ebbcada5",
+    "src/tests.rs": "4c1bfe1e7e6515779528dddcfd53ba3f6333618132e53a9c675b2bca69e9f8b0"
+  },
+  "label_cases_sha256": "1c65f0b125ab6c1dfc20e8bec760307ecc1628847dd23d653b9c47647a1bc9be",
+  "binary_sha256": "9afbb477667f8eee914785421011e05ed0b19e7a380f120090f72aec3d18d48d",
+  "native_capture_sha256": "9345277ab0f425eacd868818dd0f49caa229de3dabd0f95caba66899e368f296",
+  "native_snapshot_sha256": "87605c4b9564807a5476e7e612f146d239d9b5d039128bcb785759563f0631f8",
+  "source": "/private/tmp/rag-real-corpus/pinned/ryu",
+  "index_status": {
+    "calls": 216,
+    "capabilities": {
+      "calls_and_value_references": "conservative_static_candidates",
+      "cpg": {
+        "available": false,
+        "reason": "backend_not_implemented"
+      },
+      "data_flow_slicing": false,
+      "graph_compute": {
+        "backend": "native_cpu",
+        "gpu_available": false,
+        "reason": "no_graph_gpu_backend",
+        "scope": "structural_graph_operations"
+      },
+      "inheritance": "partial_static",
+      "languages": [
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "rust"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "python"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "javascript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "typescript"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "tsx"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "go"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "java"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "lua"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "ruby"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "csharp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "perl"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "powershell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "c"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "cpp"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "php"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "shell"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "css"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "tree-sitter",
+          "language": "html"
+        },
+        {
+          "available": true,
+          "binding_qualification": "partial_static",
+          "compiler_semantics_verified": false,
+          "engine": "sqlparser",
+          "language": "sql"
+        }
+      ],
+      "representative_precision_recall_verified": false,
+      "runtime_dispatch_verified": false,
+      "rust_receiver_typing": {
+        "backend": "captured_ast",
+        "compiler_verified": false,
+        "limitations": [
+          "complete_trait_solver_and_gats",
+          "custom_deref_and_index",
+          "macro_and_cfg_expansion",
+          "full_compiler_type_inference"
+        ],
+        "patterns": [
+          "declared_returns",
+          "method_chains",
+          "async_await",
+          "named_fields",
+          "arrays_slices_vec",
+          "standard_box_arc_rc",
+          "local_factory_initializers",
+          "explicit_function_type_arguments"
+        ],
+        "return_type_context": "declaration_document",
+        "runtime_dispatch_verified": false
+      },
+      "rust_trait_typing": {
+        "backend": "captured_ast",
+        "bound_receiver_targets": "trait_declarations_only",
+        "compiler_verified": false,
+        "limitations": [
+          "full_coherence_and_specialization",
+          "higher_ranked_and_generic_associated_types",
+          "complete_supertrait_and_trait_argument_inference",
+          "macro_cfg_and_target_configuration"
+        ],
+        "patterns": [
+          "cross_file_impl_owner",
+          "generic_impl_substitution",
+          "explicit_ufcs",
+          "generic_and_where_bounds",
+          "dyn_and_impl_trait_declarations",
+          "associated_type_projections",
+          "default_methods",
+          "inherent_precedence",
+          "explicit_ambiguity"
+        ],
+        "runtime_dispatch_verified": false
+      },
+      "slice": "bounded_structural_call_graph",
+      "sql_schema": "captured_migration_ddl_subset"
+    },
+    "capability": "static_syntax_bindings",
+    "cargo_targets": [
+      {
+        "cfg_evaluated": false,
+        "compiler_verified": false,
+        "complete": false,
+        "features_evaluated": false,
+        "kind": "lib",
+        "macro_expansion": false,
+        "manifest_hash": "6f18f89aa610afc27f54bf0d66ebf2b8232de8ac969887b9f67a565a9c0467b2",
+        "manifest_path": "/private/tmp/rag-real-corpus/pinned/ryu/Cargo.toml",
+        "manifest_revision": 1,
+        "member_paths": [
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/buffer/mod.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/common.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/d2s.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/d2s_full_table.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/d2s_intrinsics.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/digit_table.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/f2s.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/f2s_intrinsics.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/lib.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/pretty/exponent.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/pretty/mantissa.rs",
+          "/private/tmp/rag-real-corpus/pinned/ryu/src/pretty/mod.rs"
+        ],
+        "member_paths_truncated": false,
+        "name": "ryu",
+        "observed_member_paths_total": 12,
+        "package": "ryu",
+        "project": "corpus",
+        "required_features_unselected": false,
+        "root_path": "/private/tmp/rag-real-corpus/pinned/ryu/src/lib.rs",
+        "scope": "captured_source_syntax",
+        "target_id": "b1861338ab273b6e0a60f053e5d1e3ce36c00b8a2a5820240981a32534a5a07f"
+      }
+    ],
+    "cargo_targets_total": 1,
+    "cargo_targets_truncated": false,
+    "contract_version": 1,
+    "coverage": {
+      "available": true,
+      "evidence_limit": 50,
+      "evidence_truncated": false,
+      "extensions": {
+        "rs": 17,
+        "toml": 1
+      },
+      "fresh_documents": 18,
+      "indexable_documents": 18,
+      "parse_error_count": 0,
+      "source_documents": 18,
+      "stale_count": 0,
+      "unindexed_count": 0,
+      "unsupported_extension_categories": 0,
+      "unsupported_extensions_truncated": false,
+      "unsupported_is_not_parse_failure": true,
+      "unsupported_source_extensions": {}
+    },
+    "data_flow_slicing": false,
+    "filesystem_verified": false,
+    "index_rev": 1,
+    "observation_consistency": "single_read_transaction",
+    "observation_ms": 209.094709,
+    "parse_errors": [],
+    "policy_decisions": 32,
+    "project": "corpus",
+    "quality": {
+      "binding_diagnostic_code_count": 0,
+      "binding_diagnostic_codes_truncated": false,
+      "binding_diagnostic_counts": {},
+      "chunks": {
+        "byte_budget_exhausted": false,
+        "bytes_inspected": 73568,
+        "dimension_mismatches": 0,
+        "dimensions": {
+          "16": 128
+        },
+        "examples": [],
+        "examples_truncated": false,
+        "invalid_vectors": 0,
+        "large_vectors_unmeasured": 0,
+        "long_text_unmeasured": 0,
+        "max_content_chars": 800,
+        "max_estimated_tokens": 215,
+        "norm_max": 1.000000107702755,
+        "norm_min": 0.9999998949531973,
+        "norm_p50": 0.9999999868159316,
+        "oversized_estimated_tokens": 0,
+        "problem_rows": 0,
+        "sample_truncated": true,
+        "sampled": 128,
+        "tokenized": 128,
+        "total": 291,
+        "unit_norm_vectors": 128,
+        "valid_vectors": 128,
+        "zero_vectors": 0
+      },
+      "docblocks": {
+        "available": true,
+        "compiler_or_rendered_semantics_verified": false,
+        "coverage": 0.13333333333333333,
+        "documented_symbols": 8,
+        "examined_symbols": 60,
+        "full_language_coverage_verified": false,
+        "observed_doc_facts": 8,
+        "scope": "supported_syntax_forms_in_fresh_scoped_symbols",
+        "truncated_segment_lists": 0,
+        "truncated_texts": 0,
+        "uninspected_symbols": 0
+      },
+      "embedding_identity": {
+        "available": true,
+        "configured_dims": 16,
+        "dims": 16,
+        "matches_config": true,
+        "model": "text-embedding-3-small",
+        "provider": "mock",
+        "scope": "corpus_global"
+      },
+      "exhaustive": false,
+      "fresh_code_files_without_definitions": 7,
+      "healthy": null,
+      "manifest_error_code": null,
+      "observed_checks_passed": true,
+      "problems": [],
+      "reference_resolution_counts": {
+        "resolved_static": 118,
+        "unresolved": 1150
+      },
+      "sample_policy": {
+        "byte_budget": 4194304,
+        "limit": 128,
+        "max_chunk_tokens": 4096,
+        "max_text_chars": 16384,
+        "max_vector_bytes": 65536,
+        "order": "chunk_id",
+        "threshold_calibrated": false,
+        "token_counts_estimated": true
+      },
+      "signatures": {
+        "available": true,
+        "empty": 0,
+        "max_chars": 141,
+        "nonempty": 60,
+        "parameter_type_coverage": null,
+        "truncation_verified": false
+      },
+      "snapshot_error_code": null,
+      "unmeasured_checks": [
+        "semantic_precision_recall",
+        "runtime_dispatch",
+        "full_docblock_coverage",
+        "complete_parameter_types",
+        "index_commit_timing",
+        "index_failure_runs",
+        "per_project_index_timings"
+      ]
+    },
+    "resource_targets": {
+      "diagnostics": {
+        "binary_decoding_proven": false,
+        "fresh_targets": 0,
+        "hash_semantics": "decoded_stored_source_text",
+        "items": [],
+        "live_filesystem_checked": false,
+        "targets_total": 0,
+        "total": 0,
+        "truncated": false
+      },
+      "inventory_available": true,
+      "syntax_indexed": false
+    },
+    "retrieval": {
+      "lexical": {
+        "backend": "duckdb_bm25",
+        "chunks_generation": 18,
+        "configured": true,
+        "dirty": true,
+        "generation_gap": 18,
+        "index_generation": 0,
+        "rebuild_count": 1,
+        "scope": "corpus_global"
+      }
+    },
+    "runtime_dispatch_verified": false,
+    "rust_build_contexts": [
+      {
+        "available": true,
+        "cfg_flags": [
+          "check_cfg",
+          "debug_assertions",
+          "overflow_checks",
+          "target_has_atomic",
+          "target_has_atomic_load_store",
+          "target_has_reliable_f128",
+          "target_has_reliable_f16",
+          "target_has_reliable_f16_math",
+          "target_has_reliable_f16b",
+          "target_has_threads",
+          "target_thread_local",
+          "ub_checks",
+          "unix"
+        ],
+        "cfg_flags_total": 13,
+        "cfg_flags_truncated": false,
+        "cfg_values": {
+          "fmt_debug": [
+            "full"
+          ],
+          "panic": [
+            "unwind"
+          ],
+          "relocation_model": [
+            "pic"
+          ],
+          "target_abi": [
+            ""
+          ],
+          "target_arch": [
+            "aarch64"
+          ],
+          "target_endian": [
+            "little"
+          ],
+          "target_env": [
+            ""
+          ],
+          "target_family": [
+            "unix"
+          ],
+          "target_feature": [
+            "aes",
+            "crc",
+            "dit",
+            "dotprod",
+            "dpb",
+            "dpb2",
+            "fcma",
+            "fhm"
+          ],
+          "target_has_atomic": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_load_store": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_has_atomic_primitive_alignment": [
+            "128",
+            "16",
+            "32",
+            "64",
+            "8",
+            "ptr"
+          ],
+          "target_object_format": [
+            "mach-o"
+          ],
+          "target_os": [
+            "macos"
+          ],
+          "target_pointer_width": [
+            "64"
+          ],
+          "target_vendor": [
+            "apple"
+          ]
+        },
+        "cfg_values_truncated": true,
+        "compiler_verified": false,
+        "configuration_id": "57eeb80cef375db5b6b8fe29abf8d05d169a58f9f211b1aeca15520d2f666af7",
+        "default_features": true,
+        "dependency_feature_forwarding_verified": true,
+        "disabled_conditions": 12,
+        "excluded_source_files": 5,
+        "features": [],
+        "features_total": 0,
+        "features_truncated": false,
+        "manifest_hash": "6f18f89aa610afc27f54bf0d66ebf2b8232de8ac969887b9f67a565a9c0467b2",
+        "manifest_path": "/private/tmp/rag-real-corpus/pinned/ryu/Cargo.toml",
+        "manifest_revision": 1,
+        "multi_target_instantiation": false,
+        "project": "corpus",
+        "scope": "one_explicit_compilation_target_per_package",
+        "target_kind": "lib",
+        "target_name": null,
+        "target_triple": "aarch64-apple-darwin",
+        "unknown_conditions": 0
+      }
+    ],
+    "rust_build_contexts_total": 1,
+    "rust_build_contexts_truncated": false,
+    "sql_tables": 0,
+    "sql_usages": 0,
+    "stage_timings": {
+      "available": true,
+      "commit_measured": false,
+      "embedding_fts_measured": false,
+      "index_rev": 1,
+      "latest_successful_run": {
+        "index_rev": 1,
+        "metrics": {
+          "before_metrics_write_ms": 925.986125,
+          "cache_hits": 0,
+          "cache_misses": 18,
+          "cache_parse_serialize_ms": 575.306916,
+          "cache_replace_ms": 42.424709,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 18,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.000125,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 306.27608299999997,
+          "run_id": "ad9c0d93-b330-4b35-92dc-595d4a625472",
+          "source_load_decode_ms": 1.779,
+          "transaction_body_ms": 925.985917,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-26 01:56:10.878105",
+        "revision_created": true,
+        "run_id": "ad9c0d93-b330-4b35-92dc-595d4a625472",
+        "seq": 1
+      },
+      "mcp_queue_wait_measured": false,
+      "metrics_write_measured": false,
+      "publication_run": {
+        "index_rev": 1,
+        "metrics": {
+          "before_metrics_write_ms": 925.986125,
+          "cache_hits": 0,
+          "cache_misses": 18,
+          "cache_parse_serialize_ms": 575.306916,
+          "cache_replace_ms": 42.424709,
+          "commit_included": false,
+          "contract_version": 1,
+          "documents_loaded": 18,
+          "embedding_fts_included": false,
+          "lock_wait_ms": 0.000125,
+          "metrics_write_included": false,
+          "parse_error_documents": 0,
+          "revision_publish_ms": 306.27608299999997,
+          "run_id": "ad9c0d93-b330-4b35-92dc-595d4a625472",
+          "source_load_decode_ms": 1.779,
+          "transaction_body_ms": 925.985917,
+          "unsupported_documents": 0
+        },
+        "recorded_at": "2026-10-26 01:56:10.878105",
+        "revision_created": true,
+        "run_id": "ad9c0d93-b330-4b35-92dc-595d4a625472",
+        "seq": 1
+      },
+      "reason": null,
+      "scope": "corpus_global",
+      "successful_committed_runs_only": true
+    },
+    "stale_documents": [],
+    "state": "observed_checks_passed",
+    "style_facts": 0,
+    "symbols": 60,
+    "unindexed_documents": [],
+    "unresolved_calls": 145,
+    "versions": {
+      "index_format": 67,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "view": "current_captured_sources_and_fresh_subset_of_revision_inputs"
+  },
+  "sync": {
+    "input_recipe": "Cargo.toml plus every src/**/*.rs; default-feature library workload",
+    "inputs": [
+      "Cargo.toml",
+      "src/buffer/mod.rs",
+      "src/common.rs",
+      "src/d2s.rs",
+      "src/d2s_full_table.rs",
+      "src/d2s_intrinsics.rs",
+      "src/d2s_small_table.rs",
+      "src/digit_table.rs",
+      "src/f2s.rs",
+      "src/f2s_intrinsics.rs",
+      "src/lib.rs",
+      "src/parse.rs",
+      "src/pretty/exponent.rs",
+      "src/pretty/mantissa.rs",
+      "src/pretty/mod.rs",
+      "src/s2d.rs",
+      "src/s2f.rs",
+      "src/tests.rs"
+    ],
+    "ingested": 18,
+    "code_index": {
+      "indexed": 18,
+      "unchanged": 0,
+      "unsupported": 0,
+      "parse_errors": [],
+      "index_revision": 1,
+      "revision_created": true,
+      "stage_timings": {
+        "contract_version": 1,
+        "run_id": "ad9c0d93-b330-4b35-92dc-595d4a625472",
+        "lock_wait_ms": 0.000125,
+        "source_load_decode_ms": 1.779,
+        "cache_parse_serialize_ms": 575.306916,
+        "cache_replace_ms": 42.424709,
+        "revision_publish_ms": 306.27608299999997,
+        "transaction_body_ms": 925.985917,
+        "before_metrics_write_ms": 925.986125,
+        "documents_loaded": 18,
+        "cache_hits": 0,
+        "cache_misses": 18,
+        "unsupported_documents": 0,
+        "parse_error_documents": 0,
+        "commit_included": false,
+        "metrics_write_included": false,
+        "embedding_fts_included": false
+      },
+      "resolution": {
+        "contract_version": 1,
+        "documents_total": 18,
+        "documents_resolved": 18,
+        "documents_reused": 0,
+        "reference_sites_resolved": 1268,
+        "reference_sites_reused": 0,
+        "rust_package_scopes": 12,
+        "project_fallback_scopes": 0,
+        "empty_reference_documents": 6,
+        "dependency_inputs_hashed": 216,
+        "invalid_cache_entries": 0,
+        "forced_full": false,
+        "cache_available": false,
+        "no_resolution_required": false,
+        "resolution_ms": 173.474959,
+        "equivalent_to_existing": null
+      },
+      "completion": {
+        "contract_version": 1,
+        "native_total_ms": 931.875792,
+        "commit_ms": 3.8558339999999998,
+        "metrics_write_ms": 2.0336659999999998,
+        "commit_included": true,
+        "process_lifetime_peak_rss_bytes": 198557696
+      }
+    }
+  },
+  "sync_mcp_round_trip_ms": 1865.0490420404822,
+  "mcp_requests": [
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/buffer/mod.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 17,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/common.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 18,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/d2s.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 5,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/d2s_intrinsics.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 29,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/f2s.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 4,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/f2s_intrinsics.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 19,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/lib.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 5,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/pretty/exponent.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 6,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/pretty/mantissa.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 11,
+      "truncated": false
+    },
+    {
+      "arguments": {
+        "project": "corpus",
+        "path": "/private/tmp/rag-real-corpus/pinned/ryu/src/pretty/mod.rs",
+        "reference_mode": "bound",
+        "limit": 500
+      },
+      "total": 4,
+      "truncated": false
+    }
+  ],
+  "labelled_native_mcp_parity": true,
+  "parity_sites": 95,
+  "native_counts": {
+    "symbols": 60,
+    "references": 1268,
+    "bound_references": 1268
+  },
+  "oracle_exclusions": {
+    "oracle_symbol_kind_unavailable": 2918,
+    "non_callable_symbol_kind": 1558,
+    "outside_library_source": 21,
+    "source_outside_library_compilation_unit": 6
+  },
+  "production_database_touched": false,
+  "limitations": [
+    "SCIP correspondence is not compiler/runtime proof",
+    "src callable reference subset, not whole-program recall",
+    "ambiguous/generated oracle anchors excluded with counts",
+    "uncontrolled debug sync timing is diagnostic only"
+  ]
+}

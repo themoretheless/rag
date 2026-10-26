@@ -1,0 +1,35 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.40s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 4 tests
+test code_index::symbol_nodes::tests::route_handler_alternatives_are_one_occurrence_and_reference_targets_roundtrip ... ok
+test code_index::symbol_nodes::tests::shared_keys_have_stable_scoped_identity_no_fake_definition_and_bounded_proofs ... FAILED
+test code_index::symbol_nodes::tests::tables_keep_schema_only_and_usage_only_identities_with_exact_scoped_filters ... FAILED
+test code_index::symbol_nodes::tests::code_defaults_alias_contains_all_and_stale_source_coverage_preserve_legacy ... ok
+
+failures:
+
+---- code_index::symbol_nodes::tests::shared_keys_have_stable_scoped_identity_no_fake_definition_and_bounded_proofs stdout ----
+
+thread 'code_index::symbol_nodes::tests::shared_keys_have_stable_scoped_identity_no_fake_definition_and_bounded_proofs' (69568298) panicked at src/code_index/symbol_nodes.rs:318:9:
+assertion `left == right` failed
+  left: Null
+ right: String("captured:26c83b5df179a636abcc1a5746f6e855f6eccf8b9ec77ec5fc61674eaddda567")
+
+---- code_index::symbol_nodes::tests::tables_keep_schema_only_and_usage_only_identities_with_exact_scoped_filters stdout ----
+
+thread 'code_index::symbol_nodes::tests::tables_keep_schema_only_and_usage_only_identities_with_exact_scoped_filters' (69568299) panicked at src/code_index/symbol_nodes.rs:373:9:
+assertion `left == right` failed
+  left: Null
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    code_index::symbol_nodes::tests::shared_keys_have_stable_scoped_identity_no_fake_definition_and_bounded_proofs
+    code_index::symbol_nodes::tests::tables_keep_schema_only_and_usage_only_identities_with_exact_scoped_filters
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 1212 filtered out; finished in 0.29s
+
+error: test failed, to rerun pass `--lib`

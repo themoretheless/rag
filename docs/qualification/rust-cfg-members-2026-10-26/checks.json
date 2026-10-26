@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "workspace": {
+    "passed": 1510,
+    "failed": 0,
+    "ignored": 1
+  },
+  "focused_rust_passed": 65,
+  "strict_clippy": true,
+  "actual_mcp_labelled_targets": 8,
+  "executed_compiler_tests": 2,
+  "native_mcp_parity": true,
+  "identical_corpus_inputs_and_labels": true,
+  "artifact_integrity_checks": true,
+  "index_format": 66,
+  "binary_sha256": "120940eeb0290e804d6c223032c3ea0ac1f56bf0a732654efabe7ec915353e32",
+  "native_helper_sha256": "5af9b8691606696d6b370fd99e99bc13ae50297c5952e964129c74f6e853bcea",
+  "source_checkout_frozen": false,
+  "production_binary_replaced": false,
+  "production_database_used_for_qualification": false,
+  "full_plan_complete": false
+}

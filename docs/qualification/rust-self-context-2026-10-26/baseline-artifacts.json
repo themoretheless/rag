@@ -1,0 +1,11 @@
+{
+  "docs/qualification/rust-reexports-2026-10-26/controlled-itoa-after/report.json": "6392a5105a79e74b7b22d94dc4c0c0c3a8aff0c227997451f5dc39c94fe4513d",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-itoa-after/scored-cases.json": "86a50c7b09229a8439c2458f2fb508b3c6a6d128aaacafab4fbbf4bfaae0b1c9",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-itoa-after/oracle-labels.json": "871ec016fc3cf201ee9bfda017653a5de0a146fc85a2ff3fc0b53be9d3925ea1",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-ryu-after/report.json": "33227caa15222664a02b603e601a073412b3376e4e9a77bb119781a698604d2d",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-ryu-after/scored-cases.json": "8d934652dcc1cfe5bba4e3654de80ead291629805b1dcd750074437ef5c0969a",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-ryu-after/oracle-labels.json": "adfa741d87aedfdd2ceada3297cb1605054b26aa842c242de2d16a26e1902494",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-memchr-after/report.json": "2ee1a581768b78f3b2a27addf6c18a58bd6f02cac56ae37d2d4aef43f869fc2e",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-memchr-after/scored-cases.json": "e966c8c14d2952b69679556d8ba1183703756992eb487f2c250e54755dd0f594",
+  "docs/qualification/rust-reexports-2026-10-26/controlled-memchr-after/oracle-labels.json": "28405c58fb9976cccae8db48c47e737b5a67c0aa36629eb4b916bbfd4096d885"
+}

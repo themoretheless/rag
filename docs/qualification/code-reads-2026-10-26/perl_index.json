@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "versions": {
+    "index_format": 66,
+    "package": "0.1.0",
+    "store_schema": 25
+  },
+  "checks": [
+    "perl_capability",
+    "packages_subroutines_variables",
+    "qualified_and_parent_method_calls",
+    "project_isolation",
+    "normalized_hash_variable_reference",
+    "dynamic_import_object_guards",
+    "exact_unicode_body",
+    "metadata_body_separation",
+    "inheritance_candidates",
+    "package_identity_file_impact",
+    "static_sql_owner_table_impact",
+    "partial_slice",
+    "full_resolution_equivalence",
+    "stale_exclusion",
+    "source_sync",
+    "frozen_parent_diff"
+  ],
+  "perl_code_executed": false,
+  "INC_or_runtime_dispatch_proven": false,
+  "production_database_touched": false
+}

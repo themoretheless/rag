@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "transport": "stdio MCP JSON-RPC",
+  "production_database_touched": false,
+  "checks": [
+    "public_versioned_schema",
+    "legacy_no_arguments",
+    "unindexed_and_empty_not_healthy",
+    "sampled_vectors_and_tokens",
+    "explicit_cpg_degradation",
+    "graph_backend_declared",
+    "bounded_sample",
+    "source_body_not_returned",
+    "no_revision_or_fts_rebuild",
+    "project_isolation",
+    "global_stale_state",
+    "single_read_transaction",
+    "unmeasured_health_is_null"
+  ],
+  "contract_version": 1,
+  "extractor_entries": 14,
+  "sampled_chunks": 2
+}

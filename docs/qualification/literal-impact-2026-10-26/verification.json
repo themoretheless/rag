@@ -1,0 +1,249 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_contract_inspected": "op_impact generic incoming BFS and shared key/routes graph facts; no full reference application execution",
+  "reference_facade_sha256": "95322f11fd8d4f74fce8078eb171fbe4fdc1c054d753e002ff9de537a5d52f83",
+  "workspace_tests": {
+    "passed": 1478,
+    "failed": 0,
+    "ignored": 1
+  },
+  "new_native_cases": 8,
+  "query_contract_version": 1,
+  "reproduced_regression": "JS parse-error module bridged a valid URL source to another valid caller; common code impact walker now excludes invalid source nodes",
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 60,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "literal_key_direct_owners_and_ownerless_templates",
+      "indirect_code_and_resource_file_graphs",
+      "all_roots_before_direct_output_limits",
+      "independent_depth_result_and_relation_modes",
+      "route_registration_vs_client_occurrences",
+      "handler_alternatives_not_owners_or_seeds",
+      "project_disambiguation_before_path_and_kind_filters",
+      "schema_only_SQL_identity_before_path_access_filters",
+      "parse_error_bridge_exclusion",
+      "symbol_impact_target_roundtrips",
+      "long_captured_URL_selector_alignment",
+      "source_identity_revision_hash_evidence",
+      "determinism",
+      "invalid_mixed_target_rejection",
+      "stale_resource_bridge_exclusion",
+      "stale_direct_owner_exclusion",
+      "sync_replaces_literal_roots"
+    ],
+    "source_code_or_SQL_executed": false,
+    "production_database_touched": false,
+    "runtime_key_or_router_impact_proven": false,
+    "representative_quality_scale_or_full_parity_proven": false
+  },
+  "regressions": {
+    "table-impact": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_sql_executed": false,
+      "checks": [
+        "direct_readers_writers",
+        "ownerless_sql_preserved",
+        "indirect_code_chain",
+        "read_write_filters",
+        "independent_direct_budget",
+        "untruncated_owner_roots",
+        "project_disambiguation",
+        "schema_disambiguation",
+        "qualified_target",
+        "identifier_validation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh"
+      ],
+      "runtime_impact_proven": false
+    },
+    "impact-files": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_applications_executed": false,
+      "checks": [
+        "multi_file_summary",
+        "bounded_summary_counts",
+        "document_provenance",
+        "legacy_call_default",
+        "value_to_caller_chain",
+        "relation_witnesses",
+        "no_call_fabrication",
+        "override_candidate_traversal",
+        "depth_limit",
+        "item_limit",
+        "invalid_mode",
+        "project_isolation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh",
+        "no_source_bodies"
+      ],
+      "runtime_impact_proven": false
+    },
+    "file-impact": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_applications_executed": false,
+      "checks": [
+        "ownerless_module_dependency",
+        "transitive_file_callers",
+        "call_mode_separation",
+        "depth_limit",
+        "item_limit",
+        "document_id_target",
+        "mixed_target_rejected",
+        "warm_reuse",
+        "stale_bridge_excluded",
+        "sync_refresh",
+        "no_source_bodies"
+      ],
+      "runtime_impact_proven": false
+    },
+    "impact-relations": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_applications_executed": false,
+      "checks": [
+        "legacy_call_default",
+        "value_to_caller_chain",
+        "relation_witnesses",
+        "no_call_fabrication",
+        "override_candidate_traversal",
+        "depth_limit",
+        "item_limit",
+        "invalid_mode",
+        "project_isolation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh",
+        "no_source_bodies"
+      ],
+      "runtime_impact_proven": false
+    },
+    "symbol-nodes": {
+      "status": "passed",
+      "versions": {
+        "index_format": 60,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "shared_key_no_last_writer_location",
+        "stable_project_scoped_typed_ids",
+        "source_proof_retention_and_full_counts",
+        "reference_target_roundtrips",
+        "exact_id_and_prefixed_FQN_lookup",
+        "namespace_prefix_guards_and_explicit_code_override",
+        "path_scoped_counts_stable_identity",
+        "schema_only_usage_only_and_quoted_tables",
+        "route_alternatives_not_duplicate_uses",
+        "legacy_code_default_and_name_alias",
+        "all_domains_and_counts_before_limit",
+        "literal_contains_not_SQL_or_regex",
+        "source_revision_hash_identity",
+        "body_free_determinism",
+        "invalid_input_rejection",
+        "stored_snapshot_without_filesystem_reads",
+        "stale_exclusion",
+        "sync_replacement"
+      ],
+      "source_code_or_SQL_executed": false,
+      "production_database_touched": false,
+      "runtime_binding_or_catalogue_definitions_proven": false,
+      "representative_quality_scale_or_full_parity_proven": false
+    },
+    "non-code-references": {
+      "status": "passed",
+      "versions": {
+        "index_format": 60,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "queries_relation",
+        "symbol_owners_and_ownerless_files",
+        "read_write_and_source_filters",
+        "counts_before_result_limit",
+        "project_and_schema_disambiguation_before_filters",
+        "schema_only_observed_target",
+        "quoted_identifiers",
+        "registration_vs_endpoint_relations",
+        "separate_registration_request_methods",
+        "handler_alternatives_not_fake_owners_or_duplicate_occurrences",
+        "literal_URL_identity",
+        "project_scoped_legacy_symbol_mode",
+        "identity_hash_revision_evidence",
+        "body_free_determinism",
+        "mixed_target_and_invalid_argument_rejection",
+        "stale_source_exclusion",
+        "sync_replacement"
+      ],
+      "production_database_touched": false,
+      "source_code_or_SQL_executed": false,
+      "runtime_database_or_router_binding_proven": false,
+      "full_RAGRAF_parity_or_representative_quality_proven": false
+    }
+  },
+  "isolated_binary": {
+    "sha256": "763eee61ba65d0ea4f766c65a8af70fb0510741e3a095bcd990636c58b619b3e",
+    "isolated": true
+  },
+  "source_hashes_after_checks": {
+    "src/code_index.rs": "fcb5b22c989c18ab2531df90eabafe7ab35b3dd7bf730c885b556c605646baec",
+    "src/code_index/literal_impact.rs": "2535689835eba98e03426786b2f3ac14d7e2d4a056427132f59d32bc11512b32",
+    "src/code_index/impact.rs": "d4f2700bcccb6932e564b9e225370561c8e0d68fe019a31517ced7192a78bed6",
+    "src/code_index/file_impact.rs": "91eb5056554bf3eaa0bc92648535ec08885814c60a0ffc69ccccf654308b6b9a",
+    "src/code_index/symbol_nodes.rs": "c10933d75a9f9075176744103a09ba8b69ab466fb0e43ebec9a5f644638c762d",
+    "src/code_index/non_code_references.rs": "d3adf3dbab6d02abead131007c484a0c231b2fb63aac57dfff05ccbd707be679",
+    "src/mcp/analysis.rs": "0370584f4e272c62d008d6fa9b0879bad328ab199c43e24901917b3a006a3dc0",
+    "scripts/smoke_literal_impact.py": "d0d60d9fc96ed3a73d8133582a10b35f4a5ce5efe4a4f3409e7654c445345ae1",
+    "docs/LITERAL_TARGET_IMPACT.md": "bfd2b2731cbbaf34bcc9793648eb464be18f5397cbf170aaaab931159d02f2a1",
+    "docs/IMPACT_RELATIONS.md": "9f26ca04c346ed556755770ed24a6f852004fa8e0adc46cf5a1184eed228d054",
+    "docs/SHARED_SYMBOL_NODES.md": "c29dd9a29627fbc438e45c06778e25ca52bf3ccdec47ccb2736a5e6cf79aca3f",
+    "docs/NON_CODE_REFERENCES.md": "ff615d7a12905e7c2a7f562230c02e6b1ab65d1e1b0a8442397361e870163613"
+  },
+  "observed_source_index_format_after_checks": 60,
+  "log_hashes": {
+    "build.log": "8ad0f680d591e8ecafa0635b76ed1a9f9e448d2cc8f4695be54abb483f73a426",
+    "clippy.log": "47eb739e56c0242128c0d6fce091dc9d03cdb13ef8ff66df14e1e0e9c6a2a53e",
+    "file-impact.log": "ce9894850e5469558f42ae1329b1fab45b3840115ddf9f19efdf45c73382779c",
+    "final-focused.log": "f1e54b4785c79d0c5b13019726a67892fd37c67b4d7678a5838e0adb55d39aeb",
+    "focused.log": "37ca271bb6fe8f62e8be925d138bb29043f16d3bc918323b635810b56bd772eb",
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "impact-files.log": "e9082056c670dcd4182d80f33de70bbe55d9a727afd6975625eb345120ae5418",
+    "impact-relations.log": "9a9f0f5b1725e3442df87877eaca228419a98e115db6057075ba09fed210f5ca",
+    "initial-runtime.log": "8d2f5e05c3887ecc42d47952e9f16234a3f3f55190bc4b40fd24b17835ec5094",
+    "initial-workspace.log": "d9734fb8b9693a985da08d3458aa800440b49952f4dfa5bac9dfe1e63a2743d1",
+    "non-code-references.log": "0385dfe775e03c5ffca8f5b9e09116ca9448579e981e36317743e3f4faae914e",
+    "parse-bridge-initial.log": "f1d8987d17557abc28c6e50f2a4e7f0ee8546e8fabc410aed7b171ac67fe728b",
+    "pre-long-url-build.log": "d98c7225787c8ea0569509fda76eb98cd4396f1ad91af41d78fe48f1bf23ca8e",
+    "pre-long-url-clippy.log": "acf309a32efdf2d9035929ac39c4fb952c2d16dad253ec22e68567c4a36b1476",
+    "pre-long-url-workspace.log": "bf9e48f6e3e04ea6c56d40cd028ba5eb87cabd63f21b116f1c63e11f5cb2beda",
+    "runtime.log": "3bc0dde0769004bc123363b9dee468d8d967ddb9b3fd7967d79ba156217d955e",
+    "symbol-nodes.log": "e03d3807a186f91e113df074f1828cbd289fe854a912c7190551488bc5e6b4a7",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "workspace.log": "8e5843b5ac40e679b4222fe8e40d50b4f4724b05f0944bc0a36e0995efd943f0"
+  },
+  "initial_failures_retained": [
+    "parse-bridge-initial.log reproduces real invalid-source traversal bug",
+    "initial-workspace.log expected obsolete path-filter-before-identity semantics; test updated to require disambiguation then qualified zero uses",
+    "initial-runtime.log test name map reused source-position IDs after sync; runner now refreshes symbol IDs"
+  ],
+  "qualification_scope": "checked_shared_tree_build_and_isolated_executable_not_frozen_checkout",
+  "source_hashes_are_observational": true,
+  "representative_scale_or_ranking_quality_proven": false,
+  "full_RAGRAF_parity": false,
+  "commit_or_push_performed": false
+}

@@ -519,6 +519,7 @@ pub(super) fn push_call(
             site.name.clone()
         };
         out.references.push(Reference {
+            build_context: None,
             start_byte: node.start_byte(),
             document_id: doc_id.into(),
             path: out.path.clone(),

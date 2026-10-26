@@ -11,20 +11,7 @@ impl Store {
     /// Load embedding manifest by primary key.
     pub fn get_embedding_manifest_by_id(&self, id: &str) -> Result<Option<EmbeddingManifest>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, provider, model, dims, base_url, content_fingerprint,
-                   CAST(updated_at AS VARCHAR)
-            FROM embedding_manifest
-            WHERE id = ?
-            "#,
-        )?;
-
-        let mut rows = stmt.query(params![id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(rows::embedding_manifest(row)?)),
-            None => Ok(None),
-        }
+        get_embedding_manifest_locked(&conn, id)
     }
 
     /// Insert or replace the embedding corpus fingerprint.
@@ -252,4 +239,25 @@ pub(crate) fn embedding_identity_fingerprint(
     base_url: &str,
 ) -> String {
     content_hash(&format!("{}|{}|{}|{}", provider, model, dims, base_url))
+}
+
+/// Read the manifest inside an already-owned consistent database observation.
+pub(crate) fn get_embedding_manifest_locked(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<EmbeddingManifest>> {
+    let mut stmt = conn.prepare(
+        r#"
+            SELECT id, provider, model, dims, base_url, content_fingerprint,
+                   CAST(updated_at AS VARCHAR)
+            FROM embedding_manifest
+            WHERE id = ?
+            "#,
+    )?;
+
+    let mut rows = stmt.query(params![id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(rows::embedding_manifest(row)?)),
+        None => Ok(None),
+    }
 }

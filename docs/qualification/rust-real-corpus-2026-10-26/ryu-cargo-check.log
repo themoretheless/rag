@@ -1,0 +1,4 @@
+    Updating crates.io index
+     Locking 62 packages to highest compatible versions
+   Compiling ryu v1.0.23 (/private/tmp/rag-real-corpus/pinned/ryu)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.11s

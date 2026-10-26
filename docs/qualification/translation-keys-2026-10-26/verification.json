@@ -1,0 +1,254 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_php_ast_sha256": "b2c0d84cbba98fd65dd2ade0bf693514a4afbdde46d992bba32e4ae0574a34d4",
+  "PHP_string_semantics_source": "https://www.php.net/manual/en/language.types.string.php",
+  "PHP_runtime_executed": false,
+  "workspace_tests": {
+    "passed": 1460,
+    "failed": 0,
+    "ignored": 1
+  },
+  "new_native_cases": 9,
+  "selected_native_cases": 10,
+  "selected_suite_includes_one_preexisting_C_translation_unit_case": true,
+  "native_unicode_cases": [
+    "120_Cyrillic_characters",
+    "120_CJK_characters",
+    "120_four_byte_characters"
+  ],
+  "capture_contract_version": 1,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 58,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+    "reference_execution": "only_placeholder_regex_and_pure_extractor_on_fixed_template",
+    "checks": [
+      "template_PHP_shared_key_target",
+      "qualified_case_insensitive_translator_name_candidates",
+      "PHP_owner_and_PHTML_file_evidence",
+      "literal_key_case_and_space_identity",
+      "120_unicode_characters_not_120_bytes",
+      "dynamic_interpolation_concat_named_member_exclusion_and_static_escape_decoding",
+      "UTF8_byte_line_anchors",
+      "reference_placeholder_key_line_sets",
+      "repeated_occurrences_preserved",
+      "project_disambiguation_before_path",
+      "independent_result_cap",
+      "explicit_4096_occurrence_limit",
+      "invalid_and_mixed_target_rejection",
+      "position_and_equivalent_literal_spelling_history_stability",
+      "stale_exclusion",
+      "sync_replaces_keys",
+      "immutable_historical_diff",
+      "incomplete_capture_diff_exclusion"
+    ],
+    "production_database_touched": false,
+    "source_code_or_SQL_executed": false,
+    "translator_or_template_runtime_binding_proven": false,
+    "representative_quality_scale_or_full_parity_proven": false
+  },
+  "regressions": {
+    "non-code-references": {
+      "status": "passed",
+      "versions": {
+        "index_format": 58,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "queries_relation",
+        "symbol_owners_and_ownerless_files",
+        "read_write_and_source_filters",
+        "counts_before_result_limit",
+        "project_and_schema_disambiguation_before_filters",
+        "schema_only_observed_target",
+        "quoted_identifiers",
+        "registration_vs_endpoint_relations",
+        "separate_registration_request_methods",
+        "handler_alternatives_not_fake_owners_or_duplicate_occurrences",
+        "literal_URL_identity",
+        "project_scoped_legacy_symbol_mode",
+        "identity_hash_revision_evidence",
+        "body_free_determinism",
+        "mixed_target_and_invalid_argument_rejection",
+        "stale_source_exclusion",
+        "sync_replacement"
+      ],
+      "production_database_touched": false,
+      "source_code_or_SQL_executed": false,
+      "runtime_database_or_router_binding_proven": false,
+      "full_RAGRAF_parity_or_representative_quality_proven": false
+    },
+    "php-routes": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "php_code_executed": false,
+      "checks": [
+        "public_tool_description",
+        "php_route_inventory",
+        "match_method_set",
+        "class_callable_description",
+        "comments_excluded",
+        "handler_binding_unverified",
+        "no_liveness_root",
+        "deterministic_replay",
+        "stale_exclusion",
+        "sync_refresh",
+        "immutable_unbound_route_diff",
+        "project_diff_isolation"
+      ],
+      "route_candidates": 4
+    },
+    "markup-endpoints": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "checks": [
+        "literal_markup_targets",
+        "entity_decoding",
+        "separate_reference_kind",
+        "no_liveness_root",
+        "source_provenance",
+        "deterministic_replay",
+        "stale_exclusion",
+        "sync_refresh",
+        "immutable_diff",
+        "project_diff_isolation",
+        "status_not_empty",
+        "line_move_is_not_relation_change"
+      ],
+      "initial_references": 4,
+      "refreshed_references": 1
+    },
+    "method-relations": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_applications_executed": false,
+      "checks": [
+        "imported_base_method",
+        "independent_relation_budget",
+        "source_provenance",
+        "class_and_method_navigation",
+        "no_call_fabrication",
+        "project_isolation",
+        "lexical_mode_separation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh",
+        "frozen_relation_diff",
+        "no_source_bodies"
+      ],
+      "semantic_override_proven": false,
+      "removed_method_candidates": 2
+    },
+    "source-byte-copies": {
+      "status": "passed",
+      "versions": {
+        "index_format": 58,
+        "package": "0.1.0",
+        "store_schema": 25
+      },
+      "checks": [
+        "actual_raw_sha256_partition_oracle",
+        "UTF8_BOM_UTF16_LE_BE_windows1251",
+        "DOCX_and_XLSX_captured_archive_bytes",
+        "same_text_different_archive_compression",
+        "actual_PDF_extraction",
+        "digest_and_byte_count_evidence",
+        "decoded_text_vs_source_bytes",
+        "project_prefix_isolation",
+        "stored_snapshot_without_live_reads",
+        "BOM_only_sync_replacement",
+        "legacy_capture_upgrade_on_sync",
+        "mismatched_text_capture_repair_on_sync",
+        "member_group_caps_independent_of_text_comparison_budget",
+        "body_free_determinism"
+      ],
+      "production_database_touched": false,
+      "source_code_or_SQL_executed": false,
+      "current_filesystem_equality_or_deletion_safety_proven": false,
+      "representative_scale_or_full_parity_proven": false
+    },
+    "table-impact": {
+      "status": "passed",
+      "transport": "stdio MCP JSON-RPC",
+      "production_database_touched": false,
+      "source_sql_executed": false,
+      "checks": [
+        "direct_readers_writers",
+        "ownerless_sql_preserved",
+        "indirect_code_chain",
+        "read_write_filters",
+        "independent_direct_budget",
+        "untruncated_owner_roots",
+        "project_disambiguation",
+        "schema_disambiguation",
+        "qualified_target",
+        "identifier_validation",
+        "warm_reuse",
+        "stale_exclusion",
+        "sync_refresh"
+      ],
+      "runtime_impact_proven": false
+    }
+  },
+  "isolated_binary": {
+    "sha256": "782859ecbd6ce6b3d1cc27d0763f641498fb30c3bc961540755018e1c9055ca7",
+    "isolated": true
+  },
+  "source_hashes_after_checks": {
+    "src/code_index.rs": "bf252eaac6dbb9fde30a56a300a050d729a290e9c364324306ff9adee200f496",
+    "src/code_index/translation_keys.rs": "c96efdac197e03d31ceb3a7f27a1c667f1509d3762d0577cb5730f0ae35466c3",
+    "src/code_index/non_code_references.rs": "9dc57fad9fffc560194d9981922a1b027126f134afe7a242ab40ff4c32cf0067",
+    "src/code_index/history.rs": "c277f2fd77d0f4e46fccb9908f6f1658b585998e378f297cfa0863eb86bb7076",
+    "src/mcp/analysis.rs": "6ff80e32ddc4e010433dde1e57d919ab40282bfbe2746a6850274766a873e61f",
+    "scripts/smoke_translation_keys.py": "d1e5bc4858e1860f3eda38a812b5ae213b30ba8f59f8b82f66f3159685653c11",
+    "docs/TRANSLATION_KEY_REFERENCES.md": "182a5fd16313b77f801b1434bc0618ffba582184ec619e47f881c1005de60308",
+    "docs/NON_CODE_REFERENCES.md": "2ef4afa5ce3a2f0e45abf1750644eb7bd872122b995ea303251fd9e7e1c7dc8b",
+    "docs/CODE_HISTORY.md": "629685d9fc657efc1de5483b81eb21af95119a25929e6188e193c74a8da61dde"
+  },
+  "log_hashes": {
+    "build.log": "8463c9e609f4610774c639b93f968c8e4791de9d25bbf5bb630994b621d7b6c4",
+    "clippy.log": "126b159d3f7d3fd5aeceb5e2185598fda1638ffd658b2fe4b46c9a65bc794760",
+    "complete-translation-tests.log": "49bbe140d26173fa877a0a9845f00b4071490ebad4909bbfed687399dd63cddf",
+    "final-focused.log": "83ac2bd48a9c5304b892ce20e253aa90f1e368c525451590ad2528ff19b267d4",
+    "final-translation-tests.log": "59a10b3921ebc88a86a987b34a34cef52f01cffd43200e351bffcce5852f8db2",
+    "focused.log": "ee4182c24cf3ac6401a8f1ef7795f1b5e562e40868fbb4d74af1d82782f5d1de",
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "initial-build.log": "27a4e86192a42f6d6f4ac7468b33aa8ada6ac53b822c600dbf51077fe449dd44",
+    "initial-clippy.log": "521fe823e7947e796e6a943308b30ab2269e02be82f27d09ffff58080cabb419",
+    "initial-runtime.log": "98a49485a7bf9ac129d7b3b405f892acf0a601a64e543e177429cd3387e1bea1",
+    "initial-workspace.log": "316127d7ed01224e9f01a603a7cb60b3e7b0a4e1d9d697364390fd87724e07cd",
+    "markup-endpoints.log": "f634be59cc65715a6d294e0948e5f158d35f2d1267037bf1f7d9865fcf658423",
+    "method-relations.log": "cbbd7c617a0eec4991ecac835554723f269a3e036f36e024872eb124dd12f879",
+    "non-code-references.log": "f2f35d1b7080be62886cdae93b28d6ca4968c6aec7269bd0d0f58eae22464456",
+    "php-routes.log": "6c55863b837a88ed2738a66361470fbeb5dc7468b6f39d43f02ca81daeed0396",
+    "runtime.log": "08e86d09d0aef61fe150cdd48d3d0e6244d25d225abe08a1ef6c3199a183c429",
+    "source-byte-copies.log": "c30344f9a6ecb1f566f9317fa17321a636902f13c6ddf1bea50028b5ab64e2f0",
+    "spelling-runtime.log": "2293435b58ef23ea422a274946772cd2b7c6510ce8304e84031a79e0593272e8",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "translation-tests.log": "db61b1220ab7b2d3a6e35b92451e0b4ead3b328be6740f5232e05fbaad335308",
+    "unicode-translation-tests.log": "e2f021f318e0a3e8f6d106a4b317f0c3e2d5acdc913ee55c29f77ea8bc25c115",
+    "workspace.log": "5e653d6baf12cab05379fe41136c847b1d65cef25b6687c260f47970b4c17789"
+  },
+  "initial_failures_retained": "temporary_AST_cursor_borrow_error_fixed_then_concurrent_Rust_reexports_missing_module_and_lifetime_errors_resolved_in_shared_work; earlier_subset_and_pre_Unicode_limit_logs_are_not_final_gates",
+  "final_gates": [
+    "workspace.log",
+    "clippy.log",
+    "build.log",
+    "format.log",
+    "runtime.json"
+  ],
+  "qualification_scope": "checked_shared_tree_build_and_isolated_executable_not_frozen_checkout",
+  "source_hashes_are_observational": true,
+  "representative_scale_or_ranking_quality_proven": false,
+  "full_RAGRAF_parity": false,
+  "commit_or_push_performed": false
+}

@@ -1,0 +1,91 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "workspace_tests": {
+    "passed": 1349,
+    "failed": 0,
+    "ignored": 1
+  },
+  "ruby_native_cases": 10,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 44,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "ruby_capability",
+      "module_class_instance_singleton_definitions",
+      "owner_local_constructor_calls",
+      "required_superclass_methods",
+      "project_isolation",
+      "parameter_reassignment_mixin_guards",
+      "parallel_loop_rescue_local_bindings",
+      "constructor_hook_and_instance_state",
+      "exact_unicode_byte_body",
+      "metadata_body_separation",
+      "partial_slice",
+      "require_relative_file_impact",
+      "full_cache_equivalence",
+      "stale_exclusion",
+      "sync_rebind",
+      "frozen_import_diff"
+    ],
+    "production_database_touched": false,
+    "ruby_code_executed": false,
+    "runtime_dispatch_proven": false
+  },
+  "isolated_binary": {
+    "sha256": "13425ab0d1671ca9c431166b9131ea7b0a692590f2b257cc3bee67ee23e42ae9",
+    "isolated": true
+  },
+  "clippy_warnings_denied": "passed",
+  "owned_format_edition_2021": "passed",
+  "git_diff_check": "passed",
+  "mcp_scenarios": [
+    "ruby",
+    "lua",
+    "file-imports",
+    "table-impact",
+    "inline-styles"
+  ],
+  "source_hash_observations_after_checks": {
+    "Cargo.toml": "26b693d81deafb0e3aad3d86b0aa064475c5e328846696cb9e43d841390d110c",
+    "Cargo.lock": "793d4618e1d6036c5ef16b97813d33797975a9dcd030f6a4fa3002c03d926150",
+    "src/code_index.rs": "95f8fd18ad4863d00984221e46c9730bc179fe85790fb6f57a2b1aed3176e600",
+    "src/code_index/ruby.rs": "bf37e80ede9318cbf814684f688213585144687ed5750a6f0b05954ca730185f",
+    "src/code_index/resolve.rs": "f13621bd1496579a819ed31716fc770680b7dad4b9075b006689276ea75c331a",
+    "src/code_index/inheritance.rs": "d2eb9e182c108d43f86761ebefcc97641059370c3c2d149c4932a9ca92697a81",
+    "src/code_index/analysis.rs": "e82d8ba882671abe95d97e71f7529e950678280621eed9c4486f10e5f6087f82",
+    "src/code_index/status.rs": "f78f1d47d44e515074ea30b361e69e87babe827bbbed3155fcd688aea5b4331c",
+    "src/code_index/file_imports.rs": "aa5a7e49c66ae474b8e33bc5fc10b636bb2a0b3aa29243763cd453fbeae9a69d",
+    "src/code_index/history.rs": "2d79dc2bf456b0f341ecec71131afc80e7b3d82f1978a38330cbfdb46f09f051",
+    "src/mcp/analysis.rs": "398884519c1e82e13caf3d3e17692d95bece389350336b4d7feafe88d259f1cc",
+    "scripts/smoke_ruby_index.py": "51867f420994db583fc27236049e9e1d759ed8c5e1f7d3005e6faf07f5ce7422",
+    "docs/RUBY_CODE_ANALYSIS.md": "2294ff809cbfe1fd0ae7867304e5fe22bc40a5b69707ab52331a8ba24190648b"
+  },
+  "log_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "inline-styles.log": "184d7aebf5b8d4b54986146af195d2aff9dc0582ad1d86793865abfa134a88b4",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "smoke_table_impact.py.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "clippy.log": "eb3268553f4b5b2c52410db7121aface3bd74436c8de05eaa5a1bc8b03960214",
+    "workspace.log": "d8a402ecd968cc3fbccca04cf6ff42daf5b0ed64c471806da60fe6278ad6f952",
+    "smoke_inline_styles.py.log": "0835c40a0b151e91bc2e41e7b61aa7fc71eba77826e5db92e559a63f44838292",
+    "focused-seven.log": "d420385af3b259815ecbddebceed9bb9f4b7542db7c3dbfa5a40ab15dd75186d",
+    "file-imports.log": "1e319374929226498d45e5adfc6773a9b96962d68a716e510a671a826054f730",
+    "smoke_ruby_index.py.log": "188150d4dbd44bcb22690a2d14dea746d8ebdd073bf30ab76ca735f4b290e9a5",
+    "smoke_file_imports.py.log": "e9410433488de4317d5081630238a266f4352d69ca4961a4e15161f08d6ed07e",
+    "runtime.log": "a46fd84b5fd857fdc4558c30215dde6b00ac4dad9dd7efaffd0bd3daef4b9ff9",
+    "check.log": "b8522bc6a1b4d327ff1de1c2ddd710361432ef97ae8185a08f7ecbdbff766bc5",
+    "lua.log": "d92adfea65e69bc60e23bc90e6575d2f588873d800d3d59d2368eb3295efe237",
+    "smoke_code_lua.py.log": "d92adfea65e69bc60e23bc90e6575d2f588873d800d3d59d2368eb3295efe237",
+    "focused.log": "b53341d2758570737f7f62523ae3a6750b151d8e6478316372cfd659018bc75a",
+    "build.log": "6a5141e17dac82221384e0b41f63a892a775a40e842fcd962ef86926f539c965"
+  },
+  "after_check_index_format": 44,
+  "whole_checkout_frozen": false,
+  "representative_quality_or_scale_qualified": false,
+  "ruby_runtime_dispatch_proven": false,
+  "full_ragraf_parity_complete": false
+}

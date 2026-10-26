@@ -69,6 +69,11 @@ pub fn required_tool_role(name: &str) -> Option<AccessRole> {
         | "inheritance"
         | "code"
         | "repo_map"
+        | "trace_path"
+        | "detect_changes"
+        | "affected_tests"
+        | "infrastructure"
+        | "rename"
         | "impact"
         | "symbol"
         | "references"
@@ -159,6 +164,7 @@ pub fn required_tool_role(name: &str) -> Option<AccessRole> {
         | "archive_memory_items" => Some(AccessRole::Write),
 
         "db_refresh"
+        | "apply_rename"
         | "index_code"
         | "sync_sources"
         | "delete_by_source"

@@ -1,0 +1,63 @@
+{
+  "status": "captured_provider_subset_qualified",
+  "full_goal_complete": false,
+  "source_checkout_frozen": false,
+  "binary_sha256": "62a5ffbc2d294c04e81ac77734dc9a0c9e573b48fc99b5f0b6d8722c30d6bfeb",
+  "index_format": 48,
+  "workspace": {
+    "passed": 1398,
+    "failed": 0,
+    "ignored": 1,
+    "exit_code": 0,
+    "log": "workspace.log",
+    "source_checkpoint": "before final test-name and equivalent JSON serialization-comparison style repairs"
+  },
+  "final_code_index": {
+    "passed": 351,
+    "failed": 0,
+    "exit_code": 0,
+    "log": "code-index.log"
+  },
+  "strict_library_test_clippy": {
+    "exit_code": 0,
+    "log": "clippy.log"
+  },
+  "build": {
+    "exit_code": 0,
+    "log": "build.log"
+  },
+  "native_infrastructure_tests": 7,
+  "metadata_rename_integration_test": true,
+  "mcp_reports": {
+    "runtime.json": "passed",
+    "rename-regression.json": "passed",
+    "resolution-regression.json": "passed"
+  },
+  "labelled_path_edges": 8,
+  "host_fixture_compiler_exit": 0,
+  "host_fixture_execution_exit": 0,
+  "docker_or_cluster_qualified": false,
+  "runtime_path_proven": false,
+  "representative_precision_recall": false,
+  "competitor_comparison_complete": false,
+  "production_binary_replaced": false,
+  "qualification_opened_production_database": false,
+  "limitations": [
+    "Static captured provider subset; names are not live image identity",
+    "Infrastructure relations derived from frozen sources; separate edge snapshots/diff not implemented",
+    "No Helm/Terraform/general shell/workspace build semantics qualification",
+    "Logical work/output caps are not physical memory/latency guarantees",
+    "Concurrent language/corpus baseline changes preserved; not attributed to infrastructure"
+  ],
+  "artifact_sha256": {
+    "README.md": "d5b46d1b486b2c4a0f318154ebb7fd1edf42a124c091c5fc7e15cc9f0a6a6617",
+    "build.log": "bb3b14f649bf3449ddd5b1173de0f6a2cc9ee7ee968ca74004f7abd2bc45fcd6",
+    "clippy.log": "29cb90beb96bed667764134a2a2bf1d628abfa1fb6cf5362bcd42fd23d462385",
+    "code-index.log": "e0d7b8aa0329c460e17b970bb9e8012b8ac9e105157858c587e0561b28cb29e5",
+    "native-excerpt.log": "488ed1116a0b07d5e4eff5f1a411fa147be26e4ac05775252815100301bac766",
+    "rename-regression.json": "cac7fa63fee4fa7300dabd77a1c662dc913eb5e561a0a5cb3124c21ed83b2d2c",
+    "resolution-regression.json": "c5353c96235e5493b7f3e4cdbbb7bb56d6dd1c23d0184bcfd979d08df18a7eda",
+    "runtime.json": "a53fdb31324cf9b729ef34f67473510d05b2e464853bd32b1233182c9c3fef51",
+    "workspace.log": "e68a35f4c5f7346398d2a11f0aa921c8cdda4800d3d2f08d4904d01ca7322e36"
+  }
+}

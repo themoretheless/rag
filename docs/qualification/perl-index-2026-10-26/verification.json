@@ -1,0 +1,94 @@
+{
+  "head": "408996ef6b101b893444c16f5f7bc54c2737a1d9",
+  "reference_commit": "075caf86dc2f6274b9c48487e521915bcdfeaf2c",
+  "reference_comparison": "inspected_Perl_profile_and_variable_extension_not_interpreter_conformance",
+  "grammar": "ts-parser-perl 2.0.0",
+  "workspace_tests": {
+    "passed": 1382,
+    "failed": 0,
+    "ignored": 1
+  },
+  "perl_native_cases": 10,
+  "coderef_false_binding_regression_reproduced_and_fixed": true,
+  "runtime": {
+    "status": "passed",
+    "versions": {
+      "index_format": 46,
+      "package": "0.1.0",
+      "store_schema": 25
+    },
+    "checks": [
+      "perl_capability",
+      "packages_subroutines_variables",
+      "qualified_and_parent_method_calls",
+      "project_isolation",
+      "normalized_hash_variable_reference",
+      "dynamic_import_object_guards",
+      "exact_unicode_body",
+      "metadata_body_separation",
+      "inheritance_candidates",
+      "package_identity_file_impact",
+      "static_sql_owner_table_impact",
+      "partial_slice",
+      "full_resolution_equivalence",
+      "stale_exclusion",
+      "source_sync",
+      "frozen_parent_diff"
+    ],
+    "perl_code_executed": false,
+    "INC_or_runtime_dispatch_proven": false,
+    "production_database_touched": false
+  },
+  "isolated_binary": {
+    "sha256": "b23a55a24cb351cd670ade4ade50e4251150716726a7fc82133be343289fa347",
+    "isolated": true
+  },
+  "clippy_warnings_denied": "passed",
+  "owned_format_edition_2021": "passed",
+  "git_diff_check": "passed",
+  "mcp_scenarios": [
+    "perl",
+    "csharp",
+    "ruby",
+    "lua",
+    "table-impact",
+    "file-imports"
+  ],
+  "source_hash_observations_after_checks": {
+    "Cargo.toml": "a9c36e9aac42ab98555e8ca9de2cb155b351fcc2a2d3ba64a7880ba304d8f0f1",
+    "Cargo.lock": "6c32ae714da817fa96fe7747e6f43f12fe547a7e5534e0f573d4262176fb3078",
+    "src/code_index.rs": "70ff5f53a1ce67fa07e13e06d29927b35b55bc26eb75629ff727825df046ce0e",
+    "src/code_index/perl.rs": "56c15e2087f6b012d24c429220f08f3d74ffd887043ab8d9612cf75e5ff8fe8d",
+    "src/code_index/resolve.rs": "23d8297e5df28d170bf43662b37df623ce55005f9e7d9343ca5618b6b4ad2cc4",
+    "src/code_index/inheritance.rs": "f719af9220e13c3fcc0b1f250f0279a81c202e0a3bbc7369c61028d73cdccdcd",
+    "src/code_index/analysis.rs": "458fad44bbb4a3f8a273a28a714b69a071f19bfca98d1ad1fddea57c9df436e1",
+    "src/code_index/status.rs": "65b93995992df57b22d3b90bc0685deaaa7d1a03a6c9fe4f9163e91319b10e92",
+    "src/code_index/history.rs": "656ca79941c911d42982b3cffaf718a8724228d5db52967d349bd7ac8eb59c7e",
+    "src/code_index/file_imports.rs": "311e34544019409643024fad24183e7f1eb50bf738f73c8c2027b9fd128d7535",
+    "src/code_index/infrastructure/docker.rs": "6fc4d02dbb8652b6f0f27802e1b16bc45ef5fb480e74e9d5a0a7103b4730e9de",
+    "src/file_ingest.rs": "434017dc437125883a3a97ec87e52707365cc737ae31eccf70622e9e8c5062e1",
+    "src/mcp/analysis.rs": "71990250e4dff01690e3e0a7fac3c698a22e3b1d6227088511af2ab28877fcb8",
+    "scripts/smoke_perl_index.py": "a1a1d315a27b6fba0692bdfd08ad8f3f15d1a500170f423c8b8e58e5f8dd75df",
+    "docs/PERL_CODE_ANALYSIS.md": "891e81026ba54bf92c00b4dc3562052df11de74d247fe0b42873ca6dbae49623",
+    "docs/RAGRAF_FEATURE_MATRIX.md": "44b7819168847353429273662d90946110b711062931d0afd06a5cef82a4694d"
+  },
+  "log_sha256": {
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "table-impact.log": "d4f53f502606cde055e5804ca894bb381981a8ad4e9a5d005e6a0281abd54aa8",
+    "initial-coderef-regression.log": "a02f5a3986c567e38bc24361624fcc37e4a82ee3ef469fb78de1f9c0fadd390d",
+    "csharp.log": "2929d7dbef98b0659a164cf3fd69430f84538fb112c6a4b0693471b96b3586bb",
+    "clippy.log": "cd00498d64832e0377049c6f8b4365b0d2aee1499c5fa218d88832b5f50f1599",
+    "workspace.log": "65929a67919b6cdcf797a7ce157c702ef3afd2601339b98046c41c17c0270e1d",
+    "file-imports.log": "40cbd246a5cb946596fd034fcf214cb979ed3c68f53d966744c4ec0ebec572cd",
+    "grammar-info.log": "c8ee34d2f5f60cfbff66e659366d14fa4fcbfa47325f4d45ef14f9c06744ec37",
+    "runtime.log": "bfb6cea89e718d3408d74d0bd7f3a1be91ab4e0d3289bfe40e98884b0b4fbaaa",
+    "lua.log": "d92adfea65e69bc60e23bc90e6575d2f588873d800d3d59d2368eb3295efe237",
+    "ruby.log": "588bda7c861c7c8de81cc8b2d6fe47326cd5e2ca7c5b6fa1a9098e19322bfcf3",
+    "build.log": "2e7f16a2f450abd591c0d4206b35e5d618d55c68ff8463171c26d85bd9a48607"
+  },
+  "after_check_index_format": 46,
+  "whole_checkout_frozen": false,
+  "representative_quality_or_scale_qualified": false,
+  "INC_or_interpreter_runtime_dispatch_proven": false,
+  "full_ragraf_parity_complete": false
+}

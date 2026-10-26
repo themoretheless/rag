@@ -1,0 +1,7 @@
+{"pair": 0, "mode": "full", "completed": true}
+{"pair": 0, "mode": "incremental", "completed": true}
+{"pair": 1, "mode": "incremental", "completed": true}
+{"pair": 1, "mode": "full", "completed": true}
+{"pair": 2, "mode": "full", "completed": true}
+{"pair": 2, "mode": "incremental", "completed": true}
+{"summary": "docs/qualification/incremental-resolution-2026-10-26/paired-controls/summary.json", "controls_stable": false}

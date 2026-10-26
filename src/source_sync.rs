@@ -598,6 +598,7 @@ impl<'a> SourceSyncService<'a> {
                 && crate::file_ingest::decoding_metadata_current(
                     &canonical,
                     entry.document_metadata_json.as_deref(),
+                    entry.document_content_hash.as_deref(),
                 )
                 && requested_scope_matches(entry, run.command)
         }) {

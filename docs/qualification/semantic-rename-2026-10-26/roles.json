@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "transport": "authenticated HTTP MCP",
+  "binary_sha256": "abd2c80c7825844abd21321077070e7ddf6a6bb8e3ad04b25e8e0b77a804963e",
+  "roles": {
+    "read": {
+      "preview_discovered": true,
+      "apply_discovered": false,
+      "preview_allowed": true,
+      "apply_error": {
+        "code": -32602,
+        "message": "credential does not permit this tool",
+        "data": {
+          "code": "FORBIDDEN"
+        }
+      }
+    },
+    "write": {
+      "preview_discovered": true,
+      "apply_discovered": false,
+      "preview_allowed": true,
+      "apply_error": {
+        "code": -32602,
+        "message": "credential does not permit this tool",
+        "data": {
+          "code": "FORBIDDEN"
+        }
+      }
+    },
+    "admin": {
+      "preview_discovered": true,
+      "apply_discovered": true,
+      "preview_allowed": true,
+      "apply_error": {
+        "code": -32602,
+        "message": "rename plan changed or blocked; request and review a fresh preview",
+        "data": {
+          "code": "INVALID_REQUEST"
+        }
+      }
+    }
+  },
+  "production_database_touched": false,
+  "source_mutations": 0
+}

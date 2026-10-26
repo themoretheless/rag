@@ -1,0 +1,15 @@
+{
+  "scope":"Rust trait fixture, not representative compiler or runtime dispatch accuracy",
+  "calls":[
+    {"caller":"concrete","expression":"user.save","target_path":"src/implementations.rs","target":"User::save"},
+    {"caller":"concrete","expression":"user.render","target_path":"src/implementations.rs","target":"User::render"},
+    {"caller":"concrete","expression":"user.provide().save","target_path":"src/implementations.rs","target":"Other::save"},
+    {"caller":"concrete","expression":"wrapped.get().save","target_path":"src/implementations.rs","target":"User::save"},
+    {"caller":"concrete","expression":"<User as VisibleRender>::render","target_path":"src/implementations.rs","target":"User::render"},
+    {"caller":"concrete","expression":"user.default_action","target_path":"src/contracts.rs","target":"Defaulted::default_action"},
+    {"caller":"bounded","expression":"value.render","target_path":"src/contracts.rs","target":"Render::render"},
+    {"caller":"dynamic","expression":"value.render","target_path":"src/contracts.rs","target":"Render::render"},
+    {"caller":"projection","expression":"selected::<User>().save","target_path":"src/implementations.rs","target":"Other::save"},
+    {"caller":"projection","expression":"item.save","target_path":"src/implementations.rs","target":"Other::save"}
+  ]
+}

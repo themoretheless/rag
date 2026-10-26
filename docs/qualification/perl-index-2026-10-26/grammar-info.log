@@ -1,0 +1,11 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded ts-parser-perl v2.0.0
+ts-parser-perl #incremental #parsing #tree-sitter #perl
+Actively maintained tree-sitter grammar for Perl
+version: 2.0.0
+license: MIT
+rust-version: unknown
+documentation: https://docs.rs/ts-parser-perl/2.0.0
+repository: https://github.com/tree-sitter-perl/tree-sitter-perl
+crates.io: https://crates.io/crates/ts-parser-perl/2.0.0

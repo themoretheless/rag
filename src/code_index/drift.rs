@@ -6,7 +6,7 @@ use rmcp::schemars;
 use std::io::Read;
 use std::path::PathBuf;
 
-#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, Clone, Deserialize, schemars::JsonSchema)]
 pub struct SourceQuery {
     pub index_revision: Option<i64>,
     pub project: Option<String>,
@@ -101,7 +101,7 @@ pub(crate) struct LiveSource {
     bytes_hash: String,
 }
 impl LiveSource {
-    fn evidence(&self) -> serde_json::Value {
+    pub(super) fn evidence(&self) -> serde_json::Value {
         serde_json::json!({"encoding":self.encoding,"encoding_basis":self.basis,"bytes":self.bytes,"bytes_hash":self.bytes_hash})
     }
 }
@@ -216,9 +216,14 @@ fn comparison(indexed: &str, live: Option<&str>) -> (&'static str, Option<String
         }
     }
 }
+const DIFF_MAX_CELLS: usize = 1_000_000;
+const DIFF_MAX_HUNKS: usize = 64;
+
+/// Range-only edits; never exposes source text outside the requested live range.
 fn line_diff(old: &str, new: &str) -> serde_json::Value {
-    let a: Vec<_> = old.lines().collect();
-    let b: Vec<_> = new.lines().collect();
+    // Retain terminators: CRLF and missing final newline are actual source changes.
+    let a: Vec<_> = old.split_inclusive('\n').collect();
+    let b: Vec<_> = new.split_inclusive('\n').collect();
     let prefix = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
     let tail = a[prefix..]
         .iter()
@@ -226,17 +231,70 @@ fn line_diff(old: &str, new: &str) -> serde_json::Value {
         .zip(b[prefix..].iter().rev())
         .take_while(|(x, y)| x == y)
         .count();
-    serde_json::json!({"common_prefix_lines":prefix,"indexed_changed_range":{"start":prefix+1,"end_exclusive":a.len()-tail+1},"live_changed_range":{"start":prefix+1,"end_exclusive":b.len()-tail+1},"indexed_lines":a.len(),"live_lines":b.len(),"algorithm":"common_prefix_suffix_ranges"})
-}
-impl Store {
-    pub fn code_catalog(&self, q: &SourceQuery) -> Result<serde_json::Value> {
-        let (revision, files) = revision_files(self, q)?;
-        let limit = q.limit.unwrap_or(100).clamp(1, 1000);
-        let items:Vec<_>=files.iter().take(limit).map(|f|serde_json::json!({"document_id":f.id,"path":f.path,"project":f.project,"document_revision":f.revision,"content_hash":f.hash,"bytes":f.source.len(),"syntax_indexed":f.analysis.is_some()})).collect();
-        Ok(
-            serde_json::json!({"index_rev":revision,"items":items,"total":files.len(),"truncated":files.len()>limit,"view":"immutable_revision_manifest"}),
-        )
+    let (left, right) = (&a[prefix..a.len() - tail], &b[prefix..b.len() - tail]);
+    let cells = (left.len() + 1).checked_mul(right.len() + 1);
+    let exact = left.is_empty() || right.is_empty() || cells.is_some_and(|n| n <= DIFF_MAX_CELLS);
+    let mut hunks = Vec::new();
+    let mut total = 0;
+    let mut add = |i: usize, j: usize, x: usize, y: usize| {
+        total += 1;
+        if hunks.len() < DIFF_MAX_HUNKS {
+            hunks.push(serde_json::json!({
+                "kind":if i==x {"insert"} else if j==y {"delete"} else {"replace"},
+                "indexed_range":{"start":prefix+i+1,"end_exclusive":prefix+x+1},
+                "live_range":{"start":prefix+j+1,"end_exclusive":prefix+y+1}
+            }));
+        }
+    };
+    if left.is_empty() || right.is_empty() || !exact {
+        if !left.is_empty() || !right.is_empty() {
+            add(0, 0, left.len(), right.len());
+        }
+    } else {
+        let width = right.len() + 1;
+        let mut lcs = vec![0u32; cells.unwrap()];
+        for i in (0..left.len()).rev() {
+            for j in (0..right.len()).rev() {
+                lcs[i * width + j] = if left[i] == right[j] {
+                    lcs[(i + 1) * width + j + 1] + 1
+                } else {
+                    lcs[(i + 1) * width + j].max(lcs[i * width + j + 1])
+                };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < left.len() || j < right.len() {
+            if i < left.len() && j < right.len() && left[i] == right[j] {
+                i += 1;
+                j += 1;
+                continue;
+            }
+            let (start_i, start_j) = (i, j);
+            while i < left.len() || j < right.len() {
+                if i < left.len() && j < right.len() && left[i] == right[j] {
+                    break;
+                }
+                // Stable deletion-first tie break for repeated source lines.
+                if i < left.len()
+                    && (j == right.len() || lcs[(i + 1) * width + j] >= lcs[i * width + j + 1])
+                {
+                    i += 1;
+                } else {
+                    j += 1;
+                }
+            }
+            add(start_i, start_j, i, j);
+        }
     }
+    serde_json::json!({"common_prefix_lines":prefix,"indexed_changed_range":{"start":prefix+1,"end_exclusive":a.len()-tail+1},"live_changed_range":{"start":prefix+1,"end_exclusive":b.len()-tail+1},"indexed_lines":a.len(),"live_lines":b.len(),"algorithm":"common_prefix_suffix_ranges",
+        "edit_hunks":{"contract_version":1,"items":hunks,"total":total,"truncated":total>DIFF_MAX_HUNKS,
+            "exact":exact,"algorithm":if exact {"bounded_line_lcs"} else {"coarse_changed_range"},
+            "fallback_reason":if exact {None} else {Some("lcs_cell_budget_exceeded")},
+            "max_cells":DIFF_MAX_CELLS,"max_hunks":DIFF_MAX_HUNKS,"line_terminators_significant":true,
+            "coordinate_system":"one_based_half_open","text_included":false}})
+}
+
+impl Store {
     pub fn code_freshness(&self, q: &SourceQuery, roots: &[PathBuf]) -> Result<serde_json::Value> {
         let mode = source_mode(q)?;
         let (revision, files) = revision_files(self, q)?;
@@ -377,6 +435,94 @@ impl Store {
 mod tests {
     use super::*;
     use crate::models::Document;
+    fn reconstruct(old: &str, new: &str, diff: &serde_json::Value) -> String {
+        let a: Vec<_> = old.split_inclusive('\n').collect();
+        let b: Vec<_> = new.split_inclusive('\n').collect();
+        let mut result = String::new();
+        let mut at = 0;
+        for h in diff["edit_hunks"]["items"].as_array().unwrap() {
+            let start = h["indexed_range"]["start"].as_u64().unwrap() as usize - 1;
+            let end = h["indexed_range"]["end_exclusive"].as_u64().unwrap() as usize - 1;
+            let live_start = h["live_range"]["start"].as_u64().unwrap() as usize - 1;
+            let live_end = h["live_range"]["end_exclusive"].as_u64().unwrap() as usize - 1;
+            result.push_str(&a[at..start].concat());
+            result.push_str(&b[live_start..live_end].concat());
+            at = end;
+        }
+        result.push_str(&a[at..].concat());
+        result
+    }
+    #[test]
+    fn live_diff_separates_edits_and_keeps_half_open_coordinates() {
+        let old = "same\nold\nbridge\ntail\n";
+        let new = "same\nnew\nbridge\nadded\ntail\n";
+        let d = line_diff(old, new);
+        assert_eq!(d["edit_hunks"]["total"], 2);
+        assert_eq!(d["edit_hunks"]["items"][0]["kind"], "replace");
+        assert_eq!(d["edit_hunks"]["items"][1]["kind"], "insert");
+        assert_eq!(reconstruct(old, new, &d), new);
+        assert!(!d.to_string().contains("bridge"));
+    }
+    #[test]
+    fn live_diff_reconstructs_exhaustive_short_repeated_line_inputs() {
+        let texts: Vec<String> = (0..31)
+            .map(|n| {
+                let len = usize::BITS - (n + 1usize).leading_zeros() - 1;
+                (0..len)
+                    .map(|bit| {
+                        if (n + 1) & (1 << bit) == 0 {
+                            "a\n"
+                        } else {
+                            "b\n"
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        for old in &texts {
+            for new in &texts {
+                let d = line_diff(old, new);
+                assert_eq!(d["edit_hunks"]["exact"], true);
+                assert_eq!(reconstruct(old, new, &d), *new, "{old:?} -> {new:?}");
+                assert_eq!(d, line_diff(old, new));
+            }
+        }
+    }
+    #[test]
+    fn live_diff_preserves_final_newline_crlf_unicode_and_empty_sides() {
+        for (old, new) in [
+            ("", "雪\n"),
+            ("a\n", ""),
+            ("x", "x\n"),
+            ("x\r\n", "x\n"),
+            ("雪\n", "雪\n"),
+        ] {
+            let d = line_diff(old, new);
+            assert_eq!(reconstruct(old, new, &d), new);
+            assert_eq!(d["edit_hunks"]["total"], if old == new { 0 } else { 1 });
+        }
+    }
+    #[test]
+    fn live_diff_bounds_cells_and_hunks_without_claiming_full_precision() {
+        let old = "old\n".repeat(1100);
+        let new = "new\n".repeat(1100);
+        let d = line_diff(&old, &new);
+        assert_eq!(d["edit_hunks"]["exact"], false);
+        assert_eq!(
+            d["edit_hunks"]["fallback_reason"],
+            "lcs_cell_budget_exceeded"
+        );
+        assert_eq!(reconstruct(&old, &new, &d), new);
+        let old = (0..80)
+            .map(|n| format!("old{n}\nkeep{n}\n"))
+            .collect::<String>();
+        let new = old.replace("old", "new");
+        let d = line_diff(&old, &new);
+        assert_eq!(d["edit_hunks"]["total"], 80);
+        assert_eq!(d["edit_hunks"]["items"].as_array().unwrap().len(), 64);
+        assert_eq!(d["edit_hunks"]["truncated"], true);
+        assert_eq!(d["edit_hunks"]["exact"], true);
+    }
     fn seed(store: &Store, path: &str, content: &str) {
         store
             .upsert_document(&Document {

@@ -1,0 +1,12 @@
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.35s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/90e393b590952090/out/rag_mcp-90e393b590952090)
+
+running 4 tests
+test code_index::file_impact::tests::file_impact_disambiguates_document_project_identity_and_rejects_mixed_targets ... ok
+test code_index::file_impact::tests::file_impact_includes_ownerless_values_and_transitive_file_callers ... ok
+test code_index::file_impact::tests::file_impact_cycles_exclude_the_seed_and_missing_targets_stay_unproven ... ok
+test code_index::file_impact::tests::file_impact_bounds_are_stable_and_stale_files_cannot_bridge_the_graph ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 989 filtered out; finished in 0.01s
+

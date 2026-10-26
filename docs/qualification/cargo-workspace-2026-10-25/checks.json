@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "workspace_command": "cargo test --workspace --locked --offline",
+  "tests_passed": 1254,
+  "tests_ignored": 1,
+  "clippy_command": "cargo clippy --lib --tests --locked --offline -- -D warnings",
+  "source_sha256": {
+    "Cargo.toml": "65bf5fa5f605a6242b682e06a2621901978bcf546df58c27c6cd34c241c935f8",
+    "Cargo.lock": "14c34a9fd5e421d8c46abc3420dc9af4e6ca13d526a6558cd9cdee12446aa32a",
+    "src/code_index.rs": "c51d9575d72607ab6eb7807835bf04ae5fd9da8e48ce8305711182447412be74",
+    "src/code_index/resolve.rs": "24a93f37d82c5a95e373d15e20ae1cc62237bcb441538d19d1cfc639b4d3cfa5",
+    "src/code_index/rust_cargo.rs": "7e13d299be3178176e30ab10aca6dc07b5f3175717c96faca3fa1e8e5ba6e11a",
+    "src/code_index/status.rs": "d7fcda793d07f0a4c1eea2a680b8d59383f3c2f2dffe3dc41ae232567afa6a8c",
+    "src/mcp/analysis.rs": "84444274673ed58230f4e8996f382d4555e8ce60c407f2929cbfd6c6d681f9a1",
+    "scripts/smoke_cargo_workspace.py": "f6033f18c1d7b7e17cf6fa8060221a7d56952cd6830f602edec4543ad804c2d3"
+  },
+  "scope": "Current dirty working tree; not whole-plan acceptance",
+  "remaining_requirements": "See docs/CODE_INTELLIGENCE_PLAN.md"
+}

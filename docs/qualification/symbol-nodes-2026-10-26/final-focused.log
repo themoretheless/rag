@@ -1,0 +1,13 @@
+    Blocking waiting for file lock on build directory
+   Compiling rag-mcp v0.1.0 (/Users/themoretheless/Documents/Sources/rag)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 50.82s
+     Running unittests src/lib.rs (target/debug/build/rag-mcp/78e781a3d41f204c/out/rag_mcp-78e781a3d41f204c)
+
+running 4 tests
+test code_index::symbol_nodes::tests::route_handler_alternatives_are_one_occurrence_and_reference_targets_roundtrip ... ok
+test code_index::symbol_nodes::tests::tables_keep_schema_only_and_usage_only_identities_with_exact_scoped_filters ... ok
+test code_index::symbol_nodes::tests::code_defaults_alias_contains_all_and_stale_source_coverage_preserve_legacy ... ok
+test code_index::symbol_nodes::tests::shared_keys_have_stable_scoped_identity_no_fake_definition_and_bounded_proofs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1212 filtered out; finished in 0.34s
+
