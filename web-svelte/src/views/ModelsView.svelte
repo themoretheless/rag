@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { bytes } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, hasGatewayToken, loadPanels, setGatewayToken } from '@/api/client'
@@ -88,12 +89,6 @@
     }
   }
 
-  function bytes(value?: number) {
-    if (value == null) return '—'
-    const units = ['Б','КБ','МБ','ГБ']; let size = value; let unit = 0
-    while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1 }
-    return `${size.toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`
-  }
 
   function isLoopbackBind(value: string | undefined) {
     const bind = (value ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')

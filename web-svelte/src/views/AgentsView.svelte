@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { errorMessage } from '@/lib/async'
+  import { initials, time } from '@/lib/format'
+  import { percentile } from '@/lib/stats'
+  import { errorMessage, withTimeout } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
   import type { ItemsResponse, KgFact, OpsLogItem } from '@/api/types'
@@ -105,24 +107,6 @@
   })
 
   function agentKey(value?: string | null) { return value?.trim().toLocaleLowerCase() ?? '' }
-  /** Nearest-rank percentile of an ascending, non-empty list (0 for an empty one). */
-  function percentile(sorted: number[], quantile: number): number {
-    const index = Math.round((sorted.length - 1) * quantile)
-    return sorted[Math.min(index, sorted.length - 1)] ?? 0
-  }
-  async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      return await Promise.race([
-        promise,
-        new Promise<T>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new Error(`Timeout after ${timeoutMs} ms`)), timeoutMs)
-        }),
-      ])
-    } finally {
-      if (timer) clearTimeout(timer)
-    }
-  }
 
   async function fetchCalls() {
     const requestId = ++callsRequestId
@@ -191,13 +175,6 @@
     opFilter = filter
     selectedOperation = null
   }
-  function initials(name: string) {
-    const parts = name.trim().split(/[\s_-]+/).filter(Boolean)
-    const [first, second] = parts
-    if (first === undefined) return '?'
-    return (second === undefined ? first.slice(0, 2) : `${first.charAt(0)}${second.charAt(0)}`).toUpperCase()
-  }
-  function time(value?: string) { return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—' }
   function payload(item: Pick<OpsLogItem, 'payload_json'>) { try { const parsed = JSON.parse(item.payload_json || '{}'); return Object.keys(parsed).length ? JSON.stringify(parsed, null, 2) : '' } catch { return item.payload_json || '' } }
   function streamLabel(state: CallStreamState) { return ({ loading: 'loading', live: 'live', empty: 'empty', stale: 'stale', error: 'error' } as const)[state] }
   function streamTitle() {

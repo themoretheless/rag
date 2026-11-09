@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { relativeDate, shortDate, shortHash } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
@@ -261,27 +262,8 @@
     }
   }
 
-  function shortDate(value: string) {
-    if (!value) return '—'
-    return value.replace('T', ' ').slice(0, 16)
-  }
 
-  function relativeDate(value: string) {
-    const timestamp = Date.parse(value)
-    if (!Number.isFinite(timestamp)) return shortDate(value)
-    const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000))
-    if (minutes < 60) return `${minutes} мин назад`
-    const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours} ч назад`
-    const days = Math.floor(hours / 24)
-    if (days < 7) return `${days} дн назад`
-    return value.slice(0, 10)
-  }
 
-  function shortHash(value?: string | null) {
-    if (!value) return '—'
-    return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value
-  }
 
   function contentSize(value?: string | null) {
     if (!value) return '—'

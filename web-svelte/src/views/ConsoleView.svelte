@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { megabytes, time } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
@@ -52,9 +53,7 @@
   }
 
   function count(value?: number) { return value == null ? '—' : new Intl.NumberFormat('ru-RU').format(value) }
-  function bytes(value?: number) { if (value == null) return '—'; return value > 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} ГБ` : `${Math.round(value / 1024 ** 2)} МБ` }
   function uptime(seconds?: number) { if (seconds == null) return '—'; return `${Math.floor(seconds / 3600)} ч ${Math.floor((seconds % 3600) / 60)} мин` }
-  function time(value?: string) { return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—' }
   function triState(value: unknown): boolean | undefined {
     return typeof value === 'boolean' ? value : undefined
   }
@@ -88,7 +87,7 @@
     { label: `FTS ${stateLabel(doctor.fts_ready, 'готов · read-your-writes', 'не готов')}`, ok: triState(doctor.fts_ready), action: '' },
     { label: `Манифест эмбеддингов ${doctor.embed_dims ?? '—'}d`, ok: triState(doctor.embed_ok), action: '' },
     { label: `${count(doctor.orphan_chunks)} orphan chunks · ${count(doctor.orphan_edges)} orphan edges`, ok: triState(doctor.relational_integrity_ok), action: '' },
-    { label: `WAL ${bytes(doctor.wal_bytes)} из ${bytes(doctor.wal_warn_bytes)}`, ok: typeof doctor.wal_too_large === 'boolean' ? !doctor.wal_too_large : undefined, action: doctor.wal_too_large === true ? 'checkpoint' : '' },
+    { label: `WAL ${megabytes(doctor.wal_bytes)} из ${megabytes(doctor.wal_warn_bytes)}`, ok: typeof doctor.wal_too_large === 'boolean' ? !doctor.wal_too_large : undefined, action: doctor.wal_too_large === true ? 'checkpoint' : '' },
     { label: `${count(doctor.documents_without_chunks)} документов без чанков`, ok: zeroState(doctor.documents_without_chunks), action: 'reingest' },
     { label: `${count(doctor.unscoped_documents)} документов без крыла`, ok: zeroState(doctor.unscoped_documents), action: 'refile' },
   ])
@@ -120,7 +119,7 @@
       <button style="--layer:var(--l2)" onclick={() => go('graph')}><b>L2</b><span><strong>Граф объектов</strong><small>{count(status.node_count)} узлов · {count(status.edge_count)} рёбер</small></span><em>{integrityState}</em><i>›</i></button>
       <button style="--layer:var(--l1)" onclick={() => go('search')}><b>L1</b><span><strong>Извлечение</strong><small>{count(status.chunk_count)} чанков · FTS {stateLabel(status.fts_ready, 'готов', 'не готов')} · {status.embed_provider ?? '—'}/{status.embed_model ?? '—'}</small></span><em>{stateLabel(status.ready_for_search, 'ready_for_search', 'not ready')}</em><i>›</i></button>
       <button style="--layer:var(--l0)" onclick={() => go('corpus')}><b>L0</b><span><strong>Сырой корпус</strong><small>{count(status.raw_count)} документов · {(taxonomy.wings ?? []).length} крыльев · {count(doctor.unscoped_documents)} без крыла</small></span><em>immutable</em><i>›</i></button>
-      <footer><span>Хранилище: {status.backend ?? '—'} · {bytes(status.db_file_bytes)} · WAL {bytes(status.wal_bytes)} из {bytes(status.wal_warn_bytes)}</span><code>caps: {(status.storage_capabilities ?? []).join(' · ') || '—'}</code></footer>
+      <footer><span>Хранилище: {status.backend ?? '—'} · {megabytes(status.db_file_bytes)} · WAL {megabytes(status.wal_bytes)} из {megabytes(status.wal_warn_bytes)}</span><code>caps: {(status.storage_capabilities ?? []).join(' · ') || '—'}</code></footer>
     </article>
 
     <aside>

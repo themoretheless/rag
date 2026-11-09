@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { milliseconds, score } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import SearchAssessment from '@/components/SearchAssessment.svelte'
   import { api } from '@/api/client'
@@ -170,13 +171,7 @@
     }
   }
 
-  function score(value?: number) {
-    return value == null ? '—' : value.toFixed(value >= 1 ? 2 : 4)
-  }
 
-  function milliseconds(value?: number) {
-    return value == null ? '—' : `${Math.round(value)} мс`
-  }
 
   function timingPercent(value?: number, total?: number) {
     if (value == null || total == null || total <= 0) return 0

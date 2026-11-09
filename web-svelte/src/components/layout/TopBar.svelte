@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { initials } from '@/lib/format'
   import { ui } from '@/lib/state/ui.svelte'
   import { go, route, type RouteName } from '@/lib/router.svelte'
 
@@ -22,12 +23,6 @@
       ? []
       : ui.shellAgents.filter((agent) => agent.online && (agent.transport === 'stdio' || agent.transport === 'http-mcp')),
   )
-  function initials(name: string) {
-    const parts = name.trim().split(/[\s_-]+/).filter(Boolean)
-    const [first, second] = parts
-    if (first === undefined) return '?'
-    return (second === undefined ? first.slice(0, 2) : `${first.charAt(0)}${second.charAt(0)}`).toUpperCase()
-  }
   const healthLabel = $derived.by(() => {
     if (ui.healthError) return 'offline'
     if (!ui.health) return 'connecting…'

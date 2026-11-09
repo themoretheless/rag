@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { milliseconds } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import RealQuestionEvaluation from '@/components/RealQuestionEvaluation.svelte'
   import { onMount } from 'svelte'
@@ -123,7 +124,6 @@
   }
 
   function fixed(value: number | null, digits = 2) { return value === null ? '—' : value.toFixed(digits) }
-  function milliseconds(value: number | null) { return value === null ? '—' : `${Math.round(value)} мс` }
   function percent(value: number | null) { return value === null ? '0%' : `${Math.max(0, Math.min(100, Math.round(value * 100)))}%` }
   function modeLabel(name: string) {
     const base = name === 'lex' ? 'bm25' : name === 'vec' ? 'cosine' : 'default'
