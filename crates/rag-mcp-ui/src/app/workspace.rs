@@ -7,7 +7,7 @@ impl GraphApp {
         match self.mode {
             ViewMode::Home => {
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.full_view.is_none() && self.activity_base().is_none() {
+                    if self.graph.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -18,7 +18,7 @@ impl GraphApp {
                             match draw_no_source(
                                 ui,
                                 &mut self.connect_url,
-                                self.load_error.as_deref(),
+                                self.graph.load_error.as_deref(),
                                 self.open.source.is_some(),
                             ) {
                                 NoSourceAction::Connect => self.connect_http(),
@@ -31,13 +31,13 @@ impl GraphApp {
                     let action = draw_project_home(
                         ui,
                         ProjectHomeView {
-                            selected_project: nonempty(&self.filter_wing).as_deref(),
-                            home: self.project_home.as_ref(),
-                            operations: self.operations_snapshot.as_ref(),
-                            activity: &self.activity,
-                            project_error: self.project_home_error.as_deref(),
-                            operations_error: self.operations_error.as_deref(),
-                            operations_stale: self.operations_snapshot_stale,
+                            selected_project: nonempty(&self.scope.wing).as_deref(),
+                            home: self.home.overview.as_ref(),
+                            operations: self.ops.snapshot.as_ref(),
+                            activity: &self.activity.events,
+                            project_error: self.home.error.as_deref(),
+                            operations_error: self.ops.error.as_deref(),
+                            operations_stale: self.ops.snapshot_stale,
                             loading: self.pending.project_home.is_some()
                                 || self.pending.operations.is_some()
                                 || self.pending.activity.is_some(),
@@ -64,8 +64,8 @@ impl GraphApp {
                         HomeAction::OpenGraph => {
                             self.mode = ViewMode::Graph;
                             if self.activity_base().is_some() {
-                                self.seed_input.clear();
-                                self.seed_id = None;
+                                self.graph.seed_input.clear();
+                                self.graph.seed_id = None;
                                 self.dispatch_graph_load();
                             }
                         }
@@ -90,17 +90,17 @@ impl GraphApp {
                             detail_action = draw_library_detail(
                                 ui,
                                 &item,
-                                self.library_document.as_ref(),
-                                self.library_document_error.as_deref(),
+                                self.library.document.as_ref(),
+                                self.library.document_error.as_deref(),
                                 self.pending.library_document.is_some(),
                             );
                         });
                     match detail_action {
                         LibraryDetailAction::None => {}
                         LibraryDetailAction::Close => {
-                            self.library_selected_id = None;
-                            self.library_document = None;
-                            self.library_document_error = None;
+                            self.library.selected_id = None;
+                            self.library.document = None;
+                            self.library.document_error = None;
                             self.pending.library_document.clear();
                         }
                         LibraryDetailAction::Retry => {
@@ -110,11 +110,11 @@ impl GraphApp {
                         LibraryDetailAction::History(_) => self.open_revisions(&item),
                         LibraryDetailAction::OpenWiki(id) => {
                             self.mode = ViewMode::Wiki;
-                            if self.wiki_pages.iter().any(|page| page.id == id) {
+                            if self.wiki.pages.iter().any(|page| page.id == id) {
                                 self.open_wiki_page_id(&id);
                             } else {
-                                self.wiki_open_after_catalog = Some(id);
-                                self.wiki_loaded = false;
+                                self.wiki.open_after_catalog = Some(id);
+                                self.wiki.loaded = false;
                                 self.reload_wiki_catalog();
                             }
                         }
@@ -125,7 +125,7 @@ impl GraphApp {
                 }
 
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.full_view.is_none() && self.activity_base().is_none() {
+                    if self.graph.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -136,7 +136,7 @@ impl GraphApp {
                             match draw_no_source(
                                 ui,
                                 &mut self.connect_url,
-                                self.load_error.as_deref(),
+                                self.graph.load_error.as_deref(),
                                 self.open.source.is_some(),
                             ) {
                                 NoSourceAction::Connect => self.connect_http(),
@@ -148,31 +148,32 @@ impl GraphApp {
                     }
                     let action = draw_library_workspace(
                         ui,
-                        &mut self.library_request,
-                        self.library_page.as_ref(),
-                        self.library_selected_id.as_deref(),
-                        self.library_error.as_deref(),
+                        &mut self.library.request,
+                        self.library.page.as_ref(),
+                        self.library.selected_id.as_deref(),
+                        self.library.error.as_deref(),
                         self.pending.library.is_some(),
-                        !self.library_cursor_history.is_empty(),
+                        !self.library.cursor_history.is_empty(),
                     );
                     match action {
                         LibraryAction::None => {}
                         LibraryAction::ApplyFilters => self.reset_library_for_filters(),
                         LibraryAction::ResetFilters => {
-                            self.library_request.clear_filters();
+                            self.library.request.clear_filters();
                             self.reset_library_for_filters();
                         }
                         LibraryAction::Refresh => self.reload_library(),
                         LibraryAction::PreviousPage => {
-                            if let Some(cursor) = self.library_cursor_history.pop() {
-                                self.library_request.cursor = cursor;
+                            if let Some(cursor) = self.library.cursor_history.pop() {
+                                self.library.request.cursor = cursor;
                                 self.reload_library();
                             }
                         }
                         LibraryAction::NextPage(cursor) => {
-                            self.library_cursor_history
-                                .push(self.library_request.cursor.clone());
-                            self.library_request.cursor = Some(cursor);
+                            self.library
+                                .cursor_history
+                                .push(self.library.request.cursor.clone());
+                            self.library.request.cursor = Some(cursor);
                             self.reload_library();
                         }
                         LibraryAction::Select(id) => self.select_library_document(&id),
@@ -181,7 +182,7 @@ impl GraphApp {
             }
             ViewMode::Search => {
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.full_view.is_none() && self.activity_base().is_none() {
+                    if self.graph.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -192,7 +193,7 @@ impl GraphApp {
                             match draw_no_source(
                                 ui,
                                 &mut self.connect_url,
-                                self.load_error.as_deref(),
+                                self.graph.load_error.as_deref(),
                                 self.open.source.is_some(),
                             ) {
                                 NoSourceAction::Connect => self.connect_http(),
@@ -204,22 +205,22 @@ impl GraphApp {
                     }
                     let action = draw_search_workspace(
                         ui,
-                        &mut self.search_request,
-                        self.search_results.as_ref(),
-                        self.search_error.as_deref(),
+                        &mut self.search.request,
+                        self.search.results.as_ref(),
+                        self.search.error.as_deref(),
                         self.pending.search.is_some(),
                     );
                     match action {
                         SearchAction::None => {}
                         SearchAction::Run => self.run_search(),
                         SearchAction::Clear => {
-                            let wing = nonempty(&self.filter_wing);
-                            self.search_request = SearchRequest {
+                            let wing = nonempty(&self.scope.wing);
+                            self.search.request = SearchRequest {
                                 wing,
                                 ..SearchRequest::default()
                             };
-                            self.search_results = None;
-                            self.search_error = None;
+                            self.search.results = None;
+                            self.search.error = None;
                         }
                         SearchAction::OpenLibrary {
                             document_id,
@@ -229,19 +230,19 @@ impl GraphApp {
                         } => {
                             self.mode = ViewMode::Library;
                             prepare_library_request_from_search(
-                                &mut self.library_request,
-                                &self.filter_wing,
+                                &mut self.library.request,
+                                &self.scope.wing,
                                 &title,
                                 &uri,
                                 include_archived,
                             );
-                            self.library_cursor_history.clear();
-                            self.library_selected_id = None;
-                            self.library_document = None;
-                            self.library_document_error = None;
+                            self.library.cursor_history.clear();
+                            self.library.selected_id = None;
+                            self.library.document = None;
+                            self.library.document_error = None;
                             self.pending.library_document.clear();
-                            self.library_page = None;
-                            self.library_open_after_load = Some(document_id);
+                            self.library.page = None;
+                            self.library.open_after_load = Some(document_id);
                             self.reload_library();
                         }
                         SearchAction::OpenGraph { document_id, title } => {
@@ -294,18 +295,18 @@ impl GraphApp {
                     }
                 });
             }
-            ViewMode::Activity => match self.operations_tab {
+            ViewMode::Activity => match self.ops.tab {
                 OperationsTab::Activity => {
                     egui::CentralPanel::default().show(root_ui, |ui| {
                     ui.heading("Операции · Журнал");
                     ui.label("Сначала новые события. Клиенты используют стабильные анонимные ID; тела, секретные заголовки и результаты здесь не записываются.");
-                    if let Some(error) = &self.activity_error {
+                    if let Some(error) = &self.activity.error {
                         ui.colored_label(theme::DANGER, error);
                     }
                     ui.separator();
-                    let filter = self.activity_filter.trim().to_lowercase();
-                    let client_filter = self.activity_client_filter.trim().to_lowercase();
-                    let action_filter = self.activity_action_filter.trim().to_lowercase();
+                    let filter = self.activity.filter.trim().to_lowercase();
+                    let client_filter = self.activity.client_filter.trim().to_lowercase();
+                    let action_filter = self.activity.action_filter.trim().to_lowercase();
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         egui::Grid::new("activity_grid")
                             .striped(true)
@@ -319,13 +320,13 @@ impl GraphApp {
                                 ui.strong("Длительность");
                                 ui.strong("ID запроса");
                                 ui.end_row();
-                                for event in self.activity.iter().rev() {
-                                    if self.activity_kind_filter != "all"
-                                        && event.kind != self.activity_kind_filter
+                                for event in self.activity.events.iter().rev() {
+                                    if self.activity.kind_filter != "all"
+                                        && event.kind != self.activity.kind_filter
                                     {
                                         continue;
                                     }
-                                    let status_matches = match self.activity_status_filter.as_str() {
+                                    let status_matches = match self.activity.status_filter.as_str() {
                                         "success" => event.status.is_some_and(|status| status < 400),
                                         "error" => event.status.is_some_and(|status| status >= 400),
                                         _ => true,
@@ -382,10 +383,10 @@ impl GraphApp {
                     egui::CentralPanel::default().show(root_ui, |ui| {
                         action = draw_jobs(
                             ui,
-                            &self.operations_jobs,
-                            &mut self.sync_job_form,
-                            nonempty(&self.filter_wing).as_deref(),
-                            self.operations_error.as_deref(),
+                            &self.ops.jobs,
+                            &mut self.ops.sync_job_form,
+                            nonempty(&self.scope.wing).as_deref(),
+                            self.ops.error.as_deref(),
                             self.pending.jobs.is_some() || self.pending.operation_action.is_some(),
                         );
                     });
@@ -396,11 +397,11 @@ impl GraphApp {
                     egui::CentralPanel::default().show(root_ui, |ui| {
                         action = draw_maintenance(
                             ui,
-                            self.operations_snapshot.as_ref(),
-                            &mut self.backup_form,
-                            self.operations_last_result.as_ref(),
-                            self.operations_error.as_deref(),
-                            self.operations_snapshot_stale,
+                            self.ops.snapshot.as_ref(),
+                            &mut self.ops.backup_form,
+                            self.ops.last_result.as_ref(),
+                            self.ops.error.as_deref(),
+                            self.ops.snapshot_stale,
                             self.pending.operations.is_some()
                                 || self.pending.operation_action.is_some(),
                         );
@@ -412,9 +413,9 @@ impl GraphApp {
                 egui::CentralPanel::default().show(root_ui, |ui| {
                     let action = draw_evaluation_workspace(
                         ui,
-                        self.search_results.as_ref(),
-                        &self.activity,
-                        self.activity_error.as_deref(),
+                        self.search.results.as_ref(),
+                        &self.activity.events,
+                        self.activity.error.as_deref(),
                         self.pending.activity.is_some(),
                     );
                     match action {
@@ -433,18 +434,18 @@ impl GraphApp {
                 egui::CentralPanel::default().show(root_ui, |ui| {
                     let action = draw_models_workspace(
                         ui,
-                        self.operations_snapshot.as_ref(),
-                        self.operations_error.as_deref(),
+                        self.ops.snapshot.as_ref(),
+                        self.ops.error.as_deref(),
                         self.pending.operations.is_some(),
-                        self.operations_snapshot_stale,
+                        self.ops.snapshot_stale,
                     );
                     match action {
                         ModelsAction::None => {}
                         ModelsAction::Refresh => self.reload_operations(),
                         ModelsAction::OpenMaintenance => {
                             self.mode = ViewMode::Activity;
-                            self.operations_tab = OperationsTab::Maintenance;
-                            if self.operations_snapshot.is_none() {
+                            self.ops.tab = OperationsTab::Maintenance;
+                            if self.ops.snapshot.is_none() {
                                 self.reload_operations();
                             }
                         }
@@ -455,8 +456,8 @@ impl GraphApp {
                 egui::CentralPanel::default().show(root_ui, |ui| {
                     if draw_sync_workspace(
                         ui,
-                        self.operations_snapshot.as_ref(),
-                        self.operations_error.as_deref(),
+                        self.ops.snapshot.as_ref(),
+                        self.ops.error.as_deref(),
                         self.pending.operations.is_some(),
                     ) {
                         self.reload_operations();
@@ -465,7 +466,7 @@ impl GraphApp {
             }
             ViewMode::Wiki => {
                 // Left: catalog (polished dual-pane nav column).
-                if self.wiki_sidebar_visible {
+                if self.wiki.sidebar_visible {
                     egui::Panel::left("wiki_nav")
                         .default_size(250.0)
                         .size_range(190.0..=420.0)
@@ -474,18 +475,18 @@ impl GraphApp {
                         .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             let sidebar_index = self.wiki_sidebar_index();
-                            let sel = if self.wiki_dual_pane && self.wiki_focus == WikiPane::B {
-                                self.wiki_selected_id_b.as_deref()
+                            let sel = if self.wiki.dual_pane && self.wiki.focus == WikiFocus::B {
+                                self.wiki.b.selected_id.as_deref()
                             } else {
-                                self.wiki_selected_id.as_deref()
+                                self.wiki.a.selected_id.as_deref()
                             };
                             if let Some(id) = draw_wiki_sidebar(
                                 ui,
-                                &self.wiki_pages,
+                                &self.wiki.pages,
                                 &sidebar_index,
-                                &mut self.wiki_filter,
+                                &mut self.wiki.filter,
                                 sel,
-                                &mut self.wiki_show_summaries,
+                                &mut self.wiki.show_summaries,
                             ) {
                                 self.open_wiki_page_id(&id);
                             }
@@ -493,7 +494,7 @@ impl GraphApp {
                 }
 
                 // Right: secondary article when dual-pane is on.
-                if self.wiki_dual_pane {
+                if self.wiki.dual_pane {
                     egui::Panel::right("wiki_pane_b")
                         .default_size(420.0)
                         .size_range(280.0..=900.0)
@@ -502,13 +503,13 @@ impl GraphApp {
                         .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             ui.horizontal(|ui| {
-                                let focused = self.wiki_focus == WikiPane::B;
+                                let focused = self.wiki.focus == WikiFocus::B;
                                 if ui
                                     .selectable_label(focused, "Панель B")
                                     .on_hover_text("Вторая статья, только чтение")
                                     .clicked()
                                 {
-                                    self.wiki_focus = WikiPane::B;
+                                    self.wiki.focus = WikiFocus::B;
                                 }
                                 if self.pending.page_b.is_some() {
                                     ui.spinner();
@@ -516,7 +517,7 @@ impl GraphApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if self.wiki_selected_id_b.is_some()
+                                        if self.wiki.b.selected_id.is_some()
                                             && ui
                                                 .small_button("Очистить")
                                                 .on_hover_text("Закрыть вторую страницу")
@@ -531,8 +532,8 @@ impl GraphApp {
                             let known_keys = self.wiki_known_keys();
                             let action = draw_wiki_read_view(
                                 ui,
-                                self.wiki_article_b.as_ref(),
-                                self.wiki_error_b.as_deref(),
+                                self.wiki.b.article.as_ref(),
+                                self.wiki.b.error.as_deref(),
                                 WikiReadContext {
                                     known_keys: &known_keys,
                                     can_write: false,
@@ -541,12 +542,12 @@ impl GraphApp {
                                 },
                             );
                             if action.retry {
-                                if let Some(id) = self.wiki_selected_id_b.clone() {
+                                if let Some(id) = self.wiki.b.selected_id.clone() {
                                     self.open_wiki_page_in_b(&id);
                                 }
                             }
                             if action.open_id.is_some() || action.open_link.is_some() {
-                                self.wiki_focus = WikiPane::B;
+                                self.wiki.focus = WikiFocus::B;
                             }
                             if let Some(id) = action.open_id {
                                 self.open_wiki_page_id(&id);
@@ -556,7 +557,7 @@ impl GraphApp {
                         });
                 }
 
-                if !self.wiki_dual_pane && self.wiki_info_visible {
+                if !self.wiki.dual_pane && self.wiki.info_visible {
                     egui::Panel::right("wiki_info")
                         .default_size(260.0)
                         .size_range(220.0..=380.0)
@@ -566,13 +567,13 @@ impl GraphApp {
                         .show(root_ui, |ui| {
                             let action = draw_wiki_info_panel(
                                 ui,
-                                self.wiki_article.as_ref(),
-                                &self.wiki_backlinks,
-                                self.wiki_backlinks_error.as_deref(),
+                                self.wiki.a.article.as_ref(),
+                                &self.wiki.backlinks,
+                                self.wiki.backlinks_error.as_deref(),
                                 self.pending.backlinks.is_some(),
                             );
                             if action.retry {
-                                if let Some(id) = self.wiki_selected_id.clone() {
+                                if let Some(id) = self.wiki.a.selected_id.clone() {
                                     self.refresh_backlinks(&id);
                                 }
                             } else if let Some(id) = action.open_id {
@@ -588,7 +589,7 @@ impl GraphApp {
                     // locked file): same start screen as Graph mode, so Retry
                     // re-runs LoadGraph on `open.source` instead of only
                     // re-fetching the catalog.
-                    if self.full_view.is_none() && self.activity_base().is_none() {
+                    if self.graph.full_view.is_none() && self.activity_base().is_none() {
                         if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
@@ -599,7 +600,7 @@ impl GraphApp {
                             match draw_no_source(
                                 ui,
                                 &mut self.connect_url,
-                                self.load_error.as_deref(),
+                                self.graph.load_error.as_deref(),
                                 self.open.source.is_some(),
                             ) {
                                 NoSourceAction::Connect => self.connect_http(),
@@ -609,34 +610,34 @@ impl GraphApp {
                         }
                         return;
                     }
-                    if self.wiki_dual_pane {
+                    if self.wiki.dual_pane {
                         ui.horizontal(|ui| {
-                            let focused = self.wiki_focus == WikiPane::A;
+                            let focused = self.wiki.focus == WikiFocus::A;
                             if ui
                                 .selectable_label(focused, "Панель A")
                                 .on_hover_text("Основная статья; редактирование работает здесь")
                                 .clicked()
                             {
-                                self.wiki_focus = WikiPane::A;
+                                self.wiki.focus = WikiFocus::A;
                             }
                         });
                         ui.separator();
                     }
-                    if self.wiki_dual_pane || !self.wiki_info_visible {
+                    if self.wiki.dual_pane || !self.wiki.info_visible {
                         if self.pending.backlinks.is_some() {
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.weak("Обновление обратных ссылок…");
                             });
                         }
-                        if let Some(error) = self.wiki_backlinks_error.clone() {
+                        if let Some(error) = self.wiki.backlinks_error.clone() {
                             ui.horizontal_wrapped(|ui| {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(215, 100, 85),
                                     format!("Обратные ссылки недоступны: {error}"),
                                 );
                                 if ui.button("Повторить").clicked() {
-                                    if let Some(id) = self.wiki_selected_id.clone() {
+                                    if let Some(id) = self.wiki.a.selected_id.clone() {
                                         self.refresh_backlinks(&id);
                                     }
                                 }
@@ -645,15 +646,15 @@ impl GraphApp {
                     }
                     let can_write = self.wiki_can_write();
                     let saving = self.pending.save.is_some();
-                    if self.wiki_edit.is_some() && self.wiki_article.is_some() {
+                    if self.wiki.edit.is_some() && self.wiki.a.article.is_some() {
                         // Draw with short-lived field borrows, then handle actions.
                         let action = {
-                            let page = self.wiki_article.as_ref().expect("checked above");
-                            let edit = self.wiki_edit.as_mut().expect("checked above");
+                            let page = self.wiki.a.article.as_ref().expect("checked above");
+                            let edit = self.wiki.edit.as_mut().expect("checked above");
                             draw_wiki_edit_view(
                                 ui,
                                 page,
-                                self.wiki_error.as_deref(),
+                                self.wiki.a.error.as_deref(),
                                 edit,
                                 can_write,
                                 saving,
@@ -670,8 +671,8 @@ impl GraphApp {
                         let known_keys = self.wiki_known_keys();
                         let action = draw_wiki_read_view(
                             ui,
-                            self.wiki_article.as_ref(),
-                            self.wiki_error.as_deref(),
+                            self.wiki.a.article.as_ref(),
+                            self.wiki.a.error.as_deref(),
                             WikiReadContext {
                                 known_keys: &known_keys,
                                 can_write,
@@ -680,44 +681,48 @@ impl GraphApp {
                             },
                         );
                         if action.retry {
-                            if let Some(id) = self.wiki_selected_id.clone() {
+                            if let Some(id) = self.wiki.a.selected_id.clone() {
                                 self.open_wiki_page_id_no_history(&id);
                             } else {
-                                self.wiki_loaded = false;
+                                self.wiki.loaded = false;
                                 self.reload_wiki_catalog();
                             }
                         } else if action.start_edit {
-                            self.wiki_focus = WikiPane::A;
+                            self.wiki.focus = WikiFocus::A;
                             self.start_wiki_edit();
                         } else if let Some(id) = action.open_id {
-                            self.wiki_focus = WikiPane::A;
+                            self.wiki.focus = WikiFocus::A;
                             self.open_wiki_page_id(&id);
                         } else if let Some(link) = action.open_link {
-                            self.wiki_focus = WikiPane::A;
+                            self.wiki.focus = WikiFocus::A;
                             self.open_wiki_link(&link);
                         }
                     }
                 });
             }
             ViewMode::Graph => {
-                if self.selected.is_some() {
-                    let detail_w = if self.content.is_some() { 420.0 } else { 320.0 };
+                if self.graph.selected.is_some() {
+                    let detail_w = if self.graph.content.is_some() {
+                        420.0
+                    } else {
+                        320.0
+                    };
                     let content_available = self.available_load_source().is_some();
                     egui::Panel::right("detail")
                         .default_size(detail_w)
                         .frame(theme::toolbar_frame())
                         .show(root_ui, |ui| {
                             if let (Some(sel), Some(g)) =
-                                (self.selected.as_deref(), self.ui_graph.as_ref())
+                                (self.graph.selected.as_deref(), self.graph.ui_graph.as_ref())
                             {
                                 let action = draw_detail(
                                     ui,
                                     g,
                                     sel,
-                                    self.graph_lens,
+                                    self.graph.lens,
                                     DetailContentState {
-                                        body: self.content.as_ref(),
-                                        error: self.content_error.as_deref(),
+                                        body: self.graph.content.as_ref(),
+                                        error: self.graph.content_error.as_deref(),
                                         loading: self.pending.content.is_some(),
                                         available: content_available,
                                     },
@@ -725,13 +730,13 @@ impl GraphApp {
                                 match action {
                                     DetailAction::ReadContent => self.load_content_for_selected(),
                                     DetailAction::CloseContent => {
-                                        self.content = None;
-                                        self.content_error = None;
+                                        self.graph.content = None;
+                                        self.graph.content_error = None;
                                     }
                                     DetailAction::SelectNode(id) => {
-                                        self.selected = Some(id);
-                                        self.content = None;
-                                        self.content_error = None;
+                                        self.graph.selected = Some(id);
+                                        self.graph.content = None;
+                                        self.graph.content_error = None;
                                     }
                                     DetailAction::None => {}
                                 }
@@ -740,7 +745,7 @@ impl GraphApp {
                 }
 
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.pending.graph.is_some() && self.full_view.is_none() {
+                    if self.pending.graph.is_some() && self.graph.full_view.is_none() {
                         ui.vertical_centered(|ui| {
                             ui.add_space(ui.available_height() * 0.2);
                             ui.spinner();
@@ -771,7 +776,7 @@ impl GraphApp {
                         }
                         return;
                     }
-                    let Some(graph) = self.ui_graph.as_ref() else {
+                    let Some(graph) = self.graph.ui_graph.as_ref() else {
                         let stats = self.empty_stats();
                         draw_empty_banner(ui, EmptyKind::MissingSeed, None, stats.as_ref());
                         return;
@@ -779,23 +784,23 @@ impl GraphApp {
                     let out = draw_canvas(
                         ui,
                         graph,
-                        &self.positions,
-                        self.selected.as_deref(),
-                        &mut self.pan,
-                        &mut self.zoom,
-                        &mut self.need_fit,
+                        &self.graph.positions,
+                        self.graph.selected.as_deref(),
+                        &mut self.graph.pan,
+                        &mut self.graph.zoom,
+                        &mut self.graph.need_fit,
                     );
                     if let Some(id) = out.clicked_id {
-                        if self.selected.as_deref() != Some(id.as_str()) {
-                            self.content = None;
-                            self.content_error = None;
+                        if self.graph.selected.as_deref() != Some(id.as_str()) {
+                            self.graph.content = None;
+                            self.graph.content_error = None;
                             self.pending.content.clear();
                         }
-                        self.selected = Some(id);
+                        self.graph.selected = Some(id);
                     } else if out.clicked_empty {
-                        self.selected = None;
-                        self.content = None;
-                        self.content_error = None;
+                        self.graph.selected = None;
+                        self.graph.content = None;
+                        self.graph.content_error = None;
                         self.pending.content.clear();
                     }
                 });

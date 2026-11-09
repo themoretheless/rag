@@ -106,7 +106,7 @@ impl GraphApp {
         match result {
             Ok(loaded) => self.apply_loaded(loaded),
             Err(e) => {
-                self.load_error = Some(e);
+                self.graph.load_error = Some(e);
                 if self.mode == ViewMode::Wiki {
                     // Wiki can still answer (or fail with a clearer error).
                     self.ensure_wiki_loaded();
@@ -121,10 +121,10 @@ impl GraphApp {
         }
         match result {
             Ok(projects) => {
-                self.project_catalog = projects;
-                self.project_catalog_error = None;
+                self.scope.catalog = projects;
+                self.scope.catalog_error = None;
             }
-            Err(error) => self.project_catalog_error = Some(error),
+            Err(error) => self.scope.catalog_error = Some(error),
         }
     }
 
@@ -133,17 +133,17 @@ impl GraphApp {
             return;
         }
         // Selection moved on meanwhile: drop the answer.
-        if self.selected.as_deref() != Some(node_id.as_str()) {
+        if self.graph.selected.as_deref() != Some(node_id.as_str()) {
             return;
         }
         match result {
             Ok(body) => {
-                self.content = Some(body);
-                self.content_error = None;
+                self.graph.content = Some(body);
+                self.graph.content_error = None;
             }
             Err(e) => {
-                self.content = None;
-                self.content_error = Some(e);
+                self.graph.content = None;
+                self.graph.content_error = Some(e);
             }
         }
     }
@@ -155,24 +155,29 @@ impl GraphApp {
         let merged = match result {
             Ok(v) => v,
             Err(e) => {
-                self.expand_note = Some(e);
+                self.graph.expand_note = Some(e);
                 return;
             }
         };
-        let before = self.local_view.as_ref().map(|v| v.nodes.len()).unwrap_or(0);
+        let before = self
+            .graph
+            .local_view
+            .as_ref()
+            .map(|v| v.nodes.len())
+            .unwrap_or(0);
         let after = merged.nodes.len();
-        let max_n = self.max_nodes as usize;
+        let max_n = self.graph.max_nodes as usize;
         if after == before {
-            self.expand_note = Some(format!(
+            self.graph.expand_note = Some(format!(
                 "Для «{selected}» нет новых соседей в пределах max_nodes ({max_n})"
             ));
         } else if after >= max_n {
-            self.expand_note = Some(format!(
+            self.graph.expand_note = Some(format!(
                 "Раскрытие заполнило вид до max_nodes ({max_n}); часть соседей может быть скрыта"
             ));
         }
         if after > before {
-            self.expanded_dirty = true;
+            self.graph.expanded_dirty = true;
         }
         self.apply_local_topology(merged, /*reset_layout=*/ false);
     }
@@ -189,18 +194,18 @@ impl GraphApp {
         if !self.pending.project_home.accept(seq) {
             return;
         }
-        if project != self.filter_wing.trim() {
+        if project != self.scope.wing.trim() {
             return;
         }
-        self.project_home_project = Some(project);
+        self.home.project = Some(project);
         match result {
             Ok(home) => {
-                self.project_home = Some(home);
-                self.project_home_error = None;
+                self.home.overview = Some(home);
+                self.home.error = None;
             }
             Err(error) => {
-                self.project_home = None;
-                self.project_home_error = Some(error);
+                self.home.overview = None;
+                self.home.error = Some(error);
             }
         }
     }
@@ -214,39 +219,41 @@ impl GraphApp {
         if !self.pending.library.accept(seq) {
             return;
         }
-        if !project_scope_matches(project.as_deref(), &self.filter_wing) {
+        if !project_scope_matches(project.as_deref(), &self.scope.wing) {
             return;
         }
         match result {
             Ok(page) => {
                 let selected_still_visible = self
-                    .library_selected_id
+                    .library
+                    .selected_id
                     .as_ref()
                     .is_some_and(|selected| page.items.iter().any(|item| &item.id == selected));
                 if !selected_still_visible {
-                    self.library_selected_id = None;
-                    self.library_document = None;
-                    self.library_document_error = None;
+                    self.library.selected_id = None;
+                    self.library.document = None;
+                    self.library.document_error = None;
                     self.pending.library_document.clear();
                 }
-                self.library_page = Some(page);
-                self.library_error = None;
-                if let Some(id) = self.library_open_after_load.take() {
+                self.library.page = Some(page);
+                self.library.error = None;
+                if let Some(id) = self.library.open_after_load.take() {
                     if self
-                        .library_page
+                        .library
+                        .page
                         .as_ref()
                         .is_some_and(|page| page.items.iter().any(|item| item.id == id))
                     {
                         self.select_library_document(&id);
                     } else {
-                        self.library_error =
+                        self.library.error =
                             Some(format!("Документ {id} не найден текущим фильтром каталога"));
                     }
                 }
             }
             Err(error) => {
-                self.library_page = None;
-                self.library_error = Some(error);
+                self.library.page = None;
+                self.library.error = Some(error);
             }
         }
     }
@@ -260,17 +267,17 @@ impl GraphApp {
         if !self.pending.library_document.accept(seq) {
             return;
         }
-        if self.library_selected_id.as_deref() != Some(document_id.as_str()) {
+        if self.library.selected_id.as_deref() != Some(document_id.as_str()) {
             return;
         }
         match result {
             Ok(body) => {
-                self.library_document = Some(body);
-                self.library_document_error = None;
+                self.library.document = Some(body);
+                self.library.document_error = None;
             }
             Err(error) => {
-                self.library_document = None;
-                self.library_document_error = Some(error);
+                self.library.document = None;
+                self.library.document_error = Some(error);
             }
         }
     }
@@ -284,17 +291,17 @@ impl GraphApp {
         if !self.pending.search.accept(seq) {
             return;
         }
-        if !project_scope_matches(project.as_deref(), &self.filter_wing) {
+        if !project_scope_matches(project.as_deref(), &self.scope.wing) {
             return;
         }
         match result {
             Ok(results) => {
-                self.search_results = Some(results);
-                self.search_error = None;
+                self.search.results = Some(results);
+                self.search.error = None;
             }
             Err(error) => {
-                self.search_results = None;
-                self.search_error = Some(error);
+                self.search.results = None;
+                self.search.error = Some(error);
             }
         }
     }
@@ -308,13 +315,13 @@ impl GraphApp {
         }
         match result {
             Ok(snapshot) => {
-                self.operations_snapshot = Some(snapshot);
-                self.operations_snapshot_stale = false;
-                self.operations_error = None;
+                self.ops.snapshot = Some(snapshot);
+                self.ops.snapshot_stale = false;
+                self.ops.error = None;
             }
             Err(error) => {
-                self.operations_snapshot_stale = true;
-                self.operations_error = Some(error);
+                self.ops.snapshot_stale = true;
+                self.ops.error = Some(error);
             }
         }
     }
@@ -323,13 +330,13 @@ impl GraphApp {
         if !self.pending.jobs.accept(seq) {
             return;
         }
-        self.operations_jobs_last_refresh = Some(Instant::now());
+        self.ops.jobs_last_refresh = Some(Instant::now());
         match result {
             Ok(jobs) => {
-                self.operations_jobs = jobs;
-                self.operations_error = None;
+                self.ops.jobs = jobs;
+                self.ops.error = None;
             }
-            Err(error) => self.operations_error = Some(error),
+            Err(error) => self.ops.error = Some(error),
         }
     }
 
@@ -340,18 +347,19 @@ impl GraphApp {
         match *result {
             Ok(job) => {
                 if let Some(existing) = self
-                    .operations_jobs
+                    .ops
+                    .jobs
                     .iter_mut()
                     .find(|existing| existing.id == job.id)
                 {
                     *existing = job;
                 } else {
-                    self.operations_jobs.insert(0, job);
+                    self.ops.jobs.insert(0, job);
                 }
-                self.operations_error = None;
+                self.ops.error = None;
                 self.reload_jobs();
             }
-            Err(error) => self.operations_error = Some(error),
+            Err(error) => self.ops.error = Some(error),
         }
     }
 
@@ -361,11 +369,11 @@ impl GraphApp {
         }
         match result {
             Ok(result) => {
-                self.operations_last_result = Some(result);
-                self.operations_error = None;
+                self.ops.last_result = Some(result);
+                self.ops.error = None;
                 self.reload_operations();
             }
-            Err(error) => self.operations_error = Some(error),
+            Err(error) => self.ops.error = Some(error),
         }
     }
 
@@ -373,13 +381,13 @@ impl GraphApp {
         if !self.pending.activity.accept(seq) {
             return;
         }
-        self.activity_last_refresh = Some(Instant::now());
+        self.activity.last_refresh = Some(Instant::now());
         match result {
             Ok(items) => {
-                self.activity = items;
-                self.activity_error = None;
+                self.activity.events = items;
+                self.activity.error = None;
             }
-            Err(error) => self.activity_error = Some(error),
+            Err(error) => self.activity.error = Some(error),
         }
     }
 }
@@ -495,7 +503,7 @@ impl GraphApp {
                 self.revision.selected = None;
                 self.revision.error = None;
                 self.reload_revisions();
-                if self.library_selected_id.as_deref() == self.revision.document_id.as_deref() {
+                if self.library.selected_id.as_deref() == self.revision.document_id.as_deref() {
                     let id = document_id.clone();
                     self.select_library_document(&id);
                 }
@@ -511,24 +519,24 @@ impl GraphApp {
         if !self.pending.catalog.accept(seq) {
             return;
         }
-        self.wiki_loaded = true;
+        self.wiki.loaded = true;
         match result {
             Ok(mut pages) => {
                 sort_wiki_pages(&mut pages);
-                self.wiki_pages = pages;
-                self.wiki_pages_rev += 1;
-                if let Some(id) = self.wiki_open_after_catalog.take() {
-                    if self.wiki_pages.iter().any(|page| page.id == id) {
+                self.wiki.pages = pages;
+                self.wiki.pages_rev += 1;
+                if let Some(id) = self.wiki.open_after_catalog.take() {
+                    if self.wiki.pages.iter().any(|page| page.id == id) {
                         self.open_wiki_page_id(&id);
                     } else {
-                        self.wiki_error =
+                        self.wiki.a.error =
                             Some(format!("Документа {id} нет в wiki-каталоге проекта"));
                     }
                 } else {
                     self.auto_open_initial_page();
                 }
             }
-            Err(e) => self.wiki_error = Some(e),
+            Err(e) => self.wiki.a.error = Some(e),
         }
     }
 
@@ -560,16 +568,16 @@ impl GraphApp {
         if !self.pending.backlinks.accept(seq) {
             return;
         }
-        if self.wiki_selected_id.as_deref() == Some(document_id.as_str()) {
+        if self.wiki.a.selected_id.as_deref() == Some(document_id.as_str()) {
             match result {
                 Ok(backlinks) => {
-                    self.wiki_backlinks = backlinks;
-                    self.wiki_backlinks_error = None;
+                    self.wiki.backlinks = backlinks;
+                    self.wiki.backlinks_error = None;
                 }
                 Err(error) => {
                     // Preserve the last known list, but make its
                     // potentially stale status explicit.
-                    self.wiki_backlinks_error = Some(error);
+                    self.wiki.backlinks_error = Some(error);
                 }
             }
         }

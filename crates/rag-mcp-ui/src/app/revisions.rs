@@ -18,7 +18,8 @@ impl GraphApp {
         self.revision.document_uri = item.uri.clone();
         self.revision.document_layer = item.layer.clone();
         self.revision.head = self
-            .library_document
+            .library
+            .document
             .as_ref()
             .filter(|body| body.id == item.id)
             .and_then(|body| body.revision);

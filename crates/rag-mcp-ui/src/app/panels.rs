@@ -18,7 +18,7 @@ impl GraphApp {
                         if self.pending.project_home.is_some() {
                             ui.spinner();
                             ui.weak("инвентаризация…");
-                        } else if let Some(home) = &self.project_home {
+                        } else if let Some(home) = &self.home.overview {
                             ui.weak(format!("{} документов", home.documents));
                         }
                     }
@@ -26,7 +26,7 @@ impl GraphApp {
                         if self.pending.library.is_some() {
                             ui.spinner();
                             ui.weak("каталог…");
-                        } else if let Some(page) = &self.library_page {
+                        } else if let Some(page) = &self.library.page {
                             ui.weak(format!("{} документов", page.total));
                         }
                     }
@@ -34,7 +34,7 @@ impl GraphApp {
                         if self.pending.search.is_some() {
                             ui.spinner();
                             ui.weak("поиск…");
-                        } else if let Some(results) = &self.search_results {
+                        } else if let Some(results) = &self.search.results {
                             ui.weak(format!("{} результатов", results.items.len()));
                         }
                     }
@@ -53,55 +53,55 @@ impl GraphApp {
                     ViewMode::Activity => {
                         if ui
                             .selectable_label(
-                                self.operations_tab == OperationsTab::Activity,
+                                self.ops.tab == OperationsTab::Activity,
                                 "Активность",
                             )
                             .clicked()
                         {
-                            self.operations_tab = OperationsTab::Activity;
+                            self.ops.tab = OperationsTab::Activity;
                             self.refresh_activity();
                         }
                         if ui
-                            .selectable_label(self.operations_tab == OperationsTab::Jobs, "Задачи")
+                            .selectable_label(self.ops.tab == OperationsTab::Jobs, "Задачи")
                             .clicked()
                         {
-                            self.operations_tab = OperationsTab::Jobs;
+                            self.ops.tab = OperationsTab::Jobs;
                             self.reload_jobs();
                         }
                         if ui
                             .selectable_label(
-                                self.operations_tab == OperationsTab::Maintenance,
+                                self.ops.tab == OperationsTab::Maintenance,
                                 "Диагностика и бэкап",
                             )
                             .clicked()
                         {
-                            self.operations_tab = OperationsTab::Maintenance;
-                            if self.operations_snapshot.is_none() {
+                            self.ops.tab = OperationsTab::Maintenance;
+                            if self.ops.snapshot.is_none() {
                                 self.reload_operations();
                             }
                         }
                         ui.separator();
-                        if self.operations_tab == OperationsTab::Activity {
+                        if self.ops.tab == OperationsTab::Activity {
                             if ui.button("Обновить").clicked() {
                                 self.refresh_activity();
                             }
-                            ui.checkbox(&mut self.activity_auto_refresh, "Онлайн");
-                        } else if self.operations_tab == OperationsTab::Jobs {
+                            ui.checkbox(&mut self.activity.auto_refresh, "Онлайн");
+                        } else if self.ops.tab == OperationsTab::Jobs {
                             if self.pending.jobs.is_some()
                                 || self.pending.operation_action.is_some()
                             {
                                 ui.spinner();
                             }
-                            ui.weak(format!("{} сохранено", self.operations_jobs.len()));
+                            ui.weak(format!("{} сохранено", self.ops.jobs.len()));
                         } else {
                             if self.pending.operations.is_some()
                                 || self.pending.operation_action.is_some()
                             {
                                 ui.spinner();
                             }
-                            if self.operations_snapshot_stale {
+                            if self.ops.snapshot_stale {
                                 ui.colored_label(theme::WARN, "устарело");
-                            } else if let Some(snapshot) = &self.operations_snapshot {
+                            } else if let Some(snapshot) = &self.ops.snapshot {
                                 ui.colored_label(
                                     if snapshot.doctor.ok {
                                         egui::Color32::from_rgb(90, 190, 125)
@@ -116,14 +116,14 @@ impl GraphApp {
                                 );
                             }
                         }
-                        if self.operations_tab != OperationsTab::Activity {
+                        if self.ops.tab != OperationsTab::Activity {
                             return;
                         }
-                        let filters_active = self.activity_kind_filter != "all"
-                            || self.activity_status_filter != "all"
-                            || !self.activity_client_filter.is_empty()
-                            || !self.activity_action_filter.is_empty()
-                            || !self.activity_filter.is_empty();
+                        let filters_active = self.activity.kind_filter != "all"
+                            || self.activity.status_filter != "all"
+                            || !self.activity.client_filter.is_empty()
+                            || !self.activity.action_filter.is_empty()
+                            || !self.activity.filter.is_empty();
                         ui.menu_button(
                             if filters_active {
                                 "Фильтры (активны)"
@@ -134,7 +134,7 @@ impl GraphApp {
                                 ui.set_min_width(260.0);
                                 ui.label("Тип события");
                                 egui::ComboBox::from_id_salt("activity_kind_filter")
-                                    .selected_text(match self.activity_kind_filter.as_str() {
+                                    .selected_text(match self.activity.kind_filter.as_str() {
                                         "http" => "HTTP",
                                         "mcp_tool" => "MCP tool",
                                         _ => "Все типы",
@@ -147,7 +147,7 @@ impl GraphApp {
                                         ] {
                                             crate::ui::closing_selectable_value(
                                                 ui,
-                                                &mut self.activity_kind_filter,
+                                                &mut self.activity.kind_filter,
                                                 value.to_string(),
                                                 label,
                                             );
@@ -155,7 +155,7 @@ impl GraphApp {
                                     });
                                 ui.label("Результат");
                                 egui::ComboBox::from_id_salt("activity_status_filter")
-                                    .selected_text(match self.activity_status_filter.as_str() {
+                                    .selected_text(match self.activity.status_filter.as_str() {
                                         "success" => "Успех",
                                         "error" => "Ошибки",
                                         _ => "Все результаты",
@@ -168,27 +168,27 @@ impl GraphApp {
                                         ] {
                                             crate::ui::closing_selectable_value(
                                                 ui,
-                                                &mut self.activity_status_filter,
+                                                &mut self.activity.status_filter,
                                                 value.to_string(),
                                                 label,
                                             );
                                         }
                                     });
                                 ui.label("Клиент");
-                                ui.text_edit_singleline(&mut self.activity_client_filter);
+                                ui.text_edit_singleline(&mut self.activity.client_filter);
                                 ui.label("Действие или маршрут");
-                                ui.text_edit_singleline(&mut self.activity_action_filter);
+                                ui.text_edit_singleline(&mut self.activity.action_filter);
                                 ui.label("Любое поле");
-                                ui.text_edit_singleline(&mut self.activity_filter);
+                                ui.text_edit_singleline(&mut self.activity.filter);
                                 if ui
                                     .add_enabled(filters_active, egui::Button::new("Сбросить фильтры"))
                                     .clicked()
                                 {
-                                    self.activity_kind_filter = "all".into();
-                                    self.activity_status_filter = "all".into();
-                                    self.activity_client_filter.clear();
-                                    self.activity_action_filter.clear();
-                                    self.activity_filter.clear();
+                                    self.activity.kind_filter = "all".into();
+                                    self.activity.status_filter = "all".into();
+                                    self.activity.client_filter.clear();
+                                    self.activity.action_filter.clear();
+                                    self.activity.filter.clear();
                                 }
                             },
                         );
@@ -213,7 +213,7 @@ impl GraphApp {
                         );
                         if self.pending.operations.is_some() {
                             ui.spinner();
-                        } else if let Some(snapshot) = &self.operations_snapshot {
+                        } else if let Some(snapshot) = &self.ops.snapshot {
                             ui.weak(format!(
                                 "{} · схема v{} · {} чанков",
                                 snapshot.status.backend,
@@ -224,20 +224,20 @@ impl GraphApp {
                     }
                     ViewMode::Sync => {
                         ui.label(egui::RichText::new("SYNC").monospace().color(theme::L2));
-                        if let Some(sync) = self.operations_snapshot.as_ref().and_then(|snapshot| snapshot.sync.as_ref()) {
+                        if let Some(sync) = self.ops.snapshot.as_ref().and_then(|snapshot| snapshot.sync.as_ref()) {
                             ui.weak(format!("{} · cursor {} · outbox {}", sync.role, sync.latest_primary_seq, sync.pending_outbox));
                         } else { ui.weak("ожидание sync status"); }
                     }
                     ViewMode::Wiki => {
                         if ui
-                            .selectable_label(self.wiki_sidebar_visible, "Страницы")
+                            .selectable_label(self.wiki.sidebar_visible, "Страницы")
                             .on_hover_text("Показать или скрыть каталог страниц")
                             .clicked()
                         {
-                            self.wiki_sidebar_visible = !self.wiki_sidebar_visible;
+                            self.wiki.sidebar_visible = !self.wiki.sidebar_visible;
                         }
                         if ui
-                            .add_enabled(!self.wiki_history.is_empty(), egui::Button::new("< Назад"))
+                            .add_enabled(!self.wiki.history.is_empty(), egui::Button::new("< Назад"))
                             .on_hover_text("Назад по истории страниц (Alt+Left)")
                             .clicked()
                         {
@@ -245,17 +245,17 @@ impl GraphApp {
                         }
                         if ui.button("Обновить вики").clicked() {
                             if self.pending.save.is_some() {
-                                self.wiki_error = Some(
+                                self.wiki.a.error = Some(
                                     "Идёт сохранение. Дождитесь результата перед обновлением вики."
                                         .into(),
                                 );
-                            } else if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
-                                self.wiki_error = Some(
+                            } else if self.wiki.edit.as_ref().is_some_and(|e| e.dirty) {
+                                self.wiki.a.error = Some(
                                     "Есть несохранённые правки: сохраните или отмените их".into(),
                                 );
                             } else {
-                                self.wiki_edit = None;
-                                self.wiki_loaded = false;
+                                self.wiki.edit = None;
+                                self.wiki.loaded = false;
                                 self.reload_wiki_catalog();
                             }
                         }
@@ -268,56 +268,56 @@ impl GraphApp {
                             ui.weak("страница…");
                         }
                         if ui
-                            .selectable_label(self.wiki_dual_pane, "Две панели")
+                            .selectable_label(self.wiki.dual_pane, "Две панели")
                             .on_hover_text(
                                 "Две статьи: каталог слева, панель A по центру, B справа",
                             )
                             .clicked()
                         {
-                            self.wiki_dual_pane = !self.wiki_dual_pane;
-                            if self.wiki_dual_pane {
+                            self.wiki.dual_pane = !self.wiki.dual_pane;
+                            if self.wiki.dual_pane {
                                 // Next sidebar click fills the empty secondary column.
-                                self.wiki_focus = WikiPane::B;
+                                self.wiki.focus = WikiFocus::B;
                             } else {
                                 self.clear_wiki_pane_b();
-                                self.wiki_focus = WikiPane::A;
+                                self.wiki.focus = WikiFocus::A;
                             }
                         }
-                        if !self.wiki_dual_pane
+                        if !self.wiki.dual_pane
                             && ui
-                                .selectable_label(self.wiki_info_visible, "Инфо")
+                                .selectable_label(self.wiki.info_visible, "Инфо")
                                 .on_hover_text("Показать метаданные страницы и обратные ссылки")
                                 .clicked()
                         {
-                            self.wiki_info_visible = !self.wiki_info_visible;
+                            self.wiki.info_visible = !self.wiki.info_visible;
                         }
-                        if self.wiki_dual_pane {
+                        if self.wiki.dual_pane {
                             if ui
-                                .selectable_label(self.wiki_focus == WikiPane::A, "A")
+                                .selectable_label(self.wiki.focus == WikiFocus::A, "A")
                                 .on_hover_text("Фокус панели A; редактирование и сохранение работают здесь")
                                 .clicked()
                             {
-                                self.wiki_focus = WikiPane::A;
+                                self.wiki.focus = WikiFocus::A;
                             }
                             if ui
-                                .selectable_label(self.wiki_focus == WikiPane::B, "B")
+                                .selectable_label(self.wiki.focus == WikiFocus::B, "B")
                                 .on_hover_text("Фокус панели B; каталог открывает страницы здесь")
                                 .clicked()
                             {
-                                self.wiki_focus = WikiPane::B;
+                                self.wiki.focus = WikiFocus::B;
                             }
                         }
-                        let editing = self.wiki_edit.is_some();
+                        let editing = self.wiki.edit.is_some();
                         if !editing {
                             if ui
                                 .add_enabled(
-                                    self.wiki_article.is_some() && self.wiki_can_write(),
+                                    self.wiki.a.article.is_some() && self.wiki_can_write(),
                                     egui::Button::new("Редактировать"),
                                 )
                                 .on_hover_text("Редактировать панель A; сохранение идёт через HTTP gateway")
                                 .clicked()
                             {
-                                self.wiki_focus = WikiPane::A;
+                                self.wiki.focus = WikiFocus::A;
                                 self.start_wiki_edit();
                             }
                         } else {
@@ -350,13 +350,13 @@ impl GraphApp {
                         }
                         if ui
                             .add_enabled(
-                                self.wiki_selected_id.is_some() && !editing,
+                                self.wiki.a.selected_id.is_some() && !editing,
                                 egui::Button::new("Показать в графе"),
                             )
                             .clicked()
                         {
                             if let Some((id, title)) = self
-                                .wiki_article
+                                .wiki.a.article
                                 .as_ref()
                                 .map(|a| (a.id.clone(), a.title.clone()))
                             {
@@ -366,28 +366,28 @@ impl GraphApp {
                     }
                     ViewMode::Graph => {
                         let content_available = self.available_load_source().is_some();
-                        let previous_lens = self.graph_lens;
+                        let previous_lens = self.graph.lens;
                         let lens_response = egui::ComboBox::from_id_salt("graph_lens")
-                            .selected_text(self.graph_lens.label())
+                            .selected_text(self.graph.lens.label())
                             .width(130.0)
                             .show_ui(ui, |ui| {
                                 for lens in GraphLens::ALL {
                                     ui.selectable_value(
-                                        &mut self.graph_lens,
+                                        &mut self.graph.lens,
                                         lens,
                                         lens.label(),
                                     );
                                 }
                             });
-                        lens_response.response.on_hover_text(self.graph_lens.description());
-                        if self.graph_lens != previous_lens {
-                            self.selected = None;
-                            self.content = None;
+                        lens_response.response.on_hover_text(self.graph.lens.description());
+                        if self.graph.lens != previous_lens {
+                            self.graph.selected = None;
+                            self.graph.content = None;
                             self.rebuild_ui_graph();
                         }
                         ui.weak("Фокус");
                         let seed_resp = ui.add(
-                            egui::TextEdit::singleline(&mut self.seed_input)
+                            egui::TextEdit::singleline(&mut self.graph.seed_input)
                                 .desired_width(180.0)
                                 .hint_text("Найти узел…"),
                         );
@@ -395,7 +395,7 @@ impl GraphApp {
                         // document_id substring, case-insensitive, first 10).
                         // Cached per (graph revision, query): the scan reruns
                         // only when either changes.
-                        let q = self.seed_input.trim().to_lowercase();
+                        let q = self.graph.seed_input.trim().to_lowercase();
                         let suggestions: Vec<(String, String)> =
                             if seed_resp.has_focus() && !q.is_empty() {
                                 self.seed_suggestions(&q)
@@ -424,16 +424,16 @@ impl GraphApp {
                             // Exact id/document/label wins even when an earlier
                             // substring suggestion happens to be listed first.
                             if let Some(id) = seed_target_on_enter(
-                                self.full_view.as_ref(),
-                                &self.seed_input,
+                                self.graph.full_view.as_ref(),
+                                &self.graph.seed_input,
                                 first_pick.as_deref(),
                             ) {
-                                self.seed_input = id;
+                                self.graph.seed_input = id;
                             }
                             self.submit_graph_focus();
                         } else if let Some(id) = picked {
                             seed_resp.surrender_focus();
-                            self.seed_input = id;
+                            self.graph.seed_input = id;
                             self.submit_graph_focus();
                         }
                         if ui.button("Показать").clicked() {
@@ -443,9 +443,9 @@ impl GraphApp {
                             ui.set_min_width(220.0);
                             ui.horizontal(|ui| {
                                 ui.label("Глубина связей");
-                                let mut d = self.depth as i32;
+                                let mut d = self.graph.depth as i32;
                                 if ui.add(egui::DragValue::new(&mut d).range(1..=3)).changed() {
-                                    self.depth = d as u32;
+                                    self.graph.depth = d as u32;
                                     if self.topology_query_requires_reload() {
                                         self.dispatch_graph_load();
                                     } else {
@@ -453,23 +453,23 @@ impl GraphApp {
                                     }
                                 }
                             });
-                            ui.checkbox(&mut self.show_tags, "Показывать теги");
-                            ui.checkbox(&mut self.show_stubs, "Показывать заглушки");
+                            ui.checkbox(&mut self.graph.show_tags, "Показывать теги");
+                            ui.checkbox(&mut self.graph.show_stubs, "Показывать заглушки");
                             ui.separator();
                             ui.label("Комната");
                             ui.add(
-                                egui::TextEdit::singleline(&mut self.filter_room)
+                                egui::TextEdit::singleline(&mut self.scope.room)
                                     .desired_width(f32::INFINITY)
                                     .hint_text("Все комнаты"),
                             );
                             if ui
                                 .add_enabled(
-                                    !self.filter_room.is_empty(),
+                                    !self.scope.room.is_empty(),
                                     egui::Button::new("Сбросить фильтр комнаты"),
                                 )
                                 .clicked()
                             {
-                                self.filter_room.clear();
+                                self.scope.room.clear();
                             }
                         });
                         if ui
@@ -479,8 +479,8 @@ impl GraphApp {
                             )
                             .clicked()
                         {
-                            if self.expanded_dirty {
-                                self.confirm_reset = true;
+                            if self.graph.expanded_dirty {
+                                self.graph.confirm_reset = true;
                             } else {
                                 self.rebuild_ui_graph();
                             }
@@ -488,7 +488,7 @@ impl GraphApp {
                         let expanding = self.pending.expand.is_some();
                         if ui
                             .add_enabled(
-                                self.selected.is_some() && !expanding,
+                                self.graph.selected.is_some() && !expanding,
                                 egui::Button::new("Раскрыть"),
                             )
                             .clicked()
@@ -515,7 +515,7 @@ impl GraphApp {
                         let preview = ui
                             .add_enabled(
                                 content_available
-                                    && self.selected.is_some()
+                                    && self.graph.selected.is_some()
                                     && self.pending.content.is_none(),
                                 egui::Button::new("Превью"),
                             )
@@ -546,7 +546,7 @@ impl GraphApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Пульт проекта");
                         ui.separator();
-                        if let Some(project) = nonempty(&self.filter_wing) {
+                        if let Some(project) = nonempty(&self.scope.wing) {
                             ui.label(project);
                         } else {
                             ui.colored_label(
@@ -564,7 +564,7 @@ impl GraphApp {
                 ViewMode::Library => {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Корпус");
-                        if let Some(page) = &self.library_page {
+                        if let Some(page) = &self.library.page {
                             ui.separator();
                             ui.label(format!("{} всего", page.total));
                             ui.label(format!("{} на странице", page.items.len()));
@@ -581,12 +581,12 @@ impl GraphApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Поиск");
                         ui.separator();
-                        ui.label(match self.search_request.mode.as_str() {
+                        ui.label(match self.search.request.mode.as_str() {
                             "lex" => "лексический",
                             "vec" => "семантический",
                             _ => "hybrid",
                         });
-                        if let Some(project) = self.search_request.wing.as_deref() {
+                        if let Some(project) = self.search.request.wing.as_deref() {
                             ui.separator();
                             ui.label(project);
                         }
@@ -623,28 +623,32 @@ impl GraphApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Операции");
                         ui.separator();
-                        match self.operations_tab {
+                        match self.ops.tab {
                             OperationsTab::Activity => {
-                                ui.label(format!("{} событий сохранено", self.activity.len()));
+                                ui.label(format!(
+                                    "{} событий сохранено",
+                                    self.activity.events.len()
+                                ));
                                 ui.weak("тела запросов и секретные заголовки не записываются");
                             }
                             OperationsTab::Jobs => {
-                                ui.label(format!("{} задач сохранено", self.operations_jobs.len()));
+                                ui.label(format!("{} задач сохранено", self.ops.jobs.len()));
                                 ui.weak("единая очередь записи");
                             }
                             OperationsTab::Maintenance => {
                                 let healthy = self
-                                    .operations_snapshot
+                                    .ops
+                                    .snapshot
                                     .as_ref()
                                     .is_some_and(|snapshot| snapshot.doctor.ok)
-                                    && !self.operations_snapshot_stale;
+                                    && !self.ops.snapshot_stale;
                                 ui.colored_label(
                                     if healthy {
                                         egui::Color32::from_rgb(90, 190, 125)
                                     } else {
                                         egui::Color32::from_rgb(220, 150, 65)
                                     },
-                                    if self.operations_snapshot_stale {
+                                    if self.ops.snapshot_stale {
                                         "состояние устарело"
                                     } else if healthy {
                                         "в норме"
@@ -660,7 +664,7 @@ impl GraphApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Оценка");
                         ui.separator();
-                        ui.label(format!("{} событий telemetry", self.activity.len()));
+                        ui.label(format!("{} событий telemetry", self.activity.events.len()));
                         ui.weak("отсутствующие benchmark-метрики показаны как —");
                     });
                 }
@@ -668,7 +672,8 @@ impl GraphApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Синхронизация БД");
                         if let Some(sync) = self
-                            .operations_snapshot
+                            .ops
+                            .snapshot
                             .as_ref()
                             .and_then(|snapshot| snapshot.sync.as_ref())
                         {
@@ -683,7 +688,7 @@ impl GraphApp {
                 ViewMode::Models => {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong("Runtime и индекс");
-                        if let Some(snapshot) = &self.operations_snapshot {
+                        if let Some(snapshot) = &self.ops.snapshot {
                             ui.separator();
                             ui.label(format!(
                                 "backend={} schema={} search={}",
@@ -724,52 +729,57 @@ impl GraphApp {
                                 .unwrap_or("Источник данных не выбран"),
                         );
                         ui.separator();
-                        ui.label(format!("{} страниц", self.wiki_pages.len()));
+                        ui.label(format!("{} страниц", self.wiki.pages.len()));
                         if self.any_pending() {
                             ui.separator();
                             ui.spinner();
                             ui.weak("Обновление…");
                         }
-                        if self.wiki_dual_pane {
+                        if self.wiki.dual_pane {
                             ui.separator();
                             ui.label("Две панели");
                         }
-                        if self.wiki_edit.is_some() {
+                        if self.wiki.edit.is_some() {
                             ui.separator();
                             ui.strong("Редактирование");
-                            if self.wiki_edit.as_ref().is_some_and(|e| e.dirty) {
+                            if self.wiki.edit.as_ref().is_some_and(|e| e.dirty) {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(220, 160, 60),
                                     "не сохранено",
                                 );
                             }
                         }
-                        if let Some(note) = &self.wiki_save_note {
+                        if let Some(note) = &self.wiki.save_note {
                             ui.separator();
                             ui.colored_label(egui::Color32::from_rgb(100, 180, 120), note);
                         }
                     });
                 }
                 ViewMode::Graph => {
-                    let seed_label = self.seed_id.as_deref().or(if self.seed_input.is_empty() {
-                        None
-                    } else {
-                        Some(self.seed_input.as_str())
-                    });
+                    let seed_label =
+                        self.graph
+                            .seed_id
+                            .as_deref()
+                            .or(if self.graph.seed_input.is_empty() {
+                                None
+                            } else {
+                                Some(self.graph.seed_input.as_str())
+                            });
                     let truncated = self
+                        .graph
                         .ui_graph
                         .as_ref()
                         .is_some_and(|g| g.truncated_nodes || g.truncated_edges)
-                        || self.raw_truncated
-                        || self.local_truncated;
+                        || self.graph.raw_truncated
+                        || self.graph.local_truncated;
                     draw_status(
                         ui,
                         StatusView {
                             source: self.source.as_ref(),
                             seed_label,
-                            depth: self.depth,
-                            graph: self.ui_graph.as_ref(),
-                            layout_frozen: self.layout_ready,
+                            depth: self.graph.depth,
+                            graph: self.graph.ui_graph.as_ref(),
+                            layout_frozen: self.graph.layout_ready,
                             truncated,
                             banner: self.status_banner().as_deref(),
                             pending: self.any_pending(),
