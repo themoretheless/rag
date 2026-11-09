@@ -243,16 +243,21 @@ impl GraphApp {
             return;
         }
 
-        let db_path = match self.open.source.clone() {
-            Some(CliSource::Db(path)) => Some(path),
-            _ => None,
+        // A loaded gateway graph expands over HTTP, `--db` through the store,
+        // anything else in memory over the full view.
+        let source = match (self.source.as_ref(), self.open.source.as_ref()) {
+            (Some(GraphSourceKind::HttpService { base }), _) => {
+                self.sources.for_cli(&CliSource::Http(base.clone()))
+            }
+            (_, Some(configured @ CliSource::Db(_))) => self.sources.for_cli(configured),
+            _ => crate::source::in_memory(),
         };
-        let http_base = match self.source.as_ref() {
-            Some(GraphSourceKind::HttpService { base }) => Some(base.clone()),
-            _ => None,
+        let full = if source.expands_in_memory() {
+            self.full_view.clone()
+        } else {
+            None
         };
-        let full = self.full_view.clone();
-        if http_base.is_none() && db_path.is_none() && full.is_none() {
+        if source.expands_in_memory() && full.is_none() {
             self.expand_note = Some("Для раскрытия нужен загруженный граф".into());
             return;
         }
@@ -273,8 +278,7 @@ impl GraphApp {
             selected: sel,
             current,
             full,
-            db_path,
-            http_base,
+            source,
             project: nonempty(&self.filter_wing),
             include_tags: self.show_tags,
             max_nodes: self.max_nodes,

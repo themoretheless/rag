@@ -10,6 +10,7 @@ use rag_mcp_core::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 
 use crate::adapter::{adapt, topology_generation, AdaptOptions, GraphLens, UiGraph};
 use crate::layout::{overview_grid_place, place_missing_near_neighbors, radial_place, PosCache};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::cli::{CliSource, OpenArgs};
@@ -23,6 +24,7 @@ use crate::operations::{JobSnapshot, MaintenanceResult, OperationsSnapshot};
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest, ProjectHome};
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
 use crate::search::{SearchRequest, SearchResults};
+use crate::source::{DocumentSource, SourceRegistry};
 use crate::topology::{
     local_neighbors_bounded, resolve_exact_seed, resolve_seed, UI_HARD_MAX_NODES,
 };
@@ -52,7 +54,7 @@ use crate::ui::wiki::{
     draw_wiki_read_view, draw_wiki_sidebar, slug_from_wiki_uri, wiki_filter_id, WikiEditBuffers,
     WikiKnownKeys, WikiReadContext, WikiSidebarIndex,
 };
-use crate::worker::{LoadSource, WorkerCmd, WorkerEvt, WorkerHandle};
+use crate::worker::{WorkerCmd, WorkerEvt, WorkerHandle};
 
 mod events;
 mod frame;
@@ -255,6 +257,8 @@ struct GraphWikiTargetMemo {
 pub struct GraphApp {
     open: OpenArgs,
     worker: WorkerHandle,
+    /// Backends behind `open.source` / the loaded graph (shares the `--db` store).
+    sources: SourceRegistry,
     /// Monotonic job counter; every pending slot stores the seq it waits for.
     seq: u64,
     pending_graph: Option<u64>,
@@ -442,6 +446,7 @@ impl GraphApp {
         let mut app = Self {
             open,
             worker: crate::worker::spawn(cc.egui_ctx.clone()),
+            sources: SourceRegistry::default(),
             seq: 0,
             pending_graph: None,
             pending_project_catalog: None,
@@ -766,14 +771,14 @@ impl GraphApp {
             || matches!(self.open.source, Some(CliSource::Db(_)))
     }
 
-    fn available_load_source(&self) -> Option<LoadSource> {
+    fn available_load_source(&self) -> Option<Arc<dyn DocumentSource>> {
         self.source
             .as_ref()
-            .and_then(LoadSource::from_graph_source)
+            .and_then(|loaded| self.sources.for_loaded(loaded))
             .or_else(|| match self.open.source.as_ref() {
                 // A configured HTTP gateway is sufficient for document/wiki
                 // APIs even before the independent graph load succeeds.
-                Some(CliSource::Http(base)) => Some(LoadSource::Http(base.clone())),
+                Some(configured @ CliSource::Http(_)) => Some(self.sources.for_cli(configured)),
                 _ => None,
             })
     }
@@ -1072,7 +1077,7 @@ impl GraphApp {
         }
         self.worker.send(WorkerCmd::LoadGraph {
             seq,
-            source: src,
+            source: self.sources.for_cli(&src),
             seed: nonempty(&self.seed_input),
             depth: self.depth,
             project: nonempty(&self.filter_wing),

@@ -1,25 +1,120 @@
 //! Direct read-only DuckDB access for `--db` mode (feature `direct-db`).
 //!
-//! Every function here opens the database through `rag_mcp::Store`. Without
-//! the feature, `direct_db_disabled.rs` provides the same signatures and the
-//! UI builds without the server crate (no DuckDB, axum or rmcp).
+//! [`DbSource`] opens the database once through `rag_mcp::Store` and keeps that
+//! read-only connection for every later call. Without the feature the UI
+//! builds without the server crate (no DuckDB, axum or rmcp).
 
-#![allow(clippy::wildcard_imports)]
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use crate::cli::*;
-use crate::dto::*;
-use crate::snapshot::*;
-use crate::topology::*;
 use rag_mcp::db::store::WikiPageMetaFilter;
 use rag_mcp::{GraphFilter, GraphView, Store, UI_GRAPH_EXPORT_MAX_NODES};
-use std::path::Path;
+
+use crate::cli::ExportArgs;
+use crate::dto::{
+    sort_wiki_pages, BacklinkItem, DocumentBody, ExportResult, GraphSourceKind, LoadedGraph,
+    WikiPageMeta, WikiPutRequest,
+};
+use crate::snapshot::{write_graph_snapshot, write_snapshot_bytes, SnapshotEnvelopeOut};
+use crate::source::{DocumentSource, ExpandRequest, READ_ONLY_SOURCE};
+use crate::topology::{merge_graph_views, pkb_default_rel_types, UI_HARD_MAX_NODES};
+
+/// Read-only DuckDB file (Mode A). Direct writes are forbidden; mutations go
+/// through the HTTP gateway.
+pub struct DbSource {
+    path: PathBuf,
+    /// Opened on first use and then reused; `Store` clones share one connection.
+    store: Mutex<Option<Store>>,
+}
+
+impl fmt::Debug for DbSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DbSource")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DbSource {
+    /// Bind to a database path. Nothing is opened until the first call.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            store: Mutex::new(None),
+        }
+    }
+
+    /// The shared read-only store, opening it on first use. `describe` words
+    /// the open failure for the calling operation.
+    fn store(&self, describe: impl FnOnce(&dyn fmt::Display) -> String) -> Result<Store, String> {
+        let mut slot = self
+            .store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(store) = slot.as_ref() {
+            return Ok(store.clone());
+        }
+        let store = Store::open_read_only(&self.path).map_err(|error| describe(&error))?;
+        *slot = Some(store.clone());
+        Ok(store)
+    }
+}
+
+impl DocumentSource for DbSource {
+    fn load_graph(
+        &self,
+        seed: Option<&str>,
+        depth: u32,
+        project: Option<&str>,
+        include_tags: bool,
+    ) -> Result<LoadedGraph, String> {
+        load_live_db(self, seed, depth, project, include_tags)
+    }
+
+    fn wiki_catalog(&self, project: Option<&str>) -> Result<Vec<WikiPageMeta>, String> {
+        fetch_wiki_list_db(self, project)
+    }
+
+    fn document(
+        &self,
+        doc_id: Option<&str>,
+        uri: Option<&str>,
+        _label: Option<&str>,
+    ) -> Result<DocumentBody, String> {
+        fetch_document_db(self, doc_id, uri)
+    }
+
+    fn backlinks(
+        &self,
+        document_id: &str,
+        project: Option<&str>,
+    ) -> Result<Vec<BacklinkItem>, String> {
+        fetch_backlinks_db(self, document_id, project)
+    }
+
+    fn save_wiki(&self, _req: &WikiPutRequest) -> Result<DocumentBody, String> {
+        Err(READ_ONLY_SOURCE.into())
+    }
+
+    fn expand(&self, request: &ExpandRequest<'_>) -> Result<GraphView, String> {
+        expand_neighbors_store(
+            self,
+            request.current,
+            request.selected,
+            request.max_nodes,
+            request.project,
+            request.include_tags,
+        )
+    }
+}
 
 /// List wiki pages from a strictly read-only DuckDB open (metadata only).
-pub fn fetch_wiki_list_db(
-    db_path: &Path,
+fn fetch_wiki_list_db(
+    source: &DbSource,
     project: Option<&str>,
 ) -> Result<Vec<WikiPageMeta>, String> {
-    let store = Store::open_read_only(db_path).map_err(|e| format!("open db read-only: {e}"))?;
+    let store = source.store(|e| format!("open db read-only: {e}"))?;
     let (items, _) = store
         .list_wiki_page_metas_filtered(&WikiPageMetaFilter {
             wing: project.map(str::to_owned),
@@ -46,12 +141,13 @@ pub fn fetch_wiki_list_db(
 }
 
 /// Load document body via read-only DuckDB open (Mode A `--db` only).
-pub fn fetch_document_db(
-    db_path: &Path,
+fn fetch_document_db(
+    source: &DbSource,
     document_id: Option<&str>,
     uri: Option<&str>,
 ) -> Result<DocumentBody, String> {
-    let store = Store::open_read_only(db_path).map_err(|e| {
+    let db_path = source.path.as_path();
+    let store = source.store(|e| {
         format!(
             "cannot open DB {} read-only: {e}. Prefer --http while MCP holds the file.",
             db_path.display()
@@ -100,13 +196,14 @@ pub fn fetch_document_db(
 /// document_id, or label remains reachable even when it falls beyond the
 /// bounded default export. Without a seed, return the bounded project/global
 /// topology and let the UI focus locally.
-pub fn load_live_db(
-    path: &Path,
+fn load_live_db(
+    source: &DbSource,
     seed: Option<&str>,
     depth: u32,
     project: Option<&str>,
     include_tags: bool,
 ) -> Result<LoadedGraph, String> {
+    let path = source.path.as_path();
     if !path.exists() {
         return Err(format!(
             "cannot open database read-only: path does not exist: {}. Use --http for the live gateway or --snapshot for an exported view.",
@@ -114,7 +211,7 @@ pub fn load_live_db(
         ));
     }
 
-    let store = Store::open_read_only(path).map_err(|e| {
+    let store = source.store(|e| {
         format!(
             "cannot open DuckDB read-only at {}: {}. If MCP (or another process) holds an incompatible lock, use --http or --snapshot Mode C. Direct writes are forbidden.",
             path.display(),
@@ -278,16 +375,17 @@ pub fn export_graph_snapshot(args: &ExportArgs) -> Result<ExportResult, String> 
 /// Expand neighbors via read-only Store BFS (`Store::neighbors`), depth 1 from
 /// the selected node, merge into `current` under `max_nodes`.
 ///
-/// Mode A (`--db`) only. Re-opens DuckDB briefly without migration. Project
+/// Mode A (`--db`) only. Reuses the source's read-only store. Project
 /// scope is applied inside Store before the node cap.
-pub fn expand_neighbors_store(
-    db_path: &Path,
+fn expand_neighbors_store(
+    source: &DbSource,
     current: &GraphView,
     selected_id: &str,
     max_nodes: u32,
     project: Option<&str>,
     include_tags: bool,
 ) -> Result<GraphView, String> {
+    let db_path = source.path.as_path();
     let max_nodes = max_nodes.max(1);
     if !db_path.exists() {
         return Err(format!(
@@ -295,7 +393,7 @@ pub fn expand_neighbors_store(
             db_path.display()
         ));
     }
-    let store = Store::open_read_only(db_path).map_err(|e| {
+    let store = source.store(|e| {
         format!(
             "cannot open DuckDB read-only for expand at {}: {}. Use --http while the gateway owns the writer, or use a snapshot.",
             db_path.display(),
@@ -327,13 +425,14 @@ pub fn expand_neighbors_store(
 }
 
 /// Wiki backlinks for a document from a read-only DuckDB open (`--db`).
-pub fn fetch_backlinks_db(
-    path: &Path,
+fn fetch_backlinks_db(
+    source: &DbSource,
     document_id: &str,
     project: Option<&str>,
 ) -> Result<Vec<BacklinkItem>, String> {
-    let store = rag_mcp::Store::open_read_only(path)
-        .map_err(|error| format!("open {} read-only for backlinks: {error}", path.display()))?;
+    let path = source.path.as_path();
+    let store = source
+        .store(|error| format!("open {} read-only for backlinks: {error}", path.display()))?;
     let rows = match project.map(str::trim).filter(|project| !project.is_empty()) {
         Some(project) => store.wiki_backlinks_for_document_in_wing(document_id, project),
         None => store.wiki_backlinks_for_document(document_id),
@@ -349,8 +448,68 @@ pub fn fetch_backlinks_db(
 mod tests {
     use super::*;
     use crate::topology::test_support::{edge, node};
-    use rag_mcp::{Document, Store};
+    use rag_mcp::Document;
     use std::fs;
+    use std::time::SystemTime;
+
+    fn load_live_db(
+        path: &Path,
+        seed: Option<&str>,
+        depth: u32,
+        project: Option<&str>,
+        include_tags: bool,
+    ) -> Result<LoadedGraph, String> {
+        DbSource::new(path).load_graph(seed, depth, project, include_tags)
+    }
+
+    fn expand_neighbors_store(
+        path: &Path,
+        current: &GraphView,
+        selected: &str,
+        max_nodes: u32,
+        project: Option<&str>,
+        include_tags: bool,
+    ) -> Result<GraphView, String> {
+        DbSource::new(path).expand(&ExpandRequest {
+            current,
+            full: None,
+            selected,
+            max_nodes,
+            project,
+            include_tags,
+        })
+    }
+
+    #[test]
+    fn one_read_only_store_is_reused_across_calls() {
+        let suffix = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rag-mcp-ui-shared-store-{suffix}"));
+        fs::create_dir_all(&dir).expect("create temp directory");
+        let db = dir.join("rag.duckdb");
+        drop(Store::open(&db).expect("create database"));
+
+        let source = DbSource::new(&db);
+        assert!(source.store.lock().unwrap().is_none());
+        source.wiki_catalog(None).expect("catalog");
+        assert!(source.store.lock().unwrap().is_some());
+        // A second call must not need to reopen the file.
+        source.backlinks("missing", None).expect("backlinks");
+        let save = source.save_wiki(&WikiPutRequest {
+            id: String::new(),
+            slug: "page".into(),
+            uri: None,
+            title: "Page".into(),
+            content: String::new(),
+            if_match_revision: None,
+            if_match_etag: None,
+        });
+        assert_eq!(save.unwrap_err(), READ_ONLY_SOURCE);
+        drop(source);
+        fs::remove_dir_all(&dir).expect("remove temp directory");
+    }
 
     #[cfg(unix)]
     #[test]

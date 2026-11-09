@@ -309,7 +309,7 @@ impl GraphApp {
             self.wiki_error = Some("Для сохранения вики требуется HTTP gateway".into());
             return;
         };
-        if !matches!(&source, LoadSource::Http(_)) {
+        if !source.is_writable() {
             self.wiki_error = Some(
                 "Режим --db доступен только для чтения; переподключитесь через HTTP gateway".into(),
             );

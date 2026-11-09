@@ -2,7 +2,9 @@
 //! Direct DuckDB writes are forbidden; mutations go through the HTTP gateway.
 
 use rag_mcp_core::{GraphEdge, GraphNode, GraphView};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+#[cfg(feature = "direct-db")]
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
@@ -95,14 +97,14 @@ pub fn parse_graph_json(bytes: &[u8]) -> Result<GraphView, String> {
 }
 
 /// Serialize a `GraphView` to the same serde JSON format as `rag_mcp` models / MCP tools.
-#[cfg_attr(not(feature = "direct-db"), allow(dead_code))]
+#[cfg(any(test, feature = "direct-db"))]
 pub fn export_graph_view_json(view: &GraphView) -> Result<String, String> {
     serde_json::to_string_pretty(view).map_err(|e| format!("serialize GraphView: {e}"))
 }
 
 /// Optional Mode C envelope written by `export --envelope` (EGUI_GRAPH_VIEW §10.1).
 #[derive(Debug, Serialize)]
-#[cfg_attr(not(feature = "direct-db"), allow(dead_code))]
+#[cfg(feature = "direct-db")]
 pub(crate) struct SnapshotEnvelopeOut<'a> {
     pub(crate) version: u32,
     pub(crate) source: &'static str,
@@ -111,13 +113,13 @@ pub(crate) struct SnapshotEnvelopeOut<'a> {
 }
 
 /// Write a topology-only GraphView snapshot file (Mode C refresh source).
-#[cfg_attr(not(feature = "direct-db"), allow(dead_code))]
+#[cfg(feature = "direct-db")]
 pub fn write_graph_snapshot(path: &Path, view: &GraphView) -> Result<(), String> {
     let json = export_graph_view_json(view)?;
     write_snapshot_bytes(path, json.as_bytes())
 }
 
-#[cfg_attr(not(feature = "direct-db"), allow(dead_code))]
+#[cfg(feature = "direct-db")]
 pub(crate) fn write_snapshot_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
