@@ -1016,7 +1016,6 @@ mod tests {
     use super::*;
     use crate::testkit::{test_config, SeedDoc};
 
-
     /// Seed one document; `scope` is `(wing, room, source_file)`.
     fn seed_doc(
         store: &Store,

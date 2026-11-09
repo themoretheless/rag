@@ -9,9 +9,9 @@ use std::sync::Arc;
 use chrono::{DateTime, TimeZone, Utc};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Document, GraphNode};
+use rag_mcp::testkit::{open_temp_store, test_config};
 use rag_mcp::StatusReport;
 use rag_mcp::{content_hash, diary_read, diary_write, wake_up, Store, REL_TUNNEL};
-use rag_mcp::testkit::{open_temp_store, test_config};
 use uuid::Uuid;
 
 const DIMS: usize = 32;

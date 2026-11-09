@@ -21,8 +21,8 @@ use rag_mcp::error::{AppError, Result as RagResult};
 use rag_mcp::models::{Chunk, Document, SearchMode};
 use rag_mcp::query_transform::TransformLlm;
 use rag_mcp::retrieval::{execute_search_with_llm, SearchCommand};
-use rag_mcp::{Config, Store};
 use rag_mcp::testkit::open_temp_store;
+use rag_mcp::{Config, Store};
 use uuid::Uuid;
 
 const DIMS: usize = 32;

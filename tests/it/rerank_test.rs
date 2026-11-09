@@ -13,8 +13,8 @@ use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document, SearchMode};
 use rag_mcp::rerank::RerankProviderKind;
 use rag_mcp::retrieval::{execute_search, SearchCommand};
-use rag_mcp::{Config, Store};
 use rag_mcp::testkit::open_temp_store;
+use rag_mcp::{Config, Store};
 use uuid::Uuid;
 
 const DIMS: usize = 32;

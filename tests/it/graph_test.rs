@@ -7,8 +7,8 @@ use chrono::Utc;
 use rag_mcp::chunking::{from_config, Chunker};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document};
-use rag_mcp::{rebuild_document_graph, Store, REL_TAGGED, REL_WIKILINK};
 use rag_mcp::testkit::open_temp_store;
+use rag_mcp::{rebuild_document_graph, Store, REL_TAGGED, REL_WIKILINK};
 use uuid::Uuid;
 
 const DIMS: usize = 32;

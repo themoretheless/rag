@@ -11,13 +11,13 @@ use std::sync::Arc;
 use chrono::Utc;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document, GraphNode};
+use rag_mcp::testkit::open_temp_store;
 use rag_mcp::util::content_hash;
 use rag_mcp::{
     analyze_corpus, apply_maintenance_plan, heuristic_plan, log_plan, maintain_compress,
     plan_maintenance, ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions, Config,
     MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store,
 };
-use rag_mcp::testkit::open_temp_store;
 
 const DIMS: usize = 32;
 

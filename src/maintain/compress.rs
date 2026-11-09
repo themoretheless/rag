@@ -681,7 +681,6 @@ mod tests {
     use crate::models::SearchMode;
     use crate::testkit::{test_config, SeedDoc};
 
-
     fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str, emb: Vec<f32>) {
         SeedDoc::new(id, title, content)
             .layer(layer)

@@ -423,7 +423,6 @@ mod tests {
     use crate::embeddings::MockEmbedder;
     use crate::testkit::test_config;
 
-
     #[test]
     fn normalize_agent_name_rules() {
         assert_eq!(normalize_agent_name("Claude").unwrap(), "claude");

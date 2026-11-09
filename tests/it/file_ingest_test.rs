@@ -10,8 +10,8 @@ use rag_mcp::db::search::search_chunks;
 use rag_mcp::embeddings::MockEmbedder;
 use rag_mcp::ingest::{IngestFileCommand, IngestService};
 use rag_mcp::models::SearchMode;
-use rag_mcp::Config;
 use rag_mcp::testkit::open_temp_store;
+use rag_mcp::Config;
 
 const DIMS: usize = 32;
 
@@ -130,10 +130,7 @@ async fn ingest_docx_fixture_is_searchable_with_heading_metadata() {
     let (dir, store) = open_temp_store();
     let fixture = dir.path().join("runbook.docx");
     write_docx_fixture(&fixture);
-    let config = test_config(
-        store.path().to_path_buf(),
-        vec![dir.path().to_path_buf()],
-    );
+    let config = test_config(store.path().to_path_buf(), vec![dir.path().to_path_buf()]);
     let embedder: Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
         Arc::new(MockEmbedder::new(DIMS));
     let service = IngestService::new(&store, &embedder, &config);
@@ -192,10 +189,7 @@ async fn ingest_html_fixture_drops_boilerplate_and_is_searchable() {
     let (dir, store) = open_temp_store();
     let fixture = dir.path().join("page.html");
     write_html_fixture(&fixture);
-    let config = test_config(
-        store.path().to_path_buf(),
-        vec![dir.path().to_path_buf()],
-    );
+    let config = test_config(store.path().to_path_buf(), vec![dir.path().to_path_buf()]);
     let embedder: Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
         Arc::new(MockEmbedder::new(DIMS));
     let service = IngestService::new(&store, &embedder, &config);
@@ -246,10 +240,7 @@ async fn ingest_broken_docx_surfaces_per_file_error() {
     let (dir, store) = open_temp_store();
     let fixture = dir.path().join("broken.docx");
     std::fs::write(&fixture, b"definitely not a zip archive").expect("write broken docx");
-    let config = test_config(
-        store.path().to_path_buf(),
-        vec![dir.path().to_path_buf()],
-    );
+    let config = test_config(store.path().to_path_buf(), vec![dir.path().to_path_buf()]);
     let embedder: Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
         Arc::new(MockEmbedder::new(DIMS));
     let service = IngestService::new(&store, &embedder, &config);

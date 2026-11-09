@@ -7,14 +7,14 @@ use std::sync::Arc;
 
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::DocumentMetaUpdate;
+use rag_mcp::testkit::open_temp_store;
 use rag_mcp::wiki::{
     self, assert_content_mutable, FileAnswerCitation, FileAnswerRequest, WikiPageWrite,
 };
 use rag_mcp::{
-    file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config,
-    LAYER_RAW, LAYER_WIKI,
+    file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config, LAYER_RAW,
+    LAYER_WIKI,
 };
-use rag_mcp::testkit::open_temp_store;
 
 const DIMS: usize = 32;
 
