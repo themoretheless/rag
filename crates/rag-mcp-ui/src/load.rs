@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::gateway::{
-    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
-    ReqwestGatewayClient, Response,
+    client as gateway_client, decode_json, format_http_error, GatewayApi, GatewayClient, Method,
+    Response,
 };
 
 /// Hard layout caps (EGUI_GRAPH_VIEW §8.1).
@@ -285,14 +285,9 @@ struct ActivityResponse {
 /// Fetch recent gateway activity events from `GET /v1/activity`.
 pub fn fetch_activity_http(base: &str) -> Result<Vec<ActivityEvent>, String> {
     let client = gateway_client(5)?;
-    let url = http_join(normalize_http_base(base), "v1/activity");
-    let response = get(&client, url.clone())?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Activity"));
-    }
-    serde_json::from_str::<ActivityResponse>(&response.body)
+    GatewayApi::new(&client, base)
+        .get::<ActivityResponse>("v1/activity", "Activity")
         .map(|response| response.items)
-        .map_err(|error| format_json_parse_error("Activity", &error))
 }
 
 /// Optional envelope around bare `GraphView` (EGUI_GRAPH_VIEW §10.1).
@@ -497,34 +492,6 @@ struct BacklinksResponse {
 // HTTP gateway adapters (transport is injected in `_with_client` helpers).
 // ---------------------------------------------------------------------------
 
-fn gateway_client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
-    crate::gateway::client(timeout_secs)
-}
-
-fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {
-    execute_request(
-        client,
-        Request {
-            method: Method::Get,
-            url,
-            body: None,
-            headers: Vec::new(),
-        },
-    )
-}
-
-/// Normalize gateway base URL (trim whitespace and trailing `/`).
-fn normalize_http_base(base: &str) -> &str {
-    base.trim().trim_end_matches('/')
-}
-
-/// Join gateway base with a path or `path?query` (leading `/` on path optional).
-fn http_join(base: &str, path_and_query: &str) -> String {
-    let base = normalize_http_base(base);
-    let rest = path_and_query.trim_start_matches('/');
-    format!("{base}/{rest}")
-}
-
 /// Fetch incoming links for a document id, optionally constrained to a project.
 pub fn fetch_backlinks_http(
     base: &str,
@@ -541,14 +508,9 @@ fn fetch_backlinks_http_with_client(
     document_id: &str,
     project: Option<&str>,
 ) -> Result<Vec<BacklinkItem>, String> {
-    let url = http_join(base, &backlinks_path(document_id, project));
-    let response = get(client, url)?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Backlinks"));
-    }
-    let body: BacklinksResponse = serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error("Backlinks", &error))?;
-    Ok(body.backlinks)
+    GatewayApi::new(client, base)
+        .get::<BacklinksResponse>(&backlinks_path(document_id, project), "Backlinks")
+        .map(|body| body.backlinks)
 }
 
 fn backlinks_path(document_id: &str, project: Option<&str>) -> String {
@@ -576,6 +538,7 @@ fn fetch_wiki_list_http_with_client(
 ) -> Result<Vec<WikiPageMeta>, String> {
     const PAGE_SIZE: usize = 200;
     const MAX_PAGES: usize = 10_000;
+    let api = GatewayApi::new(client, base);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let path = wiki_catalog_path(project);
     let separator = if path.contains('?') { '&' } else { '?' };
@@ -589,16 +552,10 @@ fn fetch_wiki_list_http_with_client(
                     .into(),
             );
         }
-        let url = http_join(
-            base,
+        let body: WikiListResponse = api.get(
             &format!("{path}{separator}limit={PAGE_SIZE}&offset={offset}"),
-        );
-        let response = get(client, url)?;
-        if !response.is_success() {
-            return Err(format_http_error(&response, "Wiki catalog"));
-        }
-        let body: WikiListResponse = serde_json::from_str(&response.body)
-            .map_err(|error| format_json_parse_error("Wiki catalog", &error))?;
+            "Wiki catalog",
+        )?;
         if body.offset.is_some_and(|value| value != offset) {
             return Err(
                 "Wiki catalog pagination returned an unexpected offset; reload the catalog".into(),
@@ -660,7 +617,8 @@ fn fetch_document_http_with_client(
     uri: Option<&str>,
     q: Option<&str>,
 ) -> Result<DocumentBody, String> {
-    if normalize_http_base(base).is_empty() {
+    let api = GatewayApi::new(client, base);
+    if api.base().is_empty() {
         return Err("http base URL is empty".into());
     }
     let mut parts = Vec::new();
@@ -673,15 +631,10 @@ fn fetch_document_http_with_client(
     } else {
         return Err("need document_id, uri, or label to load content".into());
     }
-    let url = http_join(base, &format!("v1/document?{}", parts.join("&")));
-
-    let response = get(client, url.clone())
+    let response = api
+        .get_response(&format!("v1/document?{}", parts.join("&")))
         .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Document"));
-    }
-    let v: serde_json::Value = serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error("Document", &error))?;
+    let v: serde_json::Value = decode_json(response, "Document")?;
     document_body_from_json(&v, DocumentBodyJsonDefaults::default())
         .ok_or_else(|| "Document response is missing document fields".to_string())
 }
@@ -719,11 +672,10 @@ fn put_wiki_http_with_client(
     base: &str,
     req: &WikiPutRequest,
 ) -> Result<DocumentBody, String> {
-    let base = normalize_http_base(base);
-    if base.is_empty() {
+    let api = GatewayApi::new(client, base);
+    if api.base().is_empty() {
         return Err("http base URL is empty".into());
     }
-    let url = http_join(base, "v1/wiki");
     let mut headers = Vec::new();
     if let Some(etag) = req
         .if_match_etag
@@ -735,16 +687,10 @@ fn put_wiki_http_with_client(
     } else if let Some(rev) = req.if_match_revision {
         headers.push(("If-Match".to_string(), format!("W/\"{rev}\"")));
     }
-    let response = execute_request(
-        client,
-        Request {
-            method: Method::Put,
-            url: url.clone(),
-            body: Some(serde_json::to_string(req).map_err(|e| format!("serialize wiki: {e}"))?),
-            headers,
-        },
-    )
-    .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
+    let body = serde_json::to_string(req).map_err(|e| format!("serialize wiki: {e}"))?;
+    let response = api
+        .request(Method::Put, "v1/wiki", Some(body), headers)
+        .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND?"))?;
     if response.status == 404 || response.status == 405 {
         return Err(format!(
             "{}. Wiki writing is not available on this gateway; use a newer gateway or MCP update_wiki_page.",
@@ -774,7 +720,7 @@ fn put_wiki_http_with_client(
         }
     }
     // Server accepted write but returned no body: re-fetch document.
-    fetch_document_http_with_client(client, base, Some(&req.id), req.uri.as_deref(), None)
+    fetch_document_http_with_client(client, api.base(), Some(&req.id), req.uri.as_deref(), None)
 }
 
 /// Minimal query-string escape for path-ish ids/uris (no full url crate).
@@ -807,17 +753,12 @@ fn fetch_project_catalog_with_client(
     client: &dyn GatewayClient,
     base: &str,
 ) -> Result<Vec<String>, String> {
-    let base = normalize_http_base(base);
-    if base.is_empty() {
+    let api = GatewayApi::new(client, base);
+    if api.base().is_empty() {
         return Err("HTTP base URL is empty".into());
     }
-    let url = http_join(base, "v1/projects");
-    let response = get(client, url.clone())?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Project catalog"));
-    }
-    let mut projects = serde_json::from_str::<ProjectCatalogResponse>(&response.body)
-        .map_err(|error| format_json_parse_error("Project catalog", &error))?
+    let mut projects = api
+        .get::<ProjectCatalogResponse>("v1/projects", "Project catalog")?
         .items
         .into_iter()
         .map(|item| item.project_id)
@@ -836,22 +777,19 @@ fn load_http_with_client(
     project: Option<&str>,
     include_tags: bool,
 ) -> Result<LoadedGraph, String> {
-    let base = normalize_http_base(base);
-    if base.is_empty() {
+    let api = GatewayApi::new(client, base);
+    if api.base().is_empty() {
         return Err("--http base URL is empty".into());
     }
-    let url = http_join(base, &http_graph_path(seed, depth, project, include_tags));
-    let health = get(client, http_join(base, "health"))
+    let health = api
+        .get_response("health")
         .ok()
         .filter(Response::is_success)
         .and_then(|response| serde_json::from_str::<GatewayHealth>(&response.body).ok());
-    let response = get(client, url.clone())
+    let response = api
+        .get_response(&http_graph_path(seed, depth, project, include_tags))
         .map_err(|e| format!("{e}. Is rag-mcp running with RAG_HTTP_BIND set?"))?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Project graph"));
-    }
-    let view: GraphView = serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error("Project graph", &error))?;
+    let view: GraphView = decode_json(response, "Project graph")?;
     let raw_node_count = view.nodes.len();
     // The gateway clamps at the requested limit, so equality is the only
     // client-visible signal that more server-side nodes may exist.
@@ -860,7 +798,7 @@ fn load_http_with_client(
         view,
         projects: None,
         source: GraphSourceKind::HttpService {
-            base: base.to_string(),
+            base: api.base().to_string(),
         },
         truncated,
         raw_node_count,
@@ -1232,20 +1170,14 @@ fn expand_neighbors_http_with_client(
     project: Option<&str>,
     include_tags: bool,
 ) -> Result<GraphView, String> {
-    let base = normalize_http_base(base);
-    if base.is_empty() {
+    let api = GatewayApi::new(client, base);
+    if api.base().is_empty() {
         return Err("HTTP base URL is empty".into());
     }
-    let url = http_join(
-        base,
+    let extra: GraphView = api.get(
         &http_neighbors_path(selected_id, 1, max_nodes, project, include_tags),
-    );
-    let response = get(client, url.clone())?;
-    if !response.is_success() {
-        return Err(format_http_error(&response, "Graph expansion"));
-    }
-    let extra: GraphView = serde_json::from_str(&response.body)
-        .map_err(|error| format_json_parse_error("Graph expansion", &error))?;
+        "Graph expansion",
+    )?;
     Ok(merge_graph_views(
         current,
         &extra,
@@ -1273,6 +1205,7 @@ fn subgraph_from_keep(full: &GraphView, keep: &HashSet<String>) -> GraphView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Request;
     #[cfg(feature = "direct-db")]
     use rag_mcp::{Document, Store};
     use std::sync::Mutex;

@@ -1,8 +1,8 @@
 //! Revision history HTTP client. Restore always uses gateway-side CAS.
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
-use crate::gateway::{GatewayClient, Method, ReqwestGatewayClient};
+use crate::gateway::{client, GatewayApi, GatewayClient, Method};
 use crate::load::DocumentBody;
 
 pub const REVISION_PAGE_SIZE: usize = 50;
@@ -111,11 +111,13 @@ fn fetch_revisions_with_client(
     if let Some(cursor) = cursor.filter(|cursor| !cursor.is_empty()) {
         path.push_str(&format!("&cursor={}", encode_query(cursor)));
     }
-    get_json::<RevisionsEnvelope>(client, base, &path).map(|envelope| RevisionPage {
-        items: envelope.items,
-        total: envelope.page.total,
-        next_cursor: envelope.page.next_cursor,
-    })
+    GatewayApi::new(client, base)
+        .get::<RevisionsEnvelope>(&path, revision_context(&path))
+        .map(|envelope| RevisionPage {
+            items: envelope.items,
+            total: envelope.page.total,
+            next_cursor: envelope.page.next_cursor,
+        })
 }
 
 /// Fetch the document body as of one revision from the gateway.
@@ -138,7 +140,9 @@ fn fetch_revision_snapshot_with_client(
         "v1/revisions/snapshot?document_id={}&revision={revision}",
         encode_query(document_id)
     );
-    get_json::<SnapshotEnvelope>(client, base, &path).map(|envelope| envelope.result)
+    GatewayApi::new(client, base)
+        .get::<SnapshotEnvelope>(&path, revision_context(&path))
+        .map(|envelope| envelope.result)
 }
 
 /// Fetch the diff between two revisions (or a revision and current) from the gateway.
@@ -156,7 +160,9 @@ pub fn fetch_revision_diff_http(
     if let Some(to_revision) = to_revision {
         path.push_str(&format!("&to_revision={to_revision}"));
     }
-    get_json::<DiffEnvelope>(&client, base, &path).map(|envelope| envelope.result)
+    GatewayApi::new(&client, base)
+        .get::<DiffEnvelope>(&path, revision_context(&path))
+        .map(|envelope| envelope.result)
 }
 
 /// Restore a document to an earlier revision, guarded by `if_match_revision`.
@@ -173,36 +179,14 @@ pub fn restore_revision_http(
         if_match_revision,
     })
     .map_err(|error| format!("serialize restore request: {error}"))?;
-    send_json::<RestoreEnvelope>(
-        &client,
-        base,
-        "v1/revisions/restore",
-        Method::Post,
-        Some(body),
-    )
-    .map(|envelope| envelope.result)
-}
-
-fn client(timeout_secs: u64) -> Result<ReqwestGatewayClient, String> {
-    crate::gateway::client(timeout_secs)
-}
-
-fn get_json<T: DeserializeOwned>(
-    client: &dyn GatewayClient,
-    base: &str,
-    path: &str,
-) -> Result<T, String> {
-    send_json(client, base, path, Method::Get, None)
-}
-
-fn send_json<T: DeserializeOwned>(
-    client: &dyn GatewayClient,
-    base: &str,
-    path: &str,
-    method: Method,
-    body: Option<String>,
-) -> Result<T, String> {
-    crate::gateway::send_json(client, base, path, method, body, revision_context(path))
+    GatewayApi::new(&client, base)
+        .send::<RestoreEnvelope>(
+            Method::Post,
+            "v1/revisions/restore",
+            Some(body),
+            revision_context("v1/revisions/restore"),
+        )
+        .map(|envelope| envelope.result)
 }
 
 fn revision_context(path: &str) -> &'static str {
@@ -297,7 +281,8 @@ mod tests {
             r#"{"ok":true,"result":{"document_id":"d1","from_revision":2,"to_revision":3,"title_changed":false,"metadata_changed":false,"placement_changed":false,"added_lines":1,"removed_lines":1,"changes":[{"kind":"removed","line":1,"content":"old","content_truncated":false},{"kind":"added","line":1,"content":"new","content_truncated":false}],"truncated":false}}"#.to_string(),
         ]);
         let diff_path = "v1/revisions/diff?document_id=d1%2Fa&from_revision=2";
-        let diff = get_json::<DiffEnvelope>(&gateway, "http://gateway", diff_path)
+        let diff = GatewayApi::new(&gateway, "http://gateway")
+            .get::<DiffEnvelope>(diff_path, revision_context(diff_path))
             .unwrap()
             .result;
         assert_eq!((diff.added_lines, diff.removed_lines), (1, 1));
@@ -314,15 +299,15 @@ mod tests {
             if_match_revision: 3,
         })
         .unwrap();
-        let result = send_json::<RestoreEnvelope>(
-            &gateway,
-            "http://gateway",
-            "v1/revisions/restore",
-            Method::Post,
-            Some(body),
-        )
-        .unwrap()
-        .result;
+        let result = GatewayApi::new(&gateway, "http://gateway")
+            .send::<RestoreEnvelope>(
+                Method::Post,
+                "v1/revisions/restore",
+                Some(body),
+                revision_context("v1/revisions/restore"),
+            )
+            .unwrap()
+            .result;
         assert_eq!(result.revision, 4);
         let requests = gateway.requests.lock().unwrap();
         let body = requests[0].body.as_deref().unwrap();
@@ -350,13 +335,13 @@ mod tests {
     #[test]
     fn malformed_revision_success_does_not_echo_private_query() {
         let gateway = FakeGateway::new(vec![r#"{"items":["private-value""#.to_string()]);
-        let error = get_json::<RevisionsEnvelope>(
-            &gateway,
-            "http://user:secret@gateway",
-            "v1/revisions?document_id=private-id&token=private-token",
-        )
-        .err()
-        .expect("malformed response is rejected");
+        let error = GatewayApi::new(&gateway, "http://user:secret@gateway")
+            .get::<RevisionsEnvelope>(
+                "v1/revisions?document_id=private-id&token=private-token",
+                revision_context("v1/revisions?document_id=private-id&token=private-token"),
+            )
+            .err()
+            .expect("malformed response is rejected");
 
         assert!(error.starts_with("Could not parse Revision history response"));
         for secret in [

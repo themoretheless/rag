@@ -5,12 +5,8 @@
 //! module are called from the background worker, never from an egui frame.
 
 use serde::Deserialize;
-use std::time::Duration;
 
-use crate::gateway::{
-    execute_request, format_http_error, format_json_parse_error, GatewayClient, Method, Request,
-    ReqwestGatewayClient, Response,
-};
+use crate::gateway::{client, decode_json, format_http_error, GatewayApi, GatewayClient};
 
 /// Shared with the server; `last_updated_at` is a UTC timestamp.
 pub use rag_mcp_core::ProjectHome;
@@ -134,7 +130,7 @@ struct LibraryPageMeta {
 
 /// Fetch the project home overview for one project from the gateway.
 pub fn fetch_project_home_http(base: &str, project: &str) -> Result<ProjectHome, String> {
-    let client = ReqwestGatewayClient::new(Duration::from_secs(20))?;
+    let client = client(20)?;
     fetch_project_home_with_client(&client, base, project)
 }
 
@@ -147,21 +143,15 @@ fn fetch_project_home_with_client(
     if project.is_empty() {
         return Err("select a project to open Project Home".to_string());
     }
-    let url = join_url(
-        base,
-        &format!("v1/project-home?project={}", encode_query(project)),
-    )?;
-    let response = get(client, url.clone())?;
-    ensure_success(response, "Project Home").and_then(|body| {
-        serde_json::from_str::<ProjectHomeEnvelope>(&body)
-            .map(|envelope| envelope.project)
-            .map_err(|error| format_json_parse_error("Project Home", &error))
-    })
+    let path = format!("v1/project-home?project={}", encode_query(project));
+    GatewayApi::new(client, base)
+        .get::<ProjectHomeEnvelope>(&path, "Project Home")
+        .map(|envelope| envelope.project)
 }
 
 /// Fetch one page of the document library from the gateway.
 pub fn fetch_library_http(base: &str, request: &LibraryRequest) -> Result<LibraryPage, String> {
-    let client = ReqwestGatewayClient::new(Duration::from_secs(30))?;
+    let client = client(30)?;
     fetch_library_with_client(&client, base, request)
 }
 
@@ -170,17 +160,15 @@ fn fetch_library_with_client(
     base: &str,
     request: &LibraryRequest,
 ) -> Result<LibraryPage, String> {
-    let url = join_url(base, &library_path(request))?;
-    let response = get(client, url.clone())?;
-    ensure_success(response, "Library").and_then(|body| {
-        serde_json::from_str::<LibraryEnvelope>(&body)
-            .map(|envelope| LibraryPage {
-                items: envelope.items,
-                total: envelope.page.total,
-                next_cursor: envelope.page.next_cursor,
-                request: request.clone(),
-            })
-            .map_err(|error| format_json_parse_error("Unified Library", &error))
+    let response = GatewayApi::new(client, base).get_response(&library_path(request))?;
+    if !response.is_success() {
+        return Err(format_http_error(&response, "Library"));
+    }
+    decode_json::<LibraryEnvelope>(response, "Unified Library").map(|envelope| LibraryPage {
+        items: envelope.items,
+        total: envelope.page.total,
+        next_cursor: envelope.page.next_cursor,
+        request: request.clone(),
     })
 }
 
@@ -218,39 +206,12 @@ fn library_path(request: &LibraryRequest) -> String {
     format!("v1/documents?{query}")
 }
 
-fn get(client: &dyn GatewayClient, url: String) -> Result<Response, String> {
-    execute_request(
-        client,
-        Request {
-            method: Method::Get,
-            url,
-            body: None,
-            headers: Vec::new(),
-        },
-    )
-}
-
-fn ensure_success(response: Response, context: &str) -> Result<String, String> {
-    if response.is_success() {
-        Ok(response.body)
-    } else {
-        Err(format_http_error(&response, context))
-    }
-}
-
-fn join_url(base: &str, path: &str) -> Result<String, String> {
-    let base = base.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("http base URL is empty".to_string());
-    }
-    Ok(format!("{}/{}", base, path.trim_start_matches('/')))
-}
-
 use crate::gateway::percent_encode as encode_query;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::{Request, Response};
     use std::sync::Mutex;
 
     struct FakeGateway {
