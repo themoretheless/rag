@@ -419,7 +419,13 @@ impl Store {
                     });
                     break;
                 }
-                let text = &source[a..b];
+                // Segment bounds come from child spans in the cached index
+                // payload, not only from the validated span and cursor.
+                let Some(text) = source.get(a..b) else {
+                    return Err(AppError::config(
+                        "invalid cached code span; rebuild index_code",
+                    ));
+                };
                 let take = text
                     .char_indices()
                     .nth(remaining)
