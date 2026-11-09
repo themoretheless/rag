@@ -4,6 +4,7 @@
 //! same L0-L4 storage model without coupling either frontend to the other.
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Frame, Margin, Stroke, TextStyle};
+use rag_mcp_core::{NodeKind, RelType};
 
 pub const BG: Color32 = Color32::from_rgb(14, 17, 23);
 pub const RAIL: Color32 = Color32::from_rgb(9, 11, 16);
@@ -170,6 +171,50 @@ pub fn rgba(color: Color32, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }
 
+/// Node kind → fill color (EGUI_GRAPH_VIEW §7.2).
+pub fn kind_color(kind: Option<NodeKind>) -> Color32 {
+    match kind {
+        Some(NodeKind::Document) => L0,
+        Some(NodeKind::Tag) => L1,
+        Some(NodeKind::Stub) => Color32::from_rgb(100, 116, 139),
+        Some(NodeKind::Entity) => L2,
+        None => MUTED,
+    }
+}
+
+/// Graph node fill: documents are tinted by storage layer, the rest by kind.
+pub fn node_color(kind: Option<NodeKind>, layer: Option<&str>) -> Color32 {
+    if kind == Some(NodeKind::Document) {
+        match layer {
+            Some("wiki") => L3,
+            Some("diary") => L4,
+            _ => L0,
+        }
+    } else {
+        kind_color(kind)
+    }
+}
+
+/// Relation → edge stroke color.
+pub fn edge_color(rel: Option<RelType>) -> Color32 {
+    match rel {
+        Some(RelType::Wikilink) => rgba(L3, 150),
+        Some(RelType::Related | RelType::Similar) => rgba(L0, 115),
+        Some(RelType::Tagged | RelType::Mentions) => rgba(L1, 130),
+        Some(RelType::Contains | RelType::Imports | RelType::Describes) => rgba(L2, 145),
+        Some(RelType::Tunnel) => rgba(DANGER, 175),
+        Some(RelType::Contradicts) => rgba(DANGER, 180),
+        Some(
+            RelType::DependsOn
+            | RelType::DerivedFrom
+            | RelType::Supersedes
+            | RelType::Cites
+            | RelType::Supports,
+        ) => rgba(OK, 150),
+        None => rgba(MUTED, 120),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +227,28 @@ mod tests {
         assert_eq!(layer_color("wiki"), L3);
         assert_eq!(layer_color("diary"), L4);
         assert_eq!(layer_color("activity"), L4);
+    }
+
+    #[test]
+    fn graph_palette_distinguishes_kinds_layers_and_relations() {
+        assert_eq!(kind_color(Some(NodeKind::Document)), L0);
+        assert_eq!(kind_color(Some(NodeKind::Tag)), L1);
+        assert_eq!(kind_color(Some(NodeKind::Entity)), L2);
+        assert_eq!(kind_color(None), MUTED);
+        assert_eq!(node_color(Some(NodeKind::Document), Some("wiki")), L3);
+        assert_eq!(node_color(Some(NodeKind::Document), Some("diary")), L4);
+        assert_eq!(node_color(Some(NodeKind::Document), Some("raw")), L0);
+        assert_eq!(node_color(Some(NodeKind::Document), None), L0);
+        // Layer tint applies to documents only.
+        assert_eq!(node_color(Some(NodeKind::Tag), Some("wiki")), L1);
+
+        assert_eq!(edge_color(Some(RelType::Wikilink)), rgba(L3, 150));
+        assert_eq!(edge_color(Some(RelType::Similar)), rgba(L0, 115));
+        assert_eq!(edge_color(Some(RelType::Mentions)), rgba(L1, 130));
+        assert_eq!(edge_color(Some(RelType::Imports)), rgba(L2, 145));
+        assert_eq!(edge_color(Some(RelType::Tunnel)), rgba(DANGER, 175));
+        assert_eq!(edge_color(Some(RelType::Contradicts)), rgba(DANGER, 180));
+        assert_eq!(edge_color(Some(RelType::Cites)), rgba(OK, 150));
+        assert_eq!(edge_color(None), rgba(MUTED, 120));
     }
 }

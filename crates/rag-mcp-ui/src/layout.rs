@@ -337,8 +337,8 @@ mod tests {
         UiNode {
             id: id.into(),
             kind: "document".into(),
+            node_kind: Some(rag_mcp_core::NodeKind::Document),
             label: id.into(),
-            color: egui::Color32::from_rgb(70, 130, 200),
             document_id: None,
             uri: None,
             resolved: true,
@@ -356,6 +356,7 @@ mod tests {
             source_id: s.into(),
             target_id: t.into(),
             rel_type: "wikilink".into(),
+            rel: Some(rag_mcp_core::RelType::Wikilink),
             weight: 1.0,
             multi_count: 1,
             members: vec![],

@@ -10,7 +10,9 @@ use std::f32::consts::TAU;
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use crate::adapter::{edge_color, UiGraph, UiNode};
+use rag_mcp_core::{NodeKind, RelType};
+
+use crate::adapter::{UiGraph, UiNode};
 use crate::layout::{fit_transform, PosCache};
 use crate::ui::theme;
 
@@ -86,28 +88,21 @@ pub fn draw_canvas(
         if !segment_near_rect(sa, sb, rect) {
             continue;
         }
-        let base_w = match e.rel_type.as_str() {
-            "related" => 0.8,
-            "tunnel" => 2.2,
-            "tagged" | "mentions" => 1.0,
-            _ => 1.2,
-        };
+        let base_w = e
+            .rel
+            .map_or(RelType::DEFAULT_BASE_WIDTH, RelType::base_width);
         let width =
             (base_w + (e.weight as f32).ln_1p() * 0.45 + (e.multi_count as f32 - 1.0) * 0.25)
                 .clamp(0.6, 5.0);
-        let color = edge_color(&e.rel_type);
+        let color = theme::edge_color(e.rel);
         let stroke = Stroke::new(width, color);
-        match e.rel_type.as_str() {
-            "tagged" | "mentions" => dashed_line(&painter, sa, sb, stroke, 4.0, 4.0),
-            _ => {
-                painter.line_segment([sa, sb], stroke);
-                // Direction arrow for directed rel types (EGUI_GRAPH_VIEW §7.2).
-                if matches!(
-                    e.rel_type.as_str(),
-                    "wikilink" | "depends_on" | "derived_from" | "supersedes"
-                ) {
-                    draw_arrowhead(&painter, sa, sb, stroke);
-                }
+        if e.rel.is_some_and(RelType::is_dashed) {
+            dashed_line(&painter, sa, sb, stroke, 4.0, 4.0);
+        } else {
+            painter.line_segment([sa, sb], stroke);
+            // Direction arrow for directed rel types (EGUI_GRAPH_VIEW §7.2).
+            if e.rel.is_some_and(RelType::is_directed) {
+                draw_arrowhead(&painter, sa, sb, stroke);
             }
         }
     }
@@ -225,7 +220,7 @@ pub fn draw_canvas(
         for sn in others.iter().chain(&selected_draw) {
             mesh.add_colored_rect(
                 Rect::from_center_size(sn.center, Vec2::splat(sn.radius * 2.0)),
-                sn.node.color,
+                theme::node_color(sn.node.node_kind, sn.node.layer.as_deref()),
             );
         }
         painter.add(egui::Shape::mesh(mesh));
@@ -241,10 +236,14 @@ pub fn draw_canvas(
         let radius = sn.radius;
         let selected_here = selected == Some(node.id.as_str());
         let focused_here = focused_id.as_deref() == Some(node.id.as_str());
-        let is_stub = rag_mcp_core::NodeKind::Stub.is(&node.kind) || !node.resolved;
+        let is_stub = node.node_kind == Some(NodeKind::Stub) || !node.resolved;
 
-        // Fill color comes from adapter kind_color (document/tag/stub/entity).
-        painter.circle_filled(center, radius, node.color);
+        // Fill color by kind, documents by layer (EGUI_GRAPH_VIEW §7.2).
+        painter.circle_filled(
+            center,
+            radius,
+            theme::node_color(node.node_kind, node.layer.as_deref()),
+        );
 
         if selected_here {
             painter.circle_stroke(center, radius, Stroke::new(2.5_f32, Color32::WHITE));
@@ -378,12 +377,12 @@ fn node_accessibility_label(node: &UiNode) -> String {
 }
 
 fn localized_kind(kind: &str) -> &str {
-    match kind {
-        "document" => "документ",
-        "tag" => "тег",
-        "stub" => "заглушка",
-        "entity" => "сущность",
-        other => other,
+    match NodeKind::parse(kind) {
+        Some(NodeKind::Document) => "документ",
+        Some(NodeKind::Tag) => "тег",
+        Some(NodeKind::Stub) => "заглушка",
+        Some(NodeKind::Entity) => "сущность",
+        None => kind,
     }
 }
 
@@ -397,23 +396,23 @@ fn localized_layer(layer: &str) -> &str {
 }
 
 fn localized_relation(relation: &str) -> &str {
-    match relation {
-        "wikilink" => "вики-ссылка",
-        "related" => "связано",
-        "similar" => "похоже на",
-        "contains" => "содержит",
-        "imports" => "импортирует",
-        "describes" => "описывает",
-        "tunnel" => "туннель",
-        "tagged" => "с тегом",
-        "mentions" => "упоминает",
-        "depends_on" => "зависит от",
-        "derived_from" => "производное от",
-        "cites" => "получено из",
-        "supports" => "подтверждает",
-        "contradicts" => "противоречит",
-        "supersedes" => "замещает",
-        other => other,
+    match RelType::parse(relation) {
+        Some(RelType::Wikilink) => "вики-ссылка",
+        Some(RelType::Related) => "связано",
+        Some(RelType::Similar) => "похоже на",
+        Some(RelType::Contains) => "содержит",
+        Some(RelType::Imports) => "импортирует",
+        Some(RelType::Describes) => "описывает",
+        Some(RelType::Tunnel) => "туннель",
+        Some(RelType::Tagged) => "с тегом",
+        Some(RelType::Mentions) => "упоминает",
+        Some(RelType::DependsOn) => "зависит от",
+        Some(RelType::DerivedFrom) => "производное от",
+        Some(RelType::Cites) => "получено из",
+        Some(RelType::Supports) => "подтверждает",
+        Some(RelType::Contradicts) => "противоречит",
+        Some(RelType::Supersedes) => "замещает",
+        None => relation,
     }
 }
 
@@ -450,17 +449,23 @@ fn draw_arrowhead(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
 
 /// Compact legend of kind / rel_type colors present in the view (bottom-left).
 fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
     let mut kinds = BTreeMap::new();
     for node in &graph.nodes {
-        let label = if rag_mcp_core::NodeKind::Document.is(&node.kind) {
+        let label = if node.node_kind == Some(NodeKind::Document) {
             localized_layer(node.layer.as_deref().unwrap_or("document"))
         } else {
             localized_kind(&node.kind)
         };
-        kinds.entry(label).or_insert(node.color);
+        kinds
+            .entry(label)
+            .or_insert_with(|| theme::node_color(node.node_kind, node.layer.as_deref()));
     }
-    let rels: BTreeSet<&str> = graph.edges.iter().map(|e| e.rel_type.as_str()).collect();
+    let rels: BTreeMap<&str, Option<RelType>> = graph
+        .edges
+        .iter()
+        .map(|e| (e.rel_type.as_str(), e.rel))
+        .collect();
     let rows = kinds.len() + rels.len();
     if rows == 0 {
         return;
@@ -490,11 +495,11 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
         );
         y += line_h;
     }
-    for r in rels {
+    for (r, rel) in rels {
         let cy = y + line_h * 0.5;
         painter.line_segment(
             [Pos2::new(x, cy), Pos2::new(x + 10.0, cy)],
-            Stroke::new(1.5_f32, edge_color(r)),
+            Stroke::new(1.5_f32, theme::edge_color(rel)),
         );
         painter.text(
             Pos2::new(x + 14.0, y),
@@ -572,8 +577,8 @@ mod tests {
         let node = UiNode {
             id: "node-1".into(),
             kind: "document".into(),
+            node_kind: Some(NodeKind::Document),
             label: "Architecture".into(),
-            color: Color32::WHITE,
             document_id: Some("doc-1".into()),
             uri: Some("wiki://architecture".into()),
             resolved: true,
