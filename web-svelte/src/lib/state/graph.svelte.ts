@@ -5,14 +5,15 @@ import type { LayoutMode } from '@/lib/forceLayout'
 
 /** Graph explorer state: nodes/edges, seed expand, selection, layout. */
 class GraphStore {
-  nodes = $state<GraphNode[]>([])
-  edges = $state<GraphEdge[]>([])
+  /** Replaced wholesale per load; never mutated, so no deep proxy over hundreds of nodes. */
+  nodes = $state.raw<GraphNode[]>([])
+  edges = $state.raw<GraphEdge[]>([])
   loading = $state(false)
   error = $state<string | null>(null)
   seed = $state('')
   depth = $state(2)
   maxNodes = $state(300)
-  projects = $state<ProjectSummary[]>([])
+  projects = $state.raw<ProjectSummary[]>([])
   project = $state('rag')
   includeTags = $state(true)
   selectedId = $state<string | null>(null)

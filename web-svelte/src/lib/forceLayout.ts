@@ -20,18 +20,14 @@ export interface SimNode extends SimulationNodeDatum {
 }
 
 export interface SimLink extends SimulationLinkDatum<SimNode> {
+  source: SimNode
+  target: SimNode
   rel_type: string
 }
 
 /** Layout mode for client-side placement. Radial is for local seed views. */
 export type LayoutMode = 'force' | 'radial'
 
-export interface BuildSimulationOptions {
-  /** Default `force`. `radial` = deterministic RadialLocal (seed + BFS rings). */
-  layout?: LayoutMode
-  /** Seed id / label / document_id for radial center. */
-  seedKey?: string | null
-}
 
 /** Ring gap in px (matches rag-mcp-ui RadialLocal scale). */
 export const RING_GAP = 140
@@ -50,8 +46,8 @@ export function nodeRadius(kind?: string, degree = 1): number {
   return Math.min(18, base + Math.sqrt(Math.max(0, degree)) * 1.6)
 }
 
-/** Coarse legend bucket for a node kind (matches nodeColor branches). */
-function legendBucket(kind?: string): string {
+/** Coarse bucket of a node kind (matches the nodeColor branches); names the halo gradients too. */
+export function kindBucket(kind?: string): string {
   const k = (kind || '').toLowerCase()
   if (k.includes('tag')) return 'tag'
   if (k.includes('stub')) return 'stub'
@@ -71,7 +67,7 @@ export interface LegendEntry {
 export function legendEntries(nodes: GraphNode[]): LegendEntry[] {
   const seen = new Map<string, LegendEntry>()
   for (const n of nodes) {
-    const source = legendBucket(n.kind)
+    const source = kindBucket(n.kind)
     if (!seen.has(source)) {
       seen.set(source, { source, label: source, color: nodeColor(n.kind) })
     }
@@ -81,7 +77,7 @@ export function legendEntries(nodes: GraphNode[]): LegendEntry[] {
 
 /** d3-drag behavior for graph nodes; reheat the sim while dragging. */
 export function createNodeDrag(
-  sim: Simulation<SimNode, undefined>,
+  sim: { alphaTarget(alpha: number): { restart(): unknown } },
 ): DragBehavior<SVGGElement, SimNode, SimNode> {
   type NodeDragEvent = D3DragEvent<SVGGElement, SimNode, SimNode>
   return drag<SVGGElement, SimNode, SimNode>()
@@ -101,7 +97,7 @@ export function createNodeDrag(
     })
 }
 
-function degreeMap(edges: GraphEdge[]): Map<string, number> {
+function degreeMap(edges: readonly GraphEdge[]): Map<string, number> {
   const deg = new Map<string, number>()
   for (const e of edges) {
     deg.set(e.source_id, (deg.get(e.source_id) || 0) + 1)
@@ -110,25 +106,36 @@ function degreeMap(edges: GraphEdge[]): Map<string, number> {
   return deg
 }
 
+/**
+ * Simulation nodes for a graph view. A node that was already on screen (`previous`)
+ * keeps its position and velocity; a new one starts near the viewport centre.
+ */
 function makeSimNodes(
-  nodes: GraphNode[],
-  edges: GraphEdge[],
+  nodes: readonly GraphNode[],
+  edges: readonly GraphEdge[],
   width: number,
   height: number,
+  previous?: ReadonlyMap<string, SimNode>,
 ): SimNode[] {
   const deg = degreeMap(edges)
-  return nodes.map((n) => ({
-    id: n.id,
-    label: n.label,
-    kind: n.kind || 'document',
-    ...(n.document_id !== undefined ? { document_id: n.document_id } : {}),
-    radius: nodeRadius(n.kind, deg.get(n.id) || 0),
-    x: width / 2 + (Math.random() - 0.5) * 80,
-    y: height / 2 + (Math.random() - 0.5) * 80,
-  }))
+  return nodes.map((n) => {
+    const old = previous?.get(n.id)
+    const node: SimNode = {
+      id: n.id,
+      label: n.label,
+      kind: n.kind || 'document',
+      ...(n.document_id !== undefined ? { document_id: n.document_id } : {}),
+      radius: nodeRadius(n.kind, deg.get(n.id) || 0),
+      x: old?.x ?? width / 2 + (Math.random() - 0.5) * 80,
+      y: old?.y ?? height / 2 + (Math.random() - 0.5) * 80,
+    }
+    if (old?.vx !== undefined) node.vx = old.vx
+    if (old?.vy !== undefined) node.vy = old.vy
+    return node
+  })
 }
 
-function makeSimLinks(simNodes: SimNode[], edges: GraphEdge[]): SimLink[] {
+function makeSimLinks(simNodes: SimNode[], edges: readonly GraphEdge[]): SimLink[] {
   const byId = new Map(simNodes.map((n) => [n.id, n]))
   const simLinks: SimLink[] = []
   for (const e of edges) {
@@ -172,7 +179,7 @@ export function resolveSeedId(simNodes: SimNode[], seedKey?: string | null): str
  */
 export function placeRadialLocal(
   simNodes: SimNode[],
-  edges: GraphEdge[],
+  edges: readonly GraphEdge[],
   width: number,
   height: number,
   seedKey?: string | null,
@@ -283,51 +290,79 @@ export function placeRadialLocal(
   }
 }
 
-export function buildSimulation(
-  nodes: GraphNode[],
-  edges: GraphEdge[],
-  width: number,
-  height: number,
-  options?: BuildSimulationOptions,
-) {
-  const layout: LayoutMode = options?.layout ?? 'force'
-  const simNodes = makeSimNodes(nodes, edges, width, height)
-  const simLinks = makeSimLinks(simNodes, edges)
+export interface GraphLayoutOptions {
+  width: number
+  height: number
+  /** `radial` = deterministic RadialLocal (seed + BFS rings), frozen in place. */
+  layout: LayoutMode
+  /** Seed id / label / document_id for the radial centre. */
+  seedKey?: string | null
+}
 
-  if (layout === 'radial') {
-    placeRadialLocal(simNodes, edges, width, height, options?.seedKey)
-    // Frozen positions: minimal sim so callers can still listen for tick once.
-    const sim = forceSimulation(simNodes)
-      .force(
-        'collide',
-        forceCollide<SimNode>()
-          .radius((d) => d.radius + 4)
-          .iterations(1)
-          .strength(0),
-      )
-      .alpha(0)
-      .alphaDecay(1)
-      .stop()
-    // One tick so initial paint positions are applied without drift.
-    sim.tick()
-    return { sim, simNodes, simLinks, layout: 'radial' as const }
+/**
+ * One long-lived d3-force simulation for the graph canvas.
+ *
+ * `setData` swaps the node / link sets in place (nodes that stay keep their
+ * positions) and reheats; `relayout` re-applies the layout to the current data, e.g.
+ * after a resize or a layout switch. Nothing is rebuilt between graph loads.
+ */
+export class GraphSimulation {
+  readonly sim: Simulation<SimNode, SimLink>
+  nodes: SimNode[] = []
+  links: SimLink[] = []
+
+  private edges: readonly GraphEdge[] = []
+  private readonly linkForce = forceLink<SimNode, SimLink>()
+    .id((d) => d.id)
+    .distance((l) => (l.rel_type === 'wikilink' ? 70 : 90))
+    .strength(0.45)
+  private readonly chargeForce = forceManyBody<SimNode>().strength(-180).distanceMax(420)
+  private readonly collideForce = forceCollide<SimNode>().radius((d) => d.radius + 4)
+
+  constructor() {
+    this.sim = forceSimulation<SimNode, SimLink>().force('collide', this.collideForce).stop()
   }
 
-  const sim = forceSimulation(simNodes)
-    .force(
-      'link',
-      forceLink<SimNode, SimLink>(simLinks)
-        .id((d) => d.id)
-        .distance((l) => (l.rel_type === 'wikilink' ? 70 : 90))
-        .strength(0.45),
-    )
-    .force('charge', forceManyBody().strength(-180).distanceMax(420))
-    .force('center', forceCenter(width / 2, height / 2))
-    .force(
-      'collide',
-      forceCollide<SimNode>().radius((d) => d.radius + 4).iterations(2),
-    )
-    .alphaDecay(0.04)
+  /** Replace the graph and lay it out. */
+  setData(nodes: readonly GraphNode[], edges: readonly GraphEdge[], options: GraphLayoutOptions): void {
+    const previous = new Map(this.nodes.map((node) => [node.id, node]))
+    this.nodes = makeSimNodes(nodes, edges, options.width, options.height, previous)
+    this.links = makeSimLinks(this.nodes, edges)
+    this.edges = edges
+    this.sim.nodes(this.nodes)
+    this.relayout(options)
+  }
 
-  return { sim, simNodes, simLinks, layout: 'force' as const }
+  /** Apply the layout to the current data and (for `force`) reheat the simulation. */
+  relayout(options: GraphLayoutOptions): void {
+    const { width, height, layout } = options
+    if (layout === 'radial') {
+      placeRadialLocal(this.nodes, this.edges, width, height, options.seedKey)
+      // Frozen positions: no attracting forces, and a simulation that settles at once.
+      this.sim.force('link', null).force('charge', null).force('center', null)
+      this.collideForce.iterations(1).strength(0)
+      this.sim.alpha(0).alphaDecay(1).stop()
+      // One tick so the frozen positions are applied without drift.
+      this.sim.tick()
+      return
+    }
+    // Leaving a radial layout: release the pinned positions.
+    for (const node of this.nodes) {
+      node.fx = null
+      node.fy = null
+    }
+    this.linkForce.links(this.links)
+    this.collideForce.iterations(2).strength(1)
+    this.sim
+      .force('link', this.linkForce)
+      .force('charge', this.chargeForce)
+      .force('center', forceCenter(width / 2, height / 2))
+      .alphaDecay(0.04)
+      .alpha(1)
+      .restart()
+  }
+
+  stop(): void {
+    this.sim.stop()
+  }
 }
