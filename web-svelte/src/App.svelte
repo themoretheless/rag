@@ -1,26 +1,39 @@
 <script lang="ts">
-  import { usePoll } from '@/lib/poll'
-  import { onMount } from 'svelte'
-  import { ui } from '@/lib/state/ui.svelte'
-  import { route, startRouter } from '@/lib/router.svelte'
+  import { onMount, type Component } from 'svelte'
   import AppShell from '@/components/layout/AppShell.svelte'
-  import CommandPalette from '@/components/notion/CommandPalette.svelte'
   import ToastHost from '@/components/layout/ToastHost.svelte'
-  import WikiView from '@/views/WikiView.svelte'
-  import GraphView from '@/views/GraphView.svelte'
-  import SearchView from '@/views/SearchView.svelte'
-  import ConsoleView from '@/views/ConsoleView.svelte'
-  import CorpusView from '@/views/CorpusView.svelte'
-  import AgentsView from '@/views/AgentsView.svelte'
-  import SyncView from '@/views/SyncView.svelte'
-  import EvaluationView from '@/views/EvaluationView.svelte'
-  import ModelsView from '@/views/ModelsView.svelte'
-  import ResourcesView from '@/views/ResourcesView.svelte'
+  import CommandPalette from '@/components/notion/CommandPalette.svelte'
+  import { createRequestGate, errorMessage } from '@/lib/async'
+  import { usePoll } from '@/lib/poll'
+  import { route, startRouter } from '@/lib/router.svelte'
+  import { routeByName } from '@/lib/routes'
+  import { ui } from '@/lib/state/ui.svelte'
   import { wiki } from '@/lib/state/wiki.svelte'
+
+  // Resolve the location before the first render so only the requested screen's
+  // chunk is fetched (the route store starts on a placeholder until then).
+  startRouter()
+
+  /** The mounted screen. It is swapped only once the next screen's chunk has arrived. */
+  let View = $state.raw<Component | null>(null)
+  const screenGate = createRequestGate()
+
+  $effect(() => {
+    const ticket = screenGate.next()
+    routeByName(route.name)
+      .load()
+      .then(
+        (module) => {
+          if (ticket.current) View = module.default
+        },
+        (cause: unknown) => {
+          if (ticket.current) ui.toast(errorMessage(cause), 'error')
+        },
+      )
+  })
 
   onMount(() => {
     ui.hydrateTheme()
-    startRouter()
     void ui.checkHealth()
     void wiki.loadCatalog()
   })
@@ -29,27 +42,7 @@
 </script>
 
 <AppShell>
-  {#if route.name === 'console'}
-    <ConsoleView />
-  {:else if route.name === 'corpus'}
-    <CorpusView />
-  {:else if route.name === 'wiki'}
-    <WikiView />
-  {:else if route.name === 'graph'}
-    <GraphView />
-  {:else if route.name === 'search'}
-    <SearchView />
-  {:else if route.name === 'agents'}
-    <AgentsView />
-  {:else if route.name === 'sync'}
-    <SyncView />
-  {:else if route.name === 'evaluation'}
-    <EvaluationView />
-  {:else if route.name === 'resources'}
-    <ResourcesView />
-  {:else}
-    <ModelsView />
-  {/if}
+  {#if View}<View />{/if}
 </AppShell>
 <CommandPalette />
 <ToastHost />

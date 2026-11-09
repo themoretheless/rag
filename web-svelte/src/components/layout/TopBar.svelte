@@ -1,22 +1,10 @@
 <script lang="ts">
   import { initials } from '@/lib/format'
   import { ui } from '@/lib/state/ui.svelte'
-  import { go, route, type RouteName } from '@/lib/router.svelte'
+  import { go, route } from '@/lib/router.svelte'
+  import { routeCrumb } from '@/lib/routes'
 
-  interface RouteLabel { title: string; layer: string; color: string }
-  const consoleLabel: RouteLabel = { title: 'Пульт', layer: 'L0–L4 · обзор', color: 'var(--accent)' }
-  const labels: Partial<Record<RouteName, RouteLabel>> = {
-    console: consoleLabel,
-    corpus: { title: 'Корпус', layer: 'L0 · сырой корпус', color: 'var(--l0)' },
-    search: { title: 'Поиск', layer: 'L1 · извлечение', color: 'var(--l1)' },
-    graph: { title: 'Граф', layer: 'L2 · граф объектов', color: 'var(--l2)' },
-    wiki: { title: 'Вики', layer: 'L3 · знание', color: 'var(--l3)' },
-    agents: { title: 'Агенты · Журнал', layer: 'L4 · MCP-клиенты', color: 'var(--l4)' },
-    sync: { title: 'Синхронизация БД', layer: 'local ↔ primary', color: 'var(--l2)' },
-    evaluation: { title: 'Оценка', layer: 'eval · retrieval', color: 'var(--l1)' },
-    models: { title: 'Модели и пайплайн', layer: 'RAG_* env · runtime', color: 'var(--l3)' },
-  }
-  const current = $derived(labels[route.name] ?? consoleLabel)
+  const current = $derived(routeCrumb(route.name))
   const healthReady = $derived(Boolean(ui.health?.ok && ui.health?.fts_ready))
   const onlineAgents = $derived(
     ui.shellAgentsError
