@@ -596,7 +596,8 @@ export interface EvalQuestion {
 /** `POST /v1/eval/feedback` body. */
 export interface EvalFeedbackBody {
   id: string
-  search: Record<string, unknown>
+  /** The executed search request, replayed verbatim on a later run. */
+  search: SearchRequest
   expected: string[]
   no_answer: boolean
 }
