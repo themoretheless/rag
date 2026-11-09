@@ -68,6 +68,7 @@ mod panels;
 mod pending;
 mod revisions;
 mod state;
+mod views;
 mod wiki;
 mod workspace;
 
