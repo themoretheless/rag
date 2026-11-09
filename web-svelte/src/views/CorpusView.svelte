@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { untrack } from 'svelte'
   import { api } from '@/api/client'
   import { errorMessage } from '@/lib/async'
   import { baseName, downloadBlob } from '@/lib/download'
@@ -49,14 +49,20 @@
     if (route.name !== 'corpus') return
     const signature = route.query.toString()
     if (signature === appliedRoute) return
+    const first = appliedRoute === null
     appliedRoute = signature
-    store.applyRoute({
+    const next = {
       project: route.query.get('project')?.trim() ?? '',
       room: route.query.get('room')?.trim() ?? '',
       query: route.query.get('q')?.trim() ?? '',
       documentId: route.query.get('document_id')?.trim() ?? '',
+    }
+    // Only the URL drives this effect; the store's own reads must not re-trigger it.
+    untrack(() => {
+      store.applyRoute(next)
+      // The first URL loads every panel (documents included, once); later ones only the catalog.
+      void (first ? store.refreshAll() : store.loadDocuments())
     })
-    void store.loadDocuments()
   })
 
   $effect(() => {
@@ -70,9 +76,6 @@
     }
   }
 
-  onMount(() => {
-    void store.refreshAll()
-  })
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
