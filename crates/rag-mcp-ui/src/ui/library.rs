@@ -1,6 +1,6 @@
 //! Unified Library workspace: lean server-side catalog with deliberate filters.
 
-use crate::load::DocumentBody;
+use crate::dto::DocumentBody;
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest};
 use crate::ui::document::draw_document_reader;
 use crate::ui::text::short_timestamp;

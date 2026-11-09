@@ -3,7 +3,7 @@
 use rag_mcp_core::{GraphEdge, GraphNode, GraphView};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::load::{
+use crate::topology::{
     UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES, UI_OVERVIEW_MAX_EDGES, UI_OVERVIEW_MAX_NODES,
 };
 use crate::ui::theme;
@@ -237,7 +237,9 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let keep: HashSet<String> = kept_nodes.iter().map(|n| n.id.clone()).collect();
 
     let pkb_rels: HashSet<String> = if opts.pkb_rels_only {
-        crate::load::pkb_default_rel_types().into_iter().collect()
+        crate::topology::pkb_default_rel_types()
+            .into_iter()
+            .collect()
     } else {
         HashSet::new()
     };

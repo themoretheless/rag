@@ -19,7 +19,6 @@ mod dto;
 mod gateway;
 mod http;
 mod layout;
-mod load;
 mod operations;
 mod product;
 mod revisions;
@@ -29,9 +28,10 @@ mod topology;
 mod ui;
 mod worker;
 
+use crate::cli::{Cli, Commands};
+use crate::direct_db::export_graph_snapshot;
 use app::GraphApp;
 use clap::Parser;
-use load::{export_graph_snapshot, Cli, Commands};
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -82,7 +82,7 @@ fn main() {
     }
 }
 
-fn run_gui(open: load::OpenArgs) -> eframe::Result<()> {
+fn run_gui(open: cli::OpenArgs) -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("RAG Console — Native")

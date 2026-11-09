@@ -1,6 +1,6 @@
 //! Product console: one truthful overview of the selected project and gateway.
 
-use crate::load::ActivityEvent;
+use crate::dto::ActivityEvent;
 use crate::operations::OperationsSnapshot;
 use crate::product::ProjectHome;
 

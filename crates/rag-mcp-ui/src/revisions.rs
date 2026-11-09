@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::dto::DocumentBody;
 use crate::gateway::{client, GatewayApi, GatewayClient, Method};
-use crate::load::DocumentBody;
 
 pub const REVISION_PAGE_SIZE: usize = 50;
 

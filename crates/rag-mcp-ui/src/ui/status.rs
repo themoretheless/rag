@@ -6,7 +6,8 @@
 use egui::Ui;
 
 use crate::adapter::UiGraph;
-use crate::load::{GraphSourceKind, UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES};
+use crate::dto::GraphSourceKind;
+use crate::topology::{UI_HARD_MAX_NODES, UI_MAX_DRAW_EDGES};
 
 /// User-facing open mode for the status line (`snapshot` | `db` | `none`).
 fn mode_label(source: Option<&GraphSourceKind>) -> &'static str {

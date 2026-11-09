@@ -16,13 +16,20 @@ use std::thread;
 
 use rag_mcp_core::GraphView;
 
-use crate::load::{
-    expand_neighbors_http, expand_neighbors_local, expand_neighbors_store, fetch_activity_http,
-    fetch_backlinks_http, fetch_document_db, fetch_document_http, fetch_project_catalog_http,
-    fetch_wiki_list_db, fetch_wiki_list_http, load_cli_source, put_wiki_http, ActivityEvent,
-    BacklinkItem, CliSource, DocumentBody, GraphSourceKind, LoadedGraph, WikiPageMeta,
+use crate::cli::CliSource;
+
+use crate::direct_db::{expand_neighbors_store, fetch_document_db, fetch_wiki_list_db};
+
+use crate::dto::{
+    ActivityEvent, BacklinkItem, DocumentBody, GraphSourceKind, LoadedGraph, WikiPageMeta,
     WikiPutRequest,
 };
+
+use crate::http::{
+    expand_neighbors_http, fetch_activity_http, fetch_backlinks_http, fetch_document_http,
+    fetch_project_catalog_http, fetch_wiki_list_http, put_wiki_http,
+};
+
 use crate::operations::{
     backup_http, cancel_job_http, checkpoint_http, fetch_jobs_http, fetch_operations_http,
     start_sync_job_http, BackupRequest, JobSnapshot, MaintenanceResult, OperationsSnapshot,
@@ -36,6 +43,7 @@ use crate::revisions::{
     restore_revision_http, RestoreRevisionResult, RevisionDiff, RevisionPage,
 };
 use crate::search::{fetch_search_http, SearchRequest, SearchResults};
+use crate::topology::expand_neighbors_local;
 
 /// Document/wiki source: writable HTTP gateway or strictly read-only direct DB.
 #[derive(Debug, Clone)]
@@ -1019,6 +1027,23 @@ fn fetch_page(
                 .document(None, Some(&format!("wiki://{q}")), None)
                 .or_else(|_| source.document(None, Some(q), None))
         }
+    }
+}
+
+/// Load from a resolved CLI source (snapshot XOR read-only db XOR http).
+fn load_cli_source(
+    source: &CliSource,
+    seed: Option<&str>,
+    depth: u32,
+    project: Option<&str>,
+    include_tags: bool,
+) -> Result<LoadedGraph, String> {
+    match source {
+        CliSource::Snapshot(path) => crate::snapshot::load_snapshot_path(path),
+        CliSource::Db(path) => {
+            crate::direct_db::load_live_db(path, seed, depth, project, include_tags)
+        }
+        CliSource::Http(base) => crate::http::load_http(base, seed, depth, project, include_tags),
     }
 }
 

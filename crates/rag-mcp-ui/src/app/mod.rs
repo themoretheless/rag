@@ -12,15 +12,20 @@ use crate::adapter::{adapt, topology_generation, AdaptOptions, GraphLens, UiGrap
 use crate::layout::{overview_grid_place, place_missing_near_neighbors, radial_place, PosCache};
 use std::time::{Duration, Instant};
 
-use crate::load::{
-    local_neighbors_bounded, resolve_exact_seed, resolve_seed, sort_wiki_pages, ActivityEvent,
-    CliSource, DocumentBody, GatewayHealth, GraphSourceKind, LoadedGraph, OpenArgs, WikiPageMeta,
-    WikiPutRequest, UI_HARD_MAX_NODES,
+use crate::cli::{CliSource, OpenArgs};
+
+use crate::dto::{
+    sort_wiki_pages, ActivityEvent, DocumentBody, GatewayHealth, GraphSourceKind, LoadedGraph,
+    WikiPageMeta, WikiPutRequest,
 };
+
 use crate::operations::{JobSnapshot, MaintenanceResult, OperationsSnapshot};
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest, ProjectHome};
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
 use crate::search::{SearchRequest, SearchResults};
+use crate::topology::{
+    local_neighbors_bounded, resolve_exact_seed, resolve_seed, UI_HARD_MAX_NODES,
+};
 use crate::ui::canvas::draw_canvas;
 use crate::ui::detail::{draw_detail, DetailAction, DetailContentState};
 use crate::ui::empty::{
@@ -407,7 +412,7 @@ pub struct GraphApp {
     wiki_loaded: bool,
     /// History stack of wiki page ids for Back (Obsidian-like).
     wiki_history: Vec<String>,
-    wiki_backlinks: Vec<crate::load::BacklinkItem>,
+    wiki_backlinks: Vec<crate::dto::BacklinkItem>,
     wiki_backlinks_error: Option<String>,
     /// In-app editor buffers (None = read mode). Applies to pane A only.
     wiki_edit: Option<WikiEditBuffers>,

@@ -6,7 +6,10 @@
 
 #![allow(clippy::wildcard_imports)]
 
-use crate::load::*;
+use crate::cli::*;
+use crate::dto::*;
+use crate::snapshot::*;
+use crate::topology::*;
 use rag_mcp::db::store::WikiPageMetaFilter;
 use rag_mcp::{GraphFilter, GraphView, Store, UI_GRAPH_EXPORT_MAX_NODES};
 use std::path::Path;

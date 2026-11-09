@@ -2,7 +2,8 @@
 //!
 //! Same signatures; every call reports that `--db` needs the feature.
 
-use crate::load::*;
+use crate::cli::*;
+use crate::dto::*;
 use rag_mcp_core::GraphView;
 use std::path::Path;
 

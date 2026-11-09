@@ -8,7 +8,7 @@ use crate::ui::text::truncate;
 use egui::Ui;
 
 use crate::adapter::{suspicious_tag_label, GraphLens, UiEdge, UiGraph, UiNode};
-use crate::load::DocumentBody;
+use crate::dto::DocumentBody;
 use crate::ui::document::draw_document_reader;
 use crate::ui::theme;
 
