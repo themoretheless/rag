@@ -36,6 +36,8 @@
     ui.hydrateTheme()
     void ui.checkHealth()
     void wiki.loadCatalog()
+    // Follow the sidebar filter with debounced server reloads for the app's lifetime.
+    return wiki.start()
   })
   // Refresh the health badge periodically so offline recovery shows up.
   usePoll(() => void ui.checkHealth(10_000), 15_000)
