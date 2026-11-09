@@ -1913,3 +1913,196 @@ fn expand_parent_without_parent_keeps_own_body() {
     assert_eq!(context.len(), 1);
     assert_eq!(context[0].chunk_id, "solo");
 }
+
+// ---------------------------------------------------------------------------
+// Timing baselines for docs/refactor/BASELINE.md.
+//
+// Ignored by default so the regular test run does not grow. Run them one at a
+// time (they share the machine, not state):
+//
+//   cargo test --lib -- --ignored timing_ --nocapture --test-threads=1
+//
+// Each test prints one `TIMING ...` line; copy the numbers into BASELINE.md.
+// ---------------------------------------------------------------------------
+
+const TIMING_DOCS: usize = 2000;
+const TIMING_CHUNKS_PER_DOC: usize = 4;
+const TIMING_DIMS: usize = 32;
+const TIMING_QUERIES: usize = 50;
+const TIMING_VOCABULARY: usize = 400;
+
+/// Deterministic pseudo-random stream (no `rand` dependency in the crate).
+fn timing_next(state: &mut u64) -> u64 {
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    *state >> 33
+}
+
+fn timing_embedding(seed: u64) -> Vec<f32> {
+    let mut state = seed.wrapping_add(1);
+    (0..TIMING_DIMS)
+        .map(|_| (timing_next(&mut state) % 2001) as f32 / 1000.0 - 1.0)
+        .collect()
+}
+
+fn timing_text(seed: u64, words: usize) -> String {
+    let mut state = seed.wrapping_add(7);
+    (0..words)
+        .map(|_| format!("term{}", timing_next(&mut state) % TIMING_VOCABULARY as u64))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn timing_document(index: usize) -> (Document, Vec<Chunk>) {
+    let id = format!("timing-doc-{index}");
+    let now = Utc::now();
+    let chunks: Vec<Chunk> = (0..TIMING_CHUNKS_PER_DOC)
+        .map(|chunk_index| {
+            let seed = (index * TIMING_CHUNKS_PER_DOC + chunk_index) as u64;
+            let content = timing_text(seed, 40);
+            Chunk {
+                id: format!("{id}-c{chunk_index}"),
+                document_id: id.clone(),
+                chunk_index: chunk_index as i32,
+                char_start: 0,
+                char_end: content.len() as i32,
+                content,
+                embedding: timing_embedding(seed),
+                metadata_json: "{}".into(),
+            }
+        })
+        .collect();
+    let document = Document {
+        id: id.clone(),
+        uri: format!("timing://{index}"),
+        title: format!("Timing document {index}"),
+        content: chunks
+            .iter()
+            .map(|chunk| chunk.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        metadata_json: "{}".into(),
+        created_at: now,
+        updated_at: now,
+        ..Default::default()
+    };
+    (document, chunks)
+}
+
+/// Seed the corpus through the public write path; returns the elapsed time.
+fn seed_timing_corpus(store: &Store) -> std::time::Duration {
+    let started = Instant::now();
+    for index in 0..TIMING_DOCS {
+        let (document, chunks) = timing_document(index);
+        store.upsert_document(&document).unwrap();
+        store
+            .replace_chunks_for_document(&document.id, &chunks)
+            .unwrap();
+    }
+    started.elapsed()
+}
+
+fn timing_percentile(sorted_ms: &[f64], percentile: f64) -> f64 {
+    let rank = ((sorted_ms.len() as f64 - 1.0) * percentile).round() as usize;
+    sorted_ms[rank]
+}
+
+/// Cold = first vector search on a fresh store path (snapshot build under the
+/// Store mutex); warm = the same query against the cached snapshot.
+///
+/// Run: `cargo test --lib -- --ignored timing_vector_snapshot_cold_vs_warm --nocapture`
+#[test]
+#[ignore = "timing baseline; run explicitly, see the section comment"]
+fn timing_vector_snapshot_cold_vs_warm() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("timing-snapshot.duckdb")).expect("open");
+    seed_timing_corpus(&store);
+    let query = timing_embedding(u64::MAX / 3);
+
+    let started = Instant::now();
+    let cold_hits = search_chunks(&store, &query, 10, None).unwrap();
+    let cold_ms = elapsed_ms(started);
+    assert_eq!(cold_hits.len(), 10);
+
+    let mut warm: Vec<f64> = (0..TIMING_QUERIES)
+        .map(|_| {
+            let started = Instant::now();
+            let hits = search_chunks(&store, &query, 10, None).unwrap();
+            assert_eq!(hits.len(), 10);
+            elapsed_ms(started)
+        })
+        .collect();
+    warm.sort_by(f64::total_cmp);
+    println!(
+        "TIMING vector_snapshot docs={TIMING_DOCS} chunks={} dims={TIMING_DIMS} cold_ms={cold_ms:.1} warm_p50_ms={:.2} warm_p95_ms={:.2}",
+        TIMING_DOCS * TIMING_CHUNKS_PER_DOC,
+        timing_percentile(&warm, 0.50),
+        timing_percentile(&warm, 0.95),
+    );
+}
+
+/// Hybrid (vector + lexical + RRF) latency over distinct queries, after one
+/// warm-up query that pays for the vector snapshot and the FTS index.
+///
+/// Run: `cargo test --lib -- --ignored timing_hybrid_search_p50_p95 --nocapture`
+#[test]
+#[ignore = "timing baseline; run explicitly, see the section comment"]
+fn timing_hybrid_search_p50_p95() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("timing-hybrid.duckdb")).expect("open");
+    seed_timing_corpus(&store);
+    let fts_ready = store.ensure_fts("porter").is_ok();
+    let run = |seed: u64| {
+        let hits = search(
+            &store,
+            &SearchQuery {
+                mode: SearchMode::Hybrid,
+                top_k: 10,
+                query_text: Some(timing_text(seed, 3)),
+                query_embedding: Some(timing_embedding(seed)),
+                ..SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert!(!hits.is_empty());
+    };
+    run(1_000_000);
+
+    let mut latencies: Vec<f64> = (0..TIMING_QUERIES as u64)
+        .map(|query| {
+            let started = Instant::now();
+            run(2_000_000 + query);
+            elapsed_ms(started)
+        })
+        .collect();
+    latencies.sort_by(f64::total_cmp);
+    println!(
+        "TIMING hybrid_search docs={TIMING_DOCS} chunks={} queries={TIMING_QUERIES} fts_ready={fts_ready} p50_ms={:.2} p95_ms={:.2} max_ms={:.2}",
+        TIMING_DOCS * TIMING_CHUNKS_PER_DOC,
+        timing_percentile(&latencies, 0.50),
+        timing_percentile(&latencies, 0.95),
+        latencies[latencies.len() - 1],
+    );
+}
+
+/// Write-path throughput: `upsert_document` + `replace_chunks_for_document`
+/// per document, first as inserts and then as updates of the same ids.
+///
+/// Run: `cargo test --lib -- --ignored timing_document_upsert_throughput --nocapture`
+#[test]
+#[ignore = "timing baseline; run explicitly, see the section comment"]
+fn timing_document_upsert_throughput() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("timing-upsert.duckdb")).expect("open");
+    let insert = seed_timing_corpus(&store);
+    let update = seed_timing_corpus(&store);
+    assert_eq!(store.stats().unwrap().0, TIMING_DOCS as u64);
+    println!(
+        "TIMING document_upsert docs={TIMING_DOCS} chunks_per_doc={TIMING_CHUNKS_PER_DOC} insert_s={:.2} insert_docs_per_s={:.0} update_s={:.2} update_docs_per_s={:.0}",
+        insert.as_secs_f64(),
+        TIMING_DOCS as f64 / insert.as_secs_f64(),
+        update.as_secs_f64(),
+        TIMING_DOCS as f64 / update.as_secs_f64(),
+    );
+}
