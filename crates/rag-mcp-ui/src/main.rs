@@ -9,18 +9,23 @@
 
 mod adapter;
 mod app;
+mod cli;
 #[cfg(feature = "direct-db")]
 mod direct_db;
 #[cfg(not(feature = "direct-db"))]
 #[path = "direct_db_disabled.rs"]
 mod direct_db;
+mod dto;
 mod gateway;
+mod http;
 mod layout;
 mod load;
 mod operations;
 mod product;
 mod revisions;
 mod search;
+mod snapshot;
+mod topology;
 mod ui;
 mod worker;
 
