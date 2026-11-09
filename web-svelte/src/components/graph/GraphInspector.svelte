@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createRequestGate } from '@/lib/async'
   import { graph } from '@/lib/state/graph.svelte'
   import { api } from '@/api/client'
   import type { DocumentBody } from '@/api/types'
@@ -11,8 +12,8 @@
   const degree = $derived(node ? graph.edges.filter(edge => edge.source_id===node.id || edge.target_id===node.id).length : 0)
   const relations = $derived.by(()=>{const map=new Map<string,number>();if(node)for(const edge of graph.edges){if(edge.source_id===node.id||edge.target_id===node.id)map.set(edge.rel_type,(map.get(edge.rel_type)||0)+1)}return [...map.entries()]})
   const metadata = $derived.by((): { wing?: string; room?: string } => {try{return JSON.parse(node?.metadata_json||'{}') ?? {}}catch{return {}}})
-  let requestId = 0
-  $effect(()=>{const current=++requestId;const id=node?.document_id;detail=null;if(!id)return;api.document({id}).then(value=>{if(current===requestId)detail=value ?? null}).catch(()=>{})})
+  const detailGate = createRequestGate()
+  $effect(()=>{const ticket=detailGate.next();const id=node?.document_id;detail=null;if(!id)return;api.document({id}).then(value=>{if(ticket.current)detail=value}).catch(()=>{})})
   function expand(){if(node)onexpand?.((node.document_id||node.label||node.id).trim())}
   function searchChunks(){if(node?.document_id)navigate(`/search?document_id=${encodeURIComponent(node.document_id)}&q=${encodeURIComponent(node.label)}`)}
   function openWiki(){if(wikiOpenable && node?.document_id)goWiki(node.document_id)}

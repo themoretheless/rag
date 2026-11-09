@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createRequestGate, debounce, type RequestTicket } from '@/lib/async'
   import { wiki } from '@/lib/state/wiki.svelte'
   import { ui } from '@/lib/state/ui.svelte'
   import { api } from '@/api/client'
@@ -12,39 +13,38 @@
   let preview = $state('')
   let searchError = $state('')
   const references = $derived((wiki.current?.source_versions ?? []).filter(ref => ref && (typeof ref.document_id === 'string' || typeof ref.uri === 'string')))
-  let request = 0
-  let previewRequest = 0
-  let timer: ReturnType<typeof setTimeout> | undefined
-  onDestroy(() => { clearTimeout(timer); request++; previewRequest++ })
+  const suggestGate = createRequestGate()
+  const previewGate = createRequestGate()
+  const suggest = debounce((query: string, ticket: RequestTicket) => {
+    api.wikiList({ q:query, limit:8 }).then(
+      (response) => { if (ticket.current) matches = response.pages },
+      () => { if (ticket.current) searchError = 'Не удалось загрузить подсказки.' },
+    )
+  }, 180)
+  onDestroy(() => { suggest.cancel(); suggestGate.cancel(); previewGate.cancel() })
   function complete() {
-    clearTimeout(timer)
-    const version = ++request
+    suggest.cancel()
+    const ticket = suggestGate.next()
     completion = linkAtCaret(wiki.draftContent, body.selectionStart)
     matches = []; searchError = ''
     if (!completion) return
-    const query = completion.query
-    timer = setTimeout(async () => {
-      try {
-        const response = await api.wikiList({ q:query, limit:8 })
-        if (version === request) matches = response.pages
-      } catch { if (version === request) searchError = 'Не удалось загрузить подсказки.' }
-    }, 180)
+    suggest(completion.query, ticket)
   }
   async function insert(page: WikiPageMeta) {
     completion = linkAtCaret(wiki.draftContent, body.selectionStart)
     if (!completion) return
     const result = insertWikiLink(wiki.draftContent,completion.start,completion.end,page.slug,page.title)
-    wiki.draftContent = result.text; wiki.markDirty(); completion = null; matches = []; request++
+    wiki.draftContent = result.text; wiki.markDirty(); completion = null; matches = []; suggestGate.cancel()
     await tick(); body.focus(); body.setSelectionRange(result.caret,result.caret)
   }
   async function show(page: { id?: string | undefined; title: string; uri?: string | undefined }) {
-    const version = ++previewRequest
+    const ticket = previewGate.next()
     previewTitle = page.title; preview = 'Загрузка…'
-    try { const doc = await api.document({id:page.id, uri:page.uri}); if (version === previewRequest) preview = doc.content }
-    catch (e) { if (version === previewRequest) preview = `Не удалось открыть страницу: ${String(e)}` }
+    try { const doc = await api.document({id:page.id, uri:page.uri}); if (ticket.current) preview = doc.content }
+    catch (e) { if (ticket.current) preview = `Не удалось открыть страницу: ${String(e)}` }
   }
   function template(key: keyof typeof wikiTemplates) {
-    completion = null; matches = []; request++
+    completion = null; matches = []; suggestGate.cancel()
     wiki.draftContent += (wiki.draftContent ? '\n\n' : '') + wikiTemplates[key]
     wiki.markDirty()
   }
@@ -76,7 +76,7 @@
   ></textarea>
   {#if completion}<div class="completions"><p>Выберите страницу для ссылки</p>{#each matches as page (page.id)}<div><button onclick={() => insert(page)}>{page.title || page.slug}</button><button onclick={() => show(page)}>Просмотр</button></div>{/each}{#if searchError}<p role="alert">{searchError}</p>{/if}</div>{/if}
   </div>
-  {#if previewTitle}<aside><header><strong>{previewTitle}</strong><button onclick={() => { previewRequest++; previewTitle = '' }}>Закрыть</button></header><pre>{preview}</pre></aside>{/if}
+  {#if previewTitle}<aside><header><strong>{previewTitle}</strong><button onclick={() => { previewGate.cancel(); previewTitle = '' }}>Закрыть</button></header><pre>{preview}</pre></aside>{/if}
   </div>
   <p class="hint">{ui.t('casHint')}</p>
 </div>

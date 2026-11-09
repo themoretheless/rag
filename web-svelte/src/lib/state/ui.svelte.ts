@@ -1,4 +1,4 @@
-import { errorMessage } from '@/lib/async'
+import { createRequestGate, errorMessage } from '@/lib/async'
 import { api } from '@/api/client'
 import type { HealthResponse } from '@/api/types'
 import { formatMessage, setActiveLocale, type Locale, type MessageKey } from '@/lib/i18n'
@@ -34,7 +34,7 @@ class UiStore {
   toasts = $state<Toast[]>([])
 
   private toastSeq = 0
-  private healthRequestId = 0
+  private readonly healthGate = createRequestGate()
 
   get localeLabel(): string {
     return this.locale === 'en' ? 'EN' : 'RU'
@@ -96,18 +96,18 @@ class UiStore {
   }
 
   async checkHealth() {
-    const requestId = ++this.healthRequestId
+    const ticket = this.healthGate.next()
 
     // Keep the two shell snapshots independent: a broken optional agents panel
     // must not turn a healthy gateway red (and vice versa).
     const healthTask = api.health().then(
       (health) => {
-        if (requestId !== this.healthRequestId) return
+        if (!ticket.current) return
         this.health = health
         this.healthError = null
       },
       (cause: unknown) => {
-        if (requestId !== this.healthRequestId) return
+        if (!ticket.current) return
         this.healthError = errorMessage(cause)
         this.health = null
       },
@@ -115,12 +115,12 @@ class UiStore {
 
     const agentsTask = api.get<{ items?: ShellAgent[] }>('/v1/agents').then(
       (response) => {
-        if (requestId !== this.healthRequestId) return
+        if (!ticket.current) return
         this.shellAgents = response.items ?? []
         this.shellAgentsError = null
       },
       (cause: unknown) => {
-        if (requestId !== this.healthRequestId) return
+        if (!ticket.current) return
         // Preserve the last valid snapshot for diagnostics. TopBar hides it
         // while stale, so old `online` flags are never presented as current.
         this.shellAgentsError = errorMessage(cause)
