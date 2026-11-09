@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, hasGatewayToken, loadPanels, setGatewayToken } from '@/api/client'
   import { ui } from '@/lib/state/ui.svelte'
@@ -31,7 +32,7 @@
       // Drop all cached data and restart loaders with the new credentials.
       window.location.reload()
     } catch (cause) {
-      tokenError = cause instanceof Error ? cause.message : 'Не удалось обновить токен.'
+      tokenError = errorMessage(cause, 'Не удалось обновить токен.')
     }
   }
 
@@ -59,7 +60,7 @@
 
   async function checkpoint() {
     try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
-    catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
+    catch (cause) { ui.toast(errorMessage(cause), 'error') }
   }
 
   function summarizeDoctor(report: DoctorReport | null | undefined, known: boolean) {
@@ -81,7 +82,7 @@
       const summary = summarizeDoctor(response, true)
       ui.toast(`Doctor: ${summary.label}`, summary.ok === true ? 'ok' : summary.ok === false ? 'error' : 'info')
     } catch (cause) {
-      ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
+      ui.toast(errorMessage(cause), 'error')
     } finally {
       doctorBusy = false
     }

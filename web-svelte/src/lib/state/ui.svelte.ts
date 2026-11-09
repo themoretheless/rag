@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/async'
 import { api } from '@/api/client'
 import type { HealthResponse } from '@/api/types'
 import { formatMessage, setActiveLocale, type Locale, type MessageKey } from '@/lib/i18n'
@@ -107,7 +108,7 @@ class UiStore {
       },
       (cause: unknown) => {
         if (requestId !== this.healthRequestId) return
-        this.healthError = cause instanceof Error ? cause.message : String(cause)
+        this.healthError = errorMessage(cause)
         this.health = null
       },
     )
@@ -122,7 +123,7 @@ class UiStore {
         if (requestId !== this.healthRequestId) return
         // Preserve the last valid snapshot for diagnostics. TopBar hides it
         // while stale, so old `online` flags are never presented as current.
-        this.shellAgentsError = cause instanceof Error ? cause.message : String(cause)
+        this.shellAgentsError = errorMessage(cause)
       },
     )
 

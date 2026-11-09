@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/async'
 import { api } from '@/api/client'
 import type { GraphEdge, GraphNode, GraphView } from '@/api/types'
 import type { LayoutMode } from '@/lib/forceLayout'
@@ -139,7 +140,7 @@ class GraphStore {
       this.loading = false
       void this.appendVisibleTunnels(requestToken)
     } catch (e) {
-      if (requestToken === this.requestToken) this.error = e instanceof Error ? e.message : String(e)
+      if (requestToken === this.requestToken) this.error = errorMessage(e)
     } finally {
       if (requestToken === this.requestToken) {
         this.loading = false
@@ -180,7 +181,7 @@ class GraphStore {
       this.loading = false
       void this.appendVisibleTunnels(requestToken)
     } catch (e) {
-      if (requestToken === this.requestToken) this.error = e instanceof Error ? e.message : String(e)
+      if (requestToken === this.requestToken) this.error = errorMessage(e)
     } finally {
       if (requestToken === this.requestToken) {
         this.loading = false

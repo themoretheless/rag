@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
   import { go } from '@/lib/router.svelte'
@@ -36,7 +37,7 @@
 
   async function checkpoint() {
     try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
-    catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
+    catch (cause) { ui.toast(errorMessage(cause), 'error') }
   }
 
   async function backup() {
@@ -46,7 +47,7 @@
       await api.postOptional('/v1/operations/backup', { path: backupPath.trim(), dry_run: false, overwrite: false })
       ui.toast('Резервная копия создана', 'ok')
       backupOpen = false
-    } catch (cause) { ui.toast(cause instanceof Error ? cause.message : String(cause), 'error') }
+    } catch (cause) { ui.toast(errorMessage(cause), 'error') }
     finally { backupBusy = false }
   }
 

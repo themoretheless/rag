@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/async'
 import type {
   BacklinksResponse,
   DocumentBody,
@@ -130,7 +131,7 @@ export async function loadPanels(
         await load()
         return null
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
+        const message = errorMessage(err)
         return message ? `${label}: ${message}` : label
       }
     }),

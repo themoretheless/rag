@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from '@/lib/async'
   import RealQuestionEvaluation from '@/components/RealQuestionEvaluation.svelte'
   import { onMount } from 'svelte'
   import { api } from '@/api/client'
@@ -110,7 +111,7 @@
       path = response.path ?? ''
     } else {
       const cause = historyResult.reason
-      error = cause instanceof Error ? cause.message : String(cause)
+      error = errorMessage(cause)
     }
     if (statusResult.status === 'fulfilled') liveChunks = statusResult.value?.chunk_count ?? null
     busy = false

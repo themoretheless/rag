@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
   import type { ItemsResponse, KgFact, OpsLogItem } from '@/api/types'
@@ -136,7 +137,7 @@
       callsState = calls.length ? 'live' : 'empty'
     } catch (cause) {
       if (requestId !== callsRequestId) return
-      callsError = cause instanceof Error ? cause.message : String(cause)
+      callsError = errorMessage(cause)
       callsState = callsLoaded ? 'stale' : 'error'
       throw cause
     }

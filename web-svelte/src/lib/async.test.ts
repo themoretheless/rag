@@ -15,6 +15,8 @@ describe('errorMessage', () => {
     expect(errorMessage('plain')).toBe('plain')
     expect(errorMessage(42)).toBe('42')
     expect(errorMessage(null)).toBe('null')
+    expect(errorMessage('plain', 'fallback')).toBe('fallback')
+    expect(errorMessage(new Error('boom'), 'fallback')).toBe('boom')
   })
 
   it('recognises fetch aborts', () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from '@/lib/async'
   import SearchAssessment from '@/components/SearchAssessment.svelte'
   import { api } from '@/api/client'
   import type { PackContextResponse, SearchHit, SearchResponse } from '@/api/types'
@@ -139,7 +140,7 @@
       response = next
       resultSnapshot = snapshot
     } catch (cause) {
-      if (requestId === searchRequestId) error = cause instanceof Error ? cause.message : String(cause)
+      if (requestId === searchRequestId) error = errorMessage(cause)
     } finally {
       if (requestId === searchRequestId) busy = false
     }
@@ -163,7 +164,7 @@
       packed = next
       packedSnapshot = { search, sourceHitCount: sourceHits.length }
     } catch (cause) {
-      if (requestId === packRequestId) error = cause instanceof Error ? cause.message : String(cause)
+      if (requestId === packRequestId) error = errorMessage(cause)
     } finally {
       if (requestId === packRequestId) packing = false
     }
@@ -264,7 +265,7 @@
       ui.toast('Wiki-черновик создан', 'ok')
       goWiki(created.document_id)
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause)
+      error = errorMessage(cause)
       ui.toast('Не удалось создать wiki-черновик', 'error')
     } finally {
       creatingWiki = false

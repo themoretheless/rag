@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api } from '@/api/client'
   import type { ResourcesResponse } from '@/api/types'
@@ -53,7 +54,7 @@
       rssHistory = [...rssHistory, next.process.rss_bytes / 2 ** 30].slice(-HISTORY)
       embedHistory = [...embedHistory, next.embedder.in_flight].slice(-HISTORY)
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Не удалось получить /v1/resources'
+      error = errorMessage(cause, 'Не удалось получить /v1/resources')
     }
   }
 

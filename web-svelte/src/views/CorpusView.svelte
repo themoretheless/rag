@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
   import { goGraph, route } from '@/lib/router.svelte'
@@ -66,7 +67,7 @@
       link.remove()
       setTimeout(() => URL.revokeObjectURL(url), 60_000)
     } catch (cause) {
-      ui.toast(cause instanceof Error ? cause.message : 'Не удалось скачать источник.', 'error')
+      ui.toast(errorMessage(cause, 'Не удалось скачать источник.'), 'error')
     } finally {
       sourceBusy = false
     }
@@ -151,7 +152,7 @@
       }
     } catch (cause) {
       if (requestId === documentRequestId && (generation == null || generation === refreshGeneration)) {
-        const message = cause instanceof Error ? cause.message : String(cause)
+        const message = errorMessage(cause)
         if (append) appendError = message
         else documentError = message
       }
@@ -182,7 +183,7 @@
     } catch (cause) {
       if (catalogRequestId === documentRequestId && pendingSelectionId === documentId) {
         pendingSelectionId = ''
-        panelWarning = `Не удалось открыть документ по ссылке: ${cause instanceof Error ? cause.message : String(cause)}`
+        panelWarning = `Не удалось открыть документ по ссылке: ${errorMessage(cause)}`
       }
     }
   }
@@ -221,7 +222,7 @@
       }
     } catch (cause) {
       if (requestId === detailRequestId && selected?.id === row.id && (generation == null || generation === refreshGeneration)) {
-        detailError = cause instanceof Error ? cause.message : String(cause)
+        detailError = errorMessage(cause)
         ui.toast(detailError, 'error')
       }
     } finally {
@@ -239,7 +240,7 @@
         if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response?.project ?? null
       }).catch((cause: unknown) => {
         if (requestId !== projectHomeRequestId) return
-        const message = cause instanceof Error ? cause.message : String(cause)
+        const message = errorMessage(cause)
         console.warn('project-home load failed', cause)
         panelWarning = `Не удалось загрузить корни проекта: ${message}`
       })
@@ -254,7 +255,7 @@
       const response = await api.post<SyncJobResponse>('/v1/jobs/sync', { path: syncPath.trim(), wing: project || undefined, room: room || undefined })
       ui.toast(`Sync поставлен в очередь · ${response?.id ?? response?.job?.id ?? ''}`, 'ok')
     } catch (cause) {
-      ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
+      ui.toast(errorMessage(cause), 'error')
     } finally {
       syncBusy = false
     }

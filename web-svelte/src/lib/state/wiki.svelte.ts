@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/async'
 import { untrack } from 'svelte'
 import { api } from '@/api/client'
 import type { BacklinkItem, DocumentBody, WikiListParams, WikiPageMeta, WikiPutResult } from '@/api/types'
@@ -423,7 +424,7 @@ export class WikiStore {
       this.syncFavoritesFromCatalog()
     } catch (e) {
       if (seq !== this.catalogSeq) return
-      this.catalogError = e instanceof Error ? e.message : String(e)
+      this.catalogError = errorMessage(e)
     } finally {
       if (seq === this.catalogSeq) this.catalogLoading = false
     }
@@ -458,7 +459,7 @@ export class WikiStore {
       this.syncRecentFromCatalog()
       this.syncFavoritesFromCatalog()
     } catch (cause) {
-      if (seq === this.catalogSeq) this.loadMoreError = cause instanceof Error ? cause.message : String(cause)
+      if (seq === this.catalogSeq) this.loadMoreError = errorMessage(cause)
     } finally {
       if (seq === this.catalogSeq) this.loadingMore = false
     }
@@ -501,7 +502,7 @@ export class WikiStore {
       }
     } catch (e) {
       if (seq === this.pageSeq) {
-        this.pageError = e instanceof Error ? e.message : String(e)
+        this.pageError = errorMessage(e)
         this.current = null
       }
     } finally {
@@ -593,7 +594,7 @@ export class WikiStore {
           : 'A page with this address already exists. Choose another title.', 'error')
         return null
       }
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = errorMessage(e)
       ui.toast(msg, 'error')
       throw e
     } finally {
@@ -602,7 +603,7 @@ export class WikiStore {
   }
 
   private isCasConflict(e: unknown): boolean {
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = errorMessage(e)
     // api client throws `HTTP ${status}: …`; gateway may also say "conflict"
     return /\bHTTP 409\b/.test(msg) || /\bconflict\b/i.test(msg)
   }
@@ -707,7 +708,7 @@ export class WikiStore {
         await this.handleCasConflict(cur, seq)
       }
     } catch (cause) {
-      ui.toast(cause instanceof Error ? cause.message : String(cause), 'error')
+      ui.toast(errorMessage(cause), 'error')
       throw cause
     } finally {
       this.saving = false

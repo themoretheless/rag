@@ -1,8 +1,8 @@
 /** Small async building blocks shared by stores and views. */
 
-/** Human-readable text of anything that can be thrown. */
-export function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
+/** Human-readable text of anything that can be thrown; `fallback` replaces non-Error values. */
+export function errorMessage(cause: unknown, fallback?: string): string {
+  return cause instanceof Error ? cause.message : (fallback ?? String(cause))
 }
 
 /** True for the rejection produced by aborting a `fetch` through an AbortSignal. */
