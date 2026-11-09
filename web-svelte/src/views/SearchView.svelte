@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { copyText } from '@/lib/clipboard'
   import type { SearchHit } from '@/api/types'
   import SearchAssessment from '@/components/SearchAssessment.svelte'
   import { goWiki, navigate, route } from '@/lib/router.svelte'
@@ -31,8 +32,9 @@
 
   async function copyContext() {
     if (!session.packed?.context_text) return
-    await navigator.clipboard.writeText(session.packed.context_text)
-    ui.toast('Контекст скопирован', 'ok')
+    const copied = await copyText(session.packed.context_text)
+    if (copied) ui.toast('Контекст скопирован', 'ok')
+    else ui.toast('Не удалось скопировать: буфер обмена недоступен', 'error')
   }
 
   async function createWikiDraft() {

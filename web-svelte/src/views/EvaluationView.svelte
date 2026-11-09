@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { copyText } from '@/lib/clipboard'
   import { statusResource } from '@/api/resources.svelte'
   import { milliseconds } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
@@ -133,8 +134,9 @@
   function ciMark(value: boolean | null) { return value === null ? '—' : value ? '✓' : '!' }
   async function copyCommand() {
     const command = 'cargo run --release --bin eval -- --dataset data/eval/example-v1.json --min-recall-at-k 0.75 --min-mrr 0.6 --max-p95-ms 300 --history-jsonl bench.jsonl'
-    await navigator.clipboard.writeText(command)
-    ui.toast('Команда eval скопирована', 'ok')
+    const copied = await copyText(command)
+    if (copied) ui.toast('Команда eval скопирована', 'ok')
+    else ui.toast('Не удалось скопировать: буфер обмена недоступен', 'error')
   }
   onMount(load)
 </script>
