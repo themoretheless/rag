@@ -135,6 +135,13 @@
 
   .spark i.empty {
     opacity: .22;
+    /*
+     * Kept from the single-file view on purpose: its page-wide `.empty` placeholder
+     * rule also matched these bars and gave them this padding, which is why empty
+     * buckets render as tall blocks that overflow the card. It looks like a bug, but
+     * the refactor must not change rendering; removing this line is the fix.
+     */
+    padding: 44px 15px;
   }
 
   @media (max-width: 1150px) {
