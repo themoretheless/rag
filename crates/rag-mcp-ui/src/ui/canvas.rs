@@ -123,20 +123,45 @@ pub fn draw_canvas(
         None
     };
 
+    // Largest node radius this frame; bounds how far outside the canvas a
+    // node can sit and still be drawn or hit.
+    let max_radius = node_radius(u32::MAX, z, overview_lod);
+    // Nodes worth visiting: those whose grid cell reaches the canvas plus the
+    // margin the exact tests below allow; the hit-test then runs over that
+    // same set. Not narrowed = walk every node.
+    let cull_margin = (max_radius + 48.0).max(max_radius * 3.0) + 1.0;
+    let pointers_inside = [pointer, click_pos]
+        .into_iter()
+        .flatten()
+        .all(|pos| rect.contains(pos));
+    let mut candidates = Vec::new();
+    let narrowed = pointers_inside && {
+        let reach = rect.expand(cull_margin);
+        let world = Rect::from_min_max(
+            ((reach.min.to_vec2() - p) / z).to_pos2(),
+            ((reach.max.to_vec2() - p) / z).to_pos2(),
+        );
+        scene.grid.query(world, &mut candidates)
+    };
+
     // Precompute screen centers + radii for hit test and paint.
-    let mut screen_nodes: Vec<ScreenNode<'_>> = Vec::with_capacity(graph.nodes.len());
-    for (index, (node, world)) in graph.nodes.iter().zip(&scene.positions).enumerate() {
-        let Some(world) = *world else {
+    let mut screen_nodes: Vec<ScreenNode<'_>> = Vec::with_capacity(if narrowed {
+        candidates.len()
+    } else {
+        graph.nodes.len()
+    });
+    let visit: Box<dyn Iterator<Item = usize>> = if narrowed {
+        Box::new(candidates.into_iter())
+    } else {
+        Box::new(0..graph.nodes.len())
+    };
+    for index in visit {
+        let node = &graph.nodes[index];
+        let Some(world) = scene.positions[index] else {
             continue;
         };
         let center = to_screen(world);
-        // Size: base + k * log1p(degree), scaled mildly with zoom (EGUI_GRAPH_VIEW §7.2).
-        let radius = if overview_lod {
-            2.5
-        } else {
-            (8.0 + (node.degree as f32 + 1.0).ln_1p() * 3.0).clamp(6.0, 22.0)
-                * z.sqrt().clamp(0.6, 1.6)
-        };
+        let radius = node_radius(node.degree, z, overview_lod);
 
         // Skip fully off-screen nodes when neither pointer nor click is near.
         let expanded = rect.expand(radius + 48.0);
@@ -415,6 +440,16 @@ pub(crate) fn localized_relation(relation: &str) -> &str {
         Some(RelType::Contradicts) => "противоречит",
         Some(RelType::Supersedes) => "замещает",
         None => relation,
+    }
+}
+
+/// Node radius in screen pixels: base + k * log1p(degree), scaled mildly with
+/// zoom (EGUI_GRAPH_VIEW §7.2); a fixed dot in the dense-overview LOD.
+fn node_radius(degree: u32, zoom: f32, overview_lod: bool) -> f32 {
+    if overview_lod {
+        2.5
+    } else {
+        (8.0 + (degree as f32 + 1.0).ln_1p() * 3.0).clamp(6.0, 22.0) * zoom.sqrt().clamp(0.6, 1.6)
     }
 }
 
@@ -714,5 +749,19 @@ mod tests {
         assert!((table[0] - Vec2::new(1.0, 0.0)).length() < 1e-6);
         assert!((table[DASHED_CIRCLE_SEGMENTS] - table[0]).length() < 1e-5);
         assert!(table.iter().all(|p| (p.length() - 1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn node_radius_is_monotonic_in_degree_and_bounded() {
+        for zoom in [0.05, 0.4, 1.0, 3.0, 12.0] {
+            let cap = node_radius(u32::MAX, zoom, false);
+            let mut previous = 0.0;
+            for degree in [0, 1, 5, 50, 5_000, 1_000_000] {
+                let radius = node_radius(degree, zoom, false);
+                assert!(radius >= previous && radius <= cap);
+                previous = radius;
+            }
+            assert_eq!(node_radius(7, zoom, true), 2.5);
+        }
     }
 }

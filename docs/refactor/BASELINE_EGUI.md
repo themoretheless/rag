@@ -70,3 +70,4 @@ instead of being recomputed inside every frame.
 | 1. Positions and edge endpoints by node index | 87.2 | 1.9 | 12.2 | 0.15 | 40.1 | 140.5 | 3.4 |
 | 2. Edge shapes in one painter call, dashes clipped to the viewport, unit-circle table | 71.9 | 1.8 | 11.5 | 0.14 | 44.2 | 5.9 | 3.4 |
 | 3. Legend, hover tooltip data and incident-edge lists cached in the scene | 73.8 | 1.9 | 12.5 | 12.3 | 40.5 | 4.1 | 1.4 |
+| 4. Uniform grid for node culling and hit-testing | 72.7 | 1.7 | 11.0 | 11.2 | 41.2 | 4.4 | 1.7 |

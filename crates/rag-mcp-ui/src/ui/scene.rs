@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use egui::{Color32, Pos2};
+use egui::{Color32, Pos2, Rect};
 use rag_mcp_core::{NodeKind, RelType};
 
 use crate::adapter::{UiEdge, UiGraph};
@@ -34,29 +34,146 @@ pub struct GraphScene {
     /// detail-panel order (outgoing first, then by the other endpoint,
     /// relation and edge id).
     pub incident: Vec<Vec<usize>>,
+    /// Placed nodes bucketed by world position, for culling and hit-testing.
+    pub grid: NodeGrid,
     index_of: HashMap<String, usize>,
+}
+
+/// Uniform world-space grid over the placed nodes.
+///
+/// A query returns every node whose cell overlaps a rectangle — a superset of
+/// the nodes inside it — so callers still apply their exact test, but only to
+/// the nodes near the viewport or the pointer instead of to the whole graph.
+#[derive(Debug, Clone, Default)]
+pub struct NodeGrid {
+    origin: Pos2,
+    cell: f32,
+    cols: usize,
+    rows: usize,
+    /// `starts[c]..starts[c + 1]` is cell `c`'s slice of `items`.
+    starts: Vec<u32>,
+    /// Node indices grouped by cell, ascending within a cell.
+    items: Vec<u32>,
+}
+
+impl NodeGrid {
+    /// Target number of nodes per cell.
+    const NODES_PER_CELL: f32 = 4.0;
+
+    /// Bucket every placed node (`None` positions are left out).
+    pub fn build(positions: &[Option<Pos2>]) -> Self {
+        let placed = positions.iter().flatten().count();
+        if placed == 0 {
+            return Self::default();
+        }
+        let mut min = Pos2::new(f32::MAX, f32::MAX);
+        let mut max = Pos2::new(f32::MIN, f32::MIN);
+        for p in positions.iter().flatten() {
+            min = min.min(*p);
+            max = max.max(*p);
+        }
+        let size = max - min;
+        let area = (size.x.max(1.0) * size.y.max(1.0)).max(1.0);
+        let cell = (area * Self::NODES_PER_CELL / placed as f32)
+            .sqrt()
+            .max(1.0);
+        let cols = ((size.x / cell).floor() as usize + 1).min(4_096);
+        let rows = ((size.y / cell).floor() as usize + 1).min(4_096);
+        let mut grid = Self {
+            origin: min,
+            cell,
+            cols,
+            rows,
+            starts: vec![0; cols * rows + 1],
+            items: vec![0; placed],
+        };
+        // Counting sort by cell keeps node order inside each cell.
+        for p in positions.iter().flatten() {
+            let cell = grid.cell_of(*p);
+            grid.starts[cell + 1] += 1;
+        }
+        for cell in 0..cols * rows {
+            grid.starts[cell + 1] += grid.starts[cell];
+        }
+        let mut next = grid.starts.clone();
+        for (index, p) in positions.iter().enumerate() {
+            if let Some(p) = p {
+                let cell = grid.cell_of(*p);
+                grid.items[next[cell] as usize] = index as u32;
+                next[cell] += 1;
+            }
+        }
+        grid
+    }
+
+    fn column(&self, x: f32) -> usize {
+        (((x - self.origin.x) / self.cell).floor().max(0.0) as usize).min(self.cols - 1)
+    }
+
+    fn row(&self, y: f32) -> usize {
+        (((y - self.origin.y) / self.cell).floor().max(0.0) as usize).min(self.rows - 1)
+    }
+
+    fn cell_of(&self, p: Pos2) -> usize {
+        self.row(p.y) * self.cols + self.column(p.x)
+    }
+
+    /// Append to `out`, in ascending order, the index of every node whose
+    /// cell overlaps `world`. Returns false (and leaves `out` alone) when that
+    /// is every placed node, so the caller can simply walk all nodes.
+    pub fn query(&self, world: Rect, out: &mut Vec<usize>) -> bool {
+        if self.items.is_empty() {
+            return true;
+        }
+        let extent = Pos2::new(
+            self.origin.x + self.cell * self.cols as f32,
+            self.origin.y + self.cell * self.rows as f32,
+        );
+        if world.max.x < self.origin.x
+            || world.max.y < self.origin.y
+            || world.min.x > extent.x
+            || world.min.y > extent.y
+        {
+            return true;
+        }
+        let (c0, c1) = (self.column(world.min.x), self.column(world.max.x));
+        let (r0, r1) = (self.row(world.min.y), self.row(world.max.y));
+        if c0 == 0 && r0 == 0 && c1 == self.cols - 1 && r1 == self.rows - 1 {
+            return false;
+        }
+        let before = out.len();
+        for row in r0..=r1 {
+            let first = self.starts[row * self.cols + c0] as usize;
+            let last = self.starts[row * self.cols + c1 + 1] as usize;
+            out.extend(self.items[first..last].iter().map(|&index| index as usize));
+        }
+        out[before..].sort_unstable();
+        true
+    }
 }
 
 impl GraphScene {
     /// Index the layout by node position in `graph.nodes`.
     pub fn build(graph: &UiGraph, layout: &PosCache) -> Self {
+        let positions: Vec<Option<Pos2>> = graph
+            .nodes
+            .iter()
+            .map(|node| layout.get(&node.id).copied())
+            .collect();
         Self {
-            positions: graph
-                .nodes
-                .iter()
-                .map(|node| layout.get(&node.id).copied())
-                .collect(),
             bounds: bounds(layout),
             legend_kinds: legend_kinds(graph),
             legend_rels: legend_rels(graph),
             max_multi: max_multi(graph),
             incident: incident_edges(graph),
+            grid: NodeGrid::build(&positions),
             index_of: graph
                 .nodes
                 .iter()
                 .enumerate()
                 .map(|(index, node)| (node.id.clone(), index))
                 .collect(),
+            positions,
         }
     }
 
@@ -242,6 +359,95 @@ mod tests {
         rels.dedup();
         assert_eq!(scene.legend_rels.len(), rels.len());
         assert_eq!(scene.node_index("missing"), None);
+    }
+
+    /// Deterministic scatter with an unplaced node every 17th index.
+    fn scattered(count: usize) -> Vec<Option<Pos2>> {
+        let mut state = 0x9E37_79B9_u32;
+        let mut next = move || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) as f32 / (1 << 24) as f32
+        };
+        (0..count)
+            .map(|index| {
+                let p = Pos2::new(next() * 4_000.0 - 1_000.0, next() * 2_500.0 - 300.0);
+                (index % 17 != 3).then_some(p)
+            })
+            .collect()
+    }
+
+    fn query(grid: &NodeGrid, world: Rect, total: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        if grid.query(world, &mut out) {
+            out
+        } else {
+            (0..total).collect()
+        }
+    }
+
+    #[test]
+    fn grid_query_returns_every_node_inside_the_rectangle_in_order() {
+        let positions = scattered(2_000);
+        let grid = NodeGrid::build(&positions);
+        let rects = [
+            Rect::from_min_max(Pos2::new(-200.0, 100.0), Pos2::new(350.0, 420.0)),
+            Rect::from_min_max(Pos2::new(1_500.0, 900.0), Pos2::new(1_520.0, 910.0)),
+            Rect::from_min_max(Pos2::new(-5_000.0, -5_000.0), Pos2::new(-900.0, 0.0)),
+            Rect::from_min_max(Pos2::new(2_900.0, 2_100.0), Pos2::new(9_000.0, 9_000.0)),
+            Rect::from_min_max(Pos2::new(-9_000.0, -9_000.0), Pos2::new(9_000.0, 9_000.0)),
+            Rect::from_min_max(Pos2::new(8_000.0, 8_000.0), Pos2::new(9_000.0, 9_000.0)),
+        ];
+        let mut narrowed = false;
+        for rect in rects {
+            let found = query(&grid, rect, positions.len());
+            assert!(
+                found.windows(2).all(|pair| pair[0] < pair[1]),
+                "ascending, unique"
+            );
+            for (index, p) in positions.iter().enumerate() {
+                if p.is_some_and(|p| rect.contains(p)) {
+                    assert!(
+                        found.contains(&index),
+                        "node {index} inside {rect:?} was dropped"
+                    );
+                }
+            }
+            // Unplaced nodes are never reported by a narrowing query.
+            if found.len() < positions.len() {
+                narrowed = true;
+                assert!(found.iter().all(|&index| positions[index].is_some()));
+            }
+        }
+        assert!(narrowed, "at least one query must cull");
+        // A small viewport touches a small share of the graph.
+        let small = query(&grid, rects[1], positions.len());
+        assert!(small.len() < 60, "{} candidates", small.len());
+    }
+
+    #[test]
+    fn grid_handles_empty_and_degenerate_layouts() {
+        let empty = NodeGrid::build(&[None, None]);
+        assert!(query(&empty, Rect::EVERYTHING, 2).is_empty());
+
+        // Every node on one point: one cell, still found.
+        let stacked = vec![Some(Pos2::new(5.0, 5.0)); 9];
+        let grid = NodeGrid::build(&stacked);
+        let around = Rect::from_center_size(Pos2::new(5.0, 5.0), egui::Vec2::splat(2.0));
+        assert_eq!(query(&grid, around, 9).len(), 9);
+        let away = Rect::from_center_size(Pos2::new(500.0, 5.0), egui::Vec2::splat(2.0));
+        assert!(query(&grid, away, 9).is_empty());
+
+        // A horizontal line of nodes (zero height).
+        let line: Vec<_> = (0..100)
+            .map(|i| Some(Pos2::new(i as f32 * 10.0, 0.0)))
+            .collect();
+        let grid = NodeGrid::build(&line);
+        let window = Rect::from_min_max(Pos2::new(95.0, -1.0), Pos2::new(205.0, 1.0));
+        let found = query(&grid, window, 100);
+        for index in 10..=20 {
+            assert!(found.contains(&index));
+        }
+        assert!(found.len() < 40);
     }
 
     #[test]
