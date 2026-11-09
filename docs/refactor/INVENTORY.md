@@ -56,3 +56,13 @@ local cleanup, P3 = leave.
 | crates/rag-mcp-ui | 20047 | 37 | `draw_workspace` 799 (app/workspace.rs:6); `draw_project_home` 552 (ui/home.rs:37); `draw_workspace_toolbar` 533 (app/panels.rs:6); `drain_worker_events` 478 (app/events.rs:7) | owned by the Stage 6 agent | P1 | todo (Stage 6) |
 | crates/rag-mcp-core, crates/rag-mcp-markup | 726 / 847 | 0 / 0 | `mask_code_regions` 69 (markup extract.rs:204) | core `lib.rs` is one file | P3 | todo |
 | web-svelte/src | 11023 (ts + svelte) | — | — | owned by the Stage 7 agent | P1 | todo (Stage 7) |
+
+## Residual backlog (outside this refactor)
+
+Items found on the way that need their own task; each has an `ignore` entry
+with a reason in `deny.toml`.
+
+| item | why it is not done here | trigger to revisit |
+|---|---|---|
+| rmcp 1.4 → 3.x migration (RUSTSEC-2026-0462) | Two-major migration of the MCP SDK; the manifest pins `=1.4.0` because macro and runtime must match. The advisory is in the Streamable HTTP *client* transports, which are not enabled (`server`, `transport-io`, `transport-streamable-http-server` only), so the affected code is not compiled. | Before enabling any rmcp client feature, or when 1.x stops receiving fixes. |
+| DuckDB 2.0 crates (`duckdb`/`libduckdb-sys` 1.20000.x) | Storage-engine major upgrade. Needed to drop `zip 6.0.0`, which stays as a build-dependency of `libduckdb-sys 1.10505.0` (RUSTSEC-2026-0367/0368/0369/0429, all in `ZipArchive::extract`); the build script only unpacks DuckDB's own bundled archive. `duckdb = "1"` in `Cargo.toml` accepts 1.20000.x, so an unqualified `cargo update` performs this upgrade silently: pin or review before updating. | With the Stage 5 schema migration at the earliest; needs a recovery/compat test on an existing database. |
