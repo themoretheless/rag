@@ -5,7 +5,7 @@
 //! builds without the server crate (no DuckDB, axum or rmcp).
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rag_mcp::db::store::WikiPageMetaFilter;
@@ -447,9 +447,12 @@ fn fetch_backlinks_db(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::snapshot::load_snapshot_path;
     use crate::topology::test_support::{edge, node};
-    use rag_mcp::Document;
+    use rag_mcp::{Document, GraphEdge};
+    use std::collections::HashSet;
     use std::fs;
+    use std::path::Path;
     use std::time::SystemTime;
 
     fn load_live_db(
