@@ -469,6 +469,13 @@ fn host_rejected(
         .into_response()
 }
 
+/// The API routes without the listener's auth, host and request-id layers, for
+/// integration tests that drive handlers with `tower::ServiceExt::oneshot`.
+#[cfg(any(test, feature = "testkit"))]
+pub fn router_for_tests(state: HttpState) -> Router {
+    api_router(state)
+}
+
 fn api_router(state: HttpState) -> Router {
     Router::new()
         .merge(health::routes())

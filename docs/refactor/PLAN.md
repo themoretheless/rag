@@ -114,3 +114,37 @@ Update `ARCHITECTURE.md`, ADRs, `INVENTORY.md` statuses; merge the three overlap
 - Parity tests (Stage 1) pass after Stage 4 with the listed intentional changes.
 - End to end: start `rag-mcp` on a temp DB, ingest this repo's docs, run search over MCP and HTTP, open the web UI graph and wiki.
 - An independent review agent after Stages 3, 4, 5 and at the end.
+
+## Known MCP/HTTP drifts (to align in Stage 4)
+
+Found and pinned by `tests/it/parity_test.rs` (each has a `// DRIFT:` comment
+there). Where they agree today the test compares the two sides directly.
+When Stage 4 aligns one on purpose, the matching assertion changes in the same
+commit and the item moves to the list of intentional changes.
+
+| # | operation | MCP today | HTTP today |
+|---|---|---|---|
+| 1 | all success responses | bare result (array / object) | wrapped: `ok: true` plus, for search, `mode`, `count`, `timings`, `items` |
+| 2 | domain errors | JSON-RPC error: `-32602` invalid_params for Invalid/Config/Conflict/Forbidden, `-32002` for NotFound; wire code in `data.code` | HTTP status (400/404/409/403/503) and body `{ok:false, code, error}` |
+| 3 | error message text | bare message (`invalid search mode 'bogus': …`) | `AppError` display form with a variant prefix (`config error: …`, `invalid request: …`) |
+| 4 | request decode errors | `-32602` with no `data.code` | axum `422` with a plain-text body, no JSON envelope |
+| 5 | CAS conflict on wiki update | `-32602` with `data.code = "CONFLICT"` (no distinct class) | `409` with `code: "CONFLICT"` |
+| 6 | float scores in hits | f32 shortest form (`0.03226646`) | widened through `json!` to f64 (`0.03226646035909653`); same value as f32 |
+| 7 | `multi_get` envelope | `{documents, missing}` | `{ok, items, missing}` |
+| 8 | `multi_get` document shape | flat 7-field `DocumentDetail` (`id, uri, title, content, metadata_json, created_at, updated_at`) plus chunk fields | `{document: <full Document row>, chunks, chunks_total, chunks_truncated}` |
+| 9 | wiki create on an existing slug | `write_wiki_page` overwrites (revision 2); there is no create-only tool | `POST /v1/wiki` is create-only → `409 CONFLICT`; `PUT /v1/wiki` upserts |
+| 10 | wiki CAS update entrypoint | separate `update_wiki_page` tool (omitted kind/category/summary preserved) | same `PUT /v1/wiki` as create, `if_match_revision` / `if_match_etag` in the body |
+| 11 | neighbors: parameter name | `node_id` | `seed` |
+| 12 | neighbors: depth cap | clamped to 5 | clamped to 3 |
+| 13 | neighbors: seed resolution | node id only | node id, then document id, then exact label |
+| 14 | neighbors: unknown seed | success with an empty `{nodes:[], edges:[]}` | `404 NOT_FOUND` |
+| 15 | neighbors: blank seed | success with the empty view | `400 INVALID_REQUEST` |
+| 16 | `pack_context` | no `ok`; `trace` not available | `ok: true`; optional `trace` / `persist_trace` / `prior_trace` |
+
+Agreements pinned by the same tests: search ranking, scores (as f32), hit
+fields, default mode and default `top_k`, `top_k = 0` → no hits; pack budget
+default (`max_context_tokens`), `max_tokens = 0` → empty pack; `multi_get`
+order and `missing`; wiki create fields, revision 1 / `W/"1"`, CAS success,
+stale write leaves the page unchanged, etag form of If-Match; neighbors default
+depth 1 and the same nodes/edges; wire codes `INVALID_REQUEST`, `CONFLICT`,
+`NOT_FOUND` on both sides.

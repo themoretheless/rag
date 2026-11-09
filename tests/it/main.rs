@@ -9,6 +9,7 @@ mod hybrid_test;
 mod integration_test;
 mod maintain_test;
 mod mempalace_parity_test;
+mod parity_test;
 mod query_transform_test;
 mod recovery_cli_test;
 mod rerank_test;
