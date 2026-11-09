@@ -223,7 +223,6 @@ pub(super) struct GraphViewState {
     pub(super) positions: PosCache,
     pub(super) layout_ready: bool,
     pub(super) need_fit: bool,
-    pub(super) last_topo: u64,
     /// Banner after expand hit max_nodes or added nothing.
     pub(super) expand_note: Option<String>,
     /// True when `local_view` contains Expand merges beyond the plain seed BFS
@@ -268,7 +267,6 @@ impl GraphViewState {
             positions: PosCache::default(),
             layout_ready: false,
             need_fit: true,
-            last_topo: 0,
             expand_note: None,
             expanded_dirty: false,
             confirm_reset: false,

@@ -184,7 +184,6 @@ impl GraphApp {
             show_all_nodes: false,
         };
         let ui_graph = adapt(&local, &opts);
-        let topo = topology_generation(&local);
         self.graph.local_view = Some(local);
 
         if ui_graph.nodes.is_empty() {
@@ -200,7 +199,6 @@ impl GraphApp {
             // Expand or filter: keep existing positions; place newcomers near neighbors.
             place_missing_near_neighbors(&ui_graph, &mut self.graph.positions);
         }
-        self.graph.last_topo = topo;
         self.graph.ui_graph = Some(ui_graph);
         self.graph.layout_ready = true;
     }

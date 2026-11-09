@@ -374,8 +374,6 @@ mod tests {
             ],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 4,
-            raw_edges: 3,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -403,8 +401,6 @@ mod tests {
             edges: vec![edge("1", "z", "m"), edge("2", "z", "a")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 2,
             note: None,
         };
         let mut c1 = PosCache::default();
@@ -424,8 +420,6 @@ mod tests {
             edges: vec![edge("e1", "a", "b")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 2,
-            raw_edges: 1,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -438,8 +432,6 @@ mod tests {
             edges: vec![edge("e1", "a", "b"), edge("e2", "b", "c")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 2,
             note: None,
         };
         place_missing_near_neighbors(&g1, &mut cache);
@@ -459,8 +451,6 @@ mod tests {
             edges: vec![],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 0,
-            raw_edges: 0,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -476,8 +466,6 @@ mod tests {
             edges: vec![],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 0,
             note: None,
         };
         let mut first = PosCache::default();
@@ -497,8 +485,6 @@ mod tests {
             edges: vec![edge("e1", "seed", "near")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 1,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -520,8 +506,6 @@ mod tests {
             edges: vec![edge("1", "a", "z"), edge("2", "a", "m")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 2,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -540,8 +524,6 @@ mod tests {
             ],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 3,
-            raw_edges: 3,
             note: None,
         };
         let mut cache = PosCache::default();
@@ -575,8 +557,6 @@ mod tests {
             edges: vec![edge("e", "s", "n")],
             truncated_nodes: false,
             truncated_edges: false,
-            raw_nodes: 2,
-            raw_edges: 1,
             note: None,
         };
         let mut cache = PosCache::default();

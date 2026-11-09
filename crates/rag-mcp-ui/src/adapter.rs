@@ -47,11 +47,6 @@ pub struct UiGraph {
     pub edges: Vec<UiEdge>,
     pub truncated_nodes: bool,
     pub truncated_edges: bool,
-    /// Pre-cap counts, kept for status banners; read only by tests today.
-    #[allow(dead_code)]
-    pub raw_nodes: usize,
-    #[allow(dead_code)]
-    pub raw_edges: usize,
     /// Human-readable note when nodes/edges were dropped for caps.
     pub note: Option<String>,
 }
@@ -139,7 +134,6 @@ impl Default for AdaptOptions {
 /// - `UI_MAX_DRAW_EDGES` (2000): after multi-edge collapse; drop tagged / lowest-weight first.
 pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     let raw_nodes = view.nodes.len();
-    let raw_edges = view.edges.len();
 
     let lens_edge_ids: HashSet<&str> = view
         .edges
@@ -331,8 +325,6 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         edges: ui_edges,
         truncated_nodes,
         truncated_edges,
-        raw_nodes,
-        raw_edges,
         note,
     }
 }
@@ -678,20 +670,6 @@ fn parse_placement_meta(metadata_json: &str) -> (Option<String>, Option<String>,
     (s("layer"), s("wing"), s("room"))
 }
 
-/// Stable topology fingerprint for anti-thrash.
-pub fn topology_generation(view: &GraphView) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut node_ids: Vec<&str> = view.nodes.iter().map(|n| n.id.as_str()).collect();
-    let mut edge_ids: Vec<&str> = view.edges.iter().map(|e| e.id.as_str()).collect();
-    node_ids.sort_unstable();
-    edge_ids.sort_unstable();
-    let mut h = DefaultHasher::new();
-    node_ids.hash(&mut h);
-    edge_ids.hash(&mut h);
-    h.finish()
-}
-
 /// True when a node's metadata names the wiki layer (any key order or spacing).
 fn node_layer_is_wiki(metadata_json: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(metadata_json)
@@ -899,7 +877,6 @@ mod tests {
         let g = adapt(&view, &AdaptOptions::default());
         assert_eq!(g.nodes.len(), UI_HARD_MAX_NODES);
         assert!(g.truncated_nodes);
-        assert_eq!(g.raw_nodes, 350);
         let note = g.note.expect("truncation note");
         assert!(note.contains("300"));
         assert!(note.contains("350"));
@@ -1090,8 +1067,6 @@ mod tests {
         assert!(!g.truncated_nodes);
         assert!(!g.truncated_edges);
         assert!(g.note.is_none());
-        assert_eq!(g.raw_nodes, 2);
-        assert_eq!(g.raw_edges, 1);
     }
 
     #[test]

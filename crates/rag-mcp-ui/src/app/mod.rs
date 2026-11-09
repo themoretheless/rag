@@ -8,7 +8,7 @@
 use egui::Vec2;
 use rag_mcp_core::{GraphView, UI_GRAPH_EXPORT_MAX_NODES};
 
-use crate::adapter::{adapt, topology_generation, AdaptOptions, GraphLens, UiGraph};
+use crate::adapter::{adapt, AdaptOptions, GraphLens, UiGraph};
 use crate::layout::{overview_grid_place, place_missing_near_neighbors, radial_place, PosCache};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
