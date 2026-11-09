@@ -8,7 +8,7 @@ impl GraphApp {
             ViewMode::Home => {
                 egui::CentralPanel::default().show(root_ui, |ui| {
                     if self.full_view.is_none() && self.activity_base().is_none() {
-                        if self.pending_graph.is_some() {
+                        if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
@@ -38,9 +38,9 @@ impl GraphApp {
                             project_error: self.project_home_error.as_deref(),
                             operations_error: self.operations_error.as_deref(),
                             operations_stale: self.operations_snapshot_stale,
-                            loading: self.pending_project_home.is_some()
-                                || self.pending_operations.is_some()
-                                || self.pending_activity.is_some(),
+                            loading: self.pending.project_home.is_some()
+                                || self.pending.operations.is_some()
+                                || self.pending.activity.is_some(),
                             http_available: self.activity_base().is_some(),
                             wiki_available: self.available_load_source().is_some(),
                         },
@@ -92,7 +92,7 @@ impl GraphApp {
                                 &item,
                                 self.library_document.as_ref(),
                                 self.library_document_error.as_deref(),
-                                self.pending_library_document.is_some(),
+                                self.pending.library_document.is_some(),
                             );
                         });
                     match detail_action {
@@ -101,7 +101,7 @@ impl GraphApp {
                             self.library_selected_id = None;
                             self.library_document = None;
                             self.library_document_error = None;
-                            self.pending_library_document = None;
+                            self.pending.library_document.clear();
                         }
                         LibraryDetailAction::Retry => {
                             let id = item.id.clone();
@@ -126,7 +126,7 @@ impl GraphApp {
 
                 egui::CentralPanel::default().show(root_ui, |ui| {
                     if self.full_view.is_none() && self.activity_base().is_none() {
-                        if self.pending_graph.is_some() {
+                        if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
@@ -152,7 +152,7 @@ impl GraphApp {
                         self.library_page.as_ref(),
                         self.library_selected_id.as_deref(),
                         self.library_error.as_deref(),
-                        self.pending_library.is_some(),
+                        self.pending.library.is_some(),
                         !self.library_cursor_history.is_empty(),
                     );
                     match action {
@@ -182,7 +182,7 @@ impl GraphApp {
             ViewMode::Search => {
                 egui::CentralPanel::default().show(root_ui, |ui| {
                     if self.full_view.is_none() && self.activity_base().is_none() {
-                        if self.pending_graph.is_some() {
+                        if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
@@ -207,7 +207,7 @@ impl GraphApp {
                         &mut self.search_request,
                         self.search_results.as_ref(),
                         self.search_error.as_deref(),
-                        self.pending_search.is_some(),
+                        self.pending.search.is_some(),
                     );
                     match action {
                         SearchAction::None => {}
@@ -239,7 +239,7 @@ impl GraphApp {
                             self.library_selected_id = None;
                             self.library_document = None;
                             self.library_document_error = None;
-                            self.pending_library_document = None;
+                            self.pending.library_document.clear();
                             self.library_page = None;
                             self.library_open_after_load = Some(document_id);
                             self.reload_library();
@@ -270,10 +270,10 @@ impl GraphApp {
                             timeline_error: self.revision.error.as_deref(),
                             snapshot_error: self.revision.snapshot_error.as_deref(),
                             diff_error: self.revision.diff_error.as_deref(),
-                            loading_timeline: self.pending_revisions.is_some(),
-                            loading_snapshot: self.pending_revision_snapshot.is_some(),
-                            loading_diff: self.pending_revision_diff.is_some(),
-                            loading_restore: self.pending_revision_restore.is_some(),
+                            loading_timeline: self.pending.revisions.is_some(),
+                            loading_snapshot: self.pending.revision_snapshot.is_some(),
+                            loading_diff: self.pending.revision_diff.is_some(),
+                            loading_restore: self.pending.revision_restore.is_some(),
                         },
                     );
                     match action {
@@ -386,7 +386,7 @@ impl GraphApp {
                             &mut self.sync_job_form,
                             nonempty(&self.filter_wing).as_deref(),
                             self.operations_error.as_deref(),
-                            self.pending_jobs.is_some() || self.pending_operation_action.is_some(),
+                            self.pending.jobs.is_some() || self.pending.operation_action.is_some(),
                         );
                     });
                     self.dispatch_operations_action(action);
@@ -401,8 +401,8 @@ impl GraphApp {
                             self.operations_last_result.as_ref(),
                             self.operations_error.as_deref(),
                             self.operations_snapshot_stale,
-                            self.pending_operations.is_some()
-                                || self.pending_operation_action.is_some(),
+                            self.pending.operations.is_some()
+                                || self.pending.operation_action.is_some(),
                         );
                     });
                     self.dispatch_operations_action(action);
@@ -415,7 +415,7 @@ impl GraphApp {
                         self.search_results.as_ref(),
                         &self.activity,
                         self.activity_error.as_deref(),
-                        self.pending_activity.is_some(),
+                        self.pending.activity.is_some(),
                     );
                     match action {
                         EvaluationAction::None => {}
@@ -435,7 +435,7 @@ impl GraphApp {
                         ui,
                         self.operations_snapshot.as_ref(),
                         self.operations_error.as_deref(),
-                        self.pending_operations.is_some(),
+                        self.pending.operations.is_some(),
                         self.operations_snapshot_stale,
                     );
                     match action {
@@ -457,7 +457,7 @@ impl GraphApp {
                         ui,
                         self.operations_snapshot.as_ref(),
                         self.operations_error.as_deref(),
-                        self.pending_operations.is_some(),
+                        self.pending.operations.is_some(),
                     ) {
                         self.reload_operations();
                     }
@@ -510,7 +510,7 @@ impl GraphApp {
                                 {
                                     self.wiki_focus = WikiPane::B;
                                 }
-                                if self.pending_page_b.is_some() {
+                                if self.pending.page_b.is_some() {
                                     ui.spinner();
                                 }
                                 ui.with_layout(
@@ -537,7 +537,7 @@ impl GraphApp {
                                     known_keys: &known_keys,
                                     can_write: false,
                                     salt_prefix: "b",
-                                    loading: self.pending_page_b.is_some(),
+                                    loading: self.pending.page_b.is_some(),
                                 },
                             );
                             if action.retry {
@@ -569,7 +569,7 @@ impl GraphApp {
                                 self.wiki_article.as_ref(),
                                 &self.wiki_backlinks,
                                 self.wiki_backlinks_error.as_deref(),
-                                self.pending_backlinks.is_some(),
+                                self.pending.backlinks.is_some(),
                             );
                             if action.retry {
                                 if let Some(id) = self.wiki_selected_id.clone() {
@@ -589,7 +589,7 @@ impl GraphApp {
                     // re-runs LoadGraph on `open.source` instead of only
                     // re-fetching the catalog.
                     if self.full_view.is_none() && self.activity_base().is_none() {
-                        if self.pending_graph.is_some() {
+                        if self.pending.graph.is_some() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(80.0);
                                 ui.spinner();
@@ -623,7 +623,7 @@ impl GraphApp {
                         ui.separator();
                     }
                     if self.wiki_dual_pane || !self.wiki_info_visible {
-                        if self.pending_backlinks.is_some() {
+                        if self.pending.backlinks.is_some() {
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.weak("Обновление обратных ссылок…");
@@ -644,7 +644,7 @@ impl GraphApp {
                         }
                     }
                     let can_write = self.wiki_can_write();
-                    let saving = self.pending_save.is_some();
+                    let saving = self.pending.save.is_some();
                     if self.wiki_edit.is_some() && self.wiki_article.is_some() {
                         // Draw with short-lived field borrows, then handle actions.
                         let action = {
@@ -676,7 +676,7 @@ impl GraphApp {
                                 known_keys: &known_keys,
                                 can_write,
                                 salt_prefix: "a",
-                                loading: self.pending_page_a.is_some(),
+                                loading: self.pending.page_a.is_some(),
                             },
                         );
                         if action.retry {
@@ -718,7 +718,7 @@ impl GraphApp {
                                     DetailContentState {
                                         body: self.content.as_ref(),
                                         error: self.content_error.as_deref(),
-                                        loading: self.pending_content.is_some(),
+                                        loading: self.pending.content.is_some(),
                                         available: content_available,
                                     },
                                 );
@@ -740,7 +740,7 @@ impl GraphApp {
                 }
 
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    if self.pending_graph.is_some() && self.full_view.is_none() {
+                    if self.pending.graph.is_some() && self.full_view.is_none() {
                         ui.vertical_centered(|ui| {
                             ui.add_space(ui.available_height() * 0.2);
                             ui.spinner();
@@ -789,14 +789,14 @@ impl GraphApp {
                         if self.selected.as_deref() != Some(id.as_str()) {
                             self.content = None;
                             self.content_error = None;
-                            self.pending_content = None;
+                            self.pending.content.clear();
                         }
                         self.selected = Some(id);
                     } else if out.clicked_empty {
                         self.selected = None;
                         self.content = None;
                         self.content_error = None;
-                        self.pending_content = None;
+                        self.pending.content.clear();
                     }
                 });
             }

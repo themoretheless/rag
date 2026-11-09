@@ -15,7 +15,7 @@ impl GraphApp {
             ui.horizontal_wrapped(|ui| {
                 match self.mode {
                     ViewMode::Home => {
-                        if self.pending_project_home.is_some() {
+                        if self.pending.project_home.is_some() {
                             ui.spinner();
                             ui.weak("инвентаризация…");
                         } else if let Some(home) = &self.project_home {
@@ -23,7 +23,7 @@ impl GraphApp {
                         }
                     }
                     ViewMode::Library => {
-                        if self.pending_library.is_some() {
+                        if self.pending.library.is_some() {
                             ui.spinner();
                             ui.weak("каталог…");
                         } else if let Some(page) = &self.library_page {
@@ -31,7 +31,7 @@ impl GraphApp {
                         }
                     }
                     ViewMode::Search => {
-                        if self.pending_search.is_some() {
+                        if self.pending.search.is_some() {
                             ui.spinner();
                             ui.weak("поиск…");
                         } else if let Some(results) = &self.search_results {
@@ -39,10 +39,10 @@ impl GraphApp {
                         }
                     }
                     ViewMode::Revisions => {
-                        if self.pending_revisions.is_some()
-                            || self.pending_revision_snapshot.is_some()
-                            || self.pending_revision_diff.is_some()
-                            || self.pending_revision_restore.is_some()
+                        if self.pending.revisions.is_some()
+                            || self.pending.revision_snapshot.is_some()
+                            || self.pending.revision_diff.is_some()
+                            || self.pending.revision_restore.is_some()
                         {
                             ui.spinner();
                             ui.weak("история…");
@@ -87,15 +87,15 @@ impl GraphApp {
                             }
                             ui.checkbox(&mut self.activity_auto_refresh, "Онлайн");
                         } else if self.operations_tab == OperationsTab::Jobs {
-                            if self.pending_jobs.is_some()
-                                || self.pending_operation_action.is_some()
+                            if self.pending.jobs.is_some()
+                                || self.pending.operation_action.is_some()
                             {
                                 ui.spinner();
                             }
                             ui.weak(format!("{} сохранено", self.operations_jobs.len()));
                         } else {
-                            if self.pending_operations.is_some()
-                                || self.pending_operation_action.is_some()
+                            if self.pending.operations.is_some()
+                                || self.pending.operation_action.is_some()
                             {
                                 ui.spinner();
                             }
@@ -192,14 +192,14 @@ impl GraphApp {
                                 }
                             },
                         );
-                        if self.pending_activity.is_some() {
+                        if self.pending.activity.is_some() {
                             ui.spinner();
                         }
                     }
                     ViewMode::Evaluation => {
                         ui.label(egui::RichText::new("EVAL").monospace().color(theme::L1));
                         ui.weak("живая telemetry · benchmark-значения не угадываются");
-                        if self.pending_activity.is_some() {
+                        if self.pending.activity.is_some() {
                             ui.spinner();
                         } else if ui.button("Обновить telemetry").clicked() {
                             self.refresh_activity();
@@ -211,7 +211,7 @@ impl GraphApp {
                                 .monospace()
                                 .color(theme::L3),
                         );
-                        if self.pending_operations.is_some() {
+                        if self.pending.operations.is_some() {
                             ui.spinner();
                         } else if let Some(snapshot) = &self.operations_snapshot {
                             ui.weak(format!(
@@ -244,7 +244,7 @@ impl GraphApp {
                             self.wiki_go_back();
                         }
                         if ui.button("Обновить вики").clicked() {
-                            if self.pending_save.is_some() {
+                            if self.pending.save.is_some() {
                                 self.wiki_error = Some(
                                     "Идёт сохранение. Дождитесь результата перед обновлением вики."
                                         .into(),
@@ -259,11 +259,11 @@ impl GraphApp {
                                 self.reload_wiki_catalog();
                             }
                         }
-                        if self.pending_catalog.is_some() {
+                        if self.pending.catalog.is_some() {
                             ui.spinner();
                             ui.weak("каталог…");
                         }
-                        if self.pending_page_a.is_some() || self.pending_page_b.is_some() {
+                        if self.pending.page_a.is_some() || self.pending.page_b.is_some() {
                             ui.spinner();
                             ui.weak("страница…");
                         }
@@ -321,7 +321,7 @@ impl GraphApp {
                                 self.start_wiki_edit();
                             }
                         } else {
-                            let saving = self.pending_save.is_some();
+                            let saving = self.pending.save.is_some();
                             if ui
                                 .add_enabled(
                                     self.wiki_can_write() && !saving,
@@ -485,7 +485,7 @@ impl GraphApp {
                                 self.rebuild_ui_graph();
                             }
                         }
-                        let expanding = self.pending_expand.is_some();
+                        let expanding = self.pending.expand.is_some();
                         if ui
                             .add_enabled(
                                 self.selected.is_some() && !expanding,
@@ -516,7 +516,7 @@ impl GraphApp {
                             .add_enabled(
                                 content_available
                                     && self.selected.is_some()
-                                    && self.pending_content.is_none(),
+                                    && self.pending.content.is_none(),
                                 egui::Button::new("Превью"),
                             )
                             .on_hover_text(if content_available {
@@ -527,7 +527,7 @@ impl GraphApp {
                         if preview.clicked() {
                             self.load_content_for_selected();
                         }
-                        if self.pending_content.is_some() {
+                        if self.pending.content.is_some() {
                             ui.spinner();
                         }
                     }
@@ -554,7 +554,7 @@ impl GraphApp {
                                 "выберите проект",
                             );
                         }
-                        if self.pending_project_home.is_some() {
+                        if self.pending.project_home.is_some() {
                             ui.separator();
                             ui.spinner();
                             ui.weak("Обновление…");
@@ -569,7 +569,7 @@ impl GraphApp {
                             ui.label(format!("{} всего", page.total));
                             ui.label(format!("{} на странице", page.items.len()));
                         }
-                        if self.pending_library.is_some() || self.pending_library_document.is_some()
+                        if self.pending.library.is_some() || self.pending.library_document.is_some()
                         {
                             ui.separator();
                             ui.spinner();
@@ -590,7 +590,7 @@ impl GraphApp {
                             ui.separator();
                             ui.label(project);
                         }
-                        if self.pending_search.is_some() {
+                        if self.pending.search.is_some() {
                             ui.separator();
                             ui.spinner();
                             ui.weak("Поиск…");
@@ -608,10 +608,10 @@ impl GraphApp {
                             ui.separator();
                             ui.label(format!("сравнение с r{selected}"));
                         }
-                        if self.pending_revisions.is_some()
-                            || self.pending_revision_snapshot.is_some()
-                            || self.pending_revision_diff.is_some()
-                            || self.pending_revision_restore.is_some()
+                        if self.pending.revisions.is_some()
+                            || self.pending.revision_snapshot.is_some()
+                            || self.pending.revision_diff.is_some()
+                            || self.pending.revision_restore.is_some()
                         {
                             ui.separator();
                             ui.spinner();

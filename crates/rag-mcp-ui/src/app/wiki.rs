@@ -4,7 +4,7 @@ use super::*;
 
 impl GraphApp {
     pub(super) fn ensure_wiki_loaded(&mut self) {
-        if self.wiki_loaded || self.pending_catalog.is_some() {
+        if self.wiki_loaded || self.pending.catalog.is_some() {
             return;
         }
         self.reload_wiki_catalog();
@@ -22,7 +22,7 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_catalog = Some(seq);
+        self.pending.catalog.set(seq);
         self.worker.send(WorkerCmd::LoadWikiCatalog {
             seq,
             source,
@@ -63,7 +63,7 @@ impl GraphApp {
             self.open_wiki_page_in_b(id);
             return;
         }
-        if self.pending_save.is_some() {
+        if self.pending.save.is_some() {
             self.wiki_error = Some(
                 "Идёт сохранение. Дождитесь результата перед открытием другой страницы.".into(),
             );
@@ -103,7 +103,7 @@ impl GraphApp {
         };
         // Keep the current article visible until the new body arrives.
         let seq = self.next_seq();
-        self.pending_page_a = Some(seq);
+        self.pending.page_a.set(seq);
         self.worker.send(WorkerCmd::OpenPage {
             seq,
             pane_b: false,
@@ -127,7 +127,7 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_page_b = Some(seq);
+        self.pending.page_b.set(seq);
         self.worker.send(WorkerCmd::OpenPage {
             seq,
             pane_b: true,
@@ -142,15 +142,15 @@ impl GraphApp {
         self.wiki_selected_id_b = None;
         self.wiki_article_b = None;
         self.wiki_error_b = None;
-        self.pending_page_b = None;
+        self.pending.page_b.clear();
     }
 
     pub(super) fn reset_wiki_for_project(&mut self) {
         self.worker.cancel_wiki_reads();
-        self.pending_catalog = None;
-        self.pending_page_a = None;
-        self.pending_page_b = None;
-        self.pending_backlinks = None;
+        self.pending.catalog.clear();
+        self.pending.page_a.clear();
+        self.pending.page_b.clear();
+        self.pending.backlinks.clear();
         self.wiki_pages.clear();
         self.wiki_pages_rev += 1;
         self.wiki_selected_id = None;
@@ -264,7 +264,7 @@ impl GraphApp {
     }
 
     pub(super) fn cancel_wiki_edit(&mut self) {
-        if self.pending_save.is_some() {
+        if self.pending.save.is_some() {
             self.wiki_error =
                 Some("Идёт сохранение. Дождитесь результата перед закрытием редактора.".into());
             return;
@@ -275,7 +275,7 @@ impl GraphApp {
 
     /// Discard edits and refetch the current revision (409 CAS conflict path).
     pub(super) fn reload_wiki_page(&mut self) {
-        if self.pending_save.is_some() {
+        if self.pending.save.is_some() {
             self.wiki_error =
                 Some("Идёт сохранение. Дождитесь результата перед обновлением страницы.".into());
             return;
@@ -295,7 +295,7 @@ impl GraphApp {
     /// conflict keeps the user's text; a repeated Save/Ctrl+S is ignored while
     /// a save is in flight.
     pub(super) fn save_wiki_edit(&mut self) {
-        if self.pending_save.is_some() {
+        if self.pending.save.is_some() {
             return;
         }
         let Some(edit) = self.wiki_edit.as_ref() else {
@@ -325,7 +325,7 @@ impl GraphApp {
             if_match_etag: edit.base_etag.clone(),
         };
         let seq = self.next_seq();
-        self.pending_save = Some(seq);
+        self.pending.save.set(seq);
         self.worker.send(WorkerCmd::SavePage { seq, req, source });
     }
 
@@ -369,7 +369,7 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_backlinks = Some(seq);
+        self.pending.backlinks.set(seq);
         self.wiki_backlinks_error = None;
         self.worker.send(WorkerCmd::LoadBacklinks {
             seq,
@@ -410,7 +410,7 @@ impl GraphApp {
     }
 
     pub(super) fn wiki_go_back(&mut self) {
-        if self.pending_save.is_some() {
+        if self.pending.save.is_some() {
             self.wiki_error =
                 Some("Идёт сохранение. Дождитесь результата перед переходом назад.".into());
             return;
@@ -428,7 +428,7 @@ impl GraphApp {
     /// Resolve `[[link]]` text to a catalog page and open it (exact title/slug/id only).
     pub(super) fn open_wiki_link(&mut self, link: &str) {
         let into_b = self.wiki_dual_pane && self.wiki_focus == WikiPane::B;
-        if !into_b && self.pending_save.is_some() {
+        if !into_b && self.pending.save.is_some() {
             self.wiki_error =
                 Some("Идёт сохранение. Дождитесь результата перед переходом по ссылке.".into());
             return;
@@ -477,9 +477,9 @@ impl GraphApp {
         };
         let seq = self.next_seq();
         if into_b {
-            self.pending_page_b = Some(seq);
+            self.pending.page_b.set(seq);
         } else {
-            self.pending_page_a = Some(seq);
+            self.pending.page_a.set(seq);
         }
         self.worker.send(WorkerCmd::OpenPage {
             seq,

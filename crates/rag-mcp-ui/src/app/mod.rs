@@ -20,6 +20,7 @@ use crate::dto::{
     WikiPageMeta, WikiPutRequest,
 };
 
+use self::pending::PendingSlots;
 use crate::operations::{JobSnapshot, MaintenanceResult, OperationsSnapshot};
 use crate::product::{LibraryItem, LibraryPage, LibraryRequest, ProjectHome};
 use crate::revisions::{RestoreRevisionResult, RevisionDiff, RevisionItem};
@@ -60,6 +61,7 @@ mod events;
 mod frame;
 mod graph;
 mod panels;
+mod pending;
 mod revisions;
 mod wiki;
 mod workspace;
@@ -261,27 +263,7 @@ pub struct GraphApp {
     sources: SourceRegistry,
     /// Monotonic job counter; every pending slot stores the seq it waits for.
     seq: u64,
-    pending_graph: Option<u64>,
-    pending_project_catalog: Option<u64>,
-    pending_catalog: Option<u64>,
-    pending_page_a: Option<u64>,
-    pending_page_b: Option<u64>,
-    pending_backlinks: Option<u64>,
-    pending_content: Option<u64>,
-    pending_expand: Option<u64>,
-    pending_save: Option<u64>,
-    pending_activity: Option<u64>,
-    pending_project_home: Option<u64>,
-    pending_library: Option<u64>,
-    pending_library_document: Option<u64>,
-    pending_search: Option<u64>,
-    pending_operations: Option<u64>,
-    pending_jobs: Option<u64>,
-    pending_operation_action: Option<u64>,
-    pending_revisions: Option<u64>,
-    pending_revision_snapshot: Option<u64>,
-    pending_revision_diff: Option<u64>,
-    pending_revision_restore: Option<u64>,
+    pending: PendingSlots,
     /// HTTP base URL editable on the no-source start screen.
     connect_url: String,
     close_confirmation_open: bool,
@@ -448,27 +430,7 @@ impl GraphApp {
             worker: crate::worker::spawn(cc.egui_ctx.clone()),
             sources: SourceRegistry::default(),
             seq: 0,
-            pending_graph: None,
-            pending_project_catalog: None,
-            pending_catalog: None,
-            pending_page_a: None,
-            pending_page_b: None,
-            pending_backlinks: None,
-            pending_content: None,
-            pending_expand: None,
-            pending_save: None,
-            pending_activity: None,
-            pending_project_home: None,
-            pending_library: None,
-            pending_library_document: None,
-            pending_search: None,
-            pending_operations: None,
-            pending_jobs: None,
-            pending_operation_action: None,
-            pending_revisions: None,
-            pending_revision_snapshot: None,
-            pending_revision_diff: None,
-            pending_revision_restore: None,
+            pending: PendingSlots::default(),
             connect_url,
             close_confirmation_open: false,
             force_close: false,
@@ -584,43 +546,23 @@ impl GraphApp {
     }
 
     fn any_pending(&self) -> bool {
-        self.pending_graph.is_some()
-            || self.pending_project_catalog.is_some()
-            || self.pending_catalog.is_some()
-            || self.pending_page_a.is_some()
-            || self.pending_page_b.is_some()
-            || self.pending_backlinks.is_some()
-            || self.pending_content.is_some()
-            || self.pending_expand.is_some()
-            || self.pending_save.is_some()
-            || self.pending_activity.is_some()
-            || self.pending_project_home.is_some()
-            || self.pending_library.is_some()
-            || self.pending_library_document.is_some()
-            || self.pending_search.is_some()
-            || self.pending_operations.is_some()
-            || self.pending_jobs.is_some()
-            || self.pending_operation_action.is_some()
-            || self.pending_revisions.is_some()
-            || self.pending_revision_snapshot.is_some()
-            || self.pending_revision_diff.is_some()
-            || self.pending_revision_restore.is_some()
+        self.pending.any()
     }
 
     fn noncancellable_mutation_in_flight(&self) -> bool {
         has_noncancellable_mutation(
-            self.pending_save.is_some(),
-            self.pending_operation_action.is_some(),
-            self.pending_revision_restore.is_some(),
+            self.pending.save.is_some(),
+            self.pending.operation_action.is_some(),
+            self.pending.revision_restore.is_some(),
         )
     }
 
     fn mutation_status_label(&self) -> Option<&'static str> {
-        if self.pending_save.is_some() {
+        if self.pending.save.is_some() {
             Some("сохранение…")
-        } else if self.pending_revision_restore.is_some() {
+        } else if self.pending.revision_restore.is_some() {
             Some("восстановление…")
-        } else if self.pending_operation_action.is_some() {
+        } else if self.pending.operation_action.is_some() {
             Some("операция…")
         } else {
             None
@@ -652,10 +594,10 @@ impl GraphApp {
             ShellRoute::Console => {
                 self.mode = ViewMode::Home;
                 self.ensure_project_home_loaded();
-                if self.operations_snapshot.is_none() && self.pending_operations.is_none() {
+                if self.operations_snapshot.is_none() && self.pending.operations.is_none() {
                     self.reload_operations();
                 }
-                if self.pending_activity.is_none() {
+                if self.pending.activity.is_none() {
                     self.refresh_activity();
                 }
             }
@@ -687,7 +629,7 @@ impl GraphApp {
             }
             ShellRoute::Models => {
                 self.mode = ViewMode::Models;
-                if self.operations_snapshot.is_none() && self.pending_operations.is_none() {
+                if self.operations_snapshot.is_none() && self.pending.operations.is_none() {
                     self.reload_operations();
                 }
             }
@@ -706,7 +648,7 @@ impl GraphApp {
                     .into(),
             );
         }
-        if self.pending_operations.is_some() {
+        if self.pending.operations.is_some() {
             return (None, "gateway · обновление состояния…".into());
         }
         if self.operations_snapshot_stale {
@@ -784,7 +726,7 @@ impl GraphApp {
     }
 
     fn reload_project_catalog(&mut self) {
-        if self.pending_project_catalog.is_some() {
+        if self.pending.project_catalog.is_some() {
             return;
         }
         let Some(base) = self.activity_base() else {
@@ -794,13 +736,13 @@ impl GraphApp {
         };
         self.project_catalog_error = None;
         let seq = self.next_seq();
-        self.pending_project_catalog = Some(seq);
+        self.pending.project_catalog.set(seq);
         self.worker
             .send(WorkerCmd::LoadProjectCatalog { seq, base });
     }
 
     fn refresh_activity(&mut self) {
-        if self.pending_activity.is_some() {
+        if self.pending.activity.is_some() {
             return;
         }
         let Some(base) = self.activity_base() else {
@@ -808,7 +750,7 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_activity = Some(seq);
+        self.pending.activity.set(seq);
         self.worker.send(WorkerCmd::LoadActivity { seq, base });
     }
 
@@ -818,7 +760,7 @@ impl GraphApp {
         self.project_home_error = None;
         self.project_home_project = None;
         if project.is_empty() {
-            self.pending_project_home = None;
+            self.pending.project_home.clear();
             return;
         }
         let Some(base) = self.activity_base() else {
@@ -826,14 +768,14 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_project_home = Some(seq);
+        self.pending.project_home.set(seq);
         self.worker
             .send(WorkerCmd::LoadProjectHome { seq, base, project });
     }
 
     fn ensure_project_home_loaded(&mut self) {
         let project = nonempty(&self.filter_wing);
-        if self.pending_project_home.is_none() && self.project_home_project != project {
+        if self.pending.project_home.is_none() && self.project_home_project != project {
             self.reload_project_home();
         }
     }
@@ -849,13 +791,13 @@ impl GraphApp {
         self.library_request.limit = self.library_request.limit.clamp(1, 200);
         let request = self.library_request.clone();
         let seq = self.next_seq();
-        self.pending_library = Some(seq);
+        self.pending.library.set(seq);
         self.worker
             .send(WorkerCmd::LoadLibrary { seq, base, request });
     }
 
     fn ensure_library_loaded(&mut self) {
-        if self.pending_library.is_none() && self.library_page.is_none() {
+        if self.pending.library.is_none() && self.library_page.is_none() {
             self.reload_library();
         }
     }
@@ -866,7 +808,7 @@ impl GraphApp {
         self.library_selected_id = None;
         self.library_document = None;
         self.library_document_error = None;
-        self.pending_library_document = None;
+        self.pending.library_document.clear();
         self.reload_library();
     }
 
@@ -888,7 +830,7 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_library_document = Some(seq);
+        self.pending.library_document.set(seq);
         self.worker.send(WorkerCmd::LoadLibraryDocument {
             seq,
             base,
@@ -910,7 +852,7 @@ impl GraphApp {
         self.search_request.top_k = self.search_request.top_k.clamp(1, 100);
         self.search_error = None;
         let seq = self.next_seq();
-        self.pending_search = Some(seq);
+        self.pending.search.set(seq);
         self.worker.send(WorkerCmd::Search {
             seq,
             base,
@@ -925,12 +867,12 @@ impl GraphApp {
         };
         self.operations_error = None;
         let seq = self.next_seq();
-        self.pending_operations = Some(seq);
+        self.pending.operations.set(seq);
         self.worker.send(WorkerCmd::LoadOperations { seq, base });
     }
 
     fn reload_jobs(&mut self) {
-        if self.pending_jobs.is_some() {
+        if self.pending.jobs.is_some() {
             return;
         }
         let Some(base) = self.activity_base() else {
@@ -938,12 +880,12 @@ impl GraphApp {
             return;
         };
         let seq = self.next_seq();
-        self.pending_jobs = Some(seq);
+        self.pending.jobs.set(seq);
         self.worker.send(WorkerCmd::LoadJobs { seq, base });
     }
 
     fn dispatch_operations_action(&mut self, action: OperationsAction) {
-        if is_operations_mutation(&action) && self.pending_operation_action.is_some() {
+        if is_operations_mutation(&action) && self.pending.operation_action.is_some() {
             return;
         }
         match action {
@@ -956,7 +898,7 @@ impl GraphApp {
                     return;
                 };
                 let seq = self.next_seq();
-                self.pending_operation_action = Some(seq);
+                self.pending.operation_action.set(seq);
                 self.worker
                     .send(WorkerCmd::StartSyncJob { seq, base, request });
             }
@@ -966,7 +908,7 @@ impl GraphApp {
                     return;
                 };
                 let seq = self.next_seq();
-                self.pending_operation_action = Some(seq);
+                self.pending.operation_action.set(seq);
                 self.worker.send(WorkerCmd::CancelJob { seq, base, id });
             }
             OperationsAction::Checkpoint => {
@@ -975,7 +917,7 @@ impl GraphApp {
                     return;
                 };
                 let seq = self.next_seq();
-                self.pending_operation_action = Some(seq);
+                self.pending.operation_action.set(seq);
                 self.worker.send(WorkerCmd::Checkpoint { seq, base });
             }
             OperationsAction::Backup(request) => {
@@ -984,7 +926,7 @@ impl GraphApp {
                     return;
                 };
                 let seq = self.next_seq();
-                self.pending_operation_action = Some(seq);
+                self.pending.operation_action.set(seq);
                 self.worker.send(WorkerCmd::Backup { seq, base, request });
             }
         }
@@ -993,17 +935,17 @@ impl GraphApp {
     fn reset_product_for_project(&mut self) {
         self.worker.cancel_project_scoped_reads();
         self.mode = mode_after_project_switch(self.mode);
-        self.pending_graph = None;
-        self.pending_project_home = None;
-        self.pending_library = None;
-        self.pending_library_document = None;
-        self.pending_search = None;
-        self.pending_content = None;
-        self.pending_expand = None;
+        self.pending.graph.clear();
+        self.pending.project_home.clear();
+        self.pending.library.clear();
+        self.pending.library_document.clear();
+        self.pending.search.clear();
+        self.pending.content.clear();
+        self.pending.expand.clear();
         self.revision.clear();
-        self.pending_revisions = None;
-        self.pending_revision_snapshot = None;
-        self.pending_revision_diff = None;
+        self.pending.revisions.clear();
+        self.pending.revision_snapshot.clear();
+        self.pending.revision_diff.clear();
         self.project_home = None;
         self.project_home_project = None;
         self.project_home_error = None;
@@ -1053,8 +995,8 @@ impl GraphApp {
         // A request can change project, tag inclusion or focus. Do not paint the
         // previous topology under the new controls while the worker is pending.
         self.load_error = None;
-        self.pending_expand = None;
-        self.pending_content = None;
+        self.pending.expand.clear();
+        self.pending.content.clear();
         self.full_view = None;
         self.full_view_rev += 1;
         self.local_view = None;
@@ -1071,7 +1013,7 @@ impl GraphApp {
         self.raw_truncated = false;
         self.raw_node_count = 0;
         let seq = self.next_seq();
-        self.pending_graph = Some(seq);
+        self.pending.graph.set(seq);
         if refresh_project_catalog {
             self.reload_project_catalog();
         }
@@ -1241,7 +1183,7 @@ impl GraphApp {
             && self.mode == ViewMode::Wiki
             && self.wiki_edit.is_some()
             && self.wiki_can_write()
-            && self.pending_save.is_none()
+            && self.pending.save.is_none()
         {
             self.save_wiki_edit();
             return;
@@ -1264,7 +1206,7 @@ impl GraphApp {
             self.selected = None;
             self.content = None;
             self.content_error = None;
-            self.pending_content = None;
+            self.pending.content.clear();
         }
         if find && self.mode == ViewMode::Wiki {
             ctx.memory_mut(|m| m.request_focus(wiki_filter_id()));
@@ -1277,7 +1219,7 @@ impl GraphApp {
     fn current_close_risk(&self) -> Option<CloseRisk> {
         close_risk(
             self.wiki_edit.as_ref().is_some_and(|edit| edit.dirty),
-            self.pending_save.is_some(),
+            self.pending.save.is_some(),
         )
     }
 

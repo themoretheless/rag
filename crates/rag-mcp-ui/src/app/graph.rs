@@ -100,7 +100,7 @@ impl GraphApp {
 
         // Keep previous content visible while the worker fetches.
         let seq = self.next_seq();
-        self.pending_content = Some(seq);
+        self.pending.content.set(seq);
         self.worker.send(WorkerCmd::ReadContent {
             seq,
             node_id: sel,
@@ -117,7 +117,7 @@ impl GraphApp {
         self.worker.cancel_expand_read();
         // Any in-flight Expand merges old topology into the new local view:
         // invalidate it so the late answer is dropped by seq.
-        self.pending_expand = None;
+        self.pending.expand.clear();
         let Some(full) = self.full_view.as_ref() else {
             self.local_view = None;
             self.local_truncated = false;
@@ -272,7 +272,7 @@ impl GraphApp {
         }
 
         let seq = self.next_seq();
-        self.pending_expand = Some(seq);
+        self.pending.expand.set(seq);
         self.worker.send(WorkerCmd::ExpandNeighbors {
             seq,
             selected: sel,

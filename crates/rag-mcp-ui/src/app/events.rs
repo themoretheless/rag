@@ -8,10 +8,9 @@ impl GraphApp {
         while let Ok(evt) = self.worker.rx.try_recv() {
             match evt {
                 WorkerEvt::GraphLoaded { seq, result } => {
-                    if self.pending_graph != Some(seq) {
+                    if !self.pending.graph.accept(seq) {
                         continue;
                     }
-                    self.pending_graph = None;
                     match result {
                         Ok(loaded) => self.apply_loaded(loaded),
                         Err(e) => {
@@ -24,10 +23,9 @@ impl GraphApp {
                     }
                 }
                 WorkerEvt::ProjectCatalogLoaded { seq, result } => {
-                    if self.pending_project_catalog != Some(seq) {
+                    if !self.pending.project_catalog.accept(seq) {
                         continue;
                     }
-                    self.pending_project_catalog = None;
                     match result {
                         Ok(projects) => {
                             self.project_catalog = projects;
@@ -41,10 +39,9 @@ impl GraphApp {
                     project,
                     result,
                 } => {
-                    if self.pending_project_home != Some(seq) {
+                    if !self.pending.project_home.accept(seq) {
                         continue;
                     }
-                    self.pending_project_home = None;
                     if project != self.filter_wing.trim() {
                         continue;
                     }
@@ -65,10 +62,9 @@ impl GraphApp {
                     project,
                     result,
                 } => {
-                    if self.pending_library != Some(seq) {
+                    if !self.pending.library.accept(seq) {
                         continue;
                     }
-                    self.pending_library = None;
                     if !project_scope_matches(project.as_deref(), &self.filter_wing) {
                         continue;
                     }
@@ -82,7 +78,7 @@ impl GraphApp {
                                 self.library_selected_id = None;
                                 self.library_document = None;
                                 self.library_document_error = None;
-                                self.pending_library_document = None;
+                                self.pending.library_document.clear();
                             }
                             self.library_page = Some(page);
                             self.library_error = None;
@@ -111,10 +107,9 @@ impl GraphApp {
                     document_id,
                     result,
                 } => {
-                    if self.pending_library_document != Some(seq) {
+                    if !self.pending.library_document.accept(seq) {
                         continue;
                     }
-                    self.pending_library_document = None;
                     if self.library_selected_id.as_deref() != Some(document_id.as_str()) {
                         continue;
                     }
@@ -134,10 +129,9 @@ impl GraphApp {
                     project,
                     result,
                 } => {
-                    if self.pending_search != Some(seq) {
+                    if !self.pending.search.accept(seq) {
                         continue;
                     }
-                    self.pending_search = None;
                     if !project_scope_matches(project.as_deref(), &self.filter_wing) {
                         continue;
                     }
@@ -153,10 +147,9 @@ impl GraphApp {
                     }
                 }
                 WorkerEvt::OperationsLoaded { seq, result } => {
-                    if self.pending_operations != Some(seq) {
+                    if !self.pending.operations.accept(seq) {
                         continue;
                     }
-                    self.pending_operations = None;
                     match result {
                         Ok(snapshot) => {
                             self.operations_snapshot = Some(snapshot);
@@ -170,10 +163,9 @@ impl GraphApp {
                     }
                 }
                 WorkerEvt::JobsLoaded { seq, result } => {
-                    if self.pending_jobs != Some(seq) {
+                    if !self.pending.jobs.accept(seq) {
                         continue;
                     }
-                    self.pending_jobs = None;
                     self.operations_jobs_last_refresh = Some(Instant::now());
                     match result {
                         Ok(jobs) => {
@@ -184,10 +176,9 @@ impl GraphApp {
                     }
                 }
                 WorkerEvt::JobChanged { seq, result } => {
-                    if self.pending_operation_action != Some(seq) {
+                    if !self.pending.operation_action.accept(seq) {
                         continue;
                     }
-                    self.pending_operation_action = None;
                     match *result {
                         Ok(job) => {
                             if let Some(existing) = self
@@ -206,10 +197,9 @@ impl GraphApp {
                     }
                 }
                 WorkerEvt::MaintenanceCompleted { seq, result } => {
-                    if self.pending_operation_action != Some(seq) {
+                    if !self.pending.operation_action.accept(seq) {
                         continue;
                     }
-                    self.pending_operation_action = None;
                     match result {
                         Ok(result) => {
                             self.operations_last_result = Some(result);
@@ -225,10 +215,9 @@ impl GraphApp {
                     append,
                     result,
                 } => {
-                    if self.pending_revisions != Some(seq) {
+                    if !self.pending.revisions.accept(seq) {
                         continue;
                     }
-                    self.pending_revisions = None;
                     if self.revision.document_id.as_deref() != Some(document_id.as_str()) {
                         continue;
                     }
@@ -261,10 +250,9 @@ impl GraphApp {
                     revision,
                     result,
                 } => {
-                    if self.pending_revision_snapshot != Some(seq) {
+                    if !self.pending.revision_snapshot.accept(seq) {
                         continue;
                     }
-                    self.pending_revision_snapshot = None;
                     if self.revision.document_id.as_deref() != Some(document_id.as_str())
                         || self.revision.selected != Some(revision)
                     {
@@ -284,10 +272,9 @@ impl GraphApp {
                     from_revision,
                     result,
                 } => {
-                    if self.pending_revision_diff != Some(seq) {
+                    if !self.pending.revision_diff.accept(seq) {
                         continue;
                     }
-                    self.pending_revision_diff = None;
                     if self.revision.document_id.as_deref() != Some(document_id.as_str())
                         || self.revision.selected != Some(from_revision)
                     {
@@ -306,10 +293,9 @@ impl GraphApp {
                     document_id,
                     result,
                 } => {
-                    if self.pending_revision_restore != Some(seq) {
+                    if !self.pending.revision_restore.accept(seq) {
                         continue;
                     }
-                    self.pending_revision_restore = None;
                     if self.revision.document_id.as_deref() != Some(document_id.as_str()) {
                         continue;
                     }
@@ -336,10 +322,9 @@ impl GraphApp {
                     }
                 }
                 WorkerEvt::WikiCatalog { seq, result } => {
-                    if self.pending_catalog != Some(seq) {
+                    if !self.pending.catalog.accept(seq) {
                         continue;
                     }
-                    self.pending_catalog = None;
                     self.wiki_loaded = true;
                     match result {
                         Ok(mut pages) => {
@@ -367,15 +352,14 @@ impl GraphApp {
                     q,
                     result,
                 } => {
-                    let pending = if pane_b {
-                        &mut self.pending_page_b
+                    let slot = if pane_b {
+                        &mut self.pending.page_b
                     } else {
-                        &mut self.pending_page_a
+                        &mut self.pending.page_a
                     };
-                    if *pending != Some(seq) {
+                    if !slot.accept(seq) {
                         continue;
                     }
-                    *pending = None;
                     self.apply_page_opened(pane_b, push_history, q.as_deref(), result);
                 }
                 WorkerEvt::Backlinks {
@@ -383,10 +367,9 @@ impl GraphApp {
                     document_id,
                     result,
                 } => {
-                    if self.pending_backlinks != Some(seq) {
+                    if !self.pending.backlinks.accept(seq) {
                         continue;
                     }
-                    self.pending_backlinks = None;
                     if self.wiki_selected_id.as_deref() == Some(document_id.as_str()) {
                         match result {
                             Ok(backlinks) => {
@@ -406,10 +389,9 @@ impl GraphApp {
                     node_id,
                     result,
                 } => {
-                    if self.pending_content != Some(seq) {
+                    if !self.pending.content.accept(seq) {
                         continue;
                     }
-                    self.pending_content = None;
                     // Selection moved on meanwhile: drop the answer.
                     if self.selected.as_deref() != Some(node_id.as_str()) {
                         continue;
@@ -430,10 +412,9 @@ impl GraphApp {
                     selected,
                     result,
                 } => {
-                    if self.pending_expand != Some(seq) {
+                    if !self.pending.expand.accept(seq) {
                         continue;
                     }
-                    self.pending_expand = None;
                     let merged = match result {
                         Ok(v) => v,
                         Err(e) => {
@@ -459,17 +440,15 @@ impl GraphApp {
                     self.apply_local_topology(merged, /*reset_layout=*/ false);
                 }
                 WorkerEvt::SavedPage { seq, result } => {
-                    if self.pending_save != Some(seq) {
+                    if !self.pending.save.accept(seq) {
                         continue;
                     }
-                    self.pending_save = None;
                     self.apply_save_result(result);
                 }
                 WorkerEvt::Activity { seq, result } => {
-                    if self.pending_activity != Some(seq) {
+                    if !self.pending.activity.accept(seq) {
                         continue;
                     }
-                    self.pending_activity = None;
                     self.activity_last_refresh = Some(Instant::now());
                     match result {
                         Ok(items) => {

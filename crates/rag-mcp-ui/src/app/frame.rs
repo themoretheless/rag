@@ -11,7 +11,7 @@ impl eframe::App for GraphApp {
         if self.mode == ViewMode::Activity
             && self.operations_tab == OperationsTab::Activity
             && self.activity_auto_refresh
-            && self.pending_activity.is_none()
+            && self.pending.activity.is_none()
             && self
                 .activity_last_refresh
                 .is_none_or(|at| at.elapsed() >= Duration::from_secs(1))
@@ -20,7 +20,7 @@ impl eframe::App for GraphApp {
         }
         if self.mode == ViewMode::Activity
             && self.operations_tab == OperationsTab::Jobs
-            && self.pending_jobs.is_none()
+            && self.pending.jobs.is_none()
             && self
                 .operations_jobs_last_refresh
                 .is_none_or(|at| at.elapsed() >= Duration::from_secs(2))
@@ -51,7 +51,7 @@ impl eframe::App for GraphApp {
                 project: &mut self.filter_wing,
                 projects: &project_options,
                 project_enabled: project_switch_enabled,
-                project_loading: self.pending_project_catalog.is_some(),
+                project_loading: self.pending.project_catalog.is_some(),
                 project_error: project_catalog_error.as_deref(),
                 search_enabled: connected,
                 connected,
