@@ -9,6 +9,7 @@ pub mod insights;
 pub mod library;
 pub mod operations;
 pub mod revisions;
+pub mod scene;
 pub mod search;
 pub mod shell;
 pub mod status;

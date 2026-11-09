@@ -13,7 +13,8 @@ use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use rag_mcp_core::{NodeKind, RelType};
 
 use crate::adapter::{UiGraph, UiNode};
-use crate::layout::{fit_transform, PosCache};
+use crate::layout::fit_bounds;
+use crate::ui::scene::GraphScene;
 use crate::ui::theme;
 
 pub struct CanvasOut {
@@ -30,10 +31,12 @@ struct ScreenNode<'a> {
 }
 
 /// Draw edges then nodes; pan via drag on background; zoom via scroll.
+///
+/// `scene` must have been built from this `graph` (same node order).
 pub fn draw_canvas(
     ui: &mut Ui,
     graph: &UiGraph,
-    positions: &PosCache,
+    scene: &GraphScene,
     selected: Option<&str>,
     pan: &mut Vec2,
     zoom: &mut f32,
@@ -49,8 +52,8 @@ pub fn draw_canvas(
     // Subtle canvas background so empty vs graph is obvious.
     painter.rect_filled(rect, 0.0, Color32::from_rgb(10, 14, 24));
 
-    if *need_fit && !positions.is_empty() {
-        let (offset, scale) = fit_transform(positions, rect);
+    if *need_fit && scene.bounds.is_some() {
+        let (offset, scale) = fit_bounds(scene.bounds, rect);
         *pan = offset;
         *zoom = overview_camera_zoom(scale, graph.nodes.len());
         *need_fit = false;
@@ -76,14 +79,12 @@ pub fn draw_canvas(
 
     // --- edges (under nodes) ---
     for e in &graph.edges {
-        let Some(a) = positions.get(&e.source_id) else {
+        let (Some(a), Some(b)) = (scene.positions[e.source_idx], scene.positions[e.target_idx])
+        else {
             continue;
         };
-        let Some(b) = positions.get(&e.target_id) else {
-            continue;
-        };
-        let sa = to_screen(*a);
-        let sb = to_screen(*b);
+        let sa = to_screen(a);
+        let sb = to_screen(b);
         // Clip cheaply: skip if segment AABB misses expanded rect.
         if !segment_near_rect(sa, sb, rect) {
             continue;
@@ -119,11 +120,11 @@ pub fn draw_canvas(
 
     // Precompute screen centers + radii for hit test and paint.
     let mut screen_nodes: Vec<ScreenNode<'_>> = Vec::with_capacity(graph.nodes.len());
-    for node in &graph.nodes {
-        let Some(world) = positions.get(&node.id) else {
+    for (node, world) in graph.nodes.iter().zip(&scene.positions) {
+        let Some(world) = *world else {
             continue;
         };
-        let center = to_screen(*world);
+        let center = to_screen(world);
         // Size: base + k * log1p(degree), scaled mildly with zoom (EGUI_GRAPH_VIEW §7.2).
         let radius = if overview_lod {
             2.5

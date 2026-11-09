@@ -31,6 +31,10 @@ pub struct UiEdge {
     pub id: String,
     pub source_id: String,
     pub target_id: String,
+    /// Endpoints as indices into [`UiGraph::nodes`], set by [`adapt`] so
+    /// per-frame code never looks a node up by id.
+    pub source_idx: usize,
+    pub target_idx: usize,
     pub rel_type: String,
     /// `rel_type` parsed once; `None` for relations without dedicated styling.
     pub rel: Option<RelType>,
@@ -278,6 +282,17 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         });
         ui_edges.truncate(edge_cap);
         truncated_edges = true;
+    }
+
+    // Every drawn edge joins two kept nodes; record where they sit in `nodes`.
+    let node_index: HashMap<&str, usize> = kept_nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.as_str(), index))
+        .collect();
+    for edge in &mut ui_edges {
+        edge.source_idx = node_index[edge.source_id.as_str()];
+        edge.target_idx = node_index[edge.target_id.as_str()];
     }
 
     // Undirected adjacency for depth / degree (post-collapse, post-cap).
@@ -574,6 +589,7 @@ fn truncation_note(
 
 /// Collapse multi-edges for canvas by (source_id, target_id, rel_type).
 /// One stroke; multi_count > 1; weight = max among members; full members kept for detail.
+/// Endpoint indices are left at 0 here; [`adapt`] fills them once the node set is final.
 pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
     let mut map: HashMap<(String, String, String), UiEdge> = HashMap::new();
     for e in edges {
@@ -591,6 +607,8 @@ pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
                 id: e.id.clone(),
                 source_id: e.source_id.clone(),
                 target_id: e.target_id.clone(),
+                source_idx: 0,
+                target_idx: 0,
                 rel_type: e.rel_type.clone(),
                 rel: RelType::parse(&e.rel_type),
                 weight: e.weight,

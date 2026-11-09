@@ -49,6 +49,7 @@ use crate::ui::operations::{
     draw_jobs, draw_maintenance, BackupForm, OperationsAction, OperationsTab, SyncJobForm,
 };
 use crate::ui::revisions::{draw_revisions_workspace, RevisionsAction, RevisionsView};
+use crate::ui::scene::GraphScene;
 use crate::ui::search::{draw_search_workspace, SearchAction};
 use crate::ui::shell::{draw_rail, draw_topbar, ShellRoute, TopbarState};
 use crate::ui::status::{draw_status, StatusView};
@@ -829,7 +830,7 @@ impl GraphApp {
         self.graph.full_view_rev += 1;
         self.graph.local_view = None;
         self.graph.local_truncated = false;
-        self.graph.ui_graph = None;
+        self.graph.set_ui_graph(None);
         self.graph.positions.clear();
         self.graph.layout_ready = false;
         self.graph.need_fit = true;

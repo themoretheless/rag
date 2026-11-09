@@ -265,7 +265,8 @@ pub(in crate::app) fn body(app: &mut GraphApp, root_ui: &mut egui::Ui, _ctx: &eg
             }
             return;
         }
-        let Some(graph) = app.graph.ui_graph.as_ref() else {
+        let (Some(graph), Some(scene)) = (app.graph.ui_graph.as_ref(), app.graph.scene.as_ref())
+        else {
             let stats = app.empty_stats();
             draw_empty_banner(ui, EmptyKind::MissingSeed, None, stats.as_ref());
             return;
@@ -273,7 +274,7 @@ pub(in crate::app) fn body(app: &mut GraphApp, root_ui: &mut egui::Ui, _ctx: &eg
         let out = draw_canvas(
             ui,
             graph,
-            &app.graph.positions,
+            scene,
             app.graph.selected.as_deref(),
             &mut app.graph.pan,
             &mut app.graph.zoom,

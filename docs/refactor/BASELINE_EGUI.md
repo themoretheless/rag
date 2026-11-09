@@ -57,3 +57,14 @@ Observations that set the order of work:
   length grows with zoom.
 - Every edge costs two `HashMap<String, Pos2>` lookups per frame, and the
   legend, the hover tooltip and the hit-test each rescan all nodes or edges.
+
+## Results per step
+
+Times in ms, lower of two runs. "scene" is the per-graph draw data
+(`GraphScene`) that is now built once when the graph or its layout changes
+instead of being recomputed inside every frame.
+
+| Step | adapt | grid | radial | scene build | frame fitted | frame zoomed | detail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 83.8 | 1.9 | 12.1 | – | 45.2 | 148.3 | 3.6 |
+| 1. Positions and edge endpoints by node index | 87.2 | 1.9 | 12.2 | 0.15 | 40.1 | 140.5 | 3.4 |

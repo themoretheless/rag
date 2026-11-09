@@ -219,7 +219,10 @@ pub(super) struct GraphViewState {
     pub(super) local_view: Option<GraphView>,
     /// Exact local BFS budget truncation, independent from server/adapter caps.
     pub(super) local_truncated: bool,
+    /// Drawn graph. Replace it only through [`GraphViewState::set_ui_graph`].
     pub(super) ui_graph: Option<UiGraph>,
+    /// Draw data for `ui_graph` under the current `positions`.
+    pub(super) scene: Option<GraphScene>,
     pub(super) positions: PosCache,
     pub(super) layout_ready: bool,
     pub(super) need_fit: bool,
@@ -264,6 +267,7 @@ impl GraphViewState {
             local_view: None,
             local_truncated: false,
             ui_graph: None,
+            scene: None,
             positions: PosCache::default(),
             layout_ready: false,
             need_fit: true,
@@ -276,5 +280,14 @@ impl GraphViewState {
             pan: Vec2::ZERO,
             zoom: 1.0,
         }
+    }
+
+    /// Show `graph` (already laid out in `positions`) or nothing, keeping the
+    /// per-graph draw data in step with it.
+    pub(super) fn set_ui_graph(&mut self, graph: Option<UiGraph>) {
+        self.scene = graph
+            .as_ref()
+            .map(|graph| GraphScene::build(graph, &self.positions));
+        self.ui_graph = graph;
     }
 }

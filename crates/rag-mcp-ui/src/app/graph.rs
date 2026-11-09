@@ -57,7 +57,7 @@ impl GraphApp {
                 self.graph.seed_error = Some(e);
                 self.graph.local_view = None;
                 self.graph.local_truncated = false;
-                self.graph.ui_graph = None;
+                self.graph.set_ui_graph(None);
                 self.graph.layout_ready = false;
             }
         }
@@ -121,7 +121,7 @@ impl GraphApp {
         let Some(full) = self.graph.full_view.as_ref() else {
             self.graph.local_view = None;
             self.graph.local_truncated = false;
-            self.graph.ui_graph = None;
+            self.graph.set_ui_graph(None);
             self.graph.layout_ready = false;
             return;
         };
@@ -130,7 +130,7 @@ impl GraphApp {
             if self.graph.lens == GraphLens::Neighborhood {
                 self.graph.local_view = None;
                 self.graph.local_truncated = false;
-                self.graph.ui_graph = None;
+                self.graph.set_ui_graph(None);
                 self.graph.positions.clear();
                 self.graph.layout_ready = false;
                 self.graph.need_fit = true;
@@ -154,7 +154,7 @@ impl GraphApp {
             overview_grid_place(&overview, &mut self.graph.positions);
             self.graph.local_view = None;
             self.graph.local_truncated = false;
-            self.graph.ui_graph = Some(overview);
+            self.graph.set_ui_graph(Some(overview));
             self.graph.need_fit = true;
             self.graph.layout_ready = true;
             return;
@@ -187,7 +187,7 @@ impl GraphApp {
         self.graph.local_view = Some(local);
 
         if ui_graph.nodes.is_empty() {
-            self.graph.ui_graph = Some(ui_graph);
+            self.graph.set_ui_graph(Some(ui_graph));
             self.graph.layout_ready = false;
             return;
         }
@@ -199,7 +199,7 @@ impl GraphApp {
             // Expand or filter: keep existing positions; place newcomers near neighbors.
             place_missing_near_neighbors(&ui_graph, &mut self.graph.positions);
         }
-        self.graph.ui_graph = Some(ui_graph);
+        self.graph.set_ui_graph(Some(ui_graph));
         self.graph.layout_ready = true;
     }
 

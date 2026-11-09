@@ -21,6 +21,7 @@ use crate::adapter::{adapt, AdaptOptions, GraphLens, UiGraph};
 use crate::layout::{overview_grid_place, radial_place, PosCache};
 use crate::ui::canvas::draw_canvas;
 use crate::ui::detail::{draw_detail, DetailContentState};
+use crate::ui::scene::GraphScene;
 
 const NODES: usize = 5_000;
 const EDGES: usize = 20_000;
@@ -166,7 +167,7 @@ struct Camera {
 fn canvas_frame(
     ctx: &egui::Context,
     graph: &UiGraph,
-    positions: &PosCache,
+    scene: &GraphScene,
     selected: Option<&str>,
     camera: &mut Camera,
     pointer: Pos2,
@@ -176,7 +177,7 @@ fn canvas_frame(
             draw_canvas(
                 ui,
                 graph,
-                positions,
+                scene,
                 selected,
                 &mut camera.pan,
                 &mut camera.zoom,
@@ -239,6 +240,10 @@ fn graph_pipeline_benchmark() {
         std::hint::black_box(cache.len());
     });
     overview_grid_place(&graph, &mut positions);
+    let scene_time = median(15, || {
+        std::hint::black_box(GraphScene::build(&graph, &positions));
+    });
+    let scene = GraphScene::build(&graph, &positions);
 
     // Hub with the most incident edges: worst case for the detail panel.
     let hub = graph
@@ -258,11 +263,11 @@ fn graph_pipeline_benchmark() {
         need_fit: true,
     };
     for _ in 0..3 {
-        canvas_frame(&ctx, &graph, &positions, Some(&hub), &mut fitted, center);
+        canvas_frame(&ctx, &graph, &scene, Some(&hub), &mut fitted, center);
     }
     let fitted_zoom = fitted.zoom;
     let frame_fitted = median(25, || {
-        canvas_frame(&ctx, &graph, &positions, Some(&hub), &mut fitted, center);
+        canvas_frame(&ctx, &graph, &scene, Some(&hub), &mut fitted, center);
     });
 
     // Zoomed in 8x around the centre: most of the graph is culled.
@@ -272,10 +277,10 @@ fn graph_pipeline_benchmark() {
         need_fit: false,
     };
     for _ in 0..3 {
-        canvas_frame(&ctx, &graph, &positions, Some(&hub), &mut zoomed, center);
+        canvas_frame(&ctx, &graph, &scene, Some(&hub), &mut zoomed, center);
     }
     let frame_zoomed = median(25, || {
-        canvas_frame(&ctx, &graph, &positions, Some(&hub), &mut zoomed, center);
+        canvas_frame(&ctx, &graph, &scene, Some(&hub), &mut zoomed, center);
     });
 
     let detail_ctx = egui::Context::default();
@@ -294,6 +299,7 @@ fn graph_pipeline_benchmark() {
     println!("  adapt()                         {}", ms(adapt_time));
     println!("  layout: overview grid           {}", ms(grid_time));
     println!("  layout: radial from seed        {}", ms(radial_time));
+    println!("  scene build (per graph change)  {}", ms(scene_time));
     println!("  canvas frame, fitted overview   {}", ms(frame_fitted));
     println!("  canvas frame, zoomed in 8x      {}", ms(frame_zoomed));
     println!("  detail panel frame (hub node)   {}", ms(detail_time));
