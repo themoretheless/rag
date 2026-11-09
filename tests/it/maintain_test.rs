@@ -17,28 +17,18 @@ use rag_mcp::{
     plan_maintenance, ActionOutcomeKind, AnalyzeOptions, ApplyPlanOptions, CompressOptions, Config,
     MaintainCompressReport, MaintenanceAction, PlanOptions, PlanSource, Store,
 };
-use tempfile::TempDir;
+use rag_mcp::testkit::open_temp_store;
 
 const DIMS: usize = 32;
 
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("maintain_test.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
-
+/// Shared baseline with small chunks and tight LLM caps for the fake completer.
 fn test_config(db_path: std::path::PathBuf) -> Config {
     Config {
-        db_path,
-        embedding_model: "mock".into(),
-        embedding_dims: DIMS,
         chunk_size: 200,
         chunk_overlap: 20,
-        llm_enabled: false,
         llm_timeout_secs: 30,
         llm_max_tokens: 512,
-        ..Config::for_tests()
+        ..rag_mcp::testkit::test_config(db_path, DIMS)
     }
 }
 

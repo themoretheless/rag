@@ -4261,6 +4261,7 @@ dependencies = [
  "libc",
  "notify",
  "quick-xml 0.42.0",
+ "rag-mcp",
  "rag-mcp-core",
  "rag-mcp-markup",
  "regex",

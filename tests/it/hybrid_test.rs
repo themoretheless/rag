@@ -18,20 +18,13 @@ use rag_mcp::db::search::{search, DiversityMode, SearchQuery};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document, SearchMode};
 use rag_mcp::Store;
-use tempfile::TempDir;
+use rag_mcp::testkit::open_temp_store;
 use uuid::Uuid;
 
 const DIMS: usize = 32;
 /// Small chunks so one document can yield multiple hits for diversity tests.
 const CHUNK_SIZE: usize = 80;
 const CHUNK_OVERLAP: usize = 10;
-
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("hybrid.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
 
 /// Chunk + mock-embed + persist. Returns `(document_id, chunk_count)`.
 async fn ingest_text(

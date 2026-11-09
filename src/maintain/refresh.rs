@@ -1144,11 +1144,10 @@ mod tests {
     use super::*;
     use crate::embeddings::MockEmbedder;
     use crate::models::{Chunk, SearchMode};
-    use crate::testkit::SeedDoc;
+    use crate::testkit::{test_config, SeedDoc};
     use crate::wiki::write_wiki_page;
     use async_trait::async_trait;
     use chrono::Utc;
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Seeded body the failing embedder refuses.
@@ -1194,16 +1193,6 @@ mod tests {
 
         fn dimensions(&self) -> usize {
             self.dims
-        }
-    }
-
-    fn test_config(db_path: PathBuf, dims: usize) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".to_string(),
-            embedding_dims: dims,
-            llm_enabled: false,
-            ..Config::for_tests()
         }
     }
 

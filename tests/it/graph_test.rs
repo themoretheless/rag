@@ -8,19 +8,12 @@ use rag_mcp::chunking::{from_config, Chunker};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document};
 use rag_mcp::{rebuild_document_graph, Store, REL_TAGGED, REL_WIKILINK};
-use tempfile::TempDir;
+use rag_mcp::testkit::open_temp_store;
 use uuid::Uuid;
 
 const DIMS: usize = 32;
 const CHUNK_SIZE: usize = 800;
 const CHUNK_OVERLAP: usize = 120;
-
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("graph.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
 
 /// Chunk + mock-embed + persist a document, then rebuild its graph slice.
 /// Returns `(document_id, graph_node_id, edge_count)`.

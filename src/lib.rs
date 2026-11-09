@@ -55,8 +55,9 @@ pub mod source_scan;
 pub mod source_sync;
 pub mod storage;
 pub mod telemetry;
-#[cfg(test)]
-pub(crate) mod testkit;
+/// Test fixtures; compiled only for tests or with the `testkit` feature.
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 pub mod util;
 pub mod watch;
 pub mod web_ingest;

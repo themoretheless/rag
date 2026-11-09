@@ -22,7 +22,7 @@ use rag_mcp::models::{Chunk, Document, SearchMode};
 use rag_mcp::query_transform::TransformLlm;
 use rag_mcp::retrieval::{execute_search_with_llm, SearchCommand};
 use rag_mcp::{Config, Store};
-use tempfile::TempDir;
+use rag_mcp::testkit::open_temp_store;
 use uuid::Uuid;
 
 const DIMS: usize = 32;
@@ -56,12 +56,6 @@ impl TransformLlm for FailingLlm {
     fn cache_identity(&self) -> String {
         "stub/failing-itest".into()
     }
-}
-
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("qt.duckdb")).expect("open store");
-    (dir, store)
 }
 
 fn test_config(store: &Store) -> Config {

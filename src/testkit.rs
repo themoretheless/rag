@@ -1,21 +1,27 @@
-//! Shared fixtures for in-crate unit tests.
+//! Shared fixtures for unit tests and, behind the `testkit` feature, for the
+//! integration tests in `tests/it`.
 //!
-//! One place builds seeded documents so a new `Document`/`Chunk` field is a
-//! single edit. Per-module helpers stay as thin wrappers that name their
-//! deliberate differences (kind, hash, scope) through the builder.
+//! One place builds seeded documents and the baseline test `Config`, so a new
+//! `Document`/`Chunk`/`Config` field is a single edit. Per-module helpers stay
+//! as thin wrappers that name their deliberate differences (kind, hash, scope,
+//! chunk sizes) through the builder or struct-update syntax.
+//!
+//! Not part of the supported API: the module only exists under `cfg(test)` or
+//! `--features testkit`.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 
+use crate::config::Config;
 use crate::db::Store;
 use crate::models::{Chunk, Document};
 use crate::util::content_hash;
 
 /// A document with exactly one chunk, inserted through the plain Store API
 /// (no graph extraction, no FTS refresh).
-pub(crate) struct SeedDoc<'a> {
+pub struct SeedDoc<'a> {
     id: &'a str,
     title: &'a str,
     content: &'a str,
@@ -32,7 +38,7 @@ pub(crate) struct SeedDoc<'a> {
 
 impl<'a> SeedDoc<'a> {
     /// `layer=raw`, `kind=document`, `uri=text://{id}`, embedding `[0.1; 8]`, no hash.
-    pub(crate) fn new(id: &'a str, title: &'a str, content: &'a str) -> Self {
+    pub fn new(id: &'a str, title: &'a str, content: &'a str) -> Self {
         Self {
             id,
             title,
@@ -49,23 +55,23 @@ impl<'a> SeedDoc<'a> {
         }
     }
 
-    pub(crate) fn layer(mut self, layer: &'a str) -> Self {
+    pub fn layer(mut self, layer: &'a str) -> Self {
         self.layer = layer;
         self
     }
 
     /// Explicit kind; without it, `wiki` layer documents get `kind=wiki`.
-    pub(crate) fn kind(mut self, kind: &'a str) -> Self {
+    pub fn kind(mut self, kind: &'a str) -> Self {
         self.kind = Some(kind);
         self
     }
 
-    pub(crate) fn uri(mut self, uri: &'a str) -> Self {
+    pub fn uri(mut self, uri: &'a str) -> Self {
         self.uri = Some(uri);
         self
     }
 
-    pub(crate) fn scope(
+    pub fn scope(
         mut self,
         wing: Option<&'a str>,
         room: Option<&'a str>,
@@ -77,24 +83,24 @@ impl<'a> SeedDoc<'a> {
         self
     }
 
-    pub(crate) fn embedding(mut self, embedding: Vec<f32>) -> Self {
+    pub fn embedding(mut self, embedding: Vec<f32>) -> Self {
         self.embedding = embedding;
         self
     }
 
     /// Store `content_hash(content)` on the document row.
-    pub(crate) fn hashed(mut self) -> Self {
+    pub fn hashed(mut self) -> Self {
         self.with_hash = true;
         self
     }
 
     /// Fixed `created_at`/`updated_at` (default: now) for order-sensitive tests.
-    pub(crate) fn created_at(mut self, at: DateTime<Utc>) -> Self {
+    pub fn created_at(mut self, at: DateTime<Utc>) -> Self {
         self.created_at = Some(at);
         self
     }
 
-    pub(crate) fn insert(self, store: &Store) {
+    pub fn insert(self, store: &Store) {
         let now = self.created_at.unwrap_or_else(Utc::now);
         let kind = self.kind.unwrap_or(if self.layer == "wiki" {
             "wiki"
@@ -146,7 +152,7 @@ thread_local! {
 /// For fixtures that return only handles (state, store) and cannot hand the
 /// `TempDir` guard back; `tempdir().keep()` there leaked one database per test
 /// run into the system temp directory.
-pub(crate) fn scratch_dir() -> PathBuf {
+pub fn scratch_dir() -> PathBuf {
     let dir = tempfile::tempdir().expect("create scratch dir");
     let path = dir.path().to_path_buf();
     SCRATCH_DIRS.with(|dirs| dirs.borrow_mut().push(dir));
@@ -154,6 +160,27 @@ pub(crate) fn scratch_dir() -> PathBuf {
 }
 
 /// A fresh Store in a [`scratch_dir`], removed when the test's thread ends.
-pub(crate) fn temp_store() -> Store {
+pub fn temp_store() -> Store {
     Store::open(&scratch_dir().join("test.duckdb")).expect("open temp store")
+}
+
+/// A fresh Store plus the guard that owns its directory, for tests that also
+/// need the directory (extra files, a second open, `Config::db_path`).
+pub fn open_temp_store() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("test.duckdb")).expect("open store");
+    (dir, store)
+}
+
+/// Baseline config for tests that embed with the mock provider and must not
+/// reach an LLM: `embedding_model = "mock"`, `llm_enabled = false`, everything
+/// else from [`Config::for_tests`]. Override the rest with struct-update syntax.
+pub fn test_config(db_path: PathBuf, dims: usize) -> Config {
+    Config {
+        db_path,
+        embedding_model: "mock".into(),
+        embedding_dims: dims,
+        llm_enabled: false,
+        ..Config::for_tests()
+    }
 }

@@ -10,17 +10,10 @@ use rag_mcp::db::search::search_chunks;
 use rag_mcp::embeddings::MockEmbedder;
 use rag_mcp::ingest::{IngestFileCommand, IngestService};
 use rag_mcp::models::SearchMode;
-use rag_mcp::{Config, Store};
-use tempfile::TempDir;
+use rag_mcp::Config;
+use rag_mcp::testkit::open_temp_store;
 
 const DIMS: usize = 32;
-
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("file_ingest.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
 
 fn test_config(db_path: std::path::PathBuf, ingest_roots: Vec<std::path::PathBuf>) -> Config {
     Config {
@@ -138,7 +131,7 @@ async fn ingest_docx_fixture_is_searchable_with_heading_metadata() {
     let fixture = dir.path().join("runbook.docx");
     write_docx_fixture(&fixture);
     let config = test_config(
-        dir.path().join("file_ingest.duckdb"),
+        store.path().to_path_buf(),
         vec![dir.path().to_path_buf()],
     );
     let embedder: Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
@@ -200,7 +193,7 @@ async fn ingest_html_fixture_drops_boilerplate_and_is_searchable() {
     let fixture = dir.path().join("page.html");
     write_html_fixture(&fixture);
     let config = test_config(
-        dir.path().join("file_ingest.duckdb"),
+        store.path().to_path_buf(),
         vec![dir.path().to_path_buf()],
     );
     let embedder: Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =
@@ -254,7 +247,7 @@ async fn ingest_broken_docx_surfaces_per_file_error() {
     let fixture = dir.path().join("broken.docx");
     std::fs::write(&fixture, b"definitely not a zip archive").expect("write broken docx");
     let config = test_config(
-        dir.path().join("file_ingest.duckdb"),
+        store.path().to_path_buf(),
         vec![dir.path().to_path_buf()],
     );
     let embedder: Arc<dyn rag_mcp::embeddings::EmbeddingProvider> =

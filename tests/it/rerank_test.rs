@@ -14,16 +14,10 @@ use rag_mcp::models::{Chunk, Document, SearchMode};
 use rag_mcp::rerank::RerankProviderKind;
 use rag_mcp::retrieval::{execute_search, SearchCommand};
 use rag_mcp::{Config, Store};
-use tempfile::TempDir;
+use rag_mcp::testkit::open_temp_store;
 use uuid::Uuid;
 
 const DIMS: usize = 32;
-
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("rerank.duckdb")).expect("open store");
-    (dir, store)
-}
 
 /// Chunk + mock-embed + persist as a single chunk per document.
 async fn ingest_text(store: &Store, embedder: &MockEmbedder, text: &str, title: &str, uri: &str) {

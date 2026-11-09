@@ -679,19 +679,8 @@ fn load_docs_ordered(store: &Store, ids: &[String]) -> Result<Vec<Document>> {
 mod tests {
     use super::*;
     use crate::models::SearchMode;
-    use crate::testkit::SeedDoc;
+    use crate::testkit::{test_config, SeedDoc};
 
-    use std::path::PathBuf;
-
-    fn test_config(db_path: PathBuf) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".into(),
-            embedding_dims: 8,
-            llm_enabled: false,
-            ..Config::for_tests()
-        }
-    }
 
     fn seed_doc(store: &Store, id: &str, title: &str, content: &str, layer: &str, emb: Vec<f32>) {
         SeedDoc::new(id, title, content)
@@ -753,7 +742,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let mut opts = CompressOptions::from_config(&cfg);
         opts.level = 9;
         assert!(maintain_compress(&store, &cfg, &opts).is_err());
@@ -764,7 +753,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l0.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         seed_doc(&store, "d1", "A", "hello world body", "wiki", vec![0.1; 8]);
 
         let mut opts = CompressOptions::from_config(&cfg);
@@ -792,7 +781,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l1.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let body = "identical wiki body for compress";
         seed_doc(&store, "w1", "Keep", body, "wiki", vec![0.2; 8]);
         // slight delay not needed; ids order: pick_canonical uses created_at then id
@@ -843,7 +832,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("raw.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let body = "raw twin content";
         seed_doc(&store, "r1", "RawA", body, "raw", vec![0.3; 8]);
         seed_doc(&store, "r2", "RawB", body, "raw", vec![0.3; 8]);
@@ -876,7 +865,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rawdel.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let body = "raw twin hard delete";
         seed_doc(&store, "r1", "RawA", body, "raw", vec![0.3; 8]);
         seed_doc(&store, "r2", "RawB", body, "raw", vec![0.3; 8]);
@@ -895,7 +884,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l2list.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         // Same embedding → cosine 1.0
         let emb = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         seed_doc(
@@ -927,7 +916,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l2merge.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let emb = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         seed_doc(
             &store,
@@ -956,7 +945,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l2-migration-incomplete.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let emb = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         seed_doc(
             &store,
@@ -1014,7 +1003,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("l1dry.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let body = "dup dry run body";
         seed_doc(&store, "w1", "A", body, "wiki", vec![0.1; 8]);
         seed_doc(&store, "w2", "B", body, "wiki", vec![0.1; 8]);
@@ -1039,7 +1028,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("final-fts-failure.duckdb");
         let store = Store::open(&path).unwrap();
-        let mut cfg = test_config(path);
+        let mut cfg = test_config(path, 8);
         let body = "same durable compression body";
         seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
         seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
@@ -1077,7 +1066,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("final-fts-panic.duckdb");
         let store = Store::open(&path).unwrap();
-        let mut cfg = test_config(path);
+        let mut cfg = test_config(path, 8);
         let body = "same durable compression panic body";
         seed_doc(&store, "keep", "Keep", body, "wiki", vec![0.2; 8]);
         seed_doc(&store, "drop", "Drop", body, "wiki", vec![0.2; 8]);
@@ -1110,7 +1099,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("final-fts-panic-noop.duckdb");
         let store = Store::open(&path).unwrap();
-        let mut cfg = test_config(path);
+        let mut cfg = test_config(path, 8);
         seed_doc(
             &store,
             "only",

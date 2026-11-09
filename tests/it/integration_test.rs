@@ -10,8 +10,8 @@ use rag_mcp::chunking::{from_config, Chunker};
 use rag_mcp::db::search::search_chunks;
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Chunk, Document};
+use rag_mcp::testkit::open_temp_store;
 use rag_mcp::Store;
-use tempfile::TempDir;
 use uuid::Uuid;
 
 const DIMS: usize = 32;
@@ -19,13 +19,6 @@ const CHUNK_SIZE: usize = 800;
 const CHUNK_OVERLAP: usize = 120;
 
 /// Open a store whose file lives under a keep-alive temp directory.
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("integration.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
-
 /// Chunk + mock-embed + persist a document. Returns `(document_id, chunk_count)`.
 async fn ingest_text(
     store: &Store,

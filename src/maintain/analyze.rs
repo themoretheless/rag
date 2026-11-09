@@ -500,19 +500,9 @@ mod tests {
         assert_eq!(AnalysisCode::from("stale_wiki"), AnalysisCode::StaleWiki);
     }
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};
+    use crate::testkit::test_config;
     use crate::util::content_hash;
     use chrono::Duration;
-    use std::path::PathBuf;
-
-    fn test_config(db_path: PathBuf) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".into(),
-            embedding_dims: 8,
-            llm_enabled: false,
-            ..Config::for_tests()
-        }
-    }
 
     fn doc(id: &str, uri: &str, title: &str, content: &str, layer: &str) -> Document {
         let now = Utc::now();
@@ -540,7 +530,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         let mut opts = AnalyzeOptions::from_config(&cfg);
         opts.log_ops = true;
         let report = analyze_corpus(&store, &cfg, &opts).unwrap();
@@ -558,7 +548,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dups.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
 
         let body = "identical body for dedupe";
         store
@@ -596,7 +586,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("near-dups-migration-incomplete.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         for id in ["a", "b"] {
             let document = doc(
                 id,
@@ -637,7 +627,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stale.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
 
         let older = Utc::now() - Duration::days(5);
         let newer = Utc::now();
@@ -697,7 +687,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing-source.duckdb");
         let store = Store::open(&path).unwrap();
-        let config = test_config(path);
+        let config = test_config(path, 8);
         let mut wiki = doc(
             "wiki1",
             "wiki://summary",

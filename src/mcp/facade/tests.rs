@@ -105,14 +105,11 @@ impl EmbeddingProvider for GatedEmbedder {
     }
 }
 
+/// Shared baseline plus the ingest allowlist these tests vary.
 fn test_config(db_path: PathBuf, roots: Vec<PathBuf>, dims: usize) -> Config {
     Config {
-        db_path,
-        embedding_model: "mock".to_string(),
-        embedding_dims: dims,
         ingest_roots: roots,
-        llm_enabled: false,
-        ..Config::for_tests()
+        ..crate::testkit::test_config(db_path, dims)
     }
 }
 

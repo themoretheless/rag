@@ -11,29 +11,19 @@ use rag_mcp::wiki::{
     self, assert_content_mutable, FileAnswerCitation, FileAnswerRequest, WikiPageWrite,
 };
 use rag_mcp::{
-    file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config, Store,
+    file_answer, get_wiki_page, list_wiki_pages, write_wiki_page, AppError, Config,
     LAYER_RAW, LAYER_WIKI,
 };
-use tempfile::TempDir;
+use rag_mcp::testkit::open_temp_store;
 
 const DIMS: usize = 32;
 
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("wiki_test.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
-
+/// Shared baseline with small chunks so short pages still split.
 fn test_config(dims: usize) -> Config {
     Config {
-        db_path: std::path::PathBuf::from("./rag.duckdb"),
-        embedding_model: "mock".into(),
-        embedding_dims: dims,
         chunk_size: 200,
         chunk_overlap: 20,
-        llm_enabled: false,
-        ..Config::for_tests()
+        ..rag_mcp::testkit::test_config("./rag.duckdb".into(), dims)
     }
 }
 

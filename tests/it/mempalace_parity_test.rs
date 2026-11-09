@@ -4,35 +4,17 @@
 //! temporal KG (add/query/invalidate/supersede), diary write/read, wake_up,
 //! and tunnel create/follow. Uses a temp DuckDB file and the mock embedder.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::models::{Document, GraphNode};
 use rag_mcp::StatusReport;
-use rag_mcp::{content_hash, diary_read, diary_write, wake_up, Config, Store, REL_TUNNEL};
-use tempfile::TempDir;
+use rag_mcp::{content_hash, diary_read, diary_write, wake_up, Store, REL_TUNNEL};
+use rag_mcp::testkit::{open_temp_store, test_config};
 use uuid::Uuid;
 
 const DIMS: usize = 32;
-
-fn open_temp_store() -> (TempDir, Store) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("mempalace_parity.duckdb");
-    let store = Store::open(&path).expect("open store");
-    (dir, store)
-}
-
-fn test_config(db_path: PathBuf, dims: usize) -> Config {
-    Config {
-        db_path,
-        embedding_model: "mock".to_string(),
-        embedding_dims: dims,
-        llm_enabled: false,
-        ..Config::for_tests()
-    }
-}
 
 fn ts(y: i32, m: u32, d: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, 0, 0, 0).unwrap()
@@ -427,8 +409,8 @@ fn kg_add_query_invalidate_supersede() {
 
 #[tokio::test]
 async fn diary_write_read_and_wake_up() {
-    let (dir, store) = open_temp_store();
-    let config = test_config(dir.path().join("mempalace_parity.duckdb"), DIMS);
+    let (_dir, store) = open_temp_store();
+    let config = test_config(store.path().to_path_buf(), DIMS);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(DIMS));
 
     let w1 = diary_write(

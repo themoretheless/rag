@@ -421,18 +421,8 @@ mod tests {
 
     use super::*;
     use crate::embeddings::MockEmbedder;
+    use crate::testkit::test_config;
 
-    use std::path::PathBuf;
-
-    fn test_config(db_path: PathBuf, dims: usize) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".to_string(),
-            embedding_dims: dims,
-            llm_enabled: false,
-            ..Config::for_tests()
-        }
-    }
 
     #[test]
     fn normalize_agent_name_rules() {

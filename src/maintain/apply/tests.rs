@@ -35,14 +35,11 @@ impl EmbeddingProvider for FailOnTextEmbedder {
     }
 }
 
+/// Shared baseline plus the plan size cap these tests vary.
 fn test_config(db_path: PathBuf, max_docs: usize) -> Config {
     Config {
-        db_path,
-        embedding_model: "mock".into(),
-        embedding_dims: 8,
-        llm_enabled: false,
         maint_max_docs: max_docs,
-        ..Config::for_tests()
+        ..crate::testkit::test_config(db_path, 8)
     }
 }
 

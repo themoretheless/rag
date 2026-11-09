@@ -1014,19 +1014,8 @@ fn parse_organize_json(raw: &str) -> Result<LlmOrganizePayload> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::SeedDoc;
+    use crate::testkit::{test_config, SeedDoc};
 
-    use std::path::PathBuf;
-
-    fn test_config(db_path: PathBuf) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".into(),
-            embedding_dims: 8,
-            llm_enabled: false,
-            ..Config::for_tests()
-        }
-    }
 
     /// Seed one document; `scope` is `(wing, room, source_file)`.
     fn seed_doc(
@@ -1070,7 +1059,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
 
         seed_doc(
             &store,
@@ -1127,7 +1116,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org_apply.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
 
         seed_doc(
             &store,
@@ -1168,7 +1157,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("org-migration-incomplete.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         seed_doc(
             &store,
             "placed",
@@ -1208,7 +1197,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty_org.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         seed_doc(
             &store,
             "x",
@@ -1229,7 +1218,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cap_org.duckdb");
         let store = Store::open(&path).unwrap();
-        let cfg = test_config(path);
+        let cfg = test_config(path, 8);
         seed_doc(
             &store,
             "seed",
