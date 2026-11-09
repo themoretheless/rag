@@ -11,7 +11,23 @@ all-features = false
 version = 2
 unmaintained = "workspace"
 yanked = "deny"
-ignore = []
+ignore = [
+    # rmcp 1.4.0: unbounded response buffering in the Streamable HTTP *clients*.
+    # Only `server`, `transport-io` and `transport-streamable-http-server` are
+    # enabled (`cargo tree -e features -i rmcp` shows no client feature), so the
+    # affected code is not compiled. Fix needs rmcp >= 3.9 (two-major migration):
+    # residual backlog in docs/refactor/INVENTORY.md.
+    { id = "RUSTSEC-2026-0462", reason = "rmcp client transports are not enabled; server and stdio only" },
+    # zip 6.0.0 is only a build-dependency of libduckdb-sys 1.10505.0
+    # (`cargo tree -i zip@6.0.0`), whose build script unpacks DuckDB's own bundled
+    # source archive. All four are in `ZipArchive::extract` on untrusted input.
+    # Our own zip dependency is 9.x. Fix needs the DuckDB 2.0 crates: residual
+    # backlog in docs/refactor/INVENTORY.md.
+    { id = "RUSTSEC-2026-0367", reason = "zip 6 is a libduckdb-sys build-dependency unpacking DuckDB's bundled archive" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 6 is a libduckdb-sys build-dependency unpacking DuckDB's bundled archive" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 6 is a libduckdb-sys build-dependency unpacking DuckDB's bundled archive" },
+    { id = "RUSTSEC-2026-0429", reason = "zip 6 is a libduckdb-sys build-dependency unpacking DuckDB's bundled archive" },
+]
 
 [licenses]
 version = 2
@@ -36,6 +52,16 @@ allow = [
     # Bundled fonts in egui's epaint_default_fonts.
     "OFL-1.1",
     "Ubuntu-font-1.0",
+]
+# MPL-2.0 is file-level copyleft, so it is not in the global allow-list. These
+# four crates (the Servo CSS parser stack behind `cssparser` and `dom_query`)
+# are used as unmodified dependencies, which MPL-2.0 permits without obligations
+# on our own files. A new MPL crate must be reviewed and listed here.
+exceptions = [
+    { name = "cssparser", allow = ["MPL-2.0"] },
+    { name = "cssparser-macros", allow = ["MPL-2.0"] },
+    { name = "dtoa-short", allow = ["MPL-2.0"] },
+    { name = "selectors", allow = ["MPL-2.0"] },
 ]
 
 [bans]
