@@ -47,15 +47,6 @@ export class WikiStore {
   set filter(value: string) {
     this.catalog.filter = value
   }
-  get facet(): CatalogFacet {
-    return this.catalog.facet
-  }
-  set facet(value: CatalogFacet) {
-    this.catalog.facet = value
-  }
-  get categories(): string[] {
-    return this.catalog.categories
-  }
   get filtered(): WikiPageMeta[] {
     return this.catalog.filtered
   }
@@ -77,18 +68,6 @@ export class WikiStore {
   }
   get loadMoreError(): string | null {
     return this.catalog.loadMoreError
-  }
-  setFacet(next: CatalogFacet) {
-    this.catalog.setFacet(next)
-  }
-  facetIsAll(): boolean {
-    return this.catalog.facetIsAll()
-  }
-  facetIsKind(kind: string): boolean {
-    return this.catalog.facetIsKind(kind)
-  }
-  facetIsCategory(category: string): boolean {
-    return this.catalog.facetIsCategory(category)
   }
   loadCatalog(params?: WikiListParams): Promise<void> {
     return this.catalog.load(params)
@@ -205,17 +184,11 @@ export class WikiStore {
       this.page.current,
     )
   }
-  touchRecent(page: RecentPage) {
-    this.prefs.touchRecent(page)
-  }
   saveScrollPosition(pageId: string, top: number) {
     this.prefs.saveScrollPosition(pageId, top)
   }
   getScrollPosition(pageId: string): number {
     return this.prefs.getScrollPosition(pageId)
-  }
-  clearScrollPosition(pageId: string) {
-    this.prefs.clearScrollPosition(pageId)
   }
 }
 

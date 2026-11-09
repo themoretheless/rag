@@ -2,25 +2,19 @@
 export type Locale = 'en' | 'ru'
 
 export type MessageKey =
-  | 'toggleSidebar'
   | 'wiki'
   | 'graph'
   | 'search'
   | 'theme'
   | 'offline'
   | 'healthStats'
-  | 'lang'
   | 'pages'
   | 'favorites'
   | 'pinFavorite'
   | 'unpinFavorite'
   | 'refresh'
   | 'newPage'
-  | 'filterPages'
-  | 'filterFacets'
-  | 'facetAll'
   | 'loading'
-  | 'noPages'
   | 'back'
   | 'showInGraph'
   | 'edit'
@@ -40,7 +34,6 @@ export type MessageKey =
   | 'emptyWikiTitle'
   | 'emptyWikiHint'
   | 'createFirstPage'
-  | 'noPagesHint'
   | 'writeMarkdown'
   | 'casHint'
   | 'backlinks'
@@ -62,25 +55,16 @@ export type MessageKey =
   | 'paletteActionNew'
   | 'paletteActionGraph'
   | 'paletteActionSearch'
-  | 'searchHeading'
-  | 'searchSubtitle'
-  | 'searchPlaceholder'
-  | 'searchNoResults'
   | 'graphNodes'
   | 'graphEdges'
   | 'graphFull'
   | 'graphExpand'
-  | 'graphSeedPlaceholder'
   | 'graphDepth'
   | 'graphMax'
-  | 'graphTags'
   | 'graphFit'
   | 'graphFocus'
   | 'graphLoading'
   | 'graphNoNodes'
-  | 'graphOpenAsWiki'
-  | 'graphMinimapHint'
-  | 'graphEmptyMinimap'
   | 'layoutForce'
   | 'layoutRadial'
   | 'createPrompt'
@@ -94,13 +78,10 @@ export type MessageKey =
   | 'saveConflictDraft'
   | 'saveConflictKeep'
   | 'saveConflictDiscard'
-  | 'saveConflictReloadFail'
   | 'saveConflictReloaded'
   | 'saveConflictSavedOver'
   | 'saveConflictStillFailing'
   | 'confirm'
-  | 'keepDraft'
-  | 'discardReload'
   | 'apiInvalidPath'
   | 'apiUnauthorized'
   | 'apiForbidden'
@@ -122,29 +103,23 @@ export type MessageKey =
   | 'graphSeedLabel'
   | 'graphSeedHint'
 
-export type Messages = Record<MessageKey, string>
+type Messages = Record<MessageKey, string>
 
 export const messages: Record<Locale, Messages> = {
   en: {
-    toggleSidebar: 'Toggle sidebar (⌘B)',
     wiki: 'Wiki',
     graph: 'Graph',
     search: 'Search',
     theme: 'Theme',
     offline: 'offline',
     healthStats: '{docs} docs · {nodes} nodes',
-    lang: 'Language',
     pages: 'Pages',
     favorites: 'Favorites',
     pinFavorite: 'Pin to favorites',
     unpinFavorite: 'Unpin from favorites',
     refresh: 'Refresh',
     newPage: 'New page',
-    filterPages: 'Filter pages…',
-    filterFacets: 'Filter pages by kind or category',
-    facetAll: 'All',
     loading: 'Loading…',
-    noPages: 'No pages',
     back: '← Back',
     showInGraph: 'Show in graph',
     edit: 'Edit',
@@ -164,7 +139,6 @@ export const messages: Record<Locale, Messages> = {
     emptyWikiTitle: 'The wiki is empty',
     emptyWikiHint: 'Create your first page here, or ingest documents via the rag-mcp tools.',
     createFirstPage: 'Create the first page',
-    noPagesHint: 'Create a page with the + button above.',
     writeMarkdown: 'Write markdown… Use [[wikilinks]] and #tags',
     casHint: 'CAS: save sends if_match_revision from last load. Conflict → re-open and merge.',
     backlinks: 'Backlinks',
@@ -186,25 +160,16 @@ export const messages: Record<Locale, Messages> = {
     paletteActionNew: 'New page',
     paletteActionGraph: 'Open graph',
     paletteActionSearch: 'Open search',
-    searchHeading: 'Search',
-    searchSubtitle: 'Notion-style jump across wiki catalog + graph find.',
-    searchPlaceholder: 'Query…',
-    searchNoResults: 'No results yet',
     graphNodes: '{count} nodes',
     graphEdges: '{count} edges',
     graphFull: 'Full graph',
     graphExpand: 'Expand seed',
-    graphSeedPlaceholder: 'Seed id / label / document_id',
     graphDepth: 'depth',
     graphMax: 'max',
-    graphTags: 'tags',
     graphFit: 'Fit view',
     graphFocus: 'Focus neighbors',
     graphLoading: 'Loading graph…',
     graphNoNodes: 'No nodes',
-    graphOpenAsWiki: 'Open as wiki',
-    graphMinimapHint: 'Overview (click to navigate)',
-    graphEmptyMinimap: 'empty',
     layoutForce: 'Force',
     layoutRadial: 'Radial',
     createPrompt: 'New page title',
@@ -218,13 +183,10 @@ export const messages: Record<Locale, Messages> = {
     saveConflictDraft: 'Your draft: "{title}"',
     saveConflictKeep: 'Keep your draft and save again using the remote revision',
     saveConflictDiscard: 'Discard draft and reload the remote page',
-    saveConflictReloadFail: 'Could not reload after conflict: {msg}',
     saveConflictReloaded: 'Reloaded remote page; draft discarded',
     saveConflictSavedOver: 'Saved over remote revision',
     saveConflictStillFailing: 'Still conflicting after retry. Reload remote or merge manually, then save again.',
     confirm: 'Confirm',
-    keepDraft: 'Keep draft',
-    discardReload: 'Discard & reload',
     apiInvalidPath: 'Gateway requests require an absolute API path.',
     apiUnauthorized: 'HTTP 401: Provide a valid token in the “Access” section.',
     apiForbidden: 'HTTP 403: The token lacks permission for this action.',
@@ -247,25 +209,19 @@ export const messages: Record<Locale, Messages> = {
     graphSeedHint: 'seed · wiki://…',
   },
   ru: {
-    toggleSidebar: 'Боковая панель (⌘B)',
     wiki: 'Вики',
     graph: 'Граф',
     search: 'Поиск',
     theme: 'Тема',
     offline: 'офлайн',
     healthStats: '{docs} док. · {nodes} узлов',
-    lang: 'Язык',
     pages: 'Страницы',
     favorites: 'Избранное',
     pinFavorite: 'В избранное',
     unpinFavorite: 'Убрать из избранного',
     refresh: 'Обновить',
     newPage: 'Новая страница',
-    filterPages: 'Фильтр страниц…',
-    filterFacets: 'Фильтр по типу или категории',
-    facetAll: 'Все',
     loading: 'Загрузка…',
-    noPages: 'Нет страниц',
     back: '← Назад',
     showInGraph: 'В графе',
     edit: 'Правка',
@@ -285,7 +241,6 @@ export const messages: Record<Locale, Messages> = {
     emptyWikiTitle: 'Вики пуста',
     emptyWikiHint: 'Создайте первую страницу здесь или загрузите документы через инструменты rag-mcp.',
     createFirstPage: 'Создать первую страницу',
-    noPagesHint: 'Создайте страницу кнопкой + выше.',
     writeMarkdown: 'Пишите markdown… [[wikilinks]] и #теги',
     casHint: 'CAS: сохранение шлёт if_match_revision с последней загрузки. Конфликт → переоткройте и слейте.',
     backlinks: 'Обратные ссылки',
@@ -307,25 +262,16 @@ export const messages: Record<Locale, Messages> = {
     paletteActionNew: 'Новая страница',
     paletteActionGraph: 'Открыть граф',
     paletteActionSearch: 'Открыть поиск',
-    searchHeading: 'Поиск',
-    searchSubtitle: 'Быстрый переход по каталогу вики + поиск узла графа.',
-    searchPlaceholder: 'Запрос…',
-    searchNoResults: 'Пока нет результатов',
     graphNodes: '{count} узлов',
     graphEdges: '{count} рёбер',
     graphFull: 'Весь граф',
     graphExpand: 'Развернуть узел',
-    graphSeedPlaceholder: 'id / label / document_id узла',
     graphDepth: 'глубина',
     graphMax: 'макс',
-    graphTags: 'теги',
     graphFit: 'Вписать',
     graphFocus: 'Фокус на соседях',
     graphLoading: 'Загрузка графа…',
     graphNoNodes: 'Нет узлов',
-    graphOpenAsWiki: 'Открыть в вики',
-    graphMinimapHint: 'Обзор (клик — навигация)',
-    graphEmptyMinimap: 'пусто',
     layoutForce: 'Силы',
     layoutRadial: 'Радиальная',
     createPrompt: 'Название новой страницы',
@@ -339,13 +285,10 @@ export const messages: Record<Locale, Messages> = {
     saveConflictDraft: 'Ваш черновик: "{title}"',
     saveConflictKeep: 'Оставить черновик и сохранить поверх удалённой ревизии',
     saveConflictDiscard: 'Отбросить черновик и загрузить удалённую страницу',
-    saveConflictReloadFail: 'Не удалось перезагрузить после конфликта: {msg}',
     saveConflictReloaded: 'Удалённая версия загружена; черновик отброшен',
     saveConflictSavedOver: 'Сохранено поверх удалённой ревизии',
     saveConflictStillFailing: 'Конфликт повторился. Перезагрузите или слейте вручную, затем сохраните снова.',
     confirm: 'Подтвердить',
-    keepDraft: 'Оставить черновик',
-    discardReload: 'Отбросить и загрузить',
     apiInvalidPath: 'Запросы к шлюзу требуют абсолютного пути API.',
     apiUnauthorized: 'HTTP 401: Укажите действующий токен в разделе «Доступ».',
     apiForbidden: 'HTTP 403: У токена нет прав для этого действия.',
@@ -387,7 +330,6 @@ let activeLocale: Locale = 'ru'
 
 /** Locale used by non-component modules (API client); kept in sync by the UI store. */
 export function setActiveLocale(locale: Locale): void { activeLocale = locale }
-export function getActiveLocale(): Locale { return activeLocale }
 
 /** Translate with the active locale (for modules outside the Svelte UI store). */
 export function t(key: MessageKey, params?: Record<string, string | number>): string {

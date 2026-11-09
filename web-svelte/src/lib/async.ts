@@ -26,11 +26,6 @@ export async function loadPanels(
   return outcomes.filter((label): label is string => label !== null)
 }
 
-/** True for the rejection produced by aborting a `fetch` through an AbortSignal. */
-export function isAbortError(cause: unknown): boolean {
-  return cause instanceof DOMException && cause.name === 'AbortError'
-}
-
 export interface Debounced<Args extends unknown[]> {
   (...args: Args): void
   /** Drop the pending call, if any. */

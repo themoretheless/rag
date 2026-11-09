@@ -128,7 +128,7 @@ export interface OutlineHeading {
 }
 
 /** Plain heading text for outline labels (strips common inline markdown). */
-export function plainHeadingText(raw: string): string {
+function plainHeadingText(raw: string): string {
   return raw
     .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, t: string, l?: string) =>
       (l ?? t).trim(),
@@ -140,7 +140,7 @@ export function plainHeadingText(raw: string): string {
     .trim()
 }
 
-export function slugifyHeading(text: string): string {
+function slugifyHeading(text: string): string {
   const base = text
     .toLowerCase()
     .normalize('NFKD')

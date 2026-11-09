@@ -239,12 +239,4 @@ export class WikiPrefs {
     const y = readScrollMap()[pageId]
     return typeof y === 'number' && Number.isFinite(y) ? Math.max(0, y) : 0
   }
-
-  clearScrollPosition(pageId: string) {
-    if (!pageId) return
-    const map = readScrollMap()
-    if (!(pageId in map)) return
-    const { [pageId]: _dropped, ...rest } = map
-    writeScrollMap(rest)
-  }
 }

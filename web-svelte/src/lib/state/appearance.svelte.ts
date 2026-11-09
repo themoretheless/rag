@@ -10,10 +10,6 @@ export class Appearance {
   theme = $state<Theme>('dark')
   locale = $state<Locale>('ru')
 
-  get localeLabel(): string {
-    return this.locale === 'en' ? 'EN' : 'RU'
-  }
-
   /** Translate a shell/wiki UI string for the active locale. */
   t(key: MessageKey, params?: Record<string, string | number>): string {
     return formatMessage(this.locale, key, params)
@@ -37,10 +33,6 @@ export class Appearance {
     this.locale = next
     setActiveLocale(next)
     localStorage.setItem(LOCALE_KEY, next)
-  }
-
-  toggleLocale() {
-    this.setLocale(this.locale === 'en' ? 'ru' : 'en')
   }
 
   setTheme(next: Theme) {

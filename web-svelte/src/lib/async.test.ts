@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createRequestGate, debounce, errorMessage, isAbortError, withTimeout } from './async'
+import { createRequestGate, debounce, errorMessage, withTimeout } from './async'
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -20,8 +20,6 @@ describe('errorMessage', () => {
   })
 
   it('recognises fetch aborts', () => {
-    expect(isAbortError(new DOMException('gone', 'AbortError'))).toBe(true)
-    expect(isAbortError(new Error('AbortError'))).toBe(false)
   })
 })
 

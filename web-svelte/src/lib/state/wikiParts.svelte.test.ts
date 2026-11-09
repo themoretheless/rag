@@ -193,8 +193,6 @@ describe('WikiPrefs', () => {
     prefs.saveScrollPosition('b', -5)
     expect(prefs.getScrollPosition('a')).toBe(121)
     expect(prefs.getScrollPosition('b')).toBe(0)
-    prefs.clearScrollPosition('a')
-    expect(prefs.getScrollPosition('a')).toBe(0)
     expect(new WikiPrefs().getScrollPosition('b')).toBe(0)
     expect(prefs.getScrollPosition('')).toBe(0)
   })

@@ -56,24 +56,7 @@ export function kindBucket(kind?: string): string {
   return 'document'
 }
 
-export interface LegendEntry {
-  /** Bucket key (tag | stub | wiki | document). */
-  source: string
-  label: string
-  color: string
-}
 
-/** Distinct kind buckets present in `nodes`, for the graph legend. */
-export function legendEntries(nodes: GraphNode[]): LegendEntry[] {
-  const seen = new Map<string, LegendEntry>()
-  for (const n of nodes) {
-    const source = kindBucket(n.kind)
-    if (!seen.has(source)) {
-      seen.set(source, { source, label: source, color: nodeColor(n.kind) })
-    }
-  }
-  return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
-}
 
 /** d3-drag behavior for graph nodes; reheat the sim while dragging. */
 export function createNodeDrag(

@@ -21,12 +21,7 @@ class UiStore {
   readonly toastStore = new Toasts()
   readonly shellHealth = new ShellHealth()
 
-  sidebarCollapsed = $state(false)
   commandOpen = $state(false)
-
-  toggleSidebar() {
-    this.sidebarCollapsed = !this.sidebarCollapsed
-  }
 
   openCommand() {
     this.commandOpen = true
@@ -47,9 +42,6 @@ class UiStore {
   set locale(value: Locale) {
     this.appearance.locale = value
   }
-  get localeLabel(): string {
-    return this.appearance.localeLabel
-  }
   /** Translate a shell/wiki UI string for the active locale. */
   t(key: MessageKey, params?: Record<string, string | number>): string {
     return this.appearance.t(key, params)
@@ -62,9 +54,6 @@ class UiStore {
   }
   setLocale(next: Locale) {
     this.appearance.setLocale(next)
-  }
-  toggleLocale() {
-    this.appearance.toggleLocale()
   }
   setTheme(next: Theme) {
     this.appearance.setTheme(next)

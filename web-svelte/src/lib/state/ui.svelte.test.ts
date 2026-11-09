@@ -33,7 +33,6 @@ describe('ui store', () => {
     expect(ui.theme).toBe('light')
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(ui.locale).toBe('en')
-    expect(ui.localeLabel).toBe('EN')
   })
 
   it('ignores unknown persisted locales', async () => {
@@ -50,21 +49,19 @@ describe('ui store', () => {
     expect(document.documentElement.dataset.theme).toBe('light')
   })
 
-  it('toggleLocale flips and persists the locale and translations', async () => {
+  it('setLocale switches and persists the locale and translations', async () => {
     const ui = await freshUi()
     const ru = ui.t('wiki')
-    ui.toggleLocale()
+    ui.setLocale(ui.locale === 'en' ? 'ru' : 'en')
     expect(ui.locale).toBe('en')
     expect(localStorage.getItem('rag-locale')).toBe('en')
     expect(typeof ui.t('wiki')).toBe('string')
-    ui.toggleLocale()
+    ui.setLocale(ui.locale === 'en' ? 'ru' : 'en')
     expect(ui.t('wiki')).toBe(ru)
   })
 
-  it('toggles sidebar and command palette', async () => {
+  it('opens and closes the command palette', async () => {
     const ui = await freshUi()
-    ui.toggleSidebar()
-    expect(ui.sidebarCollapsed).toBe(true)
     ui.openCommand()
     expect(ui.commandOpen).toBe(true)
     ui.closeCommand()
