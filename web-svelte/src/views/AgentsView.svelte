@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { agentsResource } from '@/api/resources.svelte'
   import { usePoll } from '@/lib/poll'
   import { initials, time } from '@/lib/format'
   import { percentile } from '@/lib/stats'
@@ -109,7 +110,7 @@
   }
 
   async function loadAgents() {
-    agents = await api.agents()
+    agents = await agentsResource.refresh()
     if (selectedAgentKey && !agents.some((agent) => agentKey(agent.agent) === selectedAgentKey)) {
       selectedAgent = ''
       selectedOperation = null

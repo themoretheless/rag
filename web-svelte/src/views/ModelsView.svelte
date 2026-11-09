@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { statusResource } from '@/api/resources.svelte'
   import { bytes } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
@@ -50,7 +51,7 @@
     const failures = await loadPanels([
       ['LLM', async () => { llm = await api.llmStatus(); llmKnown = true }],
       ['embedding manifest', async () => { embedding = await api.embeddingManifest(); embeddingKnown = true }],
-      ['storage status', async () => { status = await api.status(); statusKnown = true }],
+      ['storage status', async () => { status = await statusResource.refresh(); statusKnown = true }],
       ['runtime', async () => { runtime = await api.runtime(); runtimeKnown = true }],
       ['capabilities', async () => { capabilities = await api.capabilities(); capabilitiesKnown = true }],
       ['doctor', async () => { await fetchDoctor() }],

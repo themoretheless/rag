@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { agentsResource } from '@/api/resources.svelte'
   import { usePoll } from '@/lib/poll'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
@@ -43,7 +44,7 @@
     error = ''
     const failures = await loadPanels([
       ['статус БД', async () => { status = await api.statusSummary() }],
-      ['клиенты', async () => { agents = await api.agents() }],
+      ['клиенты', async () => { agents = await agentsResource.refresh() }],
       ['активность', async () => { activity = await api.activity(80) }],
       ['sync', async () => { sync = await api.syncStatus() }],
     ])

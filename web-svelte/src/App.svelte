@@ -25,7 +25,7 @@
     void wiki.loadCatalog()
   })
   // Refresh the health badge periodically so offline recovery shows up.
-  usePoll(() => void ui.checkHealth(), 15_000)
+  usePoll(() => void ui.checkHealth(10_000), 15_000)
 </script>
 
 <AppShell>

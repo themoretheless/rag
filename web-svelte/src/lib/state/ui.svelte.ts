@@ -1,5 +1,6 @@
 import { createRequestGate, errorMessage } from '@/lib/async'
 import { api } from '@/api/client'
+import { agentsResource } from '@/api/resources.svelte'
 import type { AgentInfo, HealthResponse } from '@/api/types'
 import { formatMessage, setActiveLocale, type Locale, type MessageKey } from '@/lib/i18n'
 
@@ -88,7 +89,11 @@ class UiStore {
     this.commandOpen = false
   }
 
-  async checkHealth() {
+  /**
+   * Refresh the shell health badge and agent avatars. `agentsMaxAgeMs` lets the
+   * background poller reuse an agents snapshot a screen has just fetched.
+   */
+  async checkHealth(agentsMaxAgeMs = 0) {
     const ticket = this.healthGate.next()
 
     // Keep the two shell snapshots independent: a broken optional agents panel
@@ -106,7 +111,7 @@ class UiStore {
       },
     )
 
-    const agentsTask = api.agents().then(
+    const agentsTask = (agentsMaxAgeMs > 0 ? agentsResource.fresh(agentsMaxAgeMs) : agentsResource.refresh()).then(
       (agents) => {
         if (!ticket.current) return
         this.shellAgents = agents

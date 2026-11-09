@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { statusResource } from '@/api/resources.svelte'
   import { milliseconds } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import RealQuestionEvaluation from '@/components/RealQuestionEvaluation.svelte'
@@ -101,7 +102,7 @@
     error = ''
     const [historyResult, statusResult] = await Promise.allSettled([
       api.evalHistory(30),
-      api.status(),
+      statusResource.refresh(),
     ])
     if (historyResult.status === 'fulfilled') {
       const response = historyResult.value

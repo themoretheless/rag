@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { agentsResource, statusResource } from '@/api/resources.svelte'
   import { megabytes, time } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
@@ -24,12 +25,12 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['status', async () => { status = await api.status() }],
+      ['status', async () => { status = await statusResource.refresh() }],
       ['doctor', async () => { doctor = await api.doctor() }],
       ['runtime', async () => { runtime = await api.runtime() }],
       ['taxonomy', async () => { taxonomy = (await api.taxonomy()) ?? taxonomy }],
       ['ops_log', async () => { operations = await api.opsLog(8) }],
-      ['agents', async () => { agents = await api.agents() }],
+      ['agents', async () => { agents = await agentsResource.refresh() }],
       ['KG', async () => { kg = await api.kgStats() }],
     ])
     error = failures.length ? `Не обновлены панели: ${failures.join(', ')}` : ''
