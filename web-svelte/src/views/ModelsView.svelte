@@ -38,7 +38,7 @@
   }
 
   async function fetchDoctor() {
-    const response = (await api.get<DoctorReport>('/v1/doctor')) ?? {}
+    const response = await api.doctor()
     doctor = response
     doctorKnown = true
     return response
@@ -48,11 +48,11 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['LLM', async () => { llm = (await api.get<{ llm?: LlmStatus }>('/v1/llm-status'))?.llm ?? {}; llmKnown = true }],
-      ['embedding manifest', async () => { embedding = (await api.get<EmbeddingManifestStatus>('/v1/embedding-manifest')) ?? {}; embeddingKnown = true }],
-      ['storage status', async () => { status = (await api.get<StorageStatus>('/v1/status')) ?? {}; statusKnown = true }],
-      ['runtime', async () => { runtime = (await api.get<{ runtime?: RuntimeInfo }>('/v1/runtime'))?.runtime ?? {}; runtimeKnown = true }],
-      ['capabilities', async () => { capabilities = (await api.get<Capabilities>('/v1/capabilities')) ?? {}; capabilitiesKnown = true }],
+      ['LLM', async () => { llm = await api.llmStatus(); llmKnown = true }],
+      ['embedding manifest', async () => { embedding = await api.embeddingManifest(); embeddingKnown = true }],
+      ['storage status', async () => { status = await api.status(); statusKnown = true }],
+      ['runtime', async () => { runtime = await api.runtime(); runtimeKnown = true }],
+      ['capabilities', async () => { capabilities = await api.capabilities(); capabilitiesKnown = true }],
       ['doctor', async () => { await fetchDoctor() }],
     ])
     error = failures.length ? `Не обновлены панели: ${failures.join(', ')}` : ''
@@ -60,7 +60,7 @@
   }
 
   async function checkpoint() {
-    try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
+    try { await api.checkpoint(); ui.toast('Checkpoint завершён', 'ok'); await load() }
     catch (cause) { ui.toast(errorMessage(cause), 'error') }
   }
 

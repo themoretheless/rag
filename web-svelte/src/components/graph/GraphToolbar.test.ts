@@ -6,7 +6,7 @@ import { ui } from '@/lib/state/ui.svelte'
 import { graph } from '@/lib/state/graph.svelte'
 import GraphToolbar from './GraphToolbar.svelte'
 
-vi.mock('@/api/client', () => ({ api: { get: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
+vi.mock('@/api/client', () => ({ api: { projects: vi.fn(), tunnels: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
 
 function props() {
   return {

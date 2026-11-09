@@ -5,7 +5,7 @@
   import { onMount } from 'svelte'
   import { api } from '@/api/client'
   import { ui } from '@/lib/state/ui.svelte'
-  import type { EvalHistoryResponse, EvalModeReport, EvalQueryReport, EvalRun, EvalScaleRecommendation, StorageStatus } from '@/api/types'
+  import type { EvalModeReport, EvalQueryReport, EvalRun, EvalScaleRecommendation } from '@/api/types'
 
   type MetricKey = 'recall_at_k' | 'mrr' | 'ndcg_at_k' | 'p95_search_ms' | 'reciprocal_rank' | 'search_ms'
   type MetricSource = Partial<Record<MetricKey, unknown>>
@@ -100,11 +100,11 @@
     busy = true
     error = ''
     const [historyResult, statusResult] = await Promise.allSettled([
-      api.get<EvalHistoryResponse>('/v1/eval/history?limit=30'),
-      api.get<StorageStatus>('/v1/status'),
+      api.evalHistory(30),
+      api.status(),
     ])
     if (historyResult.status === 'fulfilled') {
-      const response = historyResult.value ?? {}
+      const response = historyResult.value
       // The backend preserves append-only JSONL order (oldest -> newest).
       // Keep the screen state newest-first for latest, tables and the run list.
       history = [...(response.items ?? [])].reverse()
@@ -114,7 +114,7 @@
       const cause = historyResult.reason
       error = errorMessage(cause)
     }
-    if (statusResult.status === 'fulfilled') liveChunks = statusResult.value?.chunk_count ?? null
+    if (statusResult.status === 'fulfilled') liveChunks = statusResult.value.chunk_count ?? null
     busy = false
   }
 

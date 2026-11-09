@@ -120,7 +120,7 @@
     packedSnapshot = null
     selected = 0
     try {
-      const next = await api.post<SearchResponse>('/v1/search', {
+      const next = await api.search({
         query: snapshot.query,
         mode: snapshot.mode,
         top_k: snapshot.topK,
@@ -155,7 +155,7 @@
     packing = true
     error = ''
     try {
-      const next = await api.post<PackContextResponse>('/v1/pack-context', {
+      const next = await api.packContext({
         hits: sourceHits,
         max_tokens: search.maxTokens,
         context_expansion: search.neighborChunks > 0 ? 'neighbors' : undefined,

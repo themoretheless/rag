@@ -5,36 +5,16 @@
   import { errorMessage, withTimeout } from '@/lib/async'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
-  import type { ItemsResponse, KgFact, OpsLogItem } from '@/api/types'
+  import type { AgentInfo, CallRow, KgFact, OpsLogItem } from '@/api/types'
 
-  type AgentRow = {
-    agent: string
-    transport?: string
-    online?: boolean
-    last_tool?: string
-    calls_today?: number
-    diary_count?: number
-  }
-  type CallRow = {
-    seq: number
-    ts: string
-    agent: string
-    tool: string
-    args: string
-    elapsed_ms: number
-    ok: boolean
-    result_hint?: string
-    error?: string
-  }
   type CallStreamState = 'loading' | 'live' | 'empty' | 'stale' | 'error'
   type SparkPoint = { count: number; height: number; label: string }
-  type KgListResponse = { items?: KgFact[]; facts?: KgFact[]; count?: number; total?: number }
 
   const CALL_TIMEOUT_MS = 8_000
   const SPARK_BUCKET_COUNT = 12
   const SPARK_BUCKET_MS = 5 * 60_000
 
-  let agents = $state<AgentRow[]>([])
+  let agents = $state<AgentInfo[]>([])
   let operations = $state<OpsLogItem[]>([])
   let calls = $state<CallRow[]>([])
   let facts = $state<KgFact[]>([])
@@ -113,9 +93,9 @@
     const requestId = ++callsRequestId
     if (!callsLoaded) callsState = 'loading'
     try {
-      const response = await withTimeout(api.get<{ items?: CallRow[] }>('/v1/calls?limit=100'), CALL_TIMEOUT_MS)
+      const response = await withTimeout(api.calls(100), CALL_TIMEOUT_MS)
       if (requestId !== callsRequestId) return
-      calls = response.items ?? []
+      calls = response
       callsLoaded = true
       callsError = ''
       callsUpdatedAt = Date.now()
@@ -129,8 +109,7 @@
   }
 
   async function loadAgents() {
-    const response = await api.get<{ items?: AgentRow[] }>('/v1/agents')
-    agents = response.items ?? []
+    agents = await api.agents()
     if (selectedAgentKey && !agents.some((agent) => agentKey(agent.agent) === selectedAgentKey)) {
       selectedAgent = ''
       selectedOperation = null
@@ -142,13 +121,12 @@
     error = ''
     const failures = await loadPanels([
       ['агенты', loadAgents],
-      ['ops_log', async () => { operations = (await api.get<ItemsResponse<OpsLogItem>>('/v1/ops-log?limit=100'))?.items ?? [] }],
+      ['ops_log', async () => { operations = await api.opsLog(100) }],
       ['MCP-вызовы', fetchCalls],
       ['KG', async () => {
-        const response = (await api.get<KgListResponse>('/v1/kg?limit=80')) ?? {}
-        const items = response.items ?? response.facts ?? []
-        factsTotal = response.count ?? response.total ?? items.length
-        facts = items.slice(0, 80)
+        const response = await api.kgFacts(80)
+        factsTotal = response.total
+        facts = response.items.slice(0, 80)
       }],
     ])
     const pageFailures = failures.filter((failure) => failure !== 'MCP-вызовы' && !failure.startsWith('MCP-вызовы: '))

@@ -1,6 +1,6 @@
 import { errorMessage } from '@/lib/async'
 import { api } from '@/api/client'
-import type { GraphEdge, GraphNode, GraphView } from '@/api/types'
+import type { GraphEdge, GraphNode, GraphView, ProjectSummary } from '@/api/types'
 import type { LayoutMode } from '@/lib/forceLayout'
 
 /** Graph explorer state: nodes/edges, seed expand, selection, layout. */
@@ -12,7 +12,7 @@ class GraphStore {
   seed = $state('')
   depth = $state(2)
   maxNodes = $state(300)
-  projects = $state<Array<{ project_id: string; document_count: number }>>([])
+  projects = $state<ProjectSummary[]>([])
   project = $state('rag')
   includeTags = $state(true)
   selectedId = $state<string | null>(null)
@@ -83,8 +83,7 @@ class GraphStore {
     if (this.projectsPromise) return this.projectsPromise
     this.projectsPromise = (async () => {
       try {
-        const response = await api.get<{ items?: Array<{ project_id: string; document_count: number }> }>('/v1/projects')
-        this.projects = response.items ?? []
+        this.projects = await api.projects()
         this.projectsLoaded = true
       } catch {
         // Keep the requested scope intact. The graph endpoint must validate it;
@@ -98,12 +97,12 @@ class GraphStore {
 
   private async appendVisibleTunnels(requestToken: number) {
     try {
-      const response = await api.get<{ items?: GraphEdge[] }>('/v1/tunnels')
+      const tunnels = await api.tunnels()
       if (requestToken !== this.requestToken) return
       const visible = new Set(this.nodes.map((node) => node.id))
       const known = new Set(this.edges.map((edge) => edge.id || `${edge.source_id}:${edge.target_id}:${edge.rel_type}`))
       const additions: GraphEdge[] = []
-      for (const edge of response.items ?? []) {
+      for (const edge of tunnels) {
         const key = edge.id || `${edge.source_id}:${edge.target_id}:${edge.rel_type}`
         if (visible.has(edge.source_id) && visible.has(edge.target_id) && !known.has(key)) {
           additions.push(edge)

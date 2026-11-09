@@ -1,6 +1,6 @@
 import { createRequestGate, errorMessage } from '@/lib/async'
 import { api } from '@/api/client'
-import type { HealthResponse } from '@/api/types'
+import type { AgentInfo, HealthResponse } from '@/api/types'
 import { formatMessage, setActiveLocale, type Locale, type MessageKey } from '@/lib/i18n'
 
 export type Theme = 'dark' | 'light' | 'system'
@@ -14,13 +14,6 @@ export interface Toast {
   kind: 'info' | 'error' | 'ok'
 }
 
-/** Compact agent snapshot used by the application shell. */
-export interface ShellAgent {
-  agent: string
-  transport?: string
-  online: boolean
-}
-
 /** Shell state: theme, locale, health, toasts, sidebar, command palette. */
 class UiStore {
   theme = $state<Theme>('dark')
@@ -29,7 +22,7 @@ class UiStore {
   commandOpen = $state(false)
   health = $state<HealthResponse | null>(null)
   healthError = $state<string | null>(null)
-  shellAgents = $state<ShellAgent[]>([])
+  shellAgents = $state<AgentInfo[]>([])
   shellAgentsError = $state<string | null>(null)
   toasts = $state<Toast[]>([])
 
@@ -113,10 +106,10 @@ class UiStore {
       },
     )
 
-    const agentsTask = api.get<{ items?: ShellAgent[] }>('/v1/agents').then(
-      (response) => {
+    const agentsTask = api.agents().then(
+      (agents) => {
         if (!ticket.current) return
-        this.shellAgents = response.items ?? []
+        this.shellAgents = agents
         this.shellAgentsError = null
       },
       (cause: unknown) => {

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, apiUrl, type WikiProposal } from '@/api/client'
+  import { api, apiUrl } from '@/api/client'
+  import type { WikiProposal } from '@/api/types'
   import { wiki } from '@/lib/state/wiki.svelte'
   let { onaccepted }: { onaccepted?: () => void } = $props()
   import { reviewDiff } from '@/lib/reviewDiff'

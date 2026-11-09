@@ -5,6 +5,27 @@ export function errorMessage(cause: unknown, fallback?: string): string {
   return cause instanceof Error ? cause.message : (fallback ?? String(cause))
 }
 
+/**
+ * Run independent dashboard loaders without letting one failed panel hide the rest.
+ * Returns `label: message` for each failed panel.
+ */
+export async function loadPanels(
+  panels: readonly (readonly [label: string, load: () => Promise<void>])[],
+): Promise<string[]> {
+  const outcomes = await Promise.all(
+    panels.map(async ([label, load]) => {
+      try {
+        await load()
+        return null
+      } catch (err) {
+        const message = errorMessage(err)
+        return message ? `${label}: ${message}` : label
+      }
+    }),
+  )
+  return outcomes.filter((label): label is string => label !== null)
+}
+
 /** True for the rejection produced by aborting a `fetch` through an AbortSignal. */
 export function isAbortError(cause: unknown): boolean {
   return cause instanceof DOMException && cause.name === 'AbortError'

@@ -1,7 +1,8 @@
 <script lang="ts">
   import ReviewProposals from './ReviewProposals.svelte'
   let proposals: ReviewProposals | undefined = $state()
-  import { api, type ReviewEvidence } from '@/api/client'
+  import { api } from '@/api/client'
+  import type { ReviewEvidence } from '@/api/types'
   import { goWiki } from '@/lib/router.svelte'
   let items = $state<ReviewEvidence[]>([])
   let loading = $state(false)

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { HealthResponse } from '@/api/types'
 
-vi.mock('@/api/client', () => ({ api: { get: vi.fn(), health: vi.fn() } }))
+vi.mock('@/api/client', () => ({ api: { agents: vi.fn(), health: vi.fn() } }))
 
 const mocked = vi.mocked(api)
 
@@ -85,13 +85,13 @@ describe('ui store', () => {
   it('checkHealth keeps health and agents failures independent', async () => {
     const ui = await freshUi()
     mocked.health.mockResolvedValue({ ok: true })
-    mocked.get.mockResolvedValue({ items: [{ agent: 'claude', online: true }] })
+    mocked.agents.mockResolvedValue([{ agent: 'claude', online: true }])
     await ui.checkHealth()
     expect(ui.health).toEqual({ ok: true })
     expect(ui.shellAgents).toHaveLength(1)
 
     mocked.health.mockRejectedValue(new Error('down'))
-    mocked.get.mockRejectedValue(new Error('agents down'))
+    mocked.agents.mockRejectedValue(new Error('agents down'))
     await ui.checkHealth()
     expect(ui.health).toBeNull()
     expect(ui.healthError).toBe('down')
@@ -104,7 +104,7 @@ describe('ui store', () => {
     let resolveOld!: (v: HealthResponse) => void
     mocked.health.mockReturnValueOnce(new Promise((r) => (resolveOld = r)))
     mocked.health.mockResolvedValueOnce({ ok: 'new' } as unknown as HealthResponse)
-    mocked.get.mockResolvedValue({ items: [] })
+    mocked.agents.mockResolvedValue([])
     const old = ui.checkHealth()
     await ui.checkHealth()
     resolveOld({ ok: 'old' } as unknown as HealthResponse)

@@ -5,14 +5,14 @@
   import { api, loadPanels } from '@/api/client'
   import { go } from '@/lib/router.svelte'
   import { ui } from '@/lib/state/ui.svelte'
-  import type { AgentSummary, DoctorReport, ItemsResponse, KgStats, OpsLogItem, RuntimeInfo, StorageStatus, TaxonomySummary } from '@/api/types'
+  import type { AgentInfo, DoctorReport, KgStats, OpsLogItem, RuntimeInfo, StorageStatus, TaxonomySummary } from '@/api/types'
 
   let status = $state<StorageStatus>({})
   let doctor = $state<DoctorReport>({})
   let runtime = $state<RuntimeInfo>({})
   let taxonomy = $state<TaxonomySummary>({ wings: [] })
   let operations = $state<OpsLogItem[]>([])
-  let agents = $state<AgentSummary[]>([])
+  let agents = $state<AgentInfo[]>([])
   let kg = $state<KgStats>({})
   let busy = $state(false)
   let error = $state('')
@@ -24,20 +24,20 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['status', async () => { status = (await api.get<StorageStatus>('/v1/status')) ?? {} }],
-      ['doctor', async () => { doctor = (await api.get<DoctorReport>('/v1/doctor')) ?? {} }],
-      ['runtime', async () => { runtime = (await api.get<{ runtime?: RuntimeInfo }>('/v1/runtime'))?.runtime ?? {} }],
-      ['taxonomy', async () => { taxonomy = (await api.get<{ taxonomy?: TaxonomySummary }>('/v1/taxonomy'))?.taxonomy ?? taxonomy }],
-      ['ops_log', async () => { operations = (await api.get<ItemsResponse<OpsLogItem>>('/v1/ops-log?limit=8'))?.items ?? [] }],
-      ['agents', async () => { agents = (await api.get<ItemsResponse<AgentSummary>>('/v1/agents'))?.items ?? [] }],
-      ['KG', async () => { kg = (await api.get<{ stats?: KgStats }>('/v1/kg/stats'))?.stats ?? {} }],
+      ['status', async () => { status = await api.status() }],
+      ['doctor', async () => { doctor = await api.doctor() }],
+      ['runtime', async () => { runtime = await api.runtime() }],
+      ['taxonomy', async () => { taxonomy = (await api.taxonomy()) ?? taxonomy }],
+      ['ops_log', async () => { operations = await api.opsLog(8) }],
+      ['agents', async () => { agents = await api.agents() }],
+      ['KG', async () => { kg = await api.kgStats() }],
     ])
     error = failures.length ? `Не обновлены панели: ${failures.join(', ')}` : ''
     busy = false
   }
 
   async function checkpoint() {
-    try { await api.postOptional('/v1/operations/checkpoint'); ui.toast('Checkpoint завершён', 'ok'); await load() }
+    try { await api.checkpoint(); ui.toast('Checkpoint завершён', 'ok'); await load() }
     catch (cause) { ui.toast(errorMessage(cause), 'error') }
   }
 
@@ -45,7 +45,7 @@
     if (!backupPath.trim()) return
     backupBusy = true
     try {
-      await api.postOptional('/v1/operations/backup', { path: backupPath.trim(), dry_run: false, overwrite: false })
+      await api.backup(backupPath.trim())
       ui.toast('Резервная копия создана', 'ok')
       backupOpen = false
     } catch (cause) { ui.toast(errorMessage(cause), 'error') }

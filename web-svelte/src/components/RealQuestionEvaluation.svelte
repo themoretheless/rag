@@ -1,14 +1,13 @@
 <script lang="ts">
   import { api } from '@/api/client'
-  type Question = {id:string;search:{query:string;mode:string};expected:{uri:string}[];no_answer:boolean}
-  let items = $state<Question[]>([])
+  import type { EvalFeedbackRun, EvalQuestion } from '@/api/types'
+  let items = $state<EvalQuestion[]>([])
   let total = $state(0)
   let loaded = $state(false)
   let busy = $state(false)
   let message = $state('')
-  type RunResult = {status:string;recall?:number;mrr?:number;empty_result_for_no_answer?:boolean}
-  let results = $state<Record<string, RunResult>>({})
-  function resultText(item: Question, result: RunResult | undefined): string {
+  let results = $state<Record<string, EvalFeedbackRun>>({})
+  function resultText(item: EvalQuestion, result: EvalFeedbackRun | undefined): string {
     if (!result) return ''
     if (result.status==='source_changed') return 'Контрольный источник изменился — нужна новая разметка.'
     if (item.no_answer) return `Пустая выдача: ${result.empty_result_for_no_answer?'да':'нет'}. Это не оценка правильности ответа модели.`
@@ -17,12 +16,12 @@
   async function load(more=false) {
     if(busy) return
     busy=true;message=''
-    try {const result=await api.get<{items:Question[];total:number}>(`/v1/eval/feedback?offset=${more?items.length:0}`);items=more?[...items,...result.items]:result.items;total=result.total;loaded=true}
+    try {const result=await api.evalFeedback(more?items.length:0);items=more?[...items,...result.items]:result.items;total=result.total;loaded=true}
     catch(e){message=String(e)} finally{busy=false}
   }
   async function run(id:string) {
     busy=true;message=''
-    try {results[id]=await api.post('/v1/eval/feedback/run',{id})} catch(e){message=String(e)} finally{busy=false}
+    try {results[id]=await api.runEvalFeedback(id)} catch(e){message=String(e)} finally{busy=false}
   }
 </script>
 <details class="real-eval"><summary>Реальные вопросы и ручная разметка</summary>

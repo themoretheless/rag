@@ -2,17 +2,13 @@
   import { usePoll } from '@/lib/poll'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
+  import type { ActivityItem, AgentInfo, StorageStatus, SyncState } from '@/api/types'
 
-  type Status = { ok?: boolean; db_path?: string; document_count?: number; chunk_count?: number; documents?: number; chunks?: number; backend?: string; schema_version?: string | number }
-  type Agent = { agent: string; transport?: string; online?: boolean; calls_today?: number; last_call_at?: string; last_tool?: string }
-  type Activity = { seq?: number; at?: string; client?: string; action?: string; status?: string }
-  type SyncNode = { node_id: string; hostname: string; role: string; last_seen_at: string; last_push_seq: number; pull_cursor: number; last_error?: string }
-  type SyncState = { role: string; node_id: string; primary_url?: string; latest_primary_seq: number; pending_outbox: number; nodes: SyncNode[] }
   type Node = { id: string; label: string; detail: string; online: boolean; isHost: boolean }
 
-  let status = $state<Status>({})
-  let agents = $state<Agent[]>([])
-  let activity = $state<Activity[]>([])
+  let status = $state<StorageStatus>({})
+  let agents = $state<AgentInfo[]>([])
+  let activity = $state<ActivityItem[]>([])
   let sync = $state<SyncState | null>(null)
   let busy = $state(false)
   let error = $state('')
@@ -46,10 +42,10 @@
     busy = true
     error = ''
     const failures = await loadPanels([
-      ['статус БД', async () => { status = await api.get<Status>('/v1/status?summary=true') }],
-      ['клиенты', async () => { agents = (await api.get<{ items?: Agent[] }>('/v1/agents')).items ?? [] }],
-      ['активность', async () => { activity = (await api.get<{ items?: Activity[] }>('/v1/activity?limit=80')).items ?? [] }],
-      ['sync', async () => { sync = (await api.get<{ sync: SyncState }>('/v1/sync/status')).sync }],
+      ['статус БД', async () => { status = await api.statusSummary() }],
+      ['клиенты', async () => { agents = await api.agents() }],
+      ['активность', async () => { activity = await api.activity(80) }],
+      ['sync', async () => { sync = await api.syncStatus() }],
     ])
     error = failures.length ? `Не обновлены: ${failures.join(', ')}` : ''
     updatedAt = new Date()

@@ -1,16 +1,3 @@
-import { errorMessage } from '@/lib/async'
-import type {
-  BacklinksResponse,
-  DocumentBody,
-  GraphView,
-  HealthResponse,
-  ResourcesResponse,
-  WikiListParams,
-  WikiListResponse,
-  WikiCreateBody,
-  WikiPutBody,
-  WikiPutResult,
-} from './types'
 import { t } from '@/lib/i18n'
 
 const base = () => (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
@@ -118,120 +105,34 @@ async function requestOptional<T>(path: string, init?: RequestInit): Promise<T |
   return parseOptionalJsonBody<T>(res)
 }
 
+/** Per-call options accepted by every verb. */
+export interface RequestOptions {
+  /** Abort the request, e.g. from `createRequestGate()` when a newer one supersedes it. */
+  signal?: AbortSignal | undefined
+}
+
+const withSignal = (init: RequestInit, options?: RequestOptions): RequestInit =>
+  options?.signal ? { ...init, signal: options.signal } : init
+
+const jsonBody = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
+
 /**
- * Run independent dashboard loaders without letting one failed panel hide the rest.
- * Returns `label: message` for each failed panel.
+ * Untyped HTTP verbs. Only `src/api/endpoints/*` should call these; screens and
+ * stores use the typed `api` facade from `./client`.
  */
-export async function loadPanels(
-  panels: ReadonlyArray<readonly [label: string, load: () => Promise<void>]>,
-): Promise<string[]> {
-  const outcomes = await Promise.all(
-    panels.map(async ([label, load]) => {
-      try {
-        await load()
-        return null
-      } catch (err) {
-        const message = errorMessage(err)
-        return message ? `${label}: ${message}` : label
-      }
-    }),
-  )
-  return outcomes.filter((label): label is string => label !== null)
-}
-
-/** Build query string from wiki list params (skips undefined / empty). */
-export function wikiListQuery(params?: WikiListParams): string {
-  const q = new URLSearchParams()
-  if (params) {
-    for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== '') q.set(k, String(v))
-    }
-  }
-  return q.toString()
-}
-
-export interface ReviewEvidence {
-  wiki_id: string; wiki_uri: string; wiki_title: string; raw_id: string; raw_uri: string; raw_title: string; raw_updated_at: string | null; link_kind: string
-}
-
-export interface WikiProposal {
-  id: string; base: DocumentBody; sources: { document_id: string; uri: string; content_hash: string | null; content: string | null }[];
-  content: string; revision: number; status: 'pending' | 'accepted' | 'rejected'
-}
-
-export const api = {
-  proposals: () => request<{ items: WikiProposal[] }>('/v1/wiki-proposals'),
-  changeProposal: (body: { action: 'create'; document_id: string } | { action: 'save'; id: string; revision: number; content: string } | { action: 'accept' | 'reject'; id: string; revision: number }) => request<WikiProposal>('/v1/wiki-proposals', { method: 'POST', body: JSON.stringify(body) }),
-  wikiReview: () => request<{ items: ReviewEvidence[] }>('/v1/wiki-review'),
-  // The shell polls this: skip the server's integrity scans (see /v1/doctor).
-  health: () => request<HealthResponse>('/health?summary=true'),
-  resources: () => request<ResourcesResponse>('/v1/resources'),
-
-  /** Ordinary browser links cannot attach Bearer credentials. */
-  sourceFile: async (documentId: string) => {
-    const res = await requestResponse(`/v1/source-file?document_id=${encodeURIComponent(documentId)}`)
+export const http = {
+  get: <T>(path: string, options?: RequestOptions) => request<T>(path, withSignal({}, options)),
+  put: <T>(path: string, body: unknown, options?: RequestOptions) =>
+    request<T>(path, withSignal(jsonBody('PUT', body), options)),
+  post: <T>(path: string, body: unknown = {}, options?: RequestOptions) =>
+    request<T>(path, withSignal(jsonBody('POST', body), options)),
+  /** POST to an endpoint that may answer 204 No Content (e.g. operations, feedback). */
+  postOptional: <T>(path: string, body: unknown = {}, options?: RequestOptions) =>
+    requestOptional<T>(path, withSignal(jsonBody('POST', body), options)),
+  /** Authenticated binary download (plain browser links cannot attach Bearer credentials). */
+  blob: async (path: string, options?: RequestOptions) => {
+    const res = await requestResponse(path, withSignal({}, options))
     return res.blob()
   },
-
-  /**
-   * `GET /v1/wiki?q=&limit=&offset=&kind=&category=&wing=&room=`
-   * Server-side `q` is case-insensitive substring on title/slug/uri/summary/category/kind.
-   */
-  wikiList: (params?: WikiListParams) => {
-    const s = wikiListQuery(params)
-    return request<WikiListResponse>(`/v1/wiki${s ? `?${s}` : ''}`)
-  },
-
-  document: (opts: { id?: string | undefined; uri?: string | undefined; q?: string | undefined }) => {
-    const q = new URLSearchParams()
-    if (opts.id) q.set('id', opts.id)
-    if (opts.uri) q.set('uri', opts.uri)
-    if (opts.q) q.set('q', opts.q)
-    return request<DocumentBody>(`/v1/document?${q}`)
-  },
-
-  /** Create a page only if its wiki URI is unoccupied. */
-  createWiki: (body: WikiCreateBody) =>
-    request<WikiPutResult>('/v1/wiki', { method: 'POST', body: JSON.stringify(body) }),
-
-  /** Update a wiki page using its current revision / ETag. */
-  putWiki: (body: WikiPutBody) =>
-    request<WikiPutResult>('/v1/wiki', {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    }),
-
-  backlinks: (id: string) =>
-    request<BacklinksResponse>(`/v1/backlinks?id=${encodeURIComponent(id)}`),
-
-  graph: (opts?: { max_nodes?: number; include_tags?: boolean; project?: string }) => {
-    const q = new URLSearchParams()
-    if (opts?.max_nodes) q.set('max_nodes', String(opts.max_nodes))
-    if (opts?.include_tags) q.set('include_tags', 'true')
-    if (opts?.project) q.set('project', opts.project)
-    const s = q.toString()
-    return request<GraphView>(`/v1/graph${s ? `?${s}` : ''}`)
-  },
-
-  neighbors: (seed: string, depth = 1, max_nodes = 100, include_tags = false, project = '') => {
-    const q = new URLSearchParams({
-      seed,
-      depth: String(depth),
-      max_nodes: String(max_nodes),
-    })
-    if (include_tags) q.set('include_tags', 'true')
-    if (project) q.set('project', project)
-    return request<GraphView>(`/v1/neighbors?${q}`)
-  },
-
-  findNode: (q: string) =>
-    request<unknown>(`/v1/find?q=${encodeURIComponent(q)}`),
-
-  get: <T = Record<string, unknown>>(path: string) => request<T>(path),
-  put: <T = Record<string, unknown>>(path: string, body: unknown) => request<T>(path, { method:'PUT', body:JSON.stringify(body) }),
-  post: <T = Record<string, unknown>>(path: string, body: unknown = {}) =>
-    request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
-  /** POST to an endpoint that may answer 204 No Content (e.g. operations, feedback). */
-  postOptional: <T = Record<string, unknown>>(path: string, body: unknown = {}) =>
-    requestOptional<T>(path, { method: 'POST', body: JSON.stringify(body) }),
 }
+

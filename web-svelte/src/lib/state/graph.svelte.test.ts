@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { GraphEdge, GraphNode, GraphView } from '@/api/types'
 
-vi.mock('@/api/client', () => ({ api: { get: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
+vi.mock('@/api/client', () => ({ api: { projects: vi.fn(), tunnels: vi.fn(), graph: vi.fn(), neighbors: vi.fn() } }))
 
 const mocked = vi.mocked(api)
 
@@ -25,10 +25,8 @@ async function freshStore() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocked.get.mockImplementation(async (path: string) => {
-    if (path === '/v1/projects') return { items: [{ project_id: 'rag', document_count: 3 }] }
-    return { items: [] }
-  })
+  mocked.projects.mockResolvedValue([{ project_id: 'rag', document_count: 3 }])
+  mocked.tunnels.mockResolvedValue([])
 })
 
 describe('graph store', () => {
@@ -88,10 +86,7 @@ describe('graph store', () => {
   it('appends visible tunnel edges without duplicates', async () => {
     const graph = await freshStore()
     mocked.graph.mockResolvedValue(view)
-    mocked.get.mockImplementation(async (path: string) => {
-      if (path === '/v1/tunnels') return { items: [edge('a', 'c', 'tunnel'), edge('a', 'b'), edge('a', 'zz', 'tunnel')] }
-      return { items: [] }
-    })
+    mocked.tunnels.mockResolvedValue([edge('a', 'c', 'tunnel'), edge('a', 'b'), edge('a', 'zz', 'tunnel')])
     await graph.loadFull()
     await vi.waitFor(() => expect(graph.edges).toHaveLength(4))
     expect(graph.edges.at(-1)?.rel_type).toBe('tunnel')

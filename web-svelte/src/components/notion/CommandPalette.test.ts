@@ -11,7 +11,7 @@ import { graph } from '@/lib/state/graph.svelte'
 import { meta } from '@/test/fixtures'
 import CommandPalette from './CommandPalette.svelte'
 
-vi.mock('@/api/client', () => ({ api: { get: vi.fn(), wikiList: vi.fn() } }))
+vi.mock('@/api/client', () => ({ api: { documents: vi.fn(), wikiList: vi.fn() } }))
 vi.mock('@/lib/router.svelte', () => ({
   route: { name: 'wiki', pageId: null, query: {} },
   goWiki: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock('@/lib/router.svelte', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.mocked(api.get).mockResolvedValue({ items: [] })
+  vi.mocked(api.documents).mockResolvedValue({ items: [] })
   ui.locale = 'en'
   ui.commandOpen = false
   wiki.pages = [meta('p1', 'Architecture'), meta('p2', 'Runbook')]
@@ -85,12 +85,12 @@ describe('CommandPalette', () => {
     vi.useFakeTimers()
     try {
       graph.nodes = [{ id: 'n1', label: 'Retriever node', kind: 'doc', document_id: 'd1' }]
-      vi.mocked(api.get).mockResolvedValue({ items: [{ id: 'd9', title: 'Retriever spec', uri: 'file:///x', layer: 'raw', wing: 'rag' }] })
+      vi.mocked(api.documents).mockResolvedValue({ items: [{ id: 'd9', title: 'Retriever spec', uri: 'file:///x', layer: 'raw', kind: 'document', status: 'active', updated_at: '', wing: 'rag' }] })
       open()
       await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'retriever' } })
       await vi.advanceTimersByTimeAsync(200)
       flushSync()
-      expect(api.get).toHaveBeenCalledWith(expect.stringContaining('/v1/documents?'))
+      expect(api.documents).toHaveBeenCalledWith({ limit: 20, layer: 'raw', q: 'retriever' }, expect.anything())
       await fireEvent.click(screen.getByText('Retriever spec'))
       expect(navigate).toHaveBeenCalledWith(expect.stringContaining('document_id=d9'))
       ui.openCommand()

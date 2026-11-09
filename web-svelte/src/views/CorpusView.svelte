@@ -2,23 +2,17 @@
   import { relativeDate, shortDate, shortHash } from '@/lib/format'
   import { errorMessage } from '@/lib/async'
   import { onMount } from 'svelte'
-  import { api, loadPanels } from '@/api/client'
+  import { api, documentsQuery, loadPanels } from '@/api/client'
+  import type { DocumentDetail, DocumentRow, DocumentsQuery, EmbeddingManifestStatus, ProjectHome, ProjectSummary, TaxonomySummary } from '@/api/types'
   import { goGraph, route } from '@/lib/router.svelte'
   import { ui } from '@/lib/state/ui.svelte'
 
-  type Project = { project_id: string; document_count: number; rooms: { room: string; document_count: number }[] }
-  type Row = { id: string; uri: string; title: string; wing?: string | null; room?: string | null; source_file?: string | null; layer: string; kind: string; status: string; revision?: number; pinned?: boolean; boost?: number; content_hash?: string | null; updated_at: string }
-  type DetailDocument = Row & { revision: number; metadata_json: string; content: string }
-  type DocumentDetail = { document: DetailDocument; chunks?: { id: string; chunk_index: number; content: string; char_start: number; char_end: number }[]; chunks_total?: number; chunks_truncated?: boolean }
-  type DocumentPage = { items?: Row[]; page?: { total?: number; next_cursor?: string | null } }
-  type EmbeddingStatus = { match?: boolean; live?: { provider?: string; model?: string; dims?: number }; manifest?: { provider?: string; model?: string; dims?: number } }
-  type Taxonomy = { unscoped_count?: number; total_documents?: number }
-  type ProjectHome = { source_roots?: { canonical_root: string; file_count: number }[] }
-  type SyncJobResponse = { id?: string; job?: { id?: string } }
+
+  type Row = DocumentRow
 
   const layerOptions: readonly (readonly [value: string, label: string])[] = [['', 'все'], ['raw', 'raw'], ['wiki', 'wiki']]
 
-  let projects = $state<Project[]>([])
+  let projects = $state<ProjectSummary[]>([])
   let rows = $state<Row[]>([])
   let total = $state(0)
   let project = $state('')
@@ -40,8 +34,8 @@
   let syncPath = $state('')
   let syncBusy = $state(false)
   let projectHome = $state<ProjectHome | null>(null)
-  let embeddingStatus = $state<EmbeddingStatus | null>(null)
-  let taxonomy = $state<Taxonomy>({})
+  let embeddingStatus = $state<EmbeddingManifestStatus | null>(null)
+  let taxonomy = $state<Partial<TaxonomySummary>>({})
   let backlinks = $state<{ id: string; label: string }[]>([])
   let showText = $state(false)
   let dialogEl: HTMLDivElement | null = $state(null)
@@ -79,41 +73,37 @@
   const allDocumentCount = $derived(taxonomy.total_documents ?? (scopedDocumentCount + (taxonomy.unscoped_count ?? 0)))
   const filtersDirty = $derived.by(() => Boolean(appliedFilterSignature) && documentQuery() !== appliedFilterSignature)
 
+  function documentFilters(): DocumentsQuery {
+    return { limit: 200, wing: project, room, layer, status, include_archived: status === 'archived', q: query.trim() }
+  }
+
   function documentQuery() {
-    const params = new URLSearchParams({ limit: '200' })
-    if (project) params.set('wing', project)
-    if (room) params.set('room', room)
-    if (layer) params.set('layer', layer)
-    if (status) params.set('status', status)
-    if (status === 'archived') params.set('include_archived', 'true')
-    if (query.trim()) params.set('q', query.trim())
-    return params.toString()
+    return documentsQuery(documentFilters())
   }
 
   async function loadProjects(generation?: number) {
-    const response = await api.get<{ items: Project[] }>('/v1/projects')
+    const response = await api.projects()
     if (generation != null && generation !== refreshGeneration) return
-    projects = response.items ?? []
+    projects = response
   }
 
   async function loadEmbeddingStatus(generation?: number) {
-    const response = await api.get<EmbeddingStatus>('/v1/embedding-manifest')
+    const response = await api.embeddingManifest()
     if (generation != null && generation !== refreshGeneration) return
     embeddingStatus = response
   }
 
   async function loadTaxonomy(generation?: number) {
-    const response = await api.get<{ taxonomy?: Taxonomy }>('/v1/taxonomy')
+    const response = await api.taxonomy()
     if (generation != null && generation !== refreshGeneration) return
-    taxonomy = response.taxonomy ?? {}
+    taxonomy = response ?? {}
   }
 
   async function loadDocuments(append = false, generation?: number) {
     const cursor = append ? nextCursor : null
-    const requestSignature = documentQuery()
+    const filters = documentFilters()
+    const requestSignature = documentsQuery(filters)
     if (append && (!cursor || requestSignature !== appliedFilterSignature)) return
-    const requestQuery = new URLSearchParams(requestSignature)
-    if (cursor) requestQuery.set('cursor', cursor)
     const requestId = ++documentRequestId
     if (append) {
       loadingMore = true
@@ -124,7 +114,7 @@
       appendError = ''
     }
     try {
-      const response = await api.get<DocumentPage>(`/v1/documents?${requestQuery.toString()}`)
+      const response = await api.documents(cursor ? { ...filters, cursor } : filters)
       if (requestId !== documentRequestId || (generation != null && generation !== refreshGeneration)) return
       if (append && requestSignature !== documentQuery()) return
       const incoming = response.items ?? []
@@ -167,12 +157,9 @@
 
   async function loadRoutedDocument(documentId: string, catalogRequestId: number) {
     try {
-      const response = await api.post<{ items?: DocumentDetail[] }>('/v1/multi-get', {
-        document_ids: [documentId],
-        include_chunks: false,
-      })
+      const response = await api.multiGet([documentId], { include_chunks: false })
       if (catalogRequestId !== documentRequestId || pendingSelectionId !== documentId) return
-      const routed = response.items?.[0]?.document
+      const routed = response[0]?.document
       if (!routed) {
         pendingSelectionId = ''
         panelWarning = `Документ ${documentId} не найден`
@@ -214,11 +201,11 @@
     detailError = ''
     try {
       const [response, backlinkResponse] = await Promise.all([
-        api.post<{ items?: DocumentDetail[] }>('/v1/multi-get', { document_ids: [row.id], include_chunks: true, chunk_limit: 80 }),
+        api.multiGet([row.id], { include_chunks: true, chunk_limit: 80 }),
         api.backlinks(row.id).catch(() => null),
       ])
       if (requestId === detailRequestId && selected?.id === row.id && (generation == null || generation === refreshGeneration)) {
-        detail = response?.items?.[0] ?? null
+        detail = response[0] ?? null
         backlinks = backlinkResponse?.backlinks ?? []
       }
     } catch (cause) {
@@ -237,8 +224,8 @@
     room = nextRoom
     projectHome = null
     if (nextProject) {
-      void api.get<{ project?: ProjectHome }>(`/v1/project-home?project=${encodeURIComponent(nextProject)}`).then((response) => {
-        if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response?.project ?? null
+      void api.projectHome(nextProject).then((response) => {
+        if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response
       }).catch((cause: unknown) => {
         if (requestId !== projectHomeRequestId) return
         const message = errorMessage(cause)
@@ -253,8 +240,8 @@
     if (!syncPath.trim()) return
     syncBusy = true
     try {
-      const response = await api.post<SyncJobResponse>('/v1/jobs/sync', { path: syncPath.trim(), wing: project || undefined, room: room || undefined })
-      ui.toast(`Sync поставлен в очередь · ${response?.id ?? response?.job?.id ?? ''}`, 'ok')
+      const jobId = await api.startSync({ path: syncPath.trim(), wing: project || undefined, room: room || undefined })
+      ui.toast(`Sync поставлен в очередь · ${jobId}`, 'ok')
     } catch (cause) {
       ui.toast(errorMessage(cause), 'error')
     } finally {
