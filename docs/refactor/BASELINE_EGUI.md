@@ -72,3 +72,4 @@ instead of being recomputed inside every frame.
 | 3. Legend, hover tooltip data and incident-edge lists cached in the scene | 73.8 | 1.9 | 12.5 | 12.3 | 40.5 | 4.1 | 1.4 |
 | 4. Uniform grid for node culling and hit-testing | 72.7 | 1.7 | 11.0 | 11.2 | 41.2 | 4.4 | 1.7 |
 | 5. `Arc<GraphView>` for the full and local views (Expand payload: 2 deep copies → 2 `Arc` clones, see below) | – | – | – | – | – | – | – |
+| 6. `adapt()`: placement JSON parsed once per node, no edge double-clone, index-based depth/degree | 45.2 | 1.4 | 10.6 | 10.8 | 37.6 | 3.5 | 1.5 |

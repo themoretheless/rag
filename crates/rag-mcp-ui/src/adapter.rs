@@ -189,9 +189,18 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     // (unresolved stubs, entities and tags) often have no placement of their
     // own, so keep them only when they are directly connected to a matching
     // document. Explicitly mismatched placement is never allowed through.
+    // Placement metadata is JSON: parse it once per node and reuse it for the
+    // scope filter here and for the UI node below.
+    let placements: HashMap<&str, Placement> = kind_visible
+        .iter()
+        .map(|node| (node.id.as_str(), parse_placement_meta(&node.metadata_json)))
+        .collect();
     let scope: HashMap<&str, ScopeDisposition> = kind_visible
         .iter()
-        .map(|node| (node.id.as_str(), scope_disposition(node, opts)))
+        .map(|node| {
+            let id = node.id.as_str();
+            (id, scope_disposition(node, &placements[id], opts))
+        })
         .collect();
     let anchors: HashSet<&str> = kind_visible
         .iter()
@@ -233,7 +242,12 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         clamp_nodes(&filtered_nodes, view, opts.seed_id.as_deref())
     };
 
-    let keep: HashSet<String> = kept_nodes.iter().map(|n| n.id.clone()).collect();
+    // Where each kept node sits in the output; also the "is kept" test.
+    let node_index: HashMap<&str, usize> = kept_nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.as_str(), index))
+        .collect();
 
     let pkb_rels: HashSet<String> = if opts.pkb_rels_only {
         crate::topology::pkb_default_rel_types()
@@ -247,7 +261,10 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         .edges
         .iter()
         .filter(|edge| edge_visible_for_lens(edge, opts.lens))
-        .filter(|e| keep.contains(&e.source_id) && keep.contains(&e.target_id))
+        .filter(|e| {
+            node_index.contains_key(e.source_id.as_str())
+                && node_index.contains_key(e.target_id.as_str())
+        })
         .filter(|e| {
             if !opts.pkb_rels_only {
                 return true;
@@ -258,8 +275,7 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
         })
         .collect();
 
-    let edge_owned: Vec<GraphEdge> = candidate_edges.iter().map(|e| (*e).clone()).collect();
-    let mut ui_edges = collapse_edges(&edge_owned);
+    let mut ui_edges = collapse_edges(candidate_edges);
     let pre_cap_edge_count = ui_edges.len();
     let mut truncated_edges = false;
     let (node_cap, edge_cap) = if opts.show_all_nodes {
@@ -285,43 +301,32 @@ pub fn adapt(view: &GraphView, opts: &AdaptOptions) -> UiGraph {
     }
 
     // Every drawn edge joins two kept nodes; record where they sit in `nodes`.
-    let node_index: HashMap<&str, usize> = kept_nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| (node.id.as_str(), index))
-        .collect();
     for edge in &mut ui_edges {
         edge.source_idx = node_index[edge.source_id.as_str()];
         edge.target_idx = node_index[edge.target_id.as_str()];
     }
 
     // Undirected adjacency for depth / degree (post-collapse, post-cap).
-    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); kept_nodes.len()];
+    let mut degree = vec![0_u32; kept_nodes.len()];
     for e in &ui_edges {
-        adj.entry(e.source_id.clone())
-            .or_default()
-            .push(e.target_id.clone());
-        adj.entry(e.target_id.clone())
-            .or_default()
-            .push(e.source_id.clone());
+        adjacency[e.source_idx].push(e.target_idx);
+        adjacency[e.target_idx].push(e.source_idx);
+        degree[e.source_idx] += 1;
+        degree[e.target_idx] += 1;
     }
-
-    let depth_map = bfs_depth(opts.seed_id.as_deref(), &keep, &adj);
-
-    let mut degree: HashMap<String, u32> = HashMap::new();
-    for e in &ui_edges {
-        *degree.entry(e.source_id.clone()).or_default() += 1;
-        *degree.entry(e.target_id.clone()).or_default() += 1;
-    }
+    let seed_index = opts
+        .seed_id
+        .as_deref()
+        .and_then(|seed| node_index.get(seed).copied());
+    let depth = bfs_depth(seed_index, &adjacency);
 
     let ui_nodes: Vec<UiNode> = kept_nodes
         .iter()
-        .map(|n| {
-            node_to_ui(
-                n,
-                depth_map.get(&n.id).copied().unwrap_or(0),
-                degree.get(&n.id).copied().unwrap_or(0),
-            )
+        .enumerate()
+        .map(|(index, n)| {
+            let placement = placements.get(n.id.as_str()).cloned().unwrap_or_default();
+            node_to_ui(n, placement, depth[index], degree[index])
         })
         .collect();
 
@@ -531,34 +536,26 @@ fn clamp_nodes<'a>(
     (nodes, true)
 }
 
-fn bfs_depth(
-    seed_id: Option<&str>,
-    keep: &HashSet<String>,
-    adj: &HashMap<String, Vec<String>>,
-) -> HashMap<String, u32> {
-    let mut depth_map: HashMap<String, u32> = HashMap::new();
-    let Some(seed) = seed_id else {
-        return depth_map;
+/// Hop count from the seed over `adjacency` (node indices); 0 for the seed,
+/// for unreachable nodes and when there is no seed.
+fn bfs_depth(seed: Option<usize>, adjacency: &[Vec<usize>]) -> Vec<u32> {
+    let mut depth = vec![0_u32; adjacency.len()];
+    let Some(seed) = seed else {
+        return depth;
     };
-    if !keep.contains(seed) {
-        return depth_map;
-    }
-    let mut q = VecDeque::new();
-    q.push_back((seed.to_string(), 0u32));
-    depth_map.insert(seed.to_string(), 0);
-    while let Some((id, d)) = q.pop_front() {
-        let Some(neis) = adj.get(&id) else {
-            continue;
-        };
-        for n in neis {
-            if depth_map.contains_key(n) {
-                continue;
+    let mut seen = vec![false; adjacency.len()];
+    seen[seed] = true;
+    let mut queue = VecDeque::from([seed]);
+    while let Some(node) = queue.pop_front() {
+        for &next in &adjacency[node] {
+            if !seen[next] {
+                seen[next] = true;
+                depth[next] = depth[node] + 1;
+                queue.push_back(next);
             }
-            depth_map.insert(n.clone(), d + 1);
-            q.push_back((n.clone(), d + 1));
         }
     }
-    depth_map
+    depth
 }
 
 fn truncation_note(
@@ -590,10 +587,15 @@ fn truncation_note(
 /// Collapse multi-edges for canvas by (source_id, target_id, rel_type).
 /// One stroke; multi_count > 1; weight = max among members; full members kept for detail.
 /// Endpoint indices are left at 0 here; [`adapt`] fills them once the node set is final.
-pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
-    let mut map: HashMap<(String, String, String), UiEdge> = HashMap::new();
+pub fn collapse_edges<'a>(edges: impl IntoIterator<Item = &'a GraphEdge>) -> Vec<UiEdge> {
+    // Keyed by borrowed strings: no allocation per input edge.
+    let mut map: HashMap<(&'a str, &'a str, &'a str), UiEdge> = HashMap::new();
     for e in edges {
-        let key = (e.source_id.clone(), e.target_id.clone(), e.rel_type.clone());
+        let key = (
+            e.source_id.as_str(),
+            e.target_id.as_str(),
+            e.rel_type.as_str(),
+        );
         map.entry(key)
             .and_modify(|ui| {
                 ui.multi_count += 1;
@@ -627,8 +629,8 @@ pub fn collapse_edges(edges: &[GraphEdge]) -> Vec<UiEdge> {
     out
 }
 
-fn node_to_ui(n: &GraphNode, depth: u32, degree: u32) -> UiNode {
-    let (layer, wing, room) = parse_placement_meta(&n.metadata_json);
+fn node_to_ui(n: &GraphNode, placement: Placement, depth: u32, degree: u32) -> UiNode {
+    let Placement { layer, wing, room } = placement;
     UiNode {
         id: n.id.clone(),
         kind: n.kind.clone(),
@@ -652,12 +654,15 @@ enum ScopeDisposition {
     Excluded,
 }
 
-fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition {
-    let (_, wing, room) = parse_placement_meta(&node.metadata_json);
+fn scope_disposition(
+    node: &GraphNode,
+    placement: &Placement,
+    opts: &AdaptOptions,
+) -> ScopeDisposition {
     let mut missing_placement = false;
     for (wanted, actual) in [
-        (opts.wing.as_deref(), wing.as_deref()),
-        (opts.room.as_deref(), room.as_deref()),
+        (opts.wing.as_deref(), placement.wing.as_deref()),
+        (opts.room.as_deref(), placement.room.as_deref()),
     ] {
         let Some(wanted) = wanted else {
             continue;
@@ -680,12 +685,24 @@ fn scope_disposition(node: &GraphNode, opts: &AdaptOptions) -> ScopeDisposition 
     }
 }
 
-fn parse_placement_meta(metadata_json: &str) -> (Option<String>, Option<String>, Option<String>) {
+/// Storage layer and project placement from a node's `metadata_json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Placement {
+    layer: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+}
+
+fn parse_placement_meta(metadata_json: &str) -> Placement {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(metadata_json) else {
-        return (None, None, None);
+        return Placement::default();
     };
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|s| s.to_string());
-    (s("layer"), s("wing"), s("room"))
+    Placement {
+        layer: s("layer"),
+        wing: s("wing"),
+        room: s("room"),
+    }
 }
 
 /// True when a node's metadata names the wiki layer (any key order or spacing).
