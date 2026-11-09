@@ -82,10 +82,42 @@ pub(super) struct OpsState {
     pub(super) backup_form: BackupForm,
 }
 
+/// Lowercased text the activity filters match against, one per event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ActivitySearchKey {
+    pub(super) client: String,
+    pub(super) action: String,
+    /// Timestamp, kind, client, action and status in one string.
+    pub(super) any: String,
+}
+
+impl ActivitySearchKey {
+    pub(super) fn of(event: &ActivityEvent) -> Self {
+        let client = event.client.as_deref().unwrap_or("");
+        Self {
+            client: client.to_lowercase(),
+            action: event.action.to_lowercase(),
+            any: format!(
+                "{} {} {} {} {}",
+                event.at,
+                event.kind,
+                client,
+                event.action,
+                event.status.map(|v| v.to_string()).unwrap_or_default()
+            )
+            .to_lowercase(),
+        }
+    }
+}
+
 /// Gateway activity feed and its filters.
 #[derive(Debug)]
 pub(super) struct ActivityState {
+    /// Replace only through [`ActivityState::set_events`].
     pub(super) events: Vec<ActivityEvent>,
+    /// `search_keys[i]` belongs to `events[i]`; built when the feed is loaded
+    /// instead of on every frame.
+    pub(super) search_keys: Vec<ActivitySearchKey>,
     pub(super) error: Option<String>,
     pub(super) last_refresh: Option<Instant>,
     pub(super) auto_refresh: bool,
@@ -100,6 +132,7 @@ impl Default for ActivityState {
     fn default() -> Self {
         Self {
             events: Vec::new(),
+            search_keys: Vec::new(),
             error: None,
             last_refresh: None,
             auto_refresh: true,
@@ -109,6 +142,14 @@ impl Default for ActivityState {
             action_filter: String::new(),
             status_filter: "all".into(),
         }
+    }
+}
+
+impl ActivityState {
+    /// Replace the feed and its search keys together.
+    pub(super) fn set_events(&mut self, events: Vec<ActivityEvent>) {
+        self.search_keys = events.iter().map(ActivitySearchKey::of).collect();
+        self.events = events;
     }
 }
 
@@ -192,6 +233,9 @@ pub(super) struct GraphViewState {
     /// scan over the loaded graph (up to `UI_GRAPH_EXPORT_MAX_NODES`) runs
     /// once per query change, not every frame while the field has focus.
     pub(super) seed_suggestions_cache: Option<SeedSuggestions>,
+    /// Lowercased label / id / document id per `full_view` node for
+    /// `full_view_rev`, built on the first query after a load.
+    pub(super) seed_search_keys: Option<(u64, Vec<SeedSearchKey>)>,
     /// Empty-banner topology stats for `full_view_rev`: counting kinds and
     /// relation types walks every loaded node and edge, so it runs once per
     /// load instead of every frame the banner shows.
@@ -250,6 +294,7 @@ impl GraphViewState {
             full_view: None,
             full_view_rev: 0,
             seed_suggestions_cache: None,
+            seed_search_keys: None,
             empty_stats_cache: std::cell::RefCell::new(None),
             wiki_target_cache: std::cell::RefCell::new(None),
             load_error: None,

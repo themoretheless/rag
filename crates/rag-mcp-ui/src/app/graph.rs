@@ -12,21 +12,23 @@ impl GraphApp {
                 return cached.items.clone();
             }
         }
-        let mut suggestions = Vec::new();
-        if let Some(full) = self.graph.full_view.as_deref() {
-            for n in &full.nodes {
-                let doc = n.document_id.as_deref().unwrap_or("");
-                if n.label.to_lowercase().contains(query)
-                    || n.id.to_lowercase().contains(query)
-                    || doc.to_lowercase().contains(query)
-                {
-                    suggestions.push((n.id.clone(), n.label.clone()));
-                    if suggestions.len() >= 10 {
-                        break;
-                    }
+        let rev = self.graph.full_view_rev;
+        let suggestions = match self.graph.full_view.as_deref() {
+            Some(full) => {
+                // Lowercase every node once per loaded graph, not once per query.
+                if self.graph.seed_search_keys.as_ref().map(|(at, _)| *at) != Some(rev) {
+                    self.graph.seed_search_keys = Some((rev, seed_search_keys(full)));
                 }
+                let keys = self
+                    .graph
+                    .seed_search_keys
+                    .as_ref()
+                    .map(|(_, keys)| keys.as_slice())
+                    .unwrap_or_default();
+                seed_matches(full, keys, query)
             }
-        }
+            None => Vec::new(),
+        };
         self.graph.seed_suggestions_cache = Some(SeedSuggestions {
             rev: self.graph.full_view_rev,
             query: query.to_string(),

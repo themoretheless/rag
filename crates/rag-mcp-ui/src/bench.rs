@@ -303,6 +303,39 @@ fn graph_pipeline_benchmark() {
         ));
     });
 
+    // Seed picker over the loaded graph: the old scan lowercased three fields
+    // of every node per query; keys are now built once per load.
+    let seed_scan_old = median(15, || {
+        let query = "synthetic corpus 49";
+        let hits: Vec<&str> = view
+            .nodes
+            .iter()
+            .filter(|n| {
+                n.label.to_lowercase().contains(query)
+                    || n.id.to_lowercase().contains(query)
+                    || n.document_id
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(query)
+            })
+            .take(10)
+            .map(|n| n.id.as_str())
+            .collect();
+        std::hint::black_box(hits);
+    });
+    let seed_keys_time = median(15, || {
+        std::hint::black_box(crate::app::seed_search_keys(&view).len());
+    });
+    let seed_keys = crate::app::seed_search_keys(&view);
+    let seed_scan_new = median(15, || {
+        std::hint::black_box(crate::app::seed_matches(
+            &view,
+            &seed_keys,
+            "synthetic corpus 49",
+        ));
+    });
+
     println!();
     println!(
         "graph pipeline benchmark: {} nodes / {} edges ({} drawn edges)",
@@ -317,6 +350,9 @@ fn graph_pipeline_benchmark() {
     println!("  canvas frame, fitted overview   {}", ms(frame_fitted));
     println!("  canvas frame, zoomed in 8x      {}", ms(frame_zoomed));
     println!("  detail panel frame (hub node)   {}", ms(detail_time));
+    println!("  seed query, lowercasing per node {}", ms(seed_scan_old));
+    println!("  seed keys build (per load)      {}", ms(seed_keys_time));
+    println!("  seed query over prebuilt keys   {}", ms(seed_scan_new));
     println!("  expand payload, deep copy x2    {}", ms(deep_copy));
     println!("  expand payload, Arc x2          {}", ms(shared_copy));
 }

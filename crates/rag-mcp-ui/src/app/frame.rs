@@ -29,9 +29,6 @@ impl eframe::App for GraphApp {
         {
             self.reload_jobs();
         }
-        let project_options = self.scope.catalog.clone();
-        let project_catalog_error = self.scope.catalog_error.clone();
-
         let http_available = self.activity_base().is_some();
         let wiki_available = self.available_load_source().is_some();
         let rail_output = draw_rail(root_ui, self.shell_route(), http_available, wiki_available);
@@ -51,10 +48,10 @@ impl eframe::App for GraphApp {
             TopbarState {
                 route,
                 project: &mut self.scope.wing,
-                projects: &project_options,
+                projects: &self.scope.catalog,
                 project_enabled: project_switch_enabled,
                 project_loading: self.pending.project_catalog.is_some(),
-                project_error: project_catalog_error.as_deref(),
+                project_error: self.scope.catalog_error.as_deref(),
                 search_enabled: connected,
                 connected,
                 read_only_source,

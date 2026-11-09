@@ -210,7 +210,7 @@ pub(in crate::app) fn body(app: &mut GraphApp, root_ui: &mut egui::Ui, _ctx: &eg
                         ui.strong("Длительность");
                         ui.strong("ID запроса");
                         ui.end_row();
-                        for event in app.activity.events.iter().rev() {
+                        for (event, key) in app.activity.events.iter().zip(&app.activity.search_keys).rev() {
                             if app.activity.kind_filter != "all"
                                 && event.kind != app.activity.kind_filter
                             {
@@ -224,19 +224,13 @@ pub(in crate::app) fn body(app: &mut GraphApp, root_ui: &mut egui::Ui, _ctx: &eg
                             if !status_matches {
                                 continue;
                             }
-                            let client = event.client.as_deref().unwrap_or("");
-                            if !client_filter.is_empty()
-                                && !client.to_lowercase().contains(&client_filter)
-                            {
+                            if !client_filter.is_empty() && !key.client.contains(&client_filter) {
                                 continue;
                             }
-                            if !action_filter.is_empty()
-                                && !event.action.to_lowercase().contains(&action_filter)
-                            {
+                            if !action_filter.is_empty() && !key.action.contains(&action_filter) {
                                 continue;
                             }
-                            let searchable = format!("{} {} {} {} {}", event.at, event.kind, event.client.as_deref().unwrap_or(""), event.action, event.status.map(|v| v.to_string()).unwrap_or_default()).to_lowercase();
-                            if !filter.is_empty() && !searchable.contains(&filter) {
+                            if !filter.is_empty() && !key.any.contains(&filter) {
                                 continue;
                             }
                             let local_time = event.at.get(..19).unwrap_or(&event.at).replace('T', " ");

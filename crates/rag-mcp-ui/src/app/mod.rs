@@ -259,6 +259,43 @@ impl RevisionWorkspace {
     }
 }
 
+/// Lowercased fields the seed picker matches a query against.
+pub(super) struct SeedSearchKey {
+    label: String,
+    id: String,
+    document_id: String,
+}
+
+/// One key per node of `view`, in node order.
+pub(super) fn seed_search_keys(view: &GraphView) -> Vec<SeedSearchKey> {
+    view.nodes
+        .iter()
+        .map(|node| SeedSearchKey {
+            label: node.label.to_lowercase(),
+            id: node.id.to_lowercase(),
+            document_id: node.document_id.as_deref().unwrap_or("").to_lowercase(),
+        })
+        .collect()
+}
+
+/// First ten `(node id, label)` pairs whose label, id or document id contains
+/// `query` (already lowercased), in node order.
+pub(super) fn seed_matches(
+    view: &GraphView,
+    keys: &[SeedSearchKey],
+    query: &str,
+) -> Vec<(String, String)> {
+    view.nodes
+        .iter()
+        .zip(keys)
+        .filter(|(_, key)| {
+            key.label.contains(query) || key.id.contains(query) || key.document_id.contains(query)
+        })
+        .take(10)
+        .map(|(node, _)| (node.id.clone(), node.label.clone()))
+        .collect()
+}
+
 /// Cached seed-picker matches: `(node id, label)` pairs for one query over
 /// one `full_view` revision.
 pub(super) struct SeedSuggestions {
@@ -1142,6 +1179,46 @@ mod tests {
             etag: None,
             updated_at: None,
         }
+    }
+
+    #[test]
+    fn seed_matches_are_case_insensitive_ordered_and_capped() {
+        let node = |id: &str, label: &str, document_id: Option<&str>| rag_mcp_core::GraphNode {
+            id: id.into(),
+            kind: "document".into(),
+            label: label.into(),
+            document_id: document_id.map(str::to_string),
+            uri: None,
+            resolved: true,
+            metadata_json: "{}".into(),
+        };
+        let mut nodes = vec![
+            node("N-1", "Архитектура", None),
+            node("n-2", "Other", Some("DOC-Арх")),
+            node("арх-3", "Third", None),
+            node("n-4", "Unrelated", Some("doc-4")),
+        ];
+        nodes.extend((0..20).map(|i| node(&format!("bulk-{i}"), "Bulk", None)));
+        let view = GraphView {
+            nodes,
+            edges: Vec::new(),
+        };
+        let keys = seed_search_keys(&view);
+
+        let hits = seed_matches(&view, &keys, "арх");
+        let ids: Vec<&str> = hits.iter().map(|hit| hit.0.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["N-1", "n-2", "арх-3"],
+            "label, document id and id match"
+        );
+        assert_eq!(hits[0].1, "Архитектура", "original label is returned");
+        assert_eq!(
+            seed_matches(&view, &keys, "bulk").len(),
+            10,
+            "capped at ten"
+        );
+        assert!(seed_matches(&view, &keys, "missing").is_empty());
     }
 
     #[test]

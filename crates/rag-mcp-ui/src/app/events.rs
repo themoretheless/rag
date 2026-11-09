@@ -384,7 +384,7 @@ impl GraphApp {
         self.activity.last_refresh = Some(Instant::now());
         match result {
             Ok(items) => {
-                self.activity.events = items;
+                self.activity.set_events(items);
                 self.activity.error = None;
             }
             Err(error) => self.activity.error = Some(error),
