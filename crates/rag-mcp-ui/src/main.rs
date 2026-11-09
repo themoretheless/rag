@@ -9,6 +9,8 @@
 
 mod adapter;
 mod app;
+#[cfg(test)]
+mod bench;
 mod cli;
 #[cfg(feature = "direct-db")]
 mod direct_db;
