@@ -1,81 +1,28 @@
-import { createRequestGate, errorMessage } from '@/lib/async'
-import { api } from '@/api/client'
-import { agentsResource } from '@/api/resources.svelte'
 import type { AgentInfo, HealthResponse } from '@/api/types'
-import { formatMessage, setActiveLocale, type Locale, type MessageKey } from '@/lib/i18n'
+import type { Locale, MessageKey } from '@/lib/i18n'
+import { Appearance, type Theme } from './appearance.svelte'
+import { ShellHealth } from './health.svelte'
+import { Toasts, type Toast, type ToastKind } from './toasts.svelte'
 
-export type Theme = 'dark' | 'light' | 'system'
+export type { Theme, Toast }
 
-const THEME_KEY = 'rag-theme'
-const LOCALE_KEY = 'rag-locale'
-
-export interface Toast {
-  id: number
-  text: string
-  kind: 'info' | 'error' | 'ok'
-}
-
-/** Shell state: theme, locale, health, toasts, sidebar, command palette. */
+/**
+ * Application-shell state, composed of three stores:
+ *
+ * - `appearance`  — theme and locale (`appearance.svelte.ts`)
+ * - `toastStore`  — transient notifications (`toasts.svelte.ts`)
+ * - `shellHealth` — gateway health badge and agent avatars (`health.svelte.ts`)
+ *
+ * plus the command-palette flag. The flat accessors keep the `ui.t(...)` /
+ * `ui.toast(...)` call sites that every screen uses.
+ */
 class UiStore {
-  theme = $state<Theme>('dark')
-  locale = $state<Locale>('ru')
+  readonly appearance = new Appearance()
+  readonly toastStore = new Toasts()
+  readonly shellHealth = new ShellHealth()
+
   sidebarCollapsed = $state(false)
   commandOpen = $state(false)
-  health = $state<HealthResponse | null>(null)
-  healthError = $state<string | null>(null)
-  shellAgents = $state<AgentInfo[]>([])
-  shellAgentsError = $state<string | null>(null)
-  toasts = $state<Toast[]>([])
-
-  private toastSeq = 0
-  private readonly healthGate = createRequestGate()
-
-  get localeLabel(): string {
-    return this.locale === 'en' ? 'EN' : 'RU'
-  }
-
-  /** Translate a shell/wiki UI string for the active locale. */
-  t(key: MessageKey, params?: Record<string, string | number>): string {
-    return formatMessage(this.locale, key, params)
-  }
-
-  hydrateTheme() {
-    const saved = localStorage.getItem(THEME_KEY) as Theme | null
-    if (saved) this.theme = saved
-    this.applyTheme()
-    this.hydrateLocale()
-  }
-
-  hydrateLocale() {
-    const saved = localStorage.getItem(LOCALE_KEY) as Locale | null
-    if (saved === 'en' || saved === 'ru') this.locale = saved
-    setActiveLocale(this.locale)
-  }
-
-  setLocale(l: Locale) {
-    this.locale = l
-    setActiveLocale(l)
-    localStorage.setItem(LOCALE_KEY, l)
-  }
-
-  toggleLocale() {
-    this.setLocale(this.locale === 'en' ? 'ru' : 'en')
-  }
-
-  setTheme(next: Theme) {
-    this.theme = next
-    localStorage.setItem(THEME_KEY, next)
-    this.applyTheme()
-  }
-
-  applyTheme() {
-    const root = document.documentElement
-    let mode = this.theme
-    if (mode === 'system') {
-      mode = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    }
-    root.dataset.theme = mode
-  }
 
   toggleSidebar() {
     this.sidebarCollapsed = !this.sidebarCollapsed
@@ -89,51 +36,69 @@ class UiStore {
     this.commandOpen = false
   }
 
-  /**
-   * Refresh the shell health badge and agent avatars. `agentsMaxAgeMs` lets the
-   * background poller reuse an agents snapshot a screen has just fetched.
-   */
-  async checkHealth(agentsMaxAgeMs = 0) {
-    const ticket = this.healthGate.next()
+  /* ---------- appearance ---------- */
 
-    // Keep the two shell snapshots independent: a broken optional agents panel
-    // must not turn a healthy gateway red (and vice versa).
-    const healthTask = api.health().then(
-      (health) => {
-        if (!ticket.current) return
-        this.health = health
-        this.healthError = null
-      },
-      (cause: unknown) => {
-        if (!ticket.current) return
-        this.healthError = errorMessage(cause)
-        this.health = null
-      },
-    )
-
-    const agentsTask = (agentsMaxAgeMs > 0 ? agentsResource.fresh(agentsMaxAgeMs) : agentsResource.refresh()).then(
-      (agents) => {
-        if (!ticket.current) return
-        this.shellAgents = agents
-        this.shellAgentsError = null
-      },
-      (cause: unknown) => {
-        if (!ticket.current) return
-        // Preserve the last valid snapshot for diagnostics. TopBar hides it
-        // while stale, so old `online` flags are never presented as current.
-        this.shellAgentsError = errorMessage(cause)
-      },
-    )
-
-    await Promise.all([healthTask, agentsTask])
+  get theme(): Theme {
+    return this.appearance.theme
+  }
+  get locale(): Locale {
+    return this.appearance.locale
+  }
+  set locale(value: Locale) {
+    this.appearance.locale = value
+  }
+  get localeLabel(): string {
+    return this.appearance.localeLabel
+  }
+  /** Translate a shell/wiki UI string for the active locale. */
+  t(key: MessageKey, params?: Record<string, string | number>): string {
+    return this.appearance.t(key, params)
+  }
+  hydrateTheme() {
+    this.appearance.hydrate()
+  }
+  hydrateLocale() {
+    this.appearance.hydrateLocale()
+  }
+  setLocale(next: Locale) {
+    this.appearance.setLocale(next)
+  }
+  toggleLocale() {
+    this.appearance.toggleLocale()
+  }
+  setTheme(next: Theme) {
+    this.appearance.setTheme(next)
   }
 
-  toast(text: string, kind: 'info' | 'error' | 'ok' = 'info') {
-    const id = ++this.toastSeq
-    this.toasts.push({ id, text, kind })
-    setTimeout(() => {
-      this.toasts = this.toasts.filter((x) => x.id !== id)
-    }, 4200)
+  /* ---------- toasts ---------- */
+
+  get toasts(): Toast[] {
+    return this.toastStore.items
+  }
+  toast(text: string, kind: ToastKind = 'info') {
+    this.toastStore.push(text, kind)
+  }
+
+  /* ---------- gateway health ---------- */
+
+  get health(): HealthResponse | null {
+    return this.shellHealth.health
+  }
+  get healthError(): string | null {
+    return this.shellHealth.healthError
+  }
+  get shellAgents(): AgentInfo[] {
+    return this.shellHealth.agents
+  }
+  get shellAgentsError(): string | null {
+    return this.shellHealth.agentsError
+  }
+  checkHealth(agentsMaxAgeMs = 0): Promise<void> {
+    return this.shellHealth.check(agentsMaxAgeMs)
+  }
+  /** Check health now and keep polling; returns the stop function. */
+  startHealthPolling(): () => void {
+    return this.shellHealth.start()
   }
 }
 

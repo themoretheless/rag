@@ -4,7 +4,6 @@
   import ToastHost from '@/components/layout/ToastHost.svelte'
   import CommandPalette from '@/components/notion/CommandPalette.svelte'
   import { createRequestGate, errorMessage } from '@/lib/async'
-  import { usePoll } from '@/lib/poll'
   import { route, startRouter } from '@/lib/router.svelte'
   import { routeByName } from '@/lib/routes'
   import { ui } from '@/lib/state/ui.svelte'
@@ -34,13 +33,16 @@
 
   onMount(() => {
     ui.hydrateTheme()
-    void ui.checkHealth()
     void wiki.loadCatalog()
     // Follow the sidebar filter with debounced server reloads for the app's lifetime.
-    return wiki.start()
+    const stopWiki = wiki.start()
+    // Health badge: check now, then poll so offline recovery shows up.
+    const stopHealth = ui.startHealthPolling()
+    return () => {
+      stopWiki()
+      stopHealth()
+    }
   })
-  // Refresh the health badge periodically so offline recovery shows up.
-  usePoll(() => void ui.checkHealth(10_000), 15_000)
 </script>
 
 <AppShell>
