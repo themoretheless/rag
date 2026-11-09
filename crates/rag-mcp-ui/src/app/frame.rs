@@ -105,9 +105,7 @@ impl eframe::App for GraphApp {
                 self.graph.seed_input.clear();
                 self.graph.seed_id = None;
                 self.graph.seed_error = None;
-                self.graph.selected = None;
-                self.graph.content = None;
-                self.graph.content_error = None;
+                self.select_node(None, InFlightContent::Keep);
             }
             let project_needs_reload = project_changed && self.topology_query_requires_reload();
             let tags_need_reload = tags_changed && self.topology_query_requires_reload();

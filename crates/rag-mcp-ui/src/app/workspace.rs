@@ -734,9 +734,7 @@ impl GraphApp {
                                         self.graph.content_error = None;
                                     }
                                     DetailAction::SelectNode(id) => {
-                                        self.graph.selected = Some(id);
-                                        self.graph.content = None;
-                                        self.graph.content_error = None;
+                                        self.select_node(Some(id), InFlightContent::Keep);
                                     }
                                     DetailAction::None => {}
                                 }
@@ -792,16 +790,10 @@ impl GraphApp {
                     );
                     if let Some(id) = out.clicked_id {
                         if self.graph.selected.as_deref() != Some(id.as_str()) {
-                            self.graph.content = None;
-                            self.graph.content_error = None;
-                            self.pending.content.clear();
+                            self.select_node(Some(id), InFlightContent::Cancel);
                         }
-                        self.graph.selected = Some(id);
                     } else if out.clicked_empty {
-                        self.graph.selected = None;
-                        self.graph.content = None;
-                        self.graph.content_error = None;
-                        self.pending.content.clear();
+                        self.select_node(None, InFlightContent::Cancel);
                     }
                 });
             }

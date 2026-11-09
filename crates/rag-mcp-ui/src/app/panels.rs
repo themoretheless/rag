@@ -381,8 +381,7 @@ impl GraphApp {
                             });
                         lens_response.response.on_hover_text(self.graph.lens.description());
                         if self.graph.lens != previous_lens {
-                            self.graph.selected = None;
-                            self.graph.content = None;
+                            self.select_node(None, InFlightContent::Keep);
                             self.rebuild_ui_graph();
                         }
                         ui.weak("Фокус");

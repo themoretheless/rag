@@ -113,6 +113,17 @@ enum WikiFocus {
     B,
 }
 
+/// What a selection change does to a document request still in flight for the
+/// previously selected node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InFlightContent {
+    /// Drop it: the detail panel stops showing "loading" at once.
+    Cancel,
+    /// Leave the slot alone; the answer is still discarded unless that node is
+    /// selected again by the time it arrives.
+    Keep,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CloseRisk {
     UnsavedWikiEdits,
@@ -320,6 +331,18 @@ impl GraphApp {
         };
         app.dispatch_graph_load();
         app
+    }
+
+    /// The single place the graph selection changes. The previous node's
+    /// document (and any error about it) never carries over; `in_flight` says
+    /// whether a document request still running for it is dropped as well.
+    fn select_node(&mut self, id: Option<String>, in_flight: InFlightContent) {
+        self.graph.selected = id;
+        self.graph.content = None;
+        self.graph.content_error = None;
+        if in_flight == InFlightContent::Cancel {
+            self.pending.content.clear();
+        }
     }
 
     fn next_seq(&mut self) -> u64 {
@@ -779,7 +802,6 @@ impl GraphApp {
         // previous topology under the new controls while the worker is pending.
         self.graph.load_error = None;
         self.pending.expand.clear();
-        self.pending.content.clear();
         self.graph.full_view = None;
         self.graph.full_view_rev += 1;
         self.graph.local_view = None;
@@ -788,9 +810,7 @@ impl GraphApp {
         self.graph.positions.clear();
         self.graph.layout_ready = false;
         self.graph.need_fit = true;
-        self.graph.selected = None;
-        self.graph.content = None;
-        self.graph.content_error = None;
+        self.select_node(None, InFlightContent::Cancel);
         self.graph.expand_note = None;
         self.graph.expanded_dirty = false;
         self.graph.raw_truncated = false;
@@ -987,10 +1007,7 @@ impl GraphApp {
             return;
         }
         if esc && self.mode == ViewMode::Graph && self.graph.selected.is_some() {
-            self.graph.selected = None;
-            self.graph.content = None;
-            self.graph.content_error = None;
-            self.pending.content.clear();
+            self.select_node(None, InFlightContent::Cancel);
         }
         if find && self.mode == ViewMode::Wiki {
             ctx.memory_mut(|m| m.request_focus(wiki_filter_id()));
