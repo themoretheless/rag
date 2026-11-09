@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { usePoll } from '@/lib/poll'
   import { onMount } from 'svelte'
   import { ui } from '@/lib/state/ui.svelte'
   import { route, startRouter } from '@/lib/router.svelte'
@@ -22,10 +23,9 @@
     startRouter()
     void ui.checkHealth()
     void wiki.loadCatalog()
-    // Refresh the health badge periodically so offline recovery shows up.
-    const timer = setInterval(() => void ui.checkHealth(), 15_000)
-    return () => clearInterval(timer)
   })
+  // Refresh the health badge periodically so offline recovery shows up.
+  usePoll(() => void ui.checkHealth(), 15_000)
 </script>
 
 <AppShell>

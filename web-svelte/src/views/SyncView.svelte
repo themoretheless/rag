@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { usePoll } from '@/lib/poll'
   import { onMount } from 'svelte'
   import { api, loadPanels } from '@/api/client'
 
@@ -57,9 +58,8 @@
 
   onMount(() => {
     void load()
-    const timer = setInterval(() => void load(), 10_000)
-    return () => clearInterval(timer)
   })
+  usePoll(() => void load(), 10_000)
 </script>
 
 <div class="sync-page screen">

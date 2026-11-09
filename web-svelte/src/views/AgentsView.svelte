@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { usePoll } from '@/lib/poll'
   import { initials, time } from '@/lib/format'
   import { percentile } from '@/lib/stats'
   import { errorMessage, withTimeout } from '@/lib/async'
@@ -197,9 +198,8 @@
   }
   onMount(() => {
     void load()
-    const timer = setInterval(() => void refreshCalls(), 5_000)
-    return () => clearInterval(timer)
   })
+  usePoll(() => void refreshCalls(), 5_000)
 </script>
 
 <div class="agents-page screen">

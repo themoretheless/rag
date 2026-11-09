@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { usePoll } from '@/lib/poll'
   import { fmtBytes, fmtMs } from '@/lib/format'
   import { sparkPolyline } from '@/lib/stats'
   import { errorMessage } from '@/lib/async'
@@ -42,9 +43,8 @@
 
   onMount(() => {
     void tick()
-    const timer = setInterval(() => void tick(), POLL_MS)
-    return () => clearInterval(timer)
   })
+  usePoll(() => void tick(), POLL_MS)
 
   const cpuMax = $derived(Math.max(100, ...cpuHistory) * 1.1)
   const rssMax = $derived(Math.max(1, ...rssHistory) * 1.1)
