@@ -174,8 +174,8 @@ pub enum WorkerCmd {
     ExpandNeighbors {
         seq: u64,
         selected: String,
-        current: GraphView,
-        full: Option<GraphView>,
+        current: Arc<GraphView>,
+        full: Option<Arc<GraphView>>,
         source: Arc<dyn DocumentSource>,
         project: Option<String>,
         include_tags: bool,
@@ -742,7 +742,7 @@ fn run(cmd: WorkerCmd) -> WorkerEvt {
         } => {
             let result = source.expand(&ExpandRequest {
                 current: &current,
-                full: full.as_ref(),
+                full: full.as_deref(),
                 selected: &selected,
                 max_nodes,
                 project: project.as_deref(),
@@ -1023,8 +1023,8 @@ mod tests {
         let expanded = run(WorkerCmd::ExpandNeighbors {
             seq: 7,
             selected: "n1".into(),
-            current: view(),
-            full: Some(view()),
+            current: Arc::new(view()),
+            full: Some(Arc::new(view())),
             source: source.clone(),
             project: Some("alpha".into()),
             include_tags: true,

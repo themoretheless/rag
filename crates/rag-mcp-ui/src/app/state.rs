@@ -184,7 +184,8 @@ impl Default for WikiState {
 /// Connections workspace: loaded topology, the local view drawn from it,
 /// camera, selection and the selected node's document.
 pub(super) struct GraphViewState {
-    pub(super) full_view: Option<GraphView>,
+    /// Loaded topology. Shared, not copied, with Expand jobs on the worker.
+    pub(super) full_view: Option<Arc<GraphView>>,
     /// Bumped whenever `full_view` is replaced; keys the seed-picker cache.
     pub(super) full_view_rev: u64,
     /// Seed picker suggestions for (`full_view_rev`, lowercased query): the
@@ -216,7 +217,7 @@ pub(super) struct GraphViewState {
     pub(super) prev_show_stubs: bool,
 
     /// Local topology (seed BFS and/or Expand merges) before adapter filters.
-    pub(super) local_view: Option<GraphView>,
+    pub(super) local_view: Option<Arc<GraphView>>,
     /// Exact local BFS budget truncation, independent from server/adapter caps.
     pub(super) local_truncated: bool,
     /// Drawn graph. Replace it only through [`GraphViewState::set_ui_graph`].

@@ -13,7 +13,7 @@ impl GraphApp {
             }
         }
         let mut suggestions = Vec::new();
-        if let Some(full) = self.graph.full_view.as_ref() {
+        if let Some(full) = self.graph.full_view.as_deref() {
             for n in &full.nodes {
                 let doc = n.document_id.as_deref().unwrap_or("");
                 if n.label.to_lowercase().contains(query)
@@ -43,7 +43,7 @@ impl GraphApp {
             self.rebuild_ui_graph();
             return;
         }
-        let Some(full) = self.graph.full_view.as_ref() else {
+        let Some(full) = self.graph.full_view.as_deref() else {
             self.graph.seed_error = Some("Граф не загружен".into());
             return;
         };
@@ -118,7 +118,7 @@ impl GraphApp {
         // Any in-flight Expand merges old topology into the new local view:
         // invalidate it so the late answer is dropped by seq.
         self.pending.expand.clear();
-        let Some(full) = self.graph.full_view.as_ref() else {
+        let Some(full) = self.graph.full_view.as_deref() else {
             self.graph.local_view = None;
             self.graph.local_truncated = false;
             self.graph.set_ui_graph(None);
@@ -184,7 +184,7 @@ impl GraphApp {
             show_all_nodes: false,
         };
         let ui_graph = adapt(&local, &opts);
-        self.graph.local_view = Some(local);
+        self.graph.local_view = Some(Arc::new(local));
 
         if ui_graph.nodes.is_empty() {
             self.graph.set_ui_graph(Some(ui_graph));

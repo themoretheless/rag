@@ -290,6 +290,19 @@ fn graph_pipeline_benchmark() {
     }
     let detail_time = median(25, || detail_frame(&detail_ctx, &graph, &scene, &hub));
 
+    // Expand used to deep-copy the local and the full view into the worker
+    // command; both are now shared through `Arc`.
+    let deep_copy = median(15, || {
+        std::hint::black_box((view.clone(), Some(view.clone())));
+    });
+    let shared_view = std::sync::Arc::new(view.clone());
+    let shared_copy = median(15, || {
+        std::hint::black_box((
+            std::sync::Arc::clone(&shared_view),
+            Some(std::sync::Arc::clone(&shared_view)),
+        ));
+    });
+
     println!();
     println!(
         "graph pipeline benchmark: {} nodes / {} edges ({} drawn edges)",
@@ -304,4 +317,6 @@ fn graph_pipeline_benchmark() {
     println!("  canvas frame, fitted overview   {}", ms(frame_fitted));
     println!("  canvas frame, zoomed in 8x      {}", ms(frame_zoomed));
     println!("  detail panel frame (hub node)   {}", ms(detail_time));
+    println!("  expand payload, deep copy x2    {}", ms(deep_copy));
+    println!("  expand payload, Arc x2          {}", ms(shared_copy));
 }

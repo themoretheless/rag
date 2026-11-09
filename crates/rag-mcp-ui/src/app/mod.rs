@@ -906,7 +906,7 @@ impl GraphApp {
             self.scope.catalog_error = None;
         }
         self.source = Some(loaded.source);
-        self.graph.full_view = Some(loaded.view);
+        self.graph.full_view = Some(Arc::new(loaded.view));
         self.graph.full_view_rev += 1;
         if !self.graph.seed_input.is_empty() {
             self.apply_seed_from_input();
@@ -957,7 +957,7 @@ impl GraphApp {
 
     /// Topology stats for empty banners when a source is loaded.
     fn empty_stats(&self) -> Option<EmptyGraphStats> {
-        let full = self.graph.full_view.as_ref()?;
+        let full = self.graph.full_view.as_deref()?;
         let mut cache = self.graph.empty_stats_cache.borrow_mut();
         if let Some((rev, stats)) = cache.as_ref() {
             if *rev == self.graph.full_view_rev {

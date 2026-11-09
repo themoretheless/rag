@@ -59,7 +59,7 @@ pub(in crate::app) fn toolbar(app: &mut GraphApp, ui: &mut egui::Ui) {
         // Exact id/document/label wins even when an earlier
         // substring suggestion happens to be listed first.
         if let Some(id) = seed_target_on_enter(
-            app.graph.full_view.as_ref(),
+            app.graph.full_view.as_deref(),
             &app.graph.seed_input,
             first_pick.as_deref(),
         ) {
