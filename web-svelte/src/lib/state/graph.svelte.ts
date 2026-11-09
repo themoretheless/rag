@@ -50,18 +50,19 @@ class GraphStore {
   })
 
   private applyView(view: GraphView) {
-    this.nodes = view.nodes ?? []
-    this.edges = view.edges ?? []
+    this.nodes = view.nodes
+    this.edges = view.edges
     if (!this.selectedId || !this.nodes.some((node) => node.id === this.selectedId)) {
       const degree = new Map<string, number>()
       const relationKinds = new Map<string, Set<string>>()
       for (const edge of this.edges) {
         degree.set(edge.source_id, (degree.get(edge.source_id) ?? 0) + 1)
         degree.set(edge.target_id, (degree.get(edge.target_id) ?? 0) + 1)
-        if (!relationKinds.has(edge.source_id)) relationKinds.set(edge.source_id, new Set())
-        if (!relationKinds.has(edge.target_id)) relationKinds.set(edge.target_id, new Set())
-        relationKinds.get(edge.source_id)!.add(edge.rel_type)
-        relationKinds.get(edge.target_id)!.add(edge.rel_type)
+        for (const id of [edge.source_id, edge.target_id]) {
+          const kinds = relationKinds.get(id)
+          if (kinds) kinds.add(edge.rel_type)
+          else relationKinds.set(id, new Set([edge.rel_type]))
+        }
       }
       const candidates = this.nodes.filter((node) => !/tag|stub/i.test(node.kind ?? ''))
       this.selectedId = (candidates.length ? candidates : this.nodes).reduce<GraphNode | null>(

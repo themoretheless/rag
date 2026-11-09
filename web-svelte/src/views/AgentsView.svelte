@@ -64,7 +64,7 @@
   )
   const visibleCallStats = $derived.by(() => {
     const values = filteredCalls
-      .map((item) => Number(item.elapsed_ms))
+      .map((item) => item.elapsed_ms)
       .filter((value) => Number.isFinite(value) && value >= 0)
       .sort((a, b) => a - b)
     if (!values.length) return null
@@ -85,7 +85,7 @@
       const values = buckets.get(key)
       if (!values || !Number.isFinite(timestamp) || timestamp < start || timestamp > now) continue
       const index = Math.min(SPARK_BUCKET_COUNT - 1, Math.floor((timestamp - start) / SPARK_BUCKET_MS))
-      values[index] += 1
+      values[index] = (values[index] ?? 0) + 1
     }
     const output = new Map<string, SparkPoint[]>()
     for (const [key, values] of buckets) {
@@ -104,9 +104,10 @@
   })
 
   function agentKey(value?: string | null) { return value?.trim().toLocaleLowerCase() ?? '' }
-  function percentile(sorted: number[], quantile: number) {
+  /** Nearest-rank percentile of an ascending, non-empty list (0 for an empty one). */
+  function percentile(sorted: number[], quantile: number): number {
     const index = Math.round((sorted.length - 1) * quantile)
-    return sorted[Math.min(index, sorted.length - 1)]
+    return sorted[Math.min(index, sorted.length - 1)] ?? 0
   }
   async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -191,8 +192,9 @@
   }
   function initials(name: string) {
     const parts = name.trim().split(/[\s_-]+/).filter(Boolean)
-    if (!parts.length) return '?'
-    return (parts.length === 1 ? parts[0].slice(0, 2) : parts.slice(0, 2).map((part) => part[0]).join('')).toUpperCase()
+    const [first, second] = parts
+    if (first === undefined) return '?'
+    return (second === undefined ? first.slice(0, 2) : `${first.charAt(0)}${second.charAt(0)}`).toUpperCase()
   }
   function time(value?: string) { return value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—' }
   function payload(item: Pick<OpsLogItem, 'payload_json'>) { try { const parsed = JSON.parse(item.payload_json || '{}'); return Object.keys(parsed).length ? JSON.stringify(parsed, null, 2) : '' } catch { return item.payload_json || '' } }

@@ -14,6 +14,8 @@
   type ProjectHome = { source_roots?: { canonical_root: string; file_count: number }[] }
   type SyncJobResponse = { id?: string; job?: { id?: string } }
 
+  const layerOptions: readonly (readonly [value: string, label: string])[] = [['', 'все'], ['raw', 'raw'], ['wiki', 'wiki']]
+
   let projects = $state<Project[]>([])
   let rows = $state<Row[]>([])
   let total = $state(0)
@@ -143,8 +145,9 @@
         } else {
           void loadRoutedDocument(targetId, requestId)
         }
-      } else if (!selected && rows.length) {
-        void choose(rows[0])
+      } else if (!selected) {
+        const first = rows[0]
+        if (first) void choose(first)
       }
     } catch (cause) {
       if (requestId === documentRequestId && (generation == null || generation === refreshGeneration)) {
@@ -234,7 +237,7 @@
     if (nextProject) {
       void api.get<{ project?: ProjectHome }>(`/v1/project-home?project=${encodeURIComponent(nextProject)}`).then((response) => {
         if (requestId === projectHomeRequestId && project === nextProject && room === nextRoom) projectHome = response?.project ?? null
-      }).catch((cause) => {
+      }).catch((cause: unknown) => {
         if (requestId !== projectHomeRequestId) return
         const message = cause instanceof Error ? cause.message : String(cause)
         console.warn('project-home load failed', cause)
@@ -347,7 +350,7 @@
     <section class="ingest-zone"><div><strong>Индексировать разрешённую папку</strong><p><code>sync_sources</code> · дубли по content_hash пропускаются · чанки и граф обновляются одним writer</p></div><div class="connectors"><span class="native">Markdown · Obsidian</span><span class="native">Код · репозитории</span><span class="native">TXT · JSON · TOML</span><span class="external">PDF · pdftotext</span><span class="planned">Notion · экспорт md</span><span class="planned">Картинки · OCR</span></div></section>
     <div class="toolbar">
       <input bind:value={query} aria-label="Фильтр документов" onkeydown={(event) => event.key === 'Enter' && loadDocuments()} placeholder="Фильтр по названию, URI или пути…" />
-      <div class="layer-tabs" aria-label="Слой документа">{#each [['','все'],['raw','raw'],['wiki','wiki']] as option}<button class:active={layer === option[0]} onclick={() => { layer = option[0]; void loadDocuments() }}>{option[1]}</button>{/each}</div>
+      <div class="layer-tabs" aria-label="Слой документа">{#each layerOptions as [value, label] (value)}<button class:active={layer === value} onclick={() => { layer = value; void loadDocuments() }}>{label}</button>{/each}</div>
       <select bind:value={status} aria-label="Статус документа" onchange={() => void loadDocuments()}><option value="">активные</option><option>active</option><option>draft</option><option>archived</option></select>
       <select disabled aria-label="Сортировка" title="Сервер возвращает каталог в каноническом порядке"><option>обновлён ↓</option></select>
       <button class="secondary" onclick={() => void loadDocuments()}>Найти</button>

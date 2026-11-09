@@ -94,8 +94,8 @@
     return `${size.toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`
   }
 
-  function isLoopbackBind(value: unknown) {
-    const bind = String(value ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
+  function isLoopbackBind(value: string | undefined) {
+    const bind = (value ?? '').trim().toLowerCase().replace(/^https?:\/\//, '')
     const host = bind.startsWith('[') ? bind.slice(1, bind.indexOf(']')) : bind.split(':')[0]
     return host === '127.0.0.1' || host === 'localhost' || host === '::1'
   }

@@ -39,7 +39,8 @@
     })
     for (let index = 0; index < diagrams.length; index++) {
       if (generation !== mermaidRenderGeneration) return
-      const diagram = diagrams[index]!
+      const diagram = diagrams[index]
+      if (!diagram) continue
       const source = diagram.textContent ?? ''
       if (!source.trim()) continue
 
@@ -231,6 +232,7 @@
         <!-- markdown is escaped inside renderWikiHtml; wikilinks route via onClick -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions (delegated wikilink routing) -->
         <div class="body prose" onclick={onClick} onkeydown={onKeydown} role="document">
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderWikiHtml escapes the source before emitting tags -->
           {@html html}
         </div>
       </div>

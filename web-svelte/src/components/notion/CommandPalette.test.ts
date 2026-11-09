@@ -84,7 +84,7 @@ describe('CommandPalette', () => {
   it('includes matching graph nodes and raw documents', async () => {
     vi.useFakeTimers()
     try {
-      graph.nodes = [{ id: 'n1', label: 'Retriever node', kind: 'doc', document_id: 'd1' } as never]
+      graph.nodes = [{ id: 'n1', label: 'Retriever node', kind: 'doc', document_id: 'd1' }]
       vi.mocked(api.get).mockResolvedValue({ items: [{ id: 'd9', title: 'Retriever spec', uri: 'file:///x', layer: 'raw', wing: 'rag' }] })
       open()
       await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'retriever' } })

@@ -25,7 +25,7 @@ describe('gateway Bearer authentication', () => {
 
   it('allows an unauthenticated loopback server without a token', async () => {
     await api.health()
-    const [, init] = vi.mocked(fetch).mock.calls[0]
+    const init = vi.mocked(fetch).mock.calls[0]?.[1]
     expect(new Headers(init?.headers).has('Authorization')).toBe(false)
     expect(hasGatewayToken()).toBe(false)
   })
@@ -35,9 +35,9 @@ describe('gateway Bearer authentication', () => {
     await api.createWiki(body)
     await api.putWiki({ ...body, if_match_revision: 1 })
     const calls = vi.mocked(fetch).mock.calls
-    expect(calls[0][0]).toBe('/v1/wiki')
-    expect(calls[0][1]?.method).toBe('POST')
-    expect(calls[1][1]?.method).toBe('PUT')
+    expect(calls[0]?.[0]).toBe('/v1/wiki')
+    expect(calls[0]?.[1]?.method).toBe('POST')
+    expect(calls[1]?.[1]?.method).toBe('PUT')
   })
 
   it('authenticates reads, writes, and source downloads without putting the token in URLs', async () => {
@@ -51,13 +51,13 @@ describe('gateway Bearer authentication', () => {
     for (const [url, init] of vi.mocked(fetch).mock.calls) {
       const headers = new Headers(init?.headers)
       expect(headers.get('Authorization')).toBe(`Bearer ${secret}`)
-      expect(String(url)).not.toContain(secret)
+      expect(url instanceof Request ? url.url : url.toString()).not.toContain(secret)
       expect(init?.redirect).toBe('error')
     }
-    const [, post] = vi.mocked(fetch).mock.calls[2]
+    const post = vi.mocked(fetch).mock.calls[2]?.[1]
     expect(new Headers(post?.headers).get('Content-Type')).toBe('application/json')
     expect(post?.body).toBe('{"query":"example"}')
-    expect(vi.mocked(fetch).mock.calls[3][0]).toBe('/v1/source-file?document_id=document%20with%20spaces')
+    expect(vi.mocked(fetch).mock.calls[3]?.[0]).toBe('/v1/source-file?document_id=document%20with%20spaces')
   })
 
   it('stores the token only in tab session storage and restores it after module reload', async () => {
@@ -68,7 +68,7 @@ describe('gateway Bearer authentication', () => {
     const reloaded = await import('./client')
     expect(reloaded.hasGatewayToken()).toBe(true)
     await reloaded.api.health()
-    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).get('Authorization')).toBe(`Bearer ${secret}`)
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${secret}`)
   })
 
   it('clears credentials and stops sending them on subsequent requests', async () => {
@@ -77,7 +77,7 @@ describe('gateway Bearer authentication', () => {
     expect(sessionStorage.length).toBe(0)
     expect(hasGatewayToken()).toBe(false)
     await api.health()
-    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).has('Authorization')).toBe(false)
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false)
   })
 
   it('does not reuse a token when the configured API base changes', async () => {
@@ -85,7 +85,7 @@ describe('gateway Bearer authentication', () => {
     vi.stubEnv('VITE_API_BASE', 'https://another-gateway.example')
     await api.health()
     expect(hasGatewayToken()).toBe(false)
-    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).has('Authorization')).toBe(false)
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false)
   })
 
   it('rejects malformed credentials without exposing or saving them', () => {
@@ -106,7 +106,7 @@ describe('gateway Bearer authentication', () => {
   it.each([401, 403])('reports HTTP %i without echoing an authentication response', async (status) => {
     setGatewayToken(secret)
     vi.mocked(fetch).mockResolvedValueOnce(new Response(`Rejected ${secret}`, { status }))
-    const error = await api.health().catch((cause: Error) => cause)
+    const error: unknown = await api.health().catch((cause: unknown) => cause)
     expect(String(error)).toContain(`HTTP ${status}`)
     expect(String(error)).not.toContain(secret)
   })
@@ -170,6 +170,7 @@ describe('loadPanels', () => {
       ['ok', async () => {}],
       ['status', async () => { throw new Error('HTTP 500: boom') }],
       ['bare', async () => { throw new Error('') }],
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- loadPanels must also report non-Error throwables
       ['string', async () => { throw 'nope' }],
     ])
     expect(failures).toEqual(['status: HTTP 500: boom', 'bare', 'string: nope'])

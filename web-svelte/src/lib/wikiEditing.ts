@@ -3,11 +3,11 @@ export function linkAtCaret(text: string, caret: number) {
   const start = text.lastIndexOf('[[', caret)
   if (start < 0 || start + 2 > caret) return null
   const query = text.slice(start + 2, caret)
-  if (/[\]\[\n|]/.test(query)) return null
+  if (/[\][\n|]/.test(query)) return null
   return { start, end: caret, query }
 }
 export function insertWikiLink(text: string, start: number, end: number, slug: string, title: string) {
-  const safeTitle = title.replace(/[\[\]|\r\n]/g, ' ')
+  const safeTitle = title.replace(/[[\]|\r\n]/g, ' ')
   const link = `[[${slug}|${safeTitle}]]`
   const tail = text.slice(end).startsWith(']]') ? end + 2 : end
   return { text: text.slice(0,start) + link + text.slice(tail), caret: start + link.length }

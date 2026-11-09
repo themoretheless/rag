@@ -40,6 +40,7 @@ export function setGatewayToken(value: string): void {
 export const apiUrl = (path: string) => `${base()}${path}`
 
 async function requestResponse(path: string, init?: RequestInit): Promise<Response> {
+  // eslint-disable-next-line no-control-regex -- rejecting control characters in request paths is the point
   if (!path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u0020\u007f]/.test(path)) {
     throw new Error(t('apiInvalidPath'))
   }
@@ -77,9 +78,9 @@ function isEmptyStatus(res: Response): boolean {
   return res.status === 204 || res.status === 205 || res.headers.get('Content-Length') === '0'
 }
 
-function parseText<T>(res: Response, text: string): T {
+function parseText(res: Response, text: string): unknown {
   try {
-    return JSON.parse(text) as T
+    return JSON.parse(text) as unknown
   } catch {
     throw new ApiError(res.status, t('apiInvalidJson', { status: res.status }))
   }
@@ -92,7 +93,7 @@ function parseText<T>(res: Response, text: string): T {
 export async function parseJsonBody<T>(res: Response): Promise<T> {
   const text = isEmptyStatus(res) ? '' : await res.text()
   if (!text.trim()) throw new ApiError(res.status, t('apiEmptyBody', { status: res.status }))
-  return parseText<T>(res, text)
+  return parseText(res, text) as T
 }
 
 /**
@@ -103,7 +104,7 @@ export async function parseOptionalJsonBody<T>(res: Response): Promise<T | undef
   if (isEmptyStatus(res)) return undefined
   const text = await res.text()
   if (!text.trim()) return undefined
-  return parseText<T>(res, text)
+  return parseText(res, text) as T
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -180,7 +181,7 @@ export const api = {
     return request<WikiListResponse>(`/v1/wiki${s ? `?${s}` : ''}`)
   },
 
-  document: (opts: { id?: string; uri?: string; q?: string }) => {
+  document: (opts: { id?: string | undefined; uri?: string | undefined; q?: string | undefined }) => {
     const q = new URLSearchParams()
     if (opts.id) q.set('id', opts.id)
     if (opts.uri) q.set('uri', opts.uri)

@@ -22,7 +22,7 @@ function props() {
 
 beforeEach(() => {
   ui.locale = 'en'
-  graph.nodes = [{ id: 'a', label: 'A' } as never, { id: 'b', label: 'B' } as never]
+  graph.nodes = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }]
   graph.edges = []
   graph.projects = [{ project_id: 'rag', document_count: 12 }]
   graph.project = 'rag'

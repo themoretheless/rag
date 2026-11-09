@@ -374,7 +374,7 @@ export function formatMessage(
   key: MessageKey,
   params?: Record<string, string | number>,
 ): string {
-  let s = messages[locale][key] ?? messages.en[key] ?? key
+  let s: string = messages[locale][key]
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       s = s.replaceAll(`{${k}}`, String(v))

@@ -6,7 +6,14 @@
   let loaded = $state(false)
   let busy = $state(false)
   let message = $state('')
-  let results = $state<Record<string, {status:string;recall?:number;mrr?:number;empty_result_for_no_answer?:boolean}>>({})
+  type RunResult = {status:string;recall?:number;mrr?:number;empty_result_for_no_answer?:boolean}
+  let results = $state<Record<string, RunResult>>({})
+  function resultText(item: Question, result: RunResult | undefined): string {
+    if (!result) return ''
+    if (result.status==='source_changed') return 'Контрольный источник изменился — нужна новая разметка.'
+    if (item.no_answer) return `Пустая выдача: ${result.empty_result_for_no_answer?'да':'нет'}. Это не оценка правильности ответа модели.`
+    return `Recall: ${String(result.recall?.toFixed(3))} · MRR: ${String(result.mrr?.toFixed(3))}`
+  }
   async function load(more=false) {
     if(busy) return
     busy=true;message=''
@@ -24,7 +31,7 @@
 {#if message}<p role="alert">{message}</p>{/if}
 {#if loaded && !items.length}<p>Сохранённых вопросов пока нет. Выполните поиск и отметьте правильные источники.</p>{/if}
 {#each items as item (item.id)}<article><strong>{item.search.query}</strong><p>{item.search.mode} · {item.no_answer?'Нет ответа в корпусе':item.expected.map(e=>e.uri).join(', ')}</p><button disabled={busy} onclick={()=>run(item.id)}>Проверить сейчас</button>
-{#if results[item.id]}{@const result=results[item.id]}<p>{result.status==='source_changed'?'Контрольный источник изменился — нужна новая разметка.':item.no_answer?`Пустая выдача: ${result.empty_result_for_no_answer?'да':'нет'}. Это не оценка правильности ответа модели.`:`Recall: ${result.recall?.toFixed(3)} · MRR: ${result.mrr?.toFixed(3)}`}</p>{/if}</article>{/each}
+{#if results[item.id]}<p>{resultText(item, results[item.id])}</p>{/if}</article>{/each}
 {#if items.length<total}<button disabled={busy} onclick={()=>load(true)}>Загрузить ещё</button>{/if}
 </details>
 <style>

@@ -8,7 +8,7 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from 'd3-force'
-import { drag, type DragBehavior } from 'd3-drag'
+import { drag, type D3DragEvent, type DragBehavior } from 'd3-drag'
 import type { GraphEdge, GraphNode } from '@/api/types'
 
 export interface SimNode extends SimulationNodeDatum {
@@ -83,17 +83,18 @@ export function legendEntries(nodes: GraphNode[]): LegendEntry[] {
 export function createNodeDrag(
   sim: Simulation<SimNode, undefined>,
 ): DragBehavior<SVGGElement, SimNode, SimNode> {
+  type NodeDragEvent = D3DragEvent<SVGGElement, SimNode, SimNode>
   return drag<SVGGElement, SimNode, SimNode>()
-    .on('start', (event, d) => {
+    .on('start', (event: NodeDragEvent, d) => {
       if (!event.active) sim.alphaTarget(0.3).restart()
       d.fx = d.x
       d.fy = d.y
     })
-    .on('drag', (event, d) => {
+    .on('drag', (event: NodeDragEvent, d) => {
       d.fx = event.x
       d.fy = event.y
     })
-    .on('end', (event, d) => {
+    .on('end', (event: NodeDragEvent, d) => {
       if (!event.active) sim.alphaTarget(0)
       d.fx = null
       d.fy = null
@@ -120,7 +121,7 @@ function makeSimNodes(
     id: n.id,
     label: n.label,
     kind: n.kind || 'document',
-    document_id: n.document_id,
+    ...(n.document_id !== undefined ? { document_id: n.document_id } : {}),
     radius: nodeRadius(n.kind, deg.get(n.id) || 0),
     x: width / 2 + (Math.random() - 0.5) * 80,
     y: height / 2 + (Math.random() - 0.5) * 80,
@@ -186,45 +187,39 @@ export function placeRadialLocal(
   const nodeIds = new Set(simNodes.map((n) => n.id))
   const byId = new Map(simNodes.map((n) => [n.id, n]))
 
-  const adj = new Map<string, string[]>()
+  // Undirected adjacency; a Set per node drops parallel edges.
+  const neighbourSets = new Map<string, Set<string>>()
+  const link = (from: string, to: string) => {
+    const set = neighbourSets.get(from)
+    if (set) set.add(to)
+    else neighbourSets.set(from, new Set([to]))
+  }
   for (const e of edges) {
     const s = e.source_id
     const t = e.target_id
     if (!nodeIds.has(s) || !nodeIds.has(t) || s === t) continue
-    if (!adj.has(s)) adj.set(s, [])
-    if (!adj.has(t)) adj.set(t, [])
-    adj.get(s)!.push(t)
-    adj.get(t)!.push(s)
+    link(s, t)
+    link(t, s)
   }
-  for (const [, neis] of adj) {
-    neis.sort()
-    // dedupe
-    let w = 0
-    for (let r = 0; r < neis.length; r++) {
-      if (r === 0 || neis[r] !== neis[r - 1]) neis[w++] = neis[r]!
-    }
-    neis.length = w
-  }
+  const adj = new Map<string, string[]>()
+  for (const [id, set] of neighbourSets) adj.set(id, [...set].sort())
 
-  const depthOf = new Map<string, number>()
-  const rings = new Map<number, string[]>()
-  const q: string[] = []
+  const depthOf = new Map<string, number>([[seed, 0]])
+  const rings = new Map<number, string[]>([[0, [seed]]])
+  // BFS frontier of [id, depth]; `head` avoids O(n) Array.shift().
+  const queue: [id: string, depth: number][] = [[seed, 0]]
 
-  depthOf.set(seed, 0)
-  rings.set(0, [seed])
-  q.push(seed)
-
-  while (q.length) {
-    const id = q.shift()!
-    const d = depthOf.get(id)!
-    const neis = adj.get(id)
-    if (!neis) continue
-    for (const n of neis) {
+  for (let head = 0; head < queue.length; head++) {
+    const entry = queue[head]
+    if (!entry) break
+    const [id, d] = entry
+    for (const n of adj.get(id) ?? []) {
       if (depthOf.has(n)) continue
       depthOf.set(n, d + 1)
-      if (!rings.has(d + 1)) rings.set(d + 1, [])
-      rings.get(d + 1)!.push(n)
-      q.push(n)
+      const ring = rings.get(d + 1)
+      if (ring) ring.push(n)
+      else rings.set(d + 1, [n])
+      queue.push([n, d + 1])
     }
   }
 
@@ -243,10 +238,9 @@ export function placeRadialLocal(
   for (const depth of depths) {
     const ring = (rings.get(depth) ?? []).slice().sort()
     if (depth === 0) {
-      for (let i = 0; i < ring.length; i++) {
-        const id = ring[i]!
+      ring.forEach((id, i) => {
         const node = byId.get(id)
-        if (!node) continue
+        if (!node) return
         const x = id === seed ? cx : cx + 20 * i
         const y = cy
         node.x = x
@@ -255,16 +249,15 @@ export function placeRadialLocal(
         node.fy = y
         node.vx = 0
         node.vy = 0
-      }
+      })
       continue
     }
 
     const count = Math.max(1, ring.length)
     const r = depth * RING_GAP
-    for (let i = 0; i < ring.length; i++) {
-      const id = ring[i]!
+    ring.forEach((id, i) => {
       const node = byId.get(id)
-      if (!node) continue
+      if (!node) return
       const angle = (TAU * i) / count
       const x = cx + r * Math.cos(angle)
       const y = cy + r * Math.sin(angle)
@@ -274,7 +267,7 @@ export function placeRadialLocal(
       node.fy = y
       node.vx = 0
       node.vy = 0
-    }
+    })
   }
 
   // Guarantee every node has a frozen position.

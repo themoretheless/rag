@@ -37,7 +37,7 @@
     wiki.draftContent = result.text; wiki.markDirty(); completion = null; matches = []; request++
     await tick(); body.focus(); body.setSelectionRange(result.caret,result.caret)
   }
-  async function show(page: { id?: string; title: string; uri?: string }) {
+  async function show(page: { id?: string | undefined; title: string; uri?: string | undefined }) {
     const version = ++previewRequest
     previewTitle = page.title; preview = 'Загрузка…'
     try { const doc = await api.document({id:page.id, uri:page.uri}); if (version === previewRequest) preview = doc.content }

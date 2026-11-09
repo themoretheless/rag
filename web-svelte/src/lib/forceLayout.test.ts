@@ -53,9 +53,9 @@ describe('resolveSeedId', () => {
 
 describe('placeRadialLocal', () => {
   it('centres the seed, rings neighbours by BFS depth and freezes positions', () => {
-    const nodes = [node('s'), node('a'), node('b'), node('lonely')]
+    const s = node('s'), a = node('a'), b = node('b'), lonely = node('lonely')
+    const nodes = [s, a, b, lonely]
     placeRadialLocal(nodes, [edge('s', 'a'), edge('a', 'b')], 800, 600, 's')
-    const [s, a, b, lonely] = nodes
     expect([s.x, s.y]).toEqual([400, 300])
     expect(s.fx).toBe(s.x)
     const dist = (n: SimNode) => Math.hypot((n.x ?? 0) - 400, (n.y ?? 0) - 300)

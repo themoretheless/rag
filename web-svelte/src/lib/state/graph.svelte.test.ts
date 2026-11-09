@@ -7,15 +7,15 @@ vi.mock('@/api/client', () => ({ api: { get: vi.fn(), graph: vi.fn(), neighbors:
 const mocked = vi.mocked(api)
 
 function node(id: string, kind = 'doc'): GraphNode {
-  return { id, label: id.toUpperCase(), kind } as GraphNode
+  return { id, label: id.toUpperCase(), kind }
 }
 function edge(source_id: string, target_id: string, rel_type = 'links'): GraphEdge {
-  return { id: `${source_id}-${target_id}`, source_id, target_id, rel_type } as GraphEdge
+  return { id: `${source_id}-${target_id}`, source_id, target_id, rel_type }
 }
 const view: GraphView = {
   nodes: [node('a'), node('b'), node('c'), node('t', 'tag')],
   edges: [edge('a', 'b'), edge('b', 'c', 'mentions'), edge('t', 'b', 'tagged')],
-} as GraphView
+}
 
 async function freshStore() {
   vi.resetModules()
@@ -76,7 +76,7 @@ describe('graph store', () => {
     const graph = await freshStore()
     let resolveFirst!: (v: GraphView) => void
     mocked.graph.mockReturnValueOnce(new Promise((r) => (resolveFirst = r)))
-    mocked.neighbors.mockResolvedValue({ nodes: [node('z')], edges: [] } as unknown as GraphView)
+    mocked.neighbors.mockResolvedValue({ nodes: [node('z')], edges: [] })
     const first = graph.loadFull()
     await graph.loadNeighbors('z')
     resolveFirst(view)

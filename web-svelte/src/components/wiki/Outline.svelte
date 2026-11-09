@@ -36,7 +36,7 @@
     disconnectObserver()
     if (!headings.length || typeof IntersectionObserver === 'undefined') return
 
-    const root = document.querySelector('.article') as HTMLElement | null
+    const root = document.querySelector<HTMLElement>('.article')
     observer = new IntersectionObserver(
       (entries) => {
         const visibleEntries = entries

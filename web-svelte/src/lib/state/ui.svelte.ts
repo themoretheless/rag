@@ -105,7 +105,7 @@ class UiStore {
         this.health = health
         this.healthError = null
       },
-      (cause) => {
+      (cause: unknown) => {
         if (requestId !== this.healthRequestId) return
         this.healthError = cause instanceof Error ? cause.message : String(cause)
         this.health = null
@@ -118,7 +118,7 @@ class UiStore {
         this.shellAgents = response.items ?? []
         this.shellAgentsError = null
       },
-      (cause) => {
+      (cause: unknown) => {
         if (requestId !== this.healthRequestId) return
         // Preserve the last valid snapshot for diagnostics. TopBar hides it
         // while stale, so old `online` flags are never presented as current.

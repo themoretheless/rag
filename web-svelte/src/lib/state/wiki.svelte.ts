@@ -99,8 +99,8 @@ function loadFavorites(): FavoritePage[] {
           id: p.id,
           title: typeof p.title === 'string' ? p.title : p.id,
           slug: typeof p.slug === 'string' ? p.slug : p.id,
-          category: typeof p.category === 'string' ? p.category : (p.category ?? null),
-          revision: typeof p.revision === 'number' ? p.revision : undefined,
+          category: typeof p.category === 'string' ? p.category : null,
+          ...(typeof p.revision === 'number' ? { revision: p.revision } : {}),
         })
       }
     }
@@ -309,12 +309,13 @@ export class WikiStore {
     const meta = this.pages.find((p) => p.id === id)
     const cur = this.current?.id === id ? this.current : null
     const slug = meta?.slug || (cur ? cur.uri.replace(/^wiki:\/\//, '') : '') || id
+    const revision = meta?.revision ?? cur?.revision
     const entry: FavoritePage = {
       id,
       title: meta?.title || cur?.title || slug || id,
       slug,
       category: meta?.category ?? null,
-      revision: meta?.revision ?? cur?.revision ?? undefined,
+      ...(revision != null ? { revision } : {}),
     }
     this.favorites = [...this.favorites, entry]
     this.persistFavorites()
@@ -324,7 +325,7 @@ export class WikiStore {
   private syncFavoritesFromCatalog() {
     if (!this.pages.length || !this.favorites.length) return
     const byId = new Map(this.pages.map((p) => [p.id, p]))
-    let changed = false
+    // Unchanged entries keep their identity, so reference inequality marks a real change.
     const next = this.favorites.map((f) => {
       const meta = byId.get(f.id)
       if (!meta) return f
@@ -336,7 +337,6 @@ export class WikiStore {
       ) {
         return f
       }
-      changed = true
       return {
         id: f.id,
         title: meta.title || f.title,
@@ -345,7 +345,7 @@ export class WikiStore {
         revision: meta.revision,
       }
     })
-    if (changed) {
+    if (next.some((entry, index) => entry !== this.favorites[index])) {
       this.favorites = next
       this.persistFavorites()
     }
@@ -366,15 +366,14 @@ export class WikiStore {
   private syncRecentFromCatalog() {
     if (!this.pages.length || !this.recent.length) return
     const byId = new Map(this.pages.map((p) => [p.id, p]))
-    let changed = false
+    // Unchanged entries keep their identity, so reference inequality marks a real change.
     const next = this.recent.map((r) => {
       const meta = byId.get(r.id)
       if (!meta) return r
       if (meta.title === r.title && meta.slug === r.slug) return r
-      changed = true
       return { id: r.id, title: meta.title || r.title, slug: meta.slug || r.slug }
     })
-    if (changed) {
+    if (next.some((entry, index) => entry !== this.recent[index])) {
       this.recent = next
       this.persistRecent()
     }
@@ -408,7 +407,7 @@ export class WikiStore {
     try {
       const res = await api.wikiList(merged)
       if (seq !== this.catalogSeq) return
-      this.pages = res.pages ?? []
+      this.pages = res.pages
       this.catalogParams = merged
       this.catalogNextOffset = (res.offset ?? merged.offset ?? 0) + this.pages.length
       this.catalogTotal = res.total ?? null
@@ -439,7 +438,7 @@ export class WikiStore {
     try {
       const res = await api.wikiList({ ...this.catalogParams, offset })
       if (seq !== this.catalogSeq) return
-      const batch = res.pages ?? []
+      const batch = res.pages
       const known = new Set(this.pages.map((page) => page.id))
       const additions = batch.filter((page) => {
         if (known.has(page.id)) return false
@@ -496,7 +495,7 @@ export class WikiStore {
       try {
         const bl = await api.backlinks(id)
         if (seq !== this.pageSeq) return
-        this.backlinks = bl.backlinks ?? []
+        this.backlinks = bl.backlinks
       } catch {
         if (seq === this.pageSeq) this.backlinks = []
       }
@@ -619,8 +618,8 @@ export class WikiStore {
       uri: cur.uri,
       title,
       content,
-      if_match_revision: cur.revision ?? undefined,
-      if_match_etag: cur.etag ?? undefined,
+      ...(cur.revision != null ? { if_match_revision: cur.revision } : {}),
+      ...(cur.etag != null ? { if_match_etag: cur.etag } : {}),
     })
   }
 
@@ -666,7 +665,7 @@ export class WikiStore {
       this.editing = false
       try {
         const bl = await api.backlinks(cur.id)
-        if (this.isCurrentPage(cur.id, seq)) this.backlinks = bl.backlinks ?? []
+        if (this.isCurrentPage(cur.id, seq)) this.backlinks = bl.backlinks
       } catch {
         if (this.isCurrentPage(cur.id, seq)) this.backlinks = []
       }
@@ -738,8 +737,8 @@ export class WikiStore {
     if (!pageId) return
     const map = readScrollMap()
     if (!(pageId in map)) return
-    delete map[pageId]
-    writeScrollMap(map)
+    const { [pageId]: _dropped, ...rest } = map
+    writeScrollMap(rest)
   }
 }
 

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { ui } from '@/lib/state/ui.svelte'
-  import { go, route } from '@/lib/router.svelte'
+  import { go, route, type RouteName } from '@/lib/router.svelte'
 
-  const labels: Record<string, { title: string; layer: string; color: string }> = {
-    console: { title: 'Пульт', layer: 'L0–L4 · обзор', color: 'var(--accent)' },
+  interface RouteLabel { title: string; layer: string; color: string }
+  const consoleLabel: RouteLabel = { title: 'Пульт', layer: 'L0–L4 · обзор', color: 'var(--accent)' }
+  const labels: Partial<Record<RouteName, RouteLabel>> = {
+    console: consoleLabel,
     corpus: { title: 'Корпус', layer: 'L0 · сырой корпус', color: 'var(--l0)' },
     search: { title: 'Поиск', layer: 'L1 · извлечение', color: 'var(--l1)' },
     graph: { title: 'Граф', layer: 'L2 · граф объектов', color: 'var(--l2)' },
@@ -13,7 +15,7 @@
     evaluation: { title: 'Оценка', layer: 'eval · retrieval', color: 'var(--l1)' },
     models: { title: 'Модели и пайплайн', layer: 'RAG_* env · runtime', color: 'var(--l3)' },
   }
-  const current = $derived(labels[route.name] ?? labels.console)
+  const current = $derived(labels[route.name] ?? consoleLabel)
   const healthReady = $derived(Boolean(ui.health?.ok && ui.health?.fts_ready))
   const onlineAgents = $derived(
     ui.shellAgentsError
@@ -22,8 +24,9 @@
   )
   function initials(name: string) {
     const parts = name.trim().split(/[\s_-]+/).filter(Boolean)
-    if (!parts.length) return '?'
-    return (parts.length === 1 ? parts[0].slice(0, 2) : parts.slice(0, 2).map((part) => part[0]).join('')).toUpperCase()
+    const [first, second] = parts
+    if (first === undefined) return '?'
+    return (second === undefined ? first.slice(0, 2) : `${first.charAt(0)}${second.charAt(0)}`).toUpperCase()
   }
   const healthLabel = $derived.by(() => {
     if (ui.healthError) return 'offline'

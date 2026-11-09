@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte'
   import { select, type Selection } from 'd3-selection'
-  import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom'
+  import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom'
   import { graph } from '@/lib/state/graph.svelte'
   import { ui } from '@/lib/state/ui.svelte'
   import {
@@ -29,13 +29,12 @@
   let viewH = $state(DEFAULT_VIEW_HEIGHT)
   let nodeSel: Selection<SVGGElement, SimNode, SVGGElement, unknown> | null = null
   let linkSel: Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null = null
-  let currentTransform: ZoomTransform = zoomIdentity
 
   export function fitView() {
     if (!svgSel || !zoomBehavior) return
     const nodes = liveNodes
     if (!nodes.length) {
-      svgSel.call(zoomBehavior.transform as never, zoomIdentity)
+      zoomBehavior.transform(svgSel, zoomIdentity)
       return
     }
 
@@ -53,7 +52,7 @@
       if (y + r > maxY) maxY = y + r
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
-      svgSel.call(zoomBehavior.transform as never, zoomIdentity)
+      zoomBehavior.transform(svgSel, zoomIdentity)
       return
     }
 
@@ -67,12 +66,12 @@
     )
     const tx = usableW / 2 - (scale * (minX + maxX)) / 2
     const ty = viewH / 2 - (scale * (minY + maxY)) / 2
-    svgSel.call(zoomBehavior.transform as never, zoomIdentity.translate(tx, ty).scale(scale))
+    zoomBehavior.transform(svgSel, zoomIdentity.translate(tx, ty).scale(scale))
   }
 
   function zoomBy(factor: number) {
     if (!svgSel || !zoomBehavior) return
-    svgSel.call(zoomBehavior.scaleBy as never, factor)
+    zoomBehavior.scaleBy(svgSel, factor)
   }
 
   export function zoomIn() { zoomBy(1.25) }
@@ -101,7 +100,7 @@
       .attr('height', '100%')
       .attr('viewBox', `0 0 ${width} ${height}`)
 
-    svgSel = svg as Selection<SVGSVGElement, unknown, null, undefined>
+    svgSel = svg
 
     // soft vignette background
     const defs = svg.append('defs')
@@ -122,13 +121,11 @@
     const z = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.3, 2.5])
       .on('zoom', (event) => {
-        currentTransform = event.transform
         root.attr('transform', event.transform)
       })
     zoomBehavior = z
-    currentTransform = zoomIdentity
-    svg.call(z as never)
-    svg.call(z.transform as never, zoomIdentity.translate(0, 0).scale(1))
+    svg.call(z)
+    z.transform(svg, zoomIdentity)
 
     if (!graph.nodes.length) {
       root

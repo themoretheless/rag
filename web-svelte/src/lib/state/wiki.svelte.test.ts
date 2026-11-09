@@ -62,7 +62,7 @@ describe('wiki catalog pagination', () => {
     expect(store.catalogHasMore).toBe(true)
     await store.loadMore()
     expect(store.pages).toHaveLength(75)
-    expect(store.pages[74].id).toBe('74')
+    expect(store.pages[74]?.id).toBe('74')
     expect(store.catalogTotal).toBe(75)
     expect(store.catalogHasMore).toBe(false)
     expect(api.wikiList).toHaveBeenLastCalledWith({ limit: 50, offset: 50 })

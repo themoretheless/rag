@@ -135,5 +135,6 @@ jobs:
           cache-dependency-path: web-svelte/package-lock.json
       - run: npm ci
       - run: npm run check
+      - run: npm run lint
       - run: npm test
       - run: npm run build

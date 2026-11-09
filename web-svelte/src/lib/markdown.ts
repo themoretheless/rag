@@ -76,7 +76,7 @@ function splitPipeCells(line: string): string[] {
       i++
       continue
     }
-    cur += s[i]
+    cur += s.charAt(i)
     i++
   }
   cells.push(cur.trim())
@@ -170,7 +170,7 @@ export function extractHeadings(content: string): OutlineHeading[] {
     if (inCode) continue
     const m = line.trimEnd().match(/^(#{1,3})\s+(.+)$/)
     if (!m) continue
-    const level = m[1]!.length as 1 | 2 | 3
+    const level = (m[1] ?? '').length as 1 | 2 | 3
     const text = plainHeadingText(m[2] ?? '')
     if (!text) continue
     let id = slugifyHeading(text)

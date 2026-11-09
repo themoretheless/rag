@@ -4,8 +4,10 @@
  */
 
 /** Curated, high-contrast emoji set suitable as Notion-style page icons. */
+const DEFAULT_ICON = '📄'
+
 const PAGE_ICONS: readonly string[] = [
-  '📄',
+  DEFAULT_ICON,
   '📝',
   '📚',
   '📖',
@@ -89,9 +91,9 @@ export function hashSlug(input: string): number {
  */
 export function pageIcon(slugOrKey: string | null | undefined): string {
   const key = (slugOrKey ?? '').trim()
-  if (!key) return PAGE_ICONS[0]!
+  if (!key) return DEFAULT_ICON
   const idx = hashSlug(key) % PAGE_ICONS.length
-  return PAGE_ICONS[idx]!
+  return PAGE_ICONS[idx] ?? DEFAULT_ICON
 }
 
 export { PAGE_ICONS }

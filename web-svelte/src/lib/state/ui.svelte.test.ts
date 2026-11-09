@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   delete document.documentElement.dataset.theme
-  window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as unknown as typeof window.matchMedia
+  window.matchMedia = vi.fn().mockReturnValue({ matches: false })
 })
 
 afterEach(() => {
@@ -84,7 +84,7 @@ describe('ui store', () => {
 
   it('checkHealth keeps health and agents failures independent', async () => {
     const ui = await freshUi()
-    mocked.health.mockResolvedValue({ ok: true } as unknown as HealthResponse)
+    mocked.health.mockResolvedValue({ ok: true })
     mocked.get.mockResolvedValue({ items: [{ agent: 'claude', online: true }] })
     await ui.checkHealth()
     expect(ui.health).toEqual({ ok: true })

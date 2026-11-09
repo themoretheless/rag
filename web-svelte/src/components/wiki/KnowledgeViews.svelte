@@ -54,7 +54,8 @@
     try {
       const result=await api.put<{revision:number}>('/v1/knowledge',{id:selected.id,revision:selected.revision,properties})
       selected={...selected,revision:result.revision,properties:{...properties}}
-      rows=rows.map(row=>row.id===selected?.id?selected:row) as Row[]
+      const saved=selected
+      rows=rows.map(row=>row.id===saved.id?saved:row)
       wiki.pages=wiki.pages.map(page=>page.id===selected?.id?{...page,revision:result.revision}:page)
       message='Свойства сохранены. Примените фильтры повторно, чтобы обновить состав представления.'
     }catch(e){message=String(e).includes('HTTP 409')?'Статья изменилась. Ваши правки остаются в форме; скопируйте их, отмените форму и загрузите свежую версию.':String(e)}finally{busy=false}
