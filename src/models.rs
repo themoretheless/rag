@@ -178,26 +178,8 @@ impl Document {
     }
 }
 
-/// Lean immutable revision row for timelines. Full bodies are deliberately
-/// excluded and loaded one-at-a-time through the revision snapshot endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DocumentRevisionSummary {
-    pub document_id: String,
-    pub uri: String,
-    pub title: String,
-    #[serde(default)]
-    pub wing: Option<String>,
-    #[serde(default)]
-    pub room: Option<String>,
-    pub layer: String,
-    pub kind: String,
-    pub status: String,
-    pub updated_at: String,
-    pub superseded_at: String,
-    pub revision: i64,
-    pub content_chars: u64,
-    pub content_lines: u64,
-}
+// Lean revision row for timelines; shared with clients through `rag_mcp_core`.
+pub use rag_mcp_core::DocumentRevisionSummary;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentRevisionPage {

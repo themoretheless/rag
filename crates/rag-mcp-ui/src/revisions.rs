@@ -7,24 +7,8 @@ use crate::gateway::{client, GatewayApi, GatewayClient, Method};
 
 pub const REVISION_PAGE_SIZE: usize = 50;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct RevisionItem {
-    pub document_id: String,
-    pub uri: String,
-    pub title: String,
-    #[serde(default)]
-    pub wing: Option<String>,
-    #[serde(default)]
-    pub room: Option<String>,
-    pub layer: String,
-    pub kind: String,
-    pub status: String,
-    pub updated_at: String,
-    pub superseded_at: String,
-    pub revision: i64,
-    pub content_chars: u64,
-    pub content_lines: u64,
-}
+/// One row of a document's revision timeline (the server's wire type).
+pub use rag_mcp_core::DocumentRevisionSummary as RevisionItem;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevisionPage {
