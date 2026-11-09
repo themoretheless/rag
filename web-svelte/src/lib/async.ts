@@ -115,6 +115,22 @@ export function createRequestGate(): RequestGate {
   }
 }
 
+/**
+ * Load something once and share it: concurrent and later callers get the same promise.
+ * A rejection is not kept, so the call after a failure tries again instead of
+ * replaying the old error forever.
+ */
+export function lazyPromise<T>(load: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | null = null
+  return () => {
+    pending ??= load().catch((cause: unknown) => {
+      pending = null
+      throw cause
+    })
+    return pending
+  }
+}
+
 /** Reject with `Timeout after N ms` when `promise` has not settled within `timeoutMs`. */
 export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
