@@ -26,6 +26,8 @@ pub struct CanvasOut {
 
 struct ScreenNode<'a> {
     node: &'a UiNode,
+    /// Position in `UiGraph::nodes` (and in every per-node scene table).
+    index: usize,
     center: Pos2,
     radius: f32,
 }
@@ -123,7 +125,7 @@ pub fn draw_canvas(
 
     // Precompute screen centers + radii for hit test and paint.
     let mut screen_nodes: Vec<ScreenNode<'_>> = Vec::with_capacity(graph.nodes.len());
-    for (node, world) in graph.nodes.iter().zip(&scene.positions) {
+    for (index, (node, world)) in graph.nodes.iter().zip(&scene.positions).enumerate() {
         let Some(world) = *world else {
             continue;
         };
@@ -151,6 +153,7 @@ pub fn draw_canvas(
         }
         screen_nodes.push(ScreenNode {
             node,
+            index,
             center,
             radius,
         });
@@ -202,9 +205,11 @@ pub fn draw_canvas(
     }
 
     // Hit test: closest center among nodes whose hit radius contains the pointer.
-    let hover_id = pointer.and_then(|pos| pick_node(&screen_nodes, pos).map(|n| n.id.clone()));
+    let hover = pointer.and_then(|pos| pick_node(&screen_nodes, pos));
     let clicked_id = interaction_clicked_id.or_else(|| {
-        click_pos.and_then(|pos| pick_node(&screen_nodes, pos).map(|node| node.id.clone()))
+        click_pos.and_then(|pos| {
+            pick_node(&screen_nodes, pos).map(|index| graph.nodes[index].id.clone())
+        })
     });
     let clicked_empty = response.clicked() && clicked_id.is_none();
 
@@ -236,6 +241,7 @@ pub fn draw_canvas(
         .filter(|_| !overview_lod)
     {
         let node = sn.node;
+        let sn_index = sn.index;
         let center = sn.center;
         let radius = sn.radius;
         let selected_here = selected == Some(node.id.as_str());
@@ -278,7 +284,7 @@ pub fn draw_canvas(
         }
 
         let show_label = selected_here
-            || hover_id.as_deref() == Some(node.id.as_str())
+            || hover == Some(sn_index)
             || (node.depth == 0 && n_nodes <= 5_000)
             || show_all_labels;
         if show_label {
@@ -332,31 +338,23 @@ pub fn draw_canvas(
         }
     });
 
-    draw_legend(&painter, rect, graph);
+    draw_legend(&painter, rect, scene);
 
-    if let Some(hid) = hover_id.as_deref() {
-        if let Some(node) = graph.nodes.iter().find(|n| n.id == hid) {
-            let multi = graph
-                .edges
-                .iter()
-                .filter(|e| e.source_id == hid || e.target_id == hid)
-                .filter(|e| e.multi_count > 1)
-                .map(|e| e.multi_count)
-                .max()
-                .unwrap_or(1);
-            let multi_note = if multi > 1 {
-                format!("\nмакс. кратность ребра x{multi}")
-            } else {
-                String::new()
-            };
-            response.on_hover_text(format!(
-                "{}\nтип={} · связей={}{}",
-                node.label,
-                localized_kind(&node.kind),
-                node.degree,
-                multi_note
-            ));
-        }
+    if let Some(index) = hover {
+        let node = &graph.nodes[index];
+        let multi = scene.max_multi[index];
+        let multi_note = if multi > 1 {
+            format!("\nмакс. кратность ребра x{multi}")
+        } else {
+            String::new()
+        };
+        response.on_hover_text(format!(
+            "{}\nтип={} · связей={}{}",
+            node.label,
+            localized_kind(&node.kind),
+            node.degree,
+            multi_note
+        ));
     }
 
     CanvasOut {
@@ -380,7 +378,7 @@ fn node_accessibility_label(node: &UiNode) -> String {
     )
 }
 
-fn localized_kind(kind: &str) -> &str {
+pub(crate) fn localized_kind(kind: &str) -> &str {
     match NodeKind::parse(kind) {
         Some(NodeKind::Document) => "документ",
         Some(NodeKind::Tag) => "тег",
@@ -390,7 +388,7 @@ fn localized_kind(kind: &str) -> &str {
     }
 }
 
-fn localized_layer(layer: &str) -> &str {
+pub(crate) fn localized_layer(layer: &str) -> &str {
     match layer {
         "raw" => "сырой корпус",
         "wiki" => "вики",
@@ -399,7 +397,7 @@ fn localized_layer(layer: &str) -> &str {
     }
 }
 
-fn localized_relation(relation: &str) -> &str {
+pub(crate) fn localized_relation(relation: &str) -> &str {
     match RelType::parse(relation) {
         Some(RelType::Wikilink) => "вики-ссылка",
         Some(RelType::Related) => "связано",
@@ -458,25 +456,8 @@ fn push_arrowhead(shapes: &mut Vec<egui::Shape>, a: Pos2, b: Pos2, stroke: Strok
 }
 
 /// Compact legend of kind / rel_type colors present in the view (bottom-left).
-fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
-    use std::collections::BTreeMap;
-    let mut kinds = BTreeMap::new();
-    for node in &graph.nodes {
-        let label = if node.node_kind == Some(NodeKind::Document) {
-            localized_layer(node.layer.as_deref().unwrap_or("document"))
-        } else {
-            localized_kind(&node.kind)
-        };
-        kinds
-            .entry(label)
-            .or_insert_with(|| theme::node_color(node.node_kind, node.layer.as_deref()));
-    }
-    let rels: BTreeMap<&str, Option<RelType>> = graph
-        .edges
-        .iter()
-        .map(|e| (e.rel_type.as_str(), e.rel))
-        .collect();
-    let rows = kinds.len() + rels.len();
+fn draw_legend(painter: &egui::Painter, rect: Rect, scene: &GraphScene) {
+    let rows = scene.legend_kinds.len() + scene.legend_rels.len();
     if rows == 0 {
         return;
     }
@@ -493,9 +474,9 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
     );
     let font = egui::FontId::proportional(11.0);
     let text_color = Color32::from_gray(200);
-    for (kind, color) in kinds {
+    for (kind, color) in &scene.legend_kinds {
         let cy = y + line_h * 0.5;
-        painter.circle_filled(Pos2::new(x + 4.0, cy), 4.0, color);
+        painter.circle_filled(Pos2::new(x + 4.0, cy), 4.0, *color);
         painter.text(
             Pos2::new(x + 14.0, y),
             egui::Align2::LEFT_TOP,
@@ -505,16 +486,16 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
         );
         y += line_h;
     }
-    for (r, rel) in rels {
+    for (relation, color) in &scene.legend_rels {
         let cy = y + line_h * 0.5;
         painter.line_segment(
             [Pos2::new(x, cy), Pos2::new(x + 10.0, cy)],
-            Stroke::new(1.5_f32, theme::edge_color(rel)),
+            Stroke::new(1.5_f32, *color),
         );
         painter.text(
             Pos2::new(x + 14.0, y),
             egui::Align2::LEFT_TOP,
-            localized_relation(r),
+            relation,
             font.clone(),
             text_color,
         );
@@ -522,19 +503,21 @@ fn draw_legend(painter: &egui::Painter, rect: Rect, graph: &UiGraph) {
     }
 }
 
-fn pick_node<'a>(nodes: &'a [ScreenNode<'a>], pos: Pos2) -> Option<&'a UiNode> {
-    let mut best: Option<(&UiNode, f32)> = None;
+/// Index (in `UiGraph::nodes`) of the node under `pos`: the closest centre
+/// among nodes whose hit radius contains it.
+fn pick_node(nodes: &[ScreenNode<'_>], pos: Pos2) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
     for sn in nodes {
         let hit_r = sn.radius * 1.15;
         let d = (pos - sn.center).length();
         if d <= hit_r {
             match best {
                 Some((_, bd)) if bd <= d => {}
-                _ => best = Some((sn.node, d)),
+                _ => best = Some((sn.index, d)),
             }
         }
     }
-    best.map(|(n, _)| n)
+    best.map(|(index, _)| index)
 }
 
 /// True if segment AABB intersects expanded rect (cheap clip).

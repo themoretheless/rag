@@ -208,12 +208,15 @@ pub(in crate::app) fn body(app: &mut GraphApp, root_ui: &mut egui::Ui, _ctx: &eg
             .default_size(detail_w)
             .frame(theme::toolbar_frame())
             .show(root_ui, |ui| {
-                if let (Some(sel), Some(g)) =
-                    (app.graph.selected.as_deref(), app.graph.ui_graph.as_ref())
-                {
+                if let (Some(sel), Some(g), Some(scene)) = (
+                    app.graph.selected.as_deref(),
+                    app.graph.ui_graph.as_ref(),
+                    app.graph.scene.as_ref(),
+                ) {
                     let action = draw_detail(
                         ui,
                         g,
+                        scene,
                         sel,
                         app.graph.lens,
                         DetailContentState {

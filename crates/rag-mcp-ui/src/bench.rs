@@ -188,12 +188,13 @@ fn canvas_frame(
     std::hint::black_box(output.shapes.len());
 }
 
-fn detail_frame(ctx: &egui::Context, graph: &UiGraph, selected: &str) {
+fn detail_frame(ctx: &egui::Context, graph: &UiGraph, scene: &GraphScene, selected: &str) {
     let output = ctx.run_ui(raw_input(Pos2::new(10.0, 10.0)), |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
             draw_detail(
                 ui,
                 graph,
+                scene,
                 selected,
                 GraphLens::Overview,
                 DetailContentState {
@@ -285,9 +286,9 @@ fn graph_pipeline_benchmark() {
 
     let detail_ctx = egui::Context::default();
     for _ in 0..3 {
-        detail_frame(&detail_ctx, &graph, &hub);
+        detail_frame(&detail_ctx, &graph, &scene, &hub);
     }
-    let detail_time = median(25, || detail_frame(&detail_ctx, &graph, &hub));
+    let detail_time = median(25, || detail_frame(&detail_ctx, &graph, &scene, &hub));
 
     println!();
     println!(

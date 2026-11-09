@@ -69,3 +69,4 @@ instead of being recomputed inside every frame.
 | Baseline | 83.8 | 1.9 | 12.1 | – | 45.2 | 148.3 | 3.6 |
 | 1. Positions and edge endpoints by node index | 87.2 | 1.9 | 12.2 | 0.15 | 40.1 | 140.5 | 3.4 |
 | 2. Edge shapes in one painter call, dashes clipped to the viewport, unit-circle table | 71.9 | 1.8 | 11.5 | 0.14 | 44.2 | 5.9 | 3.4 |
+| 3. Legend, hover tooltip data and incident-edge lists cached in the scene | 73.8 | 1.9 | 12.5 | 12.3 | 40.5 | 4.1 | 1.4 |

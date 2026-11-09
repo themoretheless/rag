@@ -7,9 +7,10 @@
 use crate::ui::text::truncate;
 use egui::Ui;
 
-use crate::adapter::{suspicious_tag_label, GraphLens, UiEdge, UiGraph, UiNode};
+use crate::adapter::{suspicious_tag_label, GraphLens, UiGraph, UiNode};
 use crate::dto::DocumentBody;
 use crate::ui::document::draw_document_reader;
+use crate::ui::scene::GraphScene;
 use crate::ui::theme;
 
 /// User action from the detail panel.
@@ -40,15 +41,17 @@ pub struct DetailContentState<'a> {
 pub fn draw_detail(
     ui: &mut Ui,
     graph: &UiGraph,
+    scene: &GraphScene,
     selected_id: &str,
     lens: GraphLens,
     content: DetailContentState<'_>,
 ) -> DetailAction {
     let mut action = DetailAction::None;
-    let Some(node) = graph.nodes.iter().find(|n| n.id == selected_id) else {
+    let Some(node_index) = scene.node_index(selected_id) else {
         ui.label("Выбранного узла нет в текущем представлении.");
         return action;
     };
+    let node = &graph.nodes[node_index];
 
     ui.heading(&node.label);
     ui.separator();
@@ -146,7 +149,7 @@ pub fn draw_detail(
     }
 
     ui.separator();
-    if let Some(next_id) = draw_incident_edges(ui, graph, selected_id) {
+    if let Some(next_id) = draw_incident_edges(ui, graph, &scene.incident[node_index], node_index) {
         action = DetailAction::SelectNode(next_id);
     }
 
@@ -252,35 +255,15 @@ fn draw_node_fields(ui: &mut Ui, node: &UiNode) {
         });
 }
 
-fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) -> Option<String> {
+/// `incident` lists the selected node's edges in display order (see
+/// [`GraphScene::incident`]).
+fn draw_incident_edges(
+    ui: &mut Ui,
+    graph: &UiGraph,
+    incident: &[usize],
+    selected: usize,
+) -> Option<String> {
     let mut selected_neighbor = None;
-    let mut incident: Vec<&UiEdge> = graph
-        .edges
-        .iter()
-        .filter(|e| e.source_id == selected_id || e.target_id == selected_id)
-        .collect();
-    // Stable order: outs first, then ins; then by other id / rel_type.
-    incident.sort_by(|a, b| {
-        let a_out = a.source_id == selected_id;
-        let b_out = b.source_id == selected_id;
-        b_out
-            .cmp(&a_out)
-            .then_with(|| {
-                let ao = if a_out {
-                    a.target_id.as_str()
-                } else {
-                    a.source_id.as_str()
-                };
-                let bo = if b_out {
-                    b.target_id.as_str()
-                } else {
-                    b.source_id.as_str()
-                };
-                ao.cmp(bo)
-            })
-            .then_with(|| a.rel_type.cmp(&b.rel_type))
-            .then_with(|| a.id.cmp(&b.id))
-    });
 
     ui.horizontal(|ui| {
         ui.strong("Связи узла");
@@ -295,19 +278,14 @@ fn draw_incident_edges(ui: &mut Ui, graph: &UiGraph, selected_id: &str) -> Optio
         .max_height(320.0)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            for e in incident {
-                let outgoing = e.source_id == selected_id;
-                let other_id = if outgoing {
-                    e.target_id.as_str()
+            for e in incident.iter().map(|&index| &graph.edges[index]) {
+                let outgoing = e.source_idx == selected;
+                let (other_id, other_index) = if outgoing {
+                    (e.target_id.as_str(), e.target_idx)
                 } else {
-                    e.source_id.as_str()
+                    (e.source_id.as_str(), e.source_idx)
                 };
-                let other_label = graph
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == other_id)
-                    .map(|n| n.label.as_str())
-                    .unwrap_or(other_id);
+                let other_label = graph.nodes[other_index].label.as_str();
                 let dir = if outgoing { "исх." } else { "вх." };
 
                 ui.group(|ui| {
