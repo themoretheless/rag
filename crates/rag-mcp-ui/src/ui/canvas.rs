@@ -78,6 +78,8 @@ pub fn draw_canvas(
     let to_screen = |world: Pos2| -> Pos2 { Pos2::new(world.x * z + p.x, world.y * z + p.y) };
 
     // --- edges (under nodes) ---
+    // Collected in paint order and handed to the painter in one call.
+    let mut edge_shapes: Vec<egui::Shape> = Vec::with_capacity(graph.edges.len());
     for e in &graph.edges {
         let (Some(a), Some(b)) = (scene.positions[e.source_idx], scene.positions[e.target_idx])
         else {
@@ -98,15 +100,16 @@ pub fn draw_canvas(
         let color = theme::edge_color(e.rel);
         let stroke = Stroke::new(width, color);
         if e.rel.is_some_and(RelType::is_dashed) {
-            dashed_line(&painter, sa, sb, stroke, 4.0, 4.0);
+            dashed_line(&mut edge_shapes, sa, sb, stroke, 4.0, 4.0, rect);
         } else {
-            painter.line_segment([sa, sb], stroke);
+            edge_shapes.push(egui::Shape::line_segment([sa, sb], stroke));
             // Direction arrow for directed rel types (EGUI_GRAPH_VIEW §7.2).
             if e.rel.is_some_and(RelType::is_directed) {
-                draw_arrowhead(&painter, sa, sb, stroke);
+                push_arrowhead(&mut edge_shapes, sa, sb, stroke);
             }
         }
     }
+    painter.extend(edge_shapes);
 
     let n_nodes = graph.nodes.len();
     let overview_lod = n_nodes > 5_000 && z < 2.0;
@@ -435,7 +438,7 @@ fn overview_camera_zoom(fit_zoom: f32, node_count: usize) -> f32 {
 }
 
 /// Small arrowhead just before the target node (direction of the relation).
-fn draw_arrowhead(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
+fn push_arrowhead(shapes: &mut Vec<egui::Shape>, a: Pos2, b: Pos2, stroke: Stroke) {
     let d = b - a;
     let len = d.length();
     if len < 24.0 {
@@ -444,8 +447,14 @@ fn draw_arrowhead(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
     let dir = d / len;
     let tip = b - dir * 14.0;
     let side = Vec2::new(-dir.y, dir.x);
-    painter.line_segment([tip, tip - dir * 8.0 + side * 3.5], stroke);
-    painter.line_segment([tip, tip - dir * 8.0 - side * 3.5], stroke);
+    shapes.push(egui::Shape::line_segment(
+        [tip, tip - dir * 8.0 + side * 3.5],
+        stroke,
+    ));
+    shapes.push(egui::Shape::line_segment(
+        [tip, tip - dir * 8.0 - side * 3.5],
+        stroke,
+    ));
 }
 
 /// Compact legend of kind / rel_type colors present in the view (bottom-left).
@@ -538,7 +547,42 @@ fn segment_near_rect(a: Pos2, b: Pos2, rect: Rect) -> bool {
     !(max_x < r.min.x || min_x > r.max.x || max_y < r.min.y || min_y > r.max.y)
 }
 
-fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke, dash: f32, gap: f32) {
+/// Range of distances from `a` along `a → b` (unit direction `unit`, length
+/// `len`) that lies inside `rect`, or `None` when the segment misses it.
+fn segment_span_in_rect(a: Pos2, unit: Vec2, len: f32, rect: Rect) -> Option<(f32, f32)> {
+    let (mut t0, mut t1) = (0.0_f32, len);
+    for (origin, direction, low, high) in [
+        (a.x, unit.x, rect.min.x, rect.max.x),
+        (a.y, unit.y, rect.min.y, rect.max.y),
+    ] {
+        if direction.abs() < f32::EPSILON {
+            if origin < low || origin > high {
+                return None;
+            }
+            continue;
+        }
+        let (near, far) = ((low - origin) / direction, (high - origin) / direction);
+        t0 = t0.max(near.min(far));
+        t1 = t1.min(near.max(far));
+        if t0 > t1 {
+            return None;
+        }
+    }
+    Some((t0, t1))
+}
+
+/// Dashes of length `dash` separated by `gap`, phased from `a`. Only dashes
+/// that can touch `clip` are emitted: a long edge that leaves the viewport
+/// costs what is visible, not its full on-screen length.
+fn dashed_line(
+    shapes: &mut Vec<egui::Shape>,
+    a: Pos2,
+    b: Pos2,
+    stroke: Stroke,
+    dash: f32,
+    gap: f32,
+    clip: Rect,
+) {
     let dir = b - a;
     let len = dir.length();
     if len < 0.5 {
@@ -546,25 +590,47 @@ fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke, dash: 
     }
     let unit = dir / len;
     let step = (dash + gap).max(1.0);
-    let mut t = 0.0;
-    while t < len {
+    let margin = stroke.width + 1.0;
+    let Some((from, to)) = segment_span_in_rect(a, unit, len, clip.expand(margin)) else {
+        return;
+    };
+    // Whole dashes only, on the same phase as an unclipped line.
+    let first = ((from - dash) / step).floor().max(0.0) as u32;
+    let mut index = first;
+    loop {
+        let t = index as f32 * step;
+        if t >= len || t > to {
+            break;
+        }
         let t1 = (t + dash).min(len);
-        painter.line_segment([a + unit * t, a + unit * t1], stroke);
-        t += step;
+        shapes.push(egui::Shape::line_segment(
+            [a + unit * t, a + unit * t1],
+            stroke,
+        ));
+        index += 1;
     }
 }
 
+/// Unit circle sampled every 15°, shared by every dashed stub outline.
+fn unit_circle() -> &'static [Vec2; DASHED_CIRCLE_SEGMENTS + 1] {
+    static TABLE: std::sync::OnceLock<[Vec2; DASHED_CIRCLE_SEGMENTS + 1]> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let angle = TAU * (i as f32) / (DASHED_CIRCLE_SEGMENTS as f32);
+            Vec2::new(angle.cos(), angle.sin())
+        })
+    })
+}
+
+const DASHED_CIRCLE_SEGMENTS: usize = 24;
+
 fn dashed_circle(painter: &egui::Painter, center: Pos2, radius: f32, stroke: Stroke) {
     // 24 segments; draw every other chord as a dash.
-    let n = 24i32;
-    for i in 0..n {
-        if i % 2 != 0 {
-            continue;
-        }
-        let a0 = TAU * (i as f32) / (n as f32);
-        let a1 = TAU * ((i + 1) as f32) / (n as f32);
-        let p0 = center + Vec2::new(a0.cos(), a0.sin()) * radius;
-        let p1 = center + Vec2::new(a1.cos(), a1.sin()) * radius;
+    let table = unit_circle();
+    for i in (0..DASHED_CIRCLE_SEGMENTS).step_by(2) {
+        let p0 = center + table[i] * radius;
+        let p1 = center + table[i + 1] * radius;
         painter.line_segment([p0, p1], stroke);
     }
 }
@@ -601,5 +667,69 @@ mod tests {
         assert!((overview_camera_zoom(0.1, 5_001) - 0.8).abs() < f32::EPSILON);
         assert!((overview_camera_zoom(0.01, 5_001) - 0.75).abs() < f32::EPSILON);
         assert!((overview_camera_zoom(0.1, 5_000) - 0.1).abs() < f32::EPSILON);
+    }
+
+    fn dash_segments(a: Pos2, b: Pos2, clip: Rect) -> Vec<[Pos2; 2]> {
+        let mut shapes = Vec::new();
+        dashed_line(
+            &mut shapes,
+            a,
+            b,
+            Stroke::new(1.0, Color32::WHITE),
+            4.0,
+            4.0,
+            clip,
+        );
+        shapes
+            .into_iter()
+            .map(|shape| match shape {
+                egui::Shape::LineSegment { points, .. } => points,
+                other => panic!("unexpected shape {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn clipped_dashes_are_the_visible_subset_of_the_full_line() {
+        let everything = Rect::from_min_max(Pos2::new(-1e6, -1e6), Pos2::new(1e6, 1e6));
+        let view = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(300.0, 250.0));
+        for (a, b) in [
+            (Pos2::new(-500.0, -400.0), Pos2::new(900.0, 700.0)),
+            (Pos2::new(900.0, 120.0), Pos2::new(-300.0, 240.0)),
+            (Pos2::new(150.0, -2_000.0), Pos2::new(150.0, 2_000.0)),
+            (Pos2::new(120.0, 120.0), Pos2::new(280.0, 230.0)),
+        ] {
+            let full = dash_segments(a, b, everything);
+            let clipped = dash_segments(a, b, view);
+            assert!(clipped.len() < full.len() || full.len() <= 40);
+            // Every clipped dash is one of the unclipped dashes (same phase)...
+            for dash in &clipped {
+                assert!(full.iter().any(|other| {
+                    (other[0] - dash[0]).length() < 0.01 && (other[1] - dash[1]).length() < 0.01
+                }));
+            }
+            // ...and no dash that reaches the viewport is dropped.
+            let visible = view.expand(1.0);
+            for dash in &full {
+                let touches = (0..=8).any(|step| {
+                    visible.contains(dash[0] + (dash[1] - dash[0]) * (step as f32 / 8.0))
+                });
+                if touches {
+                    assert!(clipped
+                        .iter()
+                        .any(|kept| (kept[0] - dash[0]).length() < 0.01));
+                }
+            }
+        }
+        // A line that misses the viewport costs nothing.
+        assert!(dash_segments(Pos2::new(0.0, 0.0), Pos2::new(50.0, 900.0), view).is_empty());
+    }
+
+    #[test]
+    fn unit_circle_table_closes_the_loop() {
+        let table = unit_circle();
+        assert!((table[0] - Vec2::new(1.0, 0.0)).length() < 1e-6);
+        assert!((table[DASHED_CIRCLE_SEGMENTS] - table[0]).length() < 1e-5);
+        assert!(table.iter().all(|p| (p.length() - 1.0).abs() < 1e-6));
     }
 }
