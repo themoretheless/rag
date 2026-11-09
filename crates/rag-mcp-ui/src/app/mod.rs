@@ -512,6 +512,17 @@ impl GraphApp {
         http_base_for_sources(self.source.as_ref(), self.open.source.as_ref())
     }
 
+    /// Gateway base URL for a product request. Without a gateway, hands
+    /// "<purpose> требуется HTTP gateway" to `report` (which stores it in the
+    /// caller's error slot) and returns `None`.
+    fn gateway(&mut self, purpose: &str, report: impl FnOnce(&mut Self, String)) -> Option<String> {
+        let base = self.activity_base();
+        if base.is_none() {
+            report(self, format!("{purpose} требуется HTTP gateway"));
+        }
+        base
+    }
+
     fn topology_query_requires_reload(&self) -> bool {
         self.activity_base().is_some()
             || matches!(self.source, Some(GraphSourceKind::LiveStore { .. }))
@@ -534,8 +545,9 @@ impl GraphApp {
         if self.pending.project_catalog.is_some() {
             return;
         }
-        let Some(base) = self.activity_base() else {
-            self.scope.catalog_error = Some("Для каталога проектов требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для каталога проектов", |app, error| {
+            app.scope.catalog_error = Some(error)
+        }) else {
             return;
         };
         self.scope.catalog_error = None;
@@ -549,8 +561,9 @@ impl GraphApp {
         if self.pending.activity.is_some() {
             return;
         }
-        let Some(base) = self.activity_base() else {
-            self.activity.error = Some("Для журнала требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для журнала", |app, error| {
+            app.activity.error = Some(error)
+        }) else {
             return;
         };
         let seq = self.next_seq();
@@ -567,8 +580,9 @@ impl GraphApp {
             self.pending.project_home.clear();
             return;
         }
-        let Some(base) = self.activity_base() else {
-            self.home.error = Some("Для пульта проекта требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для пульта проекта", |app, error| {
+            app.home.error = Some(error)
+        }) else {
             return;
         };
         let seq = self.next_seq();
@@ -585,9 +599,10 @@ impl GraphApp {
     }
 
     fn reload_library(&mut self) {
-        let Some(base) = self.activity_base() else {
-            self.library.error = Some("Для корпуса требуется HTTP gateway".into());
-            self.library.page = None;
+        let Some(base) = self.gateway("Для корпуса", |app, error| {
+            app.library.error = Some(error);
+            app.library.page = None;
+        }) else {
             return;
         };
         self.library.error = None;
@@ -629,9 +644,9 @@ impl GraphApp {
         self.library.selected_id = Some(item.id.clone());
         self.library.document = None;
         self.library.document_error = None;
-        let Some(base) = self.activity_base() else {
-            self.library.document_error =
-                Some("Для превью документа требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для превью документа", |app, error| {
+            app.library.document_error = Some(error)
+        }) else {
             return;
         };
         let seq = self.next_seq();
@@ -649,8 +664,9 @@ impl GraphApp {
             self.search.error = Some("Введите поисковый запрос".into());
             return;
         }
-        let Some(base) = self.activity_base() else {
-            self.search.error = Some("Для поиска требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для поиска", |app, error| {
+            app.search.error = Some(error)
+        }) else {
             return;
         };
         self.search.request.wing = nonempty(&self.scope.wing);
@@ -666,8 +682,9 @@ impl GraphApp {
     }
 
     fn reload_operations(&mut self) {
-        let Some(base) = self.activity_base() else {
-            self.ops.error = Some("Для операций требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для операций", |app, error| {
+            app.ops.error = Some(error)
+        }) else {
             return;
         };
         self.ops.error = None;
@@ -680,8 +697,9 @@ impl GraphApp {
         if self.pending.jobs.is_some() {
             return;
         }
-        let Some(base) = self.activity_base() else {
-            self.ops.error = Some("Для фоновых задач требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для фоновых задач", |app, error| {
+            app.ops.error = Some(error)
+        }) else {
             return;
         };
         let seq = self.next_seq();
@@ -698,8 +716,9 @@ impl GraphApp {
             OperationsAction::RefreshHealth => self.reload_operations(),
             OperationsAction::RefreshJobs => self.reload_jobs(),
             OperationsAction::StartSync(request) => {
-                let Some(base) = self.activity_base() else {
-                    self.ops.error = Some("Для фоновых задач требуется HTTP gateway".into());
+                let Some(base) = self.gateway("Для фоновых задач", |app, error| {
+                    app.ops.error = Some(error)
+                }) else {
                     return;
                 };
                 let seq = self.next_seq();
@@ -708,8 +727,9 @@ impl GraphApp {
                     .send(WorkerCmd::StartSyncJob { seq, base, request });
             }
             OperationsAction::CancelJob(id) => {
-                let Some(base) = self.activity_base() else {
-                    self.ops.error = Some("Для фоновых задач требуется HTTP gateway".into());
+                let Some(base) = self.gateway("Для фоновых задач", |app, error| {
+                    app.ops.error = Some(error)
+                }) else {
                     return;
                 };
                 let seq = self.next_seq();
@@ -717,8 +737,9 @@ impl GraphApp {
                 self.worker.send(WorkerCmd::CancelJob { seq, base, id });
             }
             OperationsAction::Checkpoint => {
-                let Some(base) = self.activity_base() else {
-                    self.ops.error = Some("Для обслуживания требуется HTTP gateway".into());
+                let Some(base) = self.gateway("Для обслуживания", |app, error| {
+                    app.ops.error = Some(error)
+                }) else {
                     return;
                 };
                 let seq = self.next_seq();
@@ -726,8 +747,9 @@ impl GraphApp {
                 self.worker.send(WorkerCmd::Checkpoint { seq, base });
             }
             OperationsAction::Backup(request) => {
-                let Some(base) = self.activity_base() else {
-                    self.ops.error = Some("Для обслуживания требуется HTTP gateway".into());
+                let Some(base) = self.gateway("Для обслуживания", |app, error| {
+                    app.ops.error = Some(error)
+                }) else {
                     return;
                 };
                 let seq = self.next_seq();

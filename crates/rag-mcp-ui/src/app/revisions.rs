@@ -49,8 +49,9 @@ impl GraphApp {
             self.revision.error = Some("Откройте историю из документа в корпусе".into());
             return;
         };
-        let Some(base) = self.activity_base() else {
-            self.revision.error = Some("Для истории версий требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для истории версий", |app, error| {
+            app.revision.error = Some(error)
+        }) else {
             return;
         };
         self.revision.error = None;
@@ -72,8 +73,9 @@ impl GraphApp {
         let Some(document_id) = self.revision.document_id.clone() else {
             return;
         };
-        let Some(base) = self.activity_base() else {
-            self.revision.error = Some("Для деталей версии требуется HTTP gateway".into());
+        let Some(base) = self.gateway("Для деталей версии", |app, error| {
+            app.revision.error = Some(error)
+        }) else {
             return;
         };
         self.revision.selected = Some(from_revision);
