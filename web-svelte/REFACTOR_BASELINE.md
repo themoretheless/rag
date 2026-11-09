@@ -47,6 +47,68 @@ Largest lazy vendor chunks (mermaid, loaded only when a wiki page has a diagram)
 | 366 | `src/lib/markdown.ts` |
 | 363 | `src/components/wiki/WikiHome.svelte` |
 
-## After
+## After (branch `refactor-web`)
 
-Filled in at the end of the stage.
+### Build output
+
+Entry (loaded on every URL):
+
+| Chunk | Size | gzip | vs. before |
+| --- | ---: | ---: | --- |
+| `index-*.js` (shell, router, stores, API client, command palette) | 109.01 kB | 38.68 kB | −251.7 kB (−81.1 kB gzip) |
+| `index-*.css` | 11.78 kB | 3.25 kB | −100.6 kB (−14.3 kB gzip) |
+| `index.html` | 0.72 kB | 0.40 kB | |
+
+Screens, each loaded on first visit (JS / CSS, gzip in brackets):
+
+| Screen | JS | CSS |
+| --- | ---: | ---: |
+| `WikiView` | 55.83 kB (19.16) | 15.53 kB (3.34) |
+| `SearchView` | 27.21 kB (9.29) | 14.37 kB (2.64) |
+| `CorpusView` | 25.76 kB (8.72) | 14.68 kB (2.54) |
+| `GraphView` | 22.29 kB (8.40) | 8.40 kB (1.84) |
+| `ModelsView` | 16.49 kB (5.82) | 10.88 kB (1.91) |
+| `EvaluationView` | 15.12 kB (6.00) | 9.35 kB (1.65) |
+| `ConsoleView` | 13.99 kB (4.89) | 9.37 kB (1.67) |
+| `AgentsView` | 13.57 kB (5.57) | 10.42 kB (2.03) |
+| `SyncView` | 8.98 kB (3.42) | 8.72 kB (1.84) |
+| `ResourcesView` | 7.57 kB (2.68) | 1.85 kB (0.60) |
+
+Shared lazy chunks: `graph-d3-*.js` 64.89 kB (22.42 kB gzip; d3-force/drag/selection/zoom
+and their d3 dependencies, loaded by the graph screen and by mermaid), plus three
+sub-1 kB helpers (`stats`, `clipboard`, `select`). The mermaid chunks are unchanged
+in size.
+
+87 emitted files, 3893 kB in total (uncompressed). The total grew by 23 kB: per-chunk
+module wrappers and the new stores / helpers; what a visit actually downloads shrank
+(console: 360.7 + 112.4 kB → 109.0 + 11.8 + 14.0 + 9.4 kB).
+
+
+
+### Tests
+
+34 test files, 239 tests (was 16 / 111).
+
+### Largest source files (non-test, lines)
+
+| Lines | File |
+| ---: | --- |
+| 610 | `src/api/types.ts` (all response types now live here) |
+| 393 | `src/components/wiki/WikiArticle.svelte` |
+| 384 | `src/components/graph/GraphCanvas.svelte` |
+| 376 | `src/components/wiki/WikiToolbar.svelte` |
+| 366 | `src/lib/markdown.ts` |
+| 363 | `src/components/wiki/WikiHome.svelte` |
+| 351 | `src/lib/forceLayout.ts` |
+| 337 | `src/lib/i18n.ts` |
+| 321 | `src/lib/state/wikiPage.svelte.ts` |
+| 311 | `src/components/notion/CommandPalette.svelte` |
+
+The four files the stage targeted:
+
+| File | Before | After |
+| --- | ---: | --- |
+| `src/views/SearchView.svelte` | 1082 | 310, plus `views/search/` (3 panels, model, session) |
+| `src/lib/state/wiki.svelte.ts` | 767 | 195 facade over `wikiCatalog` (242), `wikiPage` (321), `wikiPrefs` (242) |
+| `src/views/AgentsView.svelte` | 753 | 139, plus `views/agents/` (4 panels, model, call stream) |
+| `src/views/CorpusView.svelte` | 397 | 169, plus `views/corpus/` (store, model) |

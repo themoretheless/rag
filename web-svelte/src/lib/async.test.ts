@@ -19,8 +19,7 @@ describe('errorMessage', () => {
     expect(errorMessage(new Error('boom'), 'fallback')).toBe('boom')
   })
 
-  it('recognises fetch aborts', () => {
-  })
+  it('recognises fetch aborts', () => {})
 })
 
 describe('debounce', () => {
