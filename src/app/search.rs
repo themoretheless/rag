@@ -95,7 +95,10 @@ pub struct MultiGetItem {
     pub chunks_truncated: Option<bool>,
 }
 
-fn serialize_document_without_content<S>(document: &Document, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_document_without_content<S>(
+    document: &Document,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
