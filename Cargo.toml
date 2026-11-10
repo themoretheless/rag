@@ -3,6 +3,17 @@ members = [".", "crates/rag-mcp-core", "crates/rag-mcp-markup", "crates/rag-mcp-
 default-members = ["."]
 resolver = "2"
 
+# Versions of dependencies used by two or more workspace crates, declared once.
+# Members add their own features; features are additive, so no member loses
+# any it had. crates/rag-mcp-ui is maintained in another worktree and still
+# pins its own versions (same requirements as here). chrono stays per crate:
+# the core crate deliberately builds it without default features.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+unicode-normalization = "0.1.25"
+
 [package]
 name = "rag-mcp"
 version = "0.1.0"
@@ -52,17 +63,17 @@ rmcp-macros = "=1.4.0"
 tokio-util = { version = "0.7", features = ["rt"] }
 # Same major as rmcp's re-export so Cargo.lock holds one schemars version.
 schemars = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 # Process/system resource telemetry for the /v1/resources endpoint.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tracing = "0.1"
+tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-unicode-normalization = "0.1.25"
+unicode-normalization = { workspace = true }
 # Pure-Rust (miniz_oxide) zip reading for OOXML (.docx/.xlsx) extraction.
 zip = { version = "9", default-features = false, features = ["deflate"] }
 # XML event parser for OOXML document/styles/sheet parts.
