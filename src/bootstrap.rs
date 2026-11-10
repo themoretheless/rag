@@ -14,6 +14,23 @@ use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::{build_provider, EmbeddingProvider};
 
+// Process-wide knobs live in the subsystems that read them (link ceiling in
+// `db::graph::resolve`, call-log size in `telemetry`, sync identity in
+// `db::sync`). Pushing them is composition work, so it sits here rather than in
+// the value-only `config` module; the method path is unchanged.
+impl Config {
+    /// Push process-global settings (graph link ceiling, call-log size, sync identity) into the
+    /// subsystems that hold them. Call once at start-up, before first use.
+    pub fn apply_process_limits(&self) {
+        crate::db::graph::resolve::configure_max_links(self.max_links_per_doc);
+        crate::telemetry::configure_capacity(self.call_log_capacity);
+        crate::db::sync::configure_identity(
+            self.sync_node_id.clone(),
+            self.sync_primary_url.clone(),
+        );
+    }
+}
+
 /// Install the stderr `tracing` subscriber; `RUST_LOG` overrides `default_filter`.
 pub fn init_tracing(default_filter: &str) {
     let filter =

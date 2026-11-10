@@ -92,10 +92,12 @@ Cycles:
   `external_db` implements `Store` methods.
 - `code_index ↔ external_db`: `src/external_db/write_check.rs:540` ↔
   `src/code_index/sql.rs:1405`.
-- `config →` upper layers: `src/config.rs:110,138` (llm/rerank provider enums),
-  `:327` (`maintain::DEFAULT_MAX_DOCS`), `:435-437` (`apply_process_limits`
-  writes globals in `db::graph::resolve`, `telemetry`, `db::sync`), `:908`
-  (`db::search::MAX_TOP_K`).
+- ~~`config →` upper layers~~: resolved in Stage 2. Provider enums live in
+  `config::providers`, defaults and caps in `config::limits` (re-exported by
+  `llm`, `rerank`, `maintain`, `query_transform`, `telemetry`, `db::search`);
+  `impl EmbeddingIdentity for Config` moved to `db`; `apply_process_limits` is
+  implemented in `bootstrap` (composition). The three process globals it sets
+  remain globals (see INVENTORY.md, config row).
 - ~~`models`/`error → duckdb`~~: resolved in Stage 2; the impls live in `src/db/sql_types.rs`.
 - `http_api → mcp`: `src/http_api/mod.rs:68`, `src/http_api/ops.rs:18-19`.
 

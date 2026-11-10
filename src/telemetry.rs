@@ -16,7 +16,7 @@ use std::time::Instant;
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 
-pub const DEFAULT_CAPACITY: usize = 2_000;
+pub use crate::config::limits::DEFAULT_CAPACITY;
 /// Agents seen within this window count as online.
 pub const ONLINE_WINDOW_SECS: i64 = 600;
 const ARGS_MAX_CHARS: usize = 240;

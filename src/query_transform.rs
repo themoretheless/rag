@@ -26,12 +26,7 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::llm::{ChatClient, ChatMessage};
 
-/// Default number of rewrite variants (`RAG_QUERY_REWRITE_VARIANTS`).
-pub const DEFAULT_REWRITE_VARIANTS: usize = 3;
-/// Hard cap on rewrite variants fused per search.
-pub const MAX_REWRITE_VARIANTS: usize = 8;
-/// Default bounded-cache capacity per transform kind.
-pub const DEFAULT_CACHE_SIZE: usize = 256;
+pub use crate::config::limits::{DEFAULT_CACHE_SIZE, DEFAULT_REWRITE_VARIANTS, MAX_REWRITE_VARIANTS};
 /// Character cap for the hypothetical passage sent to the embedder.
 const MAX_HYDE_CHARS: usize = 2_000;
 /// Completion budget for rewrite / HyDE calls (short outputs).

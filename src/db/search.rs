@@ -37,7 +37,7 @@ const CANDIDATE_MULTIPLIER: usize = 5;
 const CANDIDATE_FLOOR: usize = 50;
 /// Hard per-source bound for adaptive diversity refill.
 const MAX_DIVERSITY_CANDIDATES: usize = 4096;
-pub const MAX_TOP_K: usize = 100;
+pub use crate::config::limits::MAX_TOP_K;
 pub const MAX_QUERY_CHARS: usize = 4096;
 
 /// Result diversity strategy.

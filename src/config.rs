@@ -8,6 +8,9 @@ use std::str::FromStr;
 use crate::error::AppError;
 use crate::models::SearchMode;
 
+pub mod limits;
+pub mod providers;
+
 /// `RAG_AUTO_SYNC_INTERVAL_SECS` default (hourly).
 const DEFAULT_AUTO_SYNC_INTERVAL_SECS: u64 = 3600;
 /// `RAG_STARTUP_WARN_MS` default: start-up phases at least this slow log a warning.
@@ -107,7 +110,7 @@ pub struct Config {
     /// Default `search` mode when the tool omits `mode`.
     pub default_search_mode: SearchMode,
     /// Chat provider preset (`RAG_LLM_PROVIDER`: ollama|openai|codex|claude|kimi|deepseek|custom).
-    pub llm_provider: crate::llm::LlmProviderKind,
+    pub llm_provider: providers::LlmProviderKind,
     /// API base URL (provider default unless `RAG_LLM_BASE_URL` set).
     pub llm_base_url: String,
     /// Chat model name (provider default unless `RAG_LLM_MODEL` set).
@@ -135,7 +138,7 @@ pub struct Config {
     /// Omit-if-match = last-write-wins when this flag is false.
     pub wiki_require_if_match: bool,
     /// Rerank backend (`RAG_RERANK_PROVIDER`: off|mock|openai_compat|ollama, default **off**).
-    pub rerank_provider: crate::rerank::RerankProviderKind,
+    pub rerank_provider: providers::RerankProviderKind,
     /// Rerank API base URL (`RAG_RERANK_BASE_URL`).
     pub rerank_base_url: String,
     /// Rerank API key (`RAG_RERANK_API_KEY`; optional for local endpoints).
@@ -149,13 +152,13 @@ pub struct Config {
     /// Rewrite variants requested when `rewrite=true` (`RAG_QUERY_REWRITE_VARIANTS`, default **3**, cap 8).
     pub query_rewrite_variants: usize,
     /// Optional chat provider override for query rewriting (`RAG_QUERY_REWRITE_PROVIDER`; default reuses `RAG_LLM_PROVIDER`).
-    pub query_rewrite_provider: Option<crate::llm::LlmProviderKind>,
+    pub query_rewrite_provider: Option<providers::LlmProviderKind>,
     /// Optional model override for query rewriting (`RAG_QUERY_REWRITE_MODEL`; default reuses `RAG_LLM_MODEL`).
     pub query_rewrite_model: Option<String>,
     /// Bounded in-process rewrite cache size (`RAG_QUERY_REWRITE_CACHE_SIZE`, default **256**, 0 disables).
     pub query_rewrite_cache_size: usize,
     /// Optional chat provider override for HyDE (`RAG_HYDE_PROVIDER`; default reuses `RAG_LLM_PROVIDER`).
-    pub hyde_provider: Option<crate::llm::LlmProviderKind>,
+    pub hyde_provider: Option<providers::LlmProviderKind>,
     /// Optional model override for HyDE (`RAG_HYDE_MODEL`; default reuses `RAG_LLM_MODEL`).
     pub hyde_model: Option<String>,
     /// Bounded in-process HyDE cache size (`RAG_HYDE_CACHE_SIZE`, default **256**, 0 disables).
@@ -299,7 +302,7 @@ pub fn parse_bind(raw: &str) -> Result<Option<SocketAddr>, AppError> {
 impl Default for Config {
     /// Defaults matching empty-env `from_env` with the mock embedding provider.
     fn default() -> Self {
-        use crate::llm::LlmProviderKind;
+        use providers::LlmProviderKind;
         let llm_provider = LlmProviderKind::Ollama;
         Self {
             db_path: PathBuf::from("./rag.duckdb"),
@@ -324,24 +327,24 @@ impl Default for Config {
             llm_enabled: true,
             llm_timeout_secs: 120,
             llm_max_tokens: 4096,
-            maint_max_docs: crate::maintain::DEFAULT_MAX_DOCS,
+            maint_max_docs: limits::DEFAULT_MAX_DOCS,
             maint_near_dup_threshold: 0.92,
             tool_surface: ToolSurface::Spine,
             http_bind: None,
             wiki_require_if_match: false,
-            rerank_provider: crate::rerank::RerankProviderKind::Off,
+            rerank_provider: providers::RerankProviderKind::Off,
             rerank_base_url: String::new(),
             rerank_api_key: String::new(),
             rerank_model: String::new(),
             rerank_top_n: 50,
             rerank_timeout_secs: 30,
-            query_rewrite_variants: crate::query_transform::DEFAULT_REWRITE_VARIANTS,
+            query_rewrite_variants: limits::DEFAULT_REWRITE_VARIANTS,
             query_rewrite_provider: None,
             query_rewrite_model: None,
-            query_rewrite_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            query_rewrite_cache_size: limits::DEFAULT_CACHE_SIZE,
             hyde_provider: None,
             hyde_model: None,
-            hyde_cache_size: crate::query_transform::DEFAULT_CACHE_SIZE,
+            hyde_cache_size: limits::DEFAULT_CACHE_SIZE,
             ingest_url_allow: Vec::new(),
             ingest_url_timeout_secs: 30,
             ingest_url_max_bytes: 10 * 1024 * 1024,
@@ -364,7 +367,7 @@ impl Default for Config {
             auto_backup_keep: 7,
             auto_backup_min_free_bytes: DEFAULT_AUTO_BACKUP_MIN_FREE_BYTES,
             max_links_per_doc: crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
-            call_log_capacity: crate::telemetry::DEFAULT_CAPACITY,
+            call_log_capacity: limits::DEFAULT_CAPACITY,
             sync_node_id: None,
             sync_primary_url: None,
             sync_primary_token: None,
@@ -429,17 +432,6 @@ fn parse_auto_sync_roots(raw: &str) -> Vec<String> {
 }
 
 impl Config {
-    /// Push process-global settings (graph link ceiling, call-log size, sync identity) into the
-    /// subsystems that hold them. Call once at start-up, before first use.
-    pub fn apply_process_limits(&self) {
-        crate::db::graph::resolve::configure_max_links(self.max_links_per_doc);
-        crate::telemetry::configure_capacity(self.call_log_capacity);
-        crate::db::sync::configure_identity(
-            self.sync_node_id.clone(),
-            self.sync_primary_url.clone(),
-        );
-    }
-
     /// Shared baseline for unit and integration tests.
     ///
     /// Mock-friendly defaults: full MCP tool surface, `wiki_require_if_match = false`,
@@ -512,7 +504,7 @@ impl Config {
         //   Fallbacks: OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY
         //   RAG_LLM_ENABLED, RAG_LLM_TIMEOUT_SECS, RAG_LLM_MAX_TOKENS
         //   RAG_MAINT_MAX_DOCS, RAG_MAINT_NEAR_DUP_THRESHOLD
-        use crate::llm::{resolve_api_key, LlmProviderKind};
+        use providers::{resolve_api_key, LlmProviderKind};
         let llm_provider = env::var("RAG_LLM_PROVIDER")
             .unwrap_or_else(|_| "ollama".to_string())
             .parse::<LlmProviderKind>()?;
@@ -599,7 +591,7 @@ impl Config {
             crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
         );
         let call_log_capacity =
-            positive_usize("RAG_CALL_LOG_CAPACITY", crate::telemetry::DEFAULT_CAPACITY);
+            positive_usize("RAG_CALL_LOG_CAPACITY", limits::DEFAULT_CAPACITY);
         let sync_node_id = env::var("RAG_NODE_ID").ok();
         let sync_primary_url = env::var("RAG_PRIMARY_URL").ok();
         let sync_primary_token = env::var("RAG_PRIMARY_TOKEN").ok().map(Secret::from);
@@ -629,10 +621,10 @@ impl Config {
         // RAG_RERANK_TIMEOUT_SECS. Default off = zero behavior change.
         let rerank_provider = env::var("RAG_RERANK_PROVIDER")
             .unwrap_or_else(|_| "off".to_string())
-            .parse::<crate::rerank::RerankProviderKind>()?;
+            .parse::<providers::RerankProviderKind>()?;
         let rerank_base_url =
             env::var("RAG_RERANK_BASE_URL").unwrap_or_else(|_| match rerank_provider {
-                crate::rerank::RerankProviderKind::Ollama => "http://127.0.0.1:11434".to_string(),
+                providers::RerankProviderKind::Ollama => "http://127.0.0.1:11434".to_string(),
                 _ => String::new(),
             });
         let rerank_api_key = env::var("RAG_RERANK_API_KEY").unwrap_or_else(|_| String::new());
@@ -903,13 +895,13 @@ impl Config {
             return Err(AppError::config("RAG_REEMBED_BATCH must be greater than 0"));
         }
 
-        use crate::rerank::RerankProviderKind;
+        use providers::RerankProviderKind;
         if self.rerank_provider != RerankProviderKind::Off {
-            if self.rerank_top_n == 0 || self.rerank_top_n > crate::db::search::MAX_TOP_K {
+            if self.rerank_top_n == 0 || self.rerank_top_n > limits::MAX_TOP_K {
                 return Err(AppError::config(format!(
                     "RAG_RERANK_TOP_N ({}) must be in 1..={}",
                     self.rerank_top_n,
-                    crate::db::search::MAX_TOP_K
+                    limits::MAX_TOP_K
                 )));
             }
             if self.rerank_timeout_secs == 0 {
@@ -938,12 +930,12 @@ impl Config {
         }
 
         if self.query_rewrite_variants == 0
-            || self.query_rewrite_variants > crate::query_transform::MAX_REWRITE_VARIANTS
+            || self.query_rewrite_variants > limits::MAX_REWRITE_VARIANTS
         {
             return Err(AppError::config(format!(
                 "RAG_QUERY_REWRITE_VARIANTS ({}) must be in 1..={}",
                 self.query_rewrite_variants,
-                crate::query_transform::MAX_REWRITE_VARIANTS
+                limits::MAX_REWRITE_VARIANTS
             )));
         }
 
@@ -952,7 +944,7 @@ impl Config {
 }
 
 /// Parse an optional LLM provider override env var (unset/empty → `None`).
-fn parse_optional_llm_provider(var: &str) -> Result<Option<crate::llm::LlmProviderKind>, AppError> {
+fn parse_optional_llm_provider(var: &str) -> Result<Option<providers::LlmProviderKind>, AppError> {
     match env::var(var) {
         Err(_) => Ok(None),
         Ok(raw) => {
@@ -960,7 +952,7 @@ fn parse_optional_llm_provider(var: &str) -> Result<Option<crate::llm::LlmProvid
             if trimmed.is_empty() {
                 Ok(None)
             } else {
-                trimmed.parse::<crate::llm::LlmProviderKind>().map(Some)
+                trimmed.parse::<providers::LlmProviderKind>().map(Some)
             }
         }
     }
@@ -1033,21 +1025,6 @@ fn parse_f64(var: &str, default: &str) -> Result<f64, AppError> {
 fn parse_search_mode(raw: &str) -> Result<SearchMode, AppError> {
     SearchMode::parse(raw)
         .map_err(|e| AppError::config(format!("invalid RAG_DEFAULT_SEARCH_MODE: {e}")))
-}
-
-impl crate::db::EmbeddingIdentity for Config {
-    fn embedding_provider_name(&self) -> &str {
-        self.embedding_provider.as_str()
-    }
-    fn embedding_model_name(&self) -> &str {
-        &self.embedding_model
-    }
-    fn embedding_dimensions(&self) -> usize {
-        self.embedding_dims
-    }
-    fn embedding_endpoint(&self) -> &str {
-        &self.embedding_base_url
-    }
 }
 
 #[cfg(test)]
