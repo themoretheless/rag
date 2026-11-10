@@ -389,3 +389,48 @@ async fn plan_maintenance_heuristic_when_llm_disabled() {
     assert!(!plan.llm_enabled);
     assert_eq!(plan.actions[0].action, MaintenanceAction::Noop);
 }
+
+/// Plan items as MCP/HTTP clients and stored plans send them today, one per
+/// action, including the lenient forms the apply layer accepts (numbers as
+/// strings, comma-separated lists, `"yes"` booleans, extra keys).
+pub(crate) const WIRE_PLAN_FIXTURE: &str = r#"[
+  {"action":"refile","reason":"wrong wing","target_id":"d1","params":{"wing":"projects","room":"","title":"T"}},
+  {"action":"pin","target_id":"d1","params":{}},
+  {"action":"unpin","target_id":"d1","params":{}},
+  {"action":"set_boost","target_id":"d1","params":{"boost":1.5}},
+  {"action":"set_tags","target_id":"d1","params":{"tags":"a, b #c","mode":"add"}},
+  {"action":"archive","target_id":"d1","params":{}},
+  {"action":"unarchive","target_id":"d1","params":{}},
+  {"action":"rebuild_index","params":{}},
+  {"action":"rebuild_graph","params":{"dirty_only":"no","max_docs":"5"}},
+  {"action":"reindex_fts","params":{}},
+  {"action":"reembed","target_id":"d1","params":{}},
+  {"action":"reembed_all","params":{"max_docs":12.7}},
+  {"action":"compile_source","target_id":"d1","params":{"source_id_or_uri":"file:///x.md","extra":[1,2]}},
+  {"action":"consolidate","params":{"source_ids":["a","b"],"title":"T","body":"B","kind":"concept"}},
+  {"action":"refresh_stale_wiki","params":{"max_docs":3,"dry_run":"yes"}},
+  {"action":"file_answer","params":{"title":"Q","content":"A","slug":"q","citations":[{"document_id":"d1"}]}},
+  {"action":"merge_exact_dup","target_id":"keep","params":{"document_ids":["keep","drop"],"allow_raw_delete":true,"delete":"1"}},
+  {"action":"drop_tombstones","params":{"allow_raw_delete":false,"max_docs":2}},
+  {"action":"vacuum","params":{}},
+  {"action":"checkpoint","params":{}},
+  {"action":"noop","reason":"nothing to do","params":{}}
+]"#;
+
+#[test]
+fn wire_plan_fixture_round_trips_unchanged() {
+    let wire: serde_json::Value = serde_json::from_str(WIRE_PLAN_FIXTURE).unwrap();
+    let items: Vec<MaintenancePlanItem> = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(items.len(), MaintenanceAction::ALL.len());
+    let names: Vec<_> = items.iter().map(|i| i.action).collect();
+    assert_eq!(names, MaintenanceAction::ALL);
+    assert_eq!(serde_json::to_value(&items).unwrap(), wire);
+    let validated = validate_plan(items.clone()).unwrap();
+    assert_eq!(validated, items);
+    // A missing `params` still defaults to `{}` and serializes as such.
+    let bare: MaintenancePlanItem = serde_json::from_str(r#"{"action":"vacuum"}"#).unwrap();
+    assert_eq!(
+        serde_json::to_value(&bare).unwrap(),
+        serde_json::json!({"action": "vacuum", "params": {}})
+    );
+}

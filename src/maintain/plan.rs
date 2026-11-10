@@ -932,4 +932,4 @@ pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
