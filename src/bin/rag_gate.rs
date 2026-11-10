@@ -1,7 +1,7 @@
 //! Opt-in PreToolUse adapter. Installation/activation is deliberately external.
 use rag_mcp::{
     gate::{self, Decision, Mode},
-    Config, Store,
+    Config,
 };
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -102,7 +102,7 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
             json!({"verdict":d.verdict,"rule":d.rule,"hook":d.hook(),"command_executed":false,"hook_backend":"direct_database"}),
         );
     }
-    let store = Store::open(&config.db_path)?;
+    let store = rag_mcp::storage::open_store(&config.db_path)?;
     let mut report = rag_mcp::gate::Gate::new(&store).analysis_gate(
         p.session_id.as_deref().unwrap(),
         &p,
@@ -115,7 +115,7 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
 
 /// Index-usage gate hook (reads one JSON tool-call payload on stdin).
 ///
-/// Opens the store read-mostly with `Store::open`, not
+/// Opens the store with `storage::open_store`, not
 /// `bootstrap::open_offline`: the gate needs no embedder or manifest check and
 /// must answer within a hook's time budget.
 #[derive(clap::Parser)]
@@ -131,7 +131,6 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
-    rag_mcp::storage::install_store_hooks();
     let cli = <Cli as clap::Parser>::parse();
     let full_json = cli.json;
     let mode = cli.mode;

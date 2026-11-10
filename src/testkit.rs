@@ -170,7 +170,7 @@ pub fn temp_store() -> Store {
 /// need the directory (extra files, a second open, `Config::db_path`).
 pub fn open_temp_store() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::open(&dir.path().join("test.duckdb")).expect("open store");
+    let store = crate::storage::open_store(&dir.path().join("test.duckdb")).expect("open store");
     (dir, store)
 }
 

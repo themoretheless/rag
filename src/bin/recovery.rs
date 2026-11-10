@@ -9,10 +9,8 @@ use rag_mcp::db::recovery::{
     BUNDLE_VERSION,
 };
 use rag_mcp::util::refuse_live_database_target;
-use rag_mcp::Store;
 
 fn main() -> Result<()> {
-    rag_mcp::storage::install_store_hooks();
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "help".into());
     let rest: Vec<String> = args.collect();
@@ -37,7 +35,8 @@ fn backup(args: &[String], drill: bool) -> Result<()> {
     let db = required_path(args, "--db")?;
     let out = required_path(args, "--out")?;
     let overwrite = flag(args, "--overwrite");
-    let store = Store::open(&db).with_context(|| format!("open source {}", db.display()))?;
+    let store = rag_mcp::storage::open_store(&db)
+        .with_context(|| format!("open source {}", db.display()))?;
     let source = store.maintenance().stats()?;
     let source_schema = store.maintenance().schema_version()?.unwrap_or(0);
     let source_manifest = store.embedding_manifest().get_embedding_manifest()?;
@@ -121,7 +120,7 @@ fn retention(args: &[String]) -> Result<()> {
 fn export_vault(args: &[String]) -> Result<()> {
     let db = required_path(args, "--db")?;
     let out = required_path(args, "--out")?;
-    let store = Store::open(&db)?;
+    let store = rag_mcp::storage::open_store(&db)?;
     let dry_run = !flag(args, "--apply");
     let report = store
         .recovery()
@@ -135,7 +134,7 @@ fn export_bundle(args: &[String]) -> Result<()> {
     let out = required_path(args, "--out")?;
     let overwrite = flag(args, "--overwrite");
     let dry_run = flag(args, "--dry-run");
-    let store = Store::open(&db)?;
+    let store = rag_mcp::storage::open_store(&db)?;
     refuse_live_database_target(&out, store.path())?;
     if out.exists() && !overwrite {
         bail!("output exists: {}", out.display());
@@ -161,7 +160,7 @@ fn import_bundle(args: &[String]) -> Result<()> {
     let format = bundle_format(args, &input)?;
     let raw = read_recovery_bundle_file(&input)?;
     let bundle = prepare_offline_import_bundle(decode_bundle(&raw, format)?)?;
-    let store = Store::open(&db)?;
+    let store = rag_mcp::storage::open_store(&db)?;
     let policy = ConflictPolicy::parse(value(args, "--conflict-policy"))?;
     let dry_run = !flag(args, "--apply");
     let report = store

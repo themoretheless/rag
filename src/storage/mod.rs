@@ -94,7 +94,7 @@ pub fn open_configured(config: &Config) -> Result<Store, AppError> {
     install_store_hooks();
     let backend = configured_backend(config)?;
     match backend {
-        BackendKind::DuckDb => Store::open(&config.db_path),
+        BackendKind::DuckDb => open_store(&config.db_path),
         other => Err(AppError::config(format!(
             "storage backend '{}' is recognized but not implemented; export_bundle/export_vault before migrating",
             other.as_str()
@@ -102,8 +102,21 @@ pub fn open_configured(config: &Config) -> Result<Store, AppError> {
     }
 }
 
+/// Open a DuckDB store with the composition hooks installed.
+///
+/// The one way binaries and test helpers open a store: it registers the
+/// document write hook (moves `code_source_text` into
+/// `code_index_source_blobs`) and the code-intelligence schema extensions
+/// before the first write, so no caller can forget them. `Store::open` stays
+/// the raw `db`-layer constructor.
+pub fn open_store(path: &std::path::Path) -> Result<Store, AppError> {
+    install_store_hooks();
+    Store::open(path)
+}
+
 /// Composition: register the store write hooks owned by higher layers.
-pub fn install_store_hooks() {
+/// Idempotent; called by [`open_store`].
+pub(crate) fn install_store_hooks() {
     crate::code_index::source::install_document_write_hook();
     register_schema_extensions();
 }
@@ -140,5 +153,36 @@ mod tests {
         let caps = duckdb_capability_names();
         assert!(caps.contains(&"documents".to_string()));
         assert!(caps.contains(&"graph".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod open_store_tests {
+    use super::*;
+    use crate::models::Document;
+
+    #[test]
+    fn open_store_moves_code_source_text_into_the_blob_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open_store(&dir.path().join("hooks.duckdb")).unwrap();
+        let now = chrono::Utc::now();
+        store
+            .documents()
+            .upsert_document(&Document {
+                id: "code-doc".into(),
+                uri: "file:///tmp/code-doc.rs".into(),
+                title: "code-doc.rs".into(),
+                content: "fn main() {}".into(),
+                metadata_json: serde_json::json!({ "code_source_text": "fn main() {}\r\n" })
+                    .to_string(),
+                created_at: now,
+                updated_at: now,
+                ..Default::default()
+            })
+            .unwrap();
+        let stored = store.documents().get_document("code-doc").unwrap().unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&stored.metadata_json).unwrap();
+        assert!(metadata.get("code_source_text").is_none(), "{metadata}");
+        assert!(metadata.get("code_source_hash").is_some(), "{metadata}");
     }
 }
