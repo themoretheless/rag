@@ -1,4 +1,3 @@
-
 use super::*;
 struct Snapshot {
     symbols: Vec<Symbol>,

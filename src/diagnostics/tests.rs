@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::embeddings::MockEmbedder;
 use crate::models::{Chunk, Document, GraphEdge, GraphNode, WikiIndexEntry};

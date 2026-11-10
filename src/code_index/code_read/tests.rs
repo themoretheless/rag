@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::models::{Chunk, Document};
 fn store(source: &str) -> (tempfile::TempDir, Store) {

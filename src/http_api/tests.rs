@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::embeddings::build_provider;
 use axum::{

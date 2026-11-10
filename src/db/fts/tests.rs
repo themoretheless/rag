@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// dict (term, df), docs (name, len), stats (num_docs, avgdl), postings.

@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::models::Document;
 fn put(store: &Store, id: &str, path: &str, content: &str, project: &str) {

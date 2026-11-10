@@ -1,4 +1,3 @@
-
 use super::*;
 fn graph(manifest: &str, source: &str) -> (CodeSnapshot, HashMap<String, IndexedDocument>) {
     let mut docs = HashMap::new();

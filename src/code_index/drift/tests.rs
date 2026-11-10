@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::models::Document;
 fn reconstruct(old: &str, new: &str, diff: &serde_json::Value) -> String {

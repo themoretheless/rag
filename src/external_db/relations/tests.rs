@@ -1,4 +1,3 @@
-
 use super::*;
 fn column(name: &str, kind: &str) -> Value {
     json!({"name":name,"data_type":kind,"type_schema":"pg_catalog"})

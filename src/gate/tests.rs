@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::{analysis_tasks::TaskSet, models::Document};
 struct Fixture {

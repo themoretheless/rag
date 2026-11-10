@@ -1,4 +1,3 @@
-
 use super::*;
 fn snapshot(files: &[(&str, &str, &str)]) -> CodeSnapshot {
     let mut docs = HashMap::new();

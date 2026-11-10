@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::models::Document;
 fn setup() -> (tempfile::TempDir, Store) {

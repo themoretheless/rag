@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::models::SearchMode;
 use crate::testkit::{test_config, SeedDoc};

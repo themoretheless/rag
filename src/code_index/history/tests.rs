@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::models::Document;
 fn doc(id: &str, path: &str, source: &str) -> Document {
