@@ -179,7 +179,10 @@ form with its variant prefix.
    plus the earlier flat MCP fields `id, uri, title, content, metadata_json,
    created_at, updated_at` (and optional `source_file`,
    `source_download_path`), kept for MCP clients that read them. HTTP items
-   gain those flat fields; MCP items gain `document`.
+   gain those flat fields; MCP items gain `document`. The body is serialised
+   once: the flat `content` stays (existing MCP clients read it) and
+   `document` omits its `content` column, so `document.content` is absent
+   on both transports.
 4. **`pack_context` (drift 16).** MCP accepts `include_trace`,
    `persist_trace` and `prior_trace` like HTTP and returns `trace` when asked.
 5. **Wiki writes (drifts 5, 9, 10).** One entrypoint,

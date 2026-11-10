@@ -535,9 +535,14 @@ async fn multi_get_agrees_on_order_missing_and_document_shape() {
     assert_eq!(mcp_ids, http_ids);
     assert_eq!(mcp["missing"], json!(["no-such-document"]));
     assert_eq!(mcp["missing"], http["missing"]);
-    for field in ["id", "uri", "title", "content", "metadata_json"] {
+    for field in ["id", "uri", "title", "metadata_json"] {
         assert_eq!(mcp_item[field], http_doc[field], "{field}");
     }
+    // The body is serialised once: flat `content` (read by MCP clients), not
+    // `document.content`.
+    assert!(mcp_item["content"].as_str().is_some_and(|c| !c.is_empty()));
+    assert!(http_doc.get("content").is_none(), "document omits content");
+    assert!(mcp_item["document"].get("content").is_none());
     for field in ["chunks", "chunks_total", "chunks_truncated"] {
         assert_eq!(mcp_item[field], http_item[field], "{field}");
     }

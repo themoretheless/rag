@@ -69,8 +69,12 @@ pub struct MultiGetCommand {
 /// `content`, `metadata_json`, `created_at`, `updated_at`, and the optional
 /// `source_file` / `source_download_path`), kept so existing MCP clients that
 /// read them keep working.
+///
+/// The body is serialised once, as the flat `content`: `document` carries
+/// every other column of the row but omits `content`.
 #[derive(Debug, Serialize)]
 pub struct MultiGetItem {
+    #[serde(serialize_with = "serialize_document_without_content")]
     pub document: Document,
     pub id: String,
     pub uri: String,
@@ -89,6 +93,17 @@ pub struct MultiGetItem {
     pub chunks_total: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunks_truncated: Option<bool>,
+}
+
+fn serialize_document_without_content<S>(document: &Document, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut row = serde_json::to_value(document).map_err(serde::ser::Error::custom)?;
+    if let Some(object) = row.as_object_mut() {
+        object.remove("content");
+    }
+    row.serialize(serializer)
 }
 
 impl From<DocumentWithChunks> for MultiGetItem {
