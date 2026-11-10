@@ -1225,7 +1225,9 @@ mod tests {
             project: Some("p".into()),
             limit: None,
         };
-        let diff = store.code_index_diff(&query).unwrap();
+        let diff = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&query)
+            .unwrap();
         assert_eq!(diff["perl_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -1243,7 +1245,12 @@ mod tests {
         child.content = "package Later;".into();
         store.upsert_document(&child).unwrap();
         store.index_code().unwrap();
-        assert_eq!(store.code_index_diff(&query).unwrap(), diff);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_index_diff(&query)
+                .unwrap(),
+            diff
+        );
         let conn = store.lock().unwrap();
         let raw: String = conn
             .query_row(
@@ -1260,7 +1267,9 @@ mod tests {
         )
         .unwrap();
         drop(conn);
-        let legacy = store.code_index_diff(&query).unwrap();
+        let legacy = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&query)
+            .unwrap();
         assert_eq!(legacy["perl_relations_available"], false);
         assert!(!legacy["relations_removed"]
             .as_array()

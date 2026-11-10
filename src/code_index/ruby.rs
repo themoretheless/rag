@@ -1436,7 +1436,9 @@ mod integration_tests {
             project: Some("p".into()),
             limit: None,
         };
-        let diff = store.code_index_diff(&dq).unwrap();
+        let diff = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&dq)
+            .unwrap();
         assert_eq!(diff["ruby_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -1457,7 +1459,12 @@ mod integration_tests {
         client.content = "require_relative 'base'\n".into();
         store.upsert_document(&client).unwrap();
         store.index_code().unwrap();
-        assert_eq!(store.code_index_diff(&dq).unwrap(), diff);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_index_diff(&dq)
+                .unwrap(),
+            diff
+        );
         let c = store.lock().unwrap();
         let raw: String = c
             .query_row(
@@ -1474,7 +1481,9 @@ mod integration_tests {
         )
         .unwrap();
         drop(c);
-        let legacy = store.code_index_diff(&dq).unwrap();
+        let legacy = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&dq)
+            .unwrap();
         assert_eq!(legacy["ruby_relations_available"], false);
         assert!(!legacy["relations_removed"]
             .as_array()

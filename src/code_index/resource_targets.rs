@@ -410,7 +410,9 @@ mod tests {
             project: Some("p".into()),
             limit: None,
         };
-        let diff = store.code_index_diff(&q).unwrap();
+        let diff = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&q)
+            .unwrap();
         assert_eq!(diff["resource_target_relations_available"], true);
         let removed = diff["relations_removed"].as_array().unwrap();
         assert!(removed.iter().any(|e| e["target"] == "json"), "{diff}");
@@ -418,7 +420,12 @@ mod tests {
         page.content = "<link href='main.css'>".into();
         store.upsert_document(&page).unwrap();
         store.index_code().unwrap();
-        assert_eq!(store.code_index_diff(&q).unwrap(), diff);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_index_diff(&q)
+                .unwrap(),
+            diff
+        );
         let c = store.lock().unwrap();
         let raw: String = c
             .query_row(
@@ -438,7 +445,9 @@ mod tests {
         )
         .unwrap();
         drop(c);
-        let legacy = store.code_index_diff(&q).unwrap();
+        let legacy = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&q)
+            .unwrap();
         assert_eq!(legacy["resource_target_relations_available"], false);
         let removed = legacy["relations_removed"].as_array().unwrap();
         assert!(!removed.iter().any(|e| e["target"] == "json"), "{legacy}");

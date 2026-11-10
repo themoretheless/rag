@@ -30,8 +30,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::code_index::CodeIndex::new(&self.store)
                 .code_freshness(&params, &self.config.ingest_roots)
                 .map_err(Self::map_err)?,
         )
@@ -45,8 +44,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::drift::SourceQuery>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::code_index::CodeIndex::new(&self.store)
                 .code_live_read(&params, &self.config.ingest_roots)
                 .map_err(Self::map_err)?,
         )
@@ -60,8 +58,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::drift::DriftQuery>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::code_index::CodeIndex::new(&self.store)
                 .code_drift_report(&params)
                 .map_err(Self::map_err)?,
         )
@@ -74,7 +71,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::drift::DriftAck>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_drift_ack(&params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::code_index::CodeIndex::new(&self.store)
+                .code_drift_ack(&params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "index_status",
@@ -122,8 +123,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::history::HistoryQuery>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::code_index::CodeIndex::new(&self.store)
                 .code_index_history(&params)
                 .map_err(Self::map_err)?,
         )
@@ -136,7 +136,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::history::DiffQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_index_diff(&params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::code_index::CodeIndex::new(&self.store)
+                .code_index_diff(&params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "calibrate",
@@ -548,9 +552,10 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let roots = self.config.ingest_roots.clone();
-        let result =
-            crate::util::run_blocking("rename", move || store.code_rename_preview(&params, &roots))
-                .await?;
+        let result = crate::util::run_blocking("rename", move || {
+            crate::code_index::CodeIndex::new(&store).code_rename_preview(&params, &roots)
+        })
+        .await?;
         Self::json_result(&result)
     }
     #[tool(
@@ -564,7 +569,7 @@ impl RagServer {
         let store = self.store.clone();
         let roots = self.config.ingest_roots.clone();
         let result = crate::util::run_blocking("apply_rename", move || {
-            store.code_rename_apply(&params, &roots)
+            crate::code_index::CodeIndex::new(&store).code_rename_apply(&params, &roots)
         })
         .await?;
         Self::json_result(&result)

@@ -530,7 +530,9 @@ mod tests {
             project: None,
             limit: None,
         };
-        let diff = store.code_index_diff(&dq).unwrap();
+        let diff = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&dq)
+            .unwrap();
         assert_eq!(diff["file_resource_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -543,7 +545,12 @@ mod tests {
         page.content = "<link href='base.css'>".into();
         store.upsert_document(&page).unwrap();
         store.index_code().unwrap();
-        assert_eq!(store.code_index_diff(&dq).unwrap(), diff);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_index_diff(&dq)
+                .unwrap(),
+            diff
+        );
         let c = store.lock().unwrap();
         let raw: String = c
             .query_row(
@@ -560,7 +567,9 @@ mod tests {
         )
         .unwrap();
         drop(c);
-        let legacy = store.code_index_diff(&dq).unwrap();
+        let legacy = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&dq)
+            .unwrap();
         assert_eq!(legacy["file_resource_relations_available"], false);
         assert!(!legacy["relations_removed"]
             .as_array()

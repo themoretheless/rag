@@ -424,7 +424,9 @@ mod tests {
             project: None,
             limit: None,
         };
-        let diff = store.code_index_diff(&dq).unwrap();
+        let diff = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&dq)
+            .unwrap();
         assert_eq!(diff["inline_style_relations_available"], true);
         assert!(
             diff["relations_added"]
@@ -437,8 +439,13 @@ mod tests {
         page.content = format!("\n\n{}", page.content.replace("&quot;", "&#34;"));
         store.upsert_document(&page).unwrap();
         store.index_code().unwrap();
-        assert_eq!(store.code_index_diff(&dq).unwrap(), diff);
-        let moved = store
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_index_diff(&dq)
+                .unwrap(),
+            diff
+        );
+        let moved = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&history::DiffQuery {
                 before: 2,
                 after: Some(3),
@@ -451,7 +458,7 @@ mod tests {
         page.content = page.content.replace("background:", "list-style-image:");
         store.upsert_document(&page).unwrap();
         store.index_code().unwrap();
-        let roles = store
+        let roles = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&history::DiffQuery {
                 before: 3,
                 after: Some(4),
@@ -486,7 +493,9 @@ mod tests {
         )
         .unwrap();
         drop(c);
-        let legacy = store.code_index_diff(&dq).unwrap();
+        let legacy = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&dq)
+            .unwrap();
         assert_eq!(legacy["inline_style_relations_available"], false);
         assert_eq!(legacy["relations_added_total"], 0);
         assert_eq!(legacy["relations_removed_total"], 0);

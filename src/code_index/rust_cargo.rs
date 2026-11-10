@@ -1337,7 +1337,7 @@ mod tests {
             ),
             ["/w/two/src/lib.rs"]
         );
-        let diff = store
+        let diff = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&history::DiffQuery {
                 before: first.index_revision.unwrap(),
                 after: changed.index_revision,

@@ -636,7 +636,9 @@ mod integration_tests {
             project: None,
             limit: None,
         };
-        let diff = store.code_index_diff(&q).unwrap();
+        let diff = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&q)
+            .unwrap();
         assert_eq!(diff["responsive_resource_relations_available"], true);
         assert!(
             diff["relations_removed"]
@@ -657,8 +659,13 @@ mod integration_tests {
         page.content = "\n\n<img srcset='a.svg 1x, b.svg 3x'>".into();
         store.upsert_document(&page).unwrap();
         store.index_code().unwrap();
-        assert_eq!(store.code_index_diff(&q).unwrap(), diff);
-        let moved = store
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_index_diff(&q)
+                .unwrap(),
+            diff
+        );
+        let moved = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&history::DiffQuery {
                 before: 2,
                 after: Some(3),
@@ -697,7 +704,9 @@ mod integration_tests {
         )
         .unwrap();
         drop(c);
-        let legacy = store.code_index_diff(&q).unwrap();
+        let legacy = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&q)
+            .unwrap();
         assert_eq!(legacy["responsive_resource_relations_available"], false);
         assert_eq!(legacy["css_url_classification_comparable"], false);
         assert_eq!(legacy["relations_added_total"], 0, "{legacy}");

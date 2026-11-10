@@ -475,31 +475,32 @@ fn build(conn: &duckdb::Connection, q: &RenameQuery, roots: &[PathBuf]) -> Resul
     Ok(Plan { report, inputs })
 }
 
-impl Store {
+impl<'a> CodeIndex<'a> {
     pub fn code_rename_preview(&self, q: &RenameQuery, roots: &[PathBuf]) -> Result<Value> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let plan = build(&tx, q, roots)?;
-        tx.commit()?;
-        Ok(plan.report)
+        self.store.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            let plan = build(&tx, q, roots)?;
+            tx.commit()?;
+            Ok(plan.report)
+        })
     }
     pub fn code_rename_apply(&self, q: &RenameApply, roots: &[PathBuf]) -> Result<Value> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let plan = build(&tx, &q.query, roots)?;
-        if plan.report["status"] != "preview"
-            || plan.report["plan_token"].as_str() != Some(q.plan_token.as_str())
-        {
-            return Err(AppError::Invalid(
-                "rename plan changed or blocked; request and review a fresh preview".into(),
-            ));
-        }
-        // Finish the read transaction before writing files, retaining the Store lock
-        // so ingestion cannot silently advance the captured corpus during apply.
-        tx.commit()?;
-        let result = apply(plan, roots)?;
-        drop(conn);
-        Ok(result)
+        self.store.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            let plan = build(&tx, &q.query, roots)?;
+            if plan.report["status"] != "preview"
+                || plan.report["plan_token"].as_str() != Some(q.plan_token.as_str())
+            {
+                return Err(AppError::Invalid(
+                    "rename plan changed or blocked; request and review a fresh preview".into(),
+                ));
+            }
+            // Finish the read transaction before writing files, retaining the Store lock
+            // so ingestion cannot silently advance the captured corpus during apply.
+            tx.commit()?;
+            // The Store lock is released when this closure returns.
+            apply(plan, roots)
+        })
     }
 }
 
@@ -740,7 +741,7 @@ mod tests {
             }
         }
         fn preview(&self) -> Value {
-            self.store
+            crate::code_index::CodeIndex::new(&self.store)
                 .code_rename_preview(&self.query(), std::slice::from_ref(&self.root))
                 .unwrap()
         }
@@ -758,8 +759,7 @@ mod tests {
         assert_eq!(p["changes"].as_array().unwrap().len(), 2);
         let before = std::fs::read_to_string(f.root.join("src/api.rs")).unwrap();
         assert!(before.contains("fn value"));
-        let r = f
-            .store
+        let r = crate::code_index::CodeIndex::new(&f.store)
             .code_rename_apply(
                 &RenameApply {
                     query: f.query(),
@@ -799,8 +799,7 @@ mod tests {
             query: f.query(),
             plan_token: "forged".into(),
         };
-        assert!(f
-            .store
+        assert!(crate::code_index::CodeIndex::new(&f.store)
             .code_rename_apply(&apply, std::slice::from_ref(&f.root))
             .is_err());
         apply.plan_token = p["plan_token"].as_str().unwrap().into();
@@ -809,8 +808,7 @@ mod tests {
             "pub mod api;pub mod client;// concurrent\n",
         )
         .unwrap();
-        assert!(f
-            .store
+        assert!(crate::code_index::CodeIndex::new(&f.store)
             .code_rename_apply(&apply, std::slice::from_ref(&f.root))
             .is_err());
         assert_eq!(
@@ -842,8 +840,7 @@ mod tests {
             "services: {changed: {image: other:v1}}\n",
         )
         .unwrap();
-        assert!(f
-            .store
+        assert!(crate::code_index::CodeIndex::new(&f.store)
             .code_rename_apply(
                 &RenameApply {
                     query: f.query(),
@@ -878,8 +875,7 @@ mod tests {
         for name in ["fn", "x(){} fn injected", "r#self", ""] {
             let mut q = f.query();
             q.new_name = name.into();
-            assert!(f
-                .store
+            assert!(crate::code_index::CodeIndex::new(&f.store)
                 .code_rename_preview(&q, std::slice::from_ref(&f.root))
                 .is_err());
         }
@@ -929,15 +925,16 @@ mod tests {
     #[test]
     fn paths_permissions_and_source_encoding_are_checked() {
         let f = Fixture::new();
-        assert!(f.store.code_rename_preview(&f.query(), &[]).is_err());
+        assert!(crate::code_index::CodeIndex::new(&f.store)
+            .code_rename_preview(&f.query(), &[])
+            .is_err());
         for bytes in [
             &b"\xffinvalid"[..],
             &b"\xef\xbb\xbfpub fn value()->i32{1}\n"[..],
         ] {
             let invalid = Fixture::new();
             std::fs::write(invalid.root.join("src/api.rs"), bytes).unwrap();
-            assert!(invalid
-                .store
+            assert!(crate::code_index::CodeIndex::new(&invalid.store)
                 .code_rename_preview(&invalid.query(), std::slice::from_ref(&invalid.root))
                 .is_err());
         }
@@ -951,8 +948,7 @@ mod tests {
             query: readonly.query(),
             plan_token: preview["plan_token"].as_str().unwrap().into(),
         };
-        assert!(readonly
-            .store
+        assert!(crate::code_index::CodeIndex::new(&readonly.store)
             .code_rename_apply(&request, std::slice::from_ref(&readonly.root))
             .is_err());
         assert!(std::fs::read_to_string(&api).unwrap().contains("fn value"));
@@ -963,14 +959,12 @@ mod tests {
             let original = f.dir.path().join("original.rs");
             std::fs::rename(&api, &original).unwrap();
             symlink(&original, &api).unwrap();
-            assert!(f
-                .store
+            assert!(crate::code_index::CodeIndex::new(&f.store)
                 .code_rename_preview(&f.query(), std::slice::from_ref(&f.root))
                 .is_err());
             std::fs::remove_file(&api).unwrap();
             std::fs::hard_link(&original, &api).unwrap();
-            assert!(f
-                .store
+            assert!(crate::code_index::CodeIndex::new(&f.store)
                 .code_rename_preview(&f.query(), std::slice::from_ref(&f.root))
                 .is_err());
         }

@@ -294,29 +294,24 @@ fn line_diff(old: &str, new: &str) -> serde_json::Value {
             "coordinate_system":"one_based_half_open","text_included":false}})
 }
 
-impl Store {
+impl<'a> CodeIndex<'a> {
     pub fn code_freshness(&self, q: &SourceQuery, roots: &[PathBuf]) -> Result<serde_json::Value> {
         let mode = source_mode(q)?;
-        let (revision, files) = revision_files(self, q)?;
+        let (revision, files) = revision_files(self.store, q)?;
         let limit = q.limit.unwrap_or(500).clamp(1, 2000);
         let mut items = Vec::new();
         let mut changed = 0;
         let mut unavailable = 0;
         for file in files.iter().take(limit) {
-            let entry = match actual(self, file, mode, roots) {
+            let entry = match actual(self.store, file, mode, roots) {
                 Ok(content) => {
                     let (status, hash) =
                         comparison(&file.hash, content.as_ref().map(|s| s.text.as_str()));
                     let event = if status != "unchanged" {
                         changed += 1;
-                        Some(observe(
-                            &*self.lock()?,
-                            revision,
-                            file,
-                            status,
-                            hash.as_deref(),
-                            mode,
-                        )?)
+                        Some(self.store.with_conn(|conn| {
+                            observe(conn, revision, file, status, hash.as_deref(), mode)
+                        })?)
                     } else {
                         None
                     };
@@ -338,27 +333,23 @@ impl Store {
             return Err(AppError::config("live_read requires path or document_id"));
         }
         let mode = source_mode(q)?;
-        let (revision, files) = revision_files(self, q)?;
+        let (revision, files) = revision_files(self.store, q)?;
         if files.len() != 1 {
             return Err(AppError::config(
                 "live_read requires one unambiguous indexed source",
             ));
         }
         let file = &files[0];
-        let content = actual(self, file, mode, roots)?;
+        let content = actual(self.store, file, mode, roots)?;
         let (status, hash) = comparison(&file.hash, content.as_ref().map(|s| s.text.as_str()));
-        let event = if status != "unchanged" {
-            Some(observe(
-                &*self.lock()?,
-                revision,
-                file,
-                status,
-                hash.as_deref(),
-                mode,
-            )?)
-        } else {
-            None
-        };
+        let event =
+            if status != "unchanged" {
+                Some(self.store.with_conn(|conn| {
+                    observe(conn, revision, file, status, hash.as_deref(), mode)
+                })?)
+            } else {
+                None
+            };
         let start = q.start_line.unwrap_or(1);
         let end = q.end_line.unwrap_or(start.saturating_add(199));
         if start == 0 || end < start {
@@ -385,16 +376,17 @@ impl Store {
         )
     }
     pub fn code_drift_report(&self, q: &DriftQuery) -> Result<serde_json::Value> {
-        let conn = self.lock()?;
-        let limit = q.limit.unwrap_or(100).clamp(1, 500);
-        let mut stmt=conn.prepare("SELECT event_id,seq,index_revision,document_id,path,project,kind,source_kind,indexed_hash,observed_hash,CAST(first_seen AS VARCHAR),CAST(last_seen AS VARCHAR),CAST(acknowledged_at AS VARCHAR),acknowledgement FROM code_index_drift WHERE (? IS NULL OR project=?) AND (? IS NULL OR index_revision=?) AND (? IS NULL OR seq<?) AND (? OR acknowledged_at IS NULL) ORDER BY seq DESC LIMIT ?")?;
-        let rows=stmt.query_map(params![q.project,q.project,q.index_revision,q.index_revision,q.before_seq,q.before_seq,q.include_acknowledged,(limit+1)as i64],|r|Ok(serde_json::json!({"event_id":r.get::<_,String>(0)?,"seq":r.get::<_,i64>(1)?,"index_rev":r.get::<_,i64>(2)?,"document_id":r.get::<_,String>(3)?,"path":r.get::<_,String>(4)?,"project":r.get::<_,Option<String>>(5)?,"kind":r.get::<_,String>(6)?,"source":r.get::<_,String>(7)?,"indexed_hash":r.get::<_,Option<String>>(8)?,"observed_hash":r.get::<_,Option<String>>(9)?,"first_seen":r.get::<_,String>(10)?,"last_seen":r.get::<_,String>(11)?,"acknowledged_at":r.get::<_,Option<String>>(12)?,"acknowledgement":r.get::<_,Option<String>>(13)?})))?;
-        let mut items = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-        let more = items.len() > limit;
-        items.truncate(limit);
-        Ok(
-            serde_json::json!({"items":items,"has_more":more,"next_before_seq":if more{items.last().and_then(|v|v["seq"].as_i64())}else{None},"observation_log_only":true}),
-        )
+        self.store.with_conn(|conn| {
+            let limit = q.limit.unwrap_or(100).clamp(1, 500);
+            let mut stmt=conn.prepare("SELECT event_id,seq,index_revision,document_id,path,project,kind,source_kind,indexed_hash,observed_hash,CAST(first_seen AS VARCHAR),CAST(last_seen AS VARCHAR),CAST(acknowledged_at AS VARCHAR),acknowledgement FROM code_index_drift WHERE (? IS NULL OR project=?) AND (? IS NULL OR index_revision=?) AND (? IS NULL OR seq<?) AND (? OR acknowledged_at IS NULL) ORDER BY seq DESC LIMIT ?")?;
+            let rows=stmt.query_map(params![q.project,q.project,q.index_revision,q.index_revision,q.before_seq,q.before_seq,q.include_acknowledged,(limit+1)as i64],|r|Ok(serde_json::json!({"event_id":r.get::<_,String>(0)?,"seq":r.get::<_,i64>(1)?,"index_rev":r.get::<_,i64>(2)?,"document_id":r.get::<_,String>(3)?,"path":r.get::<_,String>(4)?,"project":r.get::<_,Option<String>>(5)?,"kind":r.get::<_,String>(6)?,"source":r.get::<_,String>(7)?,"indexed_hash":r.get::<_,Option<String>>(8)?,"observed_hash":r.get::<_,Option<String>>(9)?,"first_seen":r.get::<_,String>(10)?,"last_seen":r.get::<_,String>(11)?,"acknowledged_at":r.get::<_,Option<String>>(12)?,"acknowledgement":r.get::<_,Option<String>>(13)?})))?;
+            let mut items = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+            let more = items.len() > limit;
+            items.truncate(limit);
+            Ok(
+                serde_json::json!({"items":items,"has_more":more,"next_before_seq":if more{items.last().and_then(|v|v["seq"].as_i64())}else{None},"observation_log_only":true}),
+            )
+        })
     }
     pub fn code_drift_ack(&self, q: &DriftAck) -> Result<serde_json::Value> {
         if q.event_ids.is_empty()
@@ -406,28 +398,29 @@ impl Store {
                 "drift_ack requires 1..500 event IDs and a nonblank note up to 4096 bytes",
             ));
         }
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let mut changed = 0;
-        let mut seen = HashSet::new();
-        for id in &q.event_ids {
-            if !seen.insert(id) {
-                continue;
+        self.store.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            let mut changed = 0;
+            let mut seen = HashSet::new();
+            for id in &q.event_ids {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let exists: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM code_index_drift WHERE event_id=?",
+                    [id],
+                    |r| r.get(0),
+                )?;
+                if exists != 1 {
+                    return Err(AppError::not_found(format!("unknown drift event {id}")));
+                }
+                changed+=tx.execute("UPDATE code_index_drift SET acknowledged_at=current_timestamp, acknowledgement=? WHERE event_id=? AND acknowledged_at IS NULL",params![q.note.trim(),id])?;
             }
-            let exists: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM code_index_drift WHERE event_id=?",
-                [id],
-                |r| r.get(0),
-            )?;
-            if exists != 1 {
-                return Err(AppError::not_found(format!("unknown drift event {id}")));
-            }
-            changed+=tx.execute("UPDATE code_index_drift SET acknowledged_at=current_timestamp, acknowledgement=? WHERE event_id=? AND acknowledged_at IS NULL",params![q.note.trim(),id])?;
-        }
-        tx.commit()?;
-        Ok(
-            serde_json::json!({"acknowledged":changed,"requested_unique":seen.len(),"source_or_index_changed":false}),
-        )
+            tx.commit()?;
+            Ok(
+                serde_json::json!({"acknowledged":changed,"requested_unique":seen.len(),"source_or_index_changed":false}),
+            )
+        })
     }
 }
 
@@ -568,17 +561,23 @@ mod tests {
                 document_id: Some("a".into()),
                 ..Default::default()
             };
-            let fresh = store.code_freshness(&q, &roots).unwrap();
+            let fresh = crate::code_index::CodeIndex::new(&store)
+                .code_freshness(&q, &roots)
+                .unwrap();
             assert_eq!(fresh["all_checked_unchanged"], true, "{encoding}");
             assert_eq!(fresh["items"][0]["observed_source"]["encoding"], encoding);
-            let live = store.code_live_read(&q, &roots).unwrap();
+            let live = crate::code_index::CodeIndex::new(&store)
+                .code_live_read(&q, &roots)
+                .unwrap();
             assert!(live["content"].as_str().unwrap().contains("Привет"));
             assert_eq!(live["observed_source"]["bytes"], bytes.len());
             assert!(
                 read_live_source(&path.display().to_string(), &roots, bytes.len() - 1).is_err()
             );
             std::fs::write(&path, text).unwrap();
-            let recoded = store.code_live_read(&q, &roots).unwrap();
+            let recoded = crate::code_index::CodeIndex::new(&store)
+                .code_live_read(&q, &roots)
+                .unwrap();
             assert_eq!(recoded["status"], "unchanged");
             assert_eq!(recoded["observed_hash"], live["observed_hash"]);
             assert_ne!(
@@ -586,7 +585,12 @@ mod tests {
                 live["observed_source"]["bytes_hash"]
             );
             std::fs::write(&path, text.replace("work", "changed")).unwrap();
-            assert_eq!(store.code_freshness(&q, &roots).unwrap()["changed"], 1);
+            assert_eq!(
+                crate::code_index::CodeIndex::new(&store)
+                    .code_freshness(&q, &roots)
+                    .unwrap()["changed"],
+                1
+            );
         }
     }
 
@@ -605,17 +609,21 @@ mod tests {
         };
         let roots = vec![root.path().to_path_buf()];
         assert_eq!(
-            store.code_freshness(&q, &roots).unwrap()["all_checked_unchanged"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_freshness(&q, &roots)
+                .unwrap()["all_checked_unchanged"],
             true
         );
         std::fs::write(&path, "first\nnew 🦀\nlast\n").unwrap();
-        let freshness = store.code_freshness(&q, &roots).unwrap();
+        let freshness = crate::code_index::CodeIndex::new(&store)
+            .code_freshness(&q, &roots)
+            .unwrap();
         assert_eq!(freshness["changed"], 1);
         let id = freshness["items"][0]["drift_event_id"]
             .as_str()
             .unwrap()
             .to_string();
-        let read = store
+        let read = crate::code_index::CodeIndex::new(&store)
             .code_live_read(
                 &SourceQuery {
                     document_id: Some("a".into()),
@@ -634,21 +642,23 @@ mod tests {
             store.get_document("a").unwrap().unwrap().content,
             "first\nold\nlast\n"
         );
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_drift_ack(&DriftAck {
                 event_ids: vec![id.clone(), "unknown".into()],
                 note: "reviewed".into()
             })
             .is_err());
         assert_eq!(
-            store.code_drift_report(&DriftQuery::default()).unwrap()["items"]
+            crate::code_index::CodeIndex::new(&store)
+                .code_drift_report(&DriftQuery::default())
+                .unwrap()["items"]
                 .as_array()
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            store
+            crate::code_index::CodeIndex::new(&store)
                 .code_drift_ack(&DriftAck {
                     event_ids: vec![id.clone()],
                     note: "reviewed".into()
@@ -657,7 +667,7 @@ mod tests {
             1
         );
         assert_eq!(
-            store
+            crate::code_index::CodeIndex::new(&store)
                 .code_drift_ack(&DriftAck {
                     event_ids: vec![id.clone()],
                     note: "must not overwrite".into()
@@ -665,16 +675,18 @@ mod tests {
                 .unwrap()["acknowledged"],
             0
         );
-        store.code_freshness(&q, &roots).unwrap();
-        assert!(
-            store.code_drift_report(&DriftQuery::default()).unwrap()["items"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
+        crate::code_index::CodeIndex::new(&store)
+            .code_freshness(&q, &roots)
+            .unwrap();
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_drift_report(&DriftQuery::default())
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         drop(store);
         let store = Store::open(&dbpath).unwrap();
-        let report = store
+        let report = crate::code_index::CodeIndex::new(&store)
             .code_drift_report(&DriftQuery {
                 include_acknowledged: true,
                 ..Default::default()
@@ -682,7 +694,7 @@ mod tests {
             .unwrap();
         assert_eq!(report["items"][0]["acknowledgement"], "reviewed");
         assert_eq!(
-            store
+            crate::code_index::CodeIndex::new(&store)
                 .code_index_history(&history::HistoryQuery::default())
                 .unwrap()["items"]
                 .as_array()
@@ -703,22 +715,38 @@ mod tests {
             document_id: Some("a".into()),
             ..Default::default()
         };
-        assert_eq!(store.code_freshness(&q, &[]).unwrap()["unavailable"], 1);
-        assert!(store.code_live_read(&q, &[]).is_err());
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_freshness(&q, &[])
+                .unwrap()["unavailable"],
+            1
+        );
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_live_read(&q, &[])
+            .is_err());
         let roots = vec![root.path().to_path_buf()];
         std::fs::write(&path, [0xff, 0xfe, 0]).unwrap();
-        assert_eq!(store.code_freshness(&q, &roots).unwrap()["unavailable"], 1);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_freshness(&q, &roots)
+                .unwrap()["unavailable"],
+            1
+        );
         std::fs::remove_file(&path).unwrap();
         assert_eq!(
-            store.code_freshness(&q, &roots).unwrap()["items"][0]["status"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_freshness(&q, &roots)
+                .unwrap()["items"][0]["status"],
             "missing"
         );
         assert_eq!(
-            store.code_live_read(&q, &roots).unwrap()["status"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_live_read(&q, &roots)
+                .unwrap()["status"],
             "missing"
         );
         assert_eq!(
-            store
+            crate::code_index::CodeIndex::new(&store)
                 .code_freshness(
                     &SourceQuery {
                         source: Some("stored".into()),
@@ -741,7 +769,7 @@ mod tests {
         store.index_code().unwrap();
         store.delete_document("a").unwrap();
         store.index_code().unwrap();
-        let first = store
+        let first = crate::code_index::CodeIndex::new(&store)
             .code_drift_report(&DriftQuery {
                 limit: Some(1),
                 ..Default::default()
@@ -749,7 +777,7 @@ mod tests {
             .unwrap();
         assert_eq!(first["has_more"], true);
         assert_eq!(first["items"][0]["kind"], "removed_from_index");
-        let second = store
+        let second = crate::code_index::CodeIndex::new(&store)
             .code_drift_report(&DriftQuery {
                 limit: Some(1),
                 before_seq: first["next_before_seq"].as_i64(),
@@ -790,18 +818,27 @@ mod path_safety_tests {
             ..Default::default()
         };
         let roots = vec![root.path().to_path_buf()];
-        assert!(store.code_live_read(&q, &roots).is_err());
-        assert_eq!(store.code_freshness(&q, &roots).unwrap()["unavailable"], 1);
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_live_read(&q, &roots)
+            .is_err());
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_freshness(&q, &roots)
+                .unwrap()["unavailable"],
+            1
+        );
         std::fs::remove_file(&link).unwrap();
         let file = std::fs::File::create(&link).unwrap();
         file.set_len(4 * 1024 * 1024 + 1).unwrap();
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_live_read(&q, &roots)
             .unwrap_err()
             .to_string()
             .contains("4 MiB"));
         assert_eq!(
-            store.code_freshness(&q, &roots).unwrap()["all_checked_unchanged"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_freshness(&q, &roots)
+                .unwrap()["all_checked_unchanged"],
             false
         );
     }

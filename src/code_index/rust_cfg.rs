@@ -1416,7 +1416,9 @@ mod tests {
             project: Some("fixture".into()),
             limit: Some(100),
         };
-        let diff = store.code_index_diff(&query).unwrap();
+        let diff = crate::code_index::CodeIndex::new(&store)
+            .code_index_diff(&query)
+            .unwrap();
         assert!(diff["edges_added_total"].as_u64().unwrap() > 0, "{diff}");
         assert!(diff["edges_removed_total"].as_u64().unwrap() > 0, "{diff}");
         assert!(
@@ -1435,7 +1437,12 @@ mod tests {
                 3,
             ))
             .unwrap();
-        assert_eq!(store.code_index_diff(&query).unwrap(), diff);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_index_diff(&query)
+                .unwrap(),
+            diff
+        );
     }
     #[test]
     fn invalid_configuration_does_not_publish_permission_or_sql_facts() {
