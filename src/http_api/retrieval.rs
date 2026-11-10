@@ -319,6 +319,48 @@ pub(super) struct SearchBody {
     persist_trace: bool,
 }
 
+impl SearchBody {
+    /// The transport-neutral search request for this body.
+    pub(super) fn to_request(&self) -> retrieval::SearchRequest {
+        retrieval::SearchRequest {
+            query: self.query.clone(),
+            mode: self.mode.clone(),
+            top_k: self.top_k,
+            document_id: self.document_id.clone(),
+            wing: self.wing.clone(),
+            room: self.room.clone(),
+            layer: self.layer.clone(),
+            source_file: self.source_file.clone(),
+            include_archived: self.include_archived,
+            min_score: self.min_score,
+            diversity: self.diversity.clone(),
+            group_by: self.group_by.clone(),
+            recency_half_life_days: self.recency_half_life_days,
+            max_context_tokens: self.max_context_tokens,
+            max_chunks_per_document: self.max_chunks_per_document,
+            context_expansion: self.context_expansion.clone(),
+            neighbor_chunks: self.neighbor_chunks,
+            timeout_ms: self.timeout_ms,
+            rrf_k: self.rrf_k,
+            rerank: self.rerank,
+            rewrite: self.rewrite,
+            hyde: self.hyde,
+        }
+    }
+}
+
+/// Resolved mode and ranked hits for an in-process caller (eval, feedback):
+/// the search use case directly, no handler → bytes → JSON round trip.
+pub(super) async fn run_search(
+    state: &HttpState,
+    body: &SearchBody,
+) -> Result<(String, Vec<SearchHit>), AppError> {
+    let command = body.to_request().into_command(&state.config);
+    let mode = retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
+    let hits = state.search_use_case().search_command(command).await?;
+    Ok((mode.as_str().to_string(), hits))
+}
+
 pub(super) async fn search_http(
     State(state): State<HttpState>,
     Json(body): Json<SearchBody>,
@@ -327,31 +369,7 @@ pub(super) async fn search_http(
     let include_trace = body.include_trace;
     let persist_trace = body.persist_trace;
     let call = telemetry::begin("http", "http", "search", Some(&audit_args));
-    let command = retrieval::SearchRequest {
-        query: body.query,
-        mode: body.mode,
-        top_k: body.top_k,
-        document_id: body.document_id,
-        wing: body.wing,
-        room: body.room,
-        layer: body.layer,
-        source_file: body.source_file,
-        include_archived: body.include_archived,
-        min_score: body.min_score,
-        diversity: body.diversity,
-        group_by: body.group_by,
-        recency_half_life_days: body.recency_half_life_days,
-        max_context_tokens: body.max_context_tokens,
-        max_chunks_per_document: body.max_chunks_per_document,
-        context_expansion: body.context_expansion,
-        neighbor_chunks: body.neighbor_chunks,
-        timeout_ms: body.timeout_ms,
-        rrf_k: body.rrf_k,
-        rerank: body.rerank,
-        rewrite: body.rewrite,
-        hyde: body.hyde,
-    }
-    .into_command(&state.config);
+    let command = body.to_request().into_command(&state.config);
     let resolved_mode =
         match retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode) {
             Ok(mode) => mode,

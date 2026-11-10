@@ -27,7 +27,7 @@ pub use export::{
 };
 pub use judges::{judge_citations, CitationJudgeInput, CitationJudgeResult};
 pub use labels::{ErrorLabel, QueryErrorLabel};
-pub use metrics::{macro_average, score_ranked_titles, RankedTitle, ScoredQuery};
+pub use metrics::{macro_average, recall_and_mrr, score_ranked_titles, RankedTitle, ScoredQuery};
 pub use prompts::{
     builtin_answer_judge, prompt_content_hash, validate_prompt, PromptVersion,
     ANSWER_JUDGE_V1_BODY, ANSWER_JUDGE_V1_NAME, ANSWER_JUDGE_V1_VERSION, PROMPT_KIND_ANSWER_JUDGE,

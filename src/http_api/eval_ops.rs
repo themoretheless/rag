@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post},
     Json, Router,
 };
@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use super::{
     error::{api_err, api_ok},
     feedback::persist_eval_run,
-    retrieval::{search_http, SearchBody},
+    retrieval::SearchBody,
     HttpState,
 };
 use crate::db::Store;
@@ -222,20 +222,12 @@ async fn online_one(st: HttpState, body: OnlineBody) -> Result<Value> {
     if question.trim().is_empty() {
         return Err(AppError::invalid("online eval requires a search query"));
     }
-    let response = search_http(State(st.clone()), Json(body.search.clone()))
-        .await
-        .into_response();
-    if !response.status().is_success() {
-        return Err(super::error::search_response_error(response).await);
-    }
-    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
-        .await
-        .map_err(|e| AppError::invalid(e.to_string()))?;
-    let search_result: Value = serde_json::from_slice(&bytes)?;
-    let hits = search_result["items"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let (mode, hits) = super::retrieval::run_search(&st, &body.search).await?;
+    let hits = hits
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let search_result = json!({ "mode": mode });
     let cited_ids: Vec<String> = hits
         .iter()
         .filter_map(|h| h.get("document_id").and_then(|v| v.as_str()))

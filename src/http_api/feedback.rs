@@ -1,7 +1,7 @@
 //! Explicitly saved, human-labelled search questions; never automatic query logging.
 use super::{
     error::{api_err, api_ok},
-    retrieval::{search_http, SearchBody},
+    retrieval::SearchBody,
     HttpState,
 };
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
 };
 use axum::{
     extract::{Query, State},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post},
     Json, Router,
 };
@@ -178,21 +178,21 @@ fn score_hits(item: &Feedback, hits: &[Value]) -> (Option<f64>, Option<f64>) {
     if item.no_answer {
         return (None, None);
     }
-    let found = item
+    let expected: Vec<(&str, &str)> = item
         .expected
         .iter()
-        .filter(|e| {
-            hits.iter()
-                .any(|h| h["document_id"] == e.document_id || h["document_uri"] == e.uri)
+        .map(|e| (e.document_id.as_str(), e.uri.as_str()))
+        .collect();
+    let ranked: Vec<(&str, &str)> = hits
+        .iter()
+        .map(|h| {
+            (
+                h["document_id"].as_str().unwrap_or_default(),
+                h["document_uri"].as_str().unwrap_or_default(),
+            )
         })
-        .count();
-    let rank = hits.iter().position(|h| {
-        item.expected
-            .iter()
-            .any(|e| h["document_id"] == e.document_id || h["document_uri"] == e.uri)
-    });
-    let recall = found as f64 / item.expected.len().max(1) as f64;
-    let mrr = rank.map(|r| 1.0 / (r + 1) as f64).unwrap_or(0.0);
+        .collect();
+    let (recall, mrr) = crate::eval::recall_and_mrr(&expected, &ranked);
     (Some(recall), Some(mrr))
 }
 fn merge_search(base: &Value, overlay: &Value) -> Result<SearchBody> {
@@ -208,19 +208,12 @@ fn merge_search(base: &Value, overlay: &Value) -> Result<SearchBody> {
     serde_json::from_value(Value::Object(merged)).map_err(|e| AppError::invalid(e.to_string()))
 }
 async fn search_with_body(st: HttpState, body: SearchBody) -> Result<(Value, Vec<Value>)> {
-    let response = search_http(State(st), Json(body)).await.into_response();
-    if !response.status().is_success() {
-        return Err(super::error::search_response_error(response).await);
-    }
-    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
-        .await
-        .map_err(|e| AppError::invalid(e.to_string()))?;
-    let result: Value = serde_json::from_slice(&bytes)?;
-    let hits = result["items"]
-        .as_array()
-        .cloned()
-        .ok_or_else(|| AppError::invalid("missing search items"))?;
-    Ok((result, hits))
+    let (mode, hits) = super::retrieval::run_search(&st, &body).await?;
+    let hits = hits
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok((json!({ "mode": mode }), hits))
 }
 async fn list_runs(State(st): State<HttpState>, Query(q): Query<Page>) -> Response {
     let result = super::run_blocking("list eval runs", move || {

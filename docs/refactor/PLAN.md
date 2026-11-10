@@ -197,3 +197,8 @@ form with its variant prefix.
    `write_page`); `update_wiki_page_cas` is now crate-internal.
    `write_wiki_page`/`write_wiki_page_command` stay as internal writers for
    maintenance, compile and review jobs (ops-log options), not transports.
+6. **Eval / feedback replays.** `POST /v1/feedback/*` replays and online eval
+   call the search use case in process instead of the `/v1/search` handler, so
+   these internal searches no longer appear as `http search` rows in the call
+   log, and a failed internal search surfaces the search error itself instead
+   of `invalid request: search failed (<status>): <body>`.
