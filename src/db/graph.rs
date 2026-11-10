@@ -211,7 +211,11 @@ impl Store {
 
         let nodes = {
             let mut stmt = conn.prepare(&selected_nodes)?;
-            crate::db::rows::query_vec(&mut stmt, params_from_iter(node_binds.iter()), row_to_node)?
+            crate::db::rows::query_vec(
+                &mut stmt,
+                params_from_iter(node_binds.iter()),
+                crate::db::rows::graph_node,
+            )?
         };
         if nodes.is_empty() {
             return Ok(GraphView::default());
@@ -246,7 +250,11 @@ impl Store {
                 ORDER BY e.id ASC
                 "#
             ))?;
-            crate::db::rows::query_vec(&mut stmt, params_from_iter(edge_binds.iter()), row_to_edge)?
+            crate::db::rows::query_vec(
+                &mut stmt,
+                params_from_iter(edge_binds.iter()),
+                crate::db::rows::graph_edge,
+            )?
         };
 
         Ok(GraphView { nodes, edges })
@@ -260,7 +268,7 @@ impl Store {
             "SELECT id, kind, label, document_id, uri, resolved, '{}' \
              FROM graph_nodes ORDER BY label ASC, id ASC",
         )?;
-        crate::db::rows::query_vec(&mut stmt, [], row_to_node)
+        crate::db::rows::query_vec(&mut stmt, [], crate::db::rows::graph_node)
     }
 
     /// Every graph edge ordered by `id`, without its `context` text (`None`):
@@ -271,7 +279,7 @@ impl Store {
             "SELECT id, source_id, target_id, rel_type, weight, NULL \
              FROM graph_edges ORDER BY id ASC",
         )?;
-        crate::db::rows::query_vec(&mut stmt, [], row_to_edge)
+        crate::db::rows::query_vec(&mut stmt, [], crate::db::rows::graph_edge)
     }
 
     /// Return every graph edge, including edges whose endpoint node is missing.
@@ -287,7 +295,7 @@ impl Store {
             ORDER BY id ASC
             "#,
         )?;
-        let edges = crate::db::rows::query_vec(&mut stmt, [], row_to_edge)?;
+        let edges = crate::db::rows::query_vec(&mut stmt, [], crate::db::rows::graph_edge)?;
         Ok(edges)
     }
 
@@ -356,7 +364,7 @@ impl Store {
                 "#,
             )?;
             crate::db::rows::for_each_row(&mut stmt, params![node_id], |row| {
-                edges.push(row_to_edge(row)?);
+                edges.push(crate::db::rows::graph_edge(row)?);
                 Ok(())
             })?;
         }
@@ -372,7 +380,11 @@ impl Store {
             ORDER BY id ASC
             "#,
         )?;
-        let nodes = crate::db::rows::query_vec(&mut stmt, params![node_id, node_id], row_to_node)?;
+        let nodes = crate::db::rows::query_vec(
+            &mut stmt,
+            params![node_id, node_id],
+            crate::db::rows::graph_node,
+        )?;
 
         Ok(GraphView { nodes, edges })
     }
@@ -824,7 +836,7 @@ pub(crate) fn find_node_by_uri_locked(
     let Some(row) = rows.next()? else {
         return Ok(None);
     };
-    let node = row_to_node(row)?;
+    let node = crate::db::rows::graph_node(row)?;
     if rows.next()?.is_some() {
         tracing::warn!(
             uri,
@@ -843,7 +855,7 @@ fn find_one_node_locked(
     let mut stmt = conn.prepare_cached(sql)?;
     let mut rows = stmt.query(params![value])?;
     match rows.next()? {
-        Some(row) => Ok(Some(row_to_node(row)?)),
+        Some(row) => Ok(Some(crate::db::rows::graph_node(row)?)),
         None => Ok(None),
     }
 }
@@ -861,7 +873,7 @@ pub(crate) fn find_nodes_by_label_locked(
         ORDER BY resolved DESC, kind ASC, id ASC
         "#,
     )?;
-    let out = crate::db::rows::query_vec(&mut stmt, params![key], row_to_node)?;
+    let out = crate::db::rows::query_vec(&mut stmt, params![key], crate::db::rows::graph_node)?;
     Ok(out)
 }
 
@@ -880,39 +892,6 @@ fn format_ts_now() -> String {
     crate::util::format_db_timestamp(Utc::now())
 }
 
-fn row_to_node(row: &duckdb::Row<'_>) -> Result<GraphNode> {
-    let resolved: bool = match row.get::<_, bool>(5) {
-        Ok(b) => b,
-        Err(_) => {
-            let v: i64 = row.get(5)?;
-            v != 0
-        }
-    };
-    Ok(GraphNode {
-        id: row.get(0)?,
-        kind: row.get(1)?,
-        label: row.get(2)?,
-        document_id: row.get(3)?,
-        uri: row.get(4)?,
-        resolved,
-        metadata_json: row
-            .get::<_, Option<String>>(6)?
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "{}".into()),
-    })
-}
-
-fn row_to_edge(row: &duckdb::Row<'_>) -> Result<GraphEdge> {
-    Ok(GraphEdge {
-        id: row.get(0)?,
-        source_id: row.get(1)?,
-        target_id: row.get(2)?,
-        rel_type: row.get(3)?,
-        weight: row.get(4)?,
-        context: row.get(5)?,
-    })
-}
-
 fn load_node_locked(conn: &duckdb::Connection, id: &str) -> Result<Option<GraphNode>> {
     let mut stmt = conn.prepare_cached(
         r#"
@@ -924,7 +903,7 @@ fn load_node_locked(conn: &duckdb::Connection, id: &str) -> Result<Option<GraphN
     )?;
     let mut rows = stmt.query(params![id])?;
     match rows.next()? {
-        Some(row) => Ok(Some(row_to_node(row)?)),
+        Some(row) => Ok(Some(crate::db::rows::graph_node(row)?)),
         None => Ok(None),
     }
 }

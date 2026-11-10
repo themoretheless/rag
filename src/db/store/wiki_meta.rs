@@ -117,7 +117,7 @@ pub(super) fn map_wiki_page_meta_row(
     let metadata_json: String = row.get(4)?;
     let revision: i64 = row.get::<_, Option<i64>>(5)?.unwrap_or(1);
     let updated_raw: String = row.get(6)?;
-    let updated_at = parse_ts(&updated_raw)?;
+    let updated_at = rows::timestamp(&updated_raw)?;
     let slug = uri
         .strip_prefix("wiki://")
         .unwrap_or(uri.as_str())

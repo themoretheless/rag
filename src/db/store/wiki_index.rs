@@ -25,7 +25,7 @@ impl Store {
             ORDER BY COALESCE(title, label, id) ASC
             "#,
         )?;
-        let out = crate::db::rows::query_vec(&mut stmt, [], row_to_wiki_index)?;
+        let out = crate::db::rows::query_vec(&mut stmt, [], crate::db::rows::wiki_index_entry)?;
         Ok(out)
     }
 
@@ -48,7 +48,7 @@ impl Store {
         )?;
         let mut rows = stmt.query(params![slug, slug, slug])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_wiki_index(row)?)),
+            Some(row) => Ok(Some(crate::db::rows::wiki_index_entry(row)?)),
             None => Ok(None),
         }
     }
@@ -385,18 +385,4 @@ pub(super) fn upsert_wiki_index_entry_locked(
         ],
     )?;
     Ok(())
-}
-
-pub(super) fn row_to_wiki_index(row: &duckdb::Row<'_>) -> Result<WikiIndexEntry> {
-    let updated_raw: String = row.get(7)?;
-    Ok(WikiIndexEntry {
-        id: row.get(0)?,
-        slug: row.get(1)?,
-        title: row.get(2)?,
-        kind: row.get(3)?,
-        category: row.get(4)?,
-        summary: row.get(5)?,
-        page_id: row.get(6)?,
-        updated_at: parse_ts(&updated_raw)?,
-    })
 }

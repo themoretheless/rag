@@ -1,7 +1,9 @@
 //! Aggregate row codecs. SQL projection order remains owned by each repository.
 
 use crate::error::{AppError, Result};
-use crate::models::{Chunk, Document, EmbeddingManifest};
+use crate::models::{
+    Chunk, Document, EmbeddingManifest, GraphEdge, GraphNode, OpsLogEntry, WikiIndexEntry,
+};
 use crate::util::parse_db_timestamp;
 
 pub(crate) fn timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
@@ -155,6 +157,69 @@ pub(crate) fn embedding_manifest(row: &duckdb::Row<'_>) -> Result<EmbeddingManif
         dims: row.get(3)?,
         base_url: row.get(4)?,
         content_fingerprint: row.get(5)?,
+        updated_at: timestamp(&updated_raw)?,
+    })
+}
+
+pub(crate) fn graph_node(row: &duckdb::Row<'_>) -> Result<GraphNode> {
+    let resolved: bool = match row.get::<_, bool>(5) {
+        Ok(b) => b,
+        Err(_) => {
+            let v: i64 = row.get(5)?;
+            v != 0
+        }
+    };
+    Ok(GraphNode {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        label: row.get(2)?,
+        document_id: row.get(3)?,
+        uri: row.get(4)?,
+        resolved,
+        metadata_json: row
+            .get::<_, Option<String>>(6)?
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "{}".into()),
+    })
+}
+
+pub(crate) fn graph_edge(row: &duckdb::Row<'_>) -> Result<GraphEdge> {
+    Ok(GraphEdge {
+        id: row.get(0)?,
+        source_id: row.get(1)?,
+        target_id: row.get(2)?,
+        rel_type: row.get(3)?,
+        weight: row.get(4)?,
+        context: row.get(5)?,
+    })
+}
+
+pub(crate) fn ops_log_entry(row: &duckdb::Row<'_>) -> Result<OpsLogEntry> {
+    let ts_raw: String = row.get(2)?;
+    Ok(OpsLogEntry {
+        id: row.get(0)?,
+        seq: row.get(1)?,
+        ts: timestamp(&ts_raw)?,
+        op: row.get(3)?,
+        prefix: row.get(4)?,
+        message: row.get(5)?,
+        entity_id: row.get(6)?,
+        entity_kind: row.get(7)?,
+        payload_json: row.get(8)?,
+        agent_name: row.get(9)?,
+    })
+}
+
+pub(crate) fn wiki_index_entry(row: &duckdb::Row<'_>) -> Result<WikiIndexEntry> {
+    let updated_raw: String = row.get(7)?;
+    Ok(WikiIndexEntry {
+        id: row.get(0)?,
+        slug: row.get(1)?,
+        title: row.get(2)?,
+        kind: row.get(3)?,
+        category: row.get(4)?,
+        summary: row.get(5)?,
+        page_id: row.get(6)?,
         updated_at: timestamp(&updated_raw)?,
     })
 }

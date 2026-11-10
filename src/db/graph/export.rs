@@ -305,7 +305,8 @@ pub(super) fn load_bounded_project_nodes_locked(
         "#
     );
     let mut stmt = conn.prepare(&sql)?;
-    let nodes = crate::db::rows::query_vec(&mut stmt, params![project], row_to_node)?;
+    let nodes =
+        crate::db::rows::query_vec(&mut stmt, params![project], crate::db::rows::graph_node)?;
     Ok(nodes)
 }
 
@@ -350,7 +351,7 @@ pub(super) fn load_bounded_project_companions_locked(
     let nodes = crate::db::rows::query_vec(
         &mut stmt,
         params_from_iter(project_node_ids.iter()),
-        row_to_node,
+        crate::db::rows::graph_node,
     )?;
     Ok(nodes)
 }
@@ -395,7 +396,7 @@ pub(super) fn resolve_ui_seed_locked(
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(params![seed])?;
         if let Some(row) = rows.next()? {
-            return Ok(Some(row_to_node(row)?));
+            return Ok(Some(crate::db::rows::graph_node(row)?));
         }
     }
     Ok(None)
@@ -456,7 +457,7 @@ pub(super) fn find_scoped_node_locked(
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params![value, project, project])?;
     match rows.next()? {
-        Some(row) => Ok(Some(row_to_node(row)?)),
+        Some(row) => Ok(Some(crate::db::rows::graph_node(row)?)),
         None => Ok(None),
     }
 }
@@ -592,7 +593,11 @@ pub(super) fn load_edges_among_locked(
         binds.extend(rel_types.iter().map(|rel| (*rel).to_string()));
     }
     let mut stmt = conn.prepare(&sql)?;
-    let edges = crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), row_to_edge)?;
+    let edges = crate::db::rows::query_vec(
+        &mut stmt,
+        params_from_iter(binds.iter()),
+        crate::db::rows::graph_edge,
+    )?;
     Ok(edges)
 }
 
@@ -715,7 +720,7 @@ pub(super) fn load_nodes_by_ids_locked(
     );
     let mut stmt = conn.prepare(&sql)?;
     let nodes = crate::db::rows::query_vec(&mut stmt, params_from_iter(node_ids.iter()), |row| {
-        row_to_node(row)
+        crate::db::rows::graph_node(row)
     })?;
     Ok(nodes)
 }
@@ -766,5 +771,9 @@ pub(super) fn load_bounded_edges_locked(
         binds.extend([project.to_string(), project.to_string()]);
     }
     let mut stmt = conn.prepare(&sql)?;
-    crate::db::rows::query_vec(&mut stmt, params_from_iter(binds.iter()), row_to_edge)
+    crate::db::rows::query_vec(
+        &mut stmt,
+        params_from_iter(binds.iter()),
+        crate::db::rows::graph_edge,
+    )
 }

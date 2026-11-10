@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use duckdb::{params, AccessMode, Config as DuckDbConfig, Connection};
 
 use super::rows;
@@ -18,8 +18,8 @@ use crate::models::{
     TaxonomyWing, VacuumStoreReport, WikiIndexEntry, WingCount,
 };
 use crate::util::{
-    content_hash, format_db_timestamp as format_ts, parse_db_timestamp, slugify as shared_slugify,
-    wiki_slug_from_uri, SlugPolicy,
+    content_hash, format_db_timestamp as format_ts, slugify as shared_slugify, wiki_slug_from_uri,
+    SlugPolicy,
 };
 
 const EMBEDDING_MIGRATION_FINGERPRINT_PREFIX: &str = "migration-incomplete:";
@@ -899,7 +899,9 @@ fn journal_generic_wiki_change_locked(
              CAST(updated_at AS VARCHAR) FROM wiki_index WHERE slug = ? LIMIT 1",
         )?;
         let mut rows = statement.query(params![slug])?;
-        rows.next()?.map(row_to_wiki_index).transpose()?
+        rows.next()?
+            .map(crate::db::rows::wiki_index_entry)
+            .transpose()?
     };
     let (summary, category) = meta_summary_category(&doc.metadata_json);
     let (old_summary, old_category) = previous
@@ -1528,11 +1530,6 @@ fn table_exists_locked(conn: &Connection, name: &str) -> bool {
         )
         .unwrap_or(0);
     n > 0
-}
-
-fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
-    parse_db_timestamp(s)
-        .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
 }
 
 mod chunks;

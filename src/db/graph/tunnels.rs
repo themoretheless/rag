@@ -97,7 +97,7 @@ impl Store {
                 "#,
             )?;
             crate::db::rows::for_each_row(&mut stmt, params![REL_TUNNEL, nid, nid], |row| {
-                out.push(row_to_edge(row)?);
+                out.push(crate::db::rows::graph_edge(row)?);
                 Ok(())
             })?;
         } else {
@@ -110,7 +110,7 @@ impl Store {
                 "#,
             )?;
             crate::db::rows::for_each_row(&mut stmt, params![REL_TUNNEL], |row| {
-                out.push(row_to_edge(row)?);
+                out.push(crate::db::rows::graph_edge(row)?);
                 Ok(())
             })?;
         }
@@ -205,7 +205,11 @@ impl Store {
                 "#,
             )?;
 
-            crate::db::rows::query_vec(&mut stmt, params![REL_TUNNEL, a, b, b, a], row_to_edge)?
+            crate::db::rows::query_vec(
+                &mut stmt,
+                params![REL_TUNNEL, a, b, b, a],
+                crate::db::rows::graph_edge,
+            )?
         } else {
             self.list_tunnels(node_id)?
         };
@@ -270,7 +274,7 @@ impl Store {
         )?;
         let mut rows = stmt.query(params![REL_TUNNEL, a, b, b, a])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_edge(row)?)),
+            Some(row) => Ok(Some(crate::db::rows::graph_edge(row)?)),
             None => Ok(None),
         }
     }

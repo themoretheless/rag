@@ -5,7 +5,7 @@ use super::*;
 /// Recent ops_log rows returned when no id, seq or limit is given.
 const DEFAULT_RECENT_OPS: usize = 50;
 
-/// Projection decoded by `row_to_ops_log`.
+/// Projection decoded by `crate::db::rows::ops_log_entry`.
 const OPS_LOG_COLUMNS: &str = "id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op, prefix, \
      COALESCE(message, ''), entity_id, entity_kind, COALESCE(payload_json, '{}'), agent_name";
 
@@ -55,7 +55,8 @@ impl Store {
             LIMIT ?
             "#
         ))?;
-        let out = crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![limit], crate::db::rows::ops_log_entry)?;
         Ok(out)
     }
 
@@ -86,7 +87,8 @@ impl Store {
             LIMIT ?
             "#
         ))?;
-        let out = crate::db::rows::query_vec(&mut stmt, params![limit], row_to_ops_log)?;
+        let out =
+            crate::db::rows::query_vec(&mut stmt, params![limit], crate::db::rows::ops_log_entry)?;
         Ok(out)
     }
 
@@ -101,7 +103,7 @@ impl Store {
         ))?;
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_ops_log(row)?)),
+            Some(row) => Ok(Some(crate::db::rows::ops_log_entry(row)?)),
             None => Ok(None),
         }
     }
@@ -118,7 +120,7 @@ impl Store {
         ))?;
         let mut rows = stmt.query(params![seq])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_ops_log(row)?)),
+            Some(row) => Ok(Some(crate::db::rows::ops_log_entry(row)?)),
             None => Ok(None),
         }
     }
@@ -197,20 +199,4 @@ pub(super) fn next_ops_seq_locked(conn: &Connection) -> Result<i64> {
         .query_row("SELECT MAX(seq) FROM ops_log", [], |r| r.get(0))
         .unwrap_or(None);
     Ok(max.unwrap_or(0) + 1)
-}
-
-pub(super) fn row_to_ops_log(row: &duckdb::Row<'_>) -> Result<OpsLogEntry> {
-    let ts_raw: String = row.get(2)?;
-    Ok(OpsLogEntry {
-        id: row.get(0)?,
-        seq: row.get(1)?,
-        ts: parse_ts(&ts_raw)?,
-        op: row.get(3)?,
-        prefix: row.get(4)?,
-        message: row.get(5)?,
-        entity_id: row.get(6)?,
-        entity_kind: row.get(7)?,
-        payload_json: row.get(8)?,
-        agent_name: row.get(9)?,
-    })
 }
