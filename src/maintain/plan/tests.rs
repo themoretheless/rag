@@ -104,8 +104,16 @@ fn whitelist_accepts_known_ops() {
     assert!(is_allowed_action("refile"));
     assert!(is_allowed_action("vacuum"));
     assert!(is_allowed_action("merge_exact_dup"));
-    assert!(is_allowed_action("consolidate_propose"));
-    assert!(is_allowed_action("resolve_stub"));
+    // Removed in Stage 4: advertised but never implemented.
+    for removed in [
+        "consolidate_propose",
+        "resolve_stub",
+        "lint_and_fix_links",
+        "build_outline",
+        "merge_near_dup",
+    ] {
+        assert!(!is_allowed_action(removed), "{removed}");
+    }
     assert!(is_allowed_action("rebuild_index"));
     assert!(is_allowed_action("reindex_fts"));
     assert!(!is_allowed_action("drop_table"));
@@ -273,7 +281,7 @@ fn heuristic_maps_dups_stale_embed_fts() {
     assert!(names.contains(&"reindex_fts"), "{names:?}");
     assert!(names.contains(&"merge_exact_dup"), "{names:?}");
     assert!(names.contains(&"refresh_stale_wiki"), "{names:?}");
-    assert!(names.contains(&"merge_near_dup"), "{names:?}");
+    assert!(!names.contains(&"merge_near_dup"), "{names:?}");
     assert!(names.contains(&"archive"), "{names:?}");
     assert!(names.contains(&"rebuild_index"), "{names:?}");
     assert!(names.contains(&"vacuum"), "{names:?}");
@@ -354,21 +362,9 @@ fn validate_named_variants_from_task() {
             target_id: None,
             params: empty_object(),
         },
-        MaintenancePlanItem {
-            action: MaintenanceAction::ConsolidatePropose,
-            reason: None,
-            target_id: None,
-            params: serde_json::json!({"source_ids": ["a", "b"]}),
-        },
-        MaintenancePlanItem {
-            action: MaintenanceAction::ResolveStub,
-            reason: None,
-            target_id: Some("stub".into()),
-            params: serde_json::json!({"target_document_id": "doc"}),
-        },
     ])
     .unwrap();
-    assert_eq!(plan.len(), 9);
+    assert_eq!(plan.len(), 7);
 }
 
 #[tokio::test]

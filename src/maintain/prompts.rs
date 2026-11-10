@@ -26,9 +26,8 @@ Rules:
    refile, pin, unpin, set_boost, set_tags, archive, unarchive,
    rebuild_index, rebuild_graph, reindex_fts,
    reembed, reembed_all,
-   compile_source, consolidate_propose, consolidate, refresh_stale_wiki, file_answer,
-   resolve_stub, lint_and_fix_links, build_outline,
-   merge_exact_dup, merge_near_dup, drop_tombstones, vacuum, checkpoint,
+   compile_source, consolidate, refresh_stale_wiki, file_answer,
+   merge_exact_dup, drop_tombstones, vacuum, checkpoint,
    noop
 4. Never invent SQL, shell, file paths outside the store, or raw-layer deletes.
 5. Prefer low-risk first: reindex_fts / rebuild_index / rebuild_graph / refresh_stale_wiki,

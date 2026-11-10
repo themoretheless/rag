@@ -202,3 +202,13 @@ form with its variant prefix.
    these internal searches no longer appear as `http search` rows in the call
    log, and a failed internal search surfaces the search error itself instead
    of `invalid request: search failed (<status>): <body>`.
+7. **Maintenance whitelist.** The five advertised-but-unimplemented actions
+   `consolidate_propose`, `resolve_stub`, `lint_and_fix_links`,
+   `build_outline` and `merge_near_dup` are deleted (approved). A plan that
+   names one is now rejected like any unknown action (LLM plans: moved to
+   `rejected`; `apply_maintenance_plan`: `FORBIDDEN`) instead of being
+   accepted and skipped at apply time. `heuristic_plan` no longer proposes
+   `merge_near_dup` for near duplicates or `resolve_stub` for unresolved stubs
+   (both still appear in `analyze_corpus`). The prompt lists the remaining 21
+   names. `maintain_compress` keeps its own `merge_near_dup` report rows (a
+   compress result label, not a plan action).

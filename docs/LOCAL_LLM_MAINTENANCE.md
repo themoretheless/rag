@@ -145,7 +145,6 @@ Uses ORGANIZE.md + local LLM:
 |--------|---------|-------|
 | suggest refile (wing/room) | yes | `refile` batch |
 | rebuild index catalog | yes | `rebuild_index` |
-| build outline for a wing | yes | write outline doc |
 | pin evergreen / archive noise | suggestions | pin/archive |
 | tag normalization | yes | set_tags |
 
@@ -160,10 +159,14 @@ Output must be **JSON action list** validated by server (whitelist ops only).
 | `consolidate` | cluster of docs → one concept/entity page |
 | `file_answer` | store Q&A into wiki |
 | `refresh_stale_wiki` | recompile wiki pages whose raw parents changed |
-| `lint_and_fix_links` | propose missing `[[links]]` / resolve stubs |
 | `kg_extract` optional | LLM triples → kg_add (off by default; opt-in) |
 
 Always: raw immutable; wiki is the mutable compiled layer (Karpathy).
+
+The plan whitelist no longer lists `consolidate_propose`, `resolve_stub`,
+`lint_and_fix_links`, `build_outline` or `merge_near_dup`: they were advertised
+but never implemented by `apply_maintenance_plan` (removed in Stage 4 of
+`docs/refactor/PLAN.md`). Near duplicates go through `maintain_compress` L2.
 
 ### 3.4 Compress storage (`maintain_compress`)
 

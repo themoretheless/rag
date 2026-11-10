@@ -33,112 +33,58 @@ const ANALYSIS_JSON_MAX_CHARS: usize = 24_000;
 /// JSON uses `snake_case` (e.g. `"refile"`, `"merge_exact_dup"`).
 ///
 /// Task aliases: Refile, Archive, Pin, MergeExactDup, RebuildIndex, Vacuum,
-/// ReindexFts, ConsolidatePropose, ResolveStub, …
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MaintenanceAction {
-    // Organize / place
-    Refile,
-    Pin,
-    Unpin,
-    SetBoost,
-    SetTags,
-    Archive,
-    Unarchive,
-    // Catalog / index
-    RebuildIndex,
-    RebuildGraph,
-    ReindexFts,
-    // Embeddings
-    Reembed,
-    ReembedAll,
-    // Compile / improve
-    CompileSource,
-    /// Propose consolidate body (no write).
-    ConsolidatePropose,
-    /// Apply consolidate / write concept page.
-    Consolidate,
-    RefreshStaleWiki,
-    FileAnswer,
-    /// Promote unresolved stub → real document.
-    ResolveStub,
-    /// Propose missing wikilinks / backlinks.
-    LintAndFixLinks,
-    /// Create/update outline page.
-    BuildOutline,
-    // Compress / hygiene
-    MergeExactDup,
-    MergeNearDup,
-    DropTombstones,
-    Vacuum,
-    Checkpoint,
-    // Meta
-    Noop,
+/// ReindexFts, Consolidate, RefreshStaleWiki, …
+/// Declares the whitelist once: the enum, its stable wire order and names.
+macro_rules! maintenance_actions {
+    ($($variant:ident => $name:literal,)+) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+        #[serde(rename_all = "snake_case")]
+        pub enum MaintenanceAction {
+            $($variant,)+
+        }
+
+        impl MaintenanceAction {
+            /// All whitelist variants in stable wire order.
+            pub const ALL: &'static [MaintenanceAction] = &[$(Self::$variant,)+];
+
+            /// Snake_case wire name (matches serde).
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+
+        /// Snake_case names of every allowed action (prompts / errors).
+        pub const ALLOWED_ACTIONS: &[&str] = &[$($name,)+];
+    };
+}
+
+maintenance_actions! {
+    Refile => "refile",
+    Pin => "pin",
+    Unpin => "unpin",
+    SetBoost => "set_boost",
+    SetTags => "set_tags",
+    Archive => "archive",
+    Unarchive => "unarchive",
+    RebuildIndex => "rebuild_index",
+    RebuildGraph => "rebuild_graph",
+    ReindexFts => "reindex_fts",
+    Reembed => "reembed",
+    ReembedAll => "reembed_all",
+    CompileSource => "compile_source",
+    Consolidate => "consolidate",
+    RefreshStaleWiki => "refresh_stale_wiki",
+    FileAnswer => "file_answer",
+    MergeExactDup => "merge_exact_dup",
+    DropTombstones => "drop_tombstones",
+    Vacuum => "vacuum",
+    Checkpoint => "checkpoint",
+    Noop => "noop",
 }
 
 impl MaintenanceAction {
-    /// All whitelist variants in stable wire order.
-    pub const ALL: &'static [MaintenanceAction] = &[
-        Self::Refile,
-        Self::Pin,
-        Self::Unpin,
-        Self::SetBoost,
-        Self::SetTags,
-        Self::Archive,
-        Self::Unarchive,
-        Self::RebuildIndex,
-        Self::RebuildGraph,
-        Self::ReindexFts,
-        Self::Reembed,
-        Self::ReembedAll,
-        Self::CompileSource,
-        Self::ConsolidatePropose,
-        Self::Consolidate,
-        Self::RefreshStaleWiki,
-        Self::FileAnswer,
-        Self::ResolveStub,
-        Self::LintAndFixLinks,
-        Self::BuildOutline,
-        Self::MergeExactDup,
-        Self::MergeNearDup,
-        Self::DropTombstones,
-        Self::Vacuum,
-        Self::Checkpoint,
-        Self::Noop,
-    ];
-
-    /// Snake_case wire name (matches serde).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Refile => "refile",
-            Self::Pin => "pin",
-            Self::Unpin => "unpin",
-            Self::SetBoost => "set_boost",
-            Self::SetTags => "set_tags",
-            Self::Archive => "archive",
-            Self::Unarchive => "unarchive",
-            Self::RebuildIndex => "rebuild_index",
-            Self::RebuildGraph => "rebuild_graph",
-            Self::ReindexFts => "reindex_fts",
-            Self::Reembed => "reembed",
-            Self::ReembedAll => "reembed_all",
-            Self::CompileSource => "compile_source",
-            Self::ConsolidatePropose => "consolidate_propose",
-            Self::Consolidate => "consolidate",
-            Self::RefreshStaleWiki => "refresh_stale_wiki",
-            Self::FileAnswer => "file_answer",
-            Self::ResolveStub => "resolve_stub",
-            Self::LintAndFixLinks => "lint_and_fix_links",
-            Self::BuildOutline => "build_outline",
-            Self::MergeExactDup => "merge_exact_dup",
-            Self::MergeNearDup => "merge_near_dup",
-            Self::DropTombstones => "drop_tombstones",
-            Self::Vacuum => "vacuum",
-            Self::Checkpoint => "checkpoint",
-            Self::Noop => "noop",
-        }
-    }
-
     /// Parse trimmed snake_case name; unknown → `None`.
     pub fn parse(name: &str) -> Option<Self> {
         let a = name.trim();
@@ -158,24 +104,19 @@ impl MaintenanceAction {
                 | Self::Unarchive
                 | Self::Reembed
                 | Self::CompileSource
-                | Self::ResolveStub
         )
     }
 
     /// Merge family (keep + drop / multi-id params).
     pub fn is_merge(self) -> bool {
-        matches!(self, Self::MergeExactDup | Self::MergeNearDup)
+        matches!(self, Self::MergeExactDup)
     }
 
     /// Higher-risk / confirm-friendly compress-adjacent ops.
     pub fn is_destructive(self) -> bool {
         matches!(
             self,
-            Self::MergeExactDup
-                | Self::MergeNearDup
-                | Self::DropTombstones
-                | Self::Archive
-                | Self::ReembedAll
+            Self::MergeExactDup | Self::DropTombstones | Self::Archive | Self::ReembedAll
         )
     }
 }
@@ -188,36 +129,6 @@ impl std::fmt::Display for MaintenanceAction {
 
 /// Alias for the whitelist enum (older name used by apply/organize).
 pub type MaintenanceActionKind = MaintenanceAction;
-
-/// Snake_case names of every allowed action (prompts / errors).
-pub const ALLOWED_ACTIONS: &[&str] = &[
-    "refile",
-    "pin",
-    "unpin",
-    "set_boost",
-    "set_tags",
-    "archive",
-    "unarchive",
-    "rebuild_index",
-    "rebuild_graph",
-    "reindex_fts",
-    "reembed",
-    "reembed_all",
-    "compile_source",
-    "consolidate_propose",
-    "consolidate",
-    "refresh_stale_wiki",
-    "file_answer",
-    "resolve_stub",
-    "lint_and_fix_links",
-    "build_outline",
-    "merge_exact_dup",
-    "merge_near_dup",
-    "drop_tombstones",
-    "vacuum",
-    "checkpoint",
-    "noop",
-];
 
 // ---------------------------------------------------------------------------
 // Plan item (LLM JSON step)
@@ -464,7 +375,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                 }
             }
         }
-        MaintenanceAction::MergeExactDup | MaintenanceAction::MergeNearDup => {
+        MaintenanceAction::MergeExactDup => {
             // Apply may resolve peers by content_hash / embedding from target_id alone.
             let Some(obj) = item.params.as_object() else {
                 return Err(AppError::invalid(format!(
@@ -493,7 +404,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                 )));
             }
         }
-        MaintenanceAction::ConsolidatePropose | MaintenanceAction::Consolidate => {
+        MaintenanceAction::Consolidate => {
             let Some(obj) = item.params.as_object() else {
                 return Err(AppError::invalid(format!(
                     "maintenance action '{}' params must be a JSON object",
@@ -672,7 +583,10 @@ pub fn action_from_parts(
 
 /// Build a deterministic plan from an [`AnalysisReport`] (no LLM).
 ///
-/// Priority: FTS / embed mismatch → exact dups → stale wiki → near dups → archives → vacuum.
+/// Priority: FTS / embed mismatch → exact dups → stale wiki → archives → vacuum.
+/// Near duplicates and unresolved stubs are reported by `analyze_corpus` but
+/// not planned: no apply step exists for them (`maintain_compress` handles near
+/// duplicates with confirmation).
 pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> MaintenancePlan {
     let max_actions = max_actions.max(1);
     let mut actions: Vec<MaintenancePlanItem> = Vec::new();
@@ -748,22 +662,6 @@ pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> Maintenanc
         });
     }
 
-    for p in &report.near_duplicates {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::MergeNearDup,
-            reason: Some(format!("near-duplicate cosine={:.3}", p.cosine)),
-            target_id: Some(p.document_id_a.clone()),
-            params: serde_json::json!({
-                "document_id_a": p.document_id_a,
-                "document_id_b": p.document_id_b,
-                "cosine": p.cosine,
-            }),
-        });
-    }
-
     for a in &report.archive_candidates {
         if actions.len() >= max_actions {
             break;
@@ -775,20 +673,6 @@ pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> Maintenanc
             params: serde_json::json!({
                 "title": a.title,
                 "boost": a.boost,
-            }),
-        });
-    }
-
-    for s in &report.unresolved_stubs {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::ResolveStub,
-            reason: Some(format!("unresolved stub '{}'", s.label)),
-            target_id: Some(s.node_id.clone()),
-            params: serde_json::json!({
-                "label": s.label,
             }),
         });
     }

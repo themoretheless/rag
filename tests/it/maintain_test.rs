@@ -283,8 +283,8 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
         "plan should propose merge_exact_dup for twins: {action_names:?}"
     );
     assert!(
-        action_names.contains(&"resolve_stub") || action_names.contains(&"vacuum"),
-        "plan should include stub resolve and/or vacuum: {action_names:?}"
+        action_names.contains(&"vacuum"),
+        "plan should include vacuum: {action_names:?}"
     );
     for a in &plan.actions {
         assert!(

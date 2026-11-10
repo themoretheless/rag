@@ -355,9 +355,9 @@ async fn execute_one(
         MaintenanceAction::RebuildIndex => {
             blocking_section(|| apply_rebuild_index(store, index, name, dry_run))
         }
-        MaintenanceAction::RebuildGraph => blocking_section(|| {
-            apply_rebuild_graph(store, index, name, params, config, dry_run)
-        }),
+        MaintenanceAction::RebuildGraph => {
+            blocking_section(|| apply_rebuild_graph(store, index, name, params, config, dry_run))
+        }
         MaintenanceAction::ReindexFts => {
             apply_reindex_fts(store, index, name, config, dry_run).await
         }
@@ -370,35 +370,13 @@ async fn execute_one(
         MaintenanceAction::CompileSource => {
             apply_compile_source(context, index, name, target, params).await
         }
-        MaintenanceAction::ConsolidatePropose => Ok(StepResult {
-            outcome: skip_outcome(
-                index,
-                name,
-                target,
-                "consolidate_propose is agent/LLM-side; call consolidate MCP tool or pass pre-synthesized title+content via consolidate",
-            ),
-            docs_delta: 0,
-        }),
         MaintenanceAction::Consolidate => {
             apply_consolidate(context, index, name, target, params).await
         }
         MaintenanceAction::RefreshStaleWiki => {
             apply_refresh_stale(context, index, name, params).await
         }
-        MaintenanceAction::FileAnswer => {
-            apply_file_answer(context, index, name, params).await
-        }
-        MaintenanceAction::ResolveStub
-        | MaintenanceAction::LintAndFixLinks
-        | MaintenanceAction::BuildOutline => Ok(StepResult {
-            outcome: skip_outcome(
-                index,
-                name,
-                target,
-                format!("{name} not implemented in apply path yet"),
-            ),
-            docs_delta: 0,
-        }),
+        MaintenanceAction::FileAnswer => apply_file_answer(context, index, name, params).await,
         MaintenanceAction::MergeExactDup => blocking_section(|| {
             apply_merge_exact_dup(
                 store,
@@ -410,18 +388,9 @@ async fn execute_one(
                 context.remaining_docs,
             )
         }),
-        MaintenanceAction::MergeNearDup => Ok(StepResult {
-            outcome: skip_outcome(
-                index,
-                name,
-                target,
-                "merge_near_dup not implemented in apply path; use maintain_compress L2 with confirm",
-            ),
-            docs_delta: 0,
-        }),
-        MaintenanceAction::DropTombstones => blocking_section(|| {
-            apply_drop_tombstones(store, index, name, params, config, dry_run)
-        }),
+        MaintenanceAction::DropTombstones => {
+            blocking_section(|| apply_drop_tombstones(store, index, name, params, config, dry_run))
+        }
         MaintenanceAction::Vacuum | MaintenanceAction::Checkpoint => {
             blocking_section(|| apply_vacuum(store, index, name, dry_run))
         }
@@ -518,8 +487,6 @@ fn is_doc_scoped(action: MaintenanceAction) -> bool {
             | MaintenanceAction::Consolidate
             | MaintenanceAction::FileAnswer
             | MaintenanceAction::MergeExactDup
-            | MaintenanceAction::MergeNearDup
-            | MaintenanceAction::ResolveStub
     )
 }
 
