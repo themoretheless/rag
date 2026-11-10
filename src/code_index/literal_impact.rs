@@ -650,7 +650,7 @@ mod selector_tests {
             })
             .unwrap();
         store.index_code().unwrap();
-        let references = store
+        let references = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 route: Some(url.clone()),
                 project: Some("p".into()),
@@ -658,7 +658,7 @@ mod selector_tests {
             })
             .unwrap();
         assert_eq!(references["total"], 1);
-        let node = store
+        let node = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some(format!("route:{url}")),
                 project: Some("p".into()),

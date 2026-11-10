@@ -297,10 +297,10 @@ fn key_references(snapshot: &CodeSnapshot, q: &ReferenceQuery, limit: usize) -> 
     finish(&mut result, items, limit);
     result
 }
-impl Store {
+impl<'a> CodeIndex<'a> {
     pub fn code_references(&self, q: &ReferenceQuery) -> Result<serde_json::Value> {
         q.validate()?;
-        let snapshot = CodeIndex::new(self).code_snapshot_in_project(q.project.as_deref())?;
+        let snapshot = self.code_snapshot_in_project(q.project.as_deref())?;
         let limit = q.selection.limit.unwrap_or(50).clamp(1, 500);
         if q.table.is_some() {
             table_references(&snapshot, q, limit)
@@ -354,7 +354,9 @@ mod tests {
         );
         store.index_code().unwrap();
         let q = table("users", Some("p"));
-        let r = store.code_references(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_references(&q)
+            .unwrap();
         assert_eq!(r["total"], 3, "{r}");
         assert_eq!(r["ownerless_total"], 1);
         assert_eq!(r["counts_by_kind"]["queries"], 3);
@@ -370,8 +372,13 @@ mod tests {
         assert!(r["items"].as_array().unwrap().iter().all(
             |i| i["evidence"]["revision"].is_i64() && i["evidence"]["content_hash"].is_string()
         ));
-        assert_eq!(r, store.code_references(&q).unwrap());
-        let read = store
+        assert_eq!(
+            r,
+            crate::code_index::CodeIndex::new(&store)
+                .code_references(&q)
+                .unwrap()
+        );
+        let read = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 table_mode: Some("read".into()),
                 selection: CodeQuery {
@@ -384,7 +391,7 @@ mod tests {
         assert_eq!(read["total"], 2);
         assert_eq!(read["items"].as_array().unwrap().len(), 1);
         assert_eq!(read["truncated"], true);
-        let empty = store
+        let empty = crate::code_index::CodeIndex::new(&store)
             .code_references(&table("empty_table", Some("p")))
             .unwrap();
         assert_eq!(empty["target_observed"], true);
@@ -420,22 +427,26 @@ mod tests {
         let mut q = table("logs", Some("p"));
         q.table_mode = Some("write".into());
         q.selection.path = Some("/p/read.sql".into());
-        let r = store.code_references(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_references(&q)
+            .unwrap();
         assert_eq!(r["needs_disambiguation"], true);
         assert_eq!(r["target_candidates_total"], 2);
         assert_eq!(r["total"], 0);
-        let r = store.code_references(&table("public.logs", None)).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_references(&table("public.logs", None))
+            .unwrap();
         assert_eq!(r["needs_disambiguation"], true);
         assert_eq!(r["target_candidates_total"], 2);
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_references(&table("public.logs", Some("p")))
             .unwrap();
         assert_eq!(r["total"], 1);
         assert_eq!(r["needs_disambiguation"], false);
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_references(&table("users; DROP TABLE users", Some("p")))
             .is_err());
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 route: Some("/x".into()),
                 ..table("users", Some("p"))
@@ -474,7 +485,9 @@ mod tests {
             project: Some("p".into()),
             ..Default::default()
         };
-        let r = store.code_references(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_references(&q)
+            .unwrap();
         assert_eq!(r["total"], 3, "{r}");
         assert_eq!(r["counts_by_kind"]["routes"], 1);
         assert_eq!(r["counts_by_kind"]["endpoint_reference"], 2);
@@ -486,7 +499,7 @@ mod tests {
             && i["request_method"] == "POST"
             && i["registration_method"].is_null()));
         assert!(!r.to_string().contains("PRIVATE_BODY"));
-        let scoped = store
+        let scoped = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 selection: CodeQuery {
                     path: Some("/p/client.js".into()),
@@ -496,7 +509,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(scoped["total"], 1);
-        let ambiguous = store
+        let ambiguous = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 route: Some("/items".into()),
                 ..Default::default()
@@ -517,7 +530,7 @@ mod tests {
             "function handle() {}\nfunction handle() {}\napp.get('/items', handle);\n",
         );
         store.index_code().unwrap();
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 route: Some("/items".into()),
                 project: Some("p".into()),
@@ -550,15 +563,21 @@ mod tests {
             project: Some("p".into()),
             ..Default::default()
         };
-        let r = store.code_references(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_references(&q)
+            .unwrap();
         assert_eq!(r["total"], 1);
         assert_eq!(r["reference_mode"], "bound");
         put(&store, "code", "/p/api.py", "p", "def work():\n pass\n");
-        let stale = store.code_references(&table("users", Some("p"))).unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .code_references(&table("users", Some("p")))
+            .unwrap();
         assert_eq!(stale["total"], 0);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
         store.index_code().unwrap();
-        let fresh = store.code_references(&table("users", Some("p"))).unwrap();
+        let fresh = crate::code_index::CodeIndex::new(&store)
+            .code_references(&table("users", Some("p")))
+            .unwrap();
         assert_eq!(fresh["target_observed"], false);
         assert!(fresh["stale_documents"].as_array().unwrap().is_empty());
     }

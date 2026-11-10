@@ -228,12 +228,12 @@ fn inventory(snapshot: &CodeSnapshot, q: &SymbolQuery) -> Vec<serde_json::Value>
         Some(serde_json::json!({"id":identity,"node_domain":kind,"kind":kind,"name":name,"qualified_name":qualified,"project":project,"path":null,"start_line":null,"end_line":null,"signature":null,"definition_location_available":false,"captured_schema_evidence":facts.schema>0,"captured_schema_complete":facts.schema_complete,"translation_definition_proven":false,"runtime_binding_proven":false,"observed_usage_total":facts.usages,"schema_evidence_total":facts.schema,"counts_by_relation":facts.counts,"source_evidence":facts.proofs.into_iter().map(|(_,v)|v).collect::<Vec<_>>(),"source_evidence_total":facts.total,"source_evidence_truncated":facts.total>q.evidence_limit.unwrap_or(5).clamp(1,50),"reference_target":reference_target,"impact_target":impact_target,"reference_target_scope":"project_required_when_other_projects_share_the_name_unassigned_project_not_selectable","evidence_scope":"selected_project_and_optional_source_path","source_bodies_included":false}))
     }).collect()
 }
-impl Store {
+impl<'a> CodeIndex<'a> {
     pub fn code_symbols(&self, q: &SymbolQuery) -> Result<serde_json::Value> {
         if q.name.is_some() && q.selection.symbol.is_some() {
             return Err(AppError::config("choose symbol or name, not both"));
         }
-        let snapshot = CodeIndex::new(self).code_snapshot_in_project(q.project.as_deref())?;
+        let snapshot = self.code_snapshot_in_project(q.project.as_deref())?;
         let selected = selected_kind(q);
         let mode = q.match_mode.unwrap_or_default();
         let limit = q.selection.limit.unwrap_or(50).clamp(1, 500);
@@ -323,7 +323,7 @@ mod tests {
         );
         put(&store, "q", "/q/a.html", "q", "%{key}");
         store.index_code().unwrap();
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 evidence_limit: Some(1),
                 ..query(SymbolKind::TranslationKey)
@@ -340,7 +340,7 @@ mod tests {
             node["reference_target"],
             serde_json::json!({"key":"key","project":"p"})
         );
-        let via_prefix = store
+        let via_prefix = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some("tpl:key".into()),
                 project: Some("p".into()),
@@ -350,12 +350,12 @@ mod tests {
         assert_eq!(via_prefix["items"][0]["id"], node["id"]);
         put(&store, "a", "/p/a.html", "p", "\n%{key}");
         store.index_code().unwrap();
-        let changed = store
+        let changed = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&query(SymbolKind::TranslationKey))
             .unwrap();
         assert_eq!(changed["items"][0]["id"], node["id"]);
         assert_eq!(changed["items"][0]["observed_usage_total"], 2);
-        let all = store
+        let all = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 symbol_kind: Some(SymbolKind::TranslationKey),
                 ..Default::default()
@@ -383,7 +383,7 @@ mod tests {
             "SELECT * FROM public.logs; SELECT * FROM users;",
         );
         store.index_code().unwrap();
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some("logs".into()),
                 selection: CodeQuery {
@@ -395,7 +395,7 @@ mod tests {
             .unwrap();
         assert_eq!(r["total"], 2);
         assert_eq!(r["truncated"], true);
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some("@table:admin.logs".into()),
                 project: Some("p".into()),
@@ -404,7 +404,7 @@ mod tests {
             .unwrap();
         assert_eq!(r["items"][0]["observed_usage_total"], 0);
         assert_eq!(r["items"][0]["captured_schema_evidence"], true);
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some("users".into()),
                 ..query(SymbolKind::Table)
@@ -412,7 +412,7 @@ mod tests {
             .unwrap();
         assert_eq!(r["items"][0]["captured_schema_evidence"], false);
         assert_eq!(r["items"][0]["observed_usage_total"], 1);
-        let scoped = store
+        let scoped = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 selection: CodeQuery {
                     path: Some("/p/use.sql".into()),
@@ -440,14 +440,21 @@ mod tests {
             "function handler(){} function handler(){} app.get('/items',handler); fetch('/items');",
         );
         store.index_code().unwrap();
-        let r = store.code_symbols(&query(SymbolKind::Route)).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_symbols(&query(SymbolKind::Route))
+            .unwrap();
         assert_eq!(r["total"], 1);
         assert_eq!(r["items"][0]["observed_usage_total"], 2);
         assert_eq!(r["items"][0]["counts_by_relation"]["routes"], 1);
         assert_eq!(r["items"][0]["counts_by_relation"]["endpoint_reference"], 1);
         let target: ReferenceQuery =
             serde_json::from_value(r["items"][0]["reference_target"].clone()).unwrap();
-        assert_eq!(store.code_references(&target).unwrap()["total"], 2);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_references(&target)
+                .unwrap()["total"],
+            2
+        );
     }
     #[test]
     fn code_defaults_alias_contains_all_and_stale_source_coverage_preserve_legacy() {
@@ -462,7 +469,7 @@ mod tests {
             "%{Work_key} %{literal%_key}",
         );
         store.index_code().unwrap();
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 project: Some("p".into()),
                 ..Default::default()
@@ -471,7 +478,7 @@ mod tests {
         assert_eq!(r["total"], 1);
         assert_eq!(r["items"][0]["name"], "Worker");
         assert!(r["items"][0]["start_line"].is_number());
-        let r = store
+        let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some("Work".into()),
                 match_mode: Some(NameMatch::Contains),
@@ -481,7 +488,7 @@ mod tests {
         assert_eq!(r["total"], 2);
         assert_eq!(r["counts_by_domain"]["code"], 1);
         assert_eq!(r["counts_by_domain"]["translation_key"], 1);
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some("Worker".into()),
                 selection: CodeQuery {
@@ -492,7 +499,7 @@ mod tests {
             })
             .is_err());
         put(&store, "html", "/p/view.html", "p", "changed");
-        let stale = store
+        let stale = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&query(SymbolKind::TranslationKey))
             .unwrap();
         assert_eq!(stale["total"], 0);
@@ -529,7 +536,9 @@ mod budget_tests {
             },
             ..Default::default()
         };
-        let r = store.code_symbols(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_symbols(&q)
+            .unwrap();
         let n = &r["items"][0];
         assert_eq!(n["source_evidence_total"], 80);
         assert_eq!(n["source_evidence"].as_array().unwrap().len(), 50);
@@ -537,7 +546,9 @@ mod budget_tests {
         assert_eq!(n["source_evidence"][49]["line"], 50);
         assert_eq!(n["source_evidence_truncated"], true);
         q.evidence_limit = Some(0);
-        let r = store.code_symbols(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_symbols(&q)
+            .unwrap();
         assert_eq!(
             r["items"][0]["source_evidence"].as_array().unwrap().len(),
             1

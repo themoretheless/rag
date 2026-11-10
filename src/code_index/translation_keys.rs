@@ -505,7 +505,9 @@ mod query_tests {
             project: Some("p".into()),
             ..Default::default()
         };
-        let r = store.code_references(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_references(&q)
+            .unwrap();
         assert_eq!(r["total"], 4, "{r}");
         assert_eq!(r["counts_by_kind"]["uses_key"], 4);
         assert!(r["items"]
@@ -513,7 +515,7 @@ mod query_tests {
             .unwrap()
             .iter()
             .any(|i| i["from"]["kind"] == "symbol" && i["from"]["name"] == "render"));
-        let limited = store
+        let limited = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 selection: CodeQuery {
                     limit: Some(1),
@@ -529,7 +531,7 @@ mod query_tests {
         assert_eq!(limited["total"], 4);
         assert_eq!(limited["items"].as_array().unwrap().len(), 1);
         assert_eq!(limited["truncated"], true);
-        let ambiguous = store
+        let ambiguous = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 key: Some("reg.months".into()),
                 selection: CodeQuery {
@@ -547,11 +549,15 @@ mod query_tests {
             "p",
             "<?php function render(){ Translate('other.key'); }",
         );
-        let stale = store.code_references(&q).unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .code_references(&q)
+            .unwrap();
         assert_eq!(stale["total"], 3);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
         store.index_code().unwrap();
-        let fresh = store.code_references(&q).unwrap();
+        let fresh = crate::code_index::CodeIndex::new(&store)
+            .code_references(&q)
+            .unwrap();
         assert_eq!(fresh["total"], 3);
         assert!(fresh["stale_documents"].as_array().unwrap().is_empty());
     }
@@ -600,10 +606,17 @@ mod cache_tests {
             project: Some("p".into()),
             ..Default::default()
         };
-        let stale = store.code_references(&query).unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .code_references(&query)
+            .unwrap();
         assert_eq!(stale["total"], 0);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
         store.index_code().unwrap();
-        assert_eq!(store.code_references(&query).unwrap()["total"], 1);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_references(&query)
+                .unwrap()["total"],
+            1
+        );
     }
 }

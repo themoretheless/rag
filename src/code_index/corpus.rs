@@ -409,11 +409,11 @@ fn corpus_files_locked(
     }
     Ok(files)
 }
-impl Store {
+impl<'a> CodeIndex<'a> {
     #[cfg(test)]
     fn corpus_files(&self, project: Option<&str>, prefix: Option<&str>) -> Result<Vec<File>> {
-        let conn = self.lock()?;
-        corpus_files_locked(&conn, project, prefix)
+        self.store
+            .with_conn(|conn| corpus_files_locked(conn, project, prefix))
     }
     pub fn search_multi(&self, q: &MultiSearch) -> Result<serde_json::Value> {
         if q.queries.is_empty()
@@ -449,136 +449,137 @@ impl Store {
                 Ok(regex)
             })
             .collect::<Result<_>>()?;
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        let files =
-            corpus_files_locked(&transaction, q.project.as_deref(), q.path_prefix.as_deref())?;
-        let limit = q.limit.unwrap_or(50).clamp(1, 500);
-        let mut items = Vec::new();
-        let mut counts = vec![0usize; patterns.len()];
-        let mut matched = 0;
-        // Independent query windows: conjunction filtering must not hide a query's hits.
-        let mut query_items = vec![Vec::new(); patterns.len()];
-        let mut families: BTreeMap<(Option<String>, String), Vec<serde_json::Value>> =
-            BTreeMap::new();
-        let mut union_total = 0usize;
-        for file in &files {
-            let per_query:Vec<_>=patterns.iter().enumerate().map(|(i,p)|{
-                let matches:Vec<_>=p.find_iter(&file.content).take(4).collect();if !matches.is_empty(){counts[i]+=1;}
-                let hits:Vec<_>=matches.iter().take(3).map(|m|{
-                    let line_start=file.content[..m.start()].rfind('\n').map_or(0,|p|p+1);let line_end=file.content[m.start()..].find('\n').map_or(file.content.len(),|p|m.start()+p);
-                    serde_json::json!({"byte_start":m.start(),"byte_end":m.end(),"line":file.content[..m.start()].bytes().filter(|b|*b==b'\n').count()+1,"column":file.content[line_start..m.start()].chars().count()+1,"snippet":file.content[line_start..line_end].chars().take(240).collect::<String>()})
-                }).collect();serde_json::json!({"query_index":i,"hits":hits,"more_occurrences":matches.len()>3})
-            }).collect();
-            let hits = per_query
-                .iter()
-                .filter(|p| !p["hits"].as_array().unwrap().is_empty())
-                .count();
-            if hits > 0 {
-                union_total += 1;
-                let mut retained = false;
-                for (i, found) in per_query.iter().enumerate() {
-                    if !found["hits"].as_array().unwrap().is_empty() && query_items[i].len() < limit
-                    {
-                        query_items[i].push(serde_json::json!({"document":file,"hits":found["hits"],"more_occurrences":found["more_occurrences"],"encoding":"stored_utf8","source_encoding":file.source_encoding,"source_encoding_basis":file.source_encoding_basis,"source_bytes_hash":file.source_bytes_hash}));
-                        retained = true;
+        self.store.with_conn(|connection| {
+            let transaction = connection.transaction()?;
+            let files =
+                corpus_files_locked(&transaction, q.project.as_deref(), q.path_prefix.as_deref())?;
+            let limit = q.limit.unwrap_or(50).clamp(1, 500);
+            let mut items = Vec::new();
+            let mut counts = vec![0usize; patterns.len()];
+            let mut matched = 0;
+            // Independent query windows: conjunction filtering must not hide a query's hits.
+            let mut query_items = vec![Vec::new(); patterns.len()];
+            let mut families: BTreeMap<(Option<String>, String), Vec<serde_json::Value>> =
+                BTreeMap::new();
+            let mut union_total = 0usize;
+            for file in &files {
+                let per_query:Vec<_>=patterns.iter().enumerate().map(|(i,p)|{
+                    let matches:Vec<_>=p.find_iter(&file.content).take(4).collect();if !matches.is_empty(){counts[i]+=1;}
+                    let hits:Vec<_>=matches.iter().take(3).map(|m|{
+                        let line_start=file.content[..m.start()].rfind('\n').map_or(0,|p|p+1);let line_end=file.content[m.start()..].find('\n').map_or(file.content.len(),|p|m.start()+p);
+                        serde_json::json!({"byte_start":m.start(),"byte_end":m.end(),"line":file.content[..m.start()].bytes().filter(|b|*b==b'\n').count()+1,"column":file.content[line_start..m.start()].chars().count()+1,"snippet":file.content[line_start..line_end].chars().take(240).collect::<String>()})
+                    }).collect();serde_json::json!({"query_index":i,"hits":hits,"more_occurrences":matches.len()>3})
+                }).collect();
+                let hits = per_query
+                    .iter()
+                    .filter(|p| !p["hits"].as_array().unwrap().is_empty())
+                    .count();
+                if hits > 0 {
+                    union_total += 1;
+                    let mut retained = false;
+                    for (i, found) in per_query.iter().enumerate() {
+                        if !found["hits"].as_array().unwrap().is_empty() && query_items[i].len() < limit
+                        {
+                            query_items[i].push(serde_json::json!({"document":file,"hits":found["hits"],"more_occurrences":found["more_occurrences"],"encoding":"stored_utf8","source_encoding":file.source_encoding,"source_encoding_basis":file.source_encoding_basis,"source_bytes_hash":file.source_bytes_hash}));
+                            retained = true;
+                        }
+                    }
+                    if retained {
+                        families.entry((file.project.clone(), file_family(&file.path))).or_default()
+                            .push(serde_json::json!({"document":file,"query_indices":per_query.iter().filter(|p| !p["hits"].as_array().unwrap().is_empty()).map(|p|p["query_index"].clone()).collect::<Vec<_>>(),"role":"unverified","role_evidence":[]}));
                     }
                 }
-                if retained {
-                    families.entry((file.project.clone(), file_family(&file.path))).or_default()
-                        .push(serde_json::json!({"document":file,"query_indices":per_query.iter().filter(|p| !p["hits"].as_array().unwrap().is_empty()).map(|p|p["query_index"].clone()).collect::<Vec<_>>(),"role":"unverified","role_evidence":[]}));
+                if (mode == "all" && hits == patterns.len()) || (mode == "any" && hits > 0) {
+                    matched += 1;
+                    if items.len() < limit {
+                        items.push(serde_json::json!({"document":file,"matches":per_query,"encoding":"stored_utf8"}));
+                    }
                 }
             }
-            if (mode == "all" && hits == patterns.len()) || (mode == "any" && hits > 0) {
-                matched += 1;
-                if items.len() < limit {
-                    items.push(serde_json::json!({"document":file,"matches":per_query,"encoding":"stored_utf8"}));
+            let per_query: Vec<_> = query_items.into_iter().enumerate().map(|(i, hits)| {
+                serde_json::json!({"query_index":i,"query":q.queries[i],"items":hits,"matching_documents_total":counts[i],"truncated":counts[i]>limit,"occurrences_per_document_limit":3})
+            }).collect();
+            let snapshot = if union_total > 0 {
+                Some(super::snapshot_locked(&transaction, q.project.as_deref())?)
+            } else {
+                None
+            };
+            let mut roles = snapshot
+                .as_ref()
+                .map(|s| search_roles(s, &files))
+                .unwrap_or_default();
+            let retained: HashSet<_> = families
+                .values()
+                .flatten()
+                .filter_map(|m| m["document"]["document_id"].as_str())
+                .collect();
+            let literal_targets: Vec<_> = files
+                .iter()
+                .filter(|f| retained.contains(f.document_id.as_str()))
+                .collect();
+            let literal = if let Some(snapshot) = &snapshot {
+                literal_mentions::scan(
+                    &transaction,
+                    snapshot,
+                    &literal_targets,
+                    q.project.as_deref(),
+                    q.literal_mentions.as_ref(),
+                )?
+            } else {
+                literal_mentions::Scan::skipped("no_retained_hits")
+            };
+            merge_literal_roles(&mut roles, &literal);
+            let family_total = families.len();
+            let mut ranked = Vec::new();
+            for ((project, name), mut members) in families {
+                let mut best = 0;
+                for member in &mut members {
+                    let id = member["document"]["document_id"].as_str().unwrap();
+                    let (score, evidence, total) = roles.get(id).cloned().unwrap_or_default();
+                    best = best.max(score);
+                    member["usage_score"] = score.into();
+                    member["role"] = match score {
+                        4 => "entrypoint_candidate",
+                        3 => "referenced_candidate",
+                        2 => "ambiguous_reference_candidate",
+                        1 => "entrypoint_candidate",
+                        _ => "no_observed_usage",
+                    }
+                    .into();
+                    member["role_evidence"] = serde_json::json!(evidence);
+                    member["role_evidence_total"] = total.into();
+                    member["role_evidence_truncated"] = (total > 100).into();
                 }
+                members.sort_by(|a, b| {
+                    b["usage_score"]
+                        .as_u64()
+                        .cmp(&a["usage_score"].as_u64())
+                        .then_with(|| {
+                            b["role_evidence_total"]
+                                .as_u64()
+                                .cmp(&a["role_evidence_total"].as_u64())
+                        })
+                        .then_with(|| {
+                            a["document"]["path"]
+                                .as_str()
+                                .cmp(&b["document"]["path"].as_str())
+                        })
+                });
+                ranked.push(serde_json::json!({"project":project,"name":name,"usage_score":best,"members":members.iter().take(limit).collect::<Vec<_>>(),"retained_members_total":members.len(),"truncated":members.len()>limit,"grouping_basis":"normalized_filename_only","duplicate_content_proven":false}));
             }
-        }
-        let per_query: Vec<_> = query_items.into_iter().enumerate().map(|(i, hits)| {
-            serde_json::json!({"query_index":i,"query":q.queries[i],"items":hits,"matching_documents_total":counts[i],"truncated":counts[i]>limit,"occurrences_per_document_limit":3})
-        }).collect();
-        let snapshot = if union_total > 0 {
-            Some(super::snapshot_locked(&transaction, q.project.as_deref())?)
-        } else {
-            None
-        };
-        let mut roles = snapshot
-            .as_ref()
-            .map(|s| search_roles(s, &files))
-            .unwrap_or_default();
-        let retained: HashSet<_> = families
-            .values()
-            .flatten()
-            .filter_map(|m| m["document"]["document_id"].as_str())
-            .collect();
-        let literal_targets: Vec<_> = files
-            .iter()
-            .filter(|f| retained.contains(f.document_id.as_str()))
-            .collect();
-        let literal = if let Some(snapshot) = &snapshot {
-            literal_mentions::scan(
-                &transaction,
-                snapshot,
-                &literal_targets,
-                q.project.as_deref(),
-                q.literal_mentions.as_ref(),
-            )?
-        } else {
-            literal_mentions::Scan::skipped("no_retained_hits")
-        };
-        merge_literal_roles(&mut roles, &literal);
-        let family_total = families.len();
-        let mut ranked = Vec::new();
-        for ((project, name), mut members) in families {
-            let mut best = 0;
-            for member in &mut members {
-                let id = member["document"]["document_id"].as_str().unwrap();
-                let (score, evidence, total) = roles.get(id).cloned().unwrap_or_default();
-                best = best.max(score);
-                member["usage_score"] = score.into();
-                member["role"] = match score {
-                    4 => "entrypoint_candidate",
-                    3 => "referenced_candidate",
-                    2 => "ambiguous_reference_candidate",
-                    1 => "entrypoint_candidate",
-                    _ => "no_observed_usage",
-                }
-                .into();
-                member["role_evidence"] = serde_json::json!(evidence);
-                member["role_evidence_total"] = total.into();
-                member["role_evidence_truncated"] = (total > 100).into();
-            }
-            members.sort_by(|a, b| {
+            ranked.sort_by(|a, b| {
                 b["usage_score"]
                     .as_u64()
                     .cmp(&a["usage_score"].as_u64())
-                    .then_with(|| {
-                        b["role_evidence_total"]
-                            .as_u64()
-                            .cmp(&a["role_evidence_total"].as_u64())
-                    })
-                    .then_with(|| {
-                        a["document"]["path"]
-                            .as_str()
-                            .cmp(&b["document"]["path"].as_str())
-                    })
+                    .then_with(|| a["project"].as_str().cmp(&b["project"].as_str()))
+                    .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
             });
-            ranked.push(serde_json::json!({"project":project,"name":name,"usage_score":best,"members":members.iter().take(limit).collect::<Vec<_>>(),"retained_members_total":members.len(),"truncated":members.len()>limit,"grouping_basis":"normalized_filename_only","duplicate_content_proven":false}));
-        }
-        ranked.sort_by(|a, b| {
-            b["usage_score"]
-                .as_u64()
-                .cmp(&a["usage_score"].as_u64())
-                .then_with(|| a["project"].as_str().cmp(&b["project"].as_str()))
-                .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
-        });
-        let family_items: Vec<_> = ranked.into_iter().take(limit).collect();
-        let role_analysis = snapshot.as_ref().map(|s| serde_json::json!({"index_rev":s.index_revision,"basis":"fresh_static_index_candidates","runtime_activity_verified":false,"stale_documents":s.stale_documents,"unindexed_documents":s.unindexed_documents,"parse_errors":s.parse_errors,"role_contract_version":2,"markup_references_included":true,"file_import_references_included":true,"literal_path_mentions_included":true,"role_source_scope":"fresh_selected_project_index_before_target_path_prefix","observation_consistency":"single_read_transaction"}));
-        let result = serde_json::json!({"items":items,"per_query":per_query,"families":family_items,"families_retained_total":family_total,"families_truncated":family_total>limit,"family_coverage":"retained_per_query_windows","family_roles_verified":false,"family_role_analysis":role_analysis,"union_matching_documents_total":union_total,"matching_documents_total":matched,"documents_scanned":files.len(),"truncated":matched>limit,"per_query_document_counts":counts,"match_mode":mode,"regex":q.regex,"case_insensitive":q.case_insensitive,"snapshot":"current_stored_documents","literal_path_analysis":literal.report,"observation_consistency":"single_read_transaction","chunk_boundary_independent":true,"filesystem_read":false});
-        transaction.commit()?;
-        Ok(result)
+            let family_items: Vec<_> = ranked.into_iter().take(limit).collect();
+            let role_analysis = snapshot.as_ref().map(|s| serde_json::json!({"index_rev":s.index_revision,"basis":"fresh_static_index_candidates","runtime_activity_verified":false,"stale_documents":s.stale_documents,"unindexed_documents":s.unindexed_documents,"parse_errors":s.parse_errors,"role_contract_version":2,"markup_references_included":true,"file_import_references_included":true,"literal_path_mentions_included":true,"role_source_scope":"fresh_selected_project_index_before_target_path_prefix","observation_consistency":"single_read_transaction"}));
+            let result = serde_json::json!({"items":items,"per_query":per_query,"families":family_items,"families_retained_total":family_total,"families_truncated":family_total>limit,"family_coverage":"retained_per_query_windows","family_roles_verified":false,"family_role_analysis":role_analysis,"union_matching_documents_total":union_total,"matching_documents_total":matched,"documents_scanned":files.len(),"truncated":matched>limit,"per_query_document_counts":counts,"match_mode":mode,"regex":q.regex,"case_insensitive":q.case_insensitive,"snapshot":"current_stored_documents","literal_path_analysis":literal.report,"observation_consistency":"single_read_transaction","chunk_boundary_independent":true,"filesystem_read":false});
+            transaction.commit()?;
+            Ok(result)
+        })
     }
     pub fn duplicates(&self, q: &DuplicateQuery) -> Result<serde_json::Value> {
         let family_view = q.grouping == Some(DuplicateGrouping::ExactAndNameFamilies);
@@ -589,191 +590,192 @@ impl Store {
         if !threshold.is_finite() || !(0.5..=1.0).contains(&threshold) {
             return Err(AppError::config("min_similarity must be between 0.5 and 1"));
         }
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        let files =
-            corpus_files_locked(&transaction, q.project.as_deref(), q.path_prefix.as_deref())?;
-        let snapshot = super::snapshot_locked(&transaction, q.project.as_deref())?;
-        let mut roles = search_roles(&snapshot, &files);
-        let mut exact: BTreeMap<(Option<String>, &str), Vec<usize>> = BTreeMap::new();
-        let mut families: BTreeMap<(Option<String>, String), Vec<usize>> = BTreeMap::new();
-        for (i, f) in files.iter().enumerate() {
-            exact
-                .entry((f.project.clone(), &f.content_hash))
-                .or_default()
-                .push(i);
-            families
-                .entry((f.project.clone(), file_family(&f.path)))
-                .or_default()
-                .push(i);
-        }
-        let mut parent: Vec<_> = (0..files.len()).collect();
-        let mut similarity = Vec::new();
-        for indices in exact.values().filter(|v| v.len() > 1) {
-            for pair in indices.windows(2) {
-                let a = root(&mut parent, pair[0]);
-                let b = root(&mut parent, pair[1]);
-                parent[b] = a;
-                similarity.push(serde_json::json!({"a":files[pair[0]].document_id,"b":files[pair[1]].document_id,"kind":"exact_stored_text","similarity":1.0}));
+        self.store.with_conn(|connection| {
+            let transaction = connection.transaction()?;
+            let files =
+                corpus_files_locked(&transaction, q.project.as_deref(), q.path_prefix.as_deref())?;
+            let snapshot = super::snapshot_locked(&transaction, q.project.as_deref())?;
+            let mut roles = search_roles(&snapshot, &files);
+            let mut exact: BTreeMap<(Option<String>, &str), Vec<usize>> = BTreeMap::new();
+            let mut families: BTreeMap<(Option<String>, String), Vec<usize>> = BTreeMap::new();
+            for (i, f) in files.iter().enumerate() {
+                exact
+                    .entry((f.project.clone(), &f.content_hash))
+                    .or_default()
+                    .push(i);
+                families
+                    .entry((f.project.clone(), file_family(&f.path)))
+                    .or_default()
+                    .push(i);
             }
-        }
-        let words =
-            regex::Regex::new(r"[\pL\pN_]+").map_err(|e| AppError::config(e.to_string()))?;
-        let mut cache = HashMap::new();
-        let mut sampled = BTreeSet::new();
-        let mut comparisons = 0;
-        let cap = q.max_comparisons.unwrap_or(10000).clamp(1, 100000);
-        let mut truncated = false;
-        if !family_view && !byte_view {
-            'families: for indices in families.values().filter(|v| v.len() > 1) {
-                for (a_pos, a) in indices.iter().enumerate() {
-                    for b in indices.iter().skip(a_pos + 1) {
-                        if files[*a].content_hash == files[*b].content_hash {
-                            continue;
-                        }
-                        if comparisons >= cap {
-                            truncated = true;
-                            break 'families;
-                        }
-                        comparisons += 1;
-                        for i in [*a, *b] {
-                            cache.entry(i).or_insert_with(|| {
-                                let (set, cut) = shingles(&files[i].content, &words);
-                                if cut {
-                                    sampled.insert(i);
-                                }
-                                set
-                            });
-                        }
-                        let a_set = &cache[a];
-                        let b_set = &cache[b];
-                        let intersection = a_set.intersection(b_set).count();
-                        let union = a_set.len() + b_set.len() - intersection;
-                        let score = if union == 0 {
-                            1.0
-                        } else {
-                            intersection as f64 / union as f64
-                        };
-                        if score >= threshold {
-                            let ra = root(&mut parent, *a);
-                            let rb = root(&mut parent, *b);
-                            parent[rb] = ra;
-                            similarity.push(serde_json::json!({"a":files[*a].document_id,"b":files[*b].document_id,"kind":"name_family_and_token_shingles","similarity":score}));
+            let mut parent: Vec<_> = (0..files.len()).collect();
+            let mut similarity = Vec::new();
+            for indices in exact.values().filter(|v| v.len() > 1) {
+                for pair in indices.windows(2) {
+                    let a = root(&mut parent, pair[0]);
+                    let b = root(&mut parent, pair[1]);
+                    parent[b] = a;
+                    similarity.push(serde_json::json!({"a":files[pair[0]].document_id,"b":files[pair[1]].document_id,"kind":"exact_stored_text","similarity":1.0}));
+                }
+            }
+            let words =
+                regex::Regex::new(r"[\pL\pN_]+").map_err(|e| AppError::config(e.to_string()))?;
+            let mut cache = HashMap::new();
+            let mut sampled = BTreeSet::new();
+            let mut comparisons = 0;
+            let cap = q.max_comparisons.unwrap_or(10000).clamp(1, 100000);
+            let mut truncated = false;
+            if !family_view && !byte_view {
+                'families: for indices in families.values().filter(|v| v.len() > 1) {
+                    for (a_pos, a) in indices.iter().enumerate() {
+                        for b in indices.iter().skip(a_pos + 1) {
+                            if files[*a].content_hash == files[*b].content_hash {
+                                continue;
+                            }
+                            if comparisons >= cap {
+                                truncated = true;
+                                break 'families;
+                            }
+                            comparisons += 1;
+                            for i in [*a, *b] {
+                                cache.entry(i).or_insert_with(|| {
+                                    let (set, cut) = shingles(&files[i].content, &words);
+                                    if cut {
+                                        sampled.insert(i);
+                                    }
+                                    set
+                                });
+                            }
+                            let a_set = &cache[a];
+                            let b_set = &cache[b];
+                            let intersection = a_set.intersection(b_set).count();
+                            let union = a_set.len() + b_set.len() - intersection;
+                            let score = if union == 0 {
+                                1.0
+                            } else {
+                                intersection as f64 / union as f64
+                            };
+                            if score >= threshold {
+                                let ra = root(&mut parent, *a);
+                                let rb = root(&mut parent, *b);
+                                parent[rb] = ra;
+                                similarity.push(serde_json::json!({"a":files[*a].document_id,"b":files[*b].document_id,"kind":"name_family_and_token_shingles","similarity":score}));
+                            }
                         }
                     }
                 }
             }
-        }
-        let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        for i in 0..files.len() {
-            let r = root(&mut parent, i);
-            groups.entry(r).or_default().push(i);
-        }
-        let candidates = if byte_view {
-            source_bytes::candidates(&files)
-        } else if family_view {
-            family_groups::candidates(&files)?
-        } else {
-            groups
-                .into_values()
-                .filter(|v| v.len() > 1)
-                .map(|indices| family_groups::Candidate {
-                    indices,
-                    kind: "similarity_component",
-                    family: None,
-                })
-                .collect()
-        };
-        let target_indices: BTreeSet<_> = candidates
-            .iter()
-            .flat_map(|c| c.indices.iter().copied())
-            .collect();
-        let literal_targets: Vec<_> = target_indices.iter().map(|i| &files[*i]).collect();
-        let literal = literal_mentions::scan(
-            &transaction,
-            &snapshot,
-            &literal_targets,
-            q.project.as_deref(),
-            q.literal_mentions.as_ref(),
-        )?;
-        merge_literal_roles(&mut roles, &literal);
-        let mut results = Vec::new();
-        for candidate in &candidates {
-            let group = &candidate.indices;
-            let mut members = Vec::new();
-            for i in group {
-                let file = &files[*i];
-                let (score, evidence, evidence_total) =
-                    roles.get(&file.document_id).cloned().unwrap_or_default();
-                members.push(serde_json::json!({"document":file,"usage_score":score,"role":match score{4=>"entrypoint_candidate",3=>"referenced_candidate",2=>"ambiguous_reference_candidate",1=>"public_api_candidate",_=>"no_observed_usage"},"evidence":evidence.iter().take(100).collect::<Vec<_>>(),"evidence_total":evidence_total,"evidence_truncated":evidence_total>evidence.len()}));
+            let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            for i in 0..files.len() {
+                let r = root(&mut parent, i);
+                groups.entry(r).or_default().push(i);
             }
-            let ids: HashSet<_> = group
-                .iter()
-                .map(|i| files[*i].document_id.as_str())
-                .collect();
-            let links: Vec<_> = similarity
-                .iter()
-                .filter(|e| {
-                    e["a"].as_str().is_some_and(|id| ids.contains(id))
-                        && e["b"].as_str().is_some_and(|id| ids.contains(id))
-                })
-                .collect();
-            let member_limit = q.max_members.unwrap_or(100).clamp(1, 500);
-            members.sort_by(|a, b| {
-                let a_path = a["document"]["path"].as_str().unwrap_or("");
-                let b_path = b["document"]["path"].as_str().unwrap_or("");
-                b["usage_score"]
-                    .as_u64()
-                    .cmp(&a["usage_score"].as_u64())
-                    .then_with(|| {
-                        b["evidence_total"]
-                            .as_u64()
-                            .cmp(&a["evidence_total"].as_u64())
-                    })
-                    .then_with(|| a_path.len().cmp(&b_path.len()))
-                    .then_with(|| a_path.cmp(b_path))
-                    .then_with(|| {
-                        a["document"]["document_id"]
-                            .as_str()
-                            .cmp(&b["document"]["document_id"].as_str())
-                    })
-            });
-            let primary = members[0]["document"]["document_id"].clone();
-            let score = members[0]["usage_score"].clone();
-            members.truncate(member_limit);
-            results.push(serde_json::json!({"kind":candidate.kind,"family_key":candidate.family,"primary_candidate":primary,"primary_is_proven":false,"usage_score":score,"members":members,"members_total":group.len(),"members_truncated":group.len()>member_limit,"similarity_evidence":links.iter().take(1000).collect::<Vec<_>>(),"similarity_evidence_total":links.len(),"similarity_evidence_truncated":links.len()>1000,"deletion_safe":false}));
-        }
-        results.sort_by(|a, b| {
-            let exact_order = if family_view {
-                (a["kind"] != "exact_stored_text").cmp(&(b["kind"] != "exact_stored_text"))
+            let candidates = if byte_view {
+                source_bytes::candidates(&files)
+            } else if family_view {
+                family_groups::candidates(&files)?
             } else {
-                std::cmp::Ordering::Equal
+                groups
+                    .into_values()
+                    .filter(|v| v.len() > 1)
+                    .map(|indices| family_groups::Candidate {
+                        indices,
+                        kind: "similarity_component",
+                        family: None,
+                    })
+                    .collect()
             };
-            exact_order
-                .then_with(|| {
+            let target_indices: BTreeSet<_> = candidates
+                .iter()
+                .flat_map(|c| c.indices.iter().copied())
+                .collect();
+            let literal_targets: Vec<_> = target_indices.iter().map(|i| &files[*i]).collect();
+            let literal = literal_mentions::scan(
+                &transaction,
+                &snapshot,
+                &literal_targets,
+                q.project.as_deref(),
+                q.literal_mentions.as_ref(),
+            )?;
+            merge_literal_roles(&mut roles, &literal);
+            let mut results = Vec::new();
+            for candidate in &candidates {
+                let group = &candidate.indices;
+                let mut members = Vec::new();
+                for i in group {
+                    let file = &files[*i];
+                    let (score, evidence, evidence_total) =
+                        roles.get(&file.document_id).cloned().unwrap_or_default();
+                    members.push(serde_json::json!({"document":file,"usage_score":score,"role":match score{4=>"entrypoint_candidate",3=>"referenced_candidate",2=>"ambiguous_reference_candidate",1=>"public_api_candidate",_=>"no_observed_usage"},"evidence":evidence.iter().take(100).collect::<Vec<_>>(),"evidence_total":evidence_total,"evidence_truncated":evidence_total>evidence.len()}));
+                }
+                let ids: HashSet<_> = group
+                    .iter()
+                    .map(|i| files[*i].document_id.as_str())
+                    .collect();
+                let links: Vec<_> = similarity
+                    .iter()
+                    .filter(|e| {
+                        e["a"].as_str().is_some_and(|id| ids.contains(id))
+                            && e["b"].as_str().is_some_and(|id| ids.contains(id))
+                    })
+                    .collect();
+                let member_limit = q.max_members.unwrap_or(100).clamp(1, 500);
+                members.sort_by(|a, b| {
+                    let a_path = a["document"]["path"].as_str().unwrap_or("");
+                    let b_path = b["document"]["path"].as_str().unwrap_or("");
                     b["usage_score"]
                         .as_u64()
                         .cmp(&a["usage_score"].as_u64())
                         .then_with(|| {
-                            a["primary_candidate"]
-                                .as_str()
-                                .cmp(&b["primary_candidate"].as_str())
+                            b["evidence_total"]
+                                .as_u64()
+                                .cmp(&a["evidence_total"].as_u64())
                         })
-                })
-                .then_with(|| a["family_key"].as_str().cmp(&b["family_key"].as_str()))
-        });
-        let total = results.len();
-        let limit = q.limit.unwrap_or(50).clamp(1, 500);
-        results.truncate(limit);
-        let primary_comparison =
-            primary_comparison::enrich(&mut results, &files, q.primary_comparison.as_ref());
-        if family_view {
-            family_groups::classify(&mut results, threshold);
-        }
-        let source_byte_identity = source_bytes::enrich(&mut results, &files);
-        let result = serde_json::json!({"source_byte_identity":source_byte_identity,"primary_comparison":primary_comparison,"groups":results,"groups_total":total,"documents_checked":files.len(),"truncated":total>limit,"comparison_limit_reached":truncated,"comparisons":comparisons,"sampled_documents":sampled.iter().map(|i|&files[*i].document_id).collect::<Vec<_>>(),"index_rev":snapshot.index_revision,"group_semantics":if byte_view{"captured_source_byte_digest_partitions"}else if family_view{"independent_exact_partitions_and_directory_sensitive_numbered_name_families"}else{"connected_similarity_components"},"grouping":if byte_view{"source_byte_copies"}else if family_view{"exact_and_name_families"}else{"similarity_components"},"grouping_contract_version":1,"pairwise_token_grouping_performed":!family_view && !byte_view,"family_classification_threshold":if family_view{Some(threshold)}else{None},"overlapping_groups_possible":family_view,"exactness":if byte_view{"captured_source_byte_digest_and_count_not_live_filesystem"}else{"stored_utf8_text_not_original_binary"},"role_contract_version":2,"literal_path_analysis":literal.report,"role_order":["usage_score_desc","observed_evidence_count_desc","path_length_asc","path_asc","document_id_asc"],"role_relations":["entrypoints","bound_calls","bound_values_and_types","file_imports","file_resources"],"role_source_scope":"fresh_selected_project_index_before_target_path_prefix","role_observation_consistency":"single_read_transaction","liveness_semantics":"observed_static_evidence_not_runtime_proof","stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors});
-        transaction.commit()?;
-        Ok(result)
+                        .then_with(|| a_path.len().cmp(&b_path.len()))
+                        .then_with(|| a_path.cmp(b_path))
+                        .then_with(|| {
+                            a["document"]["document_id"]
+                                .as_str()
+                                .cmp(&b["document"]["document_id"].as_str())
+                        })
+                });
+                let primary = members[0]["document"]["document_id"].clone();
+                let score = members[0]["usage_score"].clone();
+                members.truncate(member_limit);
+                results.push(serde_json::json!({"kind":candidate.kind,"family_key":candidate.family,"primary_candidate":primary,"primary_is_proven":false,"usage_score":score,"members":members,"members_total":group.len(),"members_truncated":group.len()>member_limit,"similarity_evidence":links.iter().take(1000).collect::<Vec<_>>(),"similarity_evidence_total":links.len(),"similarity_evidence_truncated":links.len()>1000,"deletion_safe":false}));
+            }
+            results.sort_by(|a, b| {
+                let exact_order = if family_view {
+                    (a["kind"] != "exact_stored_text").cmp(&(b["kind"] != "exact_stored_text"))
+                } else {
+                    std::cmp::Ordering::Equal
+                };
+                exact_order
+                    .then_with(|| {
+                        b["usage_score"]
+                            .as_u64()
+                            .cmp(&a["usage_score"].as_u64())
+                            .then_with(|| {
+                                a["primary_candidate"]
+                                    .as_str()
+                                    .cmp(&b["primary_candidate"].as_str())
+                            })
+                    })
+                    .then_with(|| a["family_key"].as_str().cmp(&b["family_key"].as_str()))
+            });
+            let total = results.len();
+            let limit = q.limit.unwrap_or(50).clamp(1, 500);
+            results.truncate(limit);
+            let primary_comparison =
+                primary_comparison::enrich(&mut results, &files, q.primary_comparison.as_ref());
+            if family_view {
+                family_groups::classify(&mut results, threshold);
+            }
+            let source_byte_identity = source_bytes::enrich(&mut results, &files);
+            let result = serde_json::json!({"source_byte_identity":source_byte_identity,"primary_comparison":primary_comparison,"groups":results,"groups_total":total,"documents_checked":files.len(),"truncated":total>limit,"comparison_limit_reached":truncated,"comparisons":comparisons,"sampled_documents":sampled.iter().map(|i|&files[*i].document_id).collect::<Vec<_>>(),"index_rev":snapshot.index_revision,"group_semantics":if byte_view{"captured_source_byte_digest_partitions"}else if family_view{"independent_exact_partitions_and_directory_sensitive_numbered_name_families"}else{"connected_similarity_components"},"grouping":if byte_view{"source_byte_copies"}else if family_view{"exact_and_name_families"}else{"similarity_components"},"grouping_contract_version":1,"pairwise_token_grouping_performed":!family_view && !byte_view,"family_classification_threshold":if family_view{Some(threshold)}else{None},"overlapping_groups_possible":family_view,"exactness":if byte_view{"captured_source_byte_digest_and_count_not_live_filesystem"}else{"stored_utf8_text_not_original_binary"},"role_contract_version":2,"literal_path_analysis":literal.report,"role_order":["usage_score_desc","observed_evidence_count_desc","path_length_asc","path_asc","document_id_asc"],"role_relations":["entrypoints","bound_calls","bound_values_and_types","file_imports","file_resources"],"role_source_scope":"fresh_selected_project_index_before_target_path_prefix","role_observation_consistency":"single_read_transaction","liveness_semantics":"observed_static_evidence_not_runtime_proof","stale_documents":snapshot.stale_documents,"unindexed_documents":snapshot.unindexed_documents,"parse_errors":snapshot.parse_errors});
+            transaction.commit()?;
+            Ok(result)
+        })
     }
 }
 
@@ -839,7 +841,9 @@ mod tests {
             }),
             ..Default::default()
         };
-        let report = store.duplicates(&q).unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(report["groups_total"], 1, "{report}");
         assert_eq!(report["groups"][0]["kind"], "exact_captured_source_bytes");
         assert_eq!(report["groups"][0]["members_total"], 2);
@@ -850,7 +854,9 @@ mod tests {
         let mut doc = store.get_document("b").unwrap().unwrap();
         doc.content = "changed".into();
         store.upsert_document(&doc).unwrap();
-        let changed = store.duplicates(&q).unwrap();
+        let changed = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(changed["groups_total"], 0);
         assert_eq!(
             changed["source_byte_identity"]["capture_status_counts"]["source_text_mismatch"],
@@ -885,7 +891,9 @@ mod tests {
             }),
             ..Default::default()
         };
-        let report = store.duplicates(&query).unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&query)
+            .unwrap();
         assert_eq!(report["groups_total"], 4, "{report}");
         assert_eq!(report["comparisons"], 0);
         let groups = report["groups"].as_array().unwrap();
@@ -904,8 +912,13 @@ mod tests {
         assert_eq!(different["kind"], "same_name");
         assert_eq!(different["members_total"], 2);
         assert!(!report.to_string().contains("PRIVATE_"));
-        assert_eq!(report, store.duplicates(&query).unwrap());
-        let scoped = store
+        assert_eq!(
+            report,
+            crate::code_index::CodeIndex::new(&store)
+                .duplicates(&query)
+                .unwrap()
+        );
+        let scoped = crate::code_index::CodeIndex::new(&store)
             .duplicates(&DuplicateQuery {
                 path_prefix: Some("/p/nested".into()),
                 ..query
@@ -929,7 +942,9 @@ mod tests {
             ..Default::default()
         };
         q.max_members = Some(1);
-        let r = store.duplicates(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(r["groups"][0]["kind"], "not_checked");
         assert_eq!(r["primary_comparison"]["pairs_requested"], 0);
         q.max_members = None;
@@ -937,19 +952,27 @@ mod tests {
             enabled: Some(false),
             ..Default::default()
         });
-        let r = store.duplicates(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(r["groups"][0]["kind"], "not_checked");
         q.primary_comparison = Some(PrimaryComparisonOptions {
             max_file_bytes: Some(1),
             ..Default::default()
         });
-        let r = store.duplicates(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(r["groups"][0]["kind"], "not_checked");
         q.primary_comparison = None;
-        let r = store.duplicates(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(r["groups"][0]["kind"], "same_name");
         q.grouping = None;
-        let r = store.duplicates(&q).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(r["groups_total"], 0);
     }
     #[test]
@@ -982,7 +1005,9 @@ mod tests {
             }),
             ..Default::default()
         };
-        let report = store.duplicates(&query).unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&query)
+            .unwrap();
         assert_eq!(report["groups_total"], 1, "{report}");
         assert_eq!(report["primary_comparison"]["pairs_checked"], 1);
         let group = &report["groups"][0];
@@ -997,7 +1022,9 @@ mod tests {
         assert_eq!(member["lines_only_in_primary"], 1);
         assert!(!report.to_string().contains("PRIVATE_"));
         query.max_members = Some(1);
-        let limited = store.duplicates(&query).unwrap();
+        let limited = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&query)
+            .unwrap();
         assert_eq!(limited["primary_comparison"]["pairs_requested"], 0);
         assert_eq!(
             limited["primary_comparison"]["decoded_input_bytes_charged"],
@@ -1016,7 +1043,7 @@ mod tests {
             "p",
         );
         put(&store, "b", "/p/ab/b.txt", "alpha|beta", "q");
-        let result = store
+        let result = crate::code_index::CodeIndex::new(&store)
             .search_multi(&search(&["alpha|beta", "SECOND"]))
             .unwrap();
         assert_eq!(result["matching_documents_total"], 1);
@@ -1024,30 +1051,50 @@ mod tests {
         let mut q = search(&["alpha|beta", "SECOND"]);
         q.match_mode = Some("any".into());
         assert_eq!(
-            store.search_multi(&q).unwrap()["matching_documents_total"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&q)
+                .unwrap()["matching_documents_total"],
             2
         );
         q.project = Some("p".into());
-        assert_eq!(store.search_multi(&q).unwrap()["documents_scanned"], 1);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&q)
+                .unwrap()["documents_scanned"],
+            1
+        );
         q = search(&["alpha\\|b.ta", "second"]);
         q.regex = true;
         q.case_insensitive = true;
         assert_eq!(
-            store.search_multi(&q).unwrap()["matching_documents_total"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&q)
+                .unwrap()["matching_documents_total"],
             1
         );
         q = search(&["🦀\nalpha"]);
         assert_eq!(
-            store.search_multi(&q).unwrap()["items"][0]["matches"][0]["hits"][0]["column"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&q)
+                .unwrap()["items"][0]["matches"][0]["hits"][0]["column"],
             8
         );
         q.path_prefix = Some("/p/a".into());
-        assert_eq!(store.search_multi(&q).unwrap()["documents_scanned"], 0);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&q)
+                .unwrap()["documents_scanned"],
+            0
+        );
         q.regex = true;
         q.queries = vec!["a*".into()];
-        assert!(store.search_multi(&q).is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .is_err());
         q.queries = vec!["(".into()];
-        assert!(store.search_multi(&q).is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .is_err());
     }
     #[test]
     fn independent_query_windows_and_families_preserve_scope_and_limits() {
@@ -1058,7 +1105,9 @@ mod tests {
         put(&store, "x", "/q/Files3.php", "alpha", "q");
         let mut q = search(&["alpha", "beta", "absent"]);
         q.limit = Some(1);
-        let result = store.search_multi(&q).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .unwrap();
         assert_eq!(result["matching_documents_total"], 0);
         assert_eq!(result["union_matching_documents_total"], 3);
         assert_eq!(result["per_query"][0]["matching_documents_total"], 2);
@@ -1079,15 +1128,24 @@ mod tests {
         assert_eq!(result["families"][0]["duplicate_content_proven"], false);
         assert_eq!(result["families"][0]["truncated"], true);
         q.limit = Some(10);
-        let result = store.search_multi(&q).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .unwrap();
         assert_eq!(result["families_retained_total"], 2);
         assert_eq!(
             result["families"][0]["members"].as_array().unwrap().len(),
             2
         );
-        assert_eq!(result, store.search_multi(&q).unwrap());
+        assert_eq!(
+            result,
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&q)
+                .unwrap()
+        );
         q.project = Some("q".into());
-        let result = store.search_multi(&q).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .unwrap();
         assert_eq!(result["union_matching_documents_total"], 1);
         assert_eq!(result["per_query"][1]["matching_documents_total"], 0);
         assert_eq!(result["families"][0]["project"], "q");
@@ -1106,14 +1164,18 @@ mod tests {
         doc.metadata_json = serde_json::json!({"source_decoding_version":1,"source_encoding":"windows-1251","source_encoding_basis":"heuristic_cyrillic_share","source_text_hash":content_hash("needle"),"source_bytes_hash":"raw"}).to_string();
         store.upsert_document(&doc).unwrap();
         let query = search(&["needle"]);
-        let found = store.search_multi(&query).unwrap();
+        let found = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(
             found["per_query"][0]["items"][0]["source_encoding"],
             "windows-1251"
         );
         doc.content = "needle changed".into();
         store.upsert_document(&doc).unwrap();
-        let found = store.search_multi(&query).unwrap();
+        let found = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(
             found["per_query"][0]["items"][0]["source_encoding"],
             serde_json::Value::Null
@@ -1168,7 +1230,9 @@ mod tests {
         );
         store.index_code().unwrap();
         let q = search(&["needle"]);
-        let result = store.search_multi(&q).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .unwrap();
         let members = &result["families"][0]["members"];
         assert_eq!(members[0]["document"]["path"], "/p/api.py");
         assert_eq!(members[0]["role"], "referenced_candidate");
@@ -1183,7 +1247,9 @@ mod tests {
         assert_eq!(members[0]["role_evidence_truncated"], true);
         assert!(members[0]["role_evidence_total"].as_u64().unwrap() >= 105);
         put(&store, "caller", "/p/use.py", "registered = None\n", "p");
-        let stale = store.search_multi(&q).unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .unwrap();
         assert!(!stale["family_role_analysis"]["stale_documents"]
             .as_array()
             .unwrap()
@@ -1209,7 +1275,9 @@ mod tests {
             "def changed():\n    return 'needle'\n",
             "p",
         );
-        let stale = store.search_multi(&q).unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&q)
+            .unwrap();
         assert!(stale["families"]
             .as_array()
             .unwrap()
@@ -1251,7 +1319,7 @@ mod tests {
             "q",
         );
         store.index_code().unwrap();
-        let result = store
+        let result = crate::code_index::CodeIndex::new(&store)
             .duplicates(&DuplicateQuery {
                 project: Some("p".into()),
                 path_prefix: Some("/p/copies".into()),
@@ -1288,7 +1356,9 @@ mod tests {
             max_comparisons: Some(1),
             ..Default::default()
         };
-        let result = store.duplicates(&q).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(result["comparison_limit_reached"], true);
         assert_eq!(result["comparisons"], 1);
         assert_eq!(result["groups_total"], 1);
@@ -1332,7 +1402,9 @@ mod tests {
             path_prefix: Some("/p/copies".into()),
             ..Default::default()
         };
-        let report = store.duplicates(&q).unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         let groups = report["groups"].as_array().unwrap();
         let css = groups
             .iter()
@@ -1384,7 +1456,9 @@ mod tests {
             path_prefix: Some("/p/copies".into()),
             ..Default::default()
         };
-        let before = store.duplicates(&q).unwrap();
+        let before = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(before["groups"][0]["primary_candidate"], "used", "{before}");
         assert!(before["groups"][0]["members"][0]["evidence"]
             .as_array()
@@ -1393,10 +1467,17 @@ mod tests {
             .any(|e| e["kind"] == "incoming_reference_candidate"));
         assert!(!before.to_string().contains("PRIVATE_BODY"));
         put(&store, "source", "/p/use.py", "registered=None\n", "p");
-        let after = store.duplicates(&q).unwrap();
+        let after = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         assert_eq!(after["groups"][0]["usage_score"], 0, "{after}");
         store.index_code().unwrap();
-        assert_eq!(store.duplicates(&q).unwrap()["groups"][0]["usage_score"], 0);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .duplicates(&q)
+                .unwrap()["groups"][0]["usage_score"],
+            0
+        );
     }
     #[test]
     fn duplicate_resource_target_identity_and_parsed_target_fingerprints_are_required() {
@@ -1415,7 +1496,9 @@ mod tests {
         put(&store, "module", "/p/mod.js", "const value=1;", "p");
         put(&store, "import", "/p/use.js", "import './mod.js';", "p");
         store.index_code().unwrap();
-        let files = store.corpus_files(Some("p"), None).unwrap();
+        let files = crate::code_index::CodeIndex::new(&store)
+            .corpus_files(Some("p"), None)
+            .unwrap();
         let snap = store.code_snapshot().unwrap();
         let roles = search_roles(&snap, &files);
         assert_eq!(roles.get("b").unwrap().0, 3);
@@ -1449,7 +1532,9 @@ mod tests {
             max_members: Some(1),
             ..Default::default()
         };
-        let report = store.duplicates(&q).unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&q)
+            .unwrap();
         let group = &report["groups"][0];
         assert_eq!(group["primary_candidate"], "b");
         assert_eq!(group["members_total"], 2);
@@ -1459,7 +1544,9 @@ mod tests {
             100
         );
         assert_eq!(group["members"][0]["evidence_truncated"], true);
-        let files = store.corpus_files(Some("p"), None).unwrap();
+        let files = crate::code_index::CodeIndex::new(&store)
+            .corpus_files(Some("p"), None)
+            .unwrap();
         let mut snap = store.code_snapshot().unwrap();
         let before = search_roles(&snap, &files);
         snap.file_imports.reverse();
@@ -1483,7 +1570,9 @@ mod tests {
             max_members: Some(1),
             ..Default::default()
         };
-        let report = store.duplicates(&query).unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&query)
+            .unwrap();
         assert_eq!(report["groups"][0]["primary_candidate"], "short");
         assert_eq!(
             report["groups"][0]["members"][0]["document"]["document_id"],
@@ -1491,7 +1580,9 @@ mod tests {
         );
         put(&store,"html","/p/index.html","<link href='a/deep/theme.css'><link href='a/deep/theme.css'><link href='z/theme2.css'>","p");
         store.index_code().unwrap();
-        let report = store.duplicates(&query).unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&query)
+            .unwrap();
         assert_eq!(report["groups"][0]["primary_candidate"], "long", "{report}");
         assert_eq!(report["groups"][0]["members"][0]["evidence_total"], 2);
         assert_eq!(
@@ -1542,7 +1633,9 @@ mod tests {
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.path_prefix = Some("/p/copies".into());
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(result["documents_scanned"], 6);
         assert_eq!(result["matching_documents_total"], 6);
         assert_eq!(result["families_retained_total"], 3);
@@ -1572,7 +1665,12 @@ mod tests {
             true
         );
         assert_eq!(result["observation_consistency"], "single_read_transaction");
-        assert_eq!(result, store.search_multi(&query).unwrap());
+        assert_eq!(
+            result,
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()
+        );
     }
     #[test]
     fn search_resource_roles_exclude_unindexed_and_stale_sources_and_targets() {
@@ -1593,13 +1691,16 @@ mod tests {
         query.project = Some("p".into());
         query.path_prefix = Some("/p/copies".into());
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             0
         );
         store.index_code().unwrap();
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["members"][0]["document"]
-                ["document_id"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["members"][0]["document"]["document_id"],
             "b"
         );
         put(
@@ -1610,17 +1711,23 @@ mod tests {
             "p",
         );
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             0
         );
         store.index_code().unwrap();
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             3
         );
         put(&store, "html", "/p/index.html", "<main>removed</main>", "p");
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             0
         );
     }
@@ -1642,7 +1749,9 @@ mod tests {
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         assert_eq!(
-            store.search_multi(&query).unwrap()["matching_documents_total"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["matching_documents_total"],
             1
         );
         store
@@ -1653,9 +1762,13 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert!(store.search_multi(&query).is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .is_err());
         query.queries = vec!["not-present".into()];
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(result["matching_documents_total"], 0);
         assert!(result["family_role_analysis"].is_null());
     }
@@ -1740,10 +1853,12 @@ mod tests {
         query.project = Some("p".into());
         query.path_prefix = Some("/p/copies".into());
         assert_eq!(
-            reader.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&reader)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             0
         );
-        let duplicate = reader
+        let duplicate = crate::code_index::CodeIndex::new(&reader)
             .duplicates(&DuplicateQuery {
                 project: Some("p".into()),
                 path_prefix: Some("/p/copies".into()),
@@ -1806,7 +1921,9 @@ mod tests {
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.path_prefix = Some("/p/php".into());
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         let member = &result["families"][0]["members"][0];
         assert_eq!(member["document"]["document_id"], "used", "{result}");
         assert_eq!(member["usage_score"], 2);
@@ -1820,7 +1937,7 @@ mod tests {
         assert_eq!(evidence["binding_proven"], false);
         assert!(evidence["byte_start"].as_u64().unwrap() > 8);
         assert_eq!(evidence["needle"], "php/Files2.php");
-        let dup = store
+        let dup = crate::code_index::CodeIndex::new(&store)
             .duplicates(&DuplicateQuery {
                 project: Some("p".into()),
                 path_prefix: Some("/p/php".into()),
@@ -1842,7 +1959,9 @@ mod tests {
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.path_prefix = Some("/p/a".into());
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(result["families"][0]["usage_score"], 0);
         assert_eq!(
             result["literal_path_analysis"]["ambiguous_basename_targets"],
@@ -1851,7 +1970,9 @@ mod tests {
         put(&store, "js", "/p/app.js", "const path='a/Files.php';", "p");
         store.index_code().unwrap();
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             2
         );
     }
@@ -1870,7 +1991,9 @@ mod tests {
         store.index_code().unwrap();
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(result["families"][0]["usage_score"], 0, "{result}");
         put(
             &store,
@@ -1881,7 +2004,9 @@ mod tests {
         );
         store.index_code().unwrap();
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             2
         );
     }
@@ -1910,14 +2035,18 @@ mod tests {
             enabled: Some(false),
             ..Default::default()
         });
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(result["literal_path_analysis"]["status"], "disabled");
         assert_eq!(result["families"][0]["usage_score"], 0);
         query.literal_mentions = Some(LiteralMentionOptions {
             max_bytes: Some(1),
             ..Default::default()
         });
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(result["literal_path_analysis"]["complete"], false);
         assert_eq!(result["families"][0]["usage_score"], 0);
         assert_eq!(result["literal_path_analysis"]["absence_proven"], false);
@@ -1929,7 +2058,9 @@ mod tests {
             "const path='copies/Files2.php'; // changed",
             "p",
         );
-        let result = store.search_multi(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .search_multi(&query)
+            .unwrap();
         assert_eq!(result["families"][0]["usage_score"], 0);
         assert!(
             result["literal_path_analysis"]["sources_stale_unindexed_or_unqualified"]
@@ -1939,7 +2070,9 @@ mod tests {
         );
         store.index_code().unwrap();
         assert_eq!(
-            store.search_multi(&query).unwrap()["families"][0]["usage_score"],
+            crate::code_index::CodeIndex::new(&store)
+                .search_multi(&query)
+                .unwrap()["families"][0]["usage_score"],
             2
         );
     }
@@ -1965,7 +2098,9 @@ mod tests {
             path_prefix: Some("/p/copies".into()),
             ..Default::default()
         };
-        let result = store.duplicates(&query).unwrap();
+        let result = crate::code_index::CodeIndex::new(&store)
+            .duplicates(&query)
+            .unwrap();
         let member = &result["groups"][0]["members"][0];
         assert_eq!(member["document"]["document_id"], "b");
         assert_eq!(member["evidence_total"], 25);
@@ -1973,6 +2108,11 @@ mod tests {
         assert_eq!(member["evidence_truncated"], true);
         assert_eq!(result["literal_path_analysis"]["evidence_total"], 25);
         assert_eq!(result["literal_path_analysis"]["evidence_retained"], 20);
-        assert_eq!(result, store.duplicates(&query).unwrap());
+        assert_eq!(
+            result,
+            crate::code_index::CodeIndex::new(&store)
+                .duplicates(&query)
+                .unwrap()
+        );
     }
 }

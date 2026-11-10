@@ -17,8 +17,10 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::CatalogQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("catalog", move || store.code_catalog_query(&params)).await?;
+        let result = crate::util::run_blocking("catalog", move || {
+            crate::code_index::CodeIndex::new(&store).code_catalog_query(&params)
+        })
+        .await?;
         Self::json_result(&result)
     }
     #[tool(
@@ -102,7 +104,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::corpus::MultiSearch>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.search_multi(&params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::code_index::CodeIndex::new(&self.store)
+                .search_multi(&params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "duplicates",
@@ -112,7 +118,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::corpus::DuplicateQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.duplicates(&params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::code_index::CodeIndex::new(&self.store)
+                .duplicates(&params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "index_revisions",
@@ -442,8 +452,10 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::RouteQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("routes", move || store.code_routes(&params)).await?;
+        let result = crate::util::run_blocking("routes", move || {
+            crate::code_index::CodeIndex::new(&store).code_routes(&params)
+        })
+        .await?;
         Self::json_result(&result)
     }
     #[tool(
@@ -608,7 +620,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeReadQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_read(&params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::code_index::CodeIndex::new(&self.store)
+                .code_read(&params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "repo_map",
@@ -667,7 +683,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::SymbolQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_symbols(&params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::code_index::CodeIndex::new(&self.store)
+                .code_symbols(&params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "references",
@@ -677,7 +697,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::ReferenceQuery>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.code_references(&params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::code_index::CodeIndex::new(&self.store)
+                .code_references(&params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "callers",

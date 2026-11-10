@@ -419,7 +419,7 @@ fn runs(
         serde_json::json!({"view":"committed_index_runs","query_contract_version":1,"scope":"corpus_global","index_rev":revision,"items":items,"total":total,"has_more":more,"truncated":more||previous.is_some(),"next_cursor":next,"pinned_max_seq":anchor.seq,"newer_runs_excluded":true,"successful_committed_runs_only":true,"failed_or_rolled_back_runs_available":false,"commit_measured":false,"embedding_fts_measured":false,"source_text_loaded_into_rust":false,"observation_consistency":"single_read_transaction"}),
     )
 }
-impl Store {
+impl<'a> CodeIndex<'a> {
     pub fn code_catalog(&self, q: &drift::SourceQuery) -> Result<serde_json::Value> {
         self.code_catalog_query(&CatalogQuery {
             selection: q.clone(),
@@ -444,21 +444,22 @@ impl Store {
                 "catalog cursor does not match view/filters".into(),
             ));
         }
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        if q.view == CatalogView::Runs {
-            let result = runs(&transaction, q, previous.as_ref())?;
+        self.store.with_conn(|connection| {
+            let transaction = connection.transaction()?;
+            if q.view == CatalogView::Runs {
+                let result = runs(&transaction, q, previous.as_ref())?;
+                transaction.commit()?;
+                return Ok(result);
+            }
+            let rev = revision(&transaction, q, previous.as_ref())?;
+            let result = match q.view {
+                CatalogView::Files => files(&transaction, q, rev, previous.as_ref())?,
+                CatalogView::Projects => projects(&transaction, q, rev, previous.as_ref())?,
+                CatalogView::Runs => unreachable!(),
+            };
             transaction.commit()?;
-            return Ok(result);
-        }
-        let rev = revision(&transaction, q, previous.as_ref())?;
-        let result = match q.view {
-            CatalogView::Files => files(&transaction, q, rev, previous.as_ref())?,
-            CatalogView::Projects => projects(&transaction, q, rev, previous.as_ref())?,
-            CatalogView::Runs => unreachable!(),
-        };
-        transaction.commit()?;
-        Ok(result)
+            Ok(result)
+        })
     }
 }
 
@@ -512,24 +513,32 @@ mod tests {
         store.index_code().unwrap();
         store.index_code().unwrap();
         let mut q = run_query(1);
-        let first = store.code_catalog_query(&q).unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q)
+            .unwrap();
         assert_eq!(first["total"], 3);
         assert_eq!(first["items"][0]["seq"], 3);
         put(&store, "a", Some("p"), "/p/a.py", "def changed(): pass");
         store.index_code().unwrap();
         q.cursor = first["next_cursor"].as_str().map(str::to_owned);
         q.selection.limit = Some(10);
-        let second = store.code_catalog_query(&q).unwrap();
+        let second = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q)
+            .unwrap();
         assert_eq!(second["total"], 3);
         assert_eq!(second["items"].as_array().unwrap().len(), 2);
         assert_eq!(second["items"][0]["seq"], 2);
         assert_eq!(second["has_more"], false);
-        let all = store.code_catalog_query(&run_query(10)).unwrap();
+        let all = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&run_query(10))
+            .unwrap();
         assert_eq!(all["total"], 4);
         assert_eq!(all["items"][0]["index_rev"], 2);
         let mut filtered = run_query(10);
         filtered.selection.index_revision = Some(1);
-        let r = store.code_catalog_query(&filtered).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&filtered)
+            .unwrap();
         assert_eq!(r["total"], 3);
         assert!(r["items"]
             .as_array()
@@ -544,13 +553,19 @@ mod tests {
         store.index_code().unwrap();
         store.index_code().unwrap();
         let mut q = run_query(1);
-        let first = store.code_catalog_query(&q).unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q)
+            .unwrap();
         q.cursor = first["next_cursor"].as_str().map(str::to_owned);
         q.selection.index_revision = Some(1);
-        assert!(store.code_catalog_query(&q).is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q)
+            .is_err());
         q.selection.index_revision = None;
         q.selection.project = Some("p".into());
-        assert!(store.code_catalog_query(&q).is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q)
+            .is_err());
         q.selection.project = None;
         store
             .lock()
@@ -560,7 +575,9 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert!(store.code_catalog_query(&q).is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q)
+            .is_err());
     }
     #[test]
     fn run_history_reports_invalid_and_oversized_metrics_without_decoding_bodies() {
@@ -584,7 +601,9 @@ mod tests {
                 [],
             )
             .unwrap();
-        let r = store.code_catalog_query(&run_query(10)).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&run_query(10))
+            .unwrap();
         assert_eq!(r["total"], 2);
         assert!(r["items"]
             .as_array()
@@ -597,17 +616,31 @@ mod tests {
     fn run_history_empty_and_persisted_views_are_read_only() {
         let (root, store) = setup();
         assert_eq!(
-            store.code_catalog_query(&run_query(10)).unwrap()["total"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_catalog_query(&run_query(10))
+                .unwrap()["total"],
             0
         );
         put(&store, "a", None, "/p/a.py", "def a(): pass");
         store.index_code().unwrap();
-        let before = store.code_catalog_query(&run_query(10)).unwrap();
+        let before = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&run_query(10))
+            .unwrap();
         assert_eq!(before["items"][0]["metrics_available"], true);
-        assert_eq!(store.code_catalog_query(&run_query(10)).unwrap(), before);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_catalog_query(&run_query(10))
+                .unwrap(),
+            before
+        );
         drop(store);
         let reopened = Store::open(&root.path().join("catalog.duckdb")).unwrap();
-        assert_eq!(reopened.code_catalog_query(&run_query(10)).unwrap(), before);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&reopened)
+                .code_catalog_query(&run_query(10))
+                .unwrap(),
+            before
+        );
     }
     #[test]
     fn frozen_pages_pin_revision_and_read_metadata_without_decoding_payloads() {
@@ -616,7 +649,9 @@ mod tests {
             put(&store, id, Some(p), "/same.py", "def original(): pass\n");
         }
         store.index_code().unwrap();
-        let first = store.code_catalog_query(&q(Some("alpha"))).unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q(Some("alpha")))
+            .unwrap();
         assert_eq!(first["total"], 2);
         assert_eq!(first["items"][0]["document_id"], "a");
         put(
@@ -629,7 +664,9 @@ mod tests {
         store.index_code().unwrap();
         let mut page = q(Some("alpha"));
         page.cursor = Some(first["next_cursor"].as_str().unwrap().into());
-        let second = store.code_catalog_query(&page).unwrap();
+        let second = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&page)
+            .unwrap();
         assert_eq!(second["index_rev"], first["index_rev"]);
         assert_eq!(second["items"][0]["document_id"], "b");
         assert_eq!(
@@ -639,13 +676,13 @@ mod tests {
         assert_eq!(second["has_more"], false);
         page.selection.project = Some("beta".into());
         assert!(matches!(
-            store.code_catalog_query(&page),
+            crate::code_index::CodeIndex::new(&store).code_catalog_query(&page),
             Err(AppError::Invalid(_))
         ));
         page.selection.project = Some("alpha".into());
         page.selection.index_revision = Some(2);
         assert!(matches!(
-            store.code_catalog_query(&page),
+            crate::code_index::CodeIndex::new(&store).code_catalog_query(&page),
             Err(AppError::Invalid(_))
         ));
         store
@@ -657,7 +694,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.code_catalog_query(&q(Some("alpha"))).unwrap()["items"][0]["syntax_indexed"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_catalog_query(&q(Some("alpha")))
+                .unwrap()["items"][0]["syntax_indexed"],
             true
         );
     }
@@ -670,7 +709,9 @@ mod tests {
             view: CatalogView::Projects,
             ..Default::default()
         };
-        let before = store.code_catalog_query(&query).unwrap();
+        let before = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&query)
+            .unwrap();
         assert!(before["index_rev"].is_null());
         assert!(before["items"]
             .as_array()
@@ -679,7 +720,9 @@ mod tests {
             .all(|r| r["state"] == "unindexed"));
         store.index_code().unwrap();
         query.selection.project = Some("alpha".into());
-        let indexed = store.code_catalog_query(&query).unwrap();
+        let indexed = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&query)
+            .unwrap();
         let item = &indexed["items"][0];
         assert_eq!(item["captured_hashes_match"], true);
         assert_eq!(item["state"], "captured_match_unverified");
@@ -692,7 +735,9 @@ mod tests {
             "/same.py",
             "def changed(): pass\n",
         );
-        let drift = store.code_catalog_query(&query).unwrap();
+        let drift = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&query)
+            .unwrap();
         assert_eq!(drift["items"][0]["state"], "captured_drift");
         assert_eq!(drift["items"][0]["captured_hashes_match"], false);
         store
@@ -701,11 +746,18 @@ mod tests {
             .execute("UPDATE documents SET status='archived' WHERE id='a'", [])
             .unwrap();
         assert_eq!(
-            store.code_catalog_query(&query).unwrap()["items"][0]["state"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_catalog_query(&query)
+                .unwrap()["items"][0]["state"],
             "absent_from_current_corpus"
         );
         query.selection.project = Some("alpha' OR 1=1 --".into());
-        assert_eq!(store.code_catalog_query(&query).unwrap()["total"], 0);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_catalog_query(&query)
+                .unwrap()["total"],
+            0
+        );
     }
     #[test]
     fn project_pages_distinguish_null_names_and_guard_current_observations() {
@@ -716,14 +768,18 @@ mod tests {
         store.index_code().unwrap();
         let mut query = q(None);
         query.view = CatalogView::Projects;
-        let first = store.code_catalog_query(&query).unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&query)
+            .unwrap();
         assert!(first["items"][0]["project"].is_null());
         query.cursor = Some(first["next_cursor"].as_str().unwrap().into());
-        let next = store.code_catalog_query(&query).unwrap();
+        let next = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&query)
+            .unwrap();
         assert_eq!(next["items"][0]["project"], "alpha");
         put(&store, "1", Some("null"), "/p/1.txt", "changed");
         assert!(matches!(
-            store.code_catalog_query(&query),
+            crate::code_index::CodeIndex::new(&store).code_catalog_query(&query),
             Err(AppError::Conflict(_))
         ));
     }
@@ -743,7 +799,7 @@ mod tests {
             })
             .unwrap();
         store.index_code().unwrap();
-        let report = store
+        let report = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&CatalogQuery {
                 view: CatalogView::Projects,
                 ..Default::default()
@@ -754,7 +810,9 @@ mod tests {
             "{report}"
         );
         assert_eq!(report["items"][0]["source_integrity_verified"], false);
-        let files = store.code_catalog_query(&q(None)).unwrap();
+        let files = crate::code_index::CodeIndex::new(&store)
+            .code_catalog_query(&q(None))
+            .unwrap();
         assert_eq!(files["items"][0]["bytes"], source.len());
         assert_eq!(files["content_checksums_verified"], false);
         assert_eq!(files["source_text_loaded_into_rust"], false);
@@ -782,7 +840,7 @@ mod tests {
                 .unwrap();
         }
         store.index_code().unwrap();
-        let report = store
+        let report = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&CatalogQuery {
                 view: CatalogView::Projects,
                 ..Default::default()

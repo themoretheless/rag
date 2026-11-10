@@ -815,7 +815,7 @@ impl<'a> CodeIndex<'a> {
         })
     }
     pub fn code_body(&self, q: &CodeQuery) -> Result<serde_json::Value> {
-        self.store.code_read(&CodeReadQuery {
+        self.code_read(&CodeReadQuery {
             selection: q.clone(),
             ..Default::default()
         })
