@@ -1132,7 +1132,6 @@ fn table_exists_locked(conn: &Connection, name: &str) -> bool {
 
 mod chunks;
 mod corpus_lane;
-mod delegators;
 mod documents;
 mod health;
 mod manifest;
@@ -1140,6 +1139,7 @@ mod ops_log;
 mod reembed;
 mod revisions;
 mod schema_diary;
+mod ui_compat;
 mod wiki_index;
 mod wiki_meta;
 
