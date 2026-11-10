@@ -900,7 +900,11 @@ async fn unknown_wiki_page_is_not_found_on_both_transports() {
 async fn taxonomy_wings_and_rooms_agree_and_trim_the_wing_filter() {
     let harness = Harness::new();
     harness.seed_corpus().await;
-    for (id, wing, room) in [("doc-0", "alpha", "one"), ("doc-1", "alpha", "two"), ("doc-2", "beta", "one")] {
+    for (id, wing, room) in [
+        ("doc-0", "alpha", "one"),
+        ("doc-1", "alpha", "two"),
+        ("doc-2", "beta", "one"),
+    ] {
         harness
             .context
             .store
@@ -926,13 +930,21 @@ async fn taxonomy_wings_and_rooms_agree_and_trim_the_wing_filter() {
     assert_eq!(mcp, http["items"]);
 
     // One rule: the wing filter is trimmed on both (HTTP did not trim).
-    let mcp = harness.mcp("list_rooms", json!({ "wing": " alpha " })).await.ok();
-    let (status, http) = harness.http("GET", "/v1/rooms?wing=%20alpha%20", None).await;
+    let mcp = harness
+        .mcp("list_rooms", json!({ "wing": " alpha " }))
+        .await
+        .ok();
+    let (status, http) = harness
+        .http("GET", "/v1/rooms?wing=%20alpha%20", None)
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(mcp.as_array().map(Vec::len), Some(2), "{mcp}");
     assert_eq!(mcp, http["items"]);
     // A blank wing lists every room on both.
-    let mcp = harness.mcp("list_rooms", json!({ "wing": "  " })).await.ok();
+    let mcp = harness
+        .mcp("list_rooms", json!({ "wing": "  " }))
+        .await
+        .ok();
     let (_, http) = harness.http("GET", "/v1/rooms?wing=%20%20", None).await;
     assert_eq!(mcp, http["items"]);
 }
@@ -950,7 +962,10 @@ async fn kg_reads_agree_on_facts_blank_filters_timeline_and_stats() {
             .ok();
     }
 
-    let mcp = harness.mcp("kg_query", json!({ "subject": "rag" })).await.ok();
+    let mcp = harness
+        .mcp("kg_query", json!({ "subject": "rag" }))
+        .await
+        .ok();
     let (status, http) = harness.http("GET", "/v1/kg?subject=rag", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(mcp.as_array().map(Vec::len), Some(2));
@@ -962,7 +977,9 @@ async fn kg_reads_agree_on_facts_blank_filters_timeline_and_stats() {
         .mcp("kg_query", json!({ "subject": " ", "predicate": "" }))
         .await
         .ok();
-    let (_, http) = harness.http("GET", "/v1/kg?subject=%20&predicate=", None).await;
+    let (_, http) = harness
+        .http("GET", "/v1/kg?subject=%20&predicate=", None)
+        .await;
     assert_eq!(mcp.as_array().map(Vec::len), Some(3));
     assert_eq!(mcp, http["items"]);
 
@@ -971,11 +988,16 @@ async fn kg_reads_agree_on_facts_blank_filters_timeline_and_stats() {
         .mcp("kg_query", json!({ "at_time": "not a time" }))
         .await
         .err();
-    let (status, http) = harness.http("GET", "/v1/kg?at_time=not%20a%20time", None).await;
+    let (status, http) = harness
+        .http("GET", "/v1/kg?at_time=not%20a%20time", None)
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(mcp["data"]["code"], http["code"]);
 
-    let mcp = harness.mcp("kg_timeline", json!({ "subject": " rag " })).await.ok();
+    let mcp = harness
+        .mcp("kg_timeline", json!({ "subject": " rag " }))
+        .await
+        .ok();
     let (_, http) = harness
         .http("GET", "/v1/kg/timeline?subject=%20rag%20", None)
         .await;

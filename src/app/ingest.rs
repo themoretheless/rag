@@ -54,10 +54,7 @@ impl IngestUseCase {
     /// Fetch one allowlisted web page and ingest it (MCP `ingest_url`,
     /// HTTP `POST /v1/ingest/url`). The fetch timeout is
     /// `RAG_INGEST_URL_TIMEOUT_SECS` on both transports.
-    pub async fn ingest_url(
-        &self,
-        command: IngestUrlCommand,
-    ) -> Result<IngestUrlResult, AppError> {
+    pub async fn ingest_url(&self, command: IngestUrlCommand) -> Result<IngestUrlResult, AppError> {
         let fetcher = ReqwestFetcher::new(self.config.ingest_url_timeout_secs);
         self.service().ingest_url(&fetcher, command).await
     }
