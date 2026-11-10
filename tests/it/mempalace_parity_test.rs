@@ -47,7 +47,10 @@ fn upsert_doc(
         content_hash: hash.map(str::to_string),
         ..Default::default()
     };
-    store.upsert_document(&doc).expect("upsert_document");
+    store
+        .documents()
+        .upsert_document(&doc)
+        .expect("upsert_document");
     doc
 }
 
@@ -123,14 +126,17 @@ fn wing_room_taxonomy() {
         None,
     );
 
-    let wings = store.list_wings().expect("list_wings");
+    let wings = store.documents().list_wings().expect("list_wings");
     assert_eq!(wings.len(), 2);
     assert_eq!(wings[0].wing, "ops");
     assert_eq!(wings[0].document_count, 1);
     assert_eq!(wings[1].wing, "research");
     assert_eq!(wings[1].document_count, 3);
 
-    let research_rooms = store.list_rooms(Some("research")).expect("list_rooms");
+    let research_rooms = store
+        .documents()
+        .list_rooms(Some("research"))
+        .expect("list_rooms");
     assert_eq!(research_rooms.len(), 2);
     assert_eq!(research_rooms[0].room, "llm");
     assert_eq!(research_rooms[0].document_count, 1);
@@ -138,7 +144,7 @@ fn wing_room_taxonomy() {
     assert_eq!(research_rooms[1].document_count, 2);
     assert_eq!(research_rooms[0].wing.as_deref(), Some("research"));
 
-    let tax = store.get_taxonomy().expect("get_taxonomy");
+    let tax = store.documents().get_taxonomy().expect("get_taxonomy");
     assert_eq!(tax.total_documents, 5);
     assert_eq!(tax.unscoped_count, 1);
     assert_eq!(tax.wings.len(), 2);
@@ -183,6 +189,7 @@ fn check_duplicate_by_content_hash_and_uri() {
 
     // Content-hash probe (from raw content).
     let by_content = store
+        .documents()
         .check_duplicate(Some(body), None, None)
         .expect("check by content");
     assert!(by_content.is_duplicate);
@@ -195,6 +202,7 @@ fn check_duplicate_by_content_hash_and_uri() {
 
     // URI probe.
     let by_uri = store
+        .documents()
         .check_duplicate(None, None, Some("drawer://alpha"))
         .expect("check by uri");
     assert!(by_uri.is_duplicate);
@@ -203,6 +211,7 @@ fn check_duplicate_by_content_hash_and_uri() {
 
     // Both hash + uri → combined reason.
     let both = store
+        .documents()
         .check_duplicate(Some(body), None, Some("drawer://alpha"))
         .expect("check both");
     assert!(both.is_duplicate);
@@ -211,6 +220,7 @@ fn check_duplicate_by_content_hash_and_uri() {
 
     // Fresh content is not a duplicate.
     let fresh = store
+        .documents()
         .check_duplicate(Some("totally different body text"), None, None)
         .expect("fresh");
     assert!(!fresh.is_duplicate);
@@ -218,6 +228,7 @@ fn check_duplicate_by_content_hash_and_uri() {
 
     // Missing all inputs → error.
     let err = store
+        .documents()
         .check_duplicate(None, None, None)
         .expect_err("needs input");
     assert!(err.to_string().contains("check_duplicate"));
@@ -263,19 +274,26 @@ fn delete_by_source_removes_matching_docs() {
         None,
     );
 
-    let n = store.delete_by_source(src).expect("delete_by_source");
+    let n = store
+        .documents()
+        .delete_by_source(src)
+        .expect("delete_by_source");
     assert_eq!(n, 2);
-    assert!(store.get_document(&d1.id).unwrap().is_none());
-    assert!(store.get_document(&d2.id).unwrap().is_none());
-    assert!(store.get_document(&keep.id).unwrap().is_some());
+    assert!(store.documents().get_document(&d1.id).unwrap().is_none());
+    assert!(store.documents().get_document(&d2.id).unwrap().is_none());
+    assert!(store.documents().get_document(&keep.id).unwrap().is_some());
 
     // Second call is a no-op.
-    let n2 = store.delete_by_source(src).expect("delete again");
+    let n2 = store
+        .documents()
+        .delete_by_source(src)
+        .expect("delete again");
     assert_eq!(n2, 0);
 
     // Unknown source → 0.
     assert_eq!(
         store
+            .documents()
             .delete_by_source("/vault/missing.md")
             .expect("missing"),
         0
@@ -291,6 +309,7 @@ fn kg_add_query_invalidate_supersede() {
     let (_dir, store) = open_temp_store();
 
     let f1 = store
+        .kg()
         .kg_add(rag_mcp::db::kg::KgFactInput {
             subject: "Alice",
             predicate: "works_at",
@@ -309,6 +328,7 @@ fn kg_add_query_invalidate_supersede() {
 
     // Idempotent open SPO.
     let again = store
+        .kg()
         .kg_add(rag_mcp::db::kg::KgFactInput {
             subject: "Alice",
             predicate: "works_at",
@@ -323,6 +343,7 @@ fn kg_add_query_invalidate_supersede() {
     assert_eq!(again.id, f1.id);
 
     let hits = store
+        .kg()
         .kg_query(Some("Alice"), Some("works_at"), None, None)
         .expect("query active");
     assert_eq!(hits.len(), 1);
@@ -331,6 +352,7 @@ fn kg_add_query_invalidate_supersede() {
     // Supersede employer at a shared boundary.
     let at = ts(2023, 6, 1);
     let successor = store
+        .kg()
         .kg_supersede(rag_mcp::db::kg::KgSupersedeInput {
             subject: "Alice",
             predicate: "works_at",
@@ -346,6 +368,7 @@ fn kg_add_query_invalidate_supersede() {
     assert_eq!(successor.valid_from, Some(at));
 
     let active = store
+        .kg()
         .kg_query(Some("Alice"), Some("works_at"), None, None)
         .expect("active after supersede");
     assert_eq!(active.len(), 1);
@@ -353,6 +376,7 @@ fn kg_add_query_invalidate_supersede() {
 
     // Point-in-time before boundary sees Acme.
     let before = store
+        .kg()
         .kg_query(Some("Alice"), Some("works_at"), None, Some(ts(2021, 1, 1)))
         .expect("at_time before");
     assert_eq!(before.len(), 1);
@@ -360,6 +384,7 @@ fn kg_add_query_invalidate_supersede() {
 
     // Half-open: at boundary only successor.
     let at_b = store
+        .kg()
         .kg_query(Some("Alice"), Some("works_at"), None, Some(at))
         .expect("at_time boundary");
     assert_eq!(at_b.len(), 1);
@@ -367,6 +392,7 @@ fn kg_add_query_invalidate_supersede() {
 
     // Invalidate a separate fact.
     store
+        .kg()
         .kg_add(rag_mcp::db::kg::KgFactInput {
             subject: "Bob",
             predicate: "lives_in",
@@ -380,6 +406,7 @@ fn kg_add_query_invalidate_supersede() {
         .expect("add bob");
     let ended = ts(2022, 6, 1);
     let inv = store
+        .kg()
         .kg_invalidate("Bob", "lives_in", "Paris", Some(ended))
         .expect("invalidate");
     assert_eq!(inv.len(), 1);
@@ -387,16 +414,18 @@ fn kg_add_query_invalidate_supersede() {
     assert_eq!(inv[0].valid_to, Some(ended));
 
     let bob_active = store
+        .kg()
         .kg_query(Some("Bob"), None, None, None)
         .expect("bob active");
     assert!(bob_active.is_empty());
 
     let bob_mid = store
+        .kg()
         .kg_query(Some("Bob"), None, None, Some(ts(2020, 1, 1)))
         .expect("bob mid");
     assert_eq!(bob_mid.len(), 1);
 
-    let stats = store.kg_stats().expect("kg_stats");
+    let stats = store.kg().kg_stats().expect("kg_stats");
     assert!(stats.total_facts >= 3);
     assert!(stats.active_facts >= 1);
     assert!(stats.invalidated_facts >= 1);
@@ -464,6 +493,7 @@ async fn diary_write_read_and_wake_up() {
     // Pin a wiki page so wake_up surfaces it.
     let now = Utc::now();
     store
+        .documents()
         .upsert_document(&Document {
             id: "pin-1".into(),
             uri: "wiki://pinned".into(),
@@ -483,8 +513,13 @@ async fn diary_write_read_and_wake_up() {
     let status = StatusReport {
         storage_capabilities: rag_mcp::storage::duckdb_capability_names(),
         backend: "duckdb".into(),
-        schema_version: store.schema_version().ok().flatten().unwrap_or(0),
-        fts_ready: store.fts_ready().unwrap_or(false),
+        schema_version: store
+            .maintenance()
+            .schema_version()
+            .ok()
+            .flatten()
+            .unwrap_or(0),
+        fts_ready: store.maintenance().fts_ready().unwrap_or(false),
         document_count: 0,
         chunk_count: 0,
         node_count: 0,
@@ -497,7 +532,7 @@ async fn diary_write_read_and_wake_up() {
         embedding_manifest_match: true,
         embed_provider: "mock".into(),
         embed_model: "mock".into(),
-        wings: store.list_wings().unwrap_or_default(),
+        wings: store.documents().list_wings().unwrap_or_default(),
         embed_dims: DIMS,
         ready_for_search: true,
         ingest_roots_configured: false,
@@ -581,21 +616,26 @@ fn tunnel_create_and_follow() {
     let (_dir, store) = open_temp_store();
 
     store
+        .graph()
         .upsert_graph_node(&graph_node("n1", "A", Some("d1")))
         .expect("node n1");
     store
+        .graph()
         .upsert_graph_node(&graph_node("n2", "B", Some("d2")))
         .expect("node n2");
     store
+        .graph()
         .upsert_graph_node(&graph_node("n3", "C", Some("d3")))
         .expect("node n3");
 
     // Non-tunnel noise must not appear in follow.
     store
+        .graph()
         .link_nodes("n1", "n2", "wikilink", 1.0)
         .expect("wikilink noise");
 
     let t12 = store
+        .graph()
         .create_tunnel("n1", "n2", 1.0, Some("bridge a-b"))
         .expect("create_tunnel n1-n2");
     assert_eq!(t12.rel_type, REL_TUNNEL);
@@ -605,20 +645,25 @@ fn tunnel_create_and_follow() {
 
     // Idempotent undirected update.
     let again = store
+        .graph()
         .create_tunnel("n2", "n1", 0.5, Some("updated"))
         .expect("update tunnel");
     assert_eq!(again.id, t12.id);
     assert!((again.weight - 0.5).abs() < 1e-9);
 
     let _t23 = store
+        .graph()
         .create_tunnel("n2", "n3", 1.0, None)
         .expect("create_tunnel n2-n3");
 
-    let all = store.list_tunnels(None).expect("list all");
+    let all = store.graph().list_tunnels(None).expect("list all");
     assert_eq!(all.len(), 2);
 
     // Depth 1 from n1 reaches n2 only.
-    let hop1 = store.follow_tunnels("n1", 1, 100).expect("follow depth 1");
+    let hop1 = store
+        .graph()
+        .follow_tunnels("n1", 1, 100)
+        .expect("follow depth 1");
     assert_eq!(hop1.nodes.len(), 2);
     assert!(hop1.nodes.iter().any(|n| n.id == "n1"));
     assert!(hop1.nodes.iter().any(|n| n.id == "n2"));
@@ -626,13 +671,16 @@ fn tunnel_create_and_follow() {
     assert!(hop1.edges.iter().all(|e| e.rel_type == REL_TUNNEL));
 
     // Depth 2 reaches n3 along tunnels only.
-    let hop2 = store.follow_tunnels("n1", 2, 100).expect("follow depth 2");
+    let hop2 = store
+        .graph()
+        .follow_tunnels("n1", 2, 100)
+        .expect("follow depth 2");
     assert_eq!(hop2.nodes.len(), 3);
     assert!(hop2.nodes.iter().any(|n| n.id == "n3"));
     assert_eq!(hop2.edges.len(), 2);
     assert!(hop2.edges.iter().all(|e| e.rel_type == REL_TUNNEL));
 
     // Self-loop refused.
-    let loop_err = store.create_tunnel("n1", "n1", 1.0, None);
+    let loop_err = store.graph().create_tunnel("n1", "n1", 1.0, None);
     assert!(loop_err.is_err());
 }

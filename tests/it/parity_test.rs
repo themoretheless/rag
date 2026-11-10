@@ -86,6 +86,7 @@ impl Harness {
         let now = Utc::now();
         self.context
             .store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("text://{id}"),
@@ -106,6 +107,7 @@ impl Harness {
             .remove(0);
         self.context
             .store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("{id}-c0"),
                 document_id: id.into(),
@@ -576,6 +578,7 @@ async fn wiki_create_returns_the_same_fields_on_both_transports() {
         let stored = harness
             .context
             .store
+            .documents()
             .get_document(id)
             .unwrap()
             .expect("stored page");
@@ -671,6 +674,7 @@ async fn wiki_cas_update_and_stale_write_agree_on_revision_and_conflict_code() {
         let stored = harness
             .context
             .store
+            .documents()
             .find_by_uri(&format!("wiki://{slug}"))
             .unwrap()
             .expect("page");

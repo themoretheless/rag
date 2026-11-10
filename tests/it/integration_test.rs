@@ -31,8 +31,9 @@ async fn ingest_text(
     let document_id = Uuid::new_v4().to_string();
 
     // Re-ingest by uri: drop previous doc+chunks if present.
-    if let Some(existing) = store.find_by_uri(uri).expect("find_by_uri") {
+    if let Some(existing) = store.documents().find_by_uri(uri).expect("find_by_uri") {
         store
+            .documents()
             .delete_document(&existing.id)
             .expect("delete previous by uri");
     }
@@ -47,7 +48,10 @@ async fn ingest_text(
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&doc).expect("upsert_document");
+    store
+        .documents()
+        .upsert_document(&doc)
+        .expect("upsert_document");
 
     let chunker = from_config(CHUNK_SIZE, CHUNK_OVERLAP);
     let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, text);
@@ -80,7 +84,10 @@ async fn ingest_text(
     }
 
     let chunk_count = chunks.len();
-    store.insert_chunks(&chunks).expect("insert_chunks");
+    store
+        .chunks()
+        .insert_chunks(&chunks)
+        .expect("insert_chunks");
     (document_id, chunk_count)
 }
 
@@ -90,7 +97,7 @@ async fn ingest_search_delete_stats_roundtrip() {
     let embedder = MockEmbedder::new(DIMS);
 
     // Empty store stats.
-    let (docs0, chunks0, nodes0, edges0) = store.stats().expect("stats empty");
+    let (docs0, chunks0, nodes0, edges0) = store.maintenance().stats().expect("stats empty");
     assert_eq!(docs0, 0);
     assert_eq!(chunks0, 0);
     assert_eq!(nodes0, 0);
@@ -117,7 +124,7 @@ async fn ingest_search_delete_stats_roundtrip() {
     assert!(n_b >= 1, "doc B should produce at least one chunk");
     assert_ne!(id_a, id_b);
 
-    let (docs1, chunks1, _, _) = store.stats().expect("stats after ingest");
+    let (docs1, chunks1, _, _) = store.maintenance().stats().expect("stats after ingest");
     assert_eq!(docs1, 2);
     assert_eq!(chunks1, (n_a + n_b) as u64);
 
@@ -162,17 +169,26 @@ async fn ingest_search_delete_stats_roundtrip() {
     }
 
     // Delete A; B remains.
-    assert!(store.delete_document(&id_a).expect("delete A"));
-    assert!(store.get_document(&id_a).expect("get A").is_none());
+    assert!(store.documents().delete_document(&id_a).expect("delete A"));
     assert!(store
+        .documents()
+        .get_document(&id_a)
+        .expect("get A")
+        .is_none());
+    assert!(store
+        .chunks()
         .list_chunks_for_document(&id_a)
         .expect("chunks A")
         .is_empty());
 
-    let (docs2, chunks2, _, _) = store.stats().expect("stats after delete A");
+    let (docs2, chunks2, _, _) = store.maintenance().stats().expect("stats after delete A");
     assert_eq!(docs2, 1);
     assert_eq!(chunks2, n_b as u64);
-    assert!(store.get_document(&id_b).expect("get B").is_some());
+    assert!(store
+        .documents()
+        .get_document(&id_b)
+        .expect("get B")
+        .is_some());
 
     // Search after delete should not surface A.
     let hits_after = search_chunks(&store, &query_emb, 5, None).expect("search after delete");
@@ -181,11 +197,14 @@ async fn ingest_search_delete_stats_roundtrip() {
     }
 
     // Delete remaining and confirm empty stats.
-    assert!(store.delete_document(&id_b).expect("delete B"));
-    let (docs3, chunks3, _, _) = store.stats().expect("stats empty again");
+    assert!(store.documents().delete_document(&id_b).expect("delete B"));
+    let (docs3, chunks3, _, _) = store.maintenance().stats().expect("stats empty again");
     assert_eq!(docs3, 0);
     assert_eq!(chunks3, 0);
-    assert!(!store.delete_document(&id_b).expect("delete missing"));
+    assert!(!store
+        .documents()
+        .delete_document(&id_b)
+        .expect("delete missing"));
 }
 
 #[tokio::test]
@@ -203,12 +222,12 @@ async fn reingest_same_uri_replaces_content() {
     assert_eq!(n2, 1);
     assert_ne!(id1, id2, "helper assigns a new uuid after delete");
 
-    let listed = store.list_documents().expect("list");
+    let listed = store.documents().list_documents().expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, id2);
     assert_eq!(listed[0].content, "second version beta");
 
-    let (docs, chunks, _, _) = store.stats().expect("stats");
+    let (docs, chunks, _, _) = store.maintenance().stats().expect("stats");
     assert_eq!(docs, 1);
     assert_eq!(chunks, 1);
 }
@@ -259,7 +278,7 @@ async fn multi_chunk_document_search_still_finds_doc() {
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&doc).unwrap();
+    store.documents().upsert_document(&doc).unwrap();
 
     let chunker = from_config(20, 4);
     let pieces = Chunker::chunk(&chunker, text);
@@ -289,7 +308,7 @@ async fn multi_chunk_document_search_still_finds_doc() {
 
     // Use first chunk text as query so score is exact for that chunk.
     let query_text = chunks[0].content.clone();
-    store.insert_chunks(&chunks).unwrap();
+    store.chunks().insert_chunks(&chunks).unwrap();
 
     let query_emb = embedder.embed_one(&query_text);
     let hits = search_chunks(&store, &query_emb, 3, None).unwrap();
@@ -330,15 +349,15 @@ async fn ingest_rust_file_stores_symbol_metadata() {
         updated_at: Utc::now(),
         ..Default::default()
     };
-    store.upsert_document(&doc).unwrap();
+    store.documents().upsert_document(&doc).unwrap();
 
     let chunks = DocumentIndexer::new(&embedder, &test_config())
         .build_chunks(&doc)
         .await
         .expect("build chunks");
-    store.insert_chunks(&chunks).unwrap();
+    store.chunks().insert_chunks(&chunks).unwrap();
 
-    let stored = store.list_chunks_for_document(&doc.id).unwrap();
+    let stored = store.chunks().list_chunks_for_document(&doc.id).unwrap();
     let symbols: Vec<_> = stored
         .iter()
         .map(|c| {
@@ -387,7 +406,7 @@ async fn markdown_expand_parent_returns_section_once() {
         updated_at: Utc::now(),
         ..Default::default()
     };
-    store.upsert_document(&doc).unwrap();
+    store.documents().upsert_document(&doc).unwrap();
 
     // Small windows force several leaf chunks under `# Setup`.
     let config = Config {
@@ -399,9 +418,9 @@ async fn markdown_expand_parent_returns_section_once() {
         .build_chunks(&doc)
         .await
         .expect("build chunks");
-    store.insert_chunks(&chunks).unwrap();
+    store.chunks().insert_chunks(&chunks).unwrap();
 
-    let stored = store.list_chunks_for_document(&doc.id).unwrap();
+    let stored = store.chunks().list_chunks_for_document(&doc.id).unwrap();
     let setup: Vec<_> = stored
         .iter()
         .filter(|c| c.metadata_json.contains("\"Setup\""))

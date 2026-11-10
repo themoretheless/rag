@@ -37,8 +37,9 @@ async fn ingest_text(
     let now = Utc::now();
     let document_id = Uuid::new_v4().to_string();
 
-    if let Some(existing) = store.find_by_uri(uri).expect("find_by_uri") {
+    if let Some(existing) = store.documents().find_by_uri(uri).expect("find_by_uri") {
         store
+            .documents()
             .delete_document(&existing.id)
             .expect("delete previous by uri");
     }
@@ -53,7 +54,10 @@ async fn ingest_text(
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&doc).expect("upsert_document");
+    store
+        .documents()
+        .upsert_document(&doc)
+        .expect("upsert_document");
 
     let chunker = from_config(CHUNK_SIZE, CHUNK_OVERLAP);
     let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, text);
@@ -82,7 +86,10 @@ async fn ingest_text(
     }
 
     let chunk_count = chunks.len();
-    store.insert_chunks(&chunks).expect("insert_chunks");
+    store
+        .chunks()
+        .insert_chunks(&chunks)
+        .expect("insert_chunks");
     (document_id, chunk_count)
 }
 

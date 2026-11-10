@@ -59,7 +59,10 @@ async fn seed_fixture_corpus(store: &Store, embedder: &Arc<dyn EmbeddingProvider
         room: Some("rag".into()),
         ..Default::default()
     };
-    store.upsert_document(&raw).expect("upsert unique raw");
+    store
+        .documents()
+        .upsert_document(&raw)
+        .expect("upsert unique raw");
     insert_chunk(store, &mock, &raw.id, raw_body, 0).await;
 
     // Exact-duplicate pair (same content_hash, different ids/uris).
@@ -84,7 +87,7 @@ async fn seed_fixture_corpus(store: &Store, embedder: &Arc<dyn EmbeddingProvider
             room: Some("dups".into()),
             ..Default::default()
         };
-        store.upsert_document(&d).expect("upsert twin");
+        store.documents().upsert_document(&d).expect("upsert twin");
         insert_chunk(store, &mock, id, twin_body, 0).await;
     }
 
@@ -105,11 +108,15 @@ async fn seed_fixture_corpus(store: &Store, embedder: &Arc<dyn EmbeddingProvider
         room: Some("catalog".into()),
         ..Default::default()
     };
-    store.upsert_document(&wiki).expect("upsert wiki");
+    store
+        .documents()
+        .upsert_document(&wiki)
+        .expect("upsert wiki");
     insert_chunk(store, &mock, &wiki.id, wiki_body, 0).await;
 
     // Unresolved stub referenced by the wiki body text (graph stub only).
     store
+        .graph()
         .upsert_graph_node(&GraphNode {
             id: "stub-missing-page".into(),
             kind: "stub".into(),
@@ -123,6 +130,7 @@ async fn seed_fixture_corpus(store: &Store, embedder: &Arc<dyn EmbeddingProvider
 
     // Align embedding manifest with mock config so doctor.embed_ok stays true.
     let _ = store
+        .embedding_manifest()
         .write_embedding_manifest_from_config(&test_config(store.path().to_path_buf()))
         .expect("embedding manifest");
 
@@ -162,6 +170,7 @@ async fn insert_chunk(
         .expect("one vector");
     assert_eq!(emb.len(), DIMS);
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: format!("{document_id}-c{chunk_index}"),
             document_id: document_id.into(),
@@ -241,7 +250,7 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
         analysis.issues
     );
 
-    let ops_after_analyze = store.list_ops_log(50).expect("ops_log");
+    let ops_after_analyze = store.ops_log().list_ops_log(50).expect("ops_log");
     assert!(
         ops_after_analyze.iter().any(|o| o.op == "analyze_corpus"),
         "analyze_corpus should append ops_log"
@@ -297,7 +306,10 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
     );
 
     log_plan(&store, &plan).expect("log_plan");
-    let ops_after_plan = store.list_ops_log(50).expect("ops_log after plan");
+    let ops_after_plan = store
+        .ops_log()
+        .list_ops_log(50)
+        .expect("ops_log after plan");
     assert!(
         ops_after_plan.iter().any(|o| o.op == "plan_maintenance"),
         "log_plan should append plan_maintenance"
@@ -305,14 +317,16 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
 
     // Snapshot doc meta before dry_run apply so we can prove no mutation.
     let twin_a_before = store
+        .documents()
         .get_document(&ids.twin_a)
         .expect("get twin_a")
         .expect("twin_a exists");
     let twin_b_before = store
+        .documents()
         .get_document(&ids.twin_b)
         .expect("get twin_b")
         .expect("twin_b exists");
-    let docs_before_apply = store.list_documents().expect("list docs").len();
+    let docs_before_apply = store.documents().list_documents().expect("list docs").len();
 
     // --- 3. apply_maintenance_plan dry_run (default safety) ---
     let apply_opts = ApplyPlanOptions {
@@ -341,15 +355,21 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
     );
     // Dry-run must not delete / merge twins.
     assert_eq!(
-        store.list_documents().expect("list after dry_run").len(),
+        store
+            .documents()
+            .list_documents()
+            .expect("list after dry_run")
+            .len(),
         docs_before_apply,
         "dry_run must not change document count"
     );
     let twin_a_after = store
+        .documents()
         .get_document(&ids.twin_a)
         .expect("get twin_a after")
         .expect("twin_a still present after dry_run");
     let twin_b_after = store
+        .documents()
         .get_document(&ids.twin_b)
         .expect("get twin_b after")
         .expect("twin_b still present after dry_run");
@@ -367,7 +387,7 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
         );
     }
 
-    let ops_after_apply = store.list_ops_log(100).expect("ops after apply");
+    let ops_after_apply = store.ops_log().list_ops_log(100).expect("ops after apply");
     assert!(
         ops_after_apply
             .iter()
@@ -415,15 +435,23 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
     );
 
     // Fixture docs still present after L0 (L0 does not merge/delete).
-    assert!(store.get_document(&ids.raw_unique).unwrap().is_some());
-    assert!(store.get_document(&ids.wiki).unwrap().is_some());
+    assert!(store
+        .documents()
+        .get_document(&ids.raw_unique)
+        .unwrap()
+        .is_some());
+    assert!(store.documents().get_document(&ids.wiki).unwrap().is_some());
     assert_eq!(
-        store.list_documents().expect("list after L0").len(),
+        store
+            .documents()
+            .list_documents()
+            .expect("list after L0")
+            .len(),
         docs_before_apply
     );
 
     // --- 5. vacuum_store ---
-    let vacuum = store.vacuum_store().expect("vacuum_store");
+    let vacuum = store.maintenance().vacuum_store().expect("vacuum_store");
     assert!(vacuum.checkpointed);
     assert_eq!(vacuum.db_path, store.path().display().to_string());
     // Size fields are best-effort; when present they should be finite.
@@ -431,7 +459,7 @@ async fn maintain_loop_analyze_plan_dry_run_compress_vacuum() {
         assert!(b > 0 || a > 0 || vacuum.bytes_delta == Some(0));
     }
 
-    let ops_final = store.list_ops_log(200).expect("final ops_log");
+    let ops_final = store.ops_log().list_ops_log(200).expect("final ops_log");
     let ops: Vec<&str> = ops_final.iter().map(|o| o.op.as_str()).collect();
     assert!(
         ops.contains(&"analyze_corpus"),
@@ -489,6 +517,7 @@ async fn maintain_loop_empty_corpus_is_safe() {
     let config = test_config(store.path().to_path_buf());
     let embedder = mock_embedder();
     let _ = store
+        .embedding_manifest()
         .write_embedding_manifest_from_config(&config)
         .expect("manifest");
 
@@ -534,6 +563,6 @@ async fn maintain_loop_empty_corpus_is_safe() {
     let cr = maintain_compress(&store, &config, &copts).expect("L0 empty");
     assert!(cr.l0.as_ref().unwrap().checkpointed);
 
-    let vac = store.vacuum_store().expect("vacuum empty");
+    let vac = store.maintenance().vacuum_store().expect("vacuum empty");
     assert!(vac.checkpointed);
 }

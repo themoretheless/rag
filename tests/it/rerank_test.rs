@@ -33,7 +33,10 @@ async fn ingest_text(store: &Store, embedder: &MockEmbedder, text: &str, title: 
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&doc).expect("upsert_document");
+    store
+        .documents()
+        .upsert_document(&doc)
+        .expect("upsert_document");
 
     let chunker = from_config(2_000, 0);
     let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, text);
@@ -55,7 +58,10 @@ async fn ingest_text(store: &Store, embedder: &MockEmbedder, text: &str, title: 
             metadata_json: "{}".into(),
         })
         .collect();
-    store.insert_chunks(&chunks).expect("insert_chunks");
+    store
+        .chunks()
+        .insert_chunks(&chunks)
+        .expect("insert_chunks");
 }
 
 fn search_command(query: &str, rerank: Option<bool>) -> SearchCommand {

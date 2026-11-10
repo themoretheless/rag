@@ -81,7 +81,10 @@ async fn ingest_text(store: &Store, embedder: &MockEmbedder, text: &str, title: 
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&doc).expect("upsert_document");
+    store
+        .documents()
+        .upsert_document(&doc)
+        .expect("upsert_document");
     let chunker = from_config(2_000, 0);
     let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, text);
     let texts: Vec<String> = pieces.iter().map(|(c, _, _)| c.clone()).collect();
@@ -105,7 +108,10 @@ async fn ingest_text(store: &Store, embedder: &MockEmbedder, text: &str, title: 
             chunk
         })
         .collect();
-    store.insert_chunks(&chunks).expect("insert_chunks");
+    store
+        .chunks()
+        .insert_chunks(&chunks)
+        .expect("insert_chunks");
 }
 
 fn command(query: &str, mode: &str, rewrite: bool, hyde: bool) -> SearchCommand {
@@ -283,7 +289,10 @@ async fn hyde_adds_dense_leg_in_hybrid_mode() {
     let (_dir, store) = open_temp_store();
     let embedder = MockEmbedder::new(DIMS);
     let config = test_config(&store);
-    store.ensure_embedding_manifest(&config).expect("manifest");
+    store
+        .embedding_manifest()
+        .ensure_embedding_manifest(&config)
+        .expect("manifest");
     ingest_text(
         &store,
         &embedder,
@@ -319,7 +328,10 @@ async fn hyde_llm_error_falls_back_to_plain_search() {
     let (_dir, store) = open_temp_store();
     let embedder = MockEmbedder::new(DIMS);
     let config = test_config(&store);
-    store.ensure_embedding_manifest(&config).expect("manifest");
+    store
+        .embedding_manifest()
+        .ensure_embedding_manifest(&config)
+        .expect("manifest");
     ingest_text(
         &store,
         &embedder,
@@ -393,7 +405,10 @@ async fn rewrite_and_hyde_combine_as_extra_fused_legs() {
     let (_dir, store) = open_temp_store();
     let embedder = MockEmbedder::new(DIMS);
     let config = test_config(&store);
-    store.ensure_embedding_manifest(&config).expect("manifest");
+    store
+        .embedding_manifest()
+        .ensure_embedding_manifest(&config)
+        .expect("manifest");
     ingest_text(
         &store,
         &embedder,
