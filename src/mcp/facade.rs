@@ -53,11 +53,6 @@ pub struct RagServer {
     analysis_session: String,
 }
 
-pub(super) struct FtsFinalizationOutcome {
-    pub(super) guard: Option<CorpusMutationGuard>,
-    pub(super) error: Option<String>,
-}
-
 /// Keep the exclusive corpus lane owned by detached blocking work.
 ///
 /// Dropping the async waiter detaches `spawn_blocking`; moving the guard into
@@ -81,6 +76,29 @@ fn ensure_fts_for_finalization(store: &Store, stemmer: &str) -> Result<(), AppEr
 
     store.maintenance().ensure_fts(stemmer)?;
     Ok(())
+}
+
+/// Refresh the lexical index after a committed mutation, on the current
+/// (blocking) thread. Returns the recorded failure message, if any.
+fn finalize_fts_blocking(store: &Store, stemmer: &str, operation: &'static str) -> Option<String> {
+    let refresh_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ensure_fts_for_finalization(store, stemmer)
+    }))
+    .unwrap_or_else(|_| Err(AppError::fts("corpus FTS finalization panicked")));
+    refresh_result.err().map(|error| {
+        store
+            .corpus_lane()
+            .record_fts_finalization_failure(operation, true, &error.to_string())
+            .message
+    })
+}
+
+/// Result of [`RagServer::guarded_mutation`]: the mutation's value, the FTS
+/// finalization error (if a refresh ran and failed) and the guard handed back.
+pub(super) struct GuardedMutation<T> {
+    pub(super) value: T,
+    pub(super) fts_error: Option<String>,
+    pub(super) guard: CorpusMutationGuard,
 }
 
 impl RagServer {
@@ -319,53 +337,43 @@ impl RagServer {
         self.ingest_use_case().ingest(command).await
     }
 
-    /// Refresh the corpus-wide lexical index without blocking a Tokio worker.
+    /// Run a guarded corpus mutation and its FTS refresh in one blocking task.
     ///
-    /// The guard moves into the blocking task so cancellation of the request
-    /// waiter cannot release the corpus lane before detached DuckDB work ends.
-    pub(super) async fn refresh_fts_after_mutation(
+    /// The guard moves into the task, so dropping the request future neither
+    /// releases the corpus lane early nor splits the mutation from its index
+    /// refresh: both steps run (or neither) under one lease. `needs_refresh`
+    /// decides from the mutation's value whether the lexical index changed.
+    pub(super) async fn guarded_mutation<T, W, R>(
         &self,
         operation: &'static str,
         mutation_guard: CorpusMutationGuard,
-    ) -> FtsFinalizationOutcome {
+        work: W,
+        needs_refresh: R,
+    ) -> Result<GuardedMutation<T>, AppError>
+    where
+        T: Send + 'static,
+        W: FnOnce(&Store) -> Result<T, AppError> + Send + 'static,
+        R: FnOnce(&T) -> bool + Send + 'static,
+    {
         let store = self.store.clone();
         let stemmer = self.config.fts_stemmer.clone();
-        match retain_mutation_guard_while_blocking(mutation_guard, move || {
-            let refresh_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                ensure_fts_for_finalization(&store, &stemmer)
-            }))
-            .unwrap_or_else(|_| Err(AppError::fts("corpus FTS finalization panicked")));
-            refresh_result.map_err(|error| {
-                store
-                    .corpus_lane()
-                    .record_fts_finalization_failure(operation, true, &error.to_string())
-                    .message
-            })
+        let (guard, result) = retain_mutation_guard_while_blocking(mutation_guard, move || {
+            let value = work(&store)?;
+            let fts_error = if needs_refresh(&value) {
+                finalize_fts_blocking(&store, &stemmer, operation)
+            } else {
+                None
+            };
+            Ok::<_, AppError>((value, fts_error))
         })
         .await
-        {
-            Ok((guard, Ok(_))) => FtsFinalizationOutcome {
-                guard: Some(guard),
-                error: None,
-            },
-            Ok((guard, Err(error))) => FtsFinalizationOutcome {
-                guard: Some(guard),
-                error: Some(error),
-            },
-            Err(error) => FtsFinalizationOutcome {
-                guard: None,
-                error: Some(
-                    self.store
-                        .corpus_lane()
-                        .record_fts_finalization_failure(
-                            operation,
-                            true,
-                            &format!("FTS refresh task failed: {error}"),
-                        )
-                        .message,
-                ),
-            },
-        }
+        .map_err(|error| AppError::db(format!("{operation} task failed: {error}")))?;
+        let (value, fts_error) = result?;
+        Ok(GuardedMutation {
+            value,
+            fts_error,
+            guard,
+        })
     }
 
     /// Probe local chat LLM and report embedding config (no corpus mutation).

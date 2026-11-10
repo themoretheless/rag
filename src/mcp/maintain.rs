@@ -10,6 +10,7 @@ use super::tools::{
     DoctorRepairParams, MaintainCompressParams, MaintainOrganizeParams, MaintainRefreshParams,
     PlanMaintenanceParams,
 };
+use crate::db::Store;
 use crate::diagnostics::DiagnosticsService;
 use crate::error::AppError;
 use crate::maintain::{
@@ -33,7 +34,7 @@ impl RagServer {
         Parameters(params): Parameters<CleanupSourceDuplicatesParams>,
     ) -> Result<CallToolResult, McpError> {
         let dry_run = params.dry_run.unwrap_or(true);
-        let mut mutation_guard = if dry_run {
+        let mutation_guard = if dry_run {
             None
         } else {
             Some(
@@ -50,30 +51,29 @@ impl RagServer {
             .max(1)
             .min(configured_cap);
         let confirm = params.confirm.unwrap_or(false);
-        let mut report = self
-            .blocking("cleanup_source_duplicates", move |store| {
-                store
-                    .maintenance()
-                    .cleanup_source_duplicates(dry_run, confirm, max_candidates)
+        let cleanup = move |store: &Store| {
+            store
+                .maintenance()
+                .cleanup_source_duplicates(dry_run, confirm, max_candidates)
+        };
+        let Some(guard) = mutation_guard else {
+            let report = self.blocking("cleanup_source_duplicates", cleanup).await?;
+            return Self::json_result(&report);
+        };
+        // Cleanup and its FTS refresh run in one blocking task that owns the
+        // lane, so the first search after an applied cleanup does not pay the
+        // full BM25 rebuild and cancellation cannot release the lane early.
+        let outcome = self
+            .guarded_mutation("cleanup_source_duplicates", guard, cleanup, |report| {
+                report.applied
             })
             .await?;
-        if report.applied {
-            // Keep the exclusive source-mutation lane until the derived lexical
-            // index covers the committed deletions. Otherwise the first user
-            // search after a successful cleanup pays the full BM25 rebuild.
-            let guard = mutation_guard
-                .take()
-                .expect("applied duplicate cleanup owns the mutation lane");
-            let outcome = self
-                .refresh_fts_after_mutation("cleanup_source_duplicates", guard)
-                .await;
-            if let Some(error) = outcome.error {
-                report.success = false;
-                report.errors.push(error);
-            }
-            mutation_guard = outcome.guard;
+        let _mutation_guard = outcome.guard;
+        let mut report = outcome.value;
+        if let Some(error) = outcome.fts_error {
+            report.success = false;
+            report.errors.push(error);
         }
-        let _mutation_guard = mutation_guard;
         Self::json_result(&report)
     }
 

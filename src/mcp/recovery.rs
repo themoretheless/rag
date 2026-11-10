@@ -7,7 +7,6 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
 
-use super::facade::retain_mutation_guard_while_blocking;
 use super::facade::RagServer;
 use super::tools::{BackupDbParams, ExportBundleParams, ExportVaultParams, ImportBundleParams};
 use crate::config::Config;
@@ -151,7 +150,7 @@ impl RagServer {
         })
         .await?;
         let dry_run = params.dry_run.unwrap_or(true);
-        let mut mutation_guard = if dry_run {
+        let mutation_guard = if dry_run {
             None
         } else {
             Some(
@@ -174,57 +173,33 @@ impl RagServer {
             embeddings_reembed_planned,
             embeddings_reembedded,
         } = prepared;
-        let store = self.store.clone();
         let import_path = path.clone();
-        let mut report = if let Some(guard) = mutation_guard.take() {
-            let (guard, result) = retain_mutation_guard_while_blocking(guard, move || {
-                store.recovery().import_recovery_bundle(
-                    &bundle,
-                    policy,
-                    dry_run,
-                    &import_path,
-                    format,
-                )
-            })
-            .await
-            .map_err(|error| {
-                McpError::from(AppError::db(format!("import_bundle task failed: {error}")))
-            })?;
-            mutation_guard = Some(guard);
-            result?
+        let import = move |store: &crate::db::Store| {
+            store
+                .recovery()
+                .import_recovery_bundle(&bundle, policy, dry_run, &import_path, format)
+        };
+        // Import and FTS refresh share one blocking task that owns the lane.
+        let (mut report, _mutation_guard, fts_error) = if let Some(guard) = mutation_guard {
+            let outcome = self
+                .guarded_mutation("import_bundle", guard, import, |report| {
+                    report.success
+                        && !report.dry_run
+                        && (report.documents_overwritten > 0 || report.chunks_inserted > 0)
+                })
+                .await?;
+            (outcome.value, Some(outcome.guard), outcome.fts_error)
         } else {
-            run_blocking("import_bundle", move || {
-                store.recovery().import_recovery_bundle(
-                    &bundle,
-                    policy,
-                    dry_run,
-                    &import_path,
-                    format,
-                )
-            })
-            .await?
+            (self.blocking("import_bundle", import).await?, None, None)
         };
         report.legacy_bundle_version = legacy_bundle_version;
         report.legacy_reembed_requested = params.reembed_legacy.unwrap_or(false);
         report.embeddings_reembed_planned = embeddings_reembed_planned;
         report.embeddings_reembedded = embeddings_reembedded;
-        if report.success
-            && !report.dry_run
-            && (report.documents_overwritten > 0 || report.chunks_inserted > 0)
-        {
-            let guard = mutation_guard
-                .take()
-                .expect("non-dry bundle import owns the mutation lane");
-            let outcome = self
-                .refresh_fts_after_mutation("import_bundle", guard)
-                .await;
-            mutation_guard = outcome.guard;
-            if let Some(error) = outcome.error {
-                report.success = false;
-                report.errors.push(error);
-            }
+        if let Some(error) = fts_error {
+            report.success = false;
+            report.errors.push(error);
         }
-        let _mutation_guard = mutation_guard;
         Self::json_result(&report)
     }
 }

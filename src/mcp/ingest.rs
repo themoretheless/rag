@@ -229,33 +229,26 @@ impl RagServer {
             }));
         }
 
-        let mut mutation_guard = Some(
-            self.store
-                .corpus_lane()
-                .try_corpus_mutation_guard("source deletion")?,
-        );
+        let mutation_guard = self
+            .store
+            .corpus_lane()
+            .try_corpus_mutation_guard("source deletion")?;
         let owned_source = source_file.to_string();
-        let document_ids = self
-            .blocking("delete_by_source", move |store| {
-                store.documents().delete_by_source_ids(&owned_source)
-            })
+        // Delete and FTS refresh share one blocking task that owns the lane:
+        // a cancelled request cannot release it or skip the refresh.
+        let outcome = self
+            .guarded_mutation(
+                "delete_by_source",
+                mutation_guard,
+                move |store| store.documents().delete_by_source_ids(&owned_source),
+                |ids: &Vec<String>| !ids.is_empty(),
+            )
             .await?;
+        let _mutation_guard = outcome.guard;
+        let document_ids = outcome.value;
         let deleted = document_ids.len() as u64;
         let match_count = deleted;
-        let mut finalization_errors = Vec::new();
-        if deleted > 0 {
-            let guard = mutation_guard
-                .take()
-                .expect("non-dry source deletion owns the mutation lane");
-            let outcome = self
-                .refresh_fts_after_mutation("delete_by_source", guard)
-                .await;
-            mutation_guard = outcome.guard;
-            if let Some(error) = outcome.error {
-                finalization_errors.push(error);
-            }
-        }
-        let _mutation_guard = mutation_guard;
+        let finalization_errors: Vec<String> = outcome.fts_error.into_iter().collect();
         Self::json_result(&serde_json::json!({
             "success": finalization_errors.is_empty(),
             "dry_run": false,

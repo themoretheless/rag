@@ -562,25 +562,26 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ReadIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        let entries = self
-            .blocking("read_index", |store| store.wiki_index().list_wiki_index())
-            .await?;
         let format = params
             .format
             .as_deref()
             .unwrap_or("json")
             .trim()
             .to_ascii_lowercase();
-        let markdown = if format == "markdown" || format == "md" {
-            Some(
-                self.blocking("read_index", |store| {
-                    store.wiki_index().render_wiki_index_markdown()
-                })
-                .await?,
-            )
-        } else {
-            None
-        };
+        let want_markdown = format == "markdown" || format == "md";
+        // Catalog and markdown come from one blocking task so both describe
+        // the same catalog state.
+        let (entries, markdown) = self
+            .blocking("read_index", move |store| {
+                let entries = store.wiki_index().list_wiki_index()?;
+                let markdown = if want_markdown {
+                    Some(store.wiki_index().render_wiki_index_markdown()?)
+                } else {
+                    None
+                };
+                Ok((entries, markdown))
+            })
+            .await?;
         let count = entries.len();
         Self::json_result(&ReadIndexResult {
             entries,
@@ -637,14 +638,11 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<RebuildIndexParams>,
     ) -> Result<CallToolResult, McpError> {
+        // Rebuild and its ops-log row share one blocking task: a cancelled
+        // request cannot commit the rebuild and skip the log entry.
         let count = self
             .blocking("rebuild_index", |store| {
-                store.wiki_index().rebuild_wiki_index_from_docs()
-            })
-            .await?;
-
-        let _ = self
-            .blocking("rebuild_index log", move |store| {
+                let count = store.wiki_index().rebuild_wiki_index_from_docs()?;
                 store.ops_log().append(
                     &OpsLogEntry::new(
                         "index_rebuild",
@@ -653,7 +651,8 @@ impl RagServer {
                     )
                     .entity(None, "wiki_index")
                     .payload(serde_json::json!({ "count": count }).to_string()),
-                )
+                )?;
+                Ok(count)
             })
             .await?;
 

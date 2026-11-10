@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use rmcp::handler::server::wrapper::Parameters;
 use chrono::Utc;
 
 use super::*;
@@ -2179,4 +2180,79 @@ fn kg_store_roundtrip_via_server() {
     assert_eq!(stats.total_facts, 2);
     assert_eq!(stats.active_facts, 1);
     assert_eq!(stats.superseded_facts, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropped_guarded_mutation_keeps_the_lane_until_work_and_fts_finish() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("guarded-mutation.duckdb");
+    let store = Store::open(&path).expect("open");
+    let dims = 8usize;
+    let config = test_config(path, Vec::new(), dims);
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
+
+    let guard = server
+        .store
+        .corpus_lane()
+        .try_corpus_mutation_guard("test mutation")
+        .expect("initial mutation guard");
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let waiter_server = server.clone();
+    let waiter = tokio::spawn(async move {
+        waiter_server
+            .guarded_mutation(
+                "test mutation",
+                guard,
+                move |_store| {
+                    let _ = started_tx.send(());
+                    release_rx.recv().expect("release mutation");
+                    Ok(())
+                },
+                move |_| {
+                    // The refresh decision runs after the mutation, inside
+                    // the same blocking task and under the same guard.
+                    let _ = done_tx.send(());
+                    false
+                },
+            )
+            .await
+            .map(|_| ())
+    });
+    started_rx.await.expect("mutation started");
+    // Cancel the request future while the blocking mutation runs.
+    waiter.abort();
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    assert!(
+        matches!(
+            server
+                .store
+                .corpus_lane()
+                .try_corpus_mutation_guard("second mutation"),
+            Err(AppError::Busy(_))
+        ),
+        "a dropped request must not release the lane while its mutation runs"
+    );
+
+    release_tx.send(()).expect("release mutation");
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the post-mutation step still ran after cancellation");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(guard) = server
+                .store
+                .corpus_lane()
+                .try_corpus_mutation_guard("after mutation")
+            {
+                drop(guard);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("lane released once the blocking work finished");
 }
