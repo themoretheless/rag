@@ -649,8 +649,14 @@ fn summarize_tool_result(result: &CallToolResult, analysis: bool) -> ToolResultS
     // content only when a non-text item comes first.
     let evidence = if !analysis {
         None
-    } else if result.content.first().is_some_and(|c| c.as_text().is_some()) {
-        parsed.as_ref().and_then(crate::analysis_tasks::evidence_count)
+    } else if result
+        .content
+        .first()
+        .is_some_and(|c| c.as_text().is_some())
+    {
+        parsed
+            .as_ref()
+            .and_then(crate::analysis_tasks::evidence_count)
     } else {
         result
             .content
