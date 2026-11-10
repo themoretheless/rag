@@ -123,6 +123,15 @@ pub struct PackContextParams {
     /// Chunks on each side for neighbor expansion (default 1).
     #[serde(default)]
     pub neighbor_chunks: Option<u32>,
+    /// Return a local retrieval `trace` with spans and source versions.
+    #[serde(default)]
+    pub include_trace: Option<bool>,
+    /// With a trace, also persist it into `eval_traces`.
+    #[serde(default)]
+    pub persist_trace: Option<bool>,
+    /// A prior search trace to extend (implies `include_trace`).
+    #[serde(default)]
+    pub prior_trace: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

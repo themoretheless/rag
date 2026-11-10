@@ -15,6 +15,7 @@
 //! | [`maintain`] | Corpus analyze / plan whitelist / organize / refresh (ops_log) |
 
 pub mod access;
+pub mod app;
 pub mod activity;
 pub mod analysis_tasks;
 pub mod bootstrap;

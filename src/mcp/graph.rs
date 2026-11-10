@@ -161,7 +161,8 @@ impl RagServer {
 
     #[tool(
         name = "get_neighbors",
-        description = "Local undirected BFS subgraph around a node (Obsidian local graph). \
+        description = "Local undirected BFS subgraph around a seed (node_id or seed: node id, \
+        document id, node URI or exact label; depth 1..=3; unknown seed is not found). \
         Default edges are the PKB literary set (wikilink, related, and the hand-authored wiki \
         relations such as реализует/проверяет); pass include_tags=true to also walk tag hubs, or \
         rel_types to name the relations you want (tunnel, mentions, derived_from, depends_on are \
@@ -171,21 +172,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<GetNeighborsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let depth = params.depth.unwrap_or(1);
-            let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
-            let rel_types = match params.rel_types.as_deref() {
-                Some(requested) if !requested.is_empty() => requested.to_vec(),
-                _ => pkb_rel_types(params.include_tags.unwrap_or(false)),
-            };
-            let view = self.store.graph().neighbors_filtered(
-                &params.node_id,
-                depth,
-                max_nodes,
-                Some(&rel_types),
-            )?;
-            Self::json_result(&view)
-        })
+        let view = self
+            .graph_use_case()
+            .neighbors(crate::app::NeighborsCommand {
+                seed: params.node_id,
+                depth: params.depth,
+                max_nodes: params.max_nodes,
+                rel_types: params.rel_types,
+                include_tags: params.include_tags,
+                project: params.project,
+            })
+            .await?;
+        Self::json_result(&view)
     }
 
     #[tool(

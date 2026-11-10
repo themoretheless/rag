@@ -150,6 +150,20 @@ impl HttpState {
         }
     }
 
+    /// Retrieval use cases over this state's store, embedder and config.
+    pub(crate) fn search_use_case(&self) -> crate::app::SearchUseCase {
+        crate::app::SearchUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            Arc::new(self.config.clone()),
+        )
+    }
+
+    /// Graph read use cases over this state's store.
+    pub(crate) fn graph_use_case(&self) -> crate::app::GraphUseCase {
+        crate::app::GraphUseCase::new(self.store.clone())
+    }
+
     /// Attach the posture parsed from the listener's configured tokens.
     pub(crate) fn with_auth_posture(mut self, auth: auth::AuthPosture) -> Self {
         self.auth = auth;

@@ -148,3 +148,37 @@ order and `missing`; wiki create fields, revision 1 / `W/"1"`, CAS success,
 stale write leaves the page unchanged, etag form of If-Match; neighbors default
 depth 1 and the same nodes/edges; wire codes `INVALID_REQUEST`, `CONFLICT`,
 `NOT_FOUND` on both sides.
+
+## Stage 4 intentional changes
+
+Envelopes stay transport-specific and are not drift: MCP returns the bare
+use-case result (JSON-RPC error with `data.code` on failure); HTTP wraps it as
+`{ok: true, …}` (`{ok: false, code, error}` with a status on failure). The same
+holds for drifts 1, 2, 4 and 6 above and for the `multi_get` envelope key
+(`documents` on MCP, `items` on HTTP). Error message text follows the same
+convention (drift 3): MCP sends the bare message, HTTP the `AppError` display
+form with its variant prefix.
+
+1. **Error text (Stage 3, recorded here).** About 61 HTTP validation sites now
+   answer `invalid request: …` or `timeout: …` instead of `config error: …`.
+   Status codes and wire codes (`INVALID_REQUEST`) are unchanged.
+2. **`get_neighbors` / `GET /v1/neighbors` (drifts 11–15)**, one rule in
+   `app::GraphUseCase::neighbors`:
+   - `node_id` and `seed` are aliases on both edges; MCP also accepts
+     `project` (alias `wing`), HTTP also accepts `rel_types` (comma-separated).
+   - Depth cap is 3 on both (MCP was 5).
+   - The seed resolves as node id, document id, node URI, then exact label on
+     both (MCP took a node id only).
+   - Unknown seed → `NOT_FOUND` on both (MCP returned an empty view).
+   - Blank seed → `INVALID_REQUEST` on both (MCP returned an empty view).
+   - Without `rel_types` both walk the PKB node-kind/relation policy of the UI
+     graph (MCP walked relations only); with `rel_types` both follow exactly
+     those relations.
+3. **`multi_get` document shape (drift 8).** One item shape on both:
+   `{document: <full Document row>, chunks, chunks_total, chunks_truncated}`
+   plus the earlier flat MCP fields `id, uri, title, content, metadata_json,
+   created_at, updated_at` (and optional `source_file`,
+   `source_download_path`), kept for MCP clients that read them. HTTP items
+   gain those flat fields; MCP items gain `document`.
+4. **`pack_context` (drift 16).** MCP accepts `include_trace`,
+   `persist_trace` and `prior_trace` like HTTP and returns `trace` when asked.

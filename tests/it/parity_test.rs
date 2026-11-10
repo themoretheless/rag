@@ -395,8 +395,8 @@ async fn pack_context_packs_identically_with_an_extra_ok_on_http() {
             .await;
         assert_eq!(status, StatusCode::OK);
 
-        // DRIFT: envelope. HTTP adds `ok: true` (and `trace` on request); the
-        // MCP result has no `ok`.
+        // Transport envelope (not drift): HTTP adds `ok: true`; the MCP
+        // result is bare. `trace` appears on both only when requested.
         let shared = [
             "hits",
             "total_tokens",
@@ -432,12 +432,52 @@ async fn pack_context_packs_identically_with_an_extra_ok_on_http() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pack_context_returns_a_trace_on_request_on_both_transports() {
+    let harness = Harness::new();
+    harness.seed_corpus().await;
+    let (_, found) = harness
+        .http(
+            "POST",
+            "/v1/search",
+            Some(json!({ "query": "orchard survey", "mode": "lex", "top_k": 2 })),
+        )
+        .await;
+    let hits: Vec<Value> = found["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|hit| {
+            json!({
+                "chunk_id": hit["chunk_id"],
+                "document_id": hit["document_id"],
+                "document_title": hit["document_title"],
+                "document_uri": hit["document_uri"],
+                "chunk_index": hit["chunk_index"],
+                "content": hit["content"],
+                "score": hit["score"],
+            })
+        })
+        .collect();
+    let arguments = json!({ "hits": hits, "include_trace": true });
+    // Stage 4 aligned: `include_trace` / `persist_trace` / `prior_trace` on both.
+    let mcp = harness.mcp("pack_context", arguments.clone()).await.ok();
+    let (status, http) = harness
+        .http("POST", "/v1/pack-context", Some(arguments))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    for reply in [&mcp, &http] {
+        assert_eq!(reply["trace"]["path"], json!("search_pack"), "{reply}");
+        assert_eq!(reply["trace"]["spans"][0]["name"], json!("pack_context"));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // multi_get
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn multi_get_agrees_on_order_and_missing_but_not_on_document_shape() {
+async fn multi_get_agrees_on_order_missing_and_document_shape() {
     let harness = Harness::new();
     harness.seed_corpus().await;
     let arguments = json!({
@@ -449,37 +489,33 @@ async fn multi_get_agrees_on_order_and_missing_but_not_on_document_shape() {
     let (status, http) = harness.http("POST", "/v1/multi-get", Some(arguments)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // DRIFT: envelope. MCP `{documents, missing}`; HTTP `{ok, items, missing}`.
+    // Transport envelope (not drift): MCP `{documents, missing}`; HTTP
+    // `{ok, items, missing}`.
     assert_eq!(keys(&mcp), strings(&["documents", "missing"]));
     assert_eq!(keys(&http), strings(&["ok", "items", "missing"]));
 
-    // DRIFT: document shape. MCP returns a flat 7-field `DocumentDetail` view
-    // with the chunk paging fields beside it. HTTP nests the whole `Document`
-    // row under `document` and keeps the chunk fields on the item.
+    // Stage 4 aligned: one item shape on both transports. The full row sits
+    // under `document`; the earlier flat MCP fields stay beside it.
     let (mcp_item, http_item) = (&mcp["documents"][0], &http["items"][0]);
-    assert_eq!(
-        keys(mcp_item),
-        strings(&[
-            "id",
-            "uri",
-            "title",
-            "content",
-            "metadata_json",
-            "created_at",
-            "updated_at",
-            "chunks",
-            "chunks_total",
-            "chunks_truncated",
-        ])
-    );
-    assert_eq!(
-        keys(http_item),
-        strings(&["document", "chunks", "chunks_total", "chunks_truncated"])
-    );
+    let item_keys = strings(&[
+        "document",
+        "id",
+        "uri",
+        "title",
+        "content",
+        "metadata_json",
+        "created_at",
+        "updated_at",
+        "chunks",
+        "chunks_total",
+        "chunks_truncated",
+    ]);
+    assert_eq!(keys(mcp_item), item_keys);
+    assert_eq!(keys(http_item), item_keys);
+    assert_eq!(mcp_item, http_item);
     let http_doc = &http_item["document"];
-    for http_only in ["layer", "kind", "status", "revision"] {
-        assert!(http_doc.get(http_only).is_some(), "HTTP has {http_only}");
-        assert!(mcp_item.get(http_only).is_none(), "MCP lacks {http_only}");
+    for full_row in ["layer", "kind", "status", "revision"] {
+        assert!(http_doc.get(full_row).is_some(), "document has {full_row}");
     }
 
     // Agreement: request order, missing ids, document text, chunk paging.
@@ -487,7 +523,7 @@ async fn multi_get_agrees_on_order_and_missing_but_not_on_document_shape() {
         .as_array()
         .expect("documents")
         .iter()
-        .map(|item| &item["id"])
+        .map(|item| &item["document"]["id"])
         .collect();
     let http_ids: Vec<&Value> = http["items"]
         .as_array()
@@ -750,34 +786,36 @@ async fn neighbors_agree_on_the_default_local_graph() {
     let chain = seed_chain(&harness).await;
     let seed = &chain[3];
 
-    // DRIFT: parameter name. MCP `node_id`; HTTP `seed`.
-    let mcp = harness
-        .mcp("get_neighbors", json!({ "node_id": seed }))
-        .await
-        .ok();
-    let (status, http) = harness
-        .http("GET", &format!("/v1/neighbors?seed={seed}"), None)
-        .await;
-    assert_eq!(status, StatusCode::OK);
+    // Stage 4 aligned: `node_id` and `seed` are aliases on both transports.
+    for argument in ["node_id", "seed"] {
+        let mcp = harness
+            .mcp("get_neighbors", json!({ argument: seed }))
+            .await
+            .ok();
+        let (status, http) = harness
+            .http("GET", &format!("/v1/neighbors?{argument}={seed}"), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
 
-    // Agreement: default depth 1 gives the seed and both wikilink neighbours;
-    // same bare `{nodes, edges}` view on both (no `ok` on HTTP here).
-    assert_eq!(keys(&mcp), strings(&["nodes", "edges"]));
-    assert_eq!(keys(&http), strings(&["nodes", "edges"]));
-    let expected: BTreeSet<String> = chain[2..=4].iter().cloned().collect();
-    assert_eq!(node_ids(&mcp), expected);
-    assert_eq!(node_ids(&mcp), node_ids(&http));
-    assert_eq!(edge_triples(&mcp), edge_triples(&http));
-    assert_eq!(edge_triples(&mcp).len(), 2);
+        // Agreement: default depth 1 gives the seed and both wikilink
+        // neighbours; the same bare `{nodes, edges}` view on both.
+        assert_eq!(keys(&mcp), strings(&["nodes", "edges"]));
+        assert_eq!(keys(&http), strings(&["nodes", "edges"]));
+        let expected: BTreeSet<String> = chain[2..=4].iter().cloned().collect();
+        assert_eq!(node_ids(&mcp), expected);
+        assert_eq!(node_ids(&mcp), node_ids(&http));
+        assert_eq!(edge_triples(&mcp), edge_triples(&http));
+        assert_eq!(edge_triples(&mcp).len(), 2);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn neighbors_differ_in_depth_cap_seed_resolution_and_unknown_seed() {
+async fn neighbors_share_depth_cap_seed_resolution_and_unknown_seed_rules() {
     let harness = Harness::new();
     let chain = seed_chain(&harness).await;
     let seed = &chain[0];
 
-    // DRIFT: depth cap. MCP clamps depth to 5; HTTP clamps to 3.
+    // Stage 4 aligned: one depth cap (3) on both.
     let mcp = harness
         .mcp("get_neighbors", json!({ "node_id": seed, "depth": 9 }))
         .await
@@ -786,12 +824,11 @@ async fn neighbors_differ_in_depth_cap_seed_resolution_and_unknown_seed() {
         .http("GET", &format!("/v1/neighbors?seed={seed}&depth=9"), None)
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(node_ids(&mcp), chain[..=5].iter().cloned().collect());
-    assert_eq!(node_ids(&http), chain[..=3].iter().cloned().collect());
+    let capped: BTreeSet<String> = chain[..=3].iter().cloned().collect();
+    assert_eq!(node_ids(&mcp), capped);
+    assert_eq!(node_ids(&http), capped);
 
-    // DRIFT: seed resolution. HTTP resolves a node id, a document id or an
-    // exact label; MCP accepts a node id only and treats anything else as
-    // unknown.
+    // Stage 4 aligned: both resolve a node id, document id, URI or exact label.
     let (status, http) = harness
         .http("GET", "/v1/neighbors?seed=Chain%200", None)
         .await;
@@ -801,31 +838,31 @@ async fn neighbors_differ_in_depth_cap_seed_resolution_and_unknown_seed() {
         .mcp("get_neighbors", json!({ "node_id": "Chain 0" }))
         .await
         .ok();
-    assert_eq!(mcp, json!({ "nodes": [], "edges": [] }));
+    assert_eq!(node_ids(&mcp), node_ids(&http));
 
-    // DRIFT: unknown seed. MCP succeeds with an empty view; HTTP answers 404
-    // NOT_FOUND.
+    // Stage 4 aligned: an unknown seed is NOT_FOUND on both.
     let mcp = harness
         .mcp("get_neighbors", json!({ "node_id": "no-such-node" }))
         .await
-        .ok();
-    assert_eq!(mcp, json!({ "nodes": [], "edges": [] }));
+        .err();
+    assert_eq!(mcp["code"], json!(JSONRPC_RESOURCE_NOT_FOUND));
+    assert_eq!(mcp["data"]["code"], json!("NOT_FOUND"));
     let (status, http) = harness
         .http("GET", "/v1/neighbors?seed=no-such-node", None)
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(http["code"], json!("NOT_FOUND"));
 
-    // DRIFT: a blank seed is `400 INVALID_REQUEST` on HTTP; MCP again returns
-    // the empty view.
+    // Stage 4 aligned: a blank seed is INVALID_REQUEST on both.
     let (status, http) = harness.http("GET", "/v1/neighbors?seed=%20", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(http["code"], json!("INVALID_REQUEST"));
     let mcp = harness
         .mcp("get_neighbors", json!({ "node_id": " " }))
         .await
-        .ok();
-    assert_eq!(mcp, json!({ "nodes": [], "edges": [] }));
+        .err();
+    assert_eq!(mcp["code"], json!(JSONRPC_INVALID_PARAMS));
+    assert_eq!(mcp["data"]["code"], json!("INVALID_REQUEST"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

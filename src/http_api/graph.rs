@@ -8,6 +8,7 @@ use axum::Router;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::app::NeighborsCommand;
 use crate::db::Store;
 use crate::error::AppError;
 
@@ -16,8 +17,6 @@ use super::HttpState;
 
 /// Node cap for a whole-graph export when `max_nodes` is absent.
 const DEFAULT_GRAPH_MAX_NODES: u32 = 500;
-/// Node cap for a seeded neighbourhood when `max_nodes` is absent.
-const DEFAULT_NEIGHBORHOOD_MAX_NODES: u32 = 100;
 
 /// Graph + document UI routes (no `/health`, no wiki).
 pub(super) fn routes() -> Router<HttpState> {
@@ -59,8 +58,11 @@ async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl
     }
 }
 
+/// `GET /v1/neighbors`: `seed` or its alias `node_id`, same rules as MCP
+/// `get_neighbors` (see [`crate::app::GraphUseCase::neighbors`]).
 #[derive(Debug, Deserialize)]
 struct NeighborsQuery {
+    #[serde(default, alias = "node_id")]
     seed: String,
     #[serde(default)]
     depth: Option<u32>,
@@ -70,62 +72,30 @@ struct NeighborsQuery {
     project: Option<String>,
     #[serde(default)]
     include_tags: Option<bool>,
+    /// Comma-separated relation set (MCP passes a list).
+    #[serde(default)]
+    rel_types: Option<String>,
 }
 
 async fn neighbors(
     State(st): State<HttpState>,
     Query(q): Query<NeighborsQuery>,
 ) -> impl IntoResponse {
-    let seed = q.seed.trim();
-    if seed.is_empty() {
-        return api_err(AppError::invalid("seed query param required"));
-    }
-    let depth = q.depth.unwrap_or(1).clamp(1, 3);
-    let max_nodes = q
-        .max_nodes
-        .unwrap_or(DEFAULT_NEIGHBORHOOD_MAX_NODES)
-        .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES);
-
-    let seed = seed.to_owned();
-    let include_tags = q.include_tags.unwrap_or(false);
-    let project = q.project.and_then(|project| {
-        let project = project.trim();
-        (!project.is_empty()).then(|| project.to_owned())
-    });
-    let store = st.store.clone();
-    if let Some(project) = project {
-        let query_project = project.clone();
-        let query_seed = seed.clone();
-        let result = super::run_blocking("project neighbors", move || {
-            store.graph().export_project_neighbors_for_ui(
-                &query_project,
-                &query_seed,
-                depth,
-                max_nodes,
-                include_tags,
-            )
-        })
-        .await;
-        return match result {
-            Ok(view) if view.nodes.is_empty() => api_err(AppError::not_found(format!(
-                "no graph node for seed '{seed}' in project '{project}'"
-            ))),
-            Ok(view) => api_ok(view),
-            Err(e) => api_err(e),
-        };
-    }
-
-    let query_seed = seed.clone();
-    let result = super::run_blocking("neighbors", move || {
-        store
-            .graph()
-            .export_pkb_neighbors_for_ui(&query_seed, depth, max_nodes, include_tags)
-    })
-    .await;
-    match result {
-        Ok(view) if view.nodes.is_empty() => api_err(AppError::not_found(format!(
-            "no graph node for seed '{seed}'"
-        ))),
+    let command = NeighborsCommand {
+        seed: q.seed,
+        depth: q.depth,
+        max_nodes: q.max_nodes,
+        rel_types: q.rel_types.map(|rels| {
+            rels.split(',')
+                .map(str::trim)
+                .filter(|rel| !rel.is_empty())
+                .map(str::to_owned)
+                .collect()
+        }),
+        include_tags: q.include_tags,
+        project: q.project,
+    };
+    match st.graph_use_case().neighbors(command).await {
         Ok(view) => api_ok(view),
         Err(e) => api_err(e),
     }

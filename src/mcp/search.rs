@@ -3,17 +3,15 @@
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
-use serde::Serialize;
 
 use super::facade::RagServer;
 use super::tools::{
     ExpandChunksParams, FindSimilarParams, MultiGetParams, MultiQuerySearchParams,
     PackContextParams, ReembedDocumentParams, SearchParams,
 };
-use super::views::{ChunkView, DocumentDetail};
+use super::views::ChunkView;
 use crate::models::SearchHit;
 use crate::retrieval::{self, SimilarDocumentsQuery};
-use crate::util::run_blocking;
 
 #[tool_router(router = search_router, vis = "pub(super)")]
 impl RagServer {
@@ -160,20 +158,17 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<MultiGetParams>,
     ) -> Result<CallToolResult, McpError> {
-        let store = self.store.clone();
-        let include_chunks = params.include_chunks.unwrap_or(false);
-        let chunk_limit = params.chunk_limit.map(|value| value as usize);
-        let result = run_blocking("multi_get", move || {
-            retrieval::multi_get(&store, params.document_ids, include_chunks, chunk_limit)
-        })
-        .await?;
-        let documents = result
-            .documents
-            .into_iter()
-            .map(DocumentDetail::from)
-            .collect::<Vec<_>>();
+        let result = self
+            .search_use_case()
+            .multi_get(crate::app::MultiGetCommand {
+                document_ids: params.document_ids,
+                include_chunks: params.include_chunks.unwrap_or(false),
+                chunk_limit: params.chunk_limit.map(|value| value as usize),
+            })
+            .await?;
+        // MCP envelope keeps its `documents` key; the item shape is shared.
         Self::json_result(&serde_json::json!({
-            "documents": documents,
+            "documents": result.items,
             "missing": result.missing,
         }))
     }
@@ -236,35 +231,25 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<PackContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let command = retrieval::PackContextCommand {
-            hits: params.hits.into_iter().map(SearchHit::from).collect(),
-            max_tokens: params.max_tokens.map(|t| t as usize),
-            context_expansion: params.context_expansion,
-            neighbor_chunks: params.neighbor_chunks.map(|n| n as usize),
-        };
-        let store = self.store.clone();
-        let config = self.config.clone();
-        let packed = run_blocking("pack_context", move || {
-            retrieval::pack_context(&store, &config, command)
-        })
-        .await?
-        .packed;
-        let body = PackContextResult {
-            hits: packed.hits,
-            total_tokens: packed.total_tokens,
-            max_tokens: packed.max_tokens,
-            omitted_count: packed.omitted_count,
-            context_text: packed.context_text,
-        };
-        Self::json_result(&body)
+        let prior = params
+            .prior_trace
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| crate::error::AppError::invalid(format!("prior_trace: {error}")))?;
+        let packed = self
+            .search_use_case()
+            .pack_context(crate::app::PackContextRequest {
+                hits: params.hits.into_iter().map(SearchHit::from).collect(),
+                max_tokens: params.max_tokens.map(|t| t as usize),
+                context_expansion: params.context_expansion,
+                neighbor_chunks: params.neighbor_chunks.map(|n| n as usize),
+                trace: crate::app::TraceOptions {
+                    include: params.include_trace.unwrap_or(false),
+                    persist: params.persist_trace.unwrap_or(false),
+                    prior,
+                },
+            })
+            .await?;
+        Self::json_result(&packed)
     }
-}
-
-#[derive(Debug, Serialize)]
-struct PackContextResult {
-    hits: Vec<SearchHit>,
-    total_tokens: usize,
-    max_tokens: usize,
-    omitted_count: usize,
-    context_text: String,
 }
