@@ -48,16 +48,17 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgQueryParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let at_time = parse_optional_timestamp(params.at_time.as_deref())?;
-            let facts = self.store.kg().kg_query(
-                params.subject.as_deref(),
-                params.predicate.as_deref(),
-                params.object.as_deref(),
-                at_time,
-            )?;
-            Self::json_result(&facts)
-        })
+        let page = self
+            .admin_use_case()
+            .kg_query(crate::app::KgQueryCommand {
+                subject: params.subject,
+                predicate: params.predicate,
+                object: params.object,
+                at_time: params.at_time,
+                limit: None,
+            })
+            .await?;
+        Self::json_result(&page.facts)
     }
 
     #[tool(
@@ -115,10 +116,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgTimelineParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let facts = self.store.kg().kg_timeline(&params.subject)?;
-            Self::json_result(&facts)
-        })
+        let facts = self.admin_use_case().kg_timeline(params.subject).await?;
+        Self::json_result(&facts)
     }
 
     #[tool(
@@ -126,9 +125,7 @@ impl RagServer {
         description = "Temporal KG aggregates: total/active/invalidated/superseded facts, distinct subjects/predicates, relationship_types."
     )]
     pub(super) async fn kg_stats(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let body = self.store.kg().kg_stats()?;
-            Self::json_result(&body)
-        })
+        let body = self.admin_use_case().kg_stats().await?;
+        Self::json_result(&body)
     }
 }

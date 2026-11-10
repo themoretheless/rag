@@ -217,3 +217,17 @@ form with its variant prefix.
    stdout, and unknown or missing arguments use clap's wording (for example
    `unexpected argument '--bogus' found`) with exit code 2. Flags and their
    meaning are unchanged; `rag_gate --mode` still defaults to `RAG_GATE_MODE`.
+9. **Ingest and admin reads (`app::IngestUseCase`, `app::AdminUseCase`).**
+   MCP `ingest_text` / `ingest_raw` / `add_drawer` / `ingest_file` /
+   `ingest_url` and HTTP `POST /v1/ingest/url` call `IngestUseCase` (the URL
+   fetch timeout is `RAG_INGEST_URL_TIMEOUT_SECS` on both, as before). MCP
+   `get_taxonomy`, `list_wings`, `list_rooms`, `kg_query`, `kg_timeline`,
+   `kg_stats`, `lint_wiki`, `reembed_status`, `llm_status` and the matching
+   HTTP `GET /v1/taxonomy`, `/v1/wings`, `/v1/rooms`, `/v1/kg`,
+   `/v1/kg/timeline`, `/v1/kg/stats`, `/v1/lint-wiki`, `/v1/reembed-status`,
+   `/v1/llm-status` call `AdminUseCase`, whose store reads run on the
+   blocking pool. One drift aligned: the `wing` filter of `list_rooms` /
+   `GET /v1/rooms` is trimmed on both (HTTP passed `" alpha "` through and
+   matched nothing). Blank KG filters already meant "no filter" on both (the
+   store trims them); `GET /v1/kg` keeps its `limit`, MCP `kg_query` stays
+   unpaged. Pinned by the admin tests at the end of `tests/it/parity_test.rs`.

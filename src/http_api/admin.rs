@@ -27,10 +27,8 @@ use super::{
 use crate::config::Config;
 use crate::db::store::embedding_manifest_matches_config;
 use crate::db::Store;
-use crate::diagnostics;
 use crate::error::AppError;
-use crate::util::{non_blank, parse_optional_timestamp, run_blocking};
-use crate::wiki;
+use crate::util::{non_blank, run_blocking};
 
 /// ops_log rows returned when `limit` is absent.
 const DEFAULT_OPS_LOG_LIMIT: usize = 50;
@@ -128,17 +126,17 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
 }
 
 async fn taxonomy(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.documents().get_taxonomy() {
+    match st.admin_use_case().taxonomy().await {
         Ok(value) => api_ok(json!({"ok": true, "taxonomy": value})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 async fn wings(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.documents().list_wings() {
+    match st.admin_use_case().wings().await {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -148,25 +146,19 @@ struct RoomsQuery {
 }
 
 async fn rooms(State(st): State<HttpState>, Query(q): Query<RoomsQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        match st
-            .store
-            .documents()
-            .list_rooms(non_blank(q.wing).as_deref())
-        {
-            Ok(items) => api_ok(json!({"ok": true, "items": items})),
-            Err(error) => api_err(error),
-        }
-    })
+    match st.admin_use_case().rooms(q.wing).await {
+        Ok(items) => api_ok(json!({"ok": true, "items": items})),
+        Err(error) => api_err(error),
+    }
 }
 
 async fn llm_status(State(st): State<HttpState>) -> impl IntoResponse {
-    let report = diagnostics::llm_status(&st.config, st.llm.as_ref()).await;
+    let report = st.admin_use_case().llm_status(st.llm.as_ref()).await;
     api_ok(json!({"ok": true, "llm": report}))
 }
 
 async fn reembed_status(State(st): State<HttpState>) -> impl IntoResponse {
-    match crate::maintain::reembed_status(&st.store, &st.config) {
+    match st.admin_use_case().reembed_status().await {
         Ok(status) => api_ok(json!({"ok": true, "status": status})),
         Err(error) => api_err(error),
     }
@@ -249,22 +241,17 @@ async fn kg_query(
     State(st): State<HttpState>,
     Query(q): Query<KgQueryParams>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        let at_time = match parse_optional_timestamp(q.at_time.as_deref()) {
-            Ok(value) => value,
-            Err(error) => return api_err(error),
-        };
-        match st.store.kg().kg_query_page(
-            non_blank(q.subject).as_deref(),
-            non_blank(q.predicate).as_deref(),
-            non_blank(q.object).as_deref(),
-            at_time,
-            q.limit,
-        ) {
-            Ok((items, total)) => api_ok(json!({"ok": true, "count": total, "items": items})),
-            Err(error) => api_err(error),
-        }
-    })
+    let command = crate::app::KgQueryCommand {
+        subject: q.subject,
+        predicate: q.predicate,
+        object: q.object,
+        at_time: q.at_time,
+        limit: q.limit,
+    };
+    match st.admin_use_case().kg_query(command).await {
+        Ok(page) => api_ok(json!({"ok": true, "count": page.total, "items": page.facts})),
+        Err(error) => api_err(error),
+    }
 }
 
 #[derive(Deserialize)]
@@ -276,17 +263,17 @@ async fn kg_timeline(
     State(st): State<HttpState>,
     Query(q): Query<KgTimelineQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.kg().kg_timeline(q.subject.trim()) {
+    match st.admin_use_case().kg_timeline(q.subject).await {
         Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 async fn kg_stats(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.kg().kg_stats() {
+    match st.admin_use_case().kg_stats().await {
         Ok(value) => api_ok(json!({"ok": true, "stats": value})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -309,10 +296,10 @@ async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> 
 }
 
 async fn lint_wiki(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match wiki::lint_wiki(&st.store) {
+    match st.admin_use_case().lint_wiki().await {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
-    })
+    }
 }
 
 #[derive(Deserialize)]

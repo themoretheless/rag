@@ -223,6 +223,20 @@ impl RagServer {
         crate::app::GraphUseCase::new(self.store.clone())
     }
 
+    /// Ingest use cases over this server's store, embedder and config.
+    pub(super) fn ingest_use_case(&self) -> crate::app::IngestUseCase {
+        crate::app::IngestUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            self.config.clone(),
+        )
+    }
+
+    /// Admin read use cases over this server's store and config.
+    pub(super) fn admin_use_case(&self) -> crate::app::AdminUseCase {
+        crate::app::AdminUseCase::new(self.store.clone(), self.config.clone())
+    }
+
     /// Run DuckDB-bound tool work on the blocking pool with a shared store handle.
     ///
     /// Use it for corpus-scale reads and writes (whole-graph views, deletes,
@@ -284,9 +298,7 @@ impl RagServer {
         &self,
         command: IngestCommand,
     ) -> Result<IngestResult, AppError> {
-        IngestService::new(&self.store, &self.embedder, &self.config)
-            .ingest(command)
-            .await
+        self.ingest_use_case().ingest(command).await
     }
 
     /// Refresh the corpus-wide lexical index without blocking a Tokio worker.
@@ -340,7 +352,7 @@ impl RagServer {
 
     /// Probe local chat LLM and report embedding config (no corpus mutation).
     pub(super) async fn llm_status_report(&self) -> Result<LlmStatusReport, AppError> {
-        Ok(crate::diagnostics::llm_status(&self.config, self.llm.as_ref()).await)
+        Ok(self.admin_use_case().llm_status(self.llm.as_ref()).await)
     }
 
     /// Refresh one document only when the live embedding identity already

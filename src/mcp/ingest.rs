@@ -19,7 +19,7 @@ use super::views::{DocumentDetail, SourceDetail};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::diagnostics::DiagnosticsService;
 use crate::error::AppError;
-use crate::ingest::{IngestCommand, IngestFileCommand, IngestService};
+use crate::ingest::{IngestCommand, IngestFileCommand};
 use crate::models::{DocumentFilter, Stats};
 use crate::retrieval::{self};
 use crate::source_sync::{
@@ -62,7 +62,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<IngestFileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let result = IngestService::new(&self.store, &self.embedder, &self.config)
+        let result = self
+            .ingest_use_case()
             .ingest_file(IngestFileCommand {
                 path: params.path,
                 title: params.title,
@@ -474,10 +475,8 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<ListWingsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let wings = self.store.documents().list_wings()?;
-            Self::json_result(&wings)
-        })
+        let wings = self.admin_use_case().wings().await?;
+        Self::json_result(&wings)
     }
 
     #[tool(
@@ -488,15 +487,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListRoomsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let wing = params
-                .wing
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let rooms = self.store.documents().list_rooms(wing)?;
-            Self::json_result(&rooms)
-        })
+        let rooms = self.admin_use_case().rooms(params.wing).await?;
+        Self::json_result(&rooms)
     }
 
     #[tool(
@@ -507,10 +499,8 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<GetTaxonomyParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let tax = self.store.documents().get_taxonomy()?;
-            Self::json_result(&tax)
-        })
+        let tax = self.admin_use_case().taxonomy().await?;
+        Self::json_result(&tax)
     }
 
     #[tool(

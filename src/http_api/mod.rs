@@ -134,6 +134,20 @@ impl HttpState {
         crate::app::GraphUseCase::new(self.store.clone())
     }
 
+    /// Ingest use cases over this state's store, embedder and config.
+    pub(crate) fn ingest_use_case(&self) -> crate::app::IngestUseCase {
+        crate::app::IngestUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            self.config.clone(),
+        )
+    }
+
+    /// Admin read use cases over this state's store and config.
+    pub(crate) fn admin_use_case(&self) -> crate::app::AdminUseCase {
+        crate::app::AdminUseCase::new(self.store.clone(), self.config.clone())
+    }
+
     /// Attach the posture parsed from the listener's configured tokens.
     pub(crate) fn with_auth_posture(mut self, auth: auth::AuthPosture) -> Self {
         self.auth = auth;

@@ -883,10 +883,8 @@ impl RagServer {
         raw, and aggregate health counts."
     )]
     pub(super) async fn lint_wiki(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let report = wiki::lint_wiki(&self.store)?;
-            Self::json_result(&report)
-        })
+        let report = self.admin_use_case().lint_wiki().await?;
+        Self::json_result(&report)
     }
 
     #[tool(

@@ -891,3 +891,117 @@ async fn unknown_wiki_page_is_not_found_on_both_transports() {
     assert_eq!(mcp["data"]["code"], json!("NOT_FOUND"));
     assert_eq!(mcp["data"]["code"], http["code"]);
 }
+
+// ---------------------------------------------------------------------------
+// admin reads (AdminUseCase)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn taxonomy_wings_and_rooms_agree_and_trim_the_wing_filter() {
+    let harness = Harness::new();
+    harness.seed_corpus().await;
+    for (id, wing, room) in [("doc-0", "alpha", "one"), ("doc-1", "alpha", "two"), ("doc-2", "beta", "one")] {
+        harness
+            .context
+            .store
+            .documents()
+            .update_document_meta(
+                id,
+                &rag_mcp::models::DocumentMetaUpdate {
+                    wing: Some(wing.into()),
+                    room: Some(room.into()),
+                    ..Default::default()
+                },
+            )
+            .expect("refile");
+    }
+
+    let mcp = harness.mcp("get_taxonomy", json!({})).await.ok();
+    let (status, http) = harness.http("GET", "/v1/taxonomy", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mcp, http["taxonomy"]);
+
+    let mcp = harness.mcp("list_wings", json!({})).await.ok();
+    let (_, http) = harness.http("GET", "/v1/wings", None).await;
+    assert_eq!(mcp, http["items"]);
+
+    // One rule: the wing filter is trimmed on both (HTTP did not trim).
+    let mcp = harness.mcp("list_rooms", json!({ "wing": " alpha " })).await.ok();
+    let (status, http) = harness.http("GET", "/v1/rooms?wing=%20alpha%20", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mcp.as_array().map(Vec::len), Some(2), "{mcp}");
+    assert_eq!(mcp, http["items"]);
+    // A blank wing lists every room on both.
+    let mcp = harness.mcp("list_rooms", json!({ "wing": "  " })).await.ok();
+    let (_, http) = harness.http("GET", "/v1/rooms?wing=%20%20", None).await;
+    assert_eq!(mcp, http["items"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kg_reads_agree_on_facts_blank_filters_timeline_and_stats() {
+    let harness = Harness::new();
+    for (subject, object) in [("rag", "duckdb"), ("rag", "rust"), ("ui", "svelte")] {
+        harness
+            .mcp(
+                "kg_add",
+                json!({ "subject": subject, "predicate": "uses", "object": object }),
+            )
+            .await
+            .ok();
+    }
+
+    let mcp = harness.mcp("kg_query", json!({ "subject": "rag" })).await.ok();
+    let (status, http) = harness.http("GET", "/v1/kg?subject=rag", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mcp.as_array().map(Vec::len), Some(2));
+    assert_eq!(mcp, http["items"]);
+    assert_eq!(http["count"], json!(2));
+
+    // Blank filters mean "no filter" on both.
+    let mcp = harness
+        .mcp("kg_query", json!({ "subject": " ", "predicate": "" }))
+        .await
+        .ok();
+    let (_, http) = harness.http("GET", "/v1/kg?subject=%20&predicate=", None).await;
+    assert_eq!(mcp.as_array().map(Vec::len), Some(3));
+    assert_eq!(mcp, http["items"]);
+
+    // A bad timestamp is INVALID_REQUEST on both.
+    let mcp = harness
+        .mcp("kg_query", json!({ "at_time": "not a time" }))
+        .await
+        .err();
+    let (status, http) = harness.http("GET", "/v1/kg?at_time=not%20a%20time", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(mcp["data"]["code"], http["code"]);
+
+    let mcp = harness.mcp("kg_timeline", json!({ "subject": " rag " })).await.ok();
+    let (_, http) = harness
+        .http("GET", "/v1/kg/timeline?subject=%20rag%20", None)
+        .await;
+    assert_eq!(mcp.as_array().map(Vec::len), Some(2));
+    assert_eq!(mcp, http["items"]);
+
+    let mcp = harness.mcp("kg_stats", json!({})).await.ok();
+    let (_, http) = harness.http("GET", "/v1/kg/stats", None).await;
+    assert_eq!(mcp, http["stats"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lint_wiki_and_reembed_status_agree() {
+    let harness = Harness::new();
+    harness.seed_corpus().await;
+
+    let mcp = harness.mcp("lint_wiki", json!({})).await.ok();
+    let (status, http) = harness.http("GET", "/v1/lint-wiki", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(keys(&mcp), keys(&http["report"]));
+
+    let mut mcp = harness.mcp("reembed_status", json!({})).await.ok();
+    let (status, mut http) = harness.http("GET", "/v1/reembed-status", None).await;
+    assert_eq!(status, StatusCode::OK);
+    // `configured.updated_at` is the wall clock of each call.
+    mcp["configured"]["updated_at"] = Value::Null;
+    http["status"]["configured"]["updated_at"] = Value::Null;
+    assert_eq!(mcp, http["status"]);
+}

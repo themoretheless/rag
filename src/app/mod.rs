@@ -6,11 +6,15 @@
 //! result; HTTP: `{ok: true, …}`). Parameter normalization, limit clamps,
 //! defaults and the error rules live here once (docs/refactor/PLAN.md, Stage 4).
 
+pub mod admin;
 pub mod graph;
+pub mod ingest;
 pub mod search;
 pub mod wiki;
 
+pub use admin::{AdminUseCase, KgQueryCommand, KgQueryPage};
 pub use graph::{GraphUseCase, NeighborsCommand};
+pub use ingest::IngestUseCase;
 pub use search::{
     MultiGetCommand, MultiGetItem, MultiGetResponse, PackContextRequest, PackContextResponse,
     SearchUseCase, TraceOptions,

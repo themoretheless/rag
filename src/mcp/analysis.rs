@@ -1,7 +1,7 @@
 //! Code, SQL, database and analysis operations over the shared server context.
 use super::facade::RagServer;
 use super::tools::*;
-use crate::ingest::{IngestService, IngestUrlCommand};
+use crate::ingest::IngestUrlCommand;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{service::RequestContext, RoleServer};
@@ -763,19 +763,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<IngestUrlParams>,
     ) -> Result<CallToolResult, McpError> {
-        let fetcher = crate::web_ingest::ReqwestFetcher::new(self.config.ingest_url_timeout_secs);
-        let result = IngestService::new(&self.store, &self.embedder, &self.config)
-            .ingest_url(
-                &fetcher,
-                IngestUrlCommand {
-                    url: params.url,
-                    title: params.title,
-                    uri: params.uri,
-                    metadata_json: params.metadata_json,
-                    wing: params.wing,
-                    room: params.room,
-                },
-            )
+        let result = self
+            .ingest_use_case()
+            .ingest_url(IngestUrlCommand {
+                url: params.url,
+                title: params.title,
+                uri: params.uri,
+                metadata_json: params.metadata_json,
+                wing: params.wing,
+                room: params.room,
+            })
             .await
             .map_err(Self::map_err)?;
         Self::json_result(&result)
@@ -785,13 +782,11 @@ impl RagServer {
         description = "Embedding identity status: whether vector search is open, stored vs configured identity, and resumable migration progress (documents done/pending, batch size). Read-only."
     )]
     pub(super) async fn reembed_status(&self) -> Result<CallToolResult, McpError> {
-        let store = self.store.clone();
-        let config = self.config.clone();
-        let body = crate::util::run_blocking("reembed_status", move || {
-            crate::maintain::reembed_status(&store, &config)
-        })
-        .await
-        .map_err(Self::map_err)?;
+        let body = self
+            .admin_use_case()
+            .reembed_status()
+            .await
+            .map_err(Self::map_err)?;
         Self::json_result(&body)
     }
 }
