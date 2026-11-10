@@ -26,7 +26,9 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::llm::{ChatClient, ChatMessage};
 
-pub use crate::config::limits::{DEFAULT_CACHE_SIZE, DEFAULT_REWRITE_VARIANTS, MAX_REWRITE_VARIANTS};
+pub use crate::config::limits::{
+    DEFAULT_CACHE_SIZE, DEFAULT_REWRITE_VARIANTS, MAX_REWRITE_VARIANTS,
+};
 /// Character cap for the hypothetical passage sent to the embedder.
 const MAX_HYDE_CHARS: usize = 2_000;
 /// Completion budget for rewrite / HyDE calls (short outputs).

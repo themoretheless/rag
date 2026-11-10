@@ -590,8 +590,7 @@ impl Config {
             "RAG_MAX_LINKS_PER_DOC",
             crate::graph::DEFAULT_MAX_LINKS_PER_DOC,
         );
-        let call_log_capacity =
-            positive_usize("RAG_CALL_LOG_CAPACITY", limits::DEFAULT_CAPACITY);
+        let call_log_capacity = positive_usize("RAG_CALL_LOG_CAPACITY", limits::DEFAULT_CAPACITY);
         let sync_node_id = env::var("RAG_NODE_ID").ok();
         let sync_primary_url = env::var("RAG_PRIMARY_URL").ok();
         let sync_primary_token = env::var("RAG_PRIMARY_TOKEN").ok().map(Secret::from);
