@@ -505,7 +505,9 @@ mod tests {
         assert_eq!(impact["items"][1]["path"], "/p/index.html");
         assert_eq!(impact["items"][1]["depth"], 2);
         assert_eq!(impact["items"][0]["via_kind"], "file_resource_candidate");
-        let dead = store.code_dead_files(&CodeQuery::default()).unwrap();
+        let dead = crate::code_index::CodeIndex::new(&store)
+            .code_dead_files(&CodeQuery::default())
+            .unwrap();
         assert!(
             !dead["items"]
                 .as_array()

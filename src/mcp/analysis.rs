@@ -90,7 +90,7 @@ impl RagServer {
         let store = self.store.clone();
         let config = self.config.clone();
         let result = crate::util::run_blocking("index_status", move || {
-            store.code_index_status(&params, &config)
+            crate::code_index::CodeIndex::new(&store).code_index_status(&params, &config)
         })
         .await?;
         Self::json_result(&result)
@@ -470,7 +470,7 @@ impl RagServer {
             "files" => {
                 let store = self.store.clone();
                 let result = crate::util::run_blocking("dead_code_files", move || {
-                    store.code_dead_files(&params)
+                    crate::code_index::CodeIndex::new(&store).code_dead_files(&params)
                 })
                 .await?;
                 return Self::json_result(&result);
@@ -549,9 +549,10 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::InfrastructureQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("infrastructure", move || store.code_infrastructure(&params))
-                .await?;
+        let result = crate::util::run_blocking("infrastructure", move || {
+            crate::code_index::CodeIndex::new(&store).code_infrastructure(&params)
+        })
+        .await?;
         Self::json_result(&result)
     }
     #[tool(

@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(report.index_revision, original.index_revision);
         assert!(!report.revision_created);
         assert_eq!(report.unchanged, 2);
-        let observed = upgraded
+        let observed = crate::code_index::CodeIndex::new(&upgraded)
             .code_index_status(
                 &super::super::status::StatusQuery {
                     project: Some("alpha".into()),

@@ -395,7 +395,7 @@ fn labels(n: &Yaml) -> Option<BTreeMap<String, String>> {
         .collect()
 }
 
-impl Store {
+impl<'a> CodeIndex<'a> {
     pub fn code_infrastructure(&self, q: &InfrastructureQuery) -> Result<Value> {
         if q.project.trim().is_empty() {
             return Err(AppError::Invalid("project is required".into()));
@@ -407,159 +407,160 @@ impl Store {
                 "at most eight explicit linked projects".into(),
             ));
         }
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let latest: Option<i64> =
-            tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
-        let revision = q
-            .index_revision
-            .or(latest)
-            .ok_or_else(|| AppError::Invalid("run index_code first".into()))?;
-        let mut files = Vec::new();
-        for p in &projects {
-            files.extend(history::files(&tx, revision, Some(p))?);
-        }
-        if files.len() > 1000
-            || files.iter().map(|f| f.source.len()).sum::<usize>() > 32 * 1024 * 1024
-        {
-            return Err(AppError::Invalid(
-                "infrastructure capture exceeds 1000 files/32 MiB; no partial graph".into(),
-            ));
-        }
-        let mut diagnostics = Vec::new();
-        if q.index_revision.is_none() {
-            let captured_ids: HashSet<_> = files.iter().map(|f| f.id.clone()).collect();
-            for project in &projects {
-                let mut statement=tx.prepare("SELECT id,source_file FROM documents WHERE wing=? AND source_file IS NOT NULL AND COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') ORDER BY id")?;
-                let rows = statement.query_map([project], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                })?;
-                for row in rows {
-                    let (id, path) = row?;
-                    if !captured_ids.contains(&id) {
-                        diagnostics.push(json!({"document_id":id,"path":path,"project":project,"code":"source_not_published_in_selected_revision"}));
-                    }
-                }
+        self.store.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            let latest: Option<i64> =
+                tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+            let revision = q
+                .index_revision
+                .or(latest)
+                .ok_or_else(|| AppError::Invalid("run index_code first".into()))?;
+            let mut files = Vec::new();
+            for p in &projects {
+                files.extend(history::files(&tx, revision, Some(p))?);
             }
-            files.retain(|f|{
-            let current=tx.query_row("SELECT COALESCE(source_file,uri),COALESCE(revision,1),wing,content,metadata_json FROM documents WHERE id=? AND COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated')",[&f.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?))).optional();
-            let fresh=current.ok().flatten().is_some_and(|(path,rev,project,content,meta)|path==f.path&&rev==f.revision&&project==f.project&&source::read(&tx,&content,&meta).is_ok_and(|s|content_hash(&s)==f.hash));
-            if !fresh{diagnostics.push(json!({"document_id":f.id,"path":f.path,"project":f.project,"code":"stale_or_unavailable_captured_input"}));}fresh
-        });
-        }
-        let mut code = HashMap::new();
-        for file in &files {
-            if let Some(payload) = &file.analysis {
-                if let Ok(doc) = serde_json::from_str::<IndexedDocument>(payload) {
-                    if !doc.parse_errors {
-                        code.insert(file.id.clone(), doc);
-                    }
-                }
-            }
-        }
-        let mut graph = Graph {
-            nodes: BTreeMap::new(),
-            edges: Vec::new(),
-            diagnostics,
-            files,
-            code,
-        };
-        let mut services = Vec::new();
-        let mut workloads = Vec::new();
-        for file in graph.files.clone() {
-            if !matches!(
-                Path::new(&file.path).extension().and_then(|s| s.to_str()),
-                Some("yaml" | "yml" | "json")
-            ) {
-                continue;
-            }
-            match yaml::documents(&file.source) {
-                Ok(docs) => {
-                    for doc in docs {
-                        graph.compose(&file, &doc);
-                        graph.kubernetes(&file, &doc, &mut services, &mut workloads);
-                        graph.workflow(&file, &doc);
-                    }
-                }
-                Err(_) => graph.diagnostic(&file, "invalid_or_unsupported_yaml_no_facts"),
-            }
-        }
-        for file in graph.files.clone() {
-            let filename = Path::new(&file.path)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            if (filename == "Dockerfile"
-                || filename == "Containerfile"
-                || filename.starts_with("Dockerfile.")
-                || filename.starts_with("Containerfile.")
-                || filename.ends_with(".dockerfile"))
-                && !graph
-                    .nodes
-                    .values()
-                    .any(|n| n.kind == "dockerfile" && n.evidence.document_id == file.id)
+            if files.len() > 1000
+                || files.iter().map(|f| f.source.len()).sum::<usize>() > 32 * 1024 * 1024
             {
-                let d = graph.node("dockerfile", &file.path, &file.id, evidence(&file, 0, 0, 1));
-                graph.diagnostic(&file, "standalone_build_context_unavailable");
-                graph.docker(&file, "", &d, None);
+                return Err(AppError::Invalid(
+                    "infrastructure capture exceeds 1000 files/32 MiB; no partial graph".into(),
+                ));
             }
-        }
-        for (group, service, select, e) in services {
-            for (wg, workload, labels, _) in &workloads {
-                if group == *wg && select.iter().all(|(k, v)| labels.get(k) == Some(v)) {
-                    graph.edge(&service, workload, "selector_maps_to", e.clone());
+            let mut diagnostics = Vec::new();
+            if q.index_revision.is_none() {
+                let captured_ids: HashSet<_> = files.iter().map(|f| f.id.clone()).collect();
+                for project in &projects {
+                    let mut statement=tx.prepare("SELECT id,source_file FROM documents WHERE wing=? AND source_file IS NOT NULL AND COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') ORDER BY id")?;
+                    let rows = statement.query_map([project], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                    })?;
+                    for row in rows {
+                        let (id, path) = row?;
+                        if !captured_ids.contains(&id) {
+                            diagnostics.push(json!({"document_id":id,"path":path,"project":project,"code":"source_not_published_in_selected_revision"}));
+                        }
+                    }
+                }
+                files.retain(|f|{
+                let current=tx.query_row("SELECT COALESCE(source_file,uri),COALESCE(revision,1),wing,content,metadata_json FROM documents WHERE id=? AND COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated')",[&f.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?))).optional();
+                let fresh=current.ok().flatten().is_some_and(|(path,rev,project,content,meta)|path==f.path&&rev==f.revision&&project==f.project&&source::read(&tx,&content,&meta).is_ok_and(|s|content_hash(&s)==f.hash));
+                if !fresh{diagnostics.push(json!({"document_id":f.id,"path":f.path,"project":f.project,"code":"stale_or_unavailable_captured_input"}));}fresh
+            });
+            }
+            let mut code = HashMap::new();
+            for file in &files {
+                if let Some(payload) = &file.analysis {
+                    if let Ok(doc) = serde_json::from_str::<IndexedDocument>(payload) {
+                        if !doc.parse_errors {
+                            code.insert(file.id.clone(), doc);
+                        }
+                    }
                 }
             }
-        }
-        let images: Vec<_> = graph
-            .nodes
-            .values()
-            .filter(|n| n.kind == "image")
-            .cloned()
-            .collect();
-        for a in &images {
-            for b in &images {
-                if a.project != b.project && a.name == b.name {
-                    graph.edge(
-                        &a.id,
-                        &b.id,
-                        "cross_project_exact_image_candidate",
-                        a.evidence.clone(),
-                    );
+            let mut graph = Graph {
+                nodes: BTreeMap::new(),
+                edges: Vec::new(),
+                diagnostics,
+                files,
+                code,
+            };
+            let mut services = Vec::new();
+            let mut workloads = Vec::new();
+            for file in graph.files.clone() {
+                if !matches!(
+                    Path::new(&file.path).extension().and_then(|s| s.to_str()),
+                    Some("yaml" | "yml" | "json")
+                ) {
+                    continue;
+                }
+                match yaml::documents(&file.source) {
+                    Ok(docs) => {
+                        for doc in docs {
+                            graph.compose(&file, &doc);
+                            graph.kubernetes(&file, &doc, &mut services, &mut workloads);
+                            graph.workflow(&file, &doc);
+                        }
+                    }
+                    Err(_) => graph.diagnostic(&file, "invalid_or_unsupported_yaml_no_facts"),
                 }
             }
-        }
-        graph.edges.sort_by(|a, b| {
-            (
-                &a.source,
-                &a.target,
-                &a.relation,
-                &a.evidence.document_id,
-                a.evidence.start_byte,
-            )
-                .cmp(&(
-                    &b.source,
-                    &b.target,
-                    &b.relation,
-                    &b.evidence.document_id,
-                    b.evidence.start_byte,
-                ))
-        });
-        graph.edges.dedup_by(|a, b| {
-            a.source == b.source
-                && a.target == b.target
-                && a.relation == b.relation
-                && a.evidence.document_id == b.evidence.document_id
-                && a.evidence.start_byte == b.evidence.start_byte
-        });
-        if graph.nodes.len() > 10000 || graph.edges.len() > 20000 {
-            return Err(AppError::Invalid(
-                "infrastructure graph exceeds node/edge limit; no partial graph".into(),
-            ));
-        }
-        let result = graph.report(q, revision, latest)?;
-        tx.commit()?;
-        Ok(result)
+            for file in graph.files.clone() {
+                let filename = Path::new(&file.path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                if (filename == "Dockerfile"
+                    || filename == "Containerfile"
+                    || filename.starts_with("Dockerfile.")
+                    || filename.starts_with("Containerfile.")
+                    || filename.ends_with(".dockerfile"))
+                    && !graph
+                        .nodes
+                        .values()
+                        .any(|n| n.kind == "dockerfile" && n.evidence.document_id == file.id)
+                {
+                    let d = graph.node("dockerfile", &file.path, &file.id, evidence(&file, 0, 0, 1));
+                    graph.diagnostic(&file, "standalone_build_context_unavailable");
+                    graph.docker(&file, "", &d, None);
+                }
+            }
+            for (group, service, select, e) in services {
+                for (wg, workload, labels, _) in &workloads {
+                    if group == *wg && select.iter().all(|(k, v)| labels.get(k) == Some(v)) {
+                        graph.edge(&service, workload, "selector_maps_to", e.clone());
+                    }
+                }
+            }
+            let images: Vec<_> = graph
+                .nodes
+                .values()
+                .filter(|n| n.kind == "image")
+                .cloned()
+                .collect();
+            for a in &images {
+                for b in &images {
+                    if a.project != b.project && a.name == b.name {
+                        graph.edge(
+                            &a.id,
+                            &b.id,
+                            "cross_project_exact_image_candidate",
+                            a.evidence.clone(),
+                        );
+                    }
+                }
+            }
+            graph.edges.sort_by(|a, b| {
+                (
+                    &a.source,
+                    &a.target,
+                    &a.relation,
+                    &a.evidence.document_id,
+                    a.evidence.start_byte,
+                )
+                    .cmp(&(
+                        &b.source,
+                        &b.target,
+                        &b.relation,
+                        &b.evidence.document_id,
+                        b.evidence.start_byte,
+                    ))
+            });
+            graph.edges.dedup_by(|a, b| {
+                a.source == b.source
+                    && a.target == b.target
+                    && a.relation == b.relation
+                    && a.evidence.document_id == b.evidence.document_id
+                    && a.evidence.start_byte == b.evidence.start_byte
+            });
+            if graph.nodes.len() > 10000 || graph.edges.len() > 20000 {
+                return Err(AppError::Invalid(
+                    "infrastructure graph exceeds node/edge limit; no partial graph".into(),
+                ));
+            }
+            let result = graph.report(q, revision, latest)?;
+            tx.commit()?;
+            Ok(result)
+        })
     }
 }
 

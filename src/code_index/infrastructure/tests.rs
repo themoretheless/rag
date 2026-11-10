@@ -56,7 +56,7 @@ impl Fixture {
         for (k, v) in extra.as_object().unwrap() {
             q[k] = v.clone();
         }
-        self.store
+        crate::code_index::CodeIndex::new(&self.store)
             .code_infrastructure(&serde_json::from_value::<InfrastructureQuery>(q).unwrap())
             .unwrap()
     }

@@ -206,7 +206,7 @@ mod tests {
                 .len(),
             1
         );
-        let dead = store
+        let dead = crate::code_index::CodeIndex::new(&store)
             .code_dead_files(&CodeQuery {
                 dead_code_project: Some("p".into()),
                 ..Default::default()
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(result["resource_target_diagnostics"]["total"], 1);
         // Code parser coverage retains its original semantics.
         assert!(result["stale_documents"].as_array().unwrap().is_empty());
-        let dead = store
+        let dead = crate::code_index::CodeIndex::new(&store)
             .code_dead_files(&CodeQuery {
                 dead_code_project: Some("p".into()),
                 ..Default::default()

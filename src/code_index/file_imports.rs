@@ -369,7 +369,9 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
-        let dead = store.code_dead_files(&CodeQuery::default()).unwrap();
+        let dead = crate::code_index::CodeIndex::new(&store)
+            .code_dead_files(&CodeQuery::default())
+            .unwrap();
         assert!(
             !dead["items"]
                 .as_array()

@@ -402,7 +402,9 @@ mod tests {
             result["items"][0]["via"]["inline"]["property"],
             "mask-image"
         );
-        let dead = store.code_dead_files(&CodeQuery::default()).unwrap();
+        let dead = crate::code_index::CodeIndex::new(&store)
+            .code_dead_files(&CodeQuery::default())
+            .unwrap();
         assert!(
             dead["protected"]
                 .as_array()
