@@ -74,7 +74,9 @@ fn source_mode(q: &SourceQuery) -> Result<&str> {
     Ok(mode)
 }
 fn revision_files(store: &Store, q: &SourceQuery) -> Result<(i64, Vec<File>)> {
-    let conn = store.lock()?;
+    store.with_conn(|conn| revision_files_locked(conn, q))
+}
+fn revision_files_locked(conn: &duckdb::Connection, q: &SourceQuery) -> Result<(i64, Vec<File>)> {
     let revision = match q.index_revision {
         Some(id) => id,
         None => conn
@@ -83,7 +85,7 @@ fn revision_files(store: &Store, q: &SourceQuery) -> Result<(i64, Vec<File>)> {
             })?
             .ok_or_else(|| AppError::not_found("run index_code or sync_sources first"))?,
     };
-    let files = history::files(&conn, revision, q.project.as_deref())?
+    let files = history::files(conn, revision, q.project.as_deref())?
         .into_iter()
         .filter(|f| {
             q.document_id.as_ref().is_none_or(|id| id == &f.id)
@@ -112,13 +114,18 @@ fn actual(store: &Store, file: &File, mode: &str, roots: &[PathBuf]) -> Result<O
             .filter(|d| !matches!(d.status.as_str(), "archived" | "tombstone" | "consolidated"));
         return doc
             .map(|d| {
-                source::read(&*store.lock()?, &d.content, &d.metadata_json).map(|s| LiveSource {
-                    bytes: s.len(),
-                    bytes_hash: content_hash(&s),
-                    text: s.into_owned(),
-                    encoding: "stored_utf8",
-                    basis: "stored_representation",
-                })
+                store
+                    .with_conn(|conn| {
+                        source::read(conn, &d.content, &d.metadata_json)
+                            .map(std::borrow::Cow::into_owned)
+                    })
+                    .map(|s| LiveSource {
+                        bytes: s.len(),
+                        bytes_hash: content_hash(&s),
+                        text: s,
+                        encoding: "stored_utf8",
+                        basis: "stored_representation",
+                    })
             })
             .transpose();
     }

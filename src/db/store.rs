@@ -288,11 +288,11 @@ impl Store {
 
     /// The raw DuckDB connection, for persistence code only.
     ///
-    /// Production code outside `db` goes through Store methods and the `db::*`
-    /// repositories; the wider visibility exists only so tests can seed and
-    /// inspect fixtures directly.
+    /// Private to `db`: code outside goes through Store methods or takes a
+    /// connection from [`Self::with_conn`] / [`Self::with_tx`]. Test builds keep
+    /// crate visibility so tests can seed and inspect fixtures directly.
     #[cfg(not(test))]
-    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+    pub(in crate::db) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.lock_connection()
     }
 

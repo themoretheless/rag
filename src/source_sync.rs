@@ -586,11 +586,13 @@ impl<'a> SourceSyncService<'a> {
         seen.insert(source_file.clone());
         let stamp = source_stamp(&canonical, run.scan_policy)?;
         let existing = run.preloaded.get(&source_file);
-        let preserved_source_ok = crate::code_index::source::is_preserved_html(
-            &*self.store.lock()?,
-            &canonical,
-            existing.and_then(|entry| entry.document_metadata_json.as_deref()),
-        );
+        let preserved_source_ok = self.store.with_conn(|conn| {
+            Ok(crate::code_index::source::is_preserved_html(
+                conn,
+                &canonical,
+                existing.and_then(|entry| entry.document_metadata_json.as_deref()),
+            ))
+        })?;
         if existing.is_some_and(|entry| {
             manifest_preflight_matches(entry, stamp, &canonical_root)
                 && preserved_source_ok
