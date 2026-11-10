@@ -352,7 +352,9 @@ mod tests {
                     "fixture",
                 );
             }
-            store.index_code().unwrap();
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap();
             Self { store, _dir: dir }
         }
         fn put(store: &Store, id: &str, source: &str, revision: i64, project: &str) {
@@ -468,7 +470,9 @@ mod tests {
             2,
             "fixture",
         );
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let result = f.run(&f.q("api"));
         let unit = result["items"]
             .as_array()
@@ -487,7 +491,9 @@ mod tests {
     fn test_attribute_names_are_exact_and_never_inferred_from_doc_strings() {
         let f = Fixture::new();
         Fixture::put(&f.store,"src/lib.rs","pub fn api(){} #[doc=\"[test]\"]fn doc_fake(){api();} #[tokio::test_fake]fn prefix_fake(){api();} #[::tokio::test]async fn real_async(){api();}",2,"fixture");
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let result = f.run(&f.q("api"));
         let names = names(&result);
         assert!(names.contains(&"real_async".into()));
@@ -535,14 +541,18 @@ mod tests {
             1,
             "other",
         );
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         assert_eq!(names(&f.run(&f.q("api"))), labels("references_tests"));
         let mut q = f.q("api");
         q.project = None;
         assert_eq!(f.run(&q)["status"], "ambiguous_seeds");
         let manifest="[package]\nname='affected-fixture'\nversion='0.1.0'\n[features]\nfast=[]\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\nfeatures=['fast']\ndefault_features=false\n";
         Fixture::put(&f.store, "Cargo.toml", manifest, 2, "fixture");
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let normal = crate::code_index::CodeIndex::new(&f.store)
             .code_snapshot_in_project(Some("fixture"))
             .unwrap();
@@ -567,7 +577,9 @@ mod tests {
             3,
             "fixture",
         );
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         assert_eq!(f.run(&f.q(&old_id))["status"], "seed_unavailable");
     }
     #[test]
@@ -575,12 +587,16 @@ mod tests {
         let f = Fixture::new();
         let source="pub fn api(){} pub fn wrong(){} #[cfg(test)]use crate::api as selected; #[cfg(not(test))]use crate::wrong as selected; #[cfg(test)]#[test]fn checks_cfg(){selected();}";
         Fixture::put(&f.store, "src/lib.rs", source, 2, "fixture");
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         assert!(names(&f.run(&f.q("api"))).contains(&"checks_cfg".into()));
         assert!(names(&f.run(&f.q("wrong"))).is_empty());
         let manifest="[package]\nname='affected-fixture'\nversion='0.1.0'\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\nfeatures=[]\ndefault_features=false\n";
         Fixture::put(&f.store, "Cargo.toml", manifest, 2, "fixture");
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         assert_eq!(names(&f.run(&f.q("api"))), ["checks_cfg"]);
         assert!(names(&f.run(&f.q("wrong"))).is_empty());
     }

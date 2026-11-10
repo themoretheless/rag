@@ -494,12 +494,16 @@ mod tests {
         store
             .upsert_document(&doc("base", "/p/base.css", ".base{color:red}"))
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/base.css".into()),
             ..Default::default()
         };
-        let snapshot = store.code_snapshot().unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let impact = snapshot.query("impact", &q);
         assert_eq!(impact["items"][0]["path"], "/p/main.css", "{impact}");
         assert_eq!(impact["items"][1]["path"], "/p/index.html");
@@ -519,13 +523,18 @@ mod tests {
         page.content = "<p>removed</p>".into();
         store.upsert_document(&page).unwrap();
         assert_eq!(
-            store.code_snapshot().unwrap().query("impact", &q)["items"]
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .query("impact", &q)["items"]
                 .as_array()
                 .unwrap()
                 .len(),
             1
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let dq = history::DiffQuery {
             before: 1,
             after: Some(2),
@@ -546,7 +555,9 @@ mod tests {
         );
         page.content = "<link href='base.css'>".into();
         store.upsert_document(&page).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_index_diff(&dq)

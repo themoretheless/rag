@@ -587,8 +587,12 @@ mod tests {
         assert_eq!(page["items"][0]["note_id"], first["note_id"]);
         assert_eq!(page["truncated"], false);
         assert!(s.list_documents().unwrap().is_empty());
-        s.index_code().unwrap();
-        assert!(s.code_snapshot().unwrap().symbols.is_empty());
+        crate::code_index::CodeIndex::new(&s).index_code().unwrap();
+        assert!(crate::code_index::CodeIndex::new(&s)
+            .code_snapshot()
+            .unwrap()
+            .symbols
+            .is_empty());
         let path = s.path().to_owned();
         drop(s);
         let s = Store::open(&path).unwrap();

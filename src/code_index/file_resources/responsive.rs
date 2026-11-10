@@ -593,8 +593,12 @@ mod integration_tests {
         ] {
             store.upsert_document(&d).unwrap();
         }
-        store.index_code().unwrap();
-        let snapshot = store.code_snapshot().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/b.svg".into()),
             ..Default::default()
@@ -631,7 +635,9 @@ mod integration_tests {
         }
         page.content = "<img srcset='a.svg 1x, b.svg 3x'>".into();
         store.upsert_document(&page).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = history::DiffQuery {
             before: 1,
             after: Some(2),
@@ -660,7 +666,9 @@ mod integration_tests {
         );
         page.content = "\n\n<img srcset='a.svg 1x, b.svg 3x'>".into();
         store.upsert_document(&page).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_index_diff(&q)

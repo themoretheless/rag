@@ -349,12 +349,16 @@ mod tests {
             .unwrap();
         let mut client = doc("client", "/p/client.py", "from api import absent\n");
         store.upsert_document(&client).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/api.py".into()),
             ..Default::default()
         };
-        let snapshot = store.code_snapshot().unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let result = snapshot.query("impact", &q);
         assert_eq!(result["items"][0]["path"], "/p/client.py", "{result}");
         assert_eq!(result["items"][0]["via_kind"], "file_import_candidate");
@@ -382,12 +386,20 @@ mod tests {
         );
         client.content = "x = 1\n".into();
         store.upsert_document(&client).unwrap();
-        assert!(store.code_snapshot().unwrap().query("impact", &q)["items"]
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("impact", &q)["items"]
             .as_array()
             .unwrap()
             .is_empty());
-        store.index_code().unwrap();
-        assert!(store.code_snapshot().unwrap().query("impact", &q)["items"]
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("impact", &q)["items"]
             .as_array()
             .unwrap()
             .is_empty());
@@ -411,7 +423,9 @@ mod tests {
         );
         client.content = "from api import absent\n".into();
         store.upsert_document(&client).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_index_diff(&diffq)

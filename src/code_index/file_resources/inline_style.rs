@@ -391,12 +391,17 @@ mod tests {
         ] {
             store.upsert_document(&d).unwrap();
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = CodeQuery {
             impact_file: Some("/p/b.svg".into()),
             ..Default::default()
         };
-        let result = store.code_snapshot().unwrap().query("impact", &q);
+        let result = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("impact", &q);
         assert_eq!(result["items"][0]["path"], "/p/page.html", "{result}");
         assert_eq!(
             result["items"][0]["via"]["inline"]["property"],
@@ -415,11 +420,16 @@ mod tests {
         );
         page.content = page.content.replace("2x", "3x");
         store.upsert_document(&page).unwrap();
-        assert!(store.code_snapshot().unwrap().query("impact", &q)["items"]
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("impact", &q)["items"]
             .as_array()
             .unwrap()
             .is_empty());
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let dq = history::DiffQuery {
             before: 1,
             after: Some(2),
@@ -440,7 +450,9 @@ mod tests {
         );
         page.content = format!("\n\n{}", page.content.replace("&quot;", "&#34;"));
         store.upsert_document(&page).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_index_diff(&dq)
@@ -459,7 +471,9 @@ mod tests {
         assert_eq!(moved["relations_removed_total"], 0);
         page.content = page.content.replace("background:", "list-style-image:");
         store.upsert_document(&page).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let roles = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&history::DiffQuery {
                 before: 3,

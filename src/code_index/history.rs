@@ -929,7 +929,9 @@ mod tests {
             "class Base:\n    def work(self): pass\nclass Child(Base):\n    def work(self): pass\n",
         );
         store.upsert_document(&d).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             frozen_graph(&store.lock().unwrap(), 1).unwrap()["overrides"]
                 .as_array()
@@ -939,7 +941,9 @@ mod tests {
         );
         d.content = "class Base:\n    def work(self): pass\nclass Child(Base): pass\n".into();
         store.upsert_document(&d).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DiffQuery {
             before: 1,
             after: Some(2),
@@ -990,14 +994,18 @@ mod tests {
         for d in [&view, &code] {
             store.upsert_document(d).unwrap();
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let before = frozen_graph(&store.lock().unwrap(), 1).unwrap();
         view.content = format!("\n\n{}", view.content);
         code.content = format!("\n{}", code.content);
         for d in [&view, &code] {
             store.upsert_document(d).unwrap();
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let diff = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
                 before: 1,
@@ -1018,7 +1026,9 @@ mod tests {
         );
         view.content = "%{key}".into();
         store.upsert_document(&view).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DiffQuery {
             before: 2,
             after: Some(3),
@@ -1110,14 +1120,18 @@ mod tests {
         for d in [&migration, &code, &foreign] {
             store.upsert_document(d).unwrap();
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let frozen = frozen_graph(&store.lock().unwrap(), 1).unwrap();
         assert!(frozen["sql"]["tables"].is_array());
         migration.content = "CREATE TABLE users(name TEXT NOT NULL, age INT NOT NULL);".into();
         code.content="class Base: pass\nclass Other: pass\nclass Child(Other): pass\ndef work(): pass\nregistered = None\ndef plain(): pass\n".into();
         store.upsert_document(&migration).unwrap();
         store.upsert_document(&code).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DiffQuery {
             before: 1,
             after: Some(2),
@@ -1146,7 +1160,9 @@ mod tests {
         migration.content = format!("-- moved\n{}", migration.content);
         store.upsert_document(&migration).unwrap();
         store.upsert_document(&code).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let moved = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
                 before: 2,
@@ -1168,12 +1184,16 @@ mod tests {
             "CREATE TABLE calc(a INT DEFAULT 1, b INT GENERATED ALWAYS AS (a + 1) STORED);",
         );
         store.upsert_document(&migration).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let before = frozen_graph(&store.lock().unwrap(), 1).unwrap();
         migration.content =
             "CREATE TABLE calc(a INT DEFAULT 2, b INT GENERATED ALWAYS AS (a + 2) STORED);".into();
         store.upsert_document(&migration).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let after = frozen_graph(&store.lock().unwrap(), 2).unwrap();
         let diff = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
@@ -1206,11 +1226,15 @@ mod tests {
             "CREATE TABLE x(a INT CONSTRAINT positive CHECK(a>0), CONSTRAINT uq UNIQUE(a));",
         );
         store.upsert_document(&d).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let before = frozen_graph(&store.lock().unwrap(), 1).unwrap();
         d.content="CREATE TABLE x(a INT CONSTRAINT positive CHECK(a>1), CONSTRAINT uq UNIQUE(a), CONSTRAINT ceiling CHECK(a<100));".into();
         store.upsert_document(&d).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let after = frozen_graph(&store.lock().unwrap(), 2).unwrap();
         let result = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
@@ -1262,10 +1286,18 @@ mod tests {
         store
             .upsert_document(&doc("text", "/p/readme.md", "unchanged text"))
             .unwrap();
-        let first = store.index_code().unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(first.index_revision, Some(1));
         assert!(first.revision_created);
-        assert_eq!(store.code_snapshot().unwrap().index_revision, Some(1));
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .index_revision,
+            Some(1)
+        );
         let graph: String = store
             .lock()
             .unwrap()
@@ -1284,13 +1316,21 @@ mod tests {
             .any(|r| r["reference"]["name"] == "foo"
                 && r["reference"]["is_call"] == false
                 && r["resolution"] == "resolved_static"));
-        let warm = store.index_code().unwrap();
+        let warm = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(warm.index_revision, Some(1));
         assert!(!warm.revision_created);
         let mut a = store.get_document("a").unwrap().unwrap();
         a.content="// moved definitions\nfn main() { bar(); let secret_value=1; } fn foo() {} fn bar() {}".into();
         store.upsert_document(&a).unwrap();
-        assert_eq!(store.index_code().unwrap().index_revision, Some(2));
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .index_revision,
+            Some(2)
+        );
         let diff = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
                 before: 1,
@@ -1359,13 +1399,31 @@ mod tests {
     fn deleting_every_document_makes_a_new_chronological_empty_revision() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
-        assert_eq!(store.index_code().unwrap().index_revision, Some(1));
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .index_revision,
+            Some(1)
+        );
         store
             .upsert_document(&doc("a", "/p/a.rs", "fn a() {}"))
             .unwrap();
-        assert_eq!(store.index_code().unwrap().index_revision, Some(2));
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .index_revision,
+            Some(2)
+        );
         store.delete_document("a").unwrap();
-        assert_eq!(store.index_code().unwrap().index_revision, Some(3));
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .index_revision,
+            Some(3)
+        );
         let diff = crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
                 before: 2,
@@ -1375,7 +1433,13 @@ mod tests {
             })
             .unwrap();
         assert_eq!(diff["files"][0]["kind"], "removed");
-        assert_eq!(store.index_code().unwrap().index_revision, Some(3));
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .index_revision,
+            Some(3)
+        );
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_index_diff(&DiffQuery {
                 before: 999,
@@ -1392,7 +1456,9 @@ mod tests {
         store
             .upsert_document(&doc("a", "/p/a.rs", "fn old() {}"))
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let old_payload: String = store
             .lock()
             .unwrap()
@@ -1406,7 +1472,9 @@ mod tests {
         let mut a = store.get_document("a").unwrap().unwrap();
         a.content = "fn new() {}".into();
         store.upsert_document(&a).unwrap();
-        assert!(store.index_code().is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .is_err());
         assert_eq!(
             store
                 .lock()
@@ -1423,7 +1491,13 @@ mod tests {
             .code_index_history(&HistoryQuery::default())
             .unwrap();
         assert_eq!(history["items"].as_array().unwrap().len(), 1);
-        assert_eq!(store.code_snapshot().unwrap().stale_documents, vec!["a"]);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .stale_documents,
+            vec!["a"]
+        );
     }
     #[test]
     fn client_endpoints_history_is_frozen_and_guards_legacy_capture() {
@@ -1436,7 +1510,9 @@ mod tests {
                 "$.ajax({url:'/target',method:'GET'});",
             ))
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         store
             .upsert_document(&doc(
                 "client",
@@ -1444,7 +1520,9 @@ mod tests {
                 "$.ajax({url:'/target',method:'POST'});",
             ))
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DiffQuery {
             before: 1,
             after: Some(2),
@@ -1507,7 +1585,9 @@ mod integrity_tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DiffQuery {
             before: 1,
             after: Some(1),

@@ -962,9 +962,16 @@ mod tests {
             ..Default::default()
         };
         for d in [doc("root","/p/go.mod","module example.org/app"),doc("main","/p/main.go","package main\nimport nested \"example.org/app/nested\"\nfunc main(){nested.Work()}"),doc("api","/p/nested/a.go","package nested\nfunc Work(){}")]{store.upsert_document(&d).unwrap();}
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
-            target(&store.code_snapshot().unwrap(), "nested.Work"),
+            target(
+                &crate::code_index::CodeIndex::new(&store)
+                    .code_snapshot()
+                    .unwrap(),
+                "nested.Work"
+            ),
             vec!["Work"]
         );
         store
@@ -974,11 +981,21 @@ mod tests {
                 "module other.org/nested",
             ))
             .unwrap();
-        let s = store.code_snapshot().unwrap();
+        let s = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert!(target(&s, "nested.Work").is_empty());
         assert!(s.unindexed_documents.contains(&"boundary".to_owned()));
-        store.index_code().unwrap();
-        assert!(target(&store.code_snapshot().unwrap(), "nested.Work").is_empty());
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        assert!(target(
+            &crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap(),
+            "nested.Work"
+        )
+        .is_empty());
         store
             .upsert_document(&doc(
                 "boundary",
@@ -986,7 +1003,9 @@ mod tests {
                 "module changed.org/nested",
             ))
             .unwrap();
-        let s = store.code_snapshot().unwrap();
+        let s = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert!(target(&s, "nested.Work").is_empty());
         assert!(s.stale_documents.contains(&"boundary".to_owned()));
     }

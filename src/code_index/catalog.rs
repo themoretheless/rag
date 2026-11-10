@@ -509,9 +509,15 @@ mod tests {
     fn run_history_pins_append_only_pages_across_noops_and_new_revisions() {
         let (_root, store) = setup();
         put(&store, "a", Some("p"), "/p/a.py", "def a(): pass");
-        store.index_code().unwrap();
-        store.index_code().unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut q = run_query(1);
         let first = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&q)
@@ -519,7 +525,9 @@ mod tests {
         assert_eq!(first["total"], 3);
         assert_eq!(first["items"][0]["seq"], 3);
         put(&store, "a", Some("p"), "/p/a.py", "def changed(): pass");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         q.cursor = first["next_cursor"].as_str().map(str::to_owned);
         q.selection.limit = Some(10);
         let second = crate::code_index::CodeIndex::new(&store)
@@ -550,8 +558,12 @@ mod tests {
     fn run_history_rejects_wrong_filters_revision_and_replaced_anchors() {
         let (_root, store) = setup();
         put(&store, "a", None, "/p/a.py", "def a(): pass");
-        store.index_code().unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut q = run_query(1);
         let first = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&q)
@@ -583,8 +595,12 @@ mod tests {
     fn run_history_reports_invalid_and_oversized_metrics_without_decoding_bodies() {
         let (_root, store) = setup();
         put(&store, "a", None, "/p/a.py", "def a(): pass");
-        store.index_code().unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         store
             .lock()
             .unwrap()
@@ -622,7 +638,9 @@ mod tests {
             0
         );
         put(&store, "a", None, "/p/a.py", "def a(): pass");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let before = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&run_query(10))
             .unwrap();
@@ -648,7 +666,9 @@ mod tests {
         for (id, p) in [("a", "alpha"), ("b", "alpha"), ("c", "beta")] {
             put(&store, id, Some(p), "/same.py", "def original(): pass\n");
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let first = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&q(Some("alpha")))
             .unwrap();
@@ -661,7 +681,9 @@ mod tests {
             "/same.py",
             "def changed(): pass\n",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut page = q(Some("alpha"));
         page.cursor = Some(first["next_cursor"].as_str().unwrap().into());
         let second = crate::code_index::CodeIndex::new(&store)
@@ -718,7 +740,9 @@ mod tests {
             .unwrap()
             .iter()
             .all(|r| r["state"] == "unindexed"));
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         query.selection.project = Some("alpha".into());
         let indexed = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&query)
@@ -765,7 +789,9 @@ mod tests {
         put(&store, "0", None, "/p/0.txt", "none");
         put(&store, "1", Some("null"), "/p/1.txt", "named null");
         put(&store, "2", Some("alpha"), "/p/2.txt", "alpha");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut query = q(None);
         query.view = CatalogView::Projects;
         let first = crate::code_index::CodeIndex::new(&store)
@@ -798,7 +824,9 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let report = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&CatalogQuery {
                 view: CatalogView::Projects,
@@ -839,7 +867,9 @@ mod tests {
                 })
                 .unwrap();
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let report = crate::code_index::CodeIndex::new(&store)
             .code_catalog_query(&CatalogQuery {
                 view: CatalogView::Projects,

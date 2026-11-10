@@ -402,7 +402,9 @@ mod tests {
             "p",
             "<script>const PRIVATE_BODY='used.py'; const old='unused.py.bak';</script>",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_dead_files(&query("p"))
             .unwrap();
@@ -432,7 +434,9 @@ mod tests {
             "#!/usr/bin/env custom\nexecute\n",
         );
         put(&store, "unused", "/p/unused.py", "p", "def spare(): pass");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_dead_files(&query("p"))
             .unwrap();
@@ -451,7 +455,9 @@ mod tests {
         let (_root, store) = setup();
         put(&store, "a", "/p/a.py", "p", "link='b.py'\ndef a(): pass");
         put(&store, "b", "/p/b.py", "p", "def b(): pass");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut q = query("p");
         q.dead_code_max_documents = Some(1);
         let r = crate::code_index::CodeIndex::new(&store)
@@ -484,7 +490,9 @@ mod tests {
         put(&store, "b", "/p/b/same.py", "p", "def b(): pass");
         put(&store, "view", "/p/view.txt", "p", "same.py");
         put(&store, "foreign", "/q/other.txt", "q", "a/same.py");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = query("p");
         let first = crate::code_index::CodeIndex::new(&store)
             .code_dead_files(&q)

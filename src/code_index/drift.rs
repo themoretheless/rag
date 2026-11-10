@@ -527,7 +527,9 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(store)
+            .index_code()
+            .unwrap();
     }
     #[test]
     fn encoded_live_sources_compare_decoded_text_and_expose_raw_evidence() {
@@ -766,9 +768,13 @@ mod tests {
         let mut doc = store.get_document("a").unwrap().unwrap();
         doc.content = "fn changed() {}".into();
         store.upsert_document(&doc).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         store.delete_document("a").unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let first = crate::code_index::CodeIndex::new(&store)
             .code_drift_report(&DriftQuery {
                 limit: Some(1),
@@ -812,7 +818,9 @@ mod path_safety_tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = SourceQuery {
             document_id: Some("a".into()),
             ..Default::default()

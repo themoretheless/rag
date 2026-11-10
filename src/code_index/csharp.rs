@@ -1426,12 +1426,21 @@ mod tests {
         );
         store.upsert_document(&base).unwrap();
         store.upsert_document(&client).unwrap();
-        assert_eq!(store.index_code().unwrap().indexed, 2);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .indexed,
+            2
+        );
         let q = CodeQuery {
             symbol: Some("Lib.Base.Work".into()),
             ..Default::default()
         };
-        let before = store.code_snapshot().unwrap().query("callers", &q);
+        let before = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("callers", &q);
         assert_eq!(before["items"].as_array().unwrap().len(), 1, "{before}");
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_body(&q)
@@ -1448,11 +1457,16 @@ mod tests {
         assert_eq!(full.resolution.unwrap().equivalent_to_existing, Some(true));
         client.content = "class Child { void Run(){} }".into();
         store.upsert_document(&client).unwrap();
-        assert!(store.code_snapshot().unwrap().query("callers", &q)["items"]
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("callers", &q)["items"]
             .as_array()
             .unwrap()
             .is_empty());
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let query = history::DiffQuery {
             before: 1,
             after: Some(2),
@@ -1473,7 +1487,9 @@ mod tests {
         );
         client.content = "class Later {}".into();
         store.upsert_document(&client).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_index_diff(&query)

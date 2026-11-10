@@ -490,7 +490,9 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         (dir, store)
     }
     fn path() -> CodeReadQuery {
@@ -600,7 +602,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        s.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&s).index_code().unwrap();
         let ambiguous = crate::code_index::CodeIndex::new(&s)
             .code_read(&path())
             .unwrap();
@@ -870,7 +872,7 @@ mod tests {
             crate::code_index::CodeIndex::new(&s).code_read(&q),
             Err(AppError::Conflict(_))
         ));
-        s.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&s).index_code().unwrap();
         assert!(matches!(
             crate::code_index::CodeIndex::new(&s).code_read(&q),
             Err(AppError::Conflict(_))
@@ -879,7 +881,10 @@ mod tests {
     #[test]
     fn code_cursor_delimited_ids_match_array_and_have_bounded_parsing() {
         let (_dir, s) = store("def first(): pass\ndef second(): pass\n");
-        let symbols = s.code_snapshot().unwrap().symbols;
+        let symbols = crate::code_index::CodeIndex::new(&s)
+            .code_snapshot()
+            .unwrap()
+            .symbols;
         let a = &symbols[0].id;
         let b = &symbols[1].id;
         let mut q: CodeReadQuery = serde_json::from_value(
@@ -928,7 +933,7 @@ mod tests {
         q.include_containers = true;
         q.max_chars = Some(100000);
         q.selection.limit = Some(500);
-        let expected: BTreeSet<_> = s
+        let expected: BTreeSet<_> = crate::code_index::CodeIndex::new(&s)
             .code_snapshot()
             .unwrap()
             .symbols
@@ -991,6 +996,8 @@ mod tests {
         let mut q = path();
         q.include_containers = true;
         assert!(crate::code_index::CodeIndex::new(&s).code_read(&q).is_err());
-        assert!(s.code_snapshot().is_ok());
+        assert!(crate::code_index::CodeIndex::new(&s)
+            .code_snapshot()
+            .is_ok());
     }
 }

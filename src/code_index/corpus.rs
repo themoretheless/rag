@@ -1228,7 +1228,9 @@ mod tests {
             ),
             "p",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = search(&["needle"]);
         let result = crate::code_index::CodeIndex::new(&store)
             .search_multi(&q)
@@ -1267,7 +1269,9 @@ mod tests {
             "from api import work\nregistered = work\n",
             "p",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         put(
             &store,
             "api",
@@ -1318,7 +1322,9 @@ mod tests {
             "export function work() { return 1; }",
             "q",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let result = crate::code_index::CodeIndex::new(&store)
             .duplicates(&DuplicateQuery {
                 project: Some("p".into()),
@@ -1396,7 +1402,9 @@ mod tests {
             "<link rel='stylesheet' href='../p/copies/theme.css'>",
             "q",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DuplicateQuery {
             project: Some("p".into()),
             path_prefix: Some("/p/copies".into()),
@@ -1450,7 +1458,9 @@ mod tests {
             "from copies.api2 import work\nregistered=work\n",
             "p",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DuplicateQuery {
             project: Some("p".into()),
             path_prefix: Some("/p/copies".into()),
@@ -1471,7 +1481,9 @@ mod tests {
             .duplicates(&q)
             .unwrap();
         assert_eq!(after["groups"][0]["usage_score"], 0, "{after}");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .duplicates(&q)
@@ -1495,11 +1507,15 @@ mod tests {
         );
         put(&store, "module", "/p/mod.js", "const value=1;", "p");
         put(&store, "import", "/p/use.js", "import './mod.js';", "p");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let files = crate::code_index::CodeIndex::new(&store)
             .corpus_files(Some("p"), None)
             .unwrap();
-        let snap = store.code_snapshot().unwrap();
+        let snap = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let roles = search_roles(&snap, &files);
         assert_eq!(roles.get("b").unwrap().0, 3);
         assert_eq!(roles.get("module").unwrap().0, 3);
@@ -1526,7 +1542,9 @@ mod tests {
             &"import './mod2.js';\n".repeat(105),
             "p",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = DuplicateQuery {
             project: Some("p".into()),
             max_members: Some(1),
@@ -1547,7 +1565,9 @@ mod tests {
         let files = crate::code_index::CodeIndex::new(&store)
             .corpus_files(Some("p"), None)
             .unwrap();
-        let mut snap = store.code_snapshot().unwrap();
+        let mut snap = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let before = search_roles(&snap, &files);
         snap.file_imports.reverse();
         assert_eq!(before, search_roles(&snap, &files));
@@ -1564,7 +1584,9 @@ mod tests {
             "p",
         );
         put(&store, "short", "/p/z/theme2.css", "body{color:red}", "p");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let query = DuplicateQuery {
             project: Some("p".into()),
             max_members: Some(1),
@@ -1579,7 +1601,9 @@ mod tests {
             "short"
         );
         put(&store,"html","/p/index.html","<link href='a/deep/theme.css'><link href='a/deep/theme.css'><link href='z/theme2.css'>","p");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let report = crate::code_index::CodeIndex::new(&store)
             .duplicates(&query)
             .unwrap();
@@ -1629,7 +1653,9 @@ mod tests {
             "<link href='../p/copies/theme.css'>",
             "q",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.path_prefix = Some("/p/copies".into());
@@ -1679,7 +1705,9 @@ mod tests {
         for (id, path) in [("a", "/p/copies/theme.css"), ("b", "/p/copies/theme2.css")] {
             put(&store, id, path, "/*needle*/body{color:red}", "p");
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         put(
             &store,
             "html",
@@ -1696,7 +1724,9 @@ mod tests {
                 .unwrap()["families"][0]["usage_score"],
             0
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .search_multi(&query)
@@ -1716,7 +1746,9 @@ mod tests {
                 .unwrap()["families"][0]["usage_score"],
             0
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .search_multi(&query)
@@ -1737,7 +1769,9 @@ mod tests {
         let store = Store::open(&temp.path().join("scope.duckdb")).unwrap();
         put(&store, "p", "/p/a.py", "def work(): return 'needle'", "p");
         put(&store, "q", "/q/a.py", "def work(): return 'needle'", "q");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         store
             .lock()
             .unwrap()
@@ -1799,7 +1833,9 @@ mod tests {
             "import './copies/mod2.js';",
             "p",
         );
-        reader.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&reader)
+            .index_code()
+            .unwrap();
         let mut conn = reader.lock().unwrap();
         let transaction = conn.transaction().unwrap();
         let files = corpus_files_locked(&transaction, Some("p"), Some("/p/copies")).unwrap();
@@ -1917,7 +1953,9 @@ mod tests {
             "const ENDPOINT='../p/php/Files.php';",
             "q",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.path_prefix = Some("/p/php".into());
@@ -1955,7 +1993,9 @@ mod tests {
         put(&store, "a", "/p/a/Files.php", "<?php echo 'needle';", "p");
         put(&store, "b", "/p/b/Files.php", "<?php echo 'needle';", "p");
         put(&store, "js", "/p/app.js", "const path='Files.php';", "p");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.path_prefix = Some("/p/a".into());
@@ -1968,7 +2008,9 @@ mod tests {
             1
         );
         put(&store, "js", "/p/app.js", "const path='a/Files.php';", "p");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .search_multi(&query)
@@ -1988,7 +2030,9 @@ mod tests {
             "p",
         );
         put(&store,"source","/p/app.js","const a='Files2.php.bak', b='OtherFiles2.php', c='other/Files2.php', d='https://remote/copies/Files2.php';","p");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         let result = crate::code_index::CodeIndex::new(&store)
@@ -2002,7 +2046,9 @@ mod tests {
             "const path='./copies/Files2.php';",
             "p",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .search_multi(&query)
@@ -2028,7 +2074,9 @@ mod tests {
             "const path='copies/Files2.php';",
             "p",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut query = search(&["needle"]);
         query.project = Some("p".into());
         query.literal_mentions = Some(LiteralMentionOptions {
@@ -2068,7 +2116,9 @@ mod tests {
                 .unwrap()
                 > 0
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .search_multi(&query)
@@ -2092,7 +2142,9 @@ mod tests {
                 "p",
             );
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let query = DuplicateQuery {
             project: Some("p".into()),
             path_prefix: Some("/p/copies".into()),
