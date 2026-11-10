@@ -21,9 +21,9 @@ pub mod embedding_identity;
 pub mod fts;
 pub mod graph;
 pub mod kg;
+pub mod knowledge;
 #[cfg(test)]
 mod n_plus_one_timing_tests;
-pub mod knowledge;
 pub(crate) mod payload_kv;
 pub mod recovery;
 pub mod review;

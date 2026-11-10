@@ -558,7 +558,16 @@ impl KgRepo<'_> {
                     COUNT(DISTINCT subject), COUNT(DISTINCT predicate) \
              FROM kg_facts",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )?;
 
         let mut relationship_types = Vec::new();
