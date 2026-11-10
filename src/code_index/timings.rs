@@ -101,7 +101,9 @@ mod tests {
     fn publication_and_noop_runs_are_distinct_persistent_and_do_not_change_revision() {
         let (root, store) = setup();
         put(&store, "def work(): pass\n");
-        let first = store.index_code().unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let a = first.stage_timings.as_ref().unwrap();
         assert_eq!(a.cache_misses, 1);
         assert_eq!(a.documents_loaded, 1);
@@ -118,7 +120,9 @@ mod tests {
         }
         assert!(a.before_metrics_write_ms >= a.transaction_body_ms);
         assert!(!a.commit_included);
-        let second = store.index_code().unwrap();
+        let second = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let b = second.stage_timings.as_ref().unwrap();
         assert!(!second.revision_created);
         assert_eq!(second.index_revision, first.index_revision);
@@ -128,7 +132,9 @@ mod tests {
         assert_eq!(report["publication_run"]["run_id"], a.run_id);
         assert_eq!(report["latest_successful_run"]["run_id"], b.run_id);
         put(&store, "def revised(): pass\n");
-        let third = store.index_code().unwrap();
+        let third = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_ne!(third.index_revision, first.index_revision);
         assert_eq!(status(&store.lock().unwrap(), first.index_revision), report);
         drop(store);
@@ -140,7 +146,9 @@ mod tests {
     fn measurement_write_failure_rolls_back_cache_and_publication() {
         let (_root, store) = setup();
         put(&store, "def before(): pass\n");
-        let first = store.index_code().unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let before: String = store
             .lock()
             .unwrap()
@@ -152,7 +160,9 @@ mod tests {
             .unwrap();
         store.lock().unwrap().execute("INSERT INTO code_index_runs(seq,run_id,index_revision,revision_created,metrics_json) VALUES (9223372036854775807,'forced-overflow',-1,false,'{}')",[]).unwrap();
         put(&store, "def after(): pass\n");
-        assert!(store.index_code().is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .is_err());
         let conn = store.lock().unwrap();
         let revision: Option<i64> = conn
             .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))
@@ -175,7 +185,9 @@ mod tests {
     fn missing_legacy_and_corrupt_records_are_explicit_without_fabricated_timings() {
         let (_root, store) = setup();
         put(&store, "def work(): pass\n");
-        let first = store.index_code().unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         store
             .lock()
             .unwrap()
@@ -184,7 +196,9 @@ mod tests {
         let empty = status(&store.lock().unwrap(), first.index_revision);
         assert_eq!(empty["available"], false);
         assert_eq!(empty["reason"], "no_measured_run_for_revision");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let measured = status(&store.lock().unwrap(), first.index_revision);
         assert!(measured["publication_run"].is_null());
         assert!(measured["latest_successful_run"].is_object());
@@ -221,7 +235,9 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        let original = store.index_code().unwrap();
+        let original = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         {
             let conn = store.lock().unwrap();
             conn.execute("DROP TABLE code_index_runs", []).unwrap();
@@ -236,7 +252,9 @@ mod tests {
             status(&upgraded.lock().unwrap(), original.index_revision)["reason"],
             "no_measured_run_for_revision"
         );
-        let report = upgraded.index_code().unwrap();
+        let report = crate::code_index::CodeIndex::new(&upgraded)
+            .index_code()
+            .unwrap();
         assert_eq!(report.index_revision, original.index_revision);
         assert!(!report.revision_created);
         assert_eq!(report.unchanged, 2);

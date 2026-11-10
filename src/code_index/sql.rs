@@ -2563,7 +2563,11 @@ mod persistence_tests {
             default_columns: vec![],
         };
         assert_eq!(
-            store.code_snapshot().unwrap().write_check(&check).unwrap()["status"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .write_check(&check)
+                .unwrap()["status"],
             "valid"
         );
         assert_eq!(
@@ -2589,13 +2593,19 @@ mod persistence_tests {
         doc.content = "CREATE TABLE users(name TEXT NOT NULL, age INT NOT NULL);".into();
         store.upsert_document(&doc).unwrap();
         assert_eq!(
-            store.code_snapshot().unwrap().write_check(&check).unwrap()["status"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .write_check(&check)
+                .unwrap()["status"],
             "indeterminate"
         );
         std::fs::write(&migration, &doc.content).unwrap();
         let report = service.sync(command).await.unwrap();
         assert!(report.errors.is_empty(), "{report:?}");
-        let snap = store.code_snapshot().unwrap();
+        let snap = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert!(snap.stale_documents.is_empty());
         assert_eq!(snap.write_check(&check).unwrap()["status"], "invalid");
         let mut complete_check = check;
@@ -2612,7 +2622,7 @@ mod persistence_tests {
         drop(store);
         let store = Store::open(&config.db_path).unwrap();
         assert_eq!(
-            store
+            crate::code_index::CodeIndex::new(&store)
                 .code_snapshot()
                 .unwrap()
                 .write_check(&complete_check)

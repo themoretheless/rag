@@ -722,7 +722,9 @@ mod tests {
                 })
                 .unwrap();
             store.lock().unwrap().execute("INSERT INTO source_manifest VALUES (?,?,13,0,?,'file',current_timestamp,current_timestamp)",params![path.display().to_string(),root.display().to_string(),content_hash("fn main() {}\n")]).unwrap();
-            store.index_code().unwrap();
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap();
             crate::analysis_tasks::AnalysisTasks::new(&store)
                 .analysis_task_set(
                     "s",
@@ -887,7 +889,9 @@ mod tests {
         let mut doc = f.store.get_document("file").unwrap().unwrap();
         doc.content = "fn next() {}\n".into();
         f.store.upsert_document(&doc).unwrap();
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let r = f.call(Mode::Deny);
         assert_eq!(r["facts"]["fresh"], true);
         assert_eq!(r["rule"], "index_unused");
@@ -987,7 +991,9 @@ mod tests {
                 })
                 .unwrap();
         }
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let r = f.call(Mode::Deny);
         assert!(r["facts"]["fresh"].is_null(), "{r}");
         assert_eq!(r["facts"]["checked_files"], MAX_FILES);

@@ -1595,7 +1595,9 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         crate::analysis_tasks::AnalysisTasks::new(&store)
             .analysis_task_set(
                 "wal",
@@ -1745,7 +1747,14 @@ mod tests {
                     .len(),
                 1
             );
-            assert_eq!(store.code_snapshot().unwrap().symbols[0].name, "preserved");
+            assert_eq!(
+                crate::code_index::CodeIndex::new(&store)
+                    .code_snapshot()
+                    .unwrap()
+                    .symbols[0]
+                    .name,
+                "preserved"
+            );
             let hits = search_bm25(&store, "cat", 10, &LexFilters::default()).unwrap();
             assert!(!hits.is_empty());
             {

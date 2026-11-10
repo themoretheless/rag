@@ -499,7 +499,9 @@ mod query_tests {
             "Привет %{reg.months} %{reg.months} @{reg.months} {{other.key}}",
         );
         put(&store, "foreign", "/q/view.html", "q", "%{reg.months}");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = ReferenceQuery {
             key: Some("reg.months".into()),
             project: Some("p".into()),
@@ -554,7 +556,9 @@ mod query_tests {
             .unwrap();
         assert_eq!(stale["total"], 3);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let fresh = crate::code_index::CodeIndex::new(&store)
             .code_references(&q)
             .unwrap();
@@ -581,7 +585,9 @@ mod cache_tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let payload: String = store
             .lock()
             .unwrap()
@@ -611,7 +617,9 @@ mod cache_tests {
             .unwrap();
         assert_eq!(stale["total"], 0);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_references(&query)

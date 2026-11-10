@@ -499,7 +499,9 @@ impl<'a> ExternalDb<'a> {
             .ok_or_else(|| AppError::config("unknown external database alias"))?;
         let url = std::env::var(&target.url_env)
             .map_err(|_| AppError::config("external database URL environment variable is unset"))?;
-        let revision = self.store.code_snapshot()?.index_revision;
+        let revision = crate::code_index::CodeIndex::new(self.store)
+            .code_snapshot()?
+            .index_revision;
         let snapshot = tokio::time::timeout(
             Duration::from_secs(30),
             collect(&q.connection, target, &url, revision, q.include_samples),

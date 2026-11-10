@@ -535,17 +535,16 @@ impl<'a> ExternalDb<'a> {
                 && q.columns.is_empty()
                 && q.default_columns.is_empty()
                 && row.is_none();
-            let mut result =
-                self.store
-                    .code_snapshot()?
-                    .write_check(&crate::code_index::sql::WriteCheck {
-                        table: q.table,
-                        project: q.project,
-                        operation: q.operation,
-                        columns: q.columns,
-                        values: row,
-                        default_columns: q.default_columns,
-                    })?;
+            let mut result = crate::code_index::CodeIndex::new(self.store)
+                .code_snapshot()?
+                .write_check(&crate::code_index::sql::WriteCheck {
+                    table: q.table,
+                    project: q.project,
+                    operation: q.operation,
+                    columns: q.columns,
+                    values: row,
+                    default_columns: q.default_columns,
+                })?;
             let assigned = result["checked_columns"].as_array().map_or(0, Vec::len);
             result["value_count"] = json!(count);
             if implicit {

@@ -275,7 +275,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::policy::PolicyQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.policy_trace(&params).map_err(Self::map_err)?)
     }
     #[tool(
@@ -286,7 +288,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::styles::ClassQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.class_usage(&params).map_err(Self::map_err)?)
     }
     #[tool(
@@ -396,7 +400,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::sql::SqlQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(
             &snapshot
                 .sql_query("schema", &params)
@@ -411,7 +417,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::sql::SqlQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(
             &snapshot
                 .sql_query("table_usage", &params)
@@ -440,7 +448,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.query("entrypoints", &params))
     }
     #[tool(
@@ -494,7 +504,9 @@ impl RagServer {
                 ))
             }
         }
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.query("dead_code", &params))
     }
     #[tool(
@@ -505,7 +517,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.query("slice", &params))
     }
     #[tool(
@@ -610,7 +624,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.query("inheritance", &params))
     }
     #[tool(
@@ -712,7 +728,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.query("callers", &params))
     }
     #[tool(
@@ -723,7 +741,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::code_index::CodeQuery>,
     ) -> Result<CallToolResult, McpError> {
-        let snapshot = self.store.code_snapshot().map_err(Self::map_err)?;
+        let snapshot = crate::code_index::CodeIndex::new(&self.store)
+            .code_snapshot()
+            .map_err(Self::map_err)?;
         Self::json_result(&snapshot.query("callees", &params))
     }
     #[tool(

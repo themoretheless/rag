@@ -466,14 +466,18 @@ mod tests {
             status["quality"]["chunks"]["norm_p50"],
             serde_json::Value::Null
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let status = crate::code_index::CodeIndex::new(&store)
             .code_index_status(&StatusQuery::default(), &config)
             .unwrap();
         assert_eq!(status["state"], "empty_scope");
         assert_eq!(status["quality"]["healthy"], false);
         put(&store, "a", "a", "/p/a.py", "def work(): pass\n");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let status = crate::code_index::CodeIndex::new(&store)
             .code_index_status(&StatusQuery::default(), &config)
             .unwrap();
@@ -489,7 +493,9 @@ mod tests {
         put(&store, "a", "a", "/p/a.py", "def work(): pass\n");
         put(&store, "b", "b", "/p/b.py", "def foreign(): pass\n");
         store.write_embedding_manifest_from_config(&config).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         chunk(
             &store,
             &"a".repeat(256),
@@ -578,7 +584,9 @@ mod tests {
             "/p/a.not_source",
             "unparsed fixture",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         for id in ["a", "b"] {
             put(
                 &store,
@@ -636,7 +644,9 @@ mod tests {
     fn oversized_sample_cells_are_reported_as_unmeasured() {
         let (_root, store, config) = setup();
         put(&store, "a", "a", "/p/a.py", "def work(): pass\n");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         chunk(
             &store,
             "a",
@@ -667,7 +677,9 @@ mod tests {
     fn sampling_budget_stops_inspection_and_nonunit_vectors_are_not_invalid() {
         let (_root, store, config) = setup();
         put(&store, "a", "a", "/p/a.py", "def work(): pass\n");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         store.write_embedding_manifest_from_config(&config).unwrap();
         let content = "界".repeat(TEXT_CHARS);
         let rows: Vec<_> = (0..100)
@@ -708,7 +720,9 @@ mod tests {
     fn sql_read_evidence_without_definitions_is_not_an_empty_structural_index() {
         let (_root, store, config) = setup();
         put(&store, "sql", "a", "/p/read.sql", "SELECT id FROM users;");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let status = crate::code_index::CodeIndex::new(&store)
             .code_index_status(&StatusQuery::default(), &config)
             .unwrap();
@@ -728,7 +742,9 @@ mod tests {
             "/p/view.html",
             "<form action='/save'></form>",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let status = crate::code_index::CodeIndex::new(&store)
             .code_index_status(&StatusQuery::default(), &config)
             .unwrap();

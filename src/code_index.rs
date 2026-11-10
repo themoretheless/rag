@@ -845,17 +845,6 @@ impl<'a> CodeIndex<'a> {
         })
     }
 }
-// Transitional delegators for the two most-called entry points, so their call
-// sites can move to `CodeIndex` in reviewable batches. Removed in Stage 2 once
-// no caller uses them.
-impl Store {
-    pub fn index_code(&self) -> Result<IndexReport> {
-        CodeIndex::new(self).index_code()
-    }
-    pub fn code_snapshot(&self) -> Result<CodeSnapshot> {
-        CodeIndex::new(self).code_snapshot()
-    }
-}
 fn snapshot_locked(conn: &duckdb::Connection, project: Option<&str>) -> Result<CodeSnapshot> {
     snapshot_locked_view(conn, project, false)
 }
@@ -1275,10 +1264,31 @@ mod tests {
         store
             .upsert_document(&doc("b", "b.rs", "fn beta() {}"))
             .unwrap();
-        assert_eq!(store.code_snapshot().unwrap().unindexed_documents.len(), 2);
-        assert_eq!(store.index_code().unwrap().indexed, 2);
-        assert_eq!(store.index_code().unwrap().unchanged, 2);
-        let snap = store.code_snapshot().unwrap();
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .unindexed_documents
+                .len(),
+            2
+        );
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .indexed,
+            2
+        );
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .unchanged,
+            2
+        );
+        let snap = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_eq!(snap.calls[0].resolution, "resolved_static");
         assert_eq!(snap.calls[0].resolution_basis, "lexical");
         assert_eq!(snap.calls[0].candidates.len(), 1);
@@ -1292,24 +1302,43 @@ mod tests {
         assert_eq!(snap.query("callers", &q)["total"], 1);
         drop(store);
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.code_snapshot().unwrap().symbols.len(), 3);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .symbols
+                .len(),
+            3
+        );
         // A source mutation cannot silently return old indexed facts.
         let mut a = store.get_document("a").unwrap().unwrap();
         a.content = "fn replacement() {}".into();
         store.upsert_document(&a).unwrap();
-        let snap = store.code_snapshot().unwrap();
+        let snap = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_eq!(snap.stale_documents, vec!["a"]);
         assert!(snap.calls.is_empty());
         store.delete_document("b").unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
-            store.code_snapshot().unwrap().symbols[0].name,
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .symbols[0]
+                .name,
             "replacement"
         );
         let mut a = store.get_document("a").unwrap().unwrap();
         a.status = "archived".into();
         store.upsert_document(&a).unwrap();
-        assert!(store.code_snapshot().unwrap().symbols.is_empty());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .symbols
+            .is_empty());
     }
     #[test]
     fn code_index_arrows_generics_and_call_target_arguments() {
@@ -1351,8 +1380,12 @@ mod tests {
         store
             .upsert_document(&doc("other", "other.rs", "fn c() {}"))
             .unwrap();
-        store.index_code().unwrap();
-        let snapshot = store.code_snapshot().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let q = CodeQuery {
             symbol: Some("c".into()),
             path: Some("a.rs".into()),
@@ -1408,7 +1441,7 @@ mod tests {
             store.upsert_document(&doc("main",main_path,main)).unwrap();
             store.upsert_document(&doc("lib",lib_path,library)).unwrap();
             store.upsert_document(&doc("decoy","/other/decoy.rs","fn go() {} struct Worker; impl Worker { fn work() {} }")).unwrap();
-            store.index_code().unwrap();let snapshot=store.code_snapshot().unwrap();
+            crate::code_index::CodeIndex::new(&store).index_code().unwrap();let snapshot=crate::code_index::CodeIndex::new(&store).code_snapshot().unwrap();
             let calls:Vec<_>=snapshot.calls.iter().filter(|c|c.reference.document_id=="main").collect();
             assert_eq!(calls.len(),2,"{main_path}: {snapshot:?}");
             for call in calls {
@@ -1436,8 +1469,14 @@ mod tests {
                 "export function go() {} export class Worker { work() {} }",
             ))
             .unwrap();
-        store.index_code().unwrap();
-        for c in store.code_snapshot().unwrap().calls {
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        for c in crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .calls
+        {
             assert!(c.candidates.is_empty(), "{c:?}");
         }
     }
@@ -1451,7 +1490,7 @@ mod tests {
         ] {
             let dir=tempfile::tempdir().unwrap(); let store=Store::open(&dir.path().join("code.duckdb")).unwrap();
             store.upsert_document(&doc("main",main_path,main)).unwrap();store.upsert_document(&doc("lib",lib_path,library)).unwrap();
-            store.index_code().unwrap(); let snap=store.code_snapshot().unwrap();
+            crate::code_index::CodeIndex::new(&store).index_code().unwrap(); let snap=crate::code_index::CodeIndex::new(&store).code_snapshot().unwrap();
             assert!(snap.parse_errors.is_empty(),"{main_path}: {snap:?}");
             for c in &snap.calls {assert_eq!(c.resolution,"resolved_static","{main_path}: {c:?}");assert_eq!(c.candidates.len(),1);}
             assert!(!snap.calls.is_empty());
@@ -1469,8 +1508,14 @@ mod tests {
             ))
             .unwrap();
         store.upsert_document(&doc("caller","/p/src/child.rs","use crate::inline::run as alias; use super::root; fn caller() { alias(); root(); }" )).unwrap();
-        store.index_code().unwrap();
-        for c in store.code_snapshot().unwrap().calls {
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        for c in crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .calls
+        {
             assert_eq!(c.resolution, "resolved_static", "{c:?}");
             assert!(c.candidates[0].starts_with("root:"));
         }
@@ -1487,8 +1532,14 @@ mod tests {
                 "export function go() {} function hidden() {}",
             ))
             .unwrap();
-        store.index_code().unwrap();
-        for c in store.code_snapshot().unwrap().calls {
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        for c in crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .calls
+        {
             assert!(c.candidates.is_empty(), "{c:?}");
         }
     }
@@ -1506,8 +1557,13 @@ mod tests {
         lib.wing = Some("two".into());
         store.upsert_document(&main).unwrap();
         store.upsert_document(&lib).unwrap();
-        store.index_code().unwrap();
-        assert!(store.code_snapshot().unwrap().calls[0]
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .calls[0]
             .candidates
             .is_empty());
         // Cache format changes force a parse even when content is unchanged.
@@ -1528,14 +1584,32 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(store.code_snapshot().unwrap().stale_documents, vec!["main"]);
-        assert_eq!(store.index_code().unwrap().indexed, 1);
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .stale_documents,
+            vec!["main"]
+        );
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .indexed,
+            1
+        );
         let mut lib = store.get_document("lib").unwrap().unwrap();
         lib.wing = Some("one".into());
         store.upsert_document(&lib).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
-            store.code_snapshot().unwrap().calls[0].resolution,
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .calls[0]
+                .resolution,
             "resolved_static"
         );
     }

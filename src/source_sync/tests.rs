@@ -1645,7 +1645,9 @@ async fn source_sync_refreshes_code_index_for_add_change_delete_and_warm_runs() 
     let report = service.sync(command.clone()).await.unwrap();
     assert!(report.errors.is_empty(), "{report:?}");
     assert_eq!(report.code_index.as_ref().unwrap().indexed, 2);
-    let snap = store.code_snapshot().unwrap();
+    let snap = crate::code_index::CodeIndex::new(&store)
+        .code_snapshot()
+        .unwrap();
     assert!(snap.stale_documents.is_empty());
     assert_eq!(snap.calls[0].resolution, "resolved_static");
     let report = service.sync(command.clone()).await.unwrap();
@@ -1653,14 +1655,18 @@ async fn source_sync_refreshes_code_index_for_add_change_delete_and_warm_runs() 
     std::fs::write(root.path().join("lib.py"), "def renamed_go():\n    pass\n").unwrap();
     let report = service.sync(command.clone()).await.unwrap();
     assert!(report.errors.is_empty(), "{report:?}");
-    let snap = store.code_snapshot().unwrap();
+    let snap = crate::code_index::CodeIndex::new(&store)
+        .code_snapshot()
+        .unwrap();
     assert!(snap.stale_documents.is_empty());
     assert_eq!(snap.calls[0].resolution, "unresolved");
     assert!(snap.symbols.iter().any(|s| s.name == "renamed_go"));
     std::fs::remove_file(root.path().join("lib.py")).unwrap();
     let report = service.sync(command).await.unwrap();
     assert_eq!(report.deleted.len(), 1);
-    let snap = store.code_snapshot().unwrap();
+    let snap = crate::code_index::CodeIndex::new(&store)
+        .code_snapshot()
+        .unwrap();
     assert_eq!(snap.symbols.len(), 1);
     assert!(snap.unindexed_documents.is_empty());
 }

@@ -322,7 +322,9 @@ mod tests {
             "<?php function render(){Translate('key');}",
         );
         put(&store, "q", "/q/a.html", "q", "%{key}");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 evidence_limit: Some(1),
@@ -349,7 +351,9 @@ mod tests {
             .unwrap();
         assert_eq!(via_prefix["items"][0]["id"], node["id"]);
         put(&store, "a", "/p/a.html", "p", "\n%{key}");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let changed = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&query(SymbolKind::TranslationKey))
             .unwrap();
@@ -382,7 +386,9 @@ mod tests {
             "p",
             "SELECT * FROM public.logs; SELECT * FROM users;",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 name: Some("logs".into()),
@@ -439,7 +445,9 @@ mod tests {
             "p",
             "function handler(){} function handler(){} app.get('/items',handler); fetch('/items');",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&query(SymbolKind::Route))
             .unwrap();
@@ -468,7 +476,9 @@ mod tests {
             "p",
             "%{Work_key} %{literal%_key}",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_symbols(&SymbolQuery {
                 project: Some("p".into()),
@@ -525,7 +535,9 @@ mod budget_tests {
                 ..Default::default()
             })
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut q = SymbolQuery {
             symbol_kind: Some(SymbolKind::TranslationKey),
             project: Some("p".into()),

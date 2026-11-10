@@ -88,7 +88,7 @@ impl<'a> ExternalDb<'a> {
         )
     }
     pub(super) fn external_db_cross(&self, s: &Snapshot, q: &Query) -> Result<Value> {
-        let code = self.store.code_snapshot()?;
+        let code = crate::code_index::CodeIndex::new(self.store).code_snapshot()?;
         let mut observed = BTreeSet::new();
         let mut uses = vec![];
         for usage in code

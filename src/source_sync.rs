@@ -510,11 +510,10 @@ impl<'a> SourceSyncService<'a> {
             let finalization_error = refresh_result.err().map(|error| {
                 source_sync_fts_finalization_failure(&store, durable_mutation_committed, &error)
             });
-            let code_result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.index_code()))
-                    .unwrap_or_else(|_| {
-                        Err(AppError::config("source-sync code index refresh panicked"))
-                    });
+            let code_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::code_index::CodeIndex::new(&store).index_code()
+            }))
+            .unwrap_or_else(|_| Err(AppError::config("source-sync code index refresh panicked")));
             (sync_guard, finalization_error, code_result)
         })
         .await;

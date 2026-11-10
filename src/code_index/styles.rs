@@ -904,7 +904,9 @@ mod persistence_tests {
             symbol: "policy".into(),
             ..Default::default()
         };
-        let snap = store.code_snapshot().unwrap();
+        let snap = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_eq!(
             snap.class_usage(&q).unwrap()["items"][0]["status"],
             "defined_and_used"
@@ -932,7 +934,9 @@ mod persistence_tests {
         .unwrap();
         let report = service.sync(command).await.unwrap();
         assert!(report.errors.is_empty(), "{report:?}");
-        let snap = store.code_snapshot().unwrap();
+        let snap = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_eq!(
             snap.class_usage(&q).unwrap()["items"][0]["status"],
             "unused_in_indexed_scope"
@@ -941,7 +945,11 @@ mod persistence_tests {
         drop(store);
         let store = Store::open(&config.db_path).unwrap();
         assert_eq!(
-            store.code_snapshot().unwrap().policy_trace(&p).unwrap()["default_behavior"],
+            crate::code_index::CodeIndex::new(&store)
+                .code_snapshot()
+                .unwrap()
+                .policy_trace(&p)
+                .unwrap()["default_behavior"],
             "allow"
         );
         let mut doc = store
@@ -956,7 +964,11 @@ mod persistence_tests {
             .unwrap();
         doc.content = "<?php function policy() {return false;}".into();
         store.upsert_document(&doc).unwrap();
-        let r = store.code_snapshot().unwrap().policy_trace(&p).unwrap();
+        let r = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .policy_trace(&p)
+            .unwrap();
         assert_eq!(r["found"], false);
         assert!(!r["stale_documents"].as_array().unwrap().is_empty());
     }
