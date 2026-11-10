@@ -1596,7 +1596,7 @@ mod tests {
             })
             .unwrap();
         store.index_code().unwrap();
-        store
+        crate::analysis_tasks::AnalysisTasks::new(&store)
             .analysis_task_set(
                 "wal",
                 &crate::analysis_tasks::TaskSet {
@@ -1605,7 +1605,7 @@ mod tests {
                 },
             )
             .unwrap();
-        store
+        crate::analysis_tasks::AnalysisTasks::new(&store)
             .analysis_note(
                 "wal",
                 "fixture",
@@ -1725,11 +1725,13 @@ mod tests {
                 "fn preserved() {}"
             );
             assert_eq!(
-                store.analysis_notes("wal", &Default::default()).unwrap()["total_matching"],
+                crate::analysis_tasks::AnalysisTasks::new(&store)
+                    .analysis_notes("wal", &Default::default())
+                    .unwrap()["total_matching"],
                 1
             );
             assert_eq!(
-                store
+                crate::analysis_tasks::AnalysisTasks::new(&store)
                     .analysis_task_stats("wal", &Default::default())
                     .unwrap()["gate"]["decisions"],
                 1

@@ -197,8 +197,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let session = self.analysis_scope(params.session_id.as_deref())?;
         Self::json_result(
-            &self
-                .store
+            &crate::analysis_tasks::AnalysisTasks::new(&self.store)
                 .analysis_task_set(session, &params)
                 .map_err(Self::map_err)?,
         )
@@ -219,8 +218,7 @@ impl RagServer {
             .map(|i| i.client_info.name.as_str())
             .unwrap_or("unknown");
         Self::json_result(
-            &self
-                .store
+            &crate::analysis_tasks::AnalysisTasks::new(&self.store)
                 .analysis_note(session, agent, &params)
                 .map_err(Self::map_err)?,
         )
@@ -235,8 +233,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let session = self.analysis_scope(params.session_id.as_deref())?;
         Self::json_result(
-            &self
-                .store
+            &crate::analysis_tasks::AnalysisTasks::new(&self.store)
                 .analysis_notes(session, &params)
                 .map_err(Self::map_err)?,
         )
@@ -251,8 +248,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let session = self.analysis_scope(params.session_id.as_deref())?;
         Self::json_result(
-            &self
-                .store
+            &crate::analysis_tasks::AnalysisTasks::new(&self.store)
                 .analysis_task_stats(session, &params)
                 .map_err(Self::map_err)?,
         )

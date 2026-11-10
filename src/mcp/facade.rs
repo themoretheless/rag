@@ -493,7 +493,7 @@ impl ServerHandler for RagServer {
             };
             let session = explicit.and_then(|v| v.as_str()).unwrap_or(default);
             Some(
-                self.store
+                crate::analysis_tasks::AnalysisTasks::new(&self.store)
                     .analysis_call_start(session, &name)
                     .map_err(Self::map_err)?,
             )
@@ -513,7 +513,9 @@ impl ServerHandler for RagServer {
                 .and_then(|r| r.content.iter().find_map(|c| c.as_text()))
                 .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
                 .and_then(|v| crate::analysis_tasks::evidence_count(&v));
-            if let Err(error) = self.store.analysis_call_finish(seq, operation_ok, evidence) {
+            if let Err(error) = crate::analysis_tasks::AnalysisTasks::new(&self.store)
+                .analysis_call_finish(seq, operation_ok, evidence)
+            {
                 // Preserve the operation outcome; a failed telemetry finish remains visibly unfinished.
                 tracing::warn!(error=%error, "analysis call remains unfinished");
             }

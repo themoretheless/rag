@@ -723,7 +723,7 @@ mod tests {
                 .unwrap();
             store.lock().unwrap().execute("INSERT INTO source_manifest VALUES (?,?,13,0,?,'file',current_timestamp,current_timestamp)",params![path.display().to_string(),root.display().to_string(),content_hash("fn main() {}\n")]).unwrap();
             store.index_code().unwrap();
-            store
+            crate::analysis_tasks::AnalysisTasks::new(&store)
                 .analysis_task_set(
                     "s",
                     &TaskSet {
@@ -756,8 +756,12 @@ mod tests {
                 .unwrap()
         }
         fn use_index(&self, ok: bool, records: Option<i64>) {
-            let id = self.store.analysis_call_start("s", "symbol").unwrap();
-            self.store.analysis_call_finish(id, ok, records).unwrap();
+            let id = crate::analysis_tasks::AnalysisTasks::new(&self.store)
+                .analysis_call_start("s", "symbol")
+                .unwrap();
+            crate::analysis_tasks::AnalysisTasks::new(&self.store)
+                .analysis_call_finish(id, ok, records)
+                .unwrap();
         }
     }
     #[test]
@@ -821,10 +825,12 @@ mod tests {
             .unwrap();
         f.use_index(false, Some(10));
         f.use_index(true, Some(0));
-        f.store.analysis_call_start("s", "symbol").unwrap();
+        crate::analysis_tasks::AnalysisTasks::new(&f.store)
+            .analysis_call_start("s", "symbol")
+            .unwrap();
         assert_eq!(f.call(Mode::Ask)["verdict"], "ask");
         assert_eq!(f.call(Mode::Ask)["verdict"], "deny");
-        f.store
+        crate::analysis_tasks::AnalysisTasks::new(&f.store)
             .analysis_task_set(
                 "s",
                 &TaskSet {
@@ -838,8 +844,7 @@ mod tests {
         let r = f.call(Mode::Ask);
         assert_eq!(r["verdict"], "allow");
         assert_eq!(r["rule"], "index_used");
-        let stats = f
-            .store
+        let stats = crate::analysis_tasks::AnalysisTasks::new(&f.store)
             .analysis_task_stats("s", &Default::default())
             .unwrap();
         assert_eq!(stats["gate"]["decisions"], 2);
