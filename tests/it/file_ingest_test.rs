@@ -139,6 +139,7 @@ async fn ingest_docx_fixture_is_searchable_with_heading_metadata() {
     assert!(result.chunk_count >= 1, "docx should produce chunks");
 
     let document = store
+        .documents()
         .get_document(&result.document_id)
         .expect("get")
         .expect("doc");
@@ -158,6 +159,7 @@ async fn ingest_docx_fixture_is_searchable_with_heading_metadata() {
 
     // Heading-aware chunking must attach section metadata to the chunks.
     let chunks = store
+        .chunks()
         .list_chunks_for_document(&result.document_id)
         .expect("chunks");
     let has_heading_path = chunks.iter().any(|chunk| {
@@ -198,6 +200,7 @@ async fn ingest_html_fixture_drops_boilerplate_and_is_searchable() {
     assert!(result.chunk_count >= 1);
 
     let document = store
+        .documents()
         .get_document(&result.document_id)
         .expect("get")
         .expect("doc");

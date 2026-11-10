@@ -245,8 +245,8 @@ pub async fn apply_consolidate_proposal(
     agent: Option<&str>,
 ) -> Result<WikiWriteResult> {
     let uri = format!("wiki://{}", slugify(&proposal.slug));
-    let expected_revision =
-        crate::util::blocking_section(|| store.find_by_uri(&uri))?.map(|page| page.revision);
+    let expected_revision = crate::util::blocking_section(|| store.documents().find_by_uri(&uri))?
+        .map(|page| page.revision);
     apply_consolidate_proposal_at_revision(
         store,
         embedder,
@@ -327,11 +327,13 @@ pub(super) async fn apply_consolidate_proposal_at_revision(
 
     // Link each source document → consolidated wiki (related), when nodes exist.
     crate::util::blocking_section(|| {
-        if let Ok(Some(wiki_node)) = store.find_node_by_document_id(&wr.document_id) {
+        if let Ok(Some(wiki_node)) = store.graph().find_node_by_document_id(&wr.document_id) {
             for src in sources {
-                if let Ok(Some(src_node)) = store.find_node_by_document_id(&src.id) {
+                if let Ok(Some(src_node)) = store.graph().find_node_by_document_id(&src.id) {
                     if let Err(error) =
-                        store.link_nodes(&src_node.id, &wiki_node.id, "related", 1.0)
+                        store
+                            .graph()
+                            .link_nodes(&src_node.id, &wiki_node.id, "related", 1.0)
                     {
                         tracing::warn!(%error, "failed to link consolidated wiki node");
                     }

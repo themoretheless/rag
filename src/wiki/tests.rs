@@ -127,7 +127,7 @@ fn open_store() -> Store {
 #[test]
 fn get_schema_seeds_default_at_canonical_uri() {
     let store = open_store();
-    assert!(store.get_schema_document().unwrap().is_none());
+    assert!(store.documents().get_schema_document().unwrap().is_none());
 
     let view = get_schema(&store).unwrap();
     assert_eq!(view.uri, SCHEMA_URI);
@@ -136,7 +136,11 @@ fn get_schema_seeds_default_at_canonical_uri() {
     assert!(view.content.contains("Wiki schema"));
     assert!(!view.created);
 
-    let again = store.get_schema_document().unwrap().expect("stored");
+    let again = store
+        .documents()
+        .get_schema_document()
+        .unwrap()
+        .expect("stored");
     assert_eq!(again.uri, SCHEMA_URI);
     assert_eq!(again.id, view.document_id);
 }
@@ -189,6 +193,7 @@ fn sample_config(dims: usize) -> Config {
 
 fn chunk_state(store: &Store, document_id: &str) -> Vec<ChunkState> {
     store
+        .chunks()
         .list_chunks_for_document(document_id)
         .expect("chunks")
         .into_iter()
@@ -209,6 +214,7 @@ fn outgoing_edge_state(
     node_id: &str,
 ) -> Vec<(String, String, String, Option<String>)> {
     let mut state = store
+        .graph()
         .list_graph_edges()
         .expect("graph edges")
         .into_iter()
@@ -221,6 +227,7 @@ fn outgoing_edge_state(
 
 fn wiki_index_state(store: &Store, slug: &str) -> Option<WikiIndexState> {
     store
+        .wiki_index()
         .get_wiki_index_by_slug(slug)
         .expect("wiki index")
         .map(|entry| WikiIndexState {
@@ -247,7 +254,7 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
     let before_chunks = chunk_state(&store, &created.document_id);
     let before_edges = outgoing_edge_state(&store, &created.node_id);
     let before_index = wiki_index_state(&store, "existing");
-    let before_ops = store.list_ops_log(100).unwrap().len();
+    let before_ops = store.ops_log().list_ops_log(100).unwrap().len();
     let calls = Arc::new(AtomicUsize::new(0));
     let incompatible: Arc<dyn EmbeddingProvider> = Arc::new(CountingEmbedder {
         calls: calls.clone(),
@@ -302,17 +309,25 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
         );
     }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(store.find_by_uri("wiki://new-page").unwrap().is_none());
+    assert!(store
+        .documents()
+        .find_by_uri("wiki://new-page")
+        .unwrap()
+        .is_none());
     let after_doc = get_wiki_page(&store, "existing").unwrap();
     assert_eq!(after_doc.content, before_doc.content);
     assert_eq!(after_doc.revision, before_doc.revision);
     assert_eq!(chunk_state(&store, &created.document_id), before_chunks);
     assert_eq!(outgoing_edge_state(&store, &created.node_id), before_edges);
     assert_eq!(wiki_index_state(&store, "existing"), before_index);
-    assert_eq!(store.list_ops_log(100).unwrap().len(), before_ops);
-    store.require_embedding_manifest_match(&config).unwrap();
+    assert_eq!(store.ops_log().list_ops_log(100).unwrap().len(), before_ops);
+    store
+        .embedding_manifest()
+        .require_embedding_manifest_match(&config)
+        .unwrap();
 
     store
+        .embedding_manifest()
         .set_embedding_manifest(&crate::db::store::embedding_migration_manifest(&config))
         .unwrap();
     let error = write_wiki_page_command(
@@ -345,7 +360,11 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
         "{error}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(store.get_embedding_manifest().unwrap().is_none());
+    assert!(store
+        .embedding_manifest()
+        .get_embedding_manifest()
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -366,9 +385,12 @@ async fn wiki_write_rejects_wrong_provider_dimensions_without_document_commit() 
         "{error}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(store.count_documents().unwrap(), 0);
-    assert!(store.list_ops_log(10).unwrap().is_empty());
-    store.require_embedding_manifest_match(&config).unwrap();
+    assert_eq!(store.documents().count_documents().unwrap(), 0);
+    assert!(store.ops_log().list_ops_log(10).unwrap().is_empty());
+    store
+        .embedding_manifest()
+        .require_embedding_manifest_match(&config)
+        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -426,7 +448,10 @@ async fn wiki_write_excludes_reembed_all_through_embedding_and_commit() {
         .await
         .unwrap();
     assert!(report.errors.is_empty());
-    store.require_embedding_manifest_match(&migrated).unwrap();
+    store
+        .embedding_manifest()
+        .require_embedding_manifest_match(&migrated)
+        .unwrap();
     assert!(chunk_state(&store, &written.document_id)
         .iter()
         .all(|chunk| chunk.embedding.len() == 8));
@@ -456,7 +481,10 @@ async fn maintenance_wiki_writes_reuse_only_the_explicit_corpus_lease() {
     let store = open_store();
     let config = sample_config(16);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(crate::embeddings::MockEmbedder::new(16));
-    let scoped = store.try_corpus_mutation_scope("test plan").unwrap();
+    let scoped = store
+        .corpus_lane()
+        .try_corpus_mutation_scope("test plan")
+        .unwrap();
     let blocked = write_wiki_page_command(
         &store,
         &embedder,
@@ -466,7 +494,11 @@ async fn maintenance_wiki_writes_reuse_only_the_explicit_corpus_lease() {
     .await
     .unwrap_err();
     assert!(matches!(blocked, AppError::Busy(_)));
-    assert!(store.get_embedding_manifest().unwrap().is_none());
+    assert!(store
+        .embedding_manifest()
+        .get_embedding_manifest()
+        .unwrap()
+        .is_none());
     let actions = [MaintenanceAction::Consolidate, MaintenanceAction::FileAnswer]
             .into_iter().enumerate().map(|(index, action)| MaintenancePlanItem {
                 action,
@@ -489,16 +521,28 @@ async fn maintenance_wiki_writes_reuse_only_the_explicit_corpus_lease() {
     .unwrap();
     assert!(report.errors.is_empty(), "{:?}", report.errors);
     assert_eq!(report.applied.len(), 2);
-    assert_eq!(store.count_documents().unwrap(), 2);
+    assert_eq!(store.documents().count_documents().unwrap(), 2);
     let retained = scoped.clone();
     drop(scoped);
-    assert!(store.try_corpus_mutation_guard("still leased").is_err());
+    assert!(store
+        .corpus_lane()
+        .try_corpus_mutation_guard("still leased")
+        .is_err());
     drop(retained);
-    assert!(store.try_corpus_mutation_guard("finished").is_ok());
+    assert!(store
+        .corpus_lane()
+        .try_corpus_mutation_guard("finished")
+        .is_ok());
 
     let other_store = open_store();
-    let foreign_guard = other_store.try_corpus_mutation_guard("foreign").unwrap();
-    assert!(store.with_corpus_mutation_guard(foreign_guard).is_err());
+    let foreign_guard = other_store
+        .corpus_lane()
+        .try_corpus_mutation_guard("foreign")
+        .unwrap();
+    assert!(store
+        .corpus_lane()
+        .with_corpus_mutation_guard(foreign_guard)
+        .is_err());
 }
 
 #[tokio::test]
@@ -547,6 +591,7 @@ async fn maintenance_compile_and_stale_refresh_reuse_the_exclusive_lease() {
         }));
     let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let scoped = store
+        .corpus_lane()
         .try_corpus_mutation_scope("compile and refresh")
         .unwrap();
     for action in [
@@ -574,11 +619,15 @@ async fn maintenance_compile_and_stale_refresh_reuse_the_exclusive_lease() {
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         assert_eq!(report.applied.len(), 1);
         let page = get_wiki_page(&store, "compiled-page").unwrap();
-        let mut source = store.get_document(&raw.document_id).unwrap().unwrap();
+        let mut source = store
+            .documents()
+            .get_document(&raw.document_id)
+            .unwrap()
+            .unwrap();
         source.updated_at = page.updated_at + chrono::Duration::seconds(1);
         source.content.push_str(" updated source");
         source.content_hash = Some(content_hash(&source.content));
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
     }
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(get_wiki_page(&store, "compiled-page").unwrap().revision, 2);
@@ -641,7 +690,11 @@ async fn consolidate_creates_and_updates_with_required_if_match() {
         suggested_links: vec![],
         notes: None,
     };
-    let source = store.get_document(&raw.document_id).unwrap().unwrap();
+    let source = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .unwrap();
     let result = apply_consolidate_proposal(&store, &embedder, &config, &proposal, &[source], None)
         .await
         .unwrap();
@@ -737,7 +790,7 @@ async fn generated_wiki_rejects_concurrent_edits_and_creates_during_llm_generati
                 .await
                 .unwrap();
             let before_chunks = chunk_state(&store, &concurrent.document_id);
-            let before_ops = store.list_ops_log(100).unwrap().len();
+            let before_ops = store.ops_log().list_ops_log(100).unwrap().len();
             release.add_permits(1);
             let error = tokio::time::timeout(std::time::Duration::from_secs(30), work)
                 .await
@@ -752,7 +805,7 @@ async fn generated_wiki_rejects_concurrent_edits_and_creates_during_llm_generati
             assert_eq!(kept.content, "Concurrent editor content must survive");
             assert_eq!(kept.revision, concurrent.revision);
             assert_eq!(chunk_state(&store, &concurrent.document_id), before_chunks);
-            assert_eq!(store.list_ops_log(100).unwrap().len(), before_ops);
+            assert_eq!(store.ops_log().list_ops_log(100).unwrap().len(), before_ops);
             mock.abort();
         }
     }
@@ -847,7 +900,11 @@ async fn generated_wiki_is_stale_when_source_changes_during_llm_generation() {
             .unwrap()
             .unwrap();
         let page = get_wiki_page(&store, "generated-target").unwrap();
-        let source = store.get_document(&raw.document_id).unwrap().unwrap();
+        let source = store
+            .documents()
+            .get_document(&raw.document_id)
+            .unwrap()
+            .unwrap();
         assert!(page.updated_at > source.updated_at);
         let metadata: serde_json::Value = serde_json::from_str(&page.metadata_json).unwrap();
         let versions: Vec<WikiSourceVersion> =
@@ -889,7 +946,13 @@ async fn source_versions_exclude_old_parents_after_regeneration() {
             )
             .await
             .unwrap();
-            sources.push(store.get_document(&raw.document_id).unwrap().unwrap());
+            sources.push(
+                store
+                    .documents()
+                    .get_document(&raw.document_id)
+                    .unwrap()
+                    .unwrap(),
+            );
         }
         let proposal = ConsolidateProposal {
             slug: "generated-target".into(),
@@ -958,12 +1021,21 @@ async fn source_versions_exclude_old_parents_after_regeneration() {
         )
         .await
         .unwrap();
-        let b = store.find_by_uri("raw://b").unwrap().unwrap();
+        let b = store.documents().find_by_uri("raw://b").unwrap().unwrap();
         assert!(b.updated_at > page.updated_at);
-        let b_node = store.find_node_by_document_id(&b.id).unwrap().unwrap();
-        let page_node = store.find_node_by_document_id(&page.id).unwrap().unwrap();
+        let b_node = store
+            .graph()
+            .find_node_by_document_id(&b.id)
+            .unwrap()
+            .unwrap();
+        let page_node = store
+            .graph()
+            .find_node_by_document_id(&page.id)
+            .unwrap()
+            .unwrap();
         assert!(
             store
+                .graph()
                 .neighbors(&b_node.id, 1, 500)
                 .unwrap()
                 .edges
@@ -1001,11 +1073,11 @@ async fn source_versions_exclude_old_parents_after_regeneration() {
         let mut metadata: serde_json::Value = serde_json::from_str(&page.metadata_json).unwrap();
         metadata["source_versions"] = serde_json::json!([versions[0], {"broken":true}]);
         page.metadata_json = metadata.to_string();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         assert_eq!(find_stale_wiki(&store).unwrap().len(), 2);
         metadata["source_versions"] = serde_json::json!([]);
         page.metadata_json = metadata.to_string();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         assert!(find_stale_wiki(&store).unwrap().is_empty());
     }
 }
@@ -1030,7 +1102,11 @@ async fn source_versions_ignore_metadata_changes_and_report_deleted_parents() {
     )
     .await
     .unwrap();
-    let source = store.get_document(&raw.document_id).unwrap().unwrap();
+    let source = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .unwrap();
     let proposal = ConsolidateProposal {
         slug: "summary".into(),
         title: "Summary".into(),
@@ -1045,11 +1121,15 @@ async fn source_versions_ignore_metadata_changes_and_report_deleted_parents() {
         apply_consolidate_proposal(&store, &embedder, &config, &proposal, &[source], None)
             .await
             .unwrap();
-    let mut source = store.get_document(&raw.document_id).unwrap().unwrap();
+    let mut source = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .unwrap();
     source.updated_at = Utc::now() + chrono::Duration::seconds(1);
     source.pinned = true;
     source.title = "New source title with the same content".into();
-    store.upsert_document(&source).unwrap();
+    store.documents().upsert_document(&source).unwrap();
     assert!(find_stale_wiki(&store).unwrap().is_empty());
     // Replicas can use different local source IDs; the recorded URI is a
     // fallback identity while the body hash remains the freshness evidence.
@@ -1057,9 +1137,9 @@ async fn source_versions_ignore_metadata_changes_and_report_deleted_parents() {
     let mut metadata: serde_json::Value = serde_json::from_str(&page.metadata_json).unwrap();
     metadata["source_versions"][0]["document_id"] = serde_json::json!("remote-source-id");
     page.metadata_json = metadata.to_string();
-    store.upsert_document(&page).unwrap();
+    store.documents().upsert_document(&page).unwrap();
     assert!(find_stale_wiki(&store).unwrap().is_empty());
-    store.delete_document(&raw.document_id).unwrap();
+    store.documents().delete_document(&raw.document_id).unwrap();
     let stale = find_stale_wiki(&store).unwrap();
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].wiki_id, written.document_id);
@@ -1168,11 +1248,13 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
     .await
     .expect("create wiki page");
     let original_index = store
+        .wiki_index()
         .get_wiki_index_by_slug("preserved-page")
         .expect("read index")
         .expect("index exists");
 
     let mut persisted = store
+        .documents()
         .get_document(&written.document_id)
         .expect("read document")
         .expect("document exists");
@@ -1187,6 +1269,7 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
                 .into();
     let prior_revision = persisted.revision;
     persisted.revision = store
+        .documents()
         .upsert_document_cas(&persisted, Some(prior_revision))
         .expect("seed placement and state");
     let metadata_before = persisted.metadata_json.clone();
@@ -1210,6 +1293,7 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
     .expect("update with omitted optional fields");
 
     let after = store
+        .documents()
         .get_document(&updated.document_id)
         .expect("read updated document")
         .expect("updated document exists");
@@ -1225,6 +1309,7 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
     assert_eq!(after.kind, "concept");
     assert_eq!(after.metadata_json, metadata_before);
     let after_index = store
+        .wiki_index()
         .get_wiki_index_by_slug("preserved-page")
         .expect("read updated index")
         .expect("updated index exists");
@@ -1251,6 +1336,7 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
     .await
     .expect("metadata overlay update");
     let overlaid = store
+        .documents()
         .get_document(&overlaid.document_id)
         .expect("read overlaid document")
         .expect("overlaid document exists");
@@ -1366,6 +1452,7 @@ async fn stale_if_match_preserves_body_and_chunks() {
     assert_eq!(written.revision, 1);
 
     let chunks_before = store
+        .chunks()
         .list_chunks_for_document(&written.document_id)
         .expect("list chunks");
     assert!(
@@ -1403,6 +1490,7 @@ async fn stale_if_match_preserves_body_and_chunks() {
     );
 
     let doc = store
+        .documents()
         .get_document(&written.document_id)
         .expect("get")
         .expect("exists");
@@ -1413,6 +1501,7 @@ async fn stale_if_match_preserves_body_and_chunks() {
     );
 
     let chunks_after = store
+        .chunks()
         .list_chunks_for_document(&written.document_id)
         .expect("list chunks after conflict");
     assert_eq!(
@@ -1456,7 +1545,11 @@ async fn raw_layer_immutable_rejects_wiki_overwrite_and_content_update() {
     .await
     .expect("ingest raw at wiki-like uri");
 
-    let raw_doc = store.get_document(&raw.document_id).unwrap().expect("raw");
+    let raw_doc = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .expect("raw");
     assert_eq!(raw_doc.layer, LAYER_RAW);
     assert!(assert_content_mutable(&raw_doc).is_err());
 
@@ -1503,7 +1596,11 @@ async fn raw_layer_immutable_rejects_wiki_overwrite_and_content_update() {
     .await
     .expect("re-ingest replace");
     assert_eq!(again.document_id, raw.document_id);
-    let replaced = store.get_document(&raw.document_id).unwrap().unwrap();
+    let replaced = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(replaced.content, "replaced raw content");
     assert_eq!(replaced.layer, LAYER_RAW);
 }
@@ -1553,6 +1650,7 @@ async fn file_answer_writes_wiki_graph_index_and_ops_log() {
     assert!(wr.edge_count >= 1, "wikilink/tag edges expected");
 
     let doc = store
+        .documents()
         .get_document(&wr.document_id)
         .unwrap()
         .expect("wiki doc");
@@ -1567,13 +1665,14 @@ async fn file_answer_writes_wiki_graph_index_and_ops_log() {
     assert!(meta["citations"].as_array().unwrap().len() == 1);
 
     let idx = store
+        .wiki_index()
         .get_wiki_index_by_slug("why-alpha-matters")
         .unwrap()
         .expect("index entry");
     assert_eq!(idx.page_id.as_deref(), Some(wr.document_id.as_str()));
     assert_eq!(idx.category.as_deref(), Some("answers"));
 
-    let ops = store.list_ops_log(20).unwrap();
+    let ops = store.ops_log().list_ops_log(20).unwrap();
     let fa = ops
         .iter()
         .find(|e| e.op == "file_answer")
@@ -1605,17 +1704,19 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
     .await
     .expect("initial file_answer");
     let original_document = store
+        .documents()
         .get_document(&written.document_id)
         .unwrap()
         .expect("original document");
     let original_chunks = chunk_state(&store, &written.document_id);
     let original_node = store
+        .graph()
         .find_node_by_document_id(&written.document_id)
         .unwrap()
         .expect("original graph node");
     let original_edges = outgoing_edge_state(&store, &original_node.id);
     let original_index = wiki_index_state(&store, "atomic-answer");
-    let original_ops_count = store.list_ops_log(100).unwrap().len();
+    let original_ops_count = store.ops_log().list_ops_log(100).unwrap().len();
 
     let failing_embedder: Arc<dyn EmbeddingProvider> = Arc::new(FailingEmbedder { dims });
     let error = file_answer(
@@ -1637,6 +1738,7 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
         .contains("injected wiki embedding failure"));
 
     let persisted_document = store
+        .documents()
         .get_document(&written.document_id)
         .unwrap()
         .expect("document after embedding failure");
@@ -1645,6 +1747,7 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
     assert_eq!(persisted_document.content, original_document.content);
     assert_eq!(chunk_state(&store, &written.document_id), original_chunks);
     let persisted_node = store
+        .graph()
         .find_node_by_document_id(&written.document_id)
         .unwrap()
         .expect("graph node after embedding failure");
@@ -1654,9 +1757,16 @@ async fn file_answer_embedding_failure_preserves_document_chunks_graph_and_side_
         outgoing_edge_state(&store, &persisted_node.id),
         original_edges
     );
-    assert!(store.find_nodes_by_label("New target").unwrap().is_empty());
+    assert!(store
+        .graph()
+        .find_nodes_by_label("New target")
+        .unwrap()
+        .is_empty());
     assert_eq!(wiki_index_state(&store, "atomic-answer"), original_index);
-    assert_eq!(store.list_ops_log(100).unwrap().len(), original_ops_count);
+    assert_eq!(
+        store.ops_log().list_ops_log(100).unwrap().len(),
+        original_ops_count
+    );
 }
 
 #[tokio::test]
@@ -1683,17 +1793,19 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
     .await
     .expect("initial wiki write");
     let original_document = store
+        .documents()
         .get_document(&written.document_id)
         .unwrap()
         .expect("original document");
     let original_chunks = chunk_state(&store, &written.document_id);
     let original_node = store
+        .graph()
         .find_node_by_document_id(&written.document_id)
         .unwrap()
         .expect("original graph node");
     let original_edges = outgoing_edge_state(&store, &original_node.id);
     let original_index = wiki_index_state(&store, "atomic-wiki-update");
-    let original_ops_count = store.list_ops_log(100).unwrap().len();
+    let original_ops_count = store.ops_log().list_ops_log(100).unwrap().len();
 
     // Test-only fault injector: the graph rebuild inserts the first edge,
     // then the duplicate violates this constraint after doc/chunk writes.
@@ -1731,6 +1843,7 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
     );
 
     let persisted_document = store
+        .documents()
         .get_document(&written.document_id)
         .unwrap()
         .expect("document after graph rollback");
@@ -1739,6 +1852,7 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
     assert_eq!(persisted_document.content, original_document.content);
     assert_eq!(chunk_state(&store, &written.document_id), original_chunks);
     let persisted_node = store
+        .graph()
         .find_node_by_document_id(&written.document_id)
         .unwrap()
         .expect("graph node after rollback");
@@ -1749,10 +1863,12 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
         original_edges
     );
     assert!(store
+        .graph()
         .find_nodes_by_label("Repeated target")
         .unwrap()
         .is_empty());
     assert!(store
+        .documents()
         .list_document_revisions(&written.document_id)
         .unwrap()
         .is_empty());
@@ -1760,7 +1876,10 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
         wiki_index_state(&store, "atomic-wiki-update"),
         original_index
     );
-    assert_eq!(store.list_ops_log(100).unwrap().len(), original_ops_count);
+    assert_eq!(
+        store.ops_log().list_ops_log(100).unwrap().len(),
+        original_ops_count
+    );
 }
 
 #[tokio::test]
@@ -1769,7 +1888,7 @@ async fn late_catalog_fault_rolls_back_new_wiki_page_and_audit() {
     let dims = 16usize;
     let config = sample_config(dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(crate::embeddings::MockEmbedder::new(dims));
-    let ops_before = store.list_ops_log(100).unwrap().len();
+    let ops_before = store.ops_log().list_ops_log(100).unwrap().len();
 
     let error = write_wiki_page_command(
         &store,
@@ -1798,15 +1917,17 @@ async fn late_catalog_fault_rolls_back_new_wiki_page_and_audit() {
         .to_string()
         .contains("injected wiki write failure after catalog update"));
     assert!(store
+        .documents()
         .find_by_uri("wiki://late-create-rollback")
         .unwrap()
         .is_none());
     assert!(wiki_index_state(&store, "late-create-rollback").is_none());
     assert!(store
+        .graph()
         .find_nodes_by_label("Never committed")
         .unwrap()
         .is_empty());
-    assert_eq!(store.list_ops_log(100).unwrap().len(), ops_before);
+    assert_eq!(store.ops_log().list_ops_log(100).unwrap().len(), ops_before);
 }
 
 #[tokio::test]
@@ -1832,17 +1953,19 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
     .await
     .expect("initial wiki write");
     let original_document = store
+        .documents()
         .get_document(&written.document_id)
         .unwrap()
         .expect("original document");
     let original_chunks = chunk_state(&store, &written.document_id);
     let original_node = store
+        .graph()
         .find_node_by_document_id(&written.document_id)
         .unwrap()
         .expect("original node");
     let original_edges = outgoing_edge_state(&store, &original_node.id);
     let original_index = wiki_index_state(&store, "late-update-rollback");
-    let original_ops_count = store.list_ops_log(100).unwrap().len();
+    let original_ops_count = store.ops_log().list_ops_log(100).unwrap().len();
 
     let error = write_wiki_page_command(
         &store,
@@ -1875,6 +1998,7 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
         .to_string()
         .contains("injected wiki write failure after catalog update"));
     let persisted = store
+        .documents()
         .get_document(&written.document_id)
         .unwrap()
         .expect("document survives rollback");
@@ -1884,6 +2008,7 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
     assert_eq!(persisted.metadata_json, original_document.metadata_json);
     assert_eq!(chunk_state(&store, &written.document_id), original_chunks);
     let persisted_node = store
+        .graph()
         .find_node_by_document_id(&written.document_id)
         .unwrap()
         .expect("node survives rollback");
@@ -1893,16 +2018,24 @@ async fn late_catalog_fault_rolls_back_existing_wiki_revision_and_derived_state(
         outgoing_edge_state(&store, &persisted_node.id),
         original_edges
     );
-    assert!(store.find_nodes_by_label("New target").unwrap().is_empty());
+    assert!(store
+        .graph()
+        .find_nodes_by_label("New target")
+        .unwrap()
+        .is_empty());
     assert_eq!(
         wiki_index_state(&store, "late-update-rollback"),
         original_index
     );
     assert!(store
+        .documents()
         .list_document_revisions(&written.document_id)
         .unwrap()
         .is_empty());
-    assert_eq!(store.list_ops_log(100).unwrap().len(), original_ops_count);
+    assert_eq!(
+        store.ops_log().list_ops_log(100).unwrap().len(),
+        original_ops_count
+    );
 }
 
 #[tokio::test]
@@ -1934,9 +2067,13 @@ async fn find_stale_wiki_via_metadata_and_graph() {
     .expect("ingest raw");
 
     // Pin raw to older timestamp so wiki (now) is fresh.
-    let mut raw_doc = store.get_document(&raw.document_id).unwrap().unwrap();
+    let mut raw_doc = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .unwrap();
     raw_doc.updated_at = older;
-    store.upsert_document(&raw_doc).unwrap();
+    store.documents().upsert_document(&raw_doc).unwrap();
 
     let wiki = write_wiki_page_command(
         &store,
@@ -1970,14 +2107,17 @@ async fn find_stale_wiki_via_metadata_and_graph() {
     .expect("write wiki");
 
     let raw_node = store
+        .graph()
         .find_node_by_document_id(&raw.document_id)
         .unwrap()
         .expect("raw node");
     let wiki_node = store
+        .graph()
         .find_node_by_document_id(&wiki.document_id)
         .unwrap()
         .expect("wiki node");
     store
+        .graph()
         .link_nodes(&raw_node.id, &wiki_node.id, "related", 1.0)
         .unwrap();
 
@@ -1988,14 +2128,22 @@ async fn find_stale_wiki_via_metadata_and_graph() {
     );
 
     // Bump raw past wiki without re-ingest (keeps related edge).
-    let mut raw_doc = store.get_document(&raw.document_id).unwrap().unwrap();
+    let mut raw_doc = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .unwrap();
     raw_doc.updated_at = newer;
     raw_doc.content = "version two of the source - changed".into();
-    store.upsert_document(&raw_doc).unwrap();
+    store.documents().upsert_document(&raw_doc).unwrap();
 
-    let mut wiki_doc = store.get_document(&wiki.document_id).unwrap().unwrap();
+    let mut wiki_doc = store
+        .documents()
+        .get_document(&wiki.document_id)
+        .unwrap()
+        .unwrap();
     wiki_doc.updated_at = older;
-    store.upsert_document(&wiki_doc).unwrap();
+    store.documents().upsert_document(&wiki_doc).unwrap();
 
     let stale = find_stale_wiki(&store).unwrap();
     assert_eq!(stale.len(), 1, "expected one stale pair, got {stale:?}");
@@ -2019,7 +2167,7 @@ async fn find_stale_wiki_via_metadata_and_graph() {
     assert!(report.dry_run);
     assert!(report.recompiled.is_empty());
 
-    let ops = store.list_ops_log(10).unwrap();
+    let ops = store.ops_log().list_ops_log(10).unwrap();
     assert!(
         ops.iter().any(|e| e.op == "refresh_stale_wiki"),
         "ops_log should record refresh_stale_wiki"
@@ -2064,8 +2212,16 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
     .await
     .unwrap();
 
-    let doc_a = store.get_document(&a.document_id).unwrap().unwrap();
-    let doc_b = store.get_document(&b.document_id).unwrap().unwrap();
+    let doc_a = store
+        .documents()
+        .get_document(&a.document_id)
+        .unwrap()
+        .unwrap();
+    let doc_b = store
+        .documents()
+        .get_document(&b.document_id)
+        .unwrap()
+        .unwrap();
 
     let proposal = ConsolidateProposal {
             slug: "hybrid-search".into(),
@@ -2105,6 +2261,7 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
     assert_eq!(from.len(), 2);
 
     let idx = store
+        .wiki_index()
         .get_wiki_index_by_slug("hybrid-search")
         .unwrap()
         .expect("index");
@@ -2113,15 +2270,17 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
 
     // Graph related edges from both sources.
     let wiki_node = store
+        .graph()
         .find_node_by_document_id(&wr.document_id)
         .unwrap()
         .expect("wiki node");
     for src_id in [&a.document_id, &b.document_id] {
         let src_node = store
+            .graph()
             .find_node_by_document_id(src_id)
             .unwrap()
             .expect("src node");
-        let view = store.neighbors(&src_node.id, 1, 50).unwrap();
+        let view = store.graph().neighbors(&src_node.id, 1, 50).unwrap();
         let linked = view.edges.iter().any(|e| {
             e.rel_type == "related"
                 && ((e.source_id == src_node.id && e.target_id == wiki_node.id)
@@ -2130,7 +2289,7 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
         assert!(linked, "expected related edge from {src_id} to wiki");
     }
 
-    let ops = store.list_ops_log(20).unwrap();
+    let ops = store.ops_log().list_ops_log(20).unwrap();
     assert!(
         ops.iter().any(|e| e.op == "consolidate_write"),
         "ops_log should record consolidate_write"
@@ -2138,13 +2297,17 @@ async fn apply_consolidate_proposal_writes_wiki_graph_index_and_ops() {
 
     // Stored parent arrays are sufficient when graph relations are lost.
     for src_id in [&a.document_id, &b.document_id] {
-        let node = store.find_node_by_document_id(src_id).unwrap().unwrap();
-        store.delete_edges_from(&node.id).unwrap();
-        let mut raw = store.get_document(src_id).unwrap().unwrap();
+        let node = store
+            .graph()
+            .find_node_by_document_id(src_id)
+            .unwrap()
+            .unwrap();
+        store.graph().delete_edges_from(&node.id).unwrap();
+        let mut raw = store.documents().get_document(src_id).unwrap().unwrap();
         raw.updated_at = Utc::now() + chrono::Duration::seconds(1);
         raw.content.push_str(" updated body");
         raw.content_hash = Some(content_hash(&raw.content));
-        store.upsert_document(&raw).unwrap();
+        store.documents().upsert_document(&raw).unwrap();
     }
     let stale = find_stale_wiki(&store).unwrap();
     assert_eq!(stale.len(), 2);
@@ -2174,7 +2337,7 @@ fn stale_wiki_resolves_each_parent_array_without_graph_edges() {
         updated_at: now,
         ..Document::default()
     };
-    store.upsert_document(&raw).unwrap();
+    store.documents().upsert_document(&raw).unwrap();
     for (index, (field, reference)) in [
         ("source_ids", raw.id.as_str()),
         ("source_uris", raw.uri.as_str()),
@@ -2184,6 +2347,7 @@ fn stale_wiki_resolves_each_parent_array_without_graph_edges() {
     .enumerate()
     {
         store
+            .documents()
             .upsert_document(&Document {
                 id: format!("wiki-{index}"),
                 uri: format!("wiki://array-{index}"),
@@ -2282,13 +2446,21 @@ async fn refresh_stale_wiki_apply_without_llm_lists_only() {
     .await
     .unwrap();
 
-    let mut wiki_doc = store.get_document(&wiki.document_id).unwrap().unwrap();
+    let mut wiki_doc = store
+        .documents()
+        .get_document(&wiki.document_id)
+        .unwrap()
+        .unwrap();
     wiki_doc.updated_at = older;
-    store.upsert_document(&wiki_doc).unwrap();
+    store.documents().upsert_document(&wiki_doc).unwrap();
 
-    let mut raw_doc = store.get_document(&raw.document_id).unwrap().unwrap();
+    let mut raw_doc = store
+        .documents()
+        .get_document(&raw.document_id)
+        .unwrap()
+        .unwrap();
     raw_doc.updated_at = newer;
-    store.upsert_document(&raw_doc).unwrap();
+    store.documents().upsert_document(&raw_doc).unwrap();
 
     let report = refresh_stale_wiki(&store, &embedder, &config, None, false, Some(10), None)
         .await
@@ -2307,13 +2479,14 @@ fn ensure_default_schema_seeds_once_and_is_idempotent() {
     let store = crate::testkit::temp_store();
     let schema_inits = |store: &Store| {
         store
+            .ops_log()
             .list_ops_log(100)
             .unwrap()
             .into_iter()
             .filter(|e| e.op == "schema_init")
             .count()
     };
-    assert!(store.get_schema_document().unwrap().is_none());
+    assert!(store.documents().get_schema_document().unwrap().is_none());
 
     let seeded = ensure_default_schema(&store).unwrap();
     assert_eq!(seeded.uri, SCHEMA_URI);
@@ -2322,7 +2495,12 @@ fn ensure_default_schema_seeds_once_and_is_idempotent() {
     assert_eq!(seeded.content, DEFAULT_SCHEMA);
     assert_eq!(seeded.content_hash, Some(content_hash(DEFAULT_SCHEMA)));
     assert_eq!(
-        store.get_document(&seeded.id).unwrap().unwrap().content,
+        store
+            .documents()
+            .get_document(&seeded.id)
+            .unwrap()
+            .unwrap()
+            .content,
         DEFAULT_SCHEMA
     );
     assert_eq!(schema_inits(&store), 1);

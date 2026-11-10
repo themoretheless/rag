@@ -4,7 +4,7 @@ use super::*;
 
 /// Ensure `schema://agents` exists; seed with [`DEFAULT_SCHEMA`] when missing.
 pub fn ensure_default_schema(store: &Store) -> Result<Document> {
-    if let Some(d) = store.get_schema_document()? {
+    if let Some(d) = store.documents().get_schema_document()? {
         return Ok(d);
     }
     let now = Utc::now();
@@ -22,7 +22,7 @@ pub fn ensure_default_schema(store: &Store) -> Result<Document> {
         ..Default::default()
     };
     // Document, graph node (schema can carry wikilinks) and audit row commit together.
-    store.write_unchunked_document_with_audit(
+    store.documents().write_unchunked_document_with_audit(
         &doc,
         &OpsLogEntry::new(
             "schema_init",
@@ -73,10 +73,10 @@ pub fn update_schema(
         .to_string();
 
     let (document_id, created_at, created) =
-        if let Some(existing) = store.find_by_uri(SCHEMA_URI)? {
+        if let Some(existing) = store.documents().find_by_uri(SCHEMA_URI)? {
             assert_content_mutable(&existing)?;
             (existing.id, existing.created_at, false)
-        } else if let Some(existing) = store.get_schema_document()? {
+        } else if let Some(existing) = store.documents().get_schema_document()? {
             // Fallback layer=schema row with a non-canonical uri: re-key to SCHEMA_URI.
             assert_content_mutable(&existing)?;
             (existing.id, existing.created_at, false)
@@ -98,7 +98,7 @@ pub fn update_schema(
         content_hash: Some(hash.clone()),
         ..Default::default()
     };
-    store.write_unchunked_document_with_audit(
+    store.documents().write_unchunked_document_with_audit(
         &doc,
         &OpsLogEntry::new("schema_update", "SCHEMA", format!("updated {SCHEMA_URI}"))
             .at(now)

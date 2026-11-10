@@ -81,6 +81,7 @@ fn db_repair_cli_rebuilds_into_a_new_file_and_refuses_to_overwrite() {
     {
         let store = Store::open(&db).unwrap();
         store
+            .documents()
             .upsert_document(&document("keep-me", "w", "r", ""))
             .unwrap();
     }
@@ -96,7 +97,12 @@ fn db_repair_cli_rebuilds_into_a_new_file_and_refuses_to_overwrite() {
 
     let rebuilt = Store::open(&out).unwrap();
     assert_eq!(
-        rebuilt.get_document("keep-me").unwrap().unwrap().content,
+        rebuilt
+            .documents()
+            .get_document("keep-me")
+            .unwrap()
+            .unwrap()
+            .content,
         "keep-me body"
     );
     drop(rebuilt);
@@ -177,7 +183,7 @@ fn ingest_file_cli_ingests_one_file_offline() {
     let id = result["document_id"].as_str().unwrap().to_string();
 
     let store = Store::open(&db).unwrap();
-    let doc = store.get_document(&id).unwrap().unwrap();
+    let doc = store.documents().get_document(&id).unwrap().unwrap();
     assert!(doc.content.contains("offline ingest body"));
     assert_eq!(doc.wing.as_deref(), Some("proj"));
     assert_eq!(doc.room.as_deref(), Some("notes"));
@@ -291,6 +297,7 @@ fn ingest_project_cli_ingests_a_tree_offline() {
 
     let store = Store::open(&db).unwrap();
     let mut uris: Vec<String> = store
+        .documents()
         .list_documents()
         .unwrap()
         .into_iter()
@@ -330,7 +337,7 @@ fn promote_dodo_projects_cli_moves_dodo_rooms_to_project_wings() {
             document("flat", "Dodo", "beta", "/elsewhere/file.md"),
             document("untouched", "Other", "alpha", "/repos/Dodo/alpha/api/x.md"),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
     }
     let output = run(
@@ -345,7 +352,7 @@ fn promote_dodo_projects_cli_moves_dodo_rooms_to_project_wings() {
 
     let store = Store::open(&db).unwrap();
     let placement = |id: &str| {
-        let doc = store.get_document(id).unwrap().unwrap();
+        let doc = store.documents().get_document(id).unwrap().unwrap();
         let tags = doc.metadata().unwrap()["tags"].clone();
         (
             doc.wing.unwrap_or_default(),

@@ -156,7 +156,9 @@ pub(crate) async fn write_wiki_page_synced_command(
     // Every transport and nested wiki workflow shares this boundary. Keep the
     // lease through embedding and commit so reembed_all cannot change identity
     // after a successful preflight but before these vectors are persisted.
-    let _embedding_guard = store.try_embedding_write_guard(config, "wiki write")?;
+    let _embedding_guard = store
+        .corpus_lane()
+        .try_embedding_write_guard(config, "wiki write")?;
     let WikiWriteCommand {
         slug,
         title,
@@ -189,9 +191,9 @@ pub(crate) async fn write_wiki_page_synced_command(
     let (existing, existing_index) = {
         let (store, uri, slug) = (store.clone(), uri.clone(), slug.clone());
         crate::util::run_blocking("wiki write read", move || {
-            let existing = store.find_by_uri(&uri)?;
+            let existing = store.documents().find_by_uri(&uri)?;
             let existing_index = if existing.is_some() {
-                store.get_wiki_index_by_slug(&slug)?
+                store.wiki_index().get_wiki_index_by_slug(&slug)?
             } else {
                 None
             };
@@ -578,9 +580,9 @@ fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
         ));
     }
 
-    let doc = if let Some(d) = store.get_document(s)? {
+    let doc = if let Some(d) = store.documents().get_document(s)? {
         d
-    } else if let Some(d) = store.find_by_uri(s)? {
+    } else if let Some(d) = store.documents().find_by_uri(s)? {
         d
     } else {
         let slug = if let Some(rest) = s.strip_prefix("wiki://") {
@@ -594,11 +596,11 @@ fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
             )));
         }
         let uri = format!("wiki://{slug}");
-        if let Some(d) = store.find_by_uri(&uri)? {
+        if let Some(d) = store.documents().find_by_uri(&uri)? {
             d
-        } else if let Some(entry) = store.get_wiki_index_by_slug(&slug)? {
+        } else if let Some(entry) = store.wiki_index().get_wiki_index_by_slug(&slug)? {
             if let Some(pid) = entry.page_id.as_deref() {
-                store.get_document(pid)?.ok_or_else(|| {
+                store.documents().get_document(pid)?.ok_or_else(|| {
                     AppError::not_found(format!(
                         "wiki page not found for index slug '{slug}' (stale page_id)"
                     ))
@@ -632,7 +634,7 @@ fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
 
 /// List all documents with `layer=wiki`, ordered by `created_at` ascending.
 pub fn list_wiki_pages(store: &Store) -> Result<Vec<Document>> {
-    store.list_documents_by_layer(LAYER_WIKI)
+    store.documents().list_documents_by_layer(LAYER_WIKI)
 }
 
 /// Extract kebab slug from a wiki document uri (`wiki://slug`) or title.
@@ -675,8 +677,12 @@ pub async fn ingest_raw(
         source_file,
     } = raw;
     crate::util::blocking_section(|| {
-        store.ensure_embedding_manifest(config)?;
-        store.require_embedding_manifest_match(config)
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(config)?;
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(config)
     })?;
     let now = Utc::now();
     let uri = uri
@@ -692,7 +698,10 @@ pub async fn ingest_raw(
 
     let existing = {
         let (store, uri) = (store.clone(), uri.clone());
-        crate::util::run_blocking("ingest_raw read", move || store.find_by_uri(&uri)).await?
+        crate::util::run_blocking("ingest_raw read", move || {
+            store.documents().find_by_uri(&uri)
+        })
+        .await?
     };
     let (document_id, created_at) = if let Some(existing) = existing {
         (existing.id, existing.created_at)
@@ -731,7 +740,7 @@ pub async fn ingest_raw(
         let store = store.clone();
         crate::util::run_blocking("ingest_raw commit", move || {
             // Re-ingest replace path: intentionally does not call assert_content_mutable.
-            let write = store.write_document_atomic(
+            let write = store.documents().write_document_atomic(
                 &doc,
                 None,
                 DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),

@@ -29,19 +29,20 @@ impl Storage for Store {
     /// Same write boundary as every other generic document write: the row,
     /// its graph-node label and the wiki change journal commit together.
     fn upsert_document(&self, document: &Document) -> Result<(), AppError> {
-        self.write_document_atomic(document, None, DocumentDerivedWrite::RefreshGraphLabel)
+        self.documents()
+            .write_document_atomic(document, None, DocumentDerivedWrite::RefreshGraphLabel)
             .map(|_| ())
     }
 
     fn get_document(&self, id: &str) -> Result<Option<Document>, AppError> {
-        Store::get_document(self, id)
+        self.documents().get_document(id)
     }
 
     fn list_documents(&self) -> Result<Vec<Document>, AppError> {
-        Store::list_documents(self)
+        self.documents().list_documents()
     }
 
     fn delete_document(&self, id: &str) -> Result<bool, AppError> {
-        Store::delete_document(self, id)
+        self.documents().delete_document(id)
     }
 }

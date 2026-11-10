@@ -27,8 +27,9 @@ async fn ingest_with_graph(
     let now = Utc::now();
     let document_id = Uuid::new_v4().to_string();
 
-    if let Some(existing) = store.find_by_uri(uri).expect("find_by_uri") {
+    if let Some(existing) = store.documents().find_by_uri(uri).expect("find_by_uri") {
         store
+            .documents()
             .delete_document(&existing.id)
             .expect("delete previous by uri");
     }
@@ -43,7 +44,10 @@ async fn ingest_with_graph(
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&doc).expect("upsert_document");
+    store
+        .documents()
+        .upsert_document(&doc)
+        .expect("upsert_document");
 
     let chunker = from_config(CHUNK_SIZE, CHUNK_OVERLAP);
     let pieces: Vec<(String, i32, i32)> = Chunker::chunk(&chunker, text);
@@ -67,7 +71,10 @@ async fn ingest_with_graph(
                 metadata_json: "{}".into(),
             });
         }
-        store.insert_chunks(&chunks).expect("insert_chunks");
+        store
+            .chunks()
+            .insert_chunks(&chunks)
+            .expect("insert_chunks");
     }
 
     let (node_id, edge_count) =
@@ -95,6 +102,7 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     );
 
     let node_a_row = store
+        .graph()
         .find_node_by_document_id(&id_a)
         .expect("find A node")
         .expect("A document node");
@@ -104,7 +112,7 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     assert_eq!(node_a_row.label, "A");
 
     // --- 2. Stub B created for unresolved [[B]] ---
-    let stubs_b = store.find_nodes_by_label("B").expect("find B");
+    let stubs_b = store.graph().find_nodes_by_label("B").expect("find B");
     assert_eq!(stubs_b.len(), 1, "exactly one node labeled B");
     let stub_b = &stubs_b[0];
     assert_eq!(stub_b.kind, "stub");
@@ -113,7 +121,10 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     let stub_b_id = stub_b.id.clone();
 
     // Tag #idea
-    let tags = store.find_nodes_by_label("idea").expect("find idea tag");
+    let tags = store
+        .graph()
+        .find_nodes_by_label("idea")
+        .expect("find idea tag");
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].kind, "tag");
     assert!(tags[0].resolved);
@@ -121,6 +132,7 @@ async fn ingest_stub_promote_backlinks_neighbors() {
 
     // Outgoing edges from A: wikilink → stub B, tagged → idea
     let view_a = store
+        .graph()
         .neighbors(&node_a, 1, 50)
         .expect("neighbors of A after first ingest");
     assert!(
@@ -157,6 +169,7 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     );
 
     let promoted = store
+        .graph()
         .find_node_by_id(&stub_b_id)
         .expect("find promoted")
         .expect("promoted node");
@@ -168,6 +181,7 @@ async fn ingest_stub_promote_backlinks_neighbors() {
 
     // No leftover stub for label B
     let b_nodes = store
+        .graph()
         .find_nodes_by_label("B")
         .expect("find B after promote");
     assert!(
@@ -177,7 +191,7 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     );
 
     // --- 4. Backlinks: B is targeted by A's wikilink ---
-    let back = store.backlinks(&node_b).expect("backlinks of B");
+    let back = store.graph().backlinks(&node_b).expect("backlinks of B");
     assert!(
         back.edges
             .iter()
@@ -195,7 +209,10 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     );
 
     // --- 5. Neighbors of A still reach promoted B and #idea ---
-    let neigh = store.neighbors(&node_a, 1, 50).expect("neighbors of A");
+    let neigh = store
+        .graph()
+        .neighbors(&node_a, 1, 50)
+        .expect("neighbors of A");
     assert!(
         neigh
             .nodes
@@ -212,14 +229,17 @@ async fn ingest_stub_promote_backlinks_neighbors() {
     );
 
     // Undirected: from B, depth 1 should reach A
-    let from_b = store.neighbors(&node_b, 1, 50).expect("neighbors of B");
+    let from_b = store
+        .graph()
+        .neighbors(&node_b, 1, 50)
+        .expect("neighbors of B");
     assert!(
         from_b.nodes.iter().any(|n| n.id == node_a),
         "undirected neighbors of B should include A"
     );
 
     // Graph stats sanity
-    let stats = store.graph_stats().expect("graph_stats");
+    let stats = store.graph().graph_stats().expect("graph_stats");
     assert!(stats.total_nodes >= 3, "at least A, B, idea: {:?}", stats);
     assert!(
         stats
@@ -271,7 +291,7 @@ async fn label_key_binds_case_and_width_link_variants() {
     .await;
     assert_eq!(edges, 1);
 
-    let stats = store.graph_stats().expect("graph_stats");
+    let stats = store.graph().graph_stats().expect("graph_stats");
     assert_eq!(
         stats.nodes_by_kind.get("stub").copied().unwrap_or(0),
         0,
@@ -279,6 +299,7 @@ async fn label_key_binds_case_and_width_link_variants() {
     );
 
     let by_key = store
+        .graph()
         .find_nodes_by_label("RAG-MCP   OVERVIEW")
         .expect("find_nodes_by_label");
     assert!(
@@ -299,7 +320,10 @@ async fn tag_nodes_collapse_per_label_key() {
         ingest_with_graph(&store, &embedder, "Second #idea note.", "T2", "doc://t2").await;
     assert_eq!(edges, 1, "T2 emits only its tagged edge");
 
-    let hubs = store.find_nodes_by_label("idea").expect("find tag hub");
+    let hubs = store
+        .graph()
+        .find_nodes_by_label("idea")
+        .expect("find tag hub");
     let tag_hubs: Vec<_> = hubs.iter().filter(|n| n.kind == "tag").collect();
     assert_eq!(tag_hubs.len(), 1, "one hub per tag concept: {tag_hubs:?}");
     assert_eq!(tag_hubs[0].uri.as_deref(), Some("tag://idea"));

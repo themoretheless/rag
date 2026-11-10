@@ -91,12 +91,16 @@ pub async fn compile_source(
     crate::util::blocking_section(|| {
         // Link source -> summaries via graph related edges when possible
         if let (Ok(Some(src_node)), true) = (
-            store.find_node_by_document_id(&source.id),
+            store.graph().find_node_by_document_id(&source.id),
             !page_ids.is_empty(),
         ) {
             for pid in &page_ids {
-                if let Ok(Some(dst)) = store.find_node_by_document_id(pid) {
-                    if let Err(error) = store.link_nodes(&src_node.id, &dst.id, "related", 1.0) {
+                if let Ok(Some(dst)) = store.graph().find_node_by_document_id(pid) {
+                    if let Err(error) =
+                        store
+                            .graph()
+                            .link_nodes(&src_node.id, &dst.id, "related", 1.0)
+                    {
                         tracing::warn!(%error, "failed to link wiki graph nodes");
                     }
                 }
@@ -129,6 +133,7 @@ pub async fn compile_source(
 /// needed to detect edits made while generation is in flight.
 pub(super) fn wiki_revision_snapshot(store: &Store) -> Result<HashMap<String, i64>> {
     Ok(store
+        .documents()
         .list_wiki_page_metas()?
         .into_iter()
         .map(|page| (page.uri, page.revision))

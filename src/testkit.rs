@@ -108,6 +108,7 @@ impl<'a> SeedDoc<'a> {
             "document"
         });
         store
+            .documents()
             .upsert_document(&Document {
                 id: self.id.into(),
                 uri: self
@@ -129,6 +130,7 @@ impl<'a> SeedDoc<'a> {
             })
             .unwrap();
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("{}-c0", self.id),
                 document_id: self.id.into(),
