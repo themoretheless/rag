@@ -112,12 +112,13 @@ Cycles:
 
 Leaks across layers:
 
-- `Store::lock` is `pub(crate)` (`src/db/store.rs`). Stage 2 converted the
-  `impl Store` blocks of calibration, gate, analysis_tasks and external_db to
-  repository types (`Calibrations`, `Gate`, `AnalysisTasks`, `ExternalDb`) over
-  `Store::with_conn` / `with_tx`. Still open: the 13 `impl Store` blocks in
-  `code_index` (26 methods, ~650 call sites in 44 files), above the ~30-file
-  limit for one step; `lock` stays crate-visible until they are converted.
+- ~~`Store::lock` is `pub(crate)`; 19 `impl Store` blocks outside `src/db`~~:
+  resolved in Stage 2. calibration, gate, analysis_tasks, external_db and
+  code_index use repository types (`Calibrations`, `Gate`, `AnalysisTasks`,
+  `ExternalDb`, `CodeIndex`) over `Store::with_conn` / `with_tx`; `Store::lock`
+  is private to `db` in non-test builds (tests keep crate visibility to seed
+  fixtures). `tests/it/architecture_test.rs` fails on a new `impl Store`
+  outside `src/db`.
 - No `app` layer: MCP tools and HTTP handlers each rebuild commands, limits and
   defaults (see "Known MCP/HTTP drifts" in PLAN.md).
 - Environment reads outside `config`: `src/db/store.rs:1545,1552`,

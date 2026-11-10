@@ -207,3 +207,29 @@ fn edge_parser_reads_grouped_and_inline_paths() {
     let prod = production_code("use crate::a;\n#[cfg(test)]\nuse crate::b;\nfn f() {} // crate::c\n#[cfg(test)]\nmod tests {\nuse crate::d;\n}\n");
     assert_eq!(referenced_modules(&prod), vec!["a"]);
 }
+
+#[test]
+fn store_is_extended_only_inside_db() {
+    // Code outside `src/db` reaches the database through repository types and
+    // `Store::with_conn` / `with_tx`, never by adding methods to `Store`.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rs_files(&src, &mut files);
+    let offenders: Vec<String> = files
+        .iter()
+        .filter(|f| !f.strip_prefix(&src).unwrap().starts_with("db"))
+        .filter(|f| {
+            std::fs::read_to_string(f).unwrap().lines().any(|l| {
+                let l = l.trim_start();
+                l.starts_with("impl Store {")
+                    || l.starts_with("impl crate::Store {")
+                    || l.starts_with("impl crate::db::Store {")
+            })
+        })
+        .map(|f| f.display().to_string())
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "impl Store outside src/db: {offenders:?}"
+    );
+}
