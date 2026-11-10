@@ -15,6 +15,11 @@ use tree_sitter::{Node, Parser};
 const WINDOW_MS: i64 = 900_000;
 const MAX_FILES: usize = 256;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
+/// This module's tables, registered at composition and ensured by its repository.
+pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
+    name: "gate",
+    ddl: DDL,
+};
 pub(crate) const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS analysis_gate_decisions (
  seq BIGINT PRIMARY KEY, id VARCHAR UNIQUE NOT NULL, session_id VARCHAR NOT NULL,
@@ -566,6 +571,10 @@ pub struct Gate<'a> {
 
 impl<'a> Gate<'a> {
     pub fn new(store: &'a Store) -> Self {
+        if let Err(error) = store.ensure_schema_extensions(&[SCHEMA, crate::analysis_tasks::SCHEMA])
+        {
+            tracing::warn!(%error, "could not apply gate schema");
+        }
         Self { store }
     }
 

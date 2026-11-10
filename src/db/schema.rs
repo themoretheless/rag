@@ -386,6 +386,41 @@ pub const CREATE_IDX_DOCUMENTS_STATUS: &str =
 pub const CREATE_IDX_DOCUMENTS_PINNED: &str =
     "CREATE INDEX IF NOT EXISTS idx_documents_pinned ON documents(pinned)";
 
+/// Tables owned by a layer above the store (code intelligence: analysis
+/// tasks, gate, calibration, external DB snapshots). The owning module
+/// provides the DDL; the composition root registers it, and the owning
+/// repository makes sure its store has it ([`Store::ensure_schema_extensions`]).
+///
+/// [`Store::ensure_schema_extensions`]: crate::db::Store::ensure_schema_extensions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaExtension {
+    /// Stable name; a second registration under the same name is ignored.
+    pub name: &'static str,
+    /// Idempotent DDL (`CREATE ... IF NOT EXISTS`).
+    pub ddl: &'static str,
+}
+
+static SCHEMA_EXTENSIONS: std::sync::RwLock<Vec<SchemaExtension>> =
+    std::sync::RwLock::new(Vec::new());
+
+/// Register `extension` for every store opened afterwards in this process.
+/// Idempotent by name.
+pub fn register_schema_extension(extension: SchemaExtension) {
+    let mut registered = SCHEMA_EXTENSIONS.write().unwrap_or_else(|e| e.into_inner());
+    if registered.iter().any(|e| e.name == extension.name) {
+        return;
+    }
+    registered.push(extension);
+}
+
+/// Extensions registered so far, in registration order.
+pub(crate) fn registered_schema_extensions() -> Vec<SchemaExtension> {
+    SCHEMA_EXTENSIONS
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// Apply schema DDL. Safe to call repeatedly.
 ///
 /// 1. Creates base v1 tables (`documents`, `chunks`, `graph_*`) if missing.
@@ -395,10 +430,14 @@ pub const CREATE_IDX_DOCUMENTS_PINNED: &str =
 /// 5. Creates the schema-v9 filesystem source manifest.
 /// 6. Records [`SCHEMA_VERSION`].
 pub fn migrate(conn: &Connection) -> Result<()> {
-    conn.execute_batch(crate::analysis_tasks::DDL)?;
-    conn.execute_batch(crate::gate::DDL)?;
-    conn.execute_batch(crate::calibration::DDL)?;
-    conn.execute_batch(crate::external_db::DDL)?;
+    migrate_with(conn, &registered_schema_extensions())
+}
+
+/// [`migrate`] with an explicit list of schema extensions (applied first).
+pub(crate) fn migrate_with(conn: &Connection, extensions: &[SchemaExtension]) -> Result<()> {
+    for extension in extensions {
+        conn.execute_batch(extension.ddl)?;
+    }
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS code_index_documents (
         document_id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL

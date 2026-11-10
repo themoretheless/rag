@@ -63,6 +63,9 @@ pub struct Store {
     conn: Arc<Mutex<Connection>>,
     path: PathBuf,
     corpus_mutation_lane: Arc<tokio::sync::RwLock<()>>,
+    // Schema extensions this database has had applied (shared by clones).
+    schema_extensions: Arc<Mutex<std::collections::BTreeSet<&'static str>>>,
+    read_only: bool,
     // Present only on an explicitly scoped clone used by a bulk workflow.
     // Clones keep the lease alive if nested work outlives its transport request.
     corpus_mutation_guard: Option<Arc<CorpusMutationGuard>>,
@@ -211,11 +214,20 @@ impl Store {
 
         let conn = Connection::open(path)?;
         apply_performance_pragmas(&conn)?;
-        schema::migrate(&conn)?;
+        // Unit tests open stores without the composition root; give them the
+        // tables a composed process has.
+        #[cfg(test)]
+        crate::storage::register_schema_extensions();
+        let extensions = schema::registered_schema_extensions();
+        schema::migrate_with(&conn, &extensions)?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
+            schema_extensions: Arc::new(Mutex::new(
+                extensions.iter().map(|extension| extension.name).collect(),
+            )),
+            read_only: false,
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
             corpus_mutation_guard: None,
         })
@@ -277,6 +289,8 @@ impl Store {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
+            schema_extensions: Arc::default(),
+            read_only: true,
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
             corpus_mutation_guard: None,
         })
@@ -325,6 +339,32 @@ impl Store {
         let value = work(&tx)?;
         tx.commit()?;
         Ok(value)
+    }
+
+    /// Register `extensions` process-wide and apply any this database has
+    /// not had yet. A no-op on a read-only store, which never runs DDL.
+    pub(crate) fn ensure_schema_extensions(
+        &self,
+        extensions: &[schema::SchemaExtension],
+    ) -> Result<()> {
+        for extension in extensions {
+            schema::register_schema_extension(*extension);
+        }
+        if self.read_only {
+            return Ok(());
+        }
+        let mut applied = self
+            .schema_extensions
+            .lock()
+            .map_err(|e| AppError::db(format!("schema extension lock poisoned: {e}")))?;
+        for extension in extensions {
+            if applied.contains(extension.name) {
+                continue;
+            }
+            self.lock_connection()?.execute_batch(extension.ddl)?;
+            applied.insert(extension.name);
+        }
+        Ok(())
     }
 
     fn lock_connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {

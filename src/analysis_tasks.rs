@@ -9,6 +9,11 @@ use rmcp::schemars;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+/// This module's tables, registered at composition and ensured by its repository.
+pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
+    name: "analysis_tasks",
+    ddl: DDL,
+};
 pub(crate) const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS analysis_tasks (
  session_id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, generation BIGINT NOT NULL,
@@ -137,6 +142,9 @@ pub struct AnalysisTasks<'a> {
 
 impl<'a> AnalysisTasks<'a> {
     pub fn new(store: &'a Store) -> Self {
+        if let Err(error) = store.ensure_schema_extensions(&[SCHEMA, crate::gate::SCHEMA]) {
+            tracing::warn!(%error, "could not apply analysis_tasks schema");
+        }
         Self { store }
     }
 

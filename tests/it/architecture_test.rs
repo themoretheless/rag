@@ -35,12 +35,6 @@ const ALLOWED: &[(&str, &str)] = &[
     // Stage 4: the HTTP router mounts `/mcp` from `RagServer` and reports the
     // MCP tool counts; the tool registry moves to the app layer, the bin mounts it.
     ("http_api", "mcp"),
-    // Stage 3: `db::schema::migrate` runs the DDL of the intel tables. The DDL
-    // moves with the store/intel crate split (schema registration at composition).
-    ("db", "analysis_tasks"),
-    ("db", "gate"),
-    ("db", "calibration"),
-    ("db", "external_db"),
     // Stage 4: code-index drift and git-impact capture decode files with
     // `file_ingest::decode_text`; the text decoder moves to domain (`util`).
     ("code_index", "file_ingest"),

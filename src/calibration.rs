@@ -9,6 +9,11 @@ use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
+/// This module's tables, registered at composition and ensured by its repository.
+pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
+    name: "calibration",
+    ddl: DDL,
+};
 pub(crate) const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS analysis_calibrations (
  seq BIGINT PRIMARY KEY, id VARCHAR UNIQUE NOT NULL, created_ms BIGINT NOT NULL,
@@ -256,6 +261,9 @@ pub struct Calibrations<'a> {
 
 impl<'a> Calibrations<'a> {
     pub fn new(store: &'a Store) -> Self {
+        if let Err(error) = store.ensure_schema_extensions(&[SCHEMA]) {
+            tracing::warn!(%error, "could not apply calibration schema");
+        }
         Self { store }
     }
 

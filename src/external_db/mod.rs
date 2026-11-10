@@ -18,6 +18,11 @@ use serde_json::{json, Value};
 use sqlx::{ConnectOptions, Connection, Executor, Row};
 use std::{collections::BTreeMap, str::FromStr, time::Duration};
 
+/// This module's tables, registered at composition and ensured by its repository.
+pub const SCHEMA: crate::db::schema::SchemaExtension = crate::db::schema::SchemaExtension {
+    name: "external_db",
+    ddl: DDL,
+};
 pub const DDL: &str = "CREATE SEQUENCE IF NOT EXISTS external_db_snapshot_seq; CREATE TABLE IF NOT EXISTS external_db_snapshots (id VARCHAR PRIMARY KEY, connection_alias VARCHAR NOT NULL, captured_ms BIGINT NOT NULL, payload VARCHAR NOT NULL, seq BIGINT DEFAULT nextval('external_db_snapshot_seq') UNIQUE);";
 
 #[derive(Clone, Deserialize)]
@@ -488,6 +493,9 @@ pub struct ExternalDb<'a> {
 
 impl<'a> ExternalDb<'a> {
     pub fn new(store: &'a Store) -> Self {
+        if let Err(error) = store.ensure_schema_extensions(&[SCHEMA]) {
+            tracing::warn!(%error, "could not apply external_db schema");
+        }
         Self { store }
     }
 

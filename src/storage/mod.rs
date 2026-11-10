@@ -128,6 +128,20 @@ pub fn open_configured(config: &Config) -> Result<Store, AppError> {
 /// Composition: register the store write hooks owned by higher layers.
 pub fn install_store_hooks() {
     crate::code_index::source::install_document_write_hook();
+    register_schema_extensions();
+}
+
+/// Composition: register the tables owned by the code-intelligence modules,
+/// so every store opened afterwards has them from the start.
+pub fn register_schema_extensions() {
+    for extension in [
+        crate::analysis_tasks::SCHEMA,
+        crate::gate::SCHEMA,
+        crate::calibration::SCHEMA,
+        crate::external_db::SCHEMA,
+    ] {
+        crate::db::schema::register_schema_extension(extension);
+    }
 }
 
 /// Open the configured backend through the backend-neutral document contract.
