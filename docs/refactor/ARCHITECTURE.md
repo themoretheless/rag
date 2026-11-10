@@ -100,6 +100,11 @@ Cycles:
   remain globals (see INVENTORY.md, config row).
 - ~~`models`/`error → duckdb`~~: resolved in Stage 2; the impls live in `src/db/sql_types.rs`.
 - `http_api → mcp`: `src/http_api/mod.rs:68`, `src/http_api/ops.rs:18-19`.
+  Known remaining edge after Stage 2: `mod.rs` builds the `/mcp` streamable
+  service from `RagServer`, and `ops.rs` reports `RagServer::registered_tool_count`
+  and `mcp::surface::spine_tool_names`. Both name the MCP tool registry itself,
+  so there is no neutral module to move them to until the Stage 4 app layer owns
+  the registry and the bin mounts `/mcp`. Allow-listed in the architecture test.
 
 Leaks across layers:
 
