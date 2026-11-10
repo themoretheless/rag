@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::fts::tokenize;
 use crate::models::Chunk;
 use crate::models::Document;
 use chrono::Utc;

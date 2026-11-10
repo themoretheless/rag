@@ -1,17 +1,13 @@
-//! Backend-neutral storage boundary.
+//! Storage composition: backend selection, store hooks and capability names.
 //!
-//! DuckDB remains the default and only adapter for now.  The deliberately
-//! small document slice lets callers migrate behind [`Storage`] gradually
-//! without changing the existing `db::Store` API.
+//! DuckDB (`db::Store`) is the only backend; other configured names fail at
+//! startup instead of silently pointing at DuckDB.
 
 use crate::config::Config;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, Document, Store};
-
-pub mod duckdb;
-pub mod markdown;
+use crate::{AppError, Store};
 
 /// Stable identifier used by configuration and diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,34 +73,15 @@ impl StorageCapability {
     }
 }
 
-/// Backend identity and an honest capability declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BackendMetadata {
-    pub kind: BackendKind,
-    pub name: &'static str,
-    pub capabilities: &'static [StorageCapability],
-}
-
-impl BackendMetadata {
-    /// Whether this backend implements `capability` natively.
-    pub fn supports(self, capability: StorageCapability) -> bool {
-        self.capabilities.contains(&capability)
-    }
-}
-
-/// Domain-facing storage contract.
-///
-/// This first vertical slice covers document lifecycle operations. Search,
-/// graph, wiki, and maintenance APIs continue to use the compatible DuckDB
-/// surface until they are migrated in later commits.
-pub trait Storage: Send + Sync {
-    fn metadata(&self) -> BackendMetadata;
-
-    fn upsert_document(&self, document: &Document) -> Result<(), AppError>;
-    fn get_document(&self, id: &str) -> Result<Option<Document>, AppError>;
-    fn list_documents(&self) -> Result<Vec<Document>, AppError>;
-    fn delete_document(&self, id: &str) -> Result<bool, AppError>;
-}
+/// What the DuckDB backend implements natively.
+const DUCKDB_CAPABILITIES: &[StorageCapability] = &[
+    StorageCapability::Documents,
+    StorageCapability::FullTextSearch,
+    StorageCapability::VectorSearch,
+    StorageCapability::Transactions,
+    StorageCapability::Graph,
+    StorageCapability::TemporalKnowledgeGraph,
+];
 
 /// Backend kind named by the configuration.
 pub fn configured_backend(config: &Config) -> Result<BackendKind, AppError> {
@@ -144,43 +121,9 @@ pub fn register_schema_extensions() {
     }
 }
 
-/// Open the configured backend through the backend-neutral document contract.
-///
-/// The Markdown adapter is deliberately opt-in and requires an explicit
-/// `RAG_VAULT_PATH`; `RAG_DB_PATH` is never reinterpreted as a vault root.
-pub fn open_configured_storage(config: &Config) -> Result<Box<dyn Storage>, AppError> {
-    install_store_hooks();
-    match configured_backend(config)? {
-        BackendKind::DuckDb => Ok(Box::new(Store::open(&config.db_path)?)),
-        BackendKind::Markdown => {
-            let root = config
-                .vault_path
-                .clone()
-                .ok_or_else(|| {
-                    AppError::config(
-                        "RAG_VAULT_PATH is required when RAG_STORAGE_BACKEND=markdown",
-                    )
-                })?;
-            Ok(Box::new(markdown::MarkdownVaultStorage::open(root)?))
-        }
-        other => Err(AppError::config(format!(
-            "storage backend '{}' is recognized but not implemented; export_bundle/export_vault before migrating",
-            other.as_str()
-        ))),
-    }
-}
-
-/// Capability names of the Markdown backend.
-pub fn markdown_capability_names() -> Vec<String> {
-    markdown::CAPABILITIES
-        .iter()
-        .map(|cap| cap.as_str().to_string())
-        .collect()
-}
-
 /// Capability names of the DuckDB backend.
 pub fn duckdb_capability_names() -> Vec<String> {
-    duckdb::CAPABILITIES
+    DUCKDB_CAPABILITIES
         .iter()
         .map(|cap| cap.as_str().to_string())
         .collect()
@@ -189,43 +132,6 @@ pub fn duckdb_capability_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// One lifecycle contract, run against every backend that implements it.
-    fn assert_document_lifecycle(storage: &dyn Storage) {
-        let mut doc = Document {
-            id: "conformance-doc".into(),
-            uri: "file:///conformance.md".into(),
-            title: "Conformance".into(),
-            content: "first body".into(),
-            metadata_json: "{}".into(),
-            ..Default::default()
-        };
-        storage.upsert_document(&doc).unwrap();
-        assert_eq!(
-            storage.get_document(&doc.id).unwrap().unwrap().content,
-            "first body"
-        );
-        doc.content = "second body".into();
-        storage.upsert_document(&doc).unwrap();
-        let listed = storage.list_documents().unwrap();
-        assert_eq!(listed.iter().filter(|d| d.id == doc.id).count(), 1);
-        assert_eq!(
-            storage.get_document(&doc.id).unwrap().unwrap().content,
-            "second body"
-        );
-        assert!(storage.delete_document(&doc.id).unwrap());
-        assert!(storage.get_document(&doc.id).unwrap().is_none());
-        assert!(!storage.delete_document(&doc.id).unwrap());
-    }
-
-    #[test]
-    fn document_lifecycle_conforms_on_every_backend() {
-        let root = tempfile::tempdir().unwrap();
-        let duck = crate::db::Store::open(&root.path().join("conformance.duckdb")).unwrap();
-        assert_document_lifecycle(&duck);
-        let vault = markdown::MarkdownVaultStorage::open(root.path().join("vault")).unwrap();
-        assert_document_lifecycle(&vault);
-    }
 
     #[test]
     fn backend_parser_is_explicit_and_capabilities_are_stable() {

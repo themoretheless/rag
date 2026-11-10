@@ -883,7 +883,7 @@ fn record_schema_version(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn upsert_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
+pub(crate) fn upsert_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(
         r#"
         INSERT OR REPLACE INTO meta (key, value)

@@ -30,6 +30,7 @@ use std::collections::HashMap;
 
 use duckdb::{params, params_from_iter, Connection};
 
+use super::schema::upsert_meta;
 use super::store::Store;
 use crate::error::{AppError, Result};
 use crate::models::SearchHit;
@@ -1140,17 +1141,6 @@ pub fn tokenize(text: &str) -> Vec<String> {
 fn persist_state(conn: &Connection, state: &FtsState) -> Result<()> {
     upsert_meta(conn, META_BACKEND, state.backend.as_str())?;
     upsert_meta(conn, META_STEMMER, &state.stemmer)?;
-    Ok(())
-}
-
-fn upsert_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO meta (key, value)
-        VALUES (?, ?)
-        "#,
-        params![key, value],
-    )?;
     Ok(())
 }
 

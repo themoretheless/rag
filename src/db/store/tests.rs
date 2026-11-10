@@ -3000,10 +3000,6 @@ fn list_by_content_hash_returns_every_match_oldest_first() {
         ids(store.documents().list_by_content_hash(&hash).unwrap()),
         vec!["first", "second", "unhashed"]
     );
-    assert_eq!(
-        ids(store.documents().find_all_by_content_hash(&hash).unwrap()),
-        vec!["first", "second", "unhashed"]
-    );
     assert!(store
         .documents()
         .list_by_content_hash(&content_hash("absent"))

@@ -1,5 +1,16 @@
 # Storage adapters (multi-backend)
 
+> **Status (refactor Stage 3, 2026-11-10):** the `Storage` trait, its DuckDB
+> adapter and the Markdown vault backend (`src/storage/markdown/**`) had no
+> production caller and were deleted. `storage` now only selects the backend
+> (`open_configured`: DuckDB, other names fail at startup), registers the
+> store hooks and schema extensions, and reports `duckdb_capability_names`.
+> The sections below that describe the `Storage` contract and the Markdown
+> adapter are the design record of the removed code, kept for a future
+> backend; `RAG_STORAGE_BACKEND=markdown` and `RAG_VAULT_PATH` are still parsed
+> but no longer open anything.
+
+
 **Status:** DuckDB production adapter and a bounded Markdown document adapter are implemented; the full multi-backend contract remains a design boundary.
 
 **Default backend:** DuckDB (single-file, bundled, local-first)

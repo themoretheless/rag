@@ -81,7 +81,7 @@ pub use models::{
     TaxonomyRoom, TaxonomyWing, VacuumStoreReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
     PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
-pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
+pub use storage::{BackendKind, StorageCapability};
 
 // --- Graph (domain extract in `graph`; resolve and CRUD live in `db::graph`) ---
 pub use db::graph::resolve::rebuild_document_graph;

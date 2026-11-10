@@ -662,7 +662,7 @@ fn apply_field_boosts(
         return;
     };
     let needle = raw.to_lowercase();
-    let terms = tokenize(&needle);
+    let terms = fts::tokenize(&needle);
     // Per-document checks repeat for every hit of that document: memoize.
     let mut uri_matches: HashMap<&str, bool> = HashMap::new();
     for hit in hits {
@@ -891,7 +891,7 @@ fn mmr_select(hits: Vec<SearchHit>, max_per_doc: usize, limit: usize) -> Vec<Sea
     let lambda = 0.7f32;
     let token_sets: Vec<HashSet<String>> = hits
         .iter()
-        .map(|h| tokenize(&h.content).into_iter().collect())
+        .map(|h| fts::tokenize(&h.content).into_iter().collect())
         .collect();
 
     // `max_sim[i]` is hit i's highest similarity to anything selected so far;
@@ -1752,11 +1752,6 @@ fn search_lex(
     Ok(hits)
 }
 
-/// Lowercase alphanumeric tokens (simple, language-agnostic).
-fn tokenize(text: &str) -> Vec<String> {
-    fts::tokenize(text)
-}
-
 // ---------------------------------------------------------------------------
 // RRF fusion
 // ---------------------------------------------------------------------------
@@ -1882,7 +1877,7 @@ pub fn make_snippet(content: &str, query: Option<&str>, max_chars: usize) -> Opt
             lower_starts.push(lower_content.len());
             lower_content.extend(ch.to_lowercase());
         }
-        for term in tokenize(q) {
+        for term in fts::tokenize(q) {
             if term.is_empty() {
                 continue;
             }

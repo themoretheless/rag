@@ -244,7 +244,8 @@ impl Chunks<'_> {
         Ok(out)
     }
 
-    /// Load every chunk with its embedding (for in-process vector search).
+    /// Load every chunk with its embedding. Test fixture inspector only.
+    #[cfg(test)]
     pub fn all_chunks_with_embeddings(&self) -> Result<Vec<Chunk>> {
         let conn = self.store.lock()?;
         let mut stmt = conn.prepare(

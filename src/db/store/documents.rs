@@ -119,11 +119,6 @@ impl Documents<'_> {
         Ok(out)
     }
 
-    /// Alias of [`Self::list_by_content_hash`].
-    pub fn find_all_by_content_hash(&self, hash: &str) -> Result<Vec<Document>> {
-        self.list_by_content_hash(hash)
-    }
-
     /// Content-hash / URI idempotency probe for `check_duplicate`.
     ///
     /// Provide at least one of `content`, `content_hash`, or `uri`:
