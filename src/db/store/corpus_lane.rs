@@ -136,25 +136,24 @@ impl Store {
             .err()
             .map(|marker_error| marker_error.to_string());
         let log_error = self
-            .append_ops_log(&OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "fts_finalization_failed".into(),
-                prefix: Some("FTS".into()),
-                message: format!("{operation} FTS finalization failed"),
-                entity_id: None,
-                entity_kind: Some("corpus".into()),
-                payload_json: serde_json::json!({
-                    "operation": operation,
-                    "code": "FTS_FINALIZATION_FAILED",
-                    "durable_mutation_committed": durable_mutation_committed,
-                    "retryable": true,
-                    "dirty_marker_written": marker_error.is_none(),
-                })
-                .to_string(),
-                agent_name: None,
-            })
+            .append_ops_log(
+                &OpsLogEntry::new(
+                    "fts_finalization_failed",
+                    "FTS",
+                    format!("{operation} FTS finalization failed"),
+                )
+                .entity(None, "corpus")
+                .payload(
+                    serde_json::json!({
+                        "operation": operation,
+                        "code": "FTS_FINALIZATION_FAILED",
+                        "durable_mutation_committed": durable_mutation_committed,
+                        "retryable": true,
+                        "dirty_marker_written": marker_error.is_none(),
+                    })
+                    .to_string(),
+                ),
+            )
             .err()
             .map(|log_error| log_error.to_string());
 

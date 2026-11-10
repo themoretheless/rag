@@ -347,33 +347,33 @@ pub async fn refresh_stale_wiki(
         });
     }
 
-    let _ = crate::util::blocking_section(|| {
-        store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "refresh_stale_wiki".into(),
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "refresh_stale_wiki dry_run={dry_run} stale={} raws={} applied={applied}",
-                stale.len(),
-                total_raws
-            ),
-            entity_id: None,
-            entity_kind: Some("wiki".into()),
-            payload_json: serde_json::json!({
-                "stale_count": stale.len(),
-                "raw_count": total_raws,
-                "dry_run": dry_run,
-                "applied": applied,
-                "capped": capped,
-                "max_docs": max_docs,
-                "recompiled": recompiled.len(),
-                "errors": errors.len(),
-            })
-            .to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        })
+    crate::util::blocking_section(|| {
+        store.ops_log().append(
+            &OpsLogEntry::new(
+                "refresh_stale_wiki",
+                "MAINT",
+                format!(
+                    "refresh_stale_wiki dry_run={dry_run} stale={} raws={} applied={applied}",
+                    stale.len(),
+                    total_raws
+                ),
+            )
+            .entity(None, "wiki")
+            .payload(
+                serde_json::json!({
+                    "stale_count": stale.len(),
+                    "raw_count": total_raws,
+                    "dry_run": dry_run,
+                    "applied": applied,
+                    "capped": capped,
+                    "max_docs": max_docs,
+                    "recompiled": recompiled.len(),
+                    "errors": errors.len(),
+                })
+                .to_string(),
+            )
+            .agent(agent.map(|s| s.to_string())),
+        )
     })?;
 
     Ok(RefreshStaleWikiResult {

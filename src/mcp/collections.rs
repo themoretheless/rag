@@ -39,18 +39,16 @@ impl RagServer {
             };
             let entries = Self::collection_entries(params.entries);
             let detail = self.store.create_collection(&collection, &entries)?;
-            let _ = self.store.append_ops_log(&OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: now,
-                op: "collection_create".into(),
-                prefix: Some("COLLECTION".into()),
-                message: detail.collection.name.clone(),
-                entity_id: Some(detail.collection.id.clone()),
-                entity_kind: Some("collection".into()),
-                payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
-                agent_name: None,
-            });
+            self.store.ops_log().record(
+                &OpsLogEntry::new(
+                    "collection_create",
+                    "COLLECTION",
+                    detail.collection.name.clone(),
+                )
+                .at(now)
+                .entity(Some(detail.collection.id.clone()), "collection")
+                .payload(serde_json::json!({"entry_count": detail.entries.len()}).to_string()),
+            );
             Self::json_result(&detail)
         })
     }
@@ -117,18 +115,15 @@ impl RagServer {
                 params.metadata_json.as_deref(),
                 entries.as_deref(),
             )?;
-            let _ = self.store.append_ops_log(&OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "collection_update".into(),
-                prefix: Some("COLLECTION".into()),
-                message: detail.collection.name.clone(),
-                entity_id: Some(detail.collection.id.clone()),
-                entity_kind: Some("collection".into()),
-                payload_json: serde_json::json!({"entry_count": detail.entries.len()}).to_string(),
-                agent_name: None,
-            });
+            self.store.ops_log().record(
+                &OpsLogEntry::new(
+                    "collection_update",
+                    "COLLECTION",
+                    detail.collection.name.clone(),
+                )
+                .entity(Some(detail.collection.id.clone()), "collection")
+                .payload(serde_json::json!({"entry_count": detail.entries.len()}).to_string()),
+            );
             Self::json_result(&detail)
         })
     }

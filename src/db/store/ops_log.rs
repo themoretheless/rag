@@ -9,6 +9,40 @@ const DEFAULT_RECENT_OPS: usize = 50;
 const OPS_LOG_COLUMNS: &str = "id, COALESCE(seq, 0), CAST(ts AS VARCHAR), op, prefix, \
      COALESCE(message, ''), entity_id, entity_kind, COALESCE(payload_json, '{}'), agent_name";
 
+/// The append-only operations log over the Store connection
+/// ([`Store::ops_log`]).
+#[derive(Clone, Copy)]
+pub struct OpsLog<'a> {
+    store: &'a Store,
+}
+
+impl Store {
+    /// The operations log repository.
+    pub fn ops_log(&self) -> OpsLog<'_> {
+        OpsLog { store: self }
+    }
+}
+
+impl OpsLog<'_> {
+    /// Append `entry` and return the stored row; errors propagate. For audit
+    /// rows that are part of the operation's result or contract.
+    pub fn append(&self, entry: &OpsLogEntry) -> Result<OpsLogEntry> {
+        self.store.append_ops_log(entry)
+    }
+
+    /// Best-effort audit: append `entry`, and on failure log a warning and
+    /// return `None`. Never fails the mutation the entry describes.
+    pub fn record(&self, entry: &OpsLogEntry) -> Option<OpsLogEntry> {
+        match self.append(entry) {
+            Ok(written) => Some(written),
+            Err(error) => {
+                tracing::warn!(%error, op = %entry.op, "failed to append ops_log entry");
+                None
+            }
+        }
+    }
+}
+
 impl Store {
     /// Next ops_log sequence number (max+1, starting at 1).
     ///

@@ -857,6 +857,12 @@ impl OpsLogEntry {
         }
     }
 
+    /// Stamp the entry with `ts` instead of the construction time.
+    pub fn at(mut self, ts: DateTime<Utc>) -> Self {
+        self.ts = ts;
+        self
+    }
+
     /// Set the entity id and kind.
     pub fn entity(mut self, id: Option<String>, kind: &str) -> Self {
         self.entity_id = id;

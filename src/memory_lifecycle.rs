@@ -3,7 +3,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use crate::db::Store;
 use crate::error::{AppError, Result};
@@ -247,22 +246,20 @@ fn log_mutation(
     result: &LifecycleMutationResult,
     agent: Option<&str>,
 ) -> Result<()> {
-    store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: Utc::now(),
-        op: format!("memory_lifecycle_{}", result.operation),
-        prefix: Some("MEMORY".into()),
-        message: format!(
-            "memory lifecycle {} changed {} item(s)",
-            result.operation,
-            result.changed_ids.len()
-        ),
-        entity_id: result.output_document_id.clone(),
-        entity_kind: Some("memory_lifecycle".into()),
-        payload_json: serde_json::to_string(result)?,
-        agent_name: agent.map(str::to_string),
-    })?;
+    store.ops_log().append(
+        &OpsLogEntry::new(
+            format!("memory_lifecycle_{}", result.operation),
+            "MEMORY",
+            format!(
+                "memory lifecycle {} changed {} item(s)",
+                result.operation,
+                result.changed_ids.len()
+            ),
+        )
+        .entity(result.output_document_id.clone(), "memory_lifecycle")
+        .payload(serde_json::to_string(result)?)
+        .agent(agent.map(str::to_string)),
+    )?;
     Ok(())
 }
 

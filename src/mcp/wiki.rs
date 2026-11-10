@@ -1,11 +1,9 @@
 //! Wiki compilation, index, diary, and durable operations-log tools.
 
-use chrono::Utc;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
 use serde::Serialize;
-use uuid::Uuid;
 
 use crate::db::store::MAX_OPS_LOG_PAGE;
 
@@ -217,10 +215,8 @@ impl RagServer {
                 }
                 _ => "{}".to_string(),
             };
+            // The caller's entry verbatim: an optional prefix and entity kind.
             let entry = OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: Utc::now(),
                 op: params.op,
                 prefix: params.prefix,
                 message: params.message.unwrap_or_default(),
@@ -228,8 +224,9 @@ impl RagServer {
                 entity_kind: params.entity_kind,
                 payload_json,
                 agent_name: params.agent_name,
+                ..OpsLogEntry::default()
             };
-            let written = self.store.append_ops_log(&entry)?;
+            let written = self.store.ops_log().append(&entry)?;
             Self::json_result(&written)
         })
     }
@@ -591,23 +588,22 @@ impl RagServer {
                 params.page_id,
             )?;
 
-            let _ = self.store.append_ops_log(&OpsLogEntry {
-                id: Uuid::new_v4().to_string(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "index_update".into(),
-                prefix: Some("INDEX".into()),
-                message: format!("updated index entry {}", entry.slug),
-                entity_id: Some(entry.id.clone()),
-                entity_kind: Some("wiki_index".into()),
-                payload_json: serde_json::json!({
-                    "slug": entry.slug,
-                    "title": entry.title,
-                    "kind": entry.kind,
-                })
-                .to_string(),
-                agent_name: None,
-            })?;
+            let _ = self.store.ops_log().append(
+                &OpsLogEntry::new(
+                    "index_update",
+                    "INDEX",
+                    format!("updated index entry {}", entry.slug),
+                )
+                .entity(Some(entry.id.clone()), "wiki_index")
+                .payload(
+                    serde_json::json!({
+                        "slug": entry.slug,
+                        "title": entry.title,
+                        "kind": entry.kind,
+                    })
+                    .to_string(),
+                ),
+            )?;
 
             Self::json_result(&entry)
         })
@@ -628,18 +624,15 @@ impl RagServer {
             .await?;
 
         let _ = crate::util::blocking_section(|| {
-            self.store.append_ops_log(&OpsLogEntry {
-                id: Uuid::new_v4().to_string(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "index_rebuild".into(),
-                prefix: Some("INDEX".into()),
-                message: format!("rebuilt wiki_index ({count} entries)"),
-                entity_id: None,
-                entity_kind: Some("wiki_index".into()),
-                payload_json: serde_json::json!({ "count": count }).to_string(),
-                agent_name: None,
-            })
+            self.store.ops_log().append(
+                &OpsLogEntry::new(
+                    "index_rebuild",
+                    "INDEX",
+                    format!("rebuilt wiki_index ({count} entries)"),
+                )
+                .entity(None, "wiki_index")
+                .payload(serde_json::json!({ "count": count }).to_string()),
+            )
         })?;
 
         Self::json_result(&RebuildIndexResult { count })

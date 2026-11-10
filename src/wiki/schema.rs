@@ -24,18 +24,13 @@ pub fn ensure_default_schema(store: &Store) -> Result<Document> {
     // Document, graph node (schema can carry wikilinks) and audit row commit together.
     store.write_unchunked_document_with_audit(
         &doc,
-        &OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: now,
-            op: "schema_init".into(),
-            prefix: Some("SCHEMA".into()),
-            message: format!("initialized default {SCHEMA_URI}"),
-            entity_id: Some(doc.id.clone()),
-            entity_kind: Some("schema".into()),
-            payload_json: "{}".into(),
-            agent_name: None,
-        },
+        &OpsLogEntry::new(
+            "schema_init",
+            "SCHEMA",
+            format!("initialized default {SCHEMA_URI}"),
+        )
+        .at(now)
+        .entity(Some(doc.id.clone()), "schema"),
     )?;
     Ok(doc)
 }
@@ -103,24 +98,19 @@ pub fn update_schema(
     };
     store.write_unchunked_document_with_audit(
         &doc,
-        &OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: now,
-            op: "schema_update".into(),
-            prefix: Some("SCHEMA".into()),
-            message: format!("updated {SCHEMA_URI}"),
-            entity_id: Some(document_id.clone()),
-            entity_kind: Some("schema".into()),
-            payload_json: serde_json::json!({
-                "uri": SCHEMA_URI,
-                "title": title,
-                "content_hash": hash,
-                "created": created,
-            })
-            .to_string(),
-            agent_name: agent.map(|s| s.to_string()),
-        },
+        &OpsLogEntry::new("schema_update", "SCHEMA", format!("updated {SCHEMA_URI}"))
+            .at(now)
+            .entity(Some(document_id.clone()), "schema")
+            .payload(
+                serde_json::json!({
+                    "uri": SCHEMA_URI,
+                    "title": title,
+                    "content_hash": hash,
+                    "created": created,
+                })
+                .to_string(),
+            )
+            .agent(agent.map(|s| s.to_string())),
     )?;
 
     Ok(SchemaDocumentView::from_doc(&doc, created))

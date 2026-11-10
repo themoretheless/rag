@@ -304,18 +304,11 @@ impl Store {
             "bytes_delta": report.bytes_delta,
             "checkpointed": report.checkpointed,
         });
-        let _ = self.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "vacuum_store".into(),
-            prefix: Some("MAINT".into()),
-            message: "DuckDB CHECKPOINT".into(),
-            entity_id: None,
-            entity_kind: Some("store".into()),
-            payload_json: payload.to_string(),
-            agent_name: None,
-        });
+        self.ops_log().record(
+            &OpsLogEntry::new("vacuum_store", "MAINT", "DuckDB CHECKPOINT")
+                .entity(None, "store")
+                .payload(payload.to_string()),
+        );
 
         Ok(report)
     }

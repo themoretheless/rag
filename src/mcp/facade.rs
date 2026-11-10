@@ -8,10 +8,8 @@ use crate::models::OpsLogEntry;
 use crate::source_sync::{
     sync_sources_nonblocking, SourceSyncCommand, SourceSyncControl, SourceSyncOutcome,
 };
-use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use rmcp::handler::server::tool::{ToolCallContext, ToolRouter};
 use rmcp::handler::server::wrapper::Parameters;
@@ -733,13 +731,7 @@ impl RagServer {
                             SourceSyncOutcome::Cancelled(report) => (report, true),
                         };
                         let error_count = report.errors.len();
-                        let _ = store.append_ops_log(&OpsLogEntry {
-                            id: Uuid::new_v4().to_string(),
-                            seq: 0,
-                            ts: Utc::now(),
-                            op: "watch_sync".into(),
-                            prefix: Some("WATCH".into()),
-                            message: format!(
+                        store.ops_log().record(&OpsLogEntry::new("watch_sync", "WATCH", format!(
                                 "watcher sync {}: added={} updated={} skipped={} deleted={} errors={} cancelled={cancelled}",
                                 root.display(),
                                 report.added.len(),
@@ -747,10 +739,9 @@ impl RagServer {
                                 report.skipped.len(),
                                 report.deleted.len(),
                                 error_count,
-                            ),
-                            entity_id: Some(root.display().to_string()),
-                            entity_kind: Some("watch_root".into()),
-                            payload_json: serde_json::json!({
+                            ))
+.entity(Some(root.display().to_string()), "watch_root")
+.payload(serde_json::json!({
                                 "root": root.display().to_string(),
                                 "added": report.added.len(),
                                 "updated": report.updated.len(),
@@ -759,9 +750,7 @@ impl RagServer {
                                 "errors": error_count,
                                 "cancelled": cancelled,
                             })
-                            .to_string(),
-                            agent_name: None,
-                        });
+                            .to_string()));
                         if error_count > 0 {
                             tracing::warn!(root = %root.display(), error_count, "watcher sync completed with errors");
                         }

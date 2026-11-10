@@ -207,24 +207,25 @@ pub async fn diary_write(
     let mut ops_log_id = None;
     if command.log_ops {
         let written = crate::util::blocking_section(|| {
-            store.append_ops_log(&OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: now,
-                op: "diary_write".into(),
-                prefix: Some("DIARY".into()),
-                message: format!("diary entry for agent '{agent}' topic={topic}"),
-                entity_id: Some(document_id.clone()),
-                entity_kind: Some(KIND_DIARY.into()),
-                payload_json: serde_json::json!({
-                    "agent_name": agent,
-                    "topic": topic,
-                    "uri": uri,
-                    "wing": wing,
-                })
-                .to_string(),
-                agent_name: Some(agent.clone()),
-            })
+            store.ops_log().append(
+                &OpsLogEntry::new(
+                    "diary_write",
+                    "DIARY",
+                    format!("diary entry for agent '{agent}' topic={topic}"),
+                )
+                .at(now)
+                .entity(Some(document_id.clone()), KIND_DIARY)
+                .payload(
+                    serde_json::json!({
+                        "agent_name": agent,
+                        "topic": topic,
+                        "uri": uri,
+                        "wing": wing,
+                    })
+                    .to_string(),
+                )
+                .agent(Some(agent.clone())),
+            )
         })?;
         ops_log_id = Some(written.id);
     }
@@ -354,17 +355,12 @@ pub async fn checkpoint(
     }
 
     let ops_log = crate::util::blocking_section(|| {
-        store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "checkpoint".into(),
-            prefix: Some("CKPT".into()),
-            message: summary.to_string(),
+        store.ops_log().append(&OpsLogEntry {
             entity_id: diary_result.as_ref().map(|d| d.entry.id.clone()),
             entity_kind: diary_result.as_ref().map(|_| KIND_DIARY.to_string()),
-            payload_json: payload.to_string(),
-            agent_name: agent_for_log.clone(),
+            ..OpsLogEntry::new("checkpoint", "CKPT", summary.to_string())
+                .payload(payload.to_string())
+                .agent(agent_for_log.clone())
         })
     })?;
 

@@ -6,6 +6,7 @@ use crate::models::SearchMode;
 use crate::testkit::SeedDoc;
 use crate::util::content_hash;
 use async_trait::async_trait;
+use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

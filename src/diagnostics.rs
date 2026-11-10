@@ -595,24 +595,23 @@ pub fn spawn_fts_maintenance(store: Store, config: Config) {
                         threshold,
                         "FTS stale beyond threshold; auto-reindex completed"
                     );
-                    let _ = store.append_ops_log(&crate::models::OpsLogEntry {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        seq: 0,
-                        ts: chrono::Utc::now(),
-                        op: "fts_auto_reindex".into(),
-                        prefix: Some("FTS".into()),
-                        message: format!(
-                            "FTS generation gap {gap} reached threshold {threshold}; reindexed"
+                    store.ops_log().record(
+                        &crate::models::OpsLogEntry::new(
+                            "fts_auto_reindex",
+                            "FTS",
+                            format!(
+                                "FTS generation gap {gap} reached threshold {threshold}; reindexed"
+                            ),
+                        )
+                        .entity(None, "fts")
+                        .payload(
+                            serde_json::json!({
+                                "generation_gap": gap,
+                                "threshold": threshold,
+                            })
+                            .to_string(),
                         ),
-                        entity_id: None,
-                        entity_kind: Some("fts".into()),
-                        payload_json: serde_json::json!({
-                            "generation_gap": gap,
-                            "threshold": threshold,
-                        })
-                        .to_string(),
-                        agent_name: None,
-                    });
+                    );
                 }
                 Ok(Ok(None)) => {}
                 Ok(Err(error)) => {

@@ -6,7 +6,6 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::analytics::{
@@ -359,35 +358,33 @@ pub fn analyze_corpus(
     };
 
     if opts.log_ops {
-        if let Err(error) = store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: generated_at,
-            op: "analyze_corpus".into(),
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "analyze_corpus: {} issues, {} docs, {} stubs",
-                report.issue_count,
-                report.counts.documents,
-                report.unresolved_stubs.len()
+        store.ops_log().record(
+            &OpsLogEntry::new(
+                "analyze_corpus",
+                "MAINT",
+                format!(
+                    "analyze_corpus: {} issues, {} docs, {} stubs",
+                    report.issue_count,
+                    report.counts.documents,
+                    report.unresolved_stubs.len()
+                ),
+            )
+            .at(generated_at)
+            .entity(None, "maintenance")
+            .payload(
+                serde_json::json!({
+                    "issue_count": report.issue_count,
+                    "document_count": report.counts.documents,
+                    "chunk_count": report.counts.chunks,
+                    "exact_dup_groups": report.exact_duplicates.len(),
+                    "near_dup_pairs": report.near_duplicates.len(),
+                    "orphan_nodes": report.orphan_nodes.len(),
+                    "stale_wiki": report.stale_wiki.len(),
+                    "unresolved_stubs": report.unresolved_stubs.len(),
+                })
+                .to_string(),
             ),
-            entity_id: None,
-            entity_kind: Some("maintenance".into()),
-            payload_json: serde_json::json!({
-                "issue_count": report.issue_count,
-                "document_count": report.counts.documents,
-                "chunk_count": report.counts.chunks,
-                "exact_dup_groups": report.exact_duplicates.len(),
-                "near_dup_pairs": report.near_duplicates.len(),
-                "orphan_nodes": report.orphan_nodes.len(),
-                "stale_wiki": report.stale_wiki.len(),
-                "unresolved_stubs": report.unresolved_stubs.len(),
-            })
-            .to_string(),
-            agent_name: None,
-        }) {
-            tracing::warn!(%error, "failed to append analyze_corpus ops_log entry");
-        }
+        );
     }
 
     Ok(report)

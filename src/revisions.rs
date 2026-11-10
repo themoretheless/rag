@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::store::DocumentDerivedWrite;
@@ -125,27 +124,25 @@ impl<'a> RevisionService<'a> {
             .build_chunks(&restored)
             .await?;
         let now = Utc::now();
-        let audit_entry = OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: now,
-            op: "restore_revision".into(),
-            prefix: Some("RESTORE".into()),
-            message: format!(
+        let audit_entry = OpsLogEntry::new(
+            "restore_revision",
+            "RESTORE",
+            format!(
                 "restored document {document_id} from revision {} as revision {}",
                 command.revision,
                 command.if_match_revision + 1
             ),
-            entity_id: Some(document_id.to_string()),
-            entity_kind: Some(restored.layer.to_string()),
-            payload_json: serde_json::json!({
+        )
+        .at(now)
+        .entity(Some(document_id.to_string()), restored.layer.as_str())
+        .payload(
+            serde_json::json!({
                 "from_revision": command.revision,
                 "previous_revision": command.if_match_revision,
                 "new_revision": command.if_match_revision + 1,
             })
             .to_string(),
-            agent_name: None,
-        };
+        );
         // Index lookup and the atomic commit run off the async workers.
         let write = crate::util::blocking_section(|| -> Result<_> {
             Ok(if crate::models::Layer::Wiki.is(&restored.layer) {
@@ -208,9 +205,7 @@ impl<'a> RevisionService<'a> {
                     Some(command.if_match_revision),
                     DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
                 )?;
-                if let Err(error) = self.store.append_ops_log(&audit_entry) {
-                    tracing::warn!(%error, document_id, revision = write.revision, "revision restored but audit log append failed");
-                }
+                self.store.ops_log().record(&audit_entry);
                 write
             })
         })?;

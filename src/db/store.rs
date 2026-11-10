@@ -1593,6 +1593,7 @@ pub(crate) use self::manifest::{
     embedding_identity_fingerprint, embedding_migration_manifest, get_embedding_manifest_locked,
 };
 pub use self::manifest::{embedding_manifest_from_config, embedding_manifest_matches_config};
+pub use self::ops_log::OpsLog;
 use self::{ops_log::*, wiki_index::*, wiki_meta::*};
 
 fn apply_performance_pragmas(conn: &Connection) -> Result<()> {

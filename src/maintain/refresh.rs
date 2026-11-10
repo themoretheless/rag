@@ -5,7 +5,6 @@
 
 use crate::db::store::embedding_manifest_from_config;
 use crate::models::OpsLogEntry;
-use chrono::Utc;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -681,19 +680,12 @@ pub async fn reembed_all(
 
     if let Some(fingerprint) = target_fingerprint.as_ref() {
         let documents_done = store.count_reembed_done(fingerprint)?;
-        let _ = store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "reembed_progress".into(),
-            prefix: Some("REEMBED".into()),
-            message: format!(
+        store.ops_log().record(&OpsLogEntry::new("reembed_progress", "REEMBED", format!(
                 "reembed migration batch: {} done / {} pending (target complete: {complete_success})",
                 documents_done, pending_after
-            ),
-            entity_id: None,
-            entity_kind: Some("corpus".into()),
-            payload_json: serde_json::json!({
+            ))
+.entity(None, "corpus")
+.payload(serde_json::json!({
                 "target_fingerprint": fingerprint,
                 "batch_processed": documents_processed,
                 "batch_succeeded": documents_succeeded,
@@ -704,9 +696,7 @@ pub async fn reembed_all(
                 "documents_total": documents_considered,
                 "complete": complete_success,
             })
-            .to_string(),
-            agent_name: None,
-        });
+            .to_string()));
     }
 
     Ok(ReembedAllReport {

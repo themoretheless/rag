@@ -8,10 +8,8 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use uuid::Uuid;
 
 use super::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use super::refresh::{
@@ -540,41 +538,27 @@ fn log_action(
     );
     let payload = serde_json::to_string(outcome).unwrap_or_else(|_| "{}".into());
     // One autocommit per plan step, called from the async plan loop.
-    match blocking_section(|| {
-        store.append_ops_log(&OpsLogEntry {
-            id: Uuid::new_v4().to_string(),
-            seq: 0,
-            ts: Utc::now(),
-            op,
-            prefix: Some("MAINT".into()),
-            message: format!(
-                "{} [{}] {}",
-                outcome.action,
-                match outcome.outcome {
-                    ActionOutcomeKind::Applied => {
-                        if dry_run {
-                            "dry_run"
-                        } else {
-                            "applied"
-                        }
-                    }
-                    ActionOutcomeKind::Skipped => "skipped",
-                    ActionOutcomeKind::Error => "error",
-                },
-                outcome.message
-            ),
-            entity_id: outcome.target_id.clone(),
-            entity_kind: Some("maintenance_action".into()),
-            payload_json: payload,
-            agent_name: agent.map(|s| s.to_string()),
-        })
-    }) {
-        Ok(e) => Some(e.id),
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to append ops_log for maintenance action");
-            None
-        }
-    }
+    let message = format!(
+        "{} [{}] {}",
+        outcome.action,
+        match outcome.outcome {
+            ActionOutcomeKind::Applied => {
+                if dry_run {
+                    "dry_run"
+                } else {
+                    "applied"
+                }
+            }
+            ActionOutcomeKind::Skipped => "skipped",
+            ActionOutcomeKind::Error => "error",
+        },
+        outcome.message
+    );
+    let entry = OpsLogEntry::new(op, "MAINT", message)
+        .entity(outcome.target_id.clone(), "maintenance_action")
+        .payload(payload)
+        .agent(agent.map(|s| s.to_string()));
+    blocking_section(|| store.ops_log().record(&entry)).map(|written| written.id)
 }
 
 // --- param helpers ---

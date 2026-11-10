@@ -6,7 +6,6 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::analyze::AnalysisReport;
 use super::prompts::{PLAN_MAINTENANCE_SYSTEM, PLAN_MAINTENANCE_USER_PREFIX};
@@ -977,35 +976,33 @@ pub async fn plan_maintenance(
 
 /// Append `plan_maintenance` to ops_log (best-effort: failures are logged, not propagated).
 pub fn log_plan(store: &Store, plan: &MaintenancePlan) -> Result<()> {
-    if let Err(error) = store.append_ops_log(&OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: plan.generated_at,
-        op: "plan_maintenance".into(),
-        prefix: Some("MAINT".into()),
-        message: format!(
-            "plan_maintenance: source={:?}, {} actions, {} rejected, {} issues",
-            plan.source,
-            plan.action_count,
-            plan.rejected.len(),
-            plan.issue_count
+    store.ops_log().record(
+        &OpsLogEntry::new(
+            "plan_maintenance",
+            "MAINT",
+            format!(
+                "plan_maintenance: source={:?}, {} actions, {} rejected, {} issues",
+                plan.source,
+                plan.action_count,
+                plan.rejected.len(),
+                plan.issue_count
+            ),
+        )
+        .at(plan.generated_at)
+        .entity(None, "maintenance")
+        .payload(
+            serde_json::json!({
+                "source": plan.source,
+                "action_count": plan.action_count,
+                "rejected_count": plan.rejected.len(),
+                "issue_count": plan.issue_count,
+                "llm_enabled": plan.llm_enabled,
+                "model": plan.model,
+                "actions": plan.actions.iter().map(|a| a.action.as_str()).collect::<Vec<_>>(),
+            })
+            .to_string(),
         ),
-        entity_id: None,
-        entity_kind: Some("maintenance".into()),
-        payload_json: serde_json::json!({
-            "source": plan.source,
-            "action_count": plan.action_count,
-            "rejected_count": plan.rejected.len(),
-            "issue_count": plan.issue_count,
-            "llm_enabled": plan.llm_enabled,
-            "model": plan.model,
-            "actions": plan.actions.iter().map(|a| a.action.as_str()).collect::<Vec<_>>(),
-        })
-        .to_string(),
-        agent_name: None,
-    }) {
-        tracing::warn!(%error, "failed to append plan_maintenance ops_log entry");
-    }
+    );
     Ok(())
 }
 

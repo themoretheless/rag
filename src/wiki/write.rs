@@ -376,18 +376,11 @@ pub(crate) async fn write_wiki_page_synced_command(
         }
     }
 
-    let audit_entry = OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: now,
-        op,
-        prefix: Some(prefix),
-        message,
-        entity_id: Some(document_id.clone()),
-        entity_kind: Some(LAYER_WIKI.into()),
-        payload_json: payload.to_string(),
-        agent_name: agent.clone(),
-    };
+    let audit_entry = OpsLogEntry::new(op, &prefix, message)
+        .at(now)
+        .entity(Some(document_id.clone()), LAYER_WIKI)
+        .payload(payload.to_string())
+        .agent(agent.clone());
     // The commit writes chunks and rebuilds the page's graph slice. Local
     // writes (every agent and HTTP write) commit on the blocking pool; the
     // replication paths borrow their sync event, so they hand their worker to
@@ -725,18 +718,9 @@ pub async fn ingest_raw(
         .build_plain_chunks(&doc)
         .await?;
     let chunk_count = chunks.len();
-    let audit_entry = OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: now,
-        op: "ingest_raw".into(),
-        prefix: Some("INGEST".into()),
-        message: format!("ingested raw {uri}"),
-        entity_id: Some(document_id.clone()),
-        entity_kind: Some(LAYER_RAW.into()),
-        payload_json: "{}".into(),
-        agent_name: None,
-    };
+    let audit_entry = OpsLogEntry::new("ingest_raw", "INGEST", format!("ingested raw {uri}"))
+        .at(now)
+        .entity(Some(document_id.clone()), LAYER_RAW);
     let content_digest = content_hash(&doc.content);
     // Commit (chunks + graph slice) and audit on the blocking pool.
     let write = {
@@ -748,7 +732,7 @@ pub async fn ingest_raw(
                 None,
                 DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
             )?;
-            store.append_ops_log(&audit_entry)?;
+            store.ops_log().append(&audit_entry)?;
             Ok(write)
         })
         .await?
