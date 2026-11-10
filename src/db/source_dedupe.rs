@@ -859,12 +859,8 @@ fn deduplicate_prospective_edges(
     let mut collapse_ids = Vec::with_capacity(merged_node_ids.len() + 1);
     collapse_ids.push(canonical_node_id.to_string());
     collapse_ids.extend(merged_node_ids.iter().cloned());
-    let merged_placeholders = std::iter::repeat_n("?", merged_node_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let collapse_placeholders = std::iter::repeat_n("?", collapse_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let merged_placeholders = crate::db::sql::in_placeholders(merged_node_ids.len());
+    let collapse_placeholders = crate::db::sql::in_placeholders(collapse_ids.len());
     let sql = format!(
         r#"
         DELETE FROM graph_edges
@@ -913,12 +909,8 @@ fn delete_edges_that_would_collapse_to_self(
     let mut collapse_ids = Vec::with_capacity(merged_node_ids.len() + 1);
     collapse_ids.push(canonical_node_id.to_string());
     collapse_ids.extend(merged_node_ids.iter().cloned());
-    let collapse_placeholders = std::iter::repeat_n("?", collapse_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let merged_placeholders = std::iter::repeat_n("?", merged_node_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let collapse_placeholders = crate::db::sql::in_placeholders(collapse_ids.len());
+    let merged_placeholders = crate::db::sql::in_placeholders(merged_node_ids.len());
     let sql = format!(
         r#"
         DELETE FROM graph_edges

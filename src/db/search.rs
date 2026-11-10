@@ -628,7 +628,7 @@ fn ranking_fields(store: &Store, hits: &[SearchHit]) -> Result<HashMap<String, R
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let placeholders = vec!["?"; ids.len()].join(",");
+    let placeholders = crate::db::sql::in_placeholders(ids.len());
     let conn = store.lock()?;
     let mut stmt = conn.prepare(&format!(
         "SELECT id, title, uri, COALESCE(pinned, false), COALESCE(boost, 1.0), \
@@ -1491,7 +1491,7 @@ fn parse_vectors<S: AsRef<str>>(
     const PARSE_BATCH: usize = 512;
     let mut parsed: HashMap<String, Arc<[f32]>> = HashMap::with_capacity(ids.len());
     for batch in ids.chunks(PARSE_BATCH) {
-        let placeholders = vec!["?"; batch.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(batch.len());
         let mut stmt = conn.prepare(&format!(
             "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
         ))?;
@@ -1528,7 +1528,7 @@ fn refresh_changed_documents(
         .map(|chunk| (chunk.id.as_str(), chunk))
         .collect();
     for batch in ids.chunks(DOCUMENT_BATCH) {
-        let placeholders = vec!["?"; batch.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(batch.len());
         let mut stmt = conn.prepare(&format!(
             "SELECT id, document_id, chunk_index, char_start, char_end, metadata_json, \
                     COALESCE(embedding_digest, CAST(hash(embedding_json) >> 1 AS BIGINT)) \
@@ -1666,7 +1666,7 @@ fn hydrate_vector_hits(
     {
         let conn = store.lock()?;
         for batch in ids.chunks(CONTENT_BATCH) {
-            let placeholders = vec!["?"; batch.len()].join(",");
+            let placeholders = crate::db::sql::in_placeholders(batch.len());
             let mut stmt = conn.prepare(&format!(
                 "SELECT id, content FROM chunks WHERE id IN ({placeholders})"
             ))?;
@@ -1676,7 +1676,7 @@ fn hydrate_vector_hits(
             })?;
         }
         for batch in document_ids.chunks(CONTENT_BATCH) {
-            let placeholders = vec!["?"; batch.len()].join(",");
+            let placeholders = crate::db::sql::in_placeholders(batch.len());
             let mut stmt = conn.prepare(&format!(
                 "SELECT id, title, uri FROM documents WHERE id IN ({placeholders})"
             ))?;

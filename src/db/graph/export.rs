@@ -201,10 +201,6 @@ pub(super) fn values_clause(len: usize) -> String {
     (0..len).map(|_| "(?)").collect::<Vec<_>>().join(", ")
 }
 
-pub(super) fn placeholder_list(len: usize) -> String {
-    vec!["?"; len].join(", ")
-}
-
 /// Make project-scoped graph exports self-describing for UI-side room/layer filters.
 ///
 /// Graph extraction intentionally keeps node metadata independent from document
@@ -524,7 +520,7 @@ pub(super) fn discover_frontier_neighbors_locked(
     let rel_filter = match rel_types {
         Some(rel_types) if !rel_types.is_empty() => format!(
             "AND incident.rel_type IN ({})",
-            placeholder_list(rel_types.len())
+            crate::db::sql::in_placeholders(rel_types.len())
         ),
         _ => String::new(),
     };
@@ -575,7 +571,7 @@ pub(super) fn load_edges_among_locked(
         Some(rel_types) if !rel_types.is_empty() => {
             format!(
                 "WHERE e.rel_type IN ({})",
-                placeholder_list(rel_types.len())
+                crate::db::sql::in_placeholders(rel_types.len())
             )
         }
         _ => String::new(),

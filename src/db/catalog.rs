@@ -209,9 +209,7 @@ fn catalog_where(filter: &DocumentCatalogFilter, alias: &str) -> (String, Vec<St
         });
     }
     if filter.status.as_deref().and_then(clean).is_none() && !filter.include_archived {
-        clauses.push(format!(
-            "COALESCE({alias}.status, 'active') NOT IN ('archived', 'tombstone')"
-        ));
+        clauses.push(crate::db::sql::active_document_sql(alias));
     }
     if let Some(query) = filter.q.as_deref().and_then(clean) {
         clauses.push(format!(

@@ -38,7 +38,7 @@ pub fn list_knowledge_pages(
 ) -> Result<(i64, Vec<KnowledgePageRow>)> {
     let mut clauses = vec![
         "layer = 'wiki'".to_string(),
-        "COALESCE(status,'active') NOT IN ('archived','tombstone')".into(),
+        super::sql::ACTIVE_DOCUMENT_SQL.into(),
     ];
     let mut values = Vec::new();
     if !filter.q.is_empty() {

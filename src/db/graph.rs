@@ -194,7 +194,7 @@ impl Store {
                 }
                 node_where.push(format!(
                     "{column} IN ({})",
-                    vec!["?"; values.len()].join(",")
+                    crate::db::sql::in_placeholders(values.len())
                 ));
                 node_binds.extend(values.iter().cloned());
             }
@@ -227,7 +227,10 @@ impl Store {
             }
             Some(rels) => {
                 edge_binds.extend(rels.iter().cloned());
-                format!("WHERE e.rel_type IN ({})", vec!["?"; rels.len()].join(","))
+                format!(
+                    "WHERE e.rel_type IN ({})",
+                    crate::db::sql::in_placeholders(rels.len())
+                )
             }
             None => String::new(),
         };

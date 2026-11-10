@@ -195,7 +195,7 @@ impl Store {
         };
         let mut documents_without_chunks = 0u64;
         for batch in chunkless.chunks(512) {
-            let placeholders = vec!["?"; batch.len()].join(",");
+            let placeholders = crate::db::sql::in_placeholders(batch.len());
             let count: i64 = conn.query_row(
                 &format!(
                     "SELECT COUNT(*) FROM documents WHERE id IN ({placeholders}) \

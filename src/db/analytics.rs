@@ -169,9 +169,9 @@ pub(crate) fn find_exact_duplicates(
     active_only: bool,
 ) -> Result<Vec<DuplicateGroup>> {
     let status_filter = if active_only {
-        "AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')"
+        format!("AND {}", super::sql::ACTIVE_DOCUMENT_SQL)
     } else {
-        ""
+        String::new()
     };
     let conn = store.lock()?;
     // Top groups and their members in one query (was one members query per group).

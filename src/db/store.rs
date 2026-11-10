@@ -8,6 +8,7 @@ use duckdb::{params, AccessMode, Config as DuckDbConfig, Connection};
 
 use super::rows;
 use super::schema;
+use super::sql::ACTIVE_DOCUMENT_SQL;
 use super::EmbeddingIdentity;
 use crate::error::{AppError, Result};
 use crate::models::{

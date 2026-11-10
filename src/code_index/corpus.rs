@@ -362,9 +362,7 @@ fn corpus_files_locked(
     };
     let mut files = Vec::new();
     for batch in selected.chunks(512) {
-        let placeholders = std::iter::repeat_n("?", batch.len())
-            .collect::<Vec<_>>()
-            .join(",");
+        let placeholders = crate::db::sql::in_placeholders(batch.len());
         let sql=format!("SELECT id,COALESCE(source_file,uri),wing,COALESCE(revision,1),content,metadata_json FROM documents WHERE id IN ({placeholders}) ORDER BY 2,id");
         let mut statement = conn.prepare(&sql)?;
         let rows = statement.query_map(

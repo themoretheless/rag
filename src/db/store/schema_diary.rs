@@ -60,7 +60,7 @@ impl Store {
                     CAST(created_at AS VARCHAR) \
              FROM documents \
              WHERE kind = 'diary' {agent_filter} \
-               AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
+               AND {ACTIVE_DOCUMENT_SQL} \
              ORDER BY created_at DESC, id DESC \
              LIMIT {limit}"
         );
@@ -102,7 +102,7 @@ impl Store {
                 "SELECT {select} FROM documents \
                  WHERE kind = 'diary' \
                    AND (room = ? OR wing = ?) \
-                   AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
+                   AND {ACTIVE_DOCUMENT_SQL} \
                  ORDER BY created_at DESC, id DESC \
                  LIMIT {limit}"
             );
@@ -117,7 +117,7 @@ impl Store {
             let sql = format!(
                 "SELECT {select} FROM documents \
                  WHERE kind = 'diary' \
-                   AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
+                   AND {ACTIVE_DOCUMENT_SQL} \
                  ORDER BY created_at DESC, id DESC \
                  LIMIT {limit}"
             );
@@ -141,7 +141,7 @@ impl Store {
         let sql = format!(
             "SELECT {DOCUMENT_SELECT} FROM documents \
              WHERE COALESCE(pinned, false) = true \
-               AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone') \
+               AND {ACTIVE_DOCUMENT_SQL} \
              ORDER BY COALESCE(boost, 1.0) DESC, updated_at DESC, title ASC \
              LIMIT {limit}"
         );

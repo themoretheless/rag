@@ -49,7 +49,7 @@ impl Store {
         if ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        let placeholders = vec!["?"; ids.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(ids.len());
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT id, content_hash FROM documents WHERE id IN ({placeholders})"
@@ -358,11 +358,13 @@ impl Store {
         limit: usize,
     ) -> Result<(usize, Vec<Document>)> {
         let conn = self.lock()?;
-        let predicate = r#"
-            COALESCE(status, 'active') NOT IN ('archived', 'tombstone')
+        let predicate = format!(
+            r#"
+            {ACTIVE_DOCUMENT_SQL}
             AND COALESCE(layer, '') NOT IN ('schema', 'index', 'log')
             AND (wing IS NULL OR TRIM(wing) = '')
-        "#;
+        "#
+        );
         let count: i64 = conn.query_row(
             &format!("SELECT COUNT(*)::BIGINT FROM documents WHERE {predicate}"),
             [],
@@ -447,7 +449,7 @@ impl Store {
         if ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        let placeholders = vec!["?"; ids.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(ids.len());
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT id, content FROM documents WHERE id IN ({placeholders})"
@@ -589,7 +591,7 @@ impl Store {
                 binds.push(s.clone());
             }
         } else if !filter.include_archived.unwrap_or(false) {
-            sql.push_str(" AND COALESCE(status, 'active') NOT IN ('archived', 'tombstone')");
+            sql.push_str(&format!(" AND {ACTIVE_DOCUMENT_SQL}"));
         }
         if let Some(ref layer) = filter.layer {
             if !layer.is_empty() {

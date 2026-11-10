@@ -238,7 +238,7 @@ impl Store {
         if node_ids.is_empty() {
             return Ok(std::collections::HashSet::new());
         }
-        let placeholders = vec!["?"; node_ids.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(node_ids.len());
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT n.id FROM graph_nodes n JOIN documents d ON d.id = n.document_id \

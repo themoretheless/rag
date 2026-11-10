@@ -63,7 +63,7 @@ impl Store {
         if document_ids.is_empty() {
             return Ok(out);
         }
-        let placeholders = vec!["?"; document_ids.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(document_ids.len());
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT content, embedding_json FROM chunks WHERE document_id IN ({placeholders})"
@@ -91,7 +91,7 @@ impl Store {
         if chunk_ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        let placeholders = vec!["?"; chunk_ids.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(chunk_ids.len());
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT id, metadata_json FROM chunks WHERE id IN ({placeholders})"
@@ -122,9 +122,9 @@ impl Store {
             return Ok(Vec::new());
         }
         let active_clause = if active_only {
-            "AND COALESCE(d.status, 'active') NOT IN ('archived', 'tombstone')"
+            format!("AND {}", crate::db::sql::active_document_sql("d"))
         } else {
-            ""
+            String::new()
         };
         let wing_clause = if require_wing {
             "AND d.wing IS NOT NULL AND TRIM(d.wing) <> ''"
@@ -202,7 +202,7 @@ impl Store {
         if document_ids.is_empty() {
             return Ok(out);
         }
-        let placeholders = vec!["?"; document_ids.len()].join(",");
+        let placeholders = crate::db::sql::in_placeholders(document_ids.len());
         let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
             r#"

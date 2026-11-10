@@ -226,9 +226,7 @@ impl Store {
         let root = canonical_root.display().to_string();
         let conn = self.lock()?;
         for paths in canonical_paths.chunks(500) {
-            let placeholders = std::iter::repeat_n("?", paths.len())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let placeholders = crate::db::sql::in_placeholders(paths.len());
             let sql = format!(
                 "UPDATE source_manifest SET last_seen = now() \
                  WHERE canonical_root = ? AND canonical_path IN ({placeholders})"

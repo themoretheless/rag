@@ -30,6 +30,7 @@ pub mod schema;
 pub mod search;
 mod source_dedupe;
 mod source_manifest;
+pub(crate) mod sql;
 mod sql_types;
 pub mod store;
 pub mod sync;
