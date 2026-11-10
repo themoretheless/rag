@@ -401,31 +401,7 @@ impl Store {
                 fts_full_rebuild_marked = true;
             }
             let d = &item.document;
-            tx.execute(
-                "INSERT INTO documents (id, uri, title, content, metadata_json, content_hash, \
-                wing, room, source_file, layer, kind, status, pinned, boost, revision, \
-                created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-                CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))",
-                params![
-                    d.id,
-                    d.uri,
-                    d.title,
-                    d.content,
-                    d.metadata_json,
-                    d.content_hash,
-                    d.wing,
-                    d.room,
-                    d.source_file,
-                    d.layer,
-                    d.kind,
-                    d.status,
-                    d.pinned,
-                    d.boost,
-                    d.revision,
-                    crate::util::format_db_timestamp(d.created_at),
-                    crate::util::format_db_timestamp(d.updated_at)
-                ],
-            )?;
+            crate::db::store::insert_document_row_locked(&tx, d, d.revision)?;
             // Restore keeps the bundle's revision and timestamps (no CAS bump),
             // but chunk rows go through the same writer as every other path.
             let chunks: Vec<Chunk> = item

@@ -1257,3 +1257,62 @@ fn preflight_recovery_bundle_refuses_too_many_chunks() {
         "{error}"
     );
 }
+
+#[test]
+fn import_normalizes_document_columns_like_every_other_write() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(&root.path().join("normalize.duckdb")).unwrap();
+    let mut document = recovery_document("loose", "recovery://loose", "loose body");
+    document.layer = " WIKI ".into();
+    document.kind = "".into();
+    document.status = "".into();
+    document.content_hash = None;
+    document.boost = 0.0;
+    let bundle = RecoveryBundle {
+        format: "rag-recovery-bundle".into(),
+        version: BUNDLE_VERSION,
+        exported_at: Utc::now(),
+        embedding_manifest: Some(recovery_manifest()),
+        documents: vec![BundleDocument {
+            document,
+            chunks: vec![recovery_chunk("loose-chunk", "loose", "loose body")],
+        }],
+    };
+    let report = store
+        .import_recovery_bundle(
+            &bundle,
+            ConflictPolicy::Error,
+            false,
+            Path::new("fixture.json"),
+            "json",
+        )
+        .unwrap();
+    assert!(report.success, "{report:?}");
+    let stored: (String, String, String, Option<String>, f64) = store
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT layer, kind, status, content_hash, boost FROM documents WHERE id = 'loose'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        stored,
+        (
+            "wiki".to_string(),
+            "document".to_string(),
+            "active".to_string(),
+            Some(crate::util::content_hash("loose body")),
+            1.0
+        )
+    );
+}
