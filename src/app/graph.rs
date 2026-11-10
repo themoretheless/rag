@@ -48,8 +48,9 @@ impl GraphUseCase {
     ///   to 100 and is clamped to the UI export cap;
     /// - with `rel_types` the walk follows exactly those relations, otherwise
     ///   the PKB relation/kind policy of the UI graph (`include_tags` adds tag hubs);
-    /// - with `project` the walk stays inside that project; an empty result is
-    ///   `NotFound`.
+    /// - with `project` the walk stays inside that project (same seed order,
+    ///   PKB policy); an empty result is `NotFound`; `rel_types` with
+    ///   `project` is `Invalid`.
     pub async fn neighbors(&self, command: NeighborsCommand) -> Result<GraphView, AppError> {
         let seed = command.seed.trim().to_owned();
         if seed.is_empty() {
@@ -69,17 +70,40 @@ impl GraphUseCase {
             .map(|project| project.trim().to_owned())
             .filter(|project| !project.is_empty());
         let rel_types = command.rel_types.filter(|rels| !rels.is_empty());
+        if project.is_some() && rel_types.is_some() {
+            return Err(AppError::invalid(
+                "rel_types cannot be combined with project; the project walk uses the PKB policy",
+            ));
+        }
         let store = self.store.clone();
         run_blocking("neighbors", move || {
             let graph = store.graph();
             if let Some(project) = project {
-                let view = graph.export_project_neighbors_for_ui(
-                    &project,
-                    &seed,
-                    depth,
-                    max_nodes,
-                    include_tags,
-                )?;
+                // Same seed order as the global walk (node id, document id,
+                // node URI, exact label); the project walk then keeps only
+                // nodes of that project. When the globally resolved node lies
+                // outside the project (an ambiguous label), the project's own
+                // id/document/label match is tried with the raw seed.
+                let resolved = graph.resolve_seed(&seed)?;
+                let mut view = match resolved {
+                    Some(node) => graph.export_project_neighbors_for_ui(
+                        &project,
+                        &node.id,
+                        depth,
+                        max_nodes,
+                        include_tags,
+                    )?,
+                    None => GraphView::default(),
+                };
+                if view.nodes.is_empty() {
+                    view = graph.export_project_neighbors_for_ui(
+                        &project,
+                        &seed,
+                        depth,
+                        max_nodes,
+                        include_tags,
+                    )?;
+                }
                 if view.nodes.is_empty() {
                     return Err(AppError::not_found(format!(
                         "no graph node for seed '{seed}' in project '{project}'"

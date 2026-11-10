@@ -174,6 +174,10 @@ form with its variant prefix.
    - Without `rel_types` both walk the PKB node-kind/relation policy of the UI
      graph (MCP walked relations only); with `rel_types` both follow exactly
      those relations.
+   - With `project` the seed resolves in the same order (node id, document
+     id, node URI, exact label) and the walk keeps the PKB policy inside the
+     project; `rel_types` together with `project` is `INVALID_REQUEST` on both
+     (it was silently ignored).
 3. **`multi_get` document shape (drift 8).** One item shape on both:
    `{document: <full Document row>, chunks, chunks_total, chunks_truncated}`
    plus the earlier flat MCP fields `id, uri, title, content, metadata_json,

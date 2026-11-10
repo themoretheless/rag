@@ -1166,3 +1166,68 @@ async fn update_wiki_page_rejects_create_only_and_mismatched_id() {
         .await
         .expect("matching id and slug");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_neighbors_reject_rel_types_and_resolve_a_uri_seed() {
+    let harness = Harness::new();
+    for (slug, title, content) in [
+        ("proj-b", "Proj B", "Leaf."),
+        ("proj-a", "Proj A", "Links to [[Proj B]]."),
+    ] {
+        harness
+            .mcp(
+                "write_wiki_page",
+                json!({ "slug": slug, "title": title, "content": content, "wing": "alpha" }),
+            )
+            .await
+            .ok();
+    }
+
+    // rel_types and project together are INVALID_REQUEST on both.
+    let mcp = harness
+        .mcp(
+            "get_neighbors",
+            json!({ "node_id": "Proj A", "project": "alpha", "rel_types": ["wikilink"] }),
+        )
+        .await
+        .err();
+    assert_eq!(mcp["data"]["code"], json!("INVALID_REQUEST"));
+    let (status, http) = harness
+        .http(
+            "GET",
+            "/v1/neighbors?seed=Proj%20A&project=alpha&rel_types=wikilink",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(http["code"], json!("INVALID_REQUEST"));
+
+    // The documented seed order holds inside a project too: a node URI
+    // resolves like a label does.
+    let by_label = harness
+        .mcp(
+            "get_neighbors",
+            json!({ "node_id": "Proj A", "project": "alpha" }),
+        )
+        .await
+        .ok();
+    let by_uri = harness
+        .mcp(
+            "get_neighbors",
+            json!({ "node_id": "wiki://proj-a", "project": "alpha" }),
+        )
+        .await
+        .ok();
+    assert!(node_ids(&by_label).len() >= 2, "{by_label}");
+    assert_eq!(node_ids(&by_uri), node_ids(&by_label));
+
+    // A seed outside the project is still NOT_FOUND.
+    let mcp = harness
+        .mcp(
+            "get_neighbors",
+            json!({ "node_id": "Proj A", "project": "beta" }),
+        )
+        .await
+        .err();
+    assert_eq!(mcp["data"]["code"], json!("NOT_FOUND"));
+}
