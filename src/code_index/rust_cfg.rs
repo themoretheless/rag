@@ -1384,12 +1384,21 @@ mod tests {
         ] {
             store.upsert_document(&doc).unwrap();
         }
-        let first = store.index_code().unwrap();
-        let initial = store.code_snapshot().unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        let initial = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert!(initial.symbols.iter().any(|s| s.name == "fast"));
         assert!(!initial.symbols.iter().any(|s| s.name == "slow"));
         let before = initial.rust_build_contexts[0]["configuration_id"].clone();
-        assert!(!store.index_code().unwrap().revision_created);
+        assert!(
+            !crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .revision_created
+        );
         store
             .upsert_document(&document(
                 "manifest",
@@ -1398,13 +1407,19 @@ mod tests {
                 2,
             ))
             .unwrap();
-        let stale = store.code_snapshot().unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_eq!(stale.stale_documents, ["manifest"]);
         assert!(stale.calls.iter().all(|c| c.candidates.is_empty()));
-        let changed = store.index_code().unwrap();
+        let changed = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(changed.indexed, 1);
         assert_eq!(changed.unchanged, 2);
-        let current = store.code_snapshot().unwrap();
+        let current = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_ne!(current.rust_build_contexts[0]["configuration_id"], before);
         assert!(!current.symbols.iter().any(|s| s.name == "fast"));
         assert!(current.symbols.iter().any(|s| s.name == "slow"));

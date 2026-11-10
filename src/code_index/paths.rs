@@ -341,8 +341,12 @@ mod tests {
         ] {
             store.upsert_document(&crate::models::Document {id:id.into(),uri:format!("file://{path}"),source_file:Some(path.into()),wing:Some(project.into()),content:source.into(),revision:1,..Default::default()}).unwrap();
         }
-        store.index_code().unwrap();
-        store.code_snapshot().unwrap()
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
     }
     fn query(from: &str, to: &str) -> PathQuery {
         serde_json::from_value(serde_json::json!({"from":from,"to":to})).unwrap()

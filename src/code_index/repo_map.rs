@@ -313,8 +313,12 @@ mod tests {
             "/p/callback.py",
             "from api import work\nregistered = work\n",
         );
-        store.index_code().unwrap();
-        let snapshot = store.code_snapshot().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let q = CodeQuery {
             limit: Some(2),
             ..Default::default()
@@ -329,7 +333,10 @@ mod tests {
         assert_eq!(map["ranking_edges"], 2);
         assert_eq!(map, snapshot.query("repo_map", &q));
         put(&store, "c", "/p/callback.py", "registered = None\n");
-        let stale = store.code_snapshot().unwrap().query("repo_map", &q);
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("repo_map", &q);
         assert_eq!(stale["ranking_edges"], 1);
         assert!(!stale["stale_documents"].as_array().unwrap().is_empty());
     }
@@ -344,14 +351,19 @@ mod tests {
             &format!("def {}(): pass\n", "x".repeat(200)),
         );
         put(&store, "b", "/p/б.py", "def коротко(): pass\n");
-        store.index_code().unwrap();
-        let map = store.code_snapshot().unwrap().query(
-            "repo_map",
-            &CodeQuery {
-                budget_chars: Some(128),
-                ..Default::default()
-            },
-        );
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        let map = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query(
+                "repo_map",
+                &CodeQuery {
+                    budget_chars: Some(128),
+                    ..Default::default()
+                },
+            );
         let text = map["map"].as_str().unwrap();
         assert!(text.contains("коротко"), "{map}");
         assert_eq!(
@@ -394,18 +406,23 @@ mod tests {
                 &format!("from lib.api import {name}\ndef run(): {name}()\n"),
             );
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = RepoMapQuery {
             project: Some("a".into()),
             ..Default::default()
         };
-        let first = store.code_snapshot().unwrap().repo_map(&q);
+        let first = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .repo_map(&q);
         assert!(first["map"].as_str().unwrap().contains("local"));
         assert!(!first["map"].as_str().unwrap().contains("foreign"));
         assert_eq!(first["ranking_nodes"], 2);
         assert_eq!(first["ranking_edges"], 1);
         assert_eq!(first["total_files"], 2);
-        let all = store
+        let all = crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
             .repo_map(&RepoMapQuery::default());
@@ -427,12 +444,15 @@ mod tests {
             "/src/new.py",
             "def unindexed(): pass\n",
         );
-        let scoped = store.code_snapshot().unwrap().repo_map(&q);
+        let scoped = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .repo_map(&q);
         assert_eq!(
             first, scoped,
             "another project's stale/unindexed sources must not change this map"
         );
-        let all = store
+        let all = crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
             .repo_map(&RepoMapQuery::default());
@@ -451,8 +471,12 @@ mod tests {
             "/src/lib-copy/b.py",
             "def excluded(): pass\n",
         );
-        store.index_code().unwrap();
-        let snapshot = store.code_snapshot().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let mut q = RepoMapQuery {
             project: Some("a".into()),
             path_prefix: Some("/src/lib".into()),
@@ -486,7 +510,9 @@ mod tests {
         let store = Store::open(&root.path().join("corrupt-foreign.duckdb")).unwrap();
         scoped_put(&store, "a", "a", "/p/a.py", "def local(): pass\n");
         scoped_put(&store, "b", "b", "/p/b.py", "def foreign(): pass\n");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         store
             .lock()
             .unwrap()
@@ -495,7 +521,9 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert!(store.code_snapshot().is_err());
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .is_err());
         let q = RepoMapQuery {
             project: Some("a".into()),
             ..Default::default()

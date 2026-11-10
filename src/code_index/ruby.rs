@@ -1391,13 +1391,17 @@ mod integration_tests {
         let mut client=doc("client","/p/client.rb","require_relative 'base'\nclass Child < Base\n def run; work(); end\nend\ndef main; Child.new.run(); end\nmain()\n");
         store.upsert_document(&base).unwrap();
         store.upsert_document(&client).unwrap();
-        let report = store.index_code().unwrap();
+        let report = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(report.indexed, 2);
         let q = CodeQuery {
             symbol: Some("Base#work".into()),
             ..Default::default()
         };
-        let snapshot = store.code_snapshot().unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         let callers = snapshot.query("callers", &q);
         assert!(
             !callers["items"].as_array().unwrap().is_empty(),
@@ -1425,11 +1429,16 @@ mod integration_tests {
         assert_eq!(full.resolution.unwrap().equivalent_to_existing, Some(true));
         client.content = "class Child\n def run; 1; end\nend\n".into();
         store.upsert_document(&client).unwrap();
-        assert!(store.code_snapshot().unwrap().query("callers", &q)["items"]
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query("callers", &q)["items"]
             .as_array()
             .unwrap()
             .is_empty());
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let dq = history::DiffQuery {
             before: 1,
             after: Some(2),
@@ -1458,7 +1467,9 @@ mod integration_tests {
         );
         client.content = "require_relative 'base'\n".into();
         store.upsert_document(&client).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_index_diff(&dq)

@@ -204,7 +204,9 @@ mod tests {
             "/p/view.html",
             "<form action='/same'></form>",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         (root, store)
     }
     #[test]

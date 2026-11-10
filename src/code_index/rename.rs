@@ -714,7 +714,9 @@ mod tests {
             let store = Store::open(&dir.path().join("rename.duckdb")).unwrap();
             let f = Self { store, dir, root };
             for (id,source) in [("Cargo.toml","[package]\nname='rename-fixture'\nversion='0.1.0'\nedition='2021'\n"),("src/lib.rs","pub mod api; pub mod client;\n// value stays in comments\npub const MESSAGE: &str = \"value\";\n"),("src/api.rs","pub fn value()->i32{1}\n"),("src/client.rs","pub fn use_value()->i32{crate::api::value()}\n")] {f.put(id,source,1);}
-            f.store.index_code().unwrap();
+            crate::code_index::CodeIndex::new(&f.store)
+                .index_code()
+                .unwrap();
             f
         }
         fn put(&self, id: &str, source: &str, revision: i64) {
@@ -830,7 +832,9 @@ mod tests {
             1,
         );
         f.put("Dockerfile", "FROM scratch\n# value compute\n", 1);
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let preview = f.preview();
         assert_eq!(preview["status"], "preview", "{preview}");
         assert_eq!(preview["changes"].as_array().unwrap().len(), 2);
@@ -862,14 +866,18 @@ mod tests {
         ] {
             let f = Fixture::new();
             f.put("src/client.rs", source, 2);
-            f.store.index_code().unwrap();
+            crate::code_index::CodeIndex::new(&f.store)
+                .index_code()
+                .unwrap();
             let p = f.preview();
             assert_eq!(p["status"], "blocked", "{p}");
             assert!(p["plan_token"].is_null());
         }
         let f = Fixture::new();
         f.put("src/api.rs", "pub trait T{fn value()->i32{1}}", 2);
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let p = f.preview();
         assert_eq!(p["status"], "blocked", "{p}");
         for name in ["fn", "x(){} fn injected", "r#self", ""] {

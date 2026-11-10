@@ -167,23 +167,30 @@ mod tests {
         ] {
             store.upsert_document(&d).unwrap();
         }
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         (temp, store)
     }
     fn impact(store: &Store, path: &str) -> serde_json::Value {
-        store.code_snapshot().unwrap().query(
-            "impact",
-            &CodeQuery {
-                impact_file: Some(path.into()),
-                impact_project: Some("p".into()),
-                ..Default::default()
-            },
-        )
+        crate::code_index::CodeIndex::new(store)
+            .code_snapshot()
+            .unwrap()
+            .query(
+                "impact",
+                &CodeQuery {
+                    impact_file: Some(path.into()),
+                    impact_project: Some("p".into()),
+                    ..Default::default()
+                },
+            )
     }
     #[test]
     fn nonparsed_resources_join_file_graph_without_becoming_indexed_code() {
         let (_temp, store) = corpus();
-        let snapshot = store.code_snapshot().unwrap();
+        let snapshot = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_eq!(snapshot.file_resource_targets.len(), 2);
         assert!(snapshot.file_resource_targets.iter().all(|t| t.fresh()));
         assert_eq!(snapshot.document_scopes.len(), 3);
@@ -255,7 +262,9 @@ mod tests {
                 .any(|e| e["file"]["document_id"] == "unused"),
             "{dead}"
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             impact(&store, "/p/icon.svg")["items"]
                 .as_array()
@@ -263,7 +272,12 @@ mod tests {
                 .len(),
             2
         );
-        assert!(!store.index_code().unwrap().revision_created);
+        assert!(
+            !crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .revision_created
+        );
     }
     #[test]
     fn source_attachment_identity_is_required_and_part_of_revision_fingerprint() {
@@ -281,7 +295,9 @@ mod tests {
                 "<object data='data.json'></object>",
             ))
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(impact(&store, "/p/data.json")["target_found"], false);
         // Simulate an attachment-only metadata update with unchanged revision/hash.
         store
@@ -296,7 +312,12 @@ mod tests {
             impact(&store, "/p/data.json")["target"]["captured_resource_target"]["state"],
             "unpublished"
         );
-        assert!(store.index_code().unwrap().revision_created);
+        assert!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .revision_created
+        );
         assert_eq!(
             impact(&store, "/p/data.json")["items"]
                 .as_array()
@@ -360,7 +381,9 @@ mod tests {
         data.metadata_json =
             serde_json::json!({"code_source_text":"<svg>private</svg>"}).to_string();
         store.upsert_document(&data).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let hash = content_hash("<svg>private</svg>");
         store
             .lock()
@@ -383,7 +406,9 @@ mod tests {
         store
             .upsert_document(&doc("foreign", "/p/icon.svg", "other", "<svg/>"))
             .unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             impact(&store, "/p/icon.svg")["items"]
                 .as_array()
@@ -391,19 +416,24 @@ mod tests {
                 .len(),
             2
         );
-        let foreign = store.code_snapshot().unwrap().query(
-            "impact",
-            &CodeQuery {
-                impact_file: Some("/p/icon.svg".into()),
-                impact_project: Some("other".into()),
-                ..Default::default()
-            },
-        );
+        let foreign = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap()
+            .query(
+                "impact",
+                &CodeQuery {
+                    impact_file: Some("/p/icon.svg".into()),
+                    impact_project: Some("other".into()),
+                    ..Default::default()
+                },
+            );
         assert!(foreign["items"].as_array().unwrap().is_empty());
         let mut page = store.get_document("html").unwrap().unwrap();
         page.content = "<p>removed</p>".into();
         store.upsert_document(&page).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = history::DiffQuery {
             before: 2,
             after: Some(3),
@@ -419,7 +449,9 @@ mod tests {
         assert!(removed.iter().any(|e| e["target"] == "css"));
         page.content = "<link href='main.css'>".into();
         store.upsert_document(&page).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_index_diff(&q)

@@ -35,7 +35,9 @@ impl Fixture {
         for (path, source) in &fixture.sources {
             fixture.put("p", path, source, 1);
         }
-        fixture.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&fixture.store)
+            .index_code()
+            .unwrap();
         fixture
     }
     fn put(&self, project: &str, path: &str, source: &str, revision: i64) {
@@ -184,7 +186,9 @@ fn stale_bridge_and_manifest_are_excluded_but_frozen_revision_is_retained() {
         f.path(json!({"index_revision":revision}))["status"],
         "paths"
     );
-    f.store.index_code().unwrap();
+    crate::code_index::CodeIndex::new(&f.store)
+        .index_code()
+        .unwrap();
     f.put(
         "p",
         "Cargo.toml",
@@ -204,7 +208,9 @@ fn cross_project_images_require_explicit_scope_and_path_limits_remain_visible() 
     for (path, source) in &f.sources {
         f.put("other", path, source, 1);
     }
-    f.store.index_code().unwrap();
+    crate::code_index::CodeIndex::new(&f.store)
+        .index_code()
+        .unwrap();
     let local = f.query(json!({}));
     assert!(!local["edges"]
         .as_array()
@@ -241,7 +247,7 @@ fn dynamic_invalid_and_unmodeled_container_forms_never_keep_old_code_binding() {
     ] {
         let f = Fixture::new();
         f.put("p", "Dockerfile", docker, 2);
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store).index_code().unwrap();
         let g = f.query(json!({}));
         assert!(
             !g["nodes"]
@@ -259,7 +265,9 @@ fn dynamic_invalid_and_unmodeled_container_forms_never_keep_old_code_binding() {
         "services: {api: {image: '${SECRET}', build: {context: ., target: [runtime]}}}",
         2,
     );
-    f.store.index_code().unwrap();
+    crate::code_index::CodeIndex::new(&f.store)
+        .index_code()
+        .unwrap();
     let g = f.query(json!({}));
     assert!(!serde_json::to_string(&g).unwrap().contains("SECRET"));
     assert!(!g["nodes"]
@@ -277,7 +285,9 @@ fn duplicate_resources_unpublished_sources_and_standalone_context_are_explicit()
         f.sources["service.yaml"], f.sources["service.yaml"]
     );
     f.put("p", "service.yaml", &duplicate, 2);
-    f.store.index_code().unwrap();
+    crate::code_index::CodeIndex::new(&f.store)
+        .index_code()
+        .unwrap();
     assert_eq!(
         f.query(json!({"from":"public-api","to":"main"}))["status"],
         "ambiguous_endpoints"
@@ -300,7 +310,9 @@ fn duplicate_resources_unpublished_sources_and_standalone_context_are_explicit()
         "FROM scratch\nCOPY . /app\nENTRYPOINT [\"/app/src/main.rs\"]\n",
         1,
     );
-    f.store.index_code().unwrap();
+    crate::code_index::CodeIndex::new(&f.store)
+        .index_code()
+        .unwrap();
     let g = f.query(json!({}));
     let stage = g["nodes"]
         .as_array()
@@ -331,7 +343,9 @@ fn docker_stage_limit_rejects_overflow_without_publishing_a_partial_stage() {
             .map(|i| format!("FROM scratch AS stage{i}\n"))
             .collect::<String>();
         f.put("p", "budget.dockerfile", &source, count);
-        f.store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&f.store)
+            .index_code()
+            .unwrap();
         let graph = f.query(json!({}));
         let overflow = graph["diagnostics"].as_array().unwrap().iter().any(|d| {
             d["path"] == "/p/budget.dockerfile" && d["code"] == "docker_instruction_or_stage_limit"

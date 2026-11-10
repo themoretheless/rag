@@ -507,7 +507,9 @@ mod tests {
                 })
                 .unwrap();
         }
-        let first = store.index_code().unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(first.resolution.as_ref().unwrap().documents_resolved, 7);
         assert!(first.completion.as_ref().unwrap().commit_included);
         assert!(
@@ -518,7 +520,9 @@ mod tests {
                     .unwrap()
                     .before_metrics_write_ms
         );
-        let noop = store.index_code().unwrap();
+        let noop = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert!(noop.resolution.as_ref().unwrap().no_resolution_required);
         assert!(!noop.revision_created);
         source.get_mut("core").unwrap().1 = source["core"].1.replace("{1}", "{2}");
@@ -534,7 +538,9 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        let incremental = store.index_code().unwrap();
+        let incremental = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             incremental.resolution.as_ref().unwrap().documents_resolved,
             1

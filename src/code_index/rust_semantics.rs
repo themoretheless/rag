@@ -1836,7 +1836,9 @@ mod tests {
             ..Default::default()
         };
         store.upsert_document(&document).unwrap();
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         {
             let connection = store.lock().unwrap();
             let payload: String = connection
@@ -1866,11 +1868,21 @@ mod tests {
                 )
                 .unwrap();
         }
-        let stale = store.code_snapshot().unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert_eq!(stale.stale_documents, ["legacy"]);
         assert!(stale.calls.is_empty());
-        assert_eq!(store.index_code().unwrap().indexed, 1);
-        let current = store.code_snapshot().unwrap();
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .index_code()
+                .unwrap()
+                .indexed,
+            1
+        );
+        let current = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert!(current.stale_documents.is_empty());
         assert_eq!(current.calls[0].candidates.len(), 1);
     }

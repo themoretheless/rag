@@ -1298,16 +1298,22 @@ mod tests {
         ] {
             store.upsert_document(&d).unwrap();
         }
-        let first = store.index_code().unwrap();
+        let first = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(
             paths(
-                &store.code_snapshot().unwrap(),
+                &crate::code_index::CodeIndex::new(&store)
+                    .code_snapshot()
+                    .unwrap(),
                 "/w/app/src/main.rs",
                 "engine::work"
             ),
             ["/w/one/src/lib.rs"]
         );
-        let noop = store.index_code().unwrap();
+        let noop = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(noop.unchanged, 6);
         assert!(!noop.revision_created);
         store
@@ -1318,20 +1324,26 @@ mod tests {
                 2,
             ))
             .unwrap();
-        let stale = store.code_snapshot().unwrap();
+        let stale = crate::code_index::CodeIndex::new(&store)
+            .code_snapshot()
+            .unwrap();
         assert!(paths(&stale, "/w/app/src/main.rs", "engine::work").is_empty());
         assert_eq!(stale.stale_documents, ["manifest"]);
         assert!(stale
             .binding_diagnostics
             .iter()
             .any(|v| v["code"] == "RUST_MANIFEST_BOUNDARY_UNVERIFIED"));
-        let changed = store.index_code().unwrap();
+        let changed = crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         assert_eq!(changed.indexed, 1);
         assert_eq!(changed.unchanged, 5);
         assert_ne!(changed.index_revision, first.index_revision);
         assert_eq!(
             paths(
-                &store.code_snapshot().unwrap(),
+                &crate::code_index::CodeIndex::new(&store)
+                    .code_snapshot()
+                    .unwrap(),
                 "/w/app/src/main.rs",
                 "engine::work"
             ),

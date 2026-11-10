@@ -352,7 +352,9 @@ mod tests {
             "p",
             "CREATE TABLE empty_table(id INT);",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = table("users", Some("p"));
         let r = crate::code_index::CodeIndex::new(&store)
             .code_references(&q)
@@ -423,7 +425,9 @@ mod tests {
             "q",
             "SELECT * FROM public.logs;",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let mut q = table("logs", Some("p"));
         q.table_mode = Some("write".into());
         q.selection.path = Some("/p/read.sql".into());
@@ -479,7 +483,9 @@ mod tests {
             "<a href='/items'>Link</a>",
         );
         put(&store, "foreign", "/q/client.js", "q", "fetch('/items');");
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = ReferenceQuery {
             route: Some("/items".into()),
             project: Some("p".into()),
@@ -529,7 +535,9 @@ mod tests {
             "p",
             "function handle() {}\nfunction handle() {}\napp.get('/items', handle);\n",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_references(&ReferenceQuery {
                 route: Some("/items".into()),
@@ -554,7 +562,9 @@ mod tests {
             "p",
             "def work():\n pass\ndef use():\n work()\n q='SELECT * FROM users'\n",
         );
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let q = ReferenceQuery {
             selection: CodeQuery {
                 symbol: Some("work".into()),
@@ -574,7 +584,9 @@ mod tests {
             .unwrap();
         assert_eq!(stale["total"], 0);
         assert_eq!(stale["stale_documents"].as_array().unwrap().len(), 1);
-        store.index_code().unwrap();
+        crate::code_index::CodeIndex::new(&store)
+            .index_code()
+            .unwrap();
         let fresh = crate::code_index::CodeIndex::new(&store)
             .code_references(&table("users", Some("p")))
             .unwrap();
