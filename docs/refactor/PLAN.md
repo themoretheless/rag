@@ -231,3 +231,21 @@ form with its variant prefix.
    matched nothing). Blank KG filters already meant "no filter" on both (the
    store trims them); `GET /v1/kg` keeps its `limit`, MCP `kg_query` stays
    unpaged. Pinned by the admin tests at the end of `tests/it/parity_test.rs`.
+10. **Binary arguments: `recovery`, `ingest_project`, `eval`.** All three
+    parse with clap, flags and defaults unchanged (`ingest_project --wing
+    projects --room default --max-bytes 524288`; `eval --root . --top-k 5
+    --modes lex,vec,hybrid --warmup 0 --repeat 1`, `--golden` alias of
+    `--dataset`; `recovery retention --keep 7`). `--help` prints on stdout
+    with exit 0 (it printed on stderr). Unknown arguments, missing values and
+    unparsable numbers use clap's wording (`unexpected argument '--bogus'
+    found`, `invalid value 'x' for '--top-k <N>'`) with exit code 2 (it was
+    1). Semantic checks keep their messages and exit 1 (`required: --root
+    DIR`, `--top-k must be greater than zero`, `--checkpoint requires
+    --settings-a and --settings-b`, …). `recovery`: subcommands are clap
+    subcommands; a missing `--db`/`--out`/`--in`/`--dir`/`--backup` is
+    clap's "required arguments were not provided" (exit 2) instead of
+    `required --db PATH` (exit 1); an unknown subcommand is `unrecognized
+    subcommand` (exit 2); `recovery` with no subcommand prints the help on
+    stderr and exits 2 (it printed the usage and exited 0); arguments a
+    subcommand does not define are rejected (they were ignored), except
+    `inventory --keep`, still accepted and ignored.

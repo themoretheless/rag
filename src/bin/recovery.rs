@@ -10,37 +10,138 @@ use rag_mcp::db::recovery::{
 };
 use rag_mcp::util::refuse_live_database_target;
 
+/// Offline recovery CLI. Stop the live single-writer service before opening
+/// its DB. Portable JSON/JSONL is bounded in memory; use `recovery backup`
+/// plus `recovery verify` for a large corpus.
+#[derive(clap::Parser)]
+#[command(name = "recovery", arg_required_else_help = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Online-consistent backup of DB into FILE, verified after writing.
+    Backup(BackupArgs),
+    /// Backup plus a count/schema/manifest comparison against the source.
+    RestoreDrill(BackupArgs),
+    /// Relational verification of a backup file.
+    Verify {
+        #[arg(long, value_name = "FILE")]
+        backup: PathBuf,
+    },
+    /// List backups in a directory.
+    Inventory {
+        #[arg(long, value_name = "DIR")]
+        dir: PathBuf,
+        /// Accepted for symmetry with `retention`; ignored.
+        #[arg(long, value_name = "N", hide = true)]
+        keep: Option<usize>,
+    },
+    /// Preview which backups retention would delete (never deletes).
+    Retention {
+        #[arg(long, value_name = "DIR")]
+        dir: PathBuf,
+        #[arg(long, value_name = "N", default_value_t = 7)]
+        keep: usize,
+    },
+    /// Export documents as a Markdown vault (dry run unless --apply).
+    ExportVault {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// Export a portable JSON/JSONL recovery bundle.
+    ExportBundle {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// json or jsonl (default: from the file extension, else json).
+        #[arg(long)]
+        format: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// Import a portable recovery bundle (dry run unless --apply).
+    ImportBundle {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long = "in", value_name = "FILE")]
+        input: PathBuf,
+        #[arg(long)]
+        format: Option<String>,
+        #[arg(long)]
+        apply: bool,
+        /// error | skip | overwrite.
+        #[arg(long)]
+        conflict_policy: Option<String>,
+    },
+}
+
+#[derive(clap::Args)]
+struct BackupArgs {
+    #[arg(long)]
+    db: PathBuf,
+    #[arg(long, value_name = "FILE")]
+    out: PathBuf,
+    #[arg(long)]
+    overwrite: bool,
+}
+
 fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let command = args.next().unwrap_or_else(|| "help".into());
-    let rest: Vec<String> = args.collect();
-    match command.as_str() {
-        "backup" => backup(&rest, false),
-        "restore-drill" => backup(&rest, true),
-        "verify" => verify(&rest),
-        "inventory" => inventory(&rest),
-        "retention" => retention(&rest),
-        "export-vault" => export_vault(&rest),
-        "export-bundle" => export_bundle(&rest),
-        "import-bundle" => import_bundle(&rest),
-        "help" | "-h" | "--help" => {
-            usage();
-            Ok(())
-        }
-        other => bail!("unknown recovery command '{other}' (try --help)"),
+    match <Cli as clap::Parser>::parse().command {
+        Command::Backup(args) => backup(&args, false),
+        Command::RestoreDrill(args) => backup(&args, true),
+        Command::Verify { backup } => verify(&backup),
+        Command::Inventory { dir, keep: _ } => inventory(&dir),
+        Command::Retention { dir, keep } => retention(&dir, keep),
+        Command::ExportVault {
+            db,
+            out,
+            apply,
+            overwrite,
+        } => export_vault(&db, &out, !apply, overwrite),
+        Command::ExportBundle {
+            db,
+            out,
+            format,
+            dry_run,
+            overwrite,
+        } => export_bundle(&db, &out, format.as_deref(), dry_run, overwrite),
+        Command::ImportBundle {
+            db,
+            input,
+            format,
+            apply,
+            conflict_policy,
+        } => import_bundle(
+            &db,
+            &input,
+            format.as_deref(),
+            !apply,
+            conflict_policy.as_deref(),
+        ),
     }
 }
 
-fn backup(args: &[String], drill: bool) -> Result<()> {
-    let db = required_path(args, "--db")?;
-    let out = required_path(args, "--out")?;
-    let overwrite = flag(args, "--overwrite");
-    let store = rag_mcp::storage::open_store(&db)
+fn backup(args: &BackupArgs, drill: bool) -> Result<()> {
+    let BackupArgs { db, out, overwrite } = args;
+    let overwrite = *overwrite;
+    let store = rag_mcp::storage::open_store(db)
         .with_context(|| format!("open source {}", db.display()))?;
     let source = store.maintenance().stats()?;
     let source_schema = store.maintenance().schema_version()?.unwrap_or(0);
     let source_manifest = store.embedding_manifest().get_embedding_manifest()?;
-    let report = store.recovery().backup_database(&out, false, overwrite)?;
+    let report = store.recovery().backup_database(out, false, overwrite)?;
     let verification = report
         .verification
         .as_ref()
@@ -85,9 +186,8 @@ fn backup(args: &[String], drill: bool) -> Result<()> {
     Ok(())
 }
 
-fn verify(args: &[String]) -> Result<()> {
-    let path = required_path(args, "--backup")?;
-    let report = verify_backup(&path)?;
+fn verify(path: &Path) -> Result<()> {
+    let report = verify_backup(path)?;
     if !report.ok {
         bail!("backup relational verification failed");
     }
@@ -95,19 +195,13 @@ fn verify(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn inventory(args: &[String]) -> Result<()> {
-    let dir = required_path(args, "--dir")?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&backup_inventory(&dir)?)?
-    );
+fn inventory(dir: &Path) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(&backup_inventory(dir)?)?);
     Ok(())
 }
 
-fn retention(args: &[String]) -> Result<()> {
-    let dir = required_path(args, "--dir")?;
-    let keep = value(args, "--keep").unwrap_or("7").parse::<usize>()?;
-    let candidates = retention_preview(&dir, keep)?;
+fn retention(dir: &Path, keep: usize) -> Result<()> {
+    let candidates = retention_preview(dir, keep)?;
     println!(
         "{}",
         serde_json::to_string_pretty(
@@ -117,34 +211,31 @@ fn retention(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn export_vault(args: &[String]) -> Result<()> {
-    let db = required_path(args, "--db")?;
-    let out = required_path(args, "--out")?;
-    let store = rag_mcp::storage::open_store(&db)?;
-    let dry_run = !flag(args, "--apply");
-    let report = store
-        .recovery()
-        .export_vault(&out, dry_run, flag(args, "--overwrite"))?;
+fn export_vault(db: &Path, out: &Path, dry_run: bool, overwrite: bool) -> Result<()> {
+    let store = rag_mcp::storage::open_store(db)?;
+    let report = store.recovery().export_vault(out, dry_run, overwrite)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
 
-fn export_bundle(args: &[String]) -> Result<()> {
-    let db = required_path(args, "--db")?;
-    let out = required_path(args, "--out")?;
-    let overwrite = flag(args, "--overwrite");
-    let dry_run = flag(args, "--dry-run");
-    let store = rag_mcp::storage::open_store(&db)?;
-    refuse_live_database_target(&out, store.path())?;
+fn export_bundle(
+    db: &Path,
+    out: &Path,
+    format: Option<&str>,
+    dry_run: bool,
+    overwrite: bool,
+) -> Result<()> {
+    let store = rag_mcp::storage::open_store(db)?;
+    refuse_live_database_target(out, store.path())?;
     if out.exists() && !overwrite {
         bail!("output exists: {}", out.display());
     }
     store.recovery().portable_recovery_preflight()?;
     let bundle = store.recovery().recovery_bundle()?;
-    let format = bundle_format(args, &out)?;
+    let format = bundle_format(format, out)?;
     let encoded = encode_recovery_bundle(&bundle, format)?;
     if !dry_run {
-        publish_recovery_artifact(&out, &encoded, overwrite)?;
+        publish_recovery_artifact(out, &encoded, overwrite)?;
     }
     println!(
         "{}",
@@ -154,18 +245,21 @@ fn export_bundle(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn import_bundle(args: &[String]) -> Result<()> {
-    let db = required_path(args, "--db")?;
-    let input = required_path(args, "--in")?;
-    let format = bundle_format(args, &input)?;
-    let raw = read_recovery_bundle_file(&input)?;
+fn import_bundle(
+    db: &Path,
+    input: &Path,
+    format: Option<&str>,
+    dry_run: bool,
+    conflict_policy: Option<&str>,
+) -> Result<()> {
+    let format = bundle_format(format, input)?;
+    let raw = read_recovery_bundle_file(input)?;
     let bundle = prepare_offline_import_bundle(decode_bundle(&raw, format)?)?;
-    let store = rag_mcp::storage::open_store(&db)?;
-    let policy = ConflictPolicy::parse(value(args, "--conflict-policy"))?;
-    let dry_run = !flag(args, "--apply");
+    let store = rag_mcp::storage::open_store(db)?;
+    let policy = ConflictPolicy::parse(conflict_policy)?;
     let report = store
         .recovery()
-        .import_recovery_bundle(&bundle, policy, dry_run, &input, format)?;
+        .import_recovery_bundle(&bundle, policy, dry_run, input, format)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if !report.success {
         bail!("recovery bundle import did not commit; inspect the structured report above");
@@ -193,22 +287,9 @@ fn prepare_offline_import_bundle(mut bundle: RecoveryBundle) -> Result<RecoveryB
     Ok(bundle)
 }
 
-fn value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.windows(2)
-        .find(|pair| pair[0] == name)
-        .map(|pair| pair[1].as_str())
-}
-fn required_path(args: &[String], name: &str) -> Result<PathBuf> {
-    Ok(PathBuf::from(
-        value(args, name).with_context(|| format!("required {name} PATH"))?,
-    ))
-}
-fn flag(args: &[String], name: &str) -> bool {
-    args.iter().any(|arg| arg == name)
-}
-fn bundle_format(args: &[String], path: &Path) -> Result<&'static str> {
-    let format = value(args, "--format")
-        .unwrap_or_else(|| path.extension().and_then(|v| v.to_str()).unwrap_or("json"));
+fn bundle_format(format: Option<&str>, path: &Path) -> Result<&'static str> {
+    let format =
+        format.unwrap_or_else(|| path.extension().and_then(|v| v.to_str()).unwrap_or("json"));
     match format {
         "json" => Ok("json"),
         "jsonl" | "ndjson" => Ok("jsonl"),
@@ -218,17 +299,6 @@ fn bundle_format(args: &[String], path: &Path) -> Result<&'static str> {
 
 fn decode_bundle(input: &str, format: &str) -> Result<RecoveryBundle> {
     Ok(decode_recovery_bundle(input, format)?)
-}
-
-fn usage() {
-    eprintln!(
-        "recovery backup|restore-drill --db DB --out FILE [--overwrite]\n\
-      recovery verify --backup FILE\nrecovery inventory|retention --dir DIR [--keep N]\n\
-      recovery export-vault --db DB --out DIR [--apply] [--overwrite]\n\
-      recovery export-bundle --db DB --out FILE [--format json|jsonl] [--dry-run]\n\
-      recovery import-bundle --db DB --in FILE [--apply] [--conflict-policy error|skip|overwrite]\n\
-      Portable JSON/JSONL is bounded in memory; use `recovery backup` plus `recovery verify` for a large corpus."
-    );
 }
 
 #[cfg(test)]

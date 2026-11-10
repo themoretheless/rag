@@ -26,6 +26,36 @@ fn main() -> Result<()> {
     rt.block_on(run(args))
 }
 
+/// Offline-only direct DuckDB writer. Stop the rag-mcp gateway first.
+/// For a live database, use the MCP/HTTP sync_sources operation.
+/// Env: RAG_EMBEDDING_* (same as rag-mcp).
+#[derive(clap::Parser)]
+#[command(name = "ingest_project")]
+struct Cli {
+    /// Project directory to scan.
+    #[arg(long, value_name = "DIR")]
+    root: Option<PathBuf>,
+    #[arg(long, default_value = "projects")]
+    wing: String,
+    #[arg(long, value_name = "NAME", default_value = "default")]
+    room: String,
+    /// Skip files larger than N bytes.
+    #[arg(long, value_name = "N", default_value_t = 512 * 1024)]
+    max_bytes: u64,
+    /// Comma-separated extensions, e.g. rs,md,toml.
+    #[arg(long, value_name = "CSV")]
+    ext: Option<String>,
+    /// Database path; this tool never inherits RAG_DB_PATH or a default.
+    #[arg(long, value_name = "PATH")]
+    db: Option<PathBuf>,
+    /// Acknowledge direct DuckDB access (gateway stopped).
+    #[arg(long)]
+    offline: bool,
+    /// List the files without opening the database.
+    #[arg(long)]
+    dry_run: bool,
+}
+
 struct Args {
     root: PathBuf,
     wing: String,
@@ -37,66 +67,18 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args> {
-    let mut root = None;
-    let mut wing = "projects".to_string();
-    let mut room = "default".to_string();
-    let mut max_bytes = 512 * 1024u64;
-    let mut dry_run = false;
-    let mut exts: Option<Vec<String>> = None;
-    let mut db = None;
-    let mut offline = false;
-    let mut it = std::env::args().skip(1);
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--root" => {
-                root = Some(PathBuf::from(it.next().context("--root needs path")?));
-            }
-            "--wing" => {
-                wing = it.next().context("--wing needs value")?;
-            }
-            "--room" => {
-                room = it.next().context("--room needs value")?;
-            }
-            "--max-bytes" => {
-                max_bytes = it
-                    .next()
-                    .context("--max-bytes needs value")?
-                    .parse()
-                    .context("max-bytes")?;
-            }
-            "--ext" => {
-                let list = it.next().context("--ext needs csv")?;
-                exts = Some(
-                    list.split(',')
-                        .map(|s| s.trim().trim_start_matches('.').to_ascii_lowercase())
-                        .filter(|s| !s.is_empty())
-                        .collect(),
-                );
-            }
-            "--db" => {
-                db = Some(PathBuf::from(it.next().context("--db needs path")?));
-            }
-            "--offline" => offline = true,
-            "--dry-run" => dry_run = true,
-            "-h" | "--help" => {
-                eprintln!(
-                    "Usage: ingest_project --offline --db PATH --root DIR \\\n\
-                     \t[--wing projects] [--room NAME] [--max-bytes N] \\\n\
-                     \t[--ext rs,md,toml] [--dry-run]\n\
-                     Offline-only direct DuckDB writer. Stop the rag-mcp gateway first.\n\
-                     For a live database, use the MCP/HTTP sync_sources operation.\n\
-                     Env: RAG_EMBEDDING_* (same as rag-mcp)"
-                );
-                std::process::exit(0);
-            }
-            other => bail!("unknown arg: {other} (try --help)"),
-        }
-    }
-    let root = root.context("required: --root DIR")?;
-    let db = db.context(
+    let cli = <Cli as clap::Parser>::parse();
+    let exts = cli.ext.map(|list| {
+        list.split(',')
+            .map(|s| s.trim().trim_start_matches('.').to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+    let root = cli.root.context("required: --root DIR")?;
+    let db = cli.db.context(
         "required: --db PATH; this offline tool never inherits RAG_DB_PATH or a default database",
     )?;
-    if !offline {
+    if !cli.offline {
         bail!(
             "refusing direct DuckDB access without --offline; stop the rag-mcp gateway first, \
              then pass --offline, or use the MCP/HTTP sync_sources operation"
@@ -107,10 +89,10 @@ fn parse_args() -> Result<Args> {
     }
     Ok(Args {
         root: root.canonicalize().unwrap_or(root),
-        wing,
-        room,
-        max_bytes,
-        dry_run,
+        wing: cli.wing,
+        room: cli.room,
+        max_bytes: cli.max_bytes,
+        dry_run: cli.dry_run,
         exts,
         db,
     })
