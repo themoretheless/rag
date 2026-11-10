@@ -82,11 +82,11 @@ pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
             )));
         }
         let store = Store::open(temporary.path())?;
-        let schema_version = store.schema_version()?.unwrap_or(0);
-        let (documents, chunks, nodes, edges) = store.stats()?;
+        let schema_version = store.maintenance().schema_version()?.unwrap_or(0);
+        let (documents, chunks, nodes, edges) = store.maintenance().stats()?;
         let (_, orphan_chunks, orphan_document_nodes, orphan_edges, _) =
-            store.integrity_counts()?;
-        let embedding_manifest = store.get_embedding_manifest()?;
+            store.maintenance().integrity_counts()?;
+        let embedding_manifest = store.embedding_manifest().get_embedding_manifest()?;
         let embedding_contract_ok =
             verify_embedding_contract(&store, chunks, embedding_manifest.as_ref())?;
         drop(store);

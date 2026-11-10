@@ -242,6 +242,7 @@ mod tests {
         let store = Store::open(&temp.path().join("rag.duckdb")).unwrap();
         let content = "# Hello\n\nBody [[Other]].";
         store
+            .documents()
             .upsert_document(&Document {
                 id: "doc-123456789012345".into(),
                 uri: "wiki://hello".into(),
@@ -263,10 +264,10 @@ mod tests {
             })
             .unwrap();
         let vault = temp.path().join("vault");
-        let preview = store.export_vault(&vault, true, false).unwrap();
+        let preview = store.recovery().export_vault(&vault, true, false).unwrap();
         assert_eq!(preview.documents, 1);
         assert!(!vault.exists());
-        let first = store.export_vault(&vault, false, false).unwrap();
+        let first = store.recovery().export_vault(&vault, false, false).unwrap();
         assert!(first.success);
         let note = vault.join("projects/project-a/docs/wiki/Hello-World--doc-12345678.md");
         let body = fs::read_to_string(note).unwrap();
@@ -274,7 +275,7 @@ mod tests {
         assert!(body.ends_with(content.to_owned().as_str()) || body.contains("Body [[Other]]."));
         assert!(vault.join(".rag/graph.json").is_file());
         assert!(vault.join(".rag/manifest.json").is_file());
-        let second = store.export_vault(&vault, false, true).unwrap();
+        let second = store.recovery().export_vault(&vault, false, true).unwrap();
         assert!(Path::new(second.replaced_path.as_deref().unwrap()).is_dir());
     }
 }

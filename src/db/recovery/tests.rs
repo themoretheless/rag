@@ -39,7 +39,7 @@ fn store_preflight_refuses_document_count_before_materialization() {
         .unwrap();
     }
 
-    let error = store.recovery_bundle().unwrap_err();
+    let error = store.recovery().recovery_bundle().unwrap_err();
 
     assert!(error.to_string().contains("contains 10001 documents"));
     assert!(error.to_string().contains("verified DuckDB backup"));
@@ -78,7 +78,10 @@ fn backup_writes_verified_sidecars_and_inventory_protects_final() {
     let backup = backups.join("rag-final.duckdb");
     let store = Store::open(&source).unwrap();
 
-    let report = store.backup_database(&backup, false, false).unwrap();
+    let report = store
+        .recovery()
+        .backup_database(&backup, false, false)
+        .unwrap();
     let verification = report.verification.expect("verification");
     assert!(verification.ok);
     assert_eq!(
@@ -129,12 +132,12 @@ fn verify_backup_fails_closed_for_invalid_embedding_contracts() {
         let backup = root.path().join(format!("{case}.duckdb"));
         let store = Store::open(&backup).unwrap();
         let document = recovery_document("document", "recovery://document", "body");
-        store.upsert_document(&document).unwrap();
+        store.documents().upsert_document(&document).unwrap();
         let mut chunk = recovery_chunk("chunk", "document", "body");
         if case == "dims" {
             chunk.embedding = vec![1.0];
         }
-        store.insert_chunks(&[chunk]).unwrap();
+        store.chunks().insert_chunks(&[chunk]).unwrap();
         if case != "missing" {
             let mut manifest = recovery_manifest();
             match case {
@@ -147,7 +150,10 @@ fn verify_backup_fails_closed_for_invalid_embedding_contracts() {
                 "dims" => {}
                 _ => unreachable!(),
             }
-            store.set_embedding_manifest(&manifest).unwrap();
+            store
+                .embedding_manifest()
+                .set_embedding_manifest(&manifest)
+                .unwrap();
         }
         drop(store);
         let before = fs::read(&backup).unwrap();
@@ -169,6 +175,7 @@ fn backup_reports_destination_errors() {
     let store = Store::open(&root.path().join("live.duckdb")).unwrap();
     let missing_parent = root.path().join("missing/backup.duckdb");
     assert!(store
+        .recovery()
         .backup_database(&missing_parent, false, false)
         .is_err());
 }
@@ -182,10 +189,12 @@ fn concurrent_overwrite_publications_are_serialized_as_complete_generations() {
     let store_a = Store::open(&source_a).unwrap();
     let store_b = Store::open(&source_b).unwrap();
     store_a
+        .documents()
         .upsert_document(&recovery_document("a", "recovery://a", "a"))
         .unwrap();
     for id in ["b1", "b2"] {
         store_b
+            .documents()
             .upsert_document(&recovery_document(id, &format!("recovery://{id}"), id))
             .unwrap();
     }
@@ -250,6 +259,7 @@ fn online_snapshot_copy_does_not_hold_store_mutex_and_preserves_semantics() {
     let backup = root.path().join("online.duckdb");
     let store = Store::open(&source).unwrap();
     store
+        .documents()
         .upsert_document(&recovery_document(
             "online-document",
             "recovery://online-document",
@@ -257,15 +267,19 @@ fn online_snapshot_copy_does_not_hold_store_mutex_and_preserves_semantics() {
         ))
         .unwrap();
     store
+        .chunks()
         .insert_chunks(&[recovery_chunk(
             "online-chunk",
             "online-document",
             "online body",
         )])
         .unwrap();
-    store.set_embedding_manifest(&recovery_manifest()).unwrap();
-    let source_counts = store.stats().unwrap();
-    let source_manifest = store.get_embedding_manifest().unwrap();
+    store
+        .embedding_manifest()
+        .set_embedding_manifest(&recovery_manifest())
+        .unwrap();
+    let source_counts = store.maintenance().stats().unwrap();
+    let source_manifest = store.embedding_manifest().get_embedding_manifest().unwrap();
 
     let (copy_ready_tx, copy_ready_rx) = mpsc::channel();
     let (release_copy_tx, release_copy_rx) = mpsc::channel();
@@ -291,7 +305,8 @@ fn online_snapshot_copy_does_not_hold_store_mutex_and_preserves_semantics() {
 
     let (stats_tx, stats_rx) = mpsc::channel();
     let query_store = store.clone();
-    let stats_thread = thread::spawn(move || stats_tx.send(query_store.stats()).unwrap());
+    let stats_thread =
+        thread::spawn(move || stats_tx.send(query_store.maintenance().stats()).unwrap());
     let concurrent_counts = stats_rx
         .recv_timeout(Duration::from_secs(30))
         .expect("stats must not wait for snapshot copy hook")
@@ -300,13 +315,14 @@ fn online_snapshot_copy_does_not_hold_store_mutex_and_preserves_semantics() {
     stats_thread.join().unwrap();
 
     store
+        .documents()
         .upsert_document(&recovery_document(
             "after-snapshot",
             "recovery://after-snapshot",
             "committed while backup snapshot is pinned",
         ))
         .expect("source write remains available during snapshot copy");
-    let source_counts_after = store.stats().unwrap();
+    let source_counts_after = store.maintenance().stats().unwrap();
     assert_eq!(source_counts_after.0, source_counts.0 + 1);
 
     release_copy_tx.send(()).unwrap();
@@ -338,7 +354,10 @@ fn backup_preflights_every_sidecar_before_publishing_the_database() {
     let store = Store::open(&source).unwrap();
     fs::write(&sha_path, "keep-existing-sidecar").unwrap();
 
-    let error = store.backup_database(&backup, false, false).unwrap_err();
+    let error = store
+        .recovery()
+        .backup_database(&backup, false, false)
+        .unwrap_err();
 
     assert!(matches!(error, AppError::Conflict(_)));
     assert!(!backup.exists());
@@ -406,12 +425,16 @@ fn recovery_artifact_publish_cleans_stage_after_injected_failure() {
 fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("live.duckdb")).unwrap();
-    store.set_embedding_manifest(&recovery_manifest()).unwrap();
+    store
+        .embedding_manifest()
+        .set_embedding_manifest(&recovery_manifest())
+        .unwrap();
     let original_a = recovery_document("document-a", "recovery://a", "original a");
     let original_b = recovery_document("document-b", "recovery://b", "original b");
-    store.upsert_document(&original_a).unwrap();
-    store.upsert_document(&original_b).unwrap();
+    store.documents().upsert_document(&original_a).unwrap();
+    store.documents().upsert_document(&original_b).unwrap();
     store
+        .chunks()
         .insert_chunks(&[
             recovery_chunk("chunk-a", "document-a", "original chunk a"),
             recovery_chunk("chunk-b", "document-b", "original chunk b"),
@@ -421,9 +444,10 @@ fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
         recovery_node("node-a", "document-a", "recovery://a"),
         recovery_node("node-b", "document-b", "recovery://b"),
     ] {
-        store.upsert_graph_node(&node).unwrap();
+        store.graph().upsert_graph_node(&node).unwrap();
     }
     store
+        .graph()
         .insert_graph_edges(&[GraphEdge {
             id: "edge-a-b".into(),
             source_id: "node-a".into(),
@@ -434,10 +458,12 @@ fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
         }])
         .unwrap();
 
-    let before_documents = serde_json::to_vec(&store.recovery_bundle().unwrap().documents)
-        .expect("serialize documents before import");
+    let before_documents =
+        serde_json::to_vec(&store.recovery().recovery_bundle().unwrap().documents)
+            .expect("serialize documents before import");
     let before_graph = serde_json::to_vec(
         &store
+            .graph()
             .get_graph_view(GraphFilter {
                 max_nodes: Some(100),
                 ..GraphFilter::default()
@@ -471,6 +497,7 @@ fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
     };
 
     let error = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Overwrite,
@@ -483,11 +510,17 @@ fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
     assert!(matches!(error, AppError::Conflict(_)));
     assert!(error.to_string().contains("document-a"));
     assert!(error.to_string().contains("document-b"));
-    assert!(store.get_document("new-document").unwrap().is_none());
-    let after_documents = serde_json::to_vec(&store.recovery_bundle().unwrap().documents)
-        .expect("serialize documents after import");
+    assert!(store
+        .documents()
+        .get_document("new-document")
+        .unwrap()
+        .is_none());
+    let after_documents =
+        serde_json::to_vec(&store.recovery().recovery_bundle().unwrap().documents)
+            .expect("serialize documents after import");
     let after_graph = serde_json::to_vec(
         &store
+            .graph()
             .get_graph_view(GraphFilter {
                 max_nodes: Some(100),
                 ..GraphFilter::default()
@@ -503,15 +536,19 @@ fn recovery_overwrite_cross_collision_conflicts_and_rolls_back_every_item() {
 fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("live.duckdb")).unwrap();
-    store.set_embedding_manifest(&recovery_manifest()).unwrap();
+    store
+        .embedding_manifest()
+        .set_embedding_manifest(&recovery_manifest())
+        .unwrap();
     let source_path = "/vault/replace.md";
     let mut old_document = recovery_document("old-document", "recovery://replace", "old body");
     old_document.source_file = Some(source_path.into());
-    store.upsert_document(&old_document).unwrap();
+    store.documents().upsert_document(&old_document).unwrap();
     old_document.content = "old body latest".into();
     old_document.content_hash = None;
-    store.upsert_document(&old_document).unwrap();
+    store.documents().upsert_document(&old_document).unwrap();
     store
+        .source_manifest()
         .upsert_source_manifest(crate::db::SourceManifestWrite {
             canonical_path: source_path,
             canonical_root: "/vault",
@@ -522,17 +559,24 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
         })
         .unwrap();
     assert_eq!(
-        store.list_document_revisions("old-document").unwrap().len(),
+        store
+            .documents()
+            .list_document_revisions("old-document")
+            .unwrap()
+            .len(),
         1
     );
     assert!(store
+        .source_manifest()
         .load_source_manifest_root(Path::new("/vault"))
         .unwrap()
         .contains_key(source_path));
     store
+        .chunks()
         .insert_chunks(&[recovery_chunk("old-chunk", "old-document", "old chunk")])
         .unwrap();
     store
+        .graph()
         .upsert_graph_node(&recovery_node(
             "old-node",
             "old-document",
@@ -573,6 +617,7 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
     };
 
     let report = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Overwrite,
@@ -588,12 +633,17 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
     assert_eq!(report.documents_inserted, 1);
     assert_eq!(report.conflicts, 1);
     assert_eq!(report.chunks_inserted, 2);
-    assert!(store.get_document("old-document").unwrap().is_none());
+    assert!(store
+        .documents()
+        .get_document("old-document")
+        .unwrap()
+        .is_none());
     // §6.3: the replaced document's node is demoted, not deleted. It keeps the
     // uri, so the next rebuild binds it to `replacement-document` and any note
     // that linked the old one keeps a real backlink instead of a silently
     // dropped edge.
     let demoted = store
+        .graph()
         .find_node_by_id("old-node")
         .unwrap()
         .expect("demoted stub");
@@ -602,15 +652,18 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
     assert_eq!(demoted.document_id, None);
     assert_eq!(demoted.uri.as_deref(), Some("recovery://replace"));
     assert!(store
+        .documents()
         .list_document_revisions("old-document")
         .unwrap()
         .is_empty());
     assert!(!store
+        .source_manifest()
         .load_source_manifest_root(Path::new("/vault"))
         .unwrap()
         .contains_key(source_path));
     assert_eq!(
         store
+            .documents()
             .get_document("replacement-document")
             .unwrap()
             .unwrap()
@@ -619,6 +672,7 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
     );
     assert_eq!(
         store
+            .chunks()
             .list_chunks_for_document("replacement-document")
             .unwrap()
             .len(),
@@ -626,6 +680,7 @@ fn recovery_import_preserves_zero_and_single_match_overwrite_semantics() {
     );
     assert_eq!(
         store
+            .documents()
             .get_document("inserted-document")
             .unwrap()
             .unwrap()
@@ -639,7 +694,10 @@ fn recovery_import_refuses_missing_or_mismatched_embedding_identity() {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("target.duckdb")).unwrap();
     let target_manifest = recovery_manifest();
-    store.set_embedding_manifest(&target_manifest).unwrap();
+    store
+        .embedding_manifest()
+        .set_embedding_manifest(&target_manifest)
+        .unwrap();
     let item = BundleDocument {
         document: recovery_document("imported", "recovery://imported", "body"),
         chunks: vec![recovery_chunk("imported-chunk", "imported", "body")],
@@ -653,6 +711,7 @@ fn recovery_import_refuses_missing_or_mismatched_embedding_identity() {
         documents: vec![item.clone()],
     };
     let missing_error = store
+        .recovery()
         .import_recovery_bundle(
             &missing,
             ConflictPolicy::Error,
@@ -677,6 +736,7 @@ fn recovery_import_refuses_missing_or_mismatched_embedding_identity() {
         documents: vec![item],
     };
     let mismatch_error = store
+        .recovery()
         .import_recovery_bundle(
             &mismatched,
             ConflictPolicy::Error,
@@ -688,7 +748,11 @@ fn recovery_import_refuses_missing_or_mismatched_embedding_identity() {
     assert!(mismatch_error
         .to_string()
         .contains("does not match target corpus"));
-    assert!(store.get_document("imported").unwrap().is_none());
+    assert!(store
+        .documents()
+        .get_document("imported")
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -710,6 +774,7 @@ fn recovery_import_refuses_forged_fingerprint_for_empty_target() {
     };
 
     let error = store
+        .recovery()
         .import_recovery_bundle(
             &forged,
             ConflictPolicy::Error,
@@ -722,8 +787,16 @@ fn recovery_import_refuses_forged_fingerprint_for_empty_target() {
     assert!(error
         .to_string()
         .contains("content_fingerprint does not match"));
-    assert!(store.get_embedding_manifest().unwrap().is_none());
-    assert!(store.get_document("imported").unwrap().is_none());
+    assert!(store
+        .embedding_manifest()
+        .get_embedding_manifest()
+        .unwrap()
+        .is_none());
+    assert!(store
+        .documents()
+        .get_document("imported")
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -797,6 +870,7 @@ fn recovery_import_rejects_empty_and_misparented_ids_without_writes() {
     };
 
     let error = store
+        .recovery()
         .import_recovery_bundle(
             &invalid,
             ConflictPolicy::Error,
@@ -821,6 +895,7 @@ fn recovery_import_rejects_empty_and_misparented_ids_without_writes() {
         }],
     };
     let error = store
+        .recovery()
         .import_recovery_bundle(
             &empty_document_id,
             ConflictPolicy::Error,
@@ -842,6 +917,7 @@ fn recovery_import_rejects_empty_and_misparented_ids_without_writes() {
         }],
     };
     let error = store
+        .recovery()
         .import_recovery_bundle(
             &empty_chunk_id,
             ConflictPolicy::Error,
@@ -851,8 +927,12 @@ fn recovery_import_rejects_empty_and_misparented_ids_without_writes() {
         )
         .unwrap_err();
     assert!(error.to_string().contains("has an empty id"));
-    assert_eq!(store.stats().unwrap(), (0, 0, 0, 0));
-    assert!(store.get_embedding_manifest().unwrap().is_none());
+    assert_eq!(store.maintenance().stats().unwrap(), (0, 0, 0, 0));
+    assert!(store
+        .embedding_manifest()
+        .get_embedding_manifest()
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -885,6 +965,7 @@ fn recovery_dry_run_models_intra_bundle_document_and_uri_conflicts() {
     };
 
     let preview = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Error,
@@ -897,9 +978,10 @@ fn recovery_dry_run_models_intra_bundle_document_and_uri_conflicts() {
     assert!(!preview.durable_mutation_committed);
     assert_eq!(preview.documents_inserted, 2);
     assert_eq!(preview.conflicts, 2);
-    assert_eq!(store.stats().unwrap(), (0, 0, 0, 0));
+    assert_eq!(store.maintenance().stats().unwrap(), (0, 0, 0, 0));
 
     let applied = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Error,
@@ -913,7 +995,7 @@ fn recovery_dry_run_models_intra_bundle_document_and_uri_conflicts() {
     assert_eq!(applied.conflicts, preview.conflicts);
     assert_eq!(applied.errors, preview.errors);
     assert!(!applied.durable_mutation_committed);
-    assert_eq!(store.stats().unwrap(), (0, 0, 0, 0));
+    assert_eq!(store.maintenance().stats().unwrap(), (0, 0, 0, 0));
 }
 
 #[test]
@@ -938,6 +1020,7 @@ fn recovery_dry_run_models_intra_bundle_chunk_id_conflicts() {
     };
 
     let preview_error = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Error,
@@ -946,10 +1029,15 @@ fn recovery_dry_run_models_intra_bundle_chunk_id_conflicts() {
             "json",
         )
         .unwrap_err();
-    assert_eq!(store.stats().unwrap(), (0, 0, 0, 0));
-    assert!(store.get_embedding_manifest().unwrap().is_none());
+    assert_eq!(store.maintenance().stats().unwrap(), (0, 0, 0, 0));
+    assert!(store
+        .embedding_manifest()
+        .get_embedding_manifest()
+        .unwrap()
+        .is_none());
 
     let apply_error = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Error,
@@ -959,8 +1047,12 @@ fn recovery_dry_run_models_intra_bundle_chunk_id_conflicts() {
         )
         .unwrap_err();
     assert_eq!(preview_error.to_string(), apply_error.to_string());
-    assert_eq!(store.stats().unwrap(), (0, 0, 0, 0));
-    assert!(store.get_embedding_manifest().unwrap().is_none());
+    assert_eq!(store.maintenance().stats().unwrap(), (0, 0, 0, 0));
+    assert!(store
+        .embedding_manifest()
+        .get_embedding_manifest()
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -969,9 +1061,12 @@ fn recovery_export_refuses_self_inconsistent_stored_manifest() {
     let store = Store::open(&root.path().join("source.duckdb")).unwrap();
     let mut forged_manifest = recovery_manifest();
     forged_manifest.content_fingerprint = Some("stale-or-forged".into());
-    store.set_embedding_manifest(&forged_manifest).unwrap();
+    store
+        .embedding_manifest()
+        .set_embedding_manifest(&forged_manifest)
+        .unwrap();
 
-    let error = store.recovery_bundle().unwrap_err();
+    let error = store.recovery().recovery_bundle().unwrap_err();
 
     assert!(error
         .to_string()
@@ -1056,7 +1151,10 @@ fn backup_failure_after_sidecar_publish_removes_group_and_retry_succeeds() {
     assert_backup_group_absent(&backup);
     assert_no_backup_work_files(root.path());
 
-    let report = store.backup_database(&backup, false, false).unwrap();
+    let report = store
+        .recovery()
+        .backup_database(&backup, false, false)
+        .unwrap();
     assert!(report.success);
     assert_complete_backup_group(&backup);
 }
@@ -1085,7 +1183,10 @@ fn backup_failure_after_main_verification_removes_group_and_retry_succeeds() {
     assert_backup_group_absent(&backup);
     assert_no_backup_work_files(root.path());
 
-    let report = store.backup_database(&backup, false, false).unwrap();
+    let report = store
+        .recovery()
+        .backup_database(&backup, false, false)
+        .unwrap();
     assert!(report.success);
     assert_complete_backup_group(&backup);
 }
@@ -1098,7 +1199,10 @@ fn backup_refuses_live_database_inode_alias() {
     let alias = root.path().join("alias.duckdb");
     let store = Store::open(&source).unwrap();
     fs::hard_link(&source, &alias).unwrap();
-    let error = store.backup_database(&alias, false, true).unwrap_err();
+    let error = store
+        .recovery()
+        .backup_database(&alias, false, true)
+        .unwrap_err();
     assert!(error.to_string().contains("inode"));
 }
 
@@ -1113,7 +1217,10 @@ fn backup_refuses_a_sidecar_alias_to_the_live_database() {
     fs::hard_link(&source, &metadata_path).unwrap();
     let original_len = fs::metadata(&source).unwrap().len();
 
-    let error = store.backup_database(&backup, false, true).unwrap_err();
+    let error = store
+        .recovery()
+        .backup_database(&backup, false, true)
+        .unwrap_err();
 
     assert!(matches!(error, AppError::Forbidden(_)));
     assert!(!backup.exists());
@@ -1173,6 +1280,7 @@ fn import_preserves_document_timestamps_to_the_microsecond() {
         }],
     };
     let report = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Error,
@@ -1182,10 +1290,17 @@ fn import_preserves_document_timestamps_to_the_microsecond() {
         )
         .unwrap();
     assert!(report.success, "{report:?}");
-    let restored = store.get_document("timed").unwrap().unwrap();
+    let restored = store.documents().get_document("timed").unwrap().unwrap();
     assert_eq!(restored.created_at, created);
     assert_eq!(restored.updated_at, updated);
-    assert_eq!(store.list_chunks_for_document("timed").unwrap().len(), 1);
+    assert_eq!(
+        store
+            .chunks()
+            .list_chunks_for_document("timed")
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 fn preflight_bundle(chunks_per_doc: &[usize]) -> RecoveryBundle {
@@ -1290,6 +1405,7 @@ fn import_normalizes_document_columns_like_every_other_write() {
         }],
     };
     let report = store
+        .recovery()
         .import_recovery_bundle(
             &bundle,
             ConflictPolicy::Error,

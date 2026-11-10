@@ -230,8 +230,8 @@ fn search_lex_and_hybrid_with_store() {
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&doc1).unwrap();
-    store.upsert_document(&doc2).unwrap();
+    store.documents().upsert_document(&doc1).unwrap();
+    store.documents().upsert_document(&doc2).unwrap();
 
     let chunks = vec![
         Chunk {
@@ -265,7 +265,7 @@ fn search_lex_and_hybrid_with_store() {
             metadata_json: "{}".into(),
         },
     ];
-    store.insert_chunks(&chunks).unwrap();
+    store.chunks().insert_chunks(&chunks).unwrap();
 
     // Production lexical path (DuckDB BM25, or the TF fallback without FTS).
     let lex = search_lex(
@@ -348,6 +348,7 @@ fn recency_half_life_boosts_newer_document() {
     let now = Utc::now();
     for (id, age_days) in [("old", 120), ("new", 0)] {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -360,6 +361,7 @@ fn recency_half_life_boosts_newer_document() {
             })
             .unwrap();
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("chunk-{id}"),
                 document_id: id.into(),
@@ -439,12 +441,13 @@ fn search_vec_respects_wing_room_source_and_archived() {
         status: "archived".into(),
         ..Default::default()
     };
-    store.upsert_document(&active).unwrap();
-    store.upsert_document(&other_wing).unwrap();
-    store.upsert_document(&archived).unwrap();
+    store.documents().upsert_document(&active).unwrap();
+    store.documents().upsert_document(&other_wing).unwrap();
+    store.documents().upsert_document(&archived).unwrap();
 
     let emb = vec![1.0f32, 0.0, 0.0];
     store
+        .chunks()
         .insert_chunks(&[
             Chunk {
                 id: "c-active".into(),
@@ -695,8 +698,9 @@ fn scoped_vector_search_ranks_inside_scope_before_top_k() {
         updated_at: now,
         ..Default::default()
     };
-    store.upsert_document(&target).unwrap();
+    store.documents().upsert_document(&target).unwrap();
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: "chunk-target".into(),
             document_id: target.id.clone(),
@@ -723,8 +727,9 @@ fn scoped_vector_search_ranks_inside_scope_before_top_k() {
             updated_at: now,
             ..Default::default()
         };
-        store.upsert_document(&document).unwrap();
+        store.documents().upsert_document(&document).unwrap();
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("chunk-{id}"),
                 document_id: id,
@@ -792,8 +797,9 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
         content: "first".into(),
         ..Default::default()
     };
-    store.upsert_document(&document).unwrap();
+    store.documents().upsert_document(&document).unwrap();
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: "before".into(),
             document_id: document.id.clone(),
@@ -814,6 +820,7 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
     };
 
     store
+        .chunks()
         .replace_chunks_for_document(
             &document.id,
             &[Chunk {
@@ -856,6 +863,7 @@ fn vector_snapshot_refreshes_after_embedding_only_update() {
         ("z-rival", "chunk-rival", vec![0.0, 1.0]),
     ] {
         store
+            .documents()
             .upsert_document(&Document {
                 id: document_id.into(),
                 uri: format!("uri://{document_id}"),
@@ -865,6 +873,7 @@ fn vector_snapshot_refreshes_after_embedding_only_update() {
             })
             .unwrap();
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: chunk_id.into(),
                 document_id: document_id.into(),
@@ -887,9 +896,13 @@ fn vector_snapshot_refreshes_after_embedding_only_update() {
         .unwrap()
         .generation;
 
-    let document = store.get_document("a-target").unwrap().unwrap();
-    let chunks = store.list_chunks_for_document(&document.id).unwrap();
+    let document = store.documents().get_document("a-target").unwrap().unwrap();
+    let chunks = store
+        .chunks()
+        .list_chunks_for_document(&document.id)
+        .unwrap();
     store
+        .chunks()
         .update_chunk_embeddings_atomic(
             &document.id,
             document.revision,
@@ -923,8 +936,9 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
         wing: Some("project".into()),
         ..Default::default()
     };
-    store.upsert_document(&document).unwrap();
+    store.documents().upsert_document(&document).unwrap();
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: "project-chunk".into(),
             document_id: document.id.clone(),
@@ -936,8 +950,9 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
             metadata_json: "{}".into(),
         }])
         .unwrap();
-    store.ensure_fts("porter").unwrap();
+    store.maintenance().ensure_fts("porter").unwrap();
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: "project-chunk-new".into(),
             document_id: document.id.clone(),
@@ -956,7 +971,11 @@ async fn active_corpus_mutation_rejects_all_search_modes_and_releases_cleanly() 
     };
     assert!(lifecycle_before.dirty);
 
-    let sync_guard = store.corpus_mutation_lane().write_owned().await;
+    let sync_guard = store
+        .corpus_lane()
+        .corpus_mutation_lane()
+        .write_owned()
+        .await;
     let hybrid_query = SearchQuery {
         mode: SearchMode::Hybrid,
         top_k: 5,
@@ -1072,7 +1091,7 @@ fn field_boosts_explain_title_uri_heading_pin_and_document_boost() {
         updated_at: Utc::now(),
         ..Default::default()
     };
-    store.upsert_document(&document).unwrap();
+    store.documents().upsert_document(&document).unwrap();
     let mut hits = vec![SearchHit {
         chunk_id: "c".into(),
         document_id: "d".into(),
@@ -1113,7 +1132,7 @@ fn search_context_budget_includes_expansion_and_zero_returns_no_hits() {
         content: "expanded context".into(),
         ..Default::default()
     };
-    store.upsert_document(&doc).unwrap();
+    store.documents().upsert_document(&doc).unwrap();
     let chunks: Vec<Chunk> = (0..3)
         .map(|i| Chunk {
             id: format!("budget-chunk-{i}"),
@@ -1126,7 +1145,7 @@ fn search_context_budget_includes_expansion_and_zero_returns_no_hits() {
             metadata_json: r#"{"heading_path":["Budget"]}"#.into(),
         })
         .collect();
-    store.insert_chunks(&chunks).unwrap();
+    store.chunks().insert_chunks(&chunks).unwrap();
     for budget in [0, 1, 32] {
         let query = SearchQuery {
             top_k: 1,
@@ -1159,6 +1178,7 @@ fn diversity_refill_recovers_second_document_in_every_mode_without_scope_leaks()
         ("foreign", "other", 80),
     ] {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -1188,7 +1208,7 @@ fn diversity_refill_recovers_second_document_in_every_mode_without_scope_leaks()
                 metadata_json: "{}".into(),
             })
             .collect();
-        store.insert_chunks(&chunks).unwrap();
+        store.chunks().insert_chunks(&chunks).unwrap();
     }
     for mode in [SearchMode::Vec, SearchMode::Lex, SearchMode::Hybrid] {
         let query = SearchQuery {
@@ -1239,6 +1259,7 @@ fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("diversity-cap.duckdb")).unwrap();
     store
+        .documents()
         .upsert_document(&Document {
             id: "dominant".into(),
             uri: "doc://dominant".into(),
@@ -1259,7 +1280,7 @@ fn diversity_refill_stops_at_bound_with_an_explicit_reason() {
             metadata_json: "{}".into(),
         })
         .collect();
-    store.insert_chunks(&chunks).unwrap();
+    store.chunks().insert_chunks(&chunks).unwrap();
     let query = SearchQuery {
         top_k: 2,
         query_embedding: Some(vec![1.0, 0.0]),
@@ -1298,6 +1319,7 @@ fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
     let now = Utc::now();
     for (id, wing) in [("inside", "research"), ("outside", "ops")] {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -1311,6 +1333,7 @@ fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
             })
             .unwrap();
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: format!("c-{id}"),
                 document_id: id.into(),
@@ -1345,6 +1368,7 @@ fn scoped_vector_cache_sees_documents_moved_into_the_scope() {
 
     // A metadata-only move does not advance the chunk generation.
     store
+        .documents()
         .update_document_placement(
             "outside",
             &crate::models::PlacementUpdate {
@@ -1365,6 +1389,7 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
     let now = Utc::now();
     let add = |id: &str, vectors: &[[f32; 2]]| {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -1390,7 +1415,10 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
                 metadata_json: "{}".into(),
             })
             .collect();
-        store.replace_chunks_for_document(id, &chunks).unwrap();
+        store
+            .chunks()
+            .replace_chunks_for_document(id, &chunks)
+            .unwrap();
     };
     for index in 0..6 {
         add(
@@ -1449,6 +1477,7 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
     let now = Utc::now();
     let add = |id: &str, wing: &str, vectors: &[[f32; 2]]| {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("uri://{id}"),
@@ -1475,7 +1504,10 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
                 metadata_json: "{}".into(),
             })
             .collect();
-        store.replace_chunks_for_document(id, &chunks).unwrap();
+        store
+            .chunks()
+            .replace_chunks_for_document(id, &chunks)
+            .unwrap();
     };
     for index in 0..8 {
         let wing = if index % 2 == 0 { "alpha" } else { "beta" };
@@ -1516,6 +1548,7 @@ fn scoped_vector_snapshot_refresh_matches_a_scoped_rebuild() {
 
 fn vector_test_document(store: &Store, id: &str, layer: &str, embedding: Vec<f32>) {
     store
+        .documents()
         .upsert_document(&Document {
             id: id.into(),
             uri: format!("uri://{id}"),
@@ -1526,6 +1559,7 @@ fn vector_test_document(store: &Store, id: &str, layer: &str, embedding: Vec<f32
         })
         .unwrap();
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: format!("c-{id}"),
             document_id: id.into(),
@@ -1547,6 +1581,7 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
     vector_test_document(&store, "far", "raw", vec![0.0, 1.0]);
     // A chunk whose document row is gone, scoring above every real chunk.
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: "c-orphan".into(),
             document_id: "missing".into(),
@@ -1587,6 +1622,7 @@ fn unscoped_vector_search_skips_orphan_chunks_without_losing_hits() {
     // Creating the missing document row does not bump the chunk generation;
     // the cached snapshot must still serve the orphan's chunk once it has one.
     store
+        .documents()
         .upsert_document(&Document {
             id: "missing".into(),
             uri: "uri://missing".into(),
@@ -1673,6 +1709,7 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
     };
     for (n, doc) in ["a", "b", "c", "d"].iter().enumerate() {
         store
+            .documents()
             .upsert_document(&Document {
                 id: (*doc).into(),
                 uri: format!("uri://{doc}"),
@@ -1682,6 +1719,7 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
             })
             .unwrap();
         store
+            .chunks()
             .insert_chunks(&[chunk(doc, 0, n as f32 / 10.0), chunk(doc, 1, 0.5)])
             .unwrap();
     }
@@ -1709,10 +1747,12 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
 
     // Scoped writes: replace, delete, insert, re-embed.
     store
+        .chunks()
         .replace_chunks_for_document("a", &[chunk("a", 0, 0.9), chunk("a", 2, 0.3)])
         .unwrap();
-    store.delete_document("b").unwrap();
+    store.documents().delete_document("b").unwrap();
     store
+        .documents()
         .upsert_document(&Document {
             id: "e".into(),
             uri: "uri://e".into(),
@@ -1721,10 +1761,16 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
             ..Default::default()
         })
         .unwrap();
-    store.insert_chunks(&[chunk("e", 0, 0.7)]).unwrap();
-    let c_chunks = store.list_chunks_for_document("c").unwrap();
-    let c_revision = store.get_document("c").unwrap().unwrap().revision;
+    store.chunks().insert_chunks(&[chunk("e", 0, 0.7)]).unwrap();
+    let c_chunks = store.chunks().list_chunks_for_document("c").unwrap();
+    let c_revision = store
+        .documents()
+        .get_document("c")
+        .unwrap()
+        .unwrap()
+        .revision;
     store
+        .chunks()
         .update_chunk_embeddings_atomic(
             "c",
             c_revision,
@@ -1778,7 +1824,7 @@ fn parent_fixture_store() -> (tempfile::TempDir, Store) {
         content: "leader body leaf one leaf two".into(),
         ..Default::default()
     };
-    store.upsert_document(&doc).unwrap();
+    store.documents().upsert_document(&doc).unwrap();
     let chunk = |id: &str, index: i32, content: &str, metadata: &str| Chunk {
         id: id.into(),
         document_id: doc.id.clone(),
@@ -1790,6 +1836,7 @@ fn parent_fixture_store() -> (tempfile::TempDir, Store) {
         metadata_json: metadata.into(),
     };
     store
+        .chunks()
         .insert_chunks(&[
             chunk("c0", 0, "leader body", "{}"),
             chunk("c1", 1, "leaf one", r#"{"parent_chunk_id":"c0"}"#),
@@ -1886,8 +1933,9 @@ fn expand_parent_without_parent_keeps_own_body() {
         content: "standalone chunk".into(),
         ..Default::default()
     };
-    store.upsert_document(&doc).unwrap();
+    store.documents().upsert_document(&doc).unwrap();
     store
+        .chunks()
         .insert_chunks(&[Chunk {
             id: "solo".into(),
             document_id: doc.id.clone(),
@@ -1995,8 +2043,9 @@ fn seed_timing_corpus(store: &Store) -> std::time::Duration {
     let started = Instant::now();
     for index in 0..TIMING_DOCS {
         let (document, chunks) = timing_document(index);
-        store.upsert_document(&document).unwrap();
+        store.documents().upsert_document(&document).unwrap();
         store
+            .chunks()
             .replace_chunks_for_document(&document.id, &chunks)
             .unwrap();
     }
@@ -2052,7 +2101,7 @@ fn timing_hybrid_search_p50_p95() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(&dir.path().join("timing-hybrid.duckdb")).expect("open");
     seed_timing_corpus(&store);
-    let fts_ready = store.ensure_fts("porter").is_ok();
+    let fts_ready = store.maintenance().ensure_fts("porter").is_ok();
     let run = |seed: u64| {
         let hits = search(
             &store,
@@ -2097,7 +2146,7 @@ fn timing_document_upsert_throughput() {
     let store = Store::open(&dir.path().join("timing-upsert.duckdb")).expect("open");
     let insert = seed_timing_corpus(&store);
     let update = seed_timing_corpus(&store);
-    assert_eq!(store.stats().unwrap().0, TIMING_DOCS as u64);
+    assert_eq!(store.maintenance().stats().unwrap().0, TIMING_DOCS as u64);
     println!(
         "TIMING document_upsert docs={TIMING_DOCS} chunks_per_doc={TIMING_CHUNKS_PER_DOC} insert_s={:.2} insert_docs_per_s={:.0} update_s={:.2} update_docs_per_s={:.0}",
         insert.as_secs_f64(),

@@ -20,7 +20,7 @@ impl OpsLog<'_> {
     /// Append `entry` and return the stored row; errors propagate. For audit
     /// rows that are part of the operation's result or contract.
     pub fn append(&self, entry: &OpsLogEntry) -> Result<OpsLogEntry> {
-        self.store.append_ops_log(entry)
+        self.store.ops_log().append_ops_log(entry)
     }
 
     /// Best-effort audit: append `entry`, and on failure log a warning and

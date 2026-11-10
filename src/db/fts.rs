@@ -1504,6 +1504,7 @@ mod tests {
         ];
         for (id, uri, title, wing, room, layer, kind) in docs {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: id.into(),
                     uri: uri.into(),
@@ -1555,7 +1556,7 @@ mod tests {
                 metadata_json: "{}".into(),
             });
         }
-        store.insert_chunks(&batch).unwrap();
+        store.chunks().insert_chunks(&batch).unwrap();
     }
 
     fn lifecycle(store: &Store) -> FtsGenerationState {
@@ -1581,9 +1582,10 @@ mod tests {
         }
         // Match production startup: the existing FTS schema is already checkpointed.
         // Replacing only WAL-created objects does not reproduce the catalog bug.
-        store.checkpoint().unwrap();
+        store.maintenance().checkpoint().unwrap();
         seed_docs(&store);
         store
+            .documents()
             .upsert_document(&Document {
                 id: "wal-code".into(),
                 uri: "file:///fixture/main.rs".into(),
@@ -1720,7 +1722,12 @@ mod tests {
                 }
             }
             assert_eq!(
-                store.get_document("wal-code").unwrap().unwrap().content,
+                store
+                    .documents()
+                    .get_document("wal-code")
+                    .unwrap()
+                    .unwrap()
+                    .content,
                 "fn preserved() {}"
             );
             assert_eq!(
@@ -1924,6 +1931,7 @@ mod tests {
 
         let content = "A quokka is a small marsupial native to Australia.";
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: "c5".into(),
                 document_id: "d1".into(),

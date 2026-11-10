@@ -648,23 +648,27 @@ mod tests {
             "doc://home",
             "See [[Other Note]] and #inbox stuff.",
         );
-        store.upsert_document(&d).unwrap();
+        store.documents().upsert_document(&d).unwrap();
 
         let (node_id, edge_count) = rebuild_document_graph(&store, &d).unwrap();
         assert!(!node_id.is_empty());
         assert_eq!(edge_count, 2);
 
-        let node = store.find_node_by_document_id("d1").unwrap().expect("node");
+        let node = store
+            .graph()
+            .find_node_by_document_id("d1")
+            .unwrap()
+            .expect("node");
         assert_eq!(node.id, node_id);
         assert_eq!(node.kind, "document");
         assert!(node.resolved);
 
-        let stubs = store.find_nodes_by_label("Other Note").unwrap();
+        let stubs = store.graph().find_nodes_by_label("Other Note").unwrap();
         assert_eq!(stubs.len(), 1);
         assert_eq!(stubs[0].kind, "stub");
         assert!(!stubs[0].resolved);
 
-        let tags = store.find_nodes_by_label("inbox").unwrap();
+        let tags = store.graph().find_nodes_by_label("inbox").unwrap();
         assert_eq!(tags[0].kind, "tag");
     }
 
@@ -673,18 +677,19 @@ mod tests {
         let store = open_temp();
         let mut source = doc("source", "Source", "doc://source", "[[Old target]] #oldtag");
         let target = doc("target", "Target", "doc://target", "Target body");
-        store.upsert_document(&source).unwrap();
-        store.upsert_document(&target).unwrap();
+        store.documents().upsert_document(&source).unwrap();
+        store.documents().upsert_document(&target).unwrap();
         let (source_node, _) = rebuild_document_graph(&store, &source).unwrap();
         let (target_node, _) = rebuild_document_graph(&store, &target).unwrap();
         let manual = ["related", "tunnel", "wikilink", "tagged"].map(|relation| {
             store
+                .graph()
                 .link_nodes(&source_node, &target_node, relation, 1.0)
                 .unwrap()
                 .id
         });
         source.content = "[[New target]]".into();
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
         for _ in 0..2 {
             rebuild_document_graph(&store, &source).unwrap();
         }
@@ -720,8 +725,9 @@ mod tests {
         let store = open_temp();
         let body = "Intro [[Target#Chapter|see]].";
         let source = doc("src", "Src", "doc://src", body);
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
         store
+            .chunks()
             .insert_chunks(&[
                 chunk("c-head", "src", 0, "Intro ", 0, 6),
                 chunk("c-link", "src", 1, "[[Target#Chapter|see]].", 6, 29),
@@ -786,6 +792,7 @@ mod tests {
         assert_eq!(wikilink.occurrence, Some(0));
 
         let stub_id = store
+            .graph()
             .find_nodes_by_label("Target")
             .unwrap()
             .into_iter()
@@ -793,6 +800,7 @@ mod tests {
             .expect("stub for the link target")
             .id;
         store
+            .graph()
             .link_nodes(&node_id, &stub_id, "related", 1.0)
             .unwrap();
         let explicit = {
@@ -857,10 +865,17 @@ mod tests {
     fn legacy_edges_are_attributed_by_the_origin_backfill() {
         let store = open_temp();
         let source = doc("source", "Source", "doc://source", "Updated [[Old target]]");
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
         let (node, _) = rebuild_document_graph(&store, &source).unwrap();
-        let target = store.find_nodes_by_label("Old target").unwrap().remove(0);
-        let explicit = store.link_nodes(&node, &target.id, "related", 1.0).unwrap();
+        let target = store
+            .graph()
+            .find_nodes_by_label("Old target")
+            .unwrap()
+            .remove(0);
+        let explicit = store
+            .graph()
+            .link_nodes(&node, &target.id, "related", 1.0)
+            .unwrap();
         store
             .lock()
             .unwrap()
@@ -891,7 +906,7 @@ mod tests {
             (1, 1),
             "the wikilink is re-extracted once while the explicit edge survives"
         );
-        let remaining = store.list_graph_edges().unwrap();
+        let remaining = store.graph().list_graph_edges().unwrap();
         assert_eq!(remaining.len(), 2);
         assert!(remaining.iter().any(|edge| edge.id == explicit.id));
     }
@@ -906,15 +921,17 @@ mod tests {
         let mut source = doc("d-legacy", "Legacy", "file:///notes/legacy.md", "Body");
         source.wing = Some("notes".into());
         source.source_file = Some("/notes/legacy.md".into());
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
         let (node, _) = rebuild_document_graph(&store, &source).unwrap();
         let project = store
+            .graph()
             .find_node_by_uri("project://notes")
             .unwrap()
             .expect("project node");
         // The control row: same endpoints and rel_type as the project membership
         // edge, but `link_nodes` cannot write a context, so it stays explicit.
         let hand_made = store
+            .graph()
             .link_nodes(&node, &project.id, "related", 1.0)
             .unwrap();
 
@@ -973,11 +990,11 @@ mod tests {
     fn re_ingest_keeps_stable_node_id() {
         let store = open_temp();
         let d1 = doc("d1", "Home", "doc://home", "Link [[X]]");
-        store.upsert_document(&d1).unwrap();
+        store.documents().upsert_document(&d1).unwrap();
         let (id1, _) = rebuild_document_graph(&store, &d1).unwrap();
 
         let d2 = doc("d1", "Home", "doc://home", "Link [[Y]] #t");
-        store.upsert_document(&d2).unwrap();
+        store.documents().upsert_document(&d2).unwrap();
         let (id2, edges) = rebuild_document_graph(&store, &d2).unwrap();
         assert_eq!(id1, id2);
         assert_eq!(edges, 2);
@@ -988,19 +1005,29 @@ mod tests {
         let store = open_temp();
         let first = doc("d1", "README.md", "file:///project-a/README.md", "A");
         let second = doc("d2", "README.md", "file:///project-b/README.md", "B");
-        store.upsert_document(&first).unwrap();
-        store.upsert_document(&second).unwrap();
+        store.documents().upsert_document(&first).unwrap();
+        store.documents().upsert_document(&second).unwrap();
 
         let (first_node, _) = rebuild_document_graph(&store, &first).unwrap();
         let (second_node, _) = rebuild_document_graph(&store, &second).unwrap();
 
         assert_ne!(first_node, second_node);
         assert_eq!(
-            store.find_node_by_document_id("d1").unwrap().unwrap().id,
+            store
+                .graph()
+                .find_node_by_document_id("d1")
+                .unwrap()
+                .unwrap()
+                .id,
             first_node
         );
         assert_eq!(
-            store.find_node_by_document_id("d2").unwrap().unwrap().id,
+            store
+                .graph()
+                .find_node_by_document_id("d2")
+                .unwrap()
+                .unwrap()
+                .id,
             second_node
         );
     }
@@ -1011,23 +1038,25 @@ mod tests {
         let mut source = doc("d1", "tab.rs", "file:///work/rag/src/tab.rs", "");
         source.wing = Some("rag".into());
         source.source_file = Some("/work/rag/src/tab.rs".into());
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
 
         let (document_node_id, edge_count) = rebuild_document_graph(&store, &source).unwrap();
         assert_eq!(edge_count, 2);
 
         let project = store
+            .graph()
             .find_node_by_uri("project://rag")
             .unwrap()
             .expect("project node");
         let directory = store
+            .graph()
             .find_node_by_uri("directory:///work/rag/src")
             .unwrap()
             .expect("directory node");
         assert_eq!(project.kind, "entity");
         assert_eq!(directory.label, "src");
 
-        let edges = store.list_graph_edges().unwrap();
+        let edges = store.graph().list_graph_edges().unwrap();
         assert!(edges.iter().any(|edge| {
             edge.source_id == document_node_id
                 && edge.target_id == project.id
@@ -1041,7 +1070,7 @@ mod tests {
 
         let (_, rebuilt_count) = rebuild_document_graph(&store, &source).unwrap();
         assert_eq!(rebuilt_count, 2);
-        assert_eq!(store.list_graph_edges().unwrap().len(), 2);
+        assert_eq!(store.graph().list_graph_edges().unwrap().len(), 2);
     }
 
     #[test]
@@ -1055,11 +1084,12 @@ mod tests {
         );
         source.wing = Some("project".into());
         source.source_file = Some("/work/check.sh".into());
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
 
         let (_, edge_count) = rebuild_document_graph(&store, &source).unwrap();
         assert_eq!(edge_count, 2, "only project and directory edges remain");
         assert!(store
+            .graph()
             .find_nodes_by_label("! -f \"$path\"")
             .unwrap()
             .is_empty());
@@ -1076,35 +1106,43 @@ mod tests {
         );
         source.wing = Some("project".into());
         source.source_file = Some("/work/README.md".into());
-        store.upsert_document(&source).unwrap();
+        store.documents().upsert_document(&source).unwrap();
 
         let (_, edge_count) = rebuild_document_graph(&store, &source).unwrap();
         assert_eq!(edge_count, 3);
-        assert_eq!(store.find_nodes_by_label("Architecture").unwrap().len(), 1);
+        assert_eq!(
+            store
+                .graph()
+                .find_nodes_by_label("Architecture")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn promote_stub_on_title_match() {
         let store = open_temp();
         let a = doc("da", "A", "doc://a", "See [[B]]");
-        store.upsert_document(&a).unwrap();
+        store.documents().upsert_document(&a).unwrap();
         rebuild_document_graph(&store, &a).unwrap();
 
-        let stub = store.find_nodes_by_label("B").unwrap();
+        let stub = store.graph().find_nodes_by_label("B").unwrap();
         assert_eq!(stub[0].kind, "stub");
         let stub_id = stub[0].id.clone();
 
         let b = doc("db", "B", "doc://b", "I am B");
-        store.upsert_document(&b).unwrap();
+        store.documents().upsert_document(&b).unwrap();
         let (node_id, _) = rebuild_document_graph(&store, &b).unwrap();
         assert_eq!(node_id, stub_id);
-        let promoted = store.find_node_by_id(&stub_id).unwrap().unwrap();
+        let promoted = store.graph().find_node_by_id(&stub_id).unwrap().unwrap();
         assert_eq!(promoted.kind, "document");
         assert!(promoted.resolved);
         assert_eq!(promoted.document_id.as_deref(), Some("db"));
 
         // The backlink written before the page existed must still point at it.
         let incoming = store
+            .graph()
             .list_graph_edges()
             .unwrap()
             .into_iter()
@@ -1119,25 +1157,31 @@ mod tests {
     fn wikilink_never_binds_a_tag_hub() {
         let store = open_temp();
         let tagged = doc("tagged", "Tagged", "doc://tagged", "triage #inbox");
-        store.upsert_document(&tagged).unwrap();
+        store.documents().upsert_document(&tagged).unwrap();
         rebuild_document_graph(&store, &tagged).unwrap();
 
         let linker = doc("linker", "Linker", "doc://linker", "See [[inbox]].");
-        store.upsert_document(&linker).unwrap();
+        store.documents().upsert_document(&linker).unwrap();
         let (node_id, _) = rebuild_document_graph(&store, &linker).unwrap();
 
         let edge = store
+            .graph()
             .list_graph_edges()
             .unwrap()
             .into_iter()
             .find(|e| e.source_id == node_id && e.rel_type == "wikilink")
             .expect("wikilink edge");
-        let target = store.find_node_by_id(&edge.target_id).unwrap().unwrap();
+        let target = store
+            .graph()
+            .find_node_by_id(&edge.target_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(target.kind, "stub");
         assert!(!target.resolved);
         // One hub per tag, and the stub is a separate node sharing its label_key.
         assert_eq!(
             store
+                .graph()
                 .find_nodes_by_label("inbox")
                 .unwrap()
                 .iter()
@@ -1155,10 +1199,11 @@ mod tests {
         let first = doc("first", "Duplicate", "file:///one/Duplicate.md", "A body");
         let second = doc("second", "Duplicate", "file:///two/Duplicate.md", "B body");
         for d in [&first, &second] {
-            store.upsert_document(d).unwrap();
+            store.documents().upsert_document(d).unwrap();
             rebuild_document_graph(&store, d).unwrap();
         }
         let documents = store
+            .graph()
             .find_nodes_by_label("Duplicate")
             .unwrap()
             .into_iter()
@@ -1168,22 +1213,28 @@ mod tests {
         assert_eq!(documents.len(), 2, "equal titles keep distinct nodes");
 
         let linker = doc("linker", "Linker", "doc://linker", "See [[Duplicate]].");
-        store.upsert_document(&linker).unwrap();
+        store.documents().upsert_document(&linker).unwrap();
         let (node_id, _) = rebuild_document_graph(&store, &linker).unwrap();
         let edge = store
+            .graph()
             .list_graph_edges()
             .unwrap()
             .into_iter()
             .find(|e| e.source_id == node_id && e.rel_type == "wikilink")
             .expect("wikilink edge");
         assert!(!documents.contains(&edge.target_id));
-        let target = store.find_node_by_id(&edge.target_id).unwrap().unwrap();
+        let target = store
+            .graph()
+            .find_node_by_id(&edge.target_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(target.kind, "stub");
 
         // Rebuild is idempotent: the ambiguity stub is reused, not minted again.
         rebuild_document_graph(&store, &linker).unwrap();
         assert_eq!(
             store
+                .graph()
                 .list_graph_edges()
                 .unwrap()
                 .into_iter()
@@ -1240,9 +1291,9 @@ mod tests {
         }
 
         let doc_row = doc("runbook", "Deploy Runbook", "wiki://deploy-runbook", "body");
-        store.upsert_document(&doc_row).unwrap();
+        store.documents().upsert_document(&doc_row).unwrap();
         let (node_id, _) = rebuild_document_graph(&store, &doc_row).unwrap();
-        let nodes = store.find_nodes_by_label("Deploy Runbook").unwrap();
+        let nodes = store.graph().find_nodes_by_label("Deploy Runbook").unwrap();
         let promoted = nodes.iter().find(|n| n.id == node_id).unwrap();
         assert_eq!(promoted.kind, "document");
         assert_eq!(
@@ -1262,7 +1313,7 @@ mod tests {
             "wiki://rag-mcp-overview",
             "# Overview",
         );
-        store.upsert_document(&target).unwrap();
+        store.documents().upsert_document(&target).unwrap();
         rebuild_document_graph(&store, &target).unwrap();
 
         let linker = doc(
@@ -1271,13 +1322,17 @@ mod tests {
             "wiki://rag-mcp-architecture",
             "See [[rag-mcp-overview]] for context.",
         );
-        store.upsert_document(&linker).unwrap();
+        store.documents().upsert_document(&linker).unwrap();
         let (_, edges) = rebuild_document_graph(&store, &linker).unwrap();
         assert_eq!(edges, 1);
 
-        let stubs = store.find_nodes_by_label("rag-mcp-overview").unwrap();
+        let stubs = store
+            .graph()
+            .find_nodes_by_label("rag-mcp-overview")
+            .unwrap();
         // Should not leave a stub; edge points at resolved document node.
         let overview = store
+            .graph()
             .find_node_by_document_id("t1")
             .unwrap()
             .expect("overview node");
@@ -1295,9 +1350,12 @@ mod tests {
         // Stub created first via [[slug]]; page written later with different title.
         let store = open_temp();
         let a = doc("da", "Arch", "wiki://arch", "See [[rag-mcp-overview]]");
-        store.upsert_document(&a).unwrap();
+        store.documents().upsert_document(&a).unwrap();
         rebuild_document_graph(&store, &a).unwrap();
-        let stub = store.find_nodes_by_label("rag-mcp-overview").unwrap();
+        let stub = store
+            .graph()
+            .find_nodes_by_label("rag-mcp-overview")
+            .unwrap();
         assert_eq!(stub[0].kind, "stub");
         let stub_id = stub[0].id.clone();
 
@@ -1307,10 +1365,10 @@ mod tests {
             "wiki://rag-mcp-overview",
             "Body",
         );
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         let (node_id, _) = rebuild_document_graph(&store, &page).unwrap();
         assert_eq!(node_id, stub_id);
-        let promoted = store.find_node_by_id(&stub_id).unwrap().unwrap();
+        let promoted = store.graph().find_node_by_id(&stub_id).unwrap().unwrap();
         assert!(promoted.resolved);
         assert_eq!(promoted.kind, "document");
     }

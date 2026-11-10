@@ -269,7 +269,11 @@ impl<'a> DiagnosticsService<'a> {
         let mut mutation_guard = if dry_run {
             None
         } else {
-            Some(self.store.try_corpus_mutation_guard("doctor repair")?)
+            Some(
+                self.store
+                    .corpus_lane()
+                    .try_corpus_mutation_guard("doctor repair")?,
+            )
         };
         let cap = self.config.maint_max_docs.max(1);
         let max_docs = max_docs.unwrap_or(cap).clamp(1, cap);
@@ -278,8 +282,11 @@ impl<'a> DiagnosticsService<'a> {
         // not corrupt searchable documents. Keep this aligned with
         // Store::integrity_counts so doctor and doctor_repair agree. The SQL
         // anti-join applies the cap before document bodies enter Rust.
-        let (_missing_total, missing) =
-            crate::util::blocking_section(|| self.store.list_documents_missing_chunks(max_docs))?;
+        let (_missing_total, missing) = crate::util::blocking_section(|| {
+            self.store
+                .documents()
+                .list_documents_missing_chunks(max_docs)
+        })?;
 
         let mut documents_repaired = Vec::new();
         let mut documents_failed = Vec::new();
@@ -330,13 +337,14 @@ impl<'a> DiagnosticsService<'a> {
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             #[cfg(test)]
                             crate::db::fts::test_fault::check("doctor", &stemmer)?;
-                            store.ensure_fts(&stemmer).map(|_| ())
+                            store.maintenance().ensure_fts(&stemmer).map(|_| ())
                         }))
                         .unwrap_or_else(|_| {
                             Err(AppError::fts("doctor repair FTS finalization panicked"))
                         });
                     let refresh_result = refresh_result.map_err(|error| {
                         store
+                            .corpus_lane()
                             .record_fts_finalization_failure(
                                 "doctor_repair",
                                 true,
@@ -357,6 +365,7 @@ impl<'a> DiagnosticsService<'a> {
                         mutation_guard = None;
                         errors.push(
                             self.store
+                                .corpus_lane()
                                 .record_fts_finalization_failure(
                                     "doctor_repair",
                                     true,
@@ -367,7 +376,7 @@ impl<'a> DiagnosticsService<'a> {
                     }
                 }
             }
-            crate::util::blocking_section(|| self.store.checkpoint())?;
+            crate::util::blocking_section(|| self.store.maintenance().checkpoint())?;
         }
         let after = if dry_run {
             before.clone()
@@ -393,17 +402,18 @@ impl<'a> DiagnosticsService<'a> {
 
     /// Full status report: schema, counts, wings, layer health and embedding state.
     pub fn status(&self) -> Result<StatusReport, AppError> {
-        let schema_version = self.store.schema_version()?.unwrap_or(0);
-        let fts_ready = self.store.fts_ready()?;
-        let fts_state = self.store.fts_generation_state()?;
+        let schema_version = self.store.maintenance().schema_version()?.unwrap_or(0);
+        let fts_ready = self.store.maintenance().fts_ready()?;
+        let fts_state = self.store.maintenance().fts_generation_state()?;
         let fts_generation_gap = crate::db::fts::fts_generation_gap(&fts_state);
         let fts_stale = crate::db::fts::fts_stale_needs_reindex(
             &fts_state,
             self.config.fts_stale_generation_threshold,
         );
-        let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
-        let wings = self.store.list_wings()?;
-        let layer_health = self.store.layer_health_counts()?;
+        let (document_count, chunk_count, node_count, edge_count) =
+            self.store.maintenance().stats()?;
+        let wings = self.store.documents().list_wings()?;
+        let layer_health = self.store.maintenance().layer_health_counts()?;
         let raw_count = layer_health.raw_count;
         let wiki_count = layer_health.wiki_count;
         let index_entry_count = layer_health.index_entry_count;
@@ -415,7 +425,7 @@ impl<'a> DiagnosticsService<'a> {
         };
         let uncompiled_raw_count = layer_health.uncompiled_raw_count;
         let runtime = crate::ops::runtime_snapshot();
-        let manifest = self.store.get_embedding_manifest()?;
+        let manifest = self.store.embedding_manifest().get_embedding_manifest()?;
         let embedding_manifest_match = manifest.as_ref().map_or(chunk_count == 0, |item| {
             embedding_manifest_matches_config(item, self.config)
         });
@@ -451,8 +461,8 @@ impl<'a> DiagnosticsService<'a> {
             db_path: self.store.path().display().to_string(),
             pid: runtime.pid,
             uptime_seconds: runtime.uptime_seconds,
-            db_file_bytes: self.store.db_file_size_bytes(),
-            wal_bytes: self.store.wal_file_size_bytes(),
+            db_file_bytes: self.store.maintenance().db_file_size_bytes(),
+            wal_bytes: self.store.maintenance().wal_file_size_bytes(),
             wal_warn_bytes: self.config.wal_warn_bytes,
             auto_backup: crate::ops::auto_backup_inventory(self.config),
         })
@@ -460,8 +470,9 @@ impl<'a> DiagnosticsService<'a> {
 
     /// Lightweight status: backend, schema version and row counts.
     pub fn status_summary(&self) -> Result<StatusSummary, AppError> {
-        let schema_version = self.store.schema_version()?.unwrap_or(0);
-        let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
+        let schema_version = self.store.maintenance().schema_version()?.unwrap_or(0);
+        let (document_count, chunk_count, node_count, edge_count) =
+            self.store.maintenance().stats()?;
         Ok(StatusSummary {
             backend: "duckdb".into(),
             schema_version,
@@ -475,11 +486,12 @@ impl<'a> DiagnosticsService<'a> {
 
     /// Run health checks (schema, FTS, embeddings, integrity) and report findings.
     pub fn doctor(&self) -> Result<DoctorReport, AppError> {
-        let schema_version = self.store.schema_version()?.unwrap_or(0);
+        let schema_version = self.store.maintenance().schema_version()?.unwrap_or(0);
         let schema_ok = schema_version >= SCHEMA_VERSION;
-        let fts_ready = self.store.fts_ready()?;
-        let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
-        let manifest = self.store.get_embedding_manifest()?;
+        let fts_ready = self.store.maintenance().fts_ready()?;
+        let (document_count, chunk_count, node_count, edge_count) =
+            self.store.maintenance().stats()?;
+        let manifest = self.store.embedding_manifest().get_embedding_manifest()?;
         let manifest_dims = manifest.as_ref().map(|item| item.dims);
         let embed_ok = manifest.as_ref().map_or(chunk_count == 0, |item| {
             embedding_manifest_matches_config(item, self.config)
@@ -490,10 +502,10 @@ impl<'a> DiagnosticsService<'a> {
             orphan_document_nodes,
             orphan_edges,
             unscoped_documents,
-        ) = self.store.integrity_counts()?;
+        ) = self.store.maintenance().integrity_counts()?;
         let relational_integrity_ok =
             orphan_chunks == 0 && orphan_document_nodes == 0 && orphan_edges == 0;
-        let wal_bytes = self.store.wal_file_size_bytes();
+        let wal_bytes = self.store.maintenance().wal_file_size_bytes();
         let wal_warn_bytes = self.config.wal_warn_bytes;
         let wal_too_large = wal_bytes >= wal_warn_bytes;
         let repair_hint = if !embed_ok {
@@ -579,12 +591,12 @@ pub fn spawn_fts_maintenance(store: Store, config: Config) {
             let check_store = store.clone();
             let stemmer = stemmer.clone();
             let outcome = tokio::task::spawn_blocking(move || -> Result<Option<u64>, AppError> {
-                let state = check_store.fts_generation_state()?;
+                let state = check_store.maintenance().fts_generation_state()?;
                 if !crate::db::fts::fts_stale_needs_reindex(&state, threshold) {
                     return Ok(None);
                 }
                 let gap = crate::db::fts::fts_generation_gap(&state);
-                check_store.ensure_fts(&stemmer)?;
+                check_store.maintenance().ensure_fts(&stemmer)?;
                 Ok(Some(gap.unwrap_or(state.chunks_generation)))
             })
             .await;
@@ -644,6 +656,7 @@ mod tests {
             ..Config::for_tests()
         };
         store
+            .documents()
             .upsert_document(&Document {
                 id: "identity-doc".into(),
                 uri: "text://identity-doc".into(),
@@ -653,6 +666,7 @@ mod tests {
             })
             .expect("insert document");
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: "identity-chunk".into(),
                 document_id: "identity-doc".into(),
@@ -667,7 +681,10 @@ mod tests {
 
         let mut stale = crate::db::store::embedding_manifest_from_config(&config);
         stale.content_fingerprint = Some("another-endpoint-fingerprint".into());
-        store.set_embedding_manifest(&stale).expect("set mismatch");
+        store
+            .embedding_manifest()
+            .set_embedding_manifest(&stale)
+            .expect("set mismatch");
 
         let service = DiagnosticsService::new(&store, &config);
         let status = service.status().expect("status");
@@ -684,6 +701,7 @@ mod tests {
 
         stale.content_fingerprint = None;
         store
+            .embedding_manifest()
             .set_embedding_manifest(&stale)
             .expect("set legacy manifest");
         assert!(
@@ -746,6 +764,7 @@ mod tests {
             ("raw-unresolved-wiki-backlink", "raw"),
         ] {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: id.into(),
                     uri: format!("file://{id}.md"),
@@ -779,9 +798,13 @@ mod tests {
             ),
             graph_node("source-unresolved-wiki", None, Some("wiki://draft"), false),
         ] {
-            store.upsert_graph_node(&node).expect("insert graph node");
+            store
+                .graph()
+                .upsert_graph_node(&node)
+                .expect("insert graph node");
         }
         store
+            .graph()
             .insert_graph_edges(&[
                 graph_edge("edge-non-wiki", "source-non-wiki", "target-non-wiki"),
                 graph_edge("edge-wiki", "source-wiki", "target-wiki"),
@@ -795,7 +818,10 @@ mod tests {
 
         // Legacy behavior deliberately treats every raw as uncompiled when the
         // corpus contains no layer=wiki document, even if a wiki:// source node exists.
-        let without_wiki = store.layer_health_counts().expect("layer health");
+        let without_wiki = store
+            .maintenance()
+            .layer_health_counts()
+            .expect("layer health");
         assert_eq!(without_wiki.raw_count, 4);
         assert_eq!(without_wiki.wiki_count, 0);
         assert_eq!(without_wiki.index_entry_count, 0);
@@ -804,6 +830,7 @@ mod tests {
 
         for id in ["wiki-indexed", "wiki-unindexed"] {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: id.into(),
                     uri: format!("wiki://{id}"),
@@ -819,6 +846,7 @@ mod tests {
             ("index-orphan", Some("missing-wiki")),
         ] {
             store
+                .wiki_index()
                 .upsert_wiki_index_entry(&WikiIndexEntry {
                     id: id.into(),
                     slug: id.into(),
@@ -832,7 +860,10 @@ mod tests {
                 .expect("insert wiki index entry");
         }
 
-        let counts = store.layer_health_counts().expect("layer health");
+        let counts = store
+            .maintenance()
+            .layer_health_counts()
+            .expect("layer health");
         assert_eq!(counts.raw_count, 4);
         assert_eq!(counts.wiki_count, 2);
         assert_eq!(counts.index_entry_count, 2);
@@ -887,6 +918,7 @@ mod tests {
         let path = directory.path().join("empty-document.duckdb");
         let store = Store::open(&path).expect("open store");
         store
+            .documents()
             .upsert_document(&Document {
                 id: "empty-source".into(),
                 uri: "file://empty.md".into(),
@@ -919,6 +951,7 @@ mod tests {
         let store = Store::open(&path).expect("open store");
         for index in 0..5 {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: format!("missing-{index}"),
                     uri: format!("text://missing-{index}"),
@@ -929,6 +962,7 @@ mod tests {
                 .expect("insert missing document");
         }
         store
+            .documents()
             .upsert_document(&Document {
                 id: "schema-placeholder".into(),
                 uri: "schema://placeholder".into(),
@@ -940,6 +974,7 @@ mod tests {
             .expect("insert schema placeholder");
 
         let (total, selected) = store
+            .documents()
             .list_documents_missing_chunks(2)
             .expect("bounded missing documents");
         assert_eq!(total, 5);
@@ -983,6 +1018,7 @@ mod tests {
         let store = Store::open(&path).expect("open store");
         for index in 0..3 {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: format!("missing-{index}"),
                     uri: format!("text://missing-{index}"),
@@ -1009,7 +1045,14 @@ mod tests {
 
         assert_eq!(report.documents_repaired.len(), 3);
         assert_eq!(counting.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
-        assert_eq!(store.list_documents_missing_chunks(10).unwrap().0, 0);
+        assert_eq!(
+            store
+                .documents()
+                .list_documents_missing_chunks(10)
+                .unwrap()
+                .0,
+            0
+        );
     }
 
     #[tokio::test]
@@ -1018,6 +1061,7 @@ mod tests {
         let path = directory.path().join("doctor-finalize-failure.duckdb");
         let store = Store::open(&path).expect("open store");
         store
+            .documents()
             .upsert_document(&Document {
                 id: "missing-chunks".into(),
                 uri: "text://missing-chunks".into(),
@@ -1045,6 +1089,7 @@ mod tests {
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].contains("FTS_FINALIZATION_FAILED"));
         assert!(!store
+            .chunks()
             .list_chunks_for_document("missing-chunks")
             .unwrap()
             .is_empty());
@@ -1054,6 +1099,7 @@ mod tests {
         };
         assert!(generation.dirty, "next lexical read must retry FTS");
         assert!(store
+            .ops_log()
             .list_recent_ops(10)
             .unwrap()
             .iter()

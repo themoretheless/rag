@@ -198,7 +198,7 @@ pub async fn diary_write(
         ..Default::default()
     };
 
-    crate::util::blocking_section(|| store.upsert_document(&doc))?;
+    crate::util::blocking_section(|| store.documents().upsert_document(&doc))?;
 
     let chunk_count = embed_and_store_chunks(store, embedder, config, &doc).await?;
     let (node_id, edge_count) =
@@ -254,7 +254,7 @@ pub async fn diary_write(
 pub fn diary_read(store: &Store, agent_name: &str, last_n: usize) -> Result<Vec<DiaryEntry>> {
     let agent = normalize_agent_name(agent_name)?;
     let limit = last_n.clamp(1, MAX_DIARY_ENTRIES);
-    store.list_diary_entries(Some(&agent), limit)
+    store.documents().list_diary_entries(Some(&agent), limit)
 }
 
 /// Session bootstrap: status + recent diary + pinned docs + optional schema snippet.
@@ -274,11 +274,14 @@ pub fn wake_up(
     let diary_limit = diary_limit.clamp(1, MAX_DIARY_ENTRIES);
     let pinned_limit = pinned_limit.clamp(1, MAX_PINNED_DOCS);
 
-    let diary = store.list_diary_entries(agent_scope.as_deref(), diary_limit)?;
-    let pinned_docs = store.list_pinned_documents(pinned_limit)?;
+    let diary = store
+        .documents()
+        .list_diary_entries(agent_scope.as_deref(), diary_limit)?;
+    let pinned_docs = store.documents().list_pinned_documents(pinned_limit)?;
     let pinned: Vec<DrawerListItem> = pinned_docs.iter().map(DrawerListItem::from).collect();
 
     let schema = store
+        .documents()
         .get_schema_document()?
         .map(|d| WakeUpSchemaSnippet::from_document(&d));
 
@@ -401,7 +404,7 @@ async fn embed_and_store_chunks(
         });
     }
     let n = chunks.len();
-    crate::util::blocking_section(|| store.insert_chunks(&chunks))?;
+    crate::util::blocking_section(|| store.chunks().insert_chunks(&chunks))?;
     Ok(n)
 }
 
@@ -501,7 +504,7 @@ mod tests {
             .iter()
             .any(|e| e.content == "noticed the FTS index was empty"));
 
-        let ops = store.list_ops_log(10).unwrap();
+        let ops = store.ops_log().list_ops_log(10).unwrap();
         assert!(ops.iter().any(|o| o.op == "diary_write"));
     }
 
@@ -547,7 +550,7 @@ mod tests {
         let read = diary_read(&store, "worker", 5).unwrap();
         assert_eq!(read.len(), 1);
 
-        let ops = store.list_ops_log(20).unwrap();
+        let ops = store.ops_log().list_ops_log(20).unwrap();
         let ckpts: Vec<_> = ops.iter().filter(|o| o.op == "checkpoint").collect();
         assert_eq!(ckpts.len(), 2);
         assert!(ops.iter().any(|o| o.op == "diary_write"));
@@ -594,6 +597,7 @@ mod tests {
 
         let now = Utc::now();
         store
+            .documents()
             .upsert_document(&Document {
                 id: "pin-1".into(),
                 uri: "wiki://pinned".into(),

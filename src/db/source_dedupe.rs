@@ -1071,9 +1071,10 @@ mod tests {
             "archived",
         );
         for doc in [&canonical, &legacy, &other_source, &wiki, &archived] {
-            store.upsert_document(doc).unwrap();
+            store.documents().upsert_document(doc).unwrap();
         }
         store
+            .chunks()
             .insert_chunks(&[
                 Chunk {
                     id: "canonical-chunk".into(),
@@ -1102,9 +1103,10 @@ mod tests {
             graph_node("legacy-node", Some("legacy")),
             graph_node("external-node", None),
         ] {
-            store.upsert_graph_node(&node).unwrap();
+            store.graph().upsert_graph_node(&node).unwrap();
         }
         store
+            .graph()
             .insert_graph_edges(&[
                 edge("z-canonical-out", "canonical-node", "external-node", "same"),
                 edge("a-legacy-out", "legacy-node", "external-node", "same"),
@@ -1113,6 +1115,7 @@ mod tests {
             .unwrap();
         let hash = content_hash(body);
         store
+            .source_manifest()
             .upsert_source_manifest(SourceManifestWrite {
                 canonical_path: source,
                 canonical_root: "/vault/project",
@@ -1134,29 +1137,55 @@ mod tests {
             .unwrap();
         }
 
-        let preview = store.cleanup_source_duplicates(true, false, 10).unwrap();
+        let preview = store
+            .maintenance()
+            .cleanup_source_duplicates(true, false, 10)
+            .unwrap();
         assert!(preview.dry_run);
         assert!(!preview.applied);
         assert_eq!(preview.candidate_count, 1);
         assert_eq!(preview.deleted_documents, 0);
-        assert!(store.get_document("legacy").unwrap().is_some());
+        assert!(store.documents().get_document("legacy").unwrap().is_some());
         assert_eq!(preview.groups[0].members.len(), 2);
 
-        let applied = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let applied = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert!(applied.applied);
         assert_eq!(applied.deleted_documents, 1);
         assert_eq!(applied.rewired_graph_edge_endpoints, 1);
         assert_eq!(applied.deduplicated_graph_edges, 1);
         assert_eq!(applied.rewired_kg_facts, 1);
         assert_eq!(applied.rebound_source_manifests, 1);
-        assert!(store.get_document("canonical").unwrap().is_some());
-        assert!(store.get_document("legacy").unwrap().is_none());
-        assert!(store.get_document("other-source").unwrap().is_some());
-        assert!(store.get_document("wiki").unwrap().is_some());
-        assert!(store.get_document("archived").unwrap().is_some());
-        assert!(store.list_chunks_for_document("legacy").unwrap().is_empty());
+        assert!(store
+            .documents()
+            .get_document("canonical")
+            .unwrap()
+            .is_some());
+        assert!(store.documents().get_document("legacy").unwrap().is_none());
+        assert!(store
+            .documents()
+            .get_document("other-source")
+            .unwrap()
+            .is_some());
+        assert!(store.documents().get_document("wiki").unwrap().is_some());
+        assert!(store
+            .documents()
+            .get_document("archived")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .chunks()
+            .list_chunks_for_document("legacy")
+            .unwrap()
+            .is_empty());
         assert_eq!(
-            store.list_chunks_for_document("canonical").unwrap().len(),
+            store
+                .chunks()
+                .list_chunks_for_document("canonical")
+                .unwrap()
+                .len(),
             1
         );
 
@@ -1237,15 +1266,19 @@ mod tests {
             document("legacy-a", "project://cap/a", source, body, "raw", "active"),
             document("legacy-b", "project://cap/b", source, body, "raw", "active"),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
 
         let error = store
+            .maintenance()
             .cleanup_source_duplicates(false, false, 10)
             .unwrap_err();
         assert!(error.to_string().contains("confirm=true"));
 
-        let first = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        let first = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 1)
+            .unwrap();
         assert!(first.cap_exceeded);
         assert!(first.applied);
         assert_eq!(first.candidate_count, 2);
@@ -1256,18 +1289,36 @@ mod tests {
         assert_eq!(first.deleted_documents, 1);
         assert_eq!(first.groups[0].batch_candidate_count, 1);
         assert_eq!(first.groups[0].remaining_candidate_count, 1);
-        assert!(store.get_document("legacy-a").unwrap().is_none());
-        assert!(store.get_document("legacy-b").unwrap().is_some());
+        assert!(store
+            .documents()
+            .get_document("legacy-a")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .documents()
+            .get_document("legacy-b")
+            .unwrap()
+            .is_some());
 
-        let second = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        let second = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 1)
+            .unwrap();
         assert!(!second.cap_exceeded);
         assert!(second.applied);
         assert_eq!(second.batch_candidates, 1);
         assert_eq!(second.remaining_groups, 0);
         assert_eq!(second.remaining_candidates, 0);
-        assert!(store.get_document("legacy-b").unwrap().is_none());
+        assert!(store
+            .documents()
+            .get_document("legacy-b")
+            .unwrap()
+            .is_none());
 
-        let converged = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        let converged = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 1)
+            .unwrap();
         assert_eq!(converged.candidate_count, 0);
         assert_eq!(converged.batch_candidates, 0);
         assert!(!converged.applied);
@@ -1297,19 +1348,24 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
         let mut legacy_node = graph_node("legacy-node", Some("legacy"));
         legacy_node.metadata_json = r#"{"preserved":true}"#.into();
-        store.upsert_graph_node(&legacy_node).unwrap();
+        store.graph().upsert_graph_node(&legacy_node).unwrap();
         store
+            .graph()
             .upsert_graph_node(&graph_node("external", None))
             .unwrap();
         store
+            .graph()
             .insert_graph_edges(&[edge("incoming", "external", "legacy-node", "keep")])
             .unwrap();
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert!(report.applied);
         assert_eq!(report.deleted_documents, 1);
         let conn = store.lock().unwrap();
@@ -1369,10 +1425,13 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert!(report.applied);
         assert_eq!(report.deleted_documents, 1);
         assert_eq!(report.rewired_graph_edge_endpoints, 0);
@@ -1410,16 +1469,17 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
         for node in [
             graph_node("canonical-node", Some("canonical")),
             graph_node("legacy-node", Some("legacy")),
             graph_node("external-node", None),
         ] {
-            store.upsert_graph_node(&node).unwrap();
+            store.graph().upsert_graph_node(&node).unwrap();
         }
         store
+            .graph()
             .insert_graph_edges(&[
                 edge(
                     "preexisting-self",
@@ -1449,7 +1509,10 @@ mod tests {
             ])
             .unwrap();
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert!(report.applied);
         assert_eq!(report.removed_graph_self_edges, 3);
         assert_eq!(report.rewired_graph_edge_endpoints, 1);
@@ -1504,10 +1567,11 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
         let hash = content_hash(body);
         store
+            .source_manifest()
             .upsert_source_manifest(SourceManifestWrite {
                 canonical_path: "/vault/foreign.md",
                 canonical_root: "/vault",
@@ -1518,14 +1582,17 @@ mod tests {
             })
             .unwrap();
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert_eq!(report.actionable_groups, 0);
         assert_eq!(report.skipped_groups, 1);
         assert!(report.groups[0]
             .skip_reasons
             .iter()
             .any(|reason| reason.contains("foreign source_manifest references")));
-        assert!(store.get_document("legacy").unwrap().is_some());
+        assert!(store.documents().get_document("legacy").unwrap().is_some());
         let conn = store.lock().unwrap();
         let manifest_document_id: String = conn
             .query_row(
@@ -1569,10 +1636,11 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
         let hash = content_hash(body);
         store
+            .source_manifest()
             .upsert_source_manifest(SourceManifestWrite {
                 canonical_path: source,
                 canonical_root: "/vault",
@@ -1583,7 +1651,10 @@ mod tests {
             })
             .unwrap();
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert_eq!(report.actionable_groups, 0);
         assert_eq!(report.skipped_groups, 1);
         assert!(!report.applied);
@@ -1591,7 +1662,7 @@ mod tests {
             .skip_reasons
             .iter()
             .any(|reason| reason.contains("owned by non-member document")));
-        assert!(store.get_document("legacy").unwrap().is_some());
+        assert!(store.documents().get_document("legacy").unwrap().is_some());
         let manifest_document_id: String = store
             .lock()
             .unwrap()
@@ -1626,20 +1697,24 @@ mod tests {
             "raw",
             "active",
         );
-        store.upsert_document(&canonical).unwrap();
-        store.upsert_document(&legacy).unwrap();
+        store.documents().upsert_document(&canonical).unwrap();
+        store.documents().upsert_document(&legacy).unwrap();
         legacy.title = "legacy updated title".into();
         legacy.updated_at = Utc::now();
-        store.upsert_document(&legacy).unwrap();
+        store.documents().upsert_document(&legacy).unwrap();
         assert_eq!(
             store
+                .documents()
                 .list_document_revision_summaries("legacy", 10, 0)
                 .unwrap()
                 .total,
             1
         );
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert_eq!(report.actionable_groups, 0);
         assert_eq!(report.skipped_groups, 1);
         assert!(!report.applied);
@@ -1647,9 +1722,10 @@ mod tests {
             .skip_reasons
             .iter()
             .any(|reason| reason.contains("document revisions")));
-        assert!(store.get_document("legacy").unwrap().is_some());
+        assert!(store.documents().get_document("legacy").unwrap().is_some());
         assert_eq!(
             store
+                .documents()
                 .list_document_revision_summaries("legacy", 10, 0)
                 .unwrap()
                 .total,
@@ -1681,9 +1757,10 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: "legacy-only-chunk".into(),
                 document_id: "legacy".into(),
@@ -1696,7 +1773,10 @@ mod tests {
             }])
             .unwrap();
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert_eq!(report.actionable_groups, 0);
         assert_eq!(report.skipped_groups, 1);
         assert!(!report.applied);
@@ -1704,8 +1784,15 @@ mod tests {
             .skip_reasons
             .iter()
             .any(|reason| reason.contains("canonical survivor has no chunks")));
-        assert!(store.get_document("legacy").unwrap().is_some());
-        assert_eq!(store.list_chunks_for_document("legacy").unwrap().len(), 1);
+        assert!(store.documents().get_document("legacy").unwrap().is_some());
+        assert_eq!(
+            store
+                .chunks()
+                .list_chunks_for_document("legacy")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1716,6 +1803,7 @@ mod tests {
         let dense_source = "/vault/000-dense.md";
         let dense_body = "dense duplicate body";
         store
+            .documents()
             .upsert_document(&document(
                 "dense-canonical",
                 "file:///vault/000-dense.md",
@@ -1727,6 +1815,7 @@ mod tests {
             .unwrap();
         for index in 0..(REPORT_MEMBER_LIMIT + 5) {
             store
+                .documents()
                 .upsert_document(&document(
                     &format!("dense-legacy-{index:04}"),
                     &format!("project://dense/{index}"),
@@ -1742,6 +1831,7 @@ mod tests {
             let source = format!("/vault/group-{index:04}.md");
             let body = format!("group body {index}");
             store
+                .documents()
                 .upsert_document(&document(
                     &format!("group-canonical-{index:04}"),
                     &format!("file://{source}"),
@@ -1752,6 +1842,7 @@ mod tests {
                 ))
                 .unwrap();
             store
+                .documents()
                 .upsert_document(&document(
                     &format!("group-legacy-{index:04}"),
                     &format!("project://group/{index}"),
@@ -1763,7 +1854,10 @@ mod tests {
                 .unwrap();
         }
 
-        let report = store.cleanup_source_duplicates(true, false, 1_000).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(true, false, 1_000)
+            .unwrap();
         assert_eq!(report.matched_groups, REPORT_GROUP_LIMIT + 1);
         assert_eq!(
             report.candidate_count,
@@ -1791,6 +1885,7 @@ mod tests {
             let source = format!("/vault/aaa-skipped-{index:04}.md");
             for suffix in ["a", "b"] {
                 store
+                    .documents()
                     .upsert_document(&document(
                         &format!("skipped-{index:04}-{suffix}"),
                         &format!("project://skipped/{index}/{suffix}"),
@@ -1821,10 +1916,13 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
 
-        let report = store.cleanup_source_duplicates(false, true, 1).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 1)
+            .unwrap();
         assert!(report.applied);
         assert_eq!(report.deleted_documents, 1);
         assert_eq!(report.matched_groups, REPORT_GROUP_LIMIT + 1);
@@ -1858,7 +1956,7 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
 
         let protected = "/vault/protected.md";
@@ -1880,7 +1978,7 @@ mod tests {
                 "active",
             ),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
         {
             let conn = store.lock().unwrap();
@@ -1896,14 +1994,21 @@ mod tests {
             .unwrap();
         }
 
-        let report = store.cleanup_source_duplicates(false, true, 10).unwrap();
+        let report = store
+            .maintenance()
+            .cleanup_source_duplicates(false, true, 10)
+            .unwrap();
         assert_eq!(report.matched_groups, 2);
         assert_eq!(report.actionable_groups, 0);
         assert_eq!(report.skipped_groups, 2);
         assert_eq!(report.candidate_count, 0);
         assert!(!report.applied);
-        assert!(store.get_document("old-a").unwrap().is_some());
-        assert!(store.get_document("protected-legacy").unwrap().is_some());
+        assert!(store.documents().get_document("old-a").unwrap().is_some());
+        assert!(store
+            .documents()
+            .get_document("protected-legacy")
+            .unwrap()
+            .is_some());
         assert!(report.groups.iter().any(|group| group
             .skip_reasons
             .iter()

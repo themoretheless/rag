@@ -236,7 +236,7 @@ pub(crate) fn acquire_corpus_search_guard(
     store: &Store,
     _mode: SearchMode,
 ) -> Result<CorpusSearchGuard> {
-    let guard = store.try_corpus_idle_guard().ok_or_else(|| {
+    let guard = store.corpus_lane().try_corpus_idle_guard().ok_or_else(|| {
         AppError::busy("exclusive corpus mutation is active; retry search after it completes")
     })?;
     Ok(CorpusSearchGuard { _guard: guard })
@@ -740,7 +740,7 @@ pub fn attach_context(
     let Some(expansion) = expansion else {
         // Section labels only: one metadata read for all hits, no chunk bodies.
         let ids: Vec<&str> = hits.iter().map(|hit| hit.chunk_id.as_str()).collect();
-        let metadata = store.chunk_metadata_by_ids(&ids)?;
+        let metadata = store.chunks().chunk_metadata_by_ids(&ids)?;
         for hit in hits {
             if let Some(json) = metadata.get(&hit.chunk_id) {
                 (hit.heading_path, hit.section) = section_metadata(json);
@@ -769,13 +769,17 @@ pub fn attach_context(
         let chunks: &Vec<Sectioned> = match expansion {
             ContextExpansion::ParentSection | ContextExpansion::Parent => {
                 if !chunks_by_document.contains_key(&hit.document_id) {
-                    let loaded = sectioned(store.list_chunk_bodies_for_document(&hit.document_id)?);
+                    let loaded = sectioned(
+                        store
+                            .chunks()
+                            .list_chunk_bodies_for_document(&hit.document_id)?,
+                    );
                     chunks_by_document.insert(hit.document_id.clone(), loaded);
                 }
                 &chunks_by_document[&hit.document_id]
             }
             ContextExpansion::Neighbors => {
-                window = sectioned(store.list_chunk_bodies_in_range(
+                window = sectioned(store.chunks().list_chunk_bodies_in_range(
                     &hit.document_id,
                     hit.chunk_index.saturating_sub(radius),
                     hit.chunk_index.saturating_add(radius),

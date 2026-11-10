@@ -812,6 +812,7 @@ mod tests {
         let primary = Store::open(&root.path().join("primary.duckdb")).unwrap();
         let event = change("one", "offline body");
         replica
+            .sync()
             .enqueue_sync_change(
                 &event.entity_kind,
                 &event.entity_id,
@@ -820,24 +821,30 @@ mod tests {
                 None,
             )
             .unwrap();
-        let pending = replica.pending_sync_outbox(10).unwrap();
+        let pending = replica.sync().pending_sync_outbox(10).unwrap();
         assert!(chrono::DateTime::parse_from_rfc3339(&pending[0].created_at).is_ok());
-        let assigned = primary.accept_sync_changes("replica", &pending).unwrap();
+        let assigned = primary
+            .sync()
+            .accept_sync_changes("replica", &pending)
+            .unwrap();
         assert_eq!(assigned, vec![1]);
         assert_eq!(
-            primary.accept_sync_changes("replica", &pending).unwrap(),
+            primary
+                .sync()
+                .accept_sync_changes("replica", &pending)
+                .unwrap(),
             assigned
         );
-        let pulled = primary.pull_sync_changes("replica", 0, 10).unwrap();
+        let pulled = primary.sync().pull_sync_changes("replica", 0, 10).unwrap();
         assert_eq!(pulled.len(), 1);
         assert_eq!(
             canonical_change(&pulled[0].change).unwrap(),
             canonical_change(&pending[0]).unwrap()
         );
-        replica.mark_sync_outbox_sent(&[(1, 1)]).unwrap();
-        replica.mark_sync_outbox_sent(&[(1, 1)]).unwrap();
-        assert!(replica.mark_sync_outbox_sent(&[(1, 2)]).is_err());
-        assert!(replica.pending_sync_outbox(10).unwrap().is_empty());
+        replica.sync().mark_sync_outbox_sent(&[(1, 1)]).unwrap();
+        replica.sync().mark_sync_outbox_sent(&[(1, 1)]).unwrap();
+        assert!(replica.sync().mark_sync_outbox_sent(&[(1, 2)]).is_err());
+        assert!(replica.sync().pending_sync_outbox(10).unwrap().is_empty());
     }
 
     #[test]
@@ -846,13 +853,14 @@ mod tests {
         let store = Store::open(&root.path().join("idempotency.duckdb")).unwrap();
         let original = change("one", "original");
         store
+            .sync()
             .accept_sync_changes("replica", std::slice::from_ref(&original))
             .unwrap();
         let mut changed = original.clone();
         changed.payload_json =
             serde_json::json!({"slug":"one","title":"one","content":"replacement"}).to_string();
         assert!(matches!(
-            store.accept_sync_changes("replica", &[changed]),
+            store.sync().accept_sync_changes("replica", &[changed]),
             Err(AppError::Conflict(_))
         ));
         let mut next = change("two", "next");
@@ -861,9 +869,17 @@ mod tests {
         invalid.origin_seq = 3;
         invalid.created_at = "2026-09-05 12:00:00".into();
         assert!(store
+            .sync()
             .accept_sync_changes("replica", &[next, invalid])
             .is_err());
-        assert_eq!(store.pull_sync_changes("replica", 0, 10).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .sync()
+                .pull_sync_changes("replica", 0, 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -882,10 +898,12 @@ mod tests {
             MAX_SYNC_EVENT_BYTES
         );
         let error = store
+            .sync()
             .accept_sync_changes("replica", &[event.clone()])
             .unwrap_err();
         assert!(error.to_string().contains("sync event exceeds"));
         assert!(store
+            .sync()
             .pull_sync_changes("replica", 0, 10)
             .unwrap()
             .is_empty());
@@ -895,8 +913,15 @@ mod tests {
             "slug":"boundary", "title":"boundary", "content":"x".repeat(padding - 7)
         })
         .to_string();
-        store.accept_sync_changes("replica", &[event]).unwrap();
-        let stored = store.pull_sync_changes("replica", 0, 10).unwrap().remove(0);
+        store
+            .sync()
+            .accept_sync_changes("replica", &[event])
+            .unwrap();
+        let stored = store
+            .sync()
+            .pull_sync_changes("replica", 0, 10)
+            .unwrap()
+            .remove(0);
         assert_eq!(stored.change.created_at, "2026-09-05T12:00:00.000000Z");
         assert_eq!(
             serde_json::to_vec(&stored.change).unwrap().len(),
@@ -939,7 +964,7 @@ mod tests {
             .collect::<Vec<_>>();
         assigned.sort_unstable();
         assert_eq!(assigned, (1..=12).collect::<Vec<_>>());
-        let events = store.pull_sync_changes("primary", 0, 20).unwrap();
+        let events = store.sync().pull_sync_changes("primary", 0, 20).unwrap();
         assert_eq!(
             events
                 .iter()

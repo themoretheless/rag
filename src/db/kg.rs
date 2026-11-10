@@ -613,6 +613,7 @@ mod tests {
         let store = open_temp();
         for object in ["Acme", "Globex", "Initech"] {
             store
+                .kg()
                 .kg_add(KgFactInput {
                     subject: "Dana",
                     predicate: "worked_at",
@@ -626,11 +627,15 @@ mod tests {
                 .expect("add");
         }
         let (items, total) = store
+            .kg()
             .kg_query_page(Some("Dana"), None, None, None, Some(2))
             .expect("page");
         assert_eq!(items.len(), 2);
         assert_eq!(total, 3);
-        let all = store.kg_query(Some("Dana"), None, None, None).expect("all");
+        let all = store
+            .kg()
+            .kg_query(Some("Dana"), None, None, None)
+            .expect("all");
         assert_eq!(all.len(), 3);
         let ids = |facts: &[KgFact]| facts.iter().map(|fact| fact.id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&items), ids(&all[..2]));
@@ -640,6 +645,7 @@ mod tests {
     fn kg_add_query_active_and_idempotent() {
         let store = open_temp();
         let f1 = store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "Alice",
                 predicate: "works_at",
@@ -657,6 +663,7 @@ mod tests {
         assert_eq!(f1.status, "active");
 
         let again = store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "Alice",
                 predicate: "works_at",
@@ -671,6 +678,7 @@ mod tests {
         assert_eq!(again.id, f1.id);
 
         let hits = store
+            .kg()
             .kg_query(Some("Alice"), Some("works_at"), None, None)
             .expect("query");
         assert_eq!(hits.len(), 1);
@@ -681,6 +689,7 @@ mod tests {
     fn kg_invalidate_and_at_time_query() {
         let store = open_temp();
         store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "Bob",
                 predicate: "lives_in",
@@ -695,6 +704,7 @@ mod tests {
 
         let ended = ts(2022, 6, 1);
         let inv = store
+            .kg()
             .kg_invalidate("Bob", "lives_in", "Paris", Some(ended))
             .expect("invalidate");
         assert_eq!(inv.len(), 1);
@@ -702,22 +712,26 @@ mod tests {
         assert!(inv[0].valid_to.is_some());
 
         let active = store
+            .kg()
             .kg_query(Some("Bob"), None, None, None)
             .expect("active query");
         assert!(active.is_empty());
 
         let mid = store
+            .kg()
             .kg_query(Some("Bob"), None, None, Some(ts(2021, 1, 1)))
             .expect("at_time mid");
         assert_eq!(mid.len(), 1);
 
         let after = store
+            .kg()
             .kg_query(Some("Bob"), None, None, Some(ts(2023, 1, 1)))
             .expect("at_time after");
         assert!(after.is_empty());
 
         // Half-open: at exact valid_to the fact is no longer valid.
         let boundary = store
+            .kg()
             .kg_query(Some("Bob"), None, None, Some(ended))
             .expect("at_time boundary");
         assert!(boundary.is_empty());
@@ -727,6 +741,7 @@ mod tests {
     fn kg_supersede_closes_old_and_opens_new() {
         let store = open_temp();
         store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "Carol",
                 predicate: "employer",
@@ -741,6 +756,7 @@ mod tests {
 
         let at = ts(2024, 3, 15);
         let new_f = store
+            .kg()
             .kg_supersede(KgSupersedeInput {
                 subject: "Carol",
                 predicate: "employer",
@@ -755,7 +771,7 @@ mod tests {
         assert_eq!(new_f.status, "active");
         assert_eq!(new_f.valid_from, Some(at));
 
-        let timeline = store.kg_timeline("Carol").expect("timeline");
+        let timeline = store.kg().kg_timeline("Carol").expect("timeline");
         assert_eq!(timeline.len(), 2);
         let old = timeline.iter().find(|f| f.object == "OldCo").expect("old");
         assert_eq!(old.status, "superseded");
@@ -764,12 +780,14 @@ mod tests {
 
         // At boundary: only successor (half-open).
         let at_b = store
+            .kg()
             .kg_query(Some("Carol"), Some("employer"), None, Some(at))
             .expect("query at");
         assert_eq!(at_b.len(), 1);
         assert_eq!(at_b[0].object, "NewCo");
 
         let before = store
+            .kg()
             .kg_query(Some("Carol"), Some("employer"), None, Some(ts(2020, 1, 1)))
             .expect("query before");
         assert_eq!(before.len(), 1);
@@ -780,6 +798,7 @@ mod tests {
     fn kg_stats_counts() {
         let store = open_temp();
         store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "X",
                 predicate: "rel_a",
@@ -792,6 +811,7 @@ mod tests {
             })
             .unwrap();
         store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "X",
                 predicate: "rel_b",
@@ -803,9 +823,9 @@ mod tests {
                 metadata_json: None,
             })
             .unwrap();
-        store.kg_invalidate("X", "rel_a", "Y", None).unwrap();
+        store.kg().kg_invalidate("X", "rel_a", "Y", None).unwrap();
 
-        let s = store.kg_stats().expect("stats");
+        let s = store.kg().kg_stats().expect("stats");
         assert_eq!(s.total_facts, 2);
         assert_eq!(s.active_facts, 1);
         assert_eq!(s.invalidated_facts, 1);
@@ -819,6 +839,7 @@ mod tests {
     fn kg_add_rejects_empty_and_inverted() {
         let store = open_temp();
         assert!(store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "",
                 predicate: "p",
@@ -831,6 +852,7 @@ mod tests {
             })
             .is_err());
         assert!(store
+            .kg()
             .kg_add(KgFactInput {
                 subject: "s",
                 predicate: "p",
