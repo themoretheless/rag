@@ -2581,6 +2581,7 @@ mod persistence_tests {
             2
         );
         let mut doc = store
+            .documents()
             .list_documents()
             .unwrap()
             .into_iter()
@@ -2591,7 +2592,7 @@ mod persistence_tests {
             })
             .unwrap();
         doc.content = "CREATE TABLE users(name TEXT NOT NULL, age INT NOT NULL);".into();
-        store.upsert_document(&doc).unwrap();
+        store.documents().upsert_document(&doc).unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_snapshot()

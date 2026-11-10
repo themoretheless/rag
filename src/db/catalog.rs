@@ -262,6 +262,7 @@ mod tests {
         let store = Store::open(&root.path().join("compile-queue.duckdb")).unwrap();
         for (id, room) in [("raw-a", "src"), ("raw-b", "src"), ("raw-c", "tests")] {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: id.into(),
                     uri: format!("file:///dodo/{id}.cs"),
@@ -275,6 +276,7 @@ mod tests {
                 .unwrap();
         }
         store
+            .documents()
             .upsert_document(&Document {
                 id: "page".into(),
                 uri: "wiki://dodo".into(),
@@ -290,6 +292,7 @@ mod tests {
             ("node-raw-a", "raw-a", "file:///dodo/raw-a.cs"),
         ] {
             store
+                .graph()
                 .upsert_graph_node(&GraphNode {
                     id: id.into(),
                     kind: "document".into(),
@@ -302,6 +305,7 @@ mod tests {
                 .unwrap();
         }
         store
+            .graph()
             .insert_graph_edges(&[GraphEdge {
                 id: "edge-page-raw-a".into(),
                 source_id: "node-page".into(),
@@ -314,6 +318,7 @@ mod tests {
 
         let page = |room: Option<&str>, offset: usize| {
             store
+                .documents()
                 .list_document_catalog(&DocumentCatalogFilter {
                     layer: Some("raw".into()),
                     room: room.map(str::to_string),
@@ -328,7 +333,11 @@ mod tests {
         assert_eq!(debt.total, 2);
         assert_eq!(debt.items.len(), 1);
         assert_eq!(
-            store.layer_health_counts().unwrap().uncompiled_raw_count,
+            store
+                .maintenance()
+                .layer_health_counts()
+                .unwrap()
+                .uncompiled_raw_count,
             debt.total
         );
         // The second page names the other doc, so a 17 000-doc shelf is walkable.
@@ -337,6 +346,7 @@ mod tests {
         assert_eq!(page(Some("missing-room"), 0).total, 0);
 
         let compiled = store
+            .documents()
             .list_document_catalog(&DocumentCatalogFilter {
                 layer: Some("raw".into()),
                 compiled: Some(true),
@@ -352,7 +362,7 @@ mod tests {
             vec!["raw-a"]
         );
 
-        let queue = store.uncompiled_raw_shelves(8).unwrap();
+        let queue = store.maintenance().uncompiled_raw_shelves(8).unwrap();
         assert_eq!(queue.total_shelves, 2);
         assert_eq!(
             queue
@@ -395,8 +405,9 @@ mod tests {
                 status: status.into(),
                 ..Default::default()
             };
-            store.upsert_document(&document).unwrap();
+            store.documents().upsert_document(&document).unwrap();
             store
+                .chunks()
                 .insert_chunks(&[Chunk {
                     id: format!("chunk-{id}"),
                     document_id: id.into(),
@@ -411,6 +422,7 @@ mod tests {
         }
 
         let first = store
+            .documents()
             .list_document_catalog(&DocumentCatalogFilter {
                 wing: Some("alpha".into()),
                 limit: 1,
@@ -420,6 +432,7 @@ mod tests {
         assert_eq!(first.total, 2);
         assert_eq!(first.items.len(), 1);
         let second = store
+            .documents()
             .list_document_catalog(&DocumentCatalogFilter {
                 wing: Some("alpha".into()),
                 q: Some("b.md".into()),
@@ -429,7 +442,7 @@ mod tests {
             .unwrap();
         assert_eq!(second.total, 1);
         assert_eq!(second.items[0].id, "b");
-        let home = store.project_home("alpha").unwrap();
+        let home = store.documents().project_home("alpha").unwrap();
         assert_eq!(home.documents, 3);
         assert_eq!(home.chunks, 3);
         assert_eq!(home.raw_documents, 2);

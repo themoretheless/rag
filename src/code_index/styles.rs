@@ -953,6 +953,7 @@ mod persistence_tests {
             "allow"
         );
         let mut doc = store
+            .documents()
             .list_documents()
             .unwrap()
             .into_iter()
@@ -963,7 +964,7 @@ mod persistence_tests {
             })
             .unwrap();
         doc.content = "<?php function policy() {return false;}".into();
-        store.upsert_document(&doc).unwrap();
+        store.documents().upsert_document(&doc).unwrap();
         let r = crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()

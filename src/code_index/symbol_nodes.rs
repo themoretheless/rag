@@ -292,6 +292,7 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, project: &str, body: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -526,6 +527,7 @@ mod budget_tests {
         let root = tempfile::tempdir().unwrap();
         let store = Store::open(&root.path().join("proofs.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "doc://a".into(),

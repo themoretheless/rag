@@ -1296,7 +1296,7 @@ mod tests {
             ),
             document("two-lib", "/w/two/src/lib.rs", "pub fn work(){}", 1),
         ] {
-            store.upsert_document(&d).unwrap();
+            store.documents().upsert_document(&d).unwrap();
         }
         let first = crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -1317,6 +1317,7 @@ mod tests {
         assert_eq!(noop.unchanged, 6);
         assert!(!noop.revision_created);
         store
+            .documents()
             .upsert_document(&document(
                 "manifest",
                 "/w/app/Cargo.toml",

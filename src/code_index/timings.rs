@@ -87,6 +87,7 @@ mod tests {
     }
     fn put(store: &Store, text: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "doc://a".into(),
@@ -226,6 +227,7 @@ mod tests {
         let (root, store) = setup();
         put(&store, "def work(): pass\n");
         store
+            .documents()
             .upsert_document(&Document {
                 id: "b".into(),
                 uri: "doc://b".into(),

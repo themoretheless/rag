@@ -1389,8 +1389,8 @@ mod integration_tests {
             "class Base\n def work; 'PRIVATE_BODY'; end\nend\n",
         );
         let mut client=doc("client","/p/client.rb","require_relative 'base'\nclass Child < Base\n def run; work(); end\nend\ndef main; Child.new.run(); end\nmain()\n");
-        store.upsert_document(&base).unwrap();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&base).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         let report = crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1428,7 +1428,7 @@ mod integration_tests {
         assert!(!full.revision_created);
         assert_eq!(full.resolution.unwrap().equivalent_to_existing, Some(true));
         client.content = "class Child\n def run; 1; end\nend\n".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
@@ -1466,7 +1466,7 @@ mod integration_tests {
             "{diff}"
         );
         client.content = "require_relative 'base'\n".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

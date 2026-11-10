@@ -165,7 +165,7 @@ mod tests {
             ),
             doc("unused", "/p/spare.py", "p", "def spare(): pass\n"),
         ] {
-            store.upsert_document(&d).unwrap();
+            store.documents().upsert_document(&d).unwrap();
         }
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -233,9 +233,9 @@ mod tests {
     #[test]
     fn changed_resource_is_unavailable_until_publication_and_blocks_negative_liveness() {
         let (_temp, store) = corpus();
-        let mut svg = store.get_document("svg").unwrap().unwrap();
+        let mut svg = store.documents().get_document("svg").unwrap().unwrap();
         svg.content = "<svg>changed</svg>".into();
-        store.upsert_document(&svg).unwrap();
+        store.documents().upsert_document(&svg).unwrap();
         let result = impact(&store, "/p/icon.svg");
         assert_eq!(result["target_found"], true);
         assert_eq!(result["target_available"], false);
@@ -286,8 +286,9 @@ mod tests {
         let mut data = doc("data", "/p/data.json", "p", "{}");
         data.uri = "/p/data.json".into();
         data.source_file = None;
-        store.upsert_document(&data).unwrap();
+        store.documents().upsert_document(&data).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "html",
                 "/p/page.html",
@@ -380,7 +381,7 @@ mod tests {
         let mut data = doc("blob", "/p/blob.svg", "p", "readable");
         data.metadata_json =
             serde_json::json!({"code_source_text":"<svg>private</svg>"}).to_string();
-        store.upsert_document(&data).unwrap();
+        store.documents().upsert_document(&data).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -404,6 +405,7 @@ mod tests {
     fn resource_identity_stays_project_scoped_and_legacy_diffs_skip_unqualified_family() {
         let (_temp, store) = corpus();
         store
+            .documents()
             .upsert_document(&doc("foreign", "/p/icon.svg", "other", "<svg/>"))
             .unwrap();
         crate::code_index::CodeIndex::new(&store)
@@ -428,9 +430,9 @@ mod tests {
                 },
             );
         assert!(foreign["items"].as_array().unwrap().is_empty());
-        let mut page = store.get_document("html").unwrap().unwrap();
+        let mut page = store.documents().get_document("html").unwrap().unwrap();
         page.content = "<p>removed</p>".into();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -448,7 +450,7 @@ mod tests {
         assert!(removed.iter().any(|e| e["target"] == "json"), "{diff}");
         assert!(removed.iter().any(|e| e["target"] == "css"));
         page.content = "<link href='main.css'>".into();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

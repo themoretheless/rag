@@ -429,6 +429,7 @@ mod tests {
     }
     fn put(store: &Store, id: &str, project: &str, path: &str, text: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -441,6 +442,7 @@ mod tests {
     }
     fn chunk(store: &Store, id: &str, document: &str, content: &str, embedding: Vec<f32>) {
         store
+            .chunks()
             .insert_chunks(&[Chunk {
                 id: id.into(),
                 document_id: document.into(),
@@ -492,7 +494,10 @@ mod tests {
         let (_root, store, config) = setup();
         put(&store, "a", "a", "/p/a.py", "def work(): pass\n");
         put(&store, "b", "b", "/p/b.py", "def foreign(): pass\n");
-        store.write_embedding_manifest_from_config(&config).unwrap();
+        store
+            .embedding_manifest()
+            .write_embedding_manifest_from_config(&config)
+            .unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -680,7 +685,10 @@ mod tests {
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
-        store.write_embedding_manifest_from_config(&config).unwrap();
+        store
+            .embedding_manifest()
+            .write_embedding_manifest_from_config(&config)
+            .unwrap();
         let content = "界".repeat(TEXT_CHARS);
         let rows: Vec<_> = (0..100)
             .map(|index| Chunk {
@@ -694,7 +702,7 @@ mod tests {
                 metadata_json: "{}".into(),
             })
             .collect();
-        store.insert_chunks(&rows).unwrap();
+        store.chunks().insert_chunks(&rows).unwrap();
         let status = crate::code_index::CodeIndex::new(&store)
             .code_index_status(
                 &StatusQuery {

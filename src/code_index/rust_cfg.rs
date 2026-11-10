@@ -1382,7 +1382,7 @@ mod tests {
             document("lib", "/p/src/lib.rs", SOURCE, 1),
             document("enabled", "/p/src/enabled.rs", "pub fn leaf(){}", 1),
         ] {
-            store.upsert_document(&doc).unwrap();
+            store.documents().upsert_document(&doc).unwrap();
         }
         let first = crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -1400,6 +1400,7 @@ mod tests {
                 .revision_created
         );
         store
+            .documents()
             .upsert_document(&document(
                 "manifest",
                 "/p/Cargo.toml",
@@ -1445,6 +1446,7 @@ mod tests {
             "{diff}"
         );
         store
+            .documents()
             .upsert_document(&document(
                 "manifest",
                 "/p/Cargo.toml",

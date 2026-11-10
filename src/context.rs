@@ -25,7 +25,10 @@ impl AppContext {
     /// Record the embedding manifest when missing and build the chat client.
     /// Both failures are logged and tolerated, as at every previous call site.
     pub fn new(store: Store, embedder: Arc<dyn EmbeddingProvider>, config: Config) -> Self {
-        if let Err(error) = store.ensure_embedding_manifest(&config) {
+        if let Err(error) = store
+            .embedding_manifest()
+            .ensure_embedding_manifest(&config)
+        {
             tracing::warn!(%error, "failed to ensure embedding_manifest on start");
         }
         let llm = match ChatClient::from_config(&config) {

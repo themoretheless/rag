@@ -1835,7 +1835,7 @@ mod tests {
                 .into(),
             ..Default::default()
         };
-        store.upsert_document(&document).unwrap();
+        store.documents().upsert_document(&document).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

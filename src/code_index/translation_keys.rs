@@ -470,6 +470,7 @@ mod query_tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, project: &str, content: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -576,6 +577,7 @@ mod cache_tests {
         let root = tempfile::tempdir().unwrap();
         let store = Store::open(&root.path().join("cache.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "doc://a".into(),
