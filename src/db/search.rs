@@ -286,7 +286,14 @@ pub(crate) fn search_with_corpus_guard(
                 hits
             }
             SearchMode::Hybrid => {
-                match run_hybrid(store, query, pool, &filters, &mut round_timings, &mut ranking)? {
+                match run_hybrid(
+                    store,
+                    query,
+                    pool,
+                    &filters,
+                    &mut round_timings,
+                    &mut ranking,
+                )? {
                     HybridOutcome::Fused(h) => h,
                     HybridOutcome::VecOnly(h) => h,
                 }
@@ -408,8 +415,13 @@ fn run_lex(
     }
     // db::fts owns the fallback (DuckDB BM25, else term frequency); a failure
     // here is final: retrying the same call cannot succeed.
-    let hits =
-        fts::search_bm25_with_stemmer(store, text, pool, filters, Some(query.fts_stemmer.as_str()))?;
+    let hits = fts::search_bm25_with_stemmer(
+        store,
+        text,
+        pool,
+        filters,
+        Some(query.fts_stemmer.as_str()),
+    )?;
     debug!(count = hits.len(), "lex search via db::fts");
     Ok(hits)
 }
@@ -500,11 +512,8 @@ fn finalize_hits(
         for hit in &mut hits {
             if let Some(document) = ranking.get(&hit.document_id) {
                 let updated_at = document.updated_at()?;
-                let age_days = now
-                    .signed_duration_since(updated_at)
-                    .num_seconds()
-                    .max(0) as f64
-                    / 86_400.0;
+                let age_days =
+                    now.signed_duration_since(updated_at).num_seconds().max(0) as f64 / 86_400.0;
                 let freshness = 2f64.powf(-age_days / half_life_days) as f32;
                 hit.score *= 1.0 + freshness;
             }
@@ -640,7 +649,11 @@ const RANKING_COLUMNS: &str = "id, title, uri, COALESCE(pinned, false), COALESCE
 
 /// Add the ranking fields of every distinct document among `hits` that
 /// `ranking` does not hold yet, in one query.
-fn fill_ranking_fields(store: &Store, hits: &[SearchHit], ranking: &mut RankingCache) -> Result<()> {
+fn fill_ranking_fields(
+    store: &Store,
+    hits: &[SearchHit],
+    ranking: &mut RankingCache,
+) -> Result<()> {
     let ids: Vec<&str> = hits
         .iter()
         .map(|hit| hit.document_id.as_str())
@@ -1280,7 +1293,13 @@ fn search_vec(
     top_k: usize,
     filters: &LexFilters,
 ) -> Result<Vec<SearchHit>> {
-    search_vec_ranked(store, query_embedding, top_k, filters, &mut RankingCache::new())
+    search_vec_ranked(
+        store,
+        query_embedding,
+        top_k,
+        filters,
+        &mut RankingCache::new(),
+    )
 }
 
 /// [`search_vec`] that also records the ranking fields of the documents it
@@ -1947,7 +1966,11 @@ pub fn fuse_rrf(vec_hits: &[SearchHit], lex_hits: &[SearchHit], rrf_k: f32) -> V
 
 /// [`fuse_rrf`] taking the lists by value: hits are moved into the result,
 /// never cloned.
-fn fuse_rrf_owned(vec_hits: Vec<SearchHit>, lex_hits: Vec<SearchHit>, rrf_k: f32) -> Vec<SearchHit> {
+fn fuse_rrf_owned(
+    vec_hits: Vec<SearchHit>,
+    lex_hits: Vec<SearchHit>,
+    rrf_k: f32,
+) -> Vec<SearchHit> {
     let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
     finish_two_list_rrf(rrf_fuse_lists(vec![vec_hits, lex_hits], k))
 }
@@ -1985,7 +2008,8 @@ struct RrfSlot {
 /// with the score fields of its later occurrences. Hits are only borrowed.
 fn rrf_slots(lists: &[&[SearchHit]], k: f32) -> Vec<RrfSlot> {
     let mut slots: Vec<RrfSlot> = Vec::new();
-    let mut by_id: HashMap<&str, usize> = HashMap::with_capacity(lists.iter().map(|hits| hits.len()).sum());
+    let mut by_id: HashMap<&str, usize> =
+        HashMap::with_capacity(lists.iter().map(|hits| hits.len()).sum());
     for (list_index, hits) in lists.iter().enumerate() {
         for (rank0, hit) in hits.iter().enumerate() {
             let contrib = 1.0 / (k + (rank0 + 1) as f32);

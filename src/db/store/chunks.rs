@@ -72,8 +72,9 @@ impl Chunks<'_> {
         if windows.is_empty() {
             return Ok(out);
         }
-        let values = vec!["(CAST(? AS VARCHAR), CAST(? AS INTEGER), CAST(? AS INTEGER))"; windows.len()]
-            .join(", ");
+        let values =
+            vec!["(CAST(? AS VARCHAR), CAST(? AS INTEGER), CAST(? AS INTEGER))"; windows.len()]
+                .join(", ");
         let binds: Vec<String> = windows
             .iter()
             .flat_map(|(document_id, low, high)| {
