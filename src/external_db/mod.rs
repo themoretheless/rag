@@ -481,7 +481,16 @@ async fn collect(
     snapshot.inferred_relations = Some(relations::infer(&snapshot));
     Ok(snapshot)
 }
-impl Store {
+/// External database snapshots and checks over the store connection.
+pub struct ExternalDb<'a> {
+    store: &'a Store,
+}
+
+impl<'a> ExternalDb<'a> {
+    pub fn new(store: &'a Store) -> Self {
+        Self { store }
+    }
+
     pub async fn external_db_refresh(&self, q: &Refresh) -> Result<Value> {
         let raw = std::env::var("RAG_EXTERNAL_DATABASES").unwrap_or_else(|_| "{}".into());
         let all = targets(&raw)?;
@@ -490,7 +499,7 @@ impl Store {
             .ok_or_else(|| AppError::config("unknown external database alias"))?;
         let url = std::env::var(&target.url_env)
             .map_err(|_| AppError::config("external database URL environment variable is unset"))?;
-        let revision = self.code_snapshot()?.index_revision;
+        let revision = self.store.code_snapshot()?.index_revision;
         let snapshot = tokio::time::timeout(
             Duration::from_secs(30),
             collect(&q.connection, target, &url, revision, q.include_samples),
@@ -505,33 +514,37 @@ impl Store {
                 "external schema snapshot exceeds 8 MiB; reduce configured schemas",
             ));
         }
-        self.lock()?.execute(
-            "INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",
-            duckdb::params![snapshot.id, snapshot.connection, snapshot.captured_ms, body],
-        )?;
+        self.store.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",
+                duckdb::params![snapshot.id, snapshot.connection, snapshot.captured_ms, body],
+            )?;
+            Ok(())
+        })?;
         Ok(
             json!({"snapshot_id":snapshot.id,"connection":snapshot.connection,"captured_ms":snapshot.captured_ms,"tables":snapshot.tables.len(),"complete_within_visible_scope":snapshot.complete_within_visible_scope,"diagnostics":snapshot.diagnostics,"source":"remote_metadata","capture_format":snapshot.capture_format,"samples_requested":q.include_samples,"readonly":true}),
         )
     }
     fn external_snapshot(&self, q: &Query) -> Result<Snapshot> {
-        let conn = self.lock()?;
-        let body: Option<String> = if let Some(id) = &q.snapshot_id {
-            let mut s = conn.prepare(
-                "SELECT payload FROM external_db_snapshots WHERE connection_alias=? AND id=?",
-            )?;
-            let mut rows = s.query(duckdb::params![q.connection, id])?;
-            rows.next()?.map(|r| r.get(0)).transpose()?
-        } else {
-            let mut s=conn.prepare("SELECT payload FROM external_db_snapshots WHERE connection_alias=? ORDER BY seq DESC LIMIT 1")?;
-            let mut rows = s.query(duckdb::params![q.connection])?;
-            rows.next()?.map(|r| r.get(0)).transpose()?
-        };
-        let snapshot: Snapshot = serde_json::from_str(&body.ok_or_else(|| {
-            AppError::NotFound("no captured snapshot for this alias; use db_refresh first".into())
-        })?)
-        .map_err(|_| AppError::config("stored external schema snapshot is invalid"))?;
-        snapshot.validate_format()?;
-        Ok(snapshot)
+        self.store.with_conn(|conn| {
+            let body: Option<String> = if let Some(id) = &q.snapshot_id {
+                let mut s = conn.prepare(
+                    "SELECT payload FROM external_db_snapshots WHERE connection_alias=? AND id=?",
+                )?;
+                let mut rows = s.query(duckdb::params![q.connection, id])?;
+                rows.next()?.map(|r| r.get(0)).transpose()?
+            } else {
+                let mut s=conn.prepare("SELECT payload FROM external_db_snapshots WHERE connection_alias=? ORDER BY seq DESC LIMIT 1")?;
+                let mut rows = s.query(duckdb::params![q.connection])?;
+                rows.next()?.map(|r| r.get(0)).transpose()?
+            };
+            let snapshot: Snapshot = serde_json::from_str(&body.ok_or_else(|| {
+                AppError::NotFound("no captured snapshot for this alias; use db_refresh first".into())
+            })?)
+            .map_err(|_| AppError::config("stored external schema snapshot is invalid"))?;
+            snapshot.validate_format()?;
+            Ok(snapshot)
+        })
     }
     pub fn external_db_query(&self, operation: &str, q: &Query) -> Result<Value> {
         if q.connection.len() > 64 {
@@ -1133,13 +1146,15 @@ mod fixture_tests {
                 ..Default::default()
             };
             assert_eq!(
-                store.external_db_query("db_table", &q).unwrap()["items"][0]["foreign_keys"]
+                crate::external_db::ExternalDb::new(&store)
+                    .external_db_query("db_table", &q)
+                    .unwrap()["items"][0]["foreign_keys"]
                     .as_array()
                     .unwrap()
                     .len(),
                 2
             );
-            assert!(store
+            assert!(crate::external_db::ExternalDb::new(&store)
                 .external_db_query(
                     "db_schema",
                     &Query {
@@ -1148,7 +1163,7 @@ mod fixture_tests {
                     }
                 )
                 .is_err());
-            assert!(store
+            assert!(crate::external_db::ExternalDb::new(&store)
                 .external_db_query("db_drift", &q)
                 .unwrap_err()
                 .to_string()
@@ -1158,7 +1173,9 @@ mod fixture_tests {
                 ..Default::default()
             };
             assert_eq!(
-                store.external_db_query("db_drift", &drift_q).unwrap()["compared"],
+                crate::external_db::ExternalDb::new(&store)
+                    .external_db_query("db_drift", &drift_q)
+                    .unwrap()["compared"],
                 false
             );
             let mut next = snapshot.clone();
@@ -1166,7 +1183,9 @@ mod fixture_tests {
             next.id = uuid::Uuid::new_v4().to_string();
             // Identical timestamps must still select actual insertion order.
             store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
-            let unchanged = store.external_db_query("db_drift", &drift_q).unwrap();
+            let unchanged = crate::external_db::ExternalDb::new(&store)
+                .external_db_query("db_drift", &drift_q)
+                .unwrap();
             assert_eq!(unchanged["snapshot_id"], next.id);
             assert_eq!(unchanged["total"], 0);
             next.id = uuid::Uuid::new_v4().to_string();
@@ -1177,7 +1196,9 @@ mod fixture_tests {
                 .columns[0]["nullable"] = json!("NO");
             store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
             assert_eq!(
-                store.external_db_query("db_drift", &drift_q).unwrap()["changes"][0]["kind"],
+                crate::external_db::ExternalDb::new(&store)
+                    .external_db_query("db_drift", &drift_q)
+                    .unwrap()["changes"][0]["kind"],
                 "table_changed"
             );
             for field in ["indexes", "constraints", "view"] {
@@ -1210,7 +1231,7 @@ mod fixture_tests {
                     }
                 };
                 store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![changed.id,"fixture",changed.captured_ms,serde_json::to_string(&changed).unwrap()]).unwrap();
-                let diff = store
+                let diff = crate::external_db::ExternalDb::new(&store)
                     .external_db_query(
                         "db_drift",
                         &Query {
@@ -1235,7 +1256,7 @@ mod fixture_tests {
             let legacy_id = legacy["id"].as_str().unwrap().to_string();
             store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![legacy_id,"fixture",snapshot.captured_ms,legacy.to_string()]).unwrap();
             assert_eq!(
-                store
+                crate::external_db::ExternalDb::new(&store)
                     .external_db_query(
                         "db_table",
                         &Query {
@@ -1248,7 +1269,7 @@ mod fixture_tests {
                     .unwrap()["capture_format"],
                 1
             );
-            let legacy_diff = store
+            let legacy_diff = crate::external_db::ExternalDb::new(&store)
                 .external_db_query(
                     "db_drift",
                     &Query {
@@ -1274,7 +1295,9 @@ mod fixture_tests {
             command.wing = Some("fixture".into());
             let service = crate::source_sync::SourceSyncService::new(&store, &embedder, &config);
             assert!(service.sync(command).await.unwrap().errors.is_empty());
-            let cross = store.external_db_query("db_cross", &drift_q).unwrap();
+            let cross = crate::external_db::ExternalDb::new(&store)
+                .external_db_query("db_cross", &drift_q)
+                .unwrap();
             assert!(cross["uses"]
                 .as_array()
                 .unwrap()
@@ -1301,7 +1324,7 @@ mod fixture_tests {
             next.target_fingerprint = "different-target".into();
             store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params![next.id,"fixture",next.captured_ms,serde_json::to_string(&next).unwrap()]).unwrap();
             assert_eq!(
-                store
+                crate::external_db::ExternalDb::new(&store)
                     .external_db_query(
                         "db_drift",
                         &Query {
@@ -1316,7 +1339,9 @@ mod fixture_tests {
             drop(store);
             let store = Store::open(&path).unwrap();
             assert_eq!(
-                store.external_db_query("db_relations", &q).unwrap()["total"],
+                crate::external_db::ExternalDb::new(&store)
+                    .external_db_query("db_relations", &q)
+                    .unwrap()["total"],
                 2
             );
             let admin_url = std::env::var(format!("{var}_ADMIN")).unwrap();

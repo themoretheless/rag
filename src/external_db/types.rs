@@ -257,10 +257,10 @@ mod tests {
             table: Some("t".into()),
             ..Default::default()
         };
-        assert!(
-            store.external_db_query("db_table", &q).unwrap()["items"][0]["metadata"]["types"]
-                .is_null()
-        );
+        assert!(crate::external_db::ExternalDb::new(&store)
+            .external_db_query("db_table", &q)
+            .unwrap()["items"][0]["metadata"]["types"]
+            .is_null());
         let retained: String = store
             .lock()
             .unwrap()
@@ -285,7 +285,7 @@ mod tests {
             .validate_format()
             .unwrap();
         store.lock().unwrap().execute("INSERT INTO external_db_snapshots (id,connection_alias,captured_ms,payload) VALUES (?,?,?,?)",duckdb::params!["new","alias",1,current.to_string()]).unwrap();
-        let diff = store
+        let diff = crate::external_db::ExternalDb::new(&store)
             .external_db_query(
                 "db_drift",
                 &Query {

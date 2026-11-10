@@ -520,7 +520,7 @@ fn evaluate_constraints(
         }
     }
 }
-impl Store {
+impl<'a> ExternalDb<'a> {
     pub fn check_write_plan(&self, q: Request) -> Result<Value> {
         q.validate()?;
         let count = q.count()?;
@@ -536,7 +536,8 @@ impl Store {
                 && q.default_columns.is_empty()
                 && row.is_none();
             let mut result =
-                self.code_snapshot()?
+                self.store
+                    .code_snapshot()?
                     .write_check(&crate::code_index::sql::WriteCheck {
                         table: q.table,
                         project: q.project,
@@ -789,7 +790,7 @@ mod tests {
         q.as_object_mut()
             .unwrap()
             .extend(fields.as_object().unwrap().clone());
-        store
+        crate::external_db::ExternalDb::new(store)
             .check_write_plan(serde_json::from_value(q).unwrap())
             .unwrap()
     }

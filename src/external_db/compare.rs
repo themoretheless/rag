@@ -36,7 +36,7 @@ fn resolve<'a>(name: &str, tables: &'a [LiveTable]) -> Vec<&'a LiveTable> {
         })
         .collect()
 }
-impl Store {
+impl<'a> ExternalDb<'a> {
     pub(super) fn external_db_drift(&self, s: &Snapshot, q: &Query) -> Result<Value> {
         let baseline = if let Some(id) = &q.base_snapshot_id {
             Some(self.external_snapshot(&Query {
@@ -45,15 +45,16 @@ impl Store {
                 ..Default::default()
             })?)
         } else {
-            let conn = self.lock()?;
-            let mut stmt=conn.prepare("SELECT payload FROM external_db_snapshots WHERE connection_alias=? AND seq < (SELECT seq FROM external_db_snapshots WHERE id=?) ORDER BY seq DESC LIMIT 1")?;
-            let mut rows = stmt.query(duckdb::params![s.connection, s.id])?;
-            let body: Option<String> = rows.next()?.map(|r| r.get(0)).transpose()?;
-            body.map(|body| {
-                serde_json::from_str::<Snapshot>(&body)
-                    .map_err(|_| AppError::config("invalid baseline snapshot"))
-            })
-            .transpose()?
+            self.store.with_conn(|conn| {
+                let mut stmt=conn.prepare("SELECT payload FROM external_db_snapshots WHERE connection_alias=? AND seq < (SELECT seq FROM external_db_snapshots WHERE id=?) ORDER BY seq DESC LIMIT 1")?;
+                let mut rows = stmt.query(duckdb::params![s.connection, s.id])?;
+                let body: Option<String> = rows.next()?.map(|r| r.get(0)).transpose()?;
+                body.map(|body| {
+                    serde_json::from_str::<Snapshot>(&body)
+                        .map_err(|_| AppError::config("invalid baseline snapshot"))
+                })
+                .transpose()
+            })?
         };
         let Some(base) = baseline else {
             return Ok(
@@ -87,7 +88,7 @@ impl Store {
         )
     }
     pub(super) fn external_db_cross(&self, s: &Snapshot, q: &Query) -> Result<Value> {
-        let code = self.code_snapshot()?;
+        let code = self.store.code_snapshot()?;
         let mut observed = BTreeSet::new();
         let mut uses = vec![];
         for usage in code

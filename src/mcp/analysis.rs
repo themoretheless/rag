@@ -284,8 +284,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Refresh>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_refresh(&params)
                 .await
                 .map_err(Self::map_err)?,
@@ -300,8 +299,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_query("db_schema", &params)
                 .map_err(Self::map_err)?,
         )
@@ -315,8 +313,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_query("db_table", &params)
                 .map_err(Self::map_err)?,
         )
@@ -330,8 +327,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_query("db_relations", &params)
                 .map_err(Self::map_err)?,
         )
@@ -345,8 +341,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_query("db_drift", &params)
                 .map_err(Self::map_err)?,
         )
@@ -360,8 +355,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_query("db_cross", &params)
                 .map_err(Self::map_err)?,
         )
@@ -375,8 +369,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::external_db::Query>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::external_db::ExternalDb::new(&self.store)
                 .external_db_query("db_sample", &params)
                 .map_err(Self::map_err)?,
         )
@@ -419,7 +412,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<crate::external_db::write_check::Request>,
     ) -> Result<CallToolResult, McpError> {
-        Self::json_result(&self.store.check_write_plan(params).map_err(Self::map_err)?)
+        Self::json_result(
+            &crate::external_db::ExternalDb::new(&self.store)
+                .check_write_plan(params)
+                .map_err(Self::map_err)?,
+        )
     }
     #[tool(
         name = "entrypoints",

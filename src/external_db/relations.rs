@@ -617,7 +617,9 @@ mod tests {
             table: Some("events".into()),
             ..Default::default()
         };
-        let original = store.external_db_query("db_relations", &q).unwrap();
+        let original = crate::external_db::ExternalDb::new(&store)
+            .external_db_query("db_relations", &q)
+            .unwrap();
         assert_eq!(original["total_inferred"], 1);
         assert!(original["items"].as_array().unwrap().is_empty());
         let mut old = s.clone();
@@ -625,7 +627,7 @@ mod tests {
         old.capture_format = 2;
         old.inferred_relations = None;
         save(&old);
-        let legacy = store
+        let legacy = crate::external_db::ExternalDb::new(&store)
             .external_db_query(
                 "db_relations",
                 &Query {
@@ -638,7 +640,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(legacy["inference_available"], false);
-        let drift = store
+        let drift = crate::external_db::ExternalDb::new(&store)
             .external_db_query(
                 "db_drift",
                 &Query {
@@ -656,7 +658,7 @@ mod tests {
         old.inferred_relations = Some(infer(&old));
         old.inferred_relations.as_mut().unwrap().relations.clear();
         save(&old);
-        let drift = store
+        let drift = crate::external_db::ExternalDb::new(&store)
             .external_db_query(
                 "db_drift",
                 &Query {
@@ -669,7 +671,7 @@ mod tests {
         assert_eq!(drift["total"], 0, "hypotheses are never DDL facts");
         drop(store);
         let reopened = Store::open(&path).unwrap();
-        let historic = reopened
+        let historic = crate::external_db::ExternalDb::new(&reopened)
             .external_db_query(
                 "db_relations",
                 &Query {
@@ -679,7 +681,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(historic["inferred"], original["inferred"]);
-        assert!(reopened
+        assert!(crate::external_db::ExternalDb::new(&reopened)
             .external_db_query(
                 "db_relations",
                 &Query {
