@@ -655,7 +655,7 @@ impl RagServer {
 
 impl RagServer {
     pub fn spawn_file_watcher(self) {
-        let watch_config = match crate::watch::config_from_env() {
+        let watch_config = match crate::watch::config_from(&self.config) {
             Ok(Some(config)) => config,
             Ok(None) => return,
             Err(error) => {

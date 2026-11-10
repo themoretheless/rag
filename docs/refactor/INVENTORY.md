@@ -57,6 +57,19 @@ local cleanup, P3 = leave.
 | crates/rag-mcp-core, crates/rag-mcp-markup | 726 / 847 | 0 / 0 | `mask_code_regions` 69 (markup extract.rs:204) | core `lib.rs` is one file | P3 | todo |
 | web-svelte/src | 11023 (ts + svelte) | — | — | owned by the Stage 7 agent | P1 | todo (Stage 7) |
 
+## Stage 2: environment reads still outside `Config`
+
+`RAG_GATE_MODE` (`mcp/analysis.rs`) and `RAG_WATCH_*` (`watch.rs`) moved into
+`Config` fields in Stage 2. These stay, because no `Config` reaches the read
+without a construction change that belongs to Stage 3/4:
+
+| env | read at | why it stays |
+|---|---|---|
+| `RAG_DB_THREADS`, `RAG_DB_MEMORY_LIMIT` | `db/store.rs` `apply_performance_pragmas` | applied by `Store::open` / `open_read_only`, which take only a path (~1180 call sites, plus the UI crate). Needs a `StoreOptions` built at composition. |
+| `RAG_EMBED_CONCURRENCY` | `embeddings/mod.rs` `embed_concurrency_limit` | sizes the process-wide `EMBED_GATE` semaphore in a `LazyLock`, also reported by `embedder_stats()`; no `Config` at first use. |
+| `RAG_TOKENIZER_JSON` | `search_pack.rs` `tokenizer_count` | lazy process-wide tokenizer behind the pure `estimate_tokens`, called from domain code with no `Config`. |
+| `RAG_WORKER_THREADS` | `ops.rs` `worker_threads` | read by `main` to size the tokio runtime before `Config::from_env` runs inside it, and by the resource snapshot. |
+
 ## Residual backlog (outside this refactor)
 
 Items found on the way that need their own task; each has an `ignore` entry

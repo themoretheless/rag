@@ -180,7 +180,7 @@ impl RagServer {
         let session = self.analysis_scope(payload.session_id.as_deref())?;
         let mode = params
             .mode
-            .or_else(|| std::env::var("RAG_GATE_MODE").ok())
+            .or_else(|| self.config.gate_mode.clone())
             .unwrap_or("warn".into());
         let mode = crate::gate::Mode::parse(&mode).map_err(Self::map_err)?;
         Self::json_result(

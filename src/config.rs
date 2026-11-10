@@ -236,6 +236,16 @@ pub struct Config {
     pub http_read_token: Option<Secret>,
     pub http_write_token: Option<Secret>,
     pub http_admin_token: Option<Secret>,
+    /// Default `gate` tool mode when the call sets none. Env: `RAG_GATE_MODE`
+    /// (unset: `warn`).
+    pub gate_mode: Option<String>,
+    /// Raw `;`-separated watch roots; unset disables the watcher. Env: `RAG_WATCH_ROOTS`.
+    /// Parsed and canonicalized by `watch::config_from_values` when the watcher starts.
+    pub watch_roots: Option<String>,
+    /// Raw watcher debounce in ms. Env: `RAG_WATCH_DEBOUNCE_MS`.
+    pub watch_debounce_ms: Option<String>,
+    /// Raw minimum seconds between watcher syncs. Env: `RAG_WATCH_MIN_SYNC_INTERVAL_SECS`.
+    pub watch_min_sync_interval_secs: Option<String>,
 }
 
 /// Which tools are advertised and callable.
@@ -377,6 +387,10 @@ impl Default for Config {
             http_read_token: None,
             http_write_token: None,
             http_admin_token: None,
+            gate_mode: None,
+            watch_roots: None,
+            watch_debounce_ms: None,
+            watch_min_sync_interval_secs: None,
         }
     }
 }
@@ -748,6 +762,10 @@ impl Config {
             http_read_token,
             http_write_token,
             http_admin_token,
+            gate_mode: env::var("RAG_GATE_MODE").ok(),
+            watch_roots: env::var("RAG_WATCH_ROOTS").ok(),
+            watch_debounce_ms: env::var("RAG_WATCH_DEBOUNCE_MS").ok(),
+            watch_min_sync_interval_secs: env::var("RAG_WATCH_MIN_SYNC_INTERVAL_SECS").ok(),
         };
         config.validate()?;
         Ok(config)

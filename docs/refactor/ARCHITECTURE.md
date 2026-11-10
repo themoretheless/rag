@@ -109,8 +109,9 @@ Leaks across layers:
 - No `app` layer: MCP tools and HTTP handlers each rebuild commands, limits and
   defaults (see "Known MCP/HTTP drifts" in PLAN.md).
 - Environment reads outside `config`: `src/db/store.rs:1545,1552`,
-  `src/embeddings/mod.rs:197`, `src/watch.rs:42-44`, `src/search_pack.rs:104`,
-  `src/ops.rs:585`, `src/mcp/analysis.rs:183`, `src/external_db/mod.rs` (6),
+  `src/embeddings/mod.rs:197`, `src/search_pack.rs:104`, `src/ops.rs:585`
+  (left in Stage 2, reasons in INVENTORY.md; `watch.rs` and `mcp/analysis.rs`
+  now read `Config`), `src/external_db/mod.rs` (6),
   `src/db/fts.rs` (3), `src/http_api/resources.rs` (3).
 - Process-global state: the vector snapshot cache
   (`src/db/search.rs:982`, keyed by DB path) and the globals set by
