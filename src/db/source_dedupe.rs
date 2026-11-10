@@ -946,7 +946,7 @@ fn promote_node_to_survivor(conn: &Connection, node_id: &str, survivor: &Documen
         "#,
         params![
             survivor.title,
-            crate::graph::normalize::label_key(&survivor.title),
+            rag_mcp_markup::normalize::label_key(&survivor.title),
             survivor.id,
             survivor.uri,
             node_id
@@ -1339,7 +1339,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             label_key.as_deref(),
-            Some(crate::graph::normalize::label_key(&label).as_str())
+            Some(rag_mcp_markup::normalize::label_key(&label).as_str())
         );
         let preserved_edge: i64 = conn
             .query_row(

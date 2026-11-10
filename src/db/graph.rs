@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::store::Store;
 use crate::error::{AppError, Result};
-use crate::graph::REL_TUNNEL;
+use rag_mcp_markup::REL_TUNNEL;
 use crate::models::{
     EdgeCutRow, EdgeOrigin, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, NodeKind,
     RelType,
@@ -39,14 +39,14 @@ impl Store {
             if replace {
                 tx.execute(
                     "DELETE FROM graph_edges WHERE source_id = ? AND rel_type = ?",
-                    params![node_id, crate::graph::REL_TAGGED],
+                    params![node_id, rag_mcp_markup::REL_TAGGED],
                 )?;
             }
             for label in labels {
                 let tag_id = resolve::upsert_tag_node(tx, label)?;
                 let exists: i64 = tx.query_row(
                     "SELECT COUNT(*)::BIGINT FROM graph_edges WHERE source_id = ? AND target_id = ? AND rel_type = ?",
-                    params![node_id, tag_id.as_str(), crate::graph::REL_TAGGED],
+                    params![node_id, tag_id.as_str(), rag_mcp_markup::REL_TAGGED],
                     |row| row.get(0),
                 )?;
                 if exists == 0 {
@@ -56,7 +56,7 @@ impl Store {
                             id: uuid::Uuid::new_v4().to_string(),
                             source_id: node_id.to_string(),
                             target_id: tag_id,
-                            rel_type: crate::graph::REL_TAGGED.into(),
+                            rel_type: rag_mcp_markup::REL_TAGGED.into(),
                             weight: 1.0,
                             context: None,
                         }],
@@ -106,7 +106,7 @@ impl Store {
         find_node_by_document_id_locked(&conn, doc_id)
     }
 
-    /// Find nodes whose [`label_key`](crate::graph::normalize::label_key) equals the
+    /// Find nodes whose [`label_key`](rag_mcp_markup::normalize::label_key) equals the
     /// normalized form of `label` (case-, width- and whitespace-insensitive).
     pub fn find_nodes_by_label(&self, label: &str) -> Result<Vec<GraphNode>> {
         let conn = self.lock()?;
@@ -603,7 +603,7 @@ pub(crate) fn upsert_graph_node_locked(conn: &duckdb::Connection, node: &GraphNo
             node.id,
             node.kind,
             node.label,
-            crate::graph::normalize::label_key(&node.label),
+            rag_mcp_markup::normalize::label_key(&node.label),
             node.document_id,
             node.uri,
             node.resolved,
@@ -657,7 +657,7 @@ fn delete_derived_edges_sql() -> &'static str {
 /// what referenced the deleted note (Obsidian keeps it as an unresolved target).
 /// Only the node's extraction-owned outbound edges are reclaimed, through the same
 /// §1.6 predicate the incremental rebuild uses. `uri` is deliberately kept: it is
-/// the key [`crate::graph::resolve`] re-binds a re-ingested file to the same node id.
+/// the key [`crate::db::graph::resolve`] re-binds a re-ingested file to the same node id.
 pub(crate) fn demote_graph_for_document_locked(
     conn: &duckdb::Connection,
     document_id: &str,
@@ -849,7 +849,7 @@ pub(crate) fn find_nodes_by_label_locked(
     conn: &duckdb::Connection,
     label: &str,
 ) -> Result<Vec<GraphNode>> {
-    let key = crate::graph::normalize::label_key(label);
+    let key = rag_mcp_markup::normalize::label_key(label);
     let mut stmt = conn.prepare_cached(
         r#"
         SELECT id, kind, label, document_id, uri, resolved, metadata_json

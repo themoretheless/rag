@@ -656,7 +656,7 @@ pub fn backfill_graph_node_label_keys(conn: &Connection) -> Result<u64> {
     {
         let mut stmt = conn.prepare("UPDATE graph_nodes SET label_key = ? WHERE id = ?")?;
         for (id, label) in &pending {
-            let key = crate::graph::normalize::label_key(label);
+            let key = rag_mcp_markup::normalize::label_key(label);
             if key.is_empty() {
                 continue;
             }

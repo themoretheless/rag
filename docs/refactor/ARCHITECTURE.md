@@ -84,9 +84,10 @@ Cycles:
   the registered `db::DocumentWriteHook`s; `code_index::source` registers its
   source-blob hook from `storage::install_store_hooks` (composition) and from
   the producers of `code_source_text` metadata.
-- `db ↔ graph`: `src/graph/mod.rs:8` re-exports `db::graph::resolve`, while
-  `src/db/graph/resolve.rs:16`, `src/db/graph.rs:11` and `src/db/store.rs:374`
-  import `crate::graph`.
+- ~~`db ↔ graph`~~: resolved in Stage 2. `db/**` imports link parsing from
+  `rag_mcp_markup` directly; `graph` no longer re-exports `db::graph::resolve`
+  (callers use `db::graph::resolve::rebuild_document_graph`; the crate-root
+  `rag_mcp::rebuild_document_graph` re-export is kept).
 - `db → external_db`: `src/db/schema.rs:401` runs `external_db::DDL`;
   `external_db` implements `Store` methods.
 - `code_index ↔ external_db`: `src/external_db/write_check.rs:540` ↔

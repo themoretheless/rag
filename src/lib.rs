@@ -83,10 +83,9 @@ pub use models::{
 };
 pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
 
-// --- Graph (domain extract/resolve; DB CRUD lives on [`Store`] via `db::graph`) ---
-pub use graph::{
-    extract_links, rebuild_document_graph, ExtractedLink, REL_TAGGED, REL_TUNNEL, REL_WIKILINK,
-};
+// --- Graph (domain extract in `graph`; resolve and CRUD live in `db::graph`) ---
+pub use db::graph::resolve::rebuild_document_graph;
+pub use graph::{extract_links, ExtractedLink, REL_TAGGED, REL_TUNNEL, REL_WIKILINK};
 
 // --- FTS / hybrid substrate (owned by `db::fts`, re-exported at `db::`) ---
 pub use db::{

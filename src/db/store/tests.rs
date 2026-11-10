@@ -312,7 +312,7 @@ fn graph_label_refresh_keeps_label_key_in_sync() {
         .unwrap();
 
     doc.title = "  Renamed   TITLE ".into();
-    let key = crate::graph::normalize::label_key(&doc.title);
+    let key = rag_mcp_markup::normalize::label_key(&doc.title);
     {
         let conn = store.lock().unwrap();
         refresh_document_graph_label_locked(&conn, &doc).unwrap();

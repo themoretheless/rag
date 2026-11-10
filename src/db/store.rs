@@ -371,7 +371,7 @@ impl Store {
         self.with_tx(|tx| {
             let revision = upsert_document_cas_locked(tx, doc, None)?;
             let (node_id, edge_count) =
-                crate::graph::resolve::rebuild_document_graph_locked(tx, doc)?;
+                super::graph::resolve::rebuild_document_graph_locked(tx, doc)?;
             append_ops_log_locked(tx, audit)?;
             Ok(AtomicDocumentWriteResult {
                 revision,
@@ -977,7 +977,7 @@ fn write_document_locked(
             conn.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
             insert_chunks_locked(conn, chunks, embedding_json)?;
             let (node_id, edge_count) =
-                crate::graph::resolve::rebuild_document_graph_locked(conn, doc)?;
+                super::graph::resolve::rebuild_document_graph_locked(conn, doc)?;
             (Some(node_id), edge_count)
         }
         _ => unreachable!("derived write and prepared embedding state must match"),
@@ -1488,7 +1488,7 @@ fn refresh_document_graph_label_locked(
             "UPDATE graph_nodes SET label = ?, label_key = ?, updated_at = CAST(? AS TIMESTAMP) WHERE id = ?",
             params![
                 doc.title,
-                crate::graph::normalize::label_key(&doc.title),
+                rag_mcp_markup::normalize::label_key(&doc.title),
                 format_ts(Utc::now()),
                 node_id
             ],

@@ -13,7 +13,7 @@ use crate::db::graph::{
 };
 use crate::db::Store;
 use crate::error::Result;
-use crate::graph::extract::{
+use rag_mcp_markup::extract::{
     extract_links_with, ExtractOptions, ExtractedLink, DEFAULT_MAX_LINKS_PER_DOC,
 };
 use crate::models::{Document, GraphEdge, GraphNode, Layer, NodeKind};
@@ -425,7 +425,7 @@ fn resolve_target(conn: &Connection, link: &ExtractedLink) -> Result<String> {
 /// Every tag writer (extraction and maintenance `set_tags`) goes through this so
 /// `#Alpha`, `alpha` and legacy `tag://{label}` nodes resolve to one hub.
 pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> {
-    let key = crate::graph::normalize::tag_key(label);
+    let key = rag_mcp_markup::normalize::tag_key(label);
     let uri = format!("tag://{key}");
     if let Some(node) = find_node_by_uri(conn, &uri)? {
         return Ok(node.id);
@@ -441,7 +441,7 @@ pub(crate) fn upsert_tag_node(conn: &Connection, label: &str) -> Result<String> 
     let node = GraphNode {
         id: Uuid::new_v4().to_string(),
         kind: "tag".into(),
-        label: crate::graph::normalize::display_label(label),
+        label: rag_mcp_markup::normalize::display_label(label),
         document_id: None,
         uri: Some(uri),
         resolved: true,

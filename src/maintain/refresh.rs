@@ -15,7 +15,7 @@ use crate::db::store::{embedding_manifest_matches_config, embedding_migration_ma
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::graph::rebuild_document_graph;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::models::EmbeddingManifest;
 
 /// Allowed `maintain_refresh` action names (safety whitelist).

@@ -23,7 +23,7 @@ use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::graph::rebuild_document_graph;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::models::{DocumentMetaUpdate, OpsLogEntry};
 use crate::util::blocking_section;
 use crate::wiki::{self, FileAnswerCitation};

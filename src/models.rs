@@ -652,7 +652,7 @@ pub const CONTEXT_DIRECTORY_MEMBERSHIP: &str = "directory membership";
 /// A pre-`origin` database has nothing else to tell a membership edge from a
 /// hand-made `related` one — and `link_nodes` cannot write a `context` at all,
 /// so these strings are an exact ownership marker. Shared by the writer in
-/// [`crate::graph::resolve`] and the migrate backfill so they cannot drift.
+/// [`crate::db::graph::resolve`] and the migrate backfill so they cannot drift.
 pub const STRUCTURAL_EDGE_CONTEXTS: &[&str] =
     &[CONTEXT_PROJECT_MEMBERSHIP, CONTEXT_DIRECTORY_MEMBERSHIP];
 

@@ -11,7 +11,7 @@
 //! | [`graph`] | Graph node/edge CRUD, neighbors BFS, backlinks (methods on [`Store`]) |
 //! | [`kg`] | Temporal knowledge-graph facts (P1 surface) |
 //!
-//! Graph *extract/resolve* (wikilinks, tags, stubs) lives in crate-root [`crate::graph`].
+//! Graph link *extraction* (wikilinks, tags) is pure and lives in `rag_mcp_markup` (re-exported by the crate-root `graph` module); *resolve* (nodes, stubs, edges) lives here in [`graph::resolve`].
 
 pub mod analytics;
 mod catalog;
