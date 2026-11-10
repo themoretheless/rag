@@ -182,8 +182,7 @@ impl RagServer {
             .unwrap_or("warn".into());
         let mode = crate::gate::Mode::parse(&mode).map_err(Self::map_err)?;
         Self::json_result(
-            &self
-                .store
+            &crate::gate::Gate::new(&self.store)
                 .analysis_gate(session, &payload, mode, &self.config.ingest_roots)
                 .map_err(Self::map_err)?,
         )

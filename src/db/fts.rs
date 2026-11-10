@@ -1615,7 +1615,7 @@ mod tests {
                 },
             )
             .unwrap();
-        store
+        crate::gate::Gate::new(&store)
             .analysis_gate(
                 "wal",
                 &crate::gate::Payload {

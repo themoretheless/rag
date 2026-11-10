@@ -103,7 +103,7 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
         );
     }
     let store = Store::open(&config.db_path)?;
-    let mut report = store.analysis_gate(
+    let mut report = rag_mcp::gate::Gate::new(&store).analysis_gate(
         p.session_id.as_deref().unwrap(),
         &p,
         mode,

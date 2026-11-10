@@ -405,15 +405,14 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
         f.reasons.push("CWD_UNAVAILABLE");
         return Ok(f);
     };
-    let (files, changed, format_matches) = {
-        let conn = store.lock()?;
+    let stored = store.with_conn(|conn| {
         let mut stmt=conn.prepare("SELECT DISTINCT canonical_root FROM source_manifest ORDER BY length(canonical_root) DESC,canonical_root")?;
         let all = stmt
             .query_map([], |r| r.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         f.corpus = all.into_iter().find(|r| cwd.starts_with(Path::new(r)));
         let Some(root) = f.corpus.as_ref() else {
-            return Ok(f);
+            return Ok(None);
         };
         let latest: Option<(i64, String)> = conn
             .query_row(
@@ -425,7 +424,7 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
         let Some((rev, graph)) = latest else {
             f.fresh = Some(false);
             f.reasons.push("INDEX_MISSING");
-            return Ok(f);
+            return Ok(None);
         };
         f.rev = Some(rev);
         let format_matches = serde_json::from_str::<Value>(&graph)?
@@ -443,8 +442,11 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let changed = stored_changes(&conn, rev, root)?;
-        (files, changed, format_matches)
+        let changed = stored_changes(conn, rev, root)?;
+        Ok(Some((files, changed, format_matches)))
+    })?;
+    let Some((files, changed, format_matches)) = stored else {
+        return Ok(f);
     };
     if !format_matches || changed > 0 {
         f.fresh = Some(false);
@@ -489,10 +491,9 @@ fn freshness(store: &Store, cwd: &str, roots: &[PathBuf]) -> Result<Facts> {
         f.fresh = Some(true);
     }
     // Do not certify a revision that changed during the unlocked bounded live reads.
-    let current: Option<i64> =
-        store
-            .lock()?
-            .query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+    let current: Option<i64> = store.with_conn(|conn| {
+        Ok(conn.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?)
+    })?;
     if current != f.rev {
         f.fresh = None;
         f.reasons.push("INDEX_REVISION_CHANGED_DURING_CHECK");
@@ -558,7 +559,16 @@ fn decide(c: &Classification, f: &Facts, mode: Mode, used: bool, first: bool) ->
     }
     d
 }
-impl Store {
+/// Gate decisions repository over the store connection.
+pub struct Gate<'a> {
+    store: &'a Store,
+}
+
+impl<'a> Gate<'a> {
+    pub fn new(store: &'a Store) -> Self {
+        Self { store }
+    }
+
     pub fn analysis_gate(
         &self,
         session_id: &str,
@@ -568,7 +578,10 @@ impl Store {
     ) -> Result<Value> {
         let session = analysis_tasks::session(session_id)?;
         let at = chrono::Utc::now().timestamp_millis();
-        let task = analysis_tasks::active(&*self.lock()?, &session, at)?.0;
+        let task = self
+            .store
+            .with_conn(|conn| analysis_tasks::active(conn, &session, at))?
+            .0;
         let c = if mode == Mode::Off {
             Classification {
                 kind: "off",
@@ -584,7 +597,7 @@ impl Store {
         };
         let mut f =
             if mode != Mode::Off && matches!(c.kind, "file_search" | "read" | "unknown_shell") {
-                freshness(self, &p.cwd, roots)?
+                freshness(self.store, &p.cwd, roots)?
             } else {
                 Facts {
                     corpus: None,
@@ -595,68 +608,69 @@ impl Store {
                     reasons: vec![],
                 }
             };
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let rev: Option<i64> =
-            tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
-        if f.rev.is_some() && f.rev != rev {
-            f.fresh = None;
-            f.reasons.push("INDEX_REVISION_CHANGED_BEFORE_DECISION");
-        }
-        if f.rev == rev {
-            if let (Some(rev), Some(root)) = (rev, f.corpus.as_deref()) {
-                if stored_changes(&tx, rev, root)? > 0 {
-                    f.fresh = Some(false);
-                    f.reasons.push("STORED_INPUTS_CHANGED_BEFORE_DECISION");
+        self.store.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            let rev: Option<i64> =
+                tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+            if f.rev.is_some() && f.rev != rev {
+                f.fresh = None;
+                f.reasons.push("INDEX_REVISION_CHANGED_BEFORE_DECISION");
+            }
+            if f.rev == rev {
+                if let (Some(rev), Some(root)) = (rev, f.corpus.as_deref()) {
+                    if stored_changes(&tx, rev, root)? > 0 {
+                        f.fresh = Some(false);
+                        f.reasons.push("STORED_INPUTS_CHANGED_BEFORE_DECISION");
+                    }
                 }
             }
-        }
-        let epoch:Option<(i64,String)>=tx.query_row("SELECT seq,facts_json FROM analysis_gate_decisions WHERE session_id=? AND kind='session_start' ORDER BY seq DESC LIMIT 1",[&session],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-        let epoch_gate = epoch.as_ref().map_or(0, |e| e.0);
-        let epoch_call = epoch
-            .as_ref()
-            .map(|e| serde_json::from_str::<Value>(&e.1))
-            .transpose()?
-            .and_then(|v| v["index_use_barrier_seq"].as_i64())
-            .unwrap_or(0);
-        let used:i64=tx.query_row("SELECT COUNT(*) FROM analysis_calls WHERE session_id=? AND task=? AND ok=true AND finished_ms>=? AND started_ms<=? AND index_rev IS NOT DISTINCT FROM ? AND evidence_count>0 AND seq>?",params![session,task,at-WINDOW_MS,at,rev,epoch_call],|r|r.get(0))?;
-        let prev:i64=tx.query_row("SELECT COUNT(*) FROM analysis_gate_decisions WHERE session_id=? AND task=? AND index_rev IS NOT DISTINCT FROM ? AND created_ms>=? AND mode='ask' AND verdict IN ('ask','deny') AND seq>?",params![session,task,rev,at-WINDOW_MS,epoch_gate],|r|r.get(0))?;
-        let mut d = decide(&c, &f, mode, used > 0, prev == 0);
-        d.facts = json!({"kind":c.kind,"classification_uncertain":c.uncertain,"corpus_root":f.corpus,"fresh":f.fresh,"index_rev":f.rev.or(rev),"freshness_scope":"indexed_manifest_inputs_only_no_new_file_discovery","checked_files":f.checked,"checked_bytes":f.bytes,"checked_bytes_basis":"original_file_bytes","checksum_scope":"decoded_source_utf8","freshness_reasons":f.reasons,"index_used":used>0,"index_use_scope":"same_database_task_session_revision_at_call_start_successful_nonempty","first_offence":prev==0,"mode":mode,"budgets":{"files":MAX_FILES,"total_bytes":MAX_BYTES,"per_file_bytes":4*1024*1024}});
-        if c.kind == "session_start" {
-            let barrier: i64 =
-                tx.query_row("SELECT COALESCE(MAX(seq),0) FROM analysis_calls", [], |r| {
-                    r.get(0)
-                })?;
-            d.facts["index_use_barrier_seq"] = json!(barrier);
-        }
-        let seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_gate_decisions",
-            [],
-            |r| r.get(0),
-        )?;
-        let id = uuid::Uuid::new_v4().to_string();
-        tx.execute(
-            "INSERT INTO analysis_gate_decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            params![
-                seq,
-                id,
-                session,
-                task,
-                rev,
-                at,
-                mode.as_str(),
-                c.kind,
-                d.verdict,
-                d.rule,
-                serde_json::to_string(&d.facts)?
-            ],
-        )?;
-        let counters = summary(&tx, Some(&task), 5)?;
-        tx.commit()?;
-        Ok(
-            json!({"decision_id":id,"seq":seq,"session_id":session,"task":task,"index_rev":rev,"verdict":d.verdict,"rule":d.rule,"reason":d.reason,"context":d.context,"facts":d.facts,"hook":d.hook(),"counters":counters,"command_executed":false,"client_hook_installed":false,"not_checked":["command_safety","runtime_authorization","unindexed_new_files","whether_prior_queries_covered_target_project"]}),
-        )
+            let epoch:Option<(i64,String)>=tx.query_row("SELECT seq,facts_json FROM analysis_gate_decisions WHERE session_id=? AND kind='session_start' ORDER BY seq DESC LIMIT 1",[&session],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            let epoch_gate = epoch.as_ref().map_or(0, |e| e.0);
+            let epoch_call = epoch
+                .as_ref()
+                .map(|e| serde_json::from_str::<Value>(&e.1))
+                .transpose()?
+                .and_then(|v| v["index_use_barrier_seq"].as_i64())
+                .unwrap_or(0);
+            let used:i64=tx.query_row("SELECT COUNT(*) FROM analysis_calls WHERE session_id=? AND task=? AND ok=true AND finished_ms>=? AND started_ms<=? AND index_rev IS NOT DISTINCT FROM ? AND evidence_count>0 AND seq>?",params![session,task,at-WINDOW_MS,at,rev,epoch_call],|r|r.get(0))?;
+            let prev:i64=tx.query_row("SELECT COUNT(*) FROM analysis_gate_decisions WHERE session_id=? AND task=? AND index_rev IS NOT DISTINCT FROM ? AND created_ms>=? AND mode='ask' AND verdict IN ('ask','deny') AND seq>?",params![session,task,rev,at-WINDOW_MS,epoch_gate],|r|r.get(0))?;
+            let mut d = decide(&c, &f, mode, used > 0, prev == 0);
+            d.facts = json!({"kind":c.kind,"classification_uncertain":c.uncertain,"corpus_root":f.corpus,"fresh":f.fresh,"index_rev":f.rev.or(rev),"freshness_scope":"indexed_manifest_inputs_only_no_new_file_discovery","checked_files":f.checked,"checked_bytes":f.bytes,"checked_bytes_basis":"original_file_bytes","checksum_scope":"decoded_source_utf8","freshness_reasons":f.reasons,"index_used":used>0,"index_use_scope":"same_database_task_session_revision_at_call_start_successful_nonempty","first_offence":prev==0,"mode":mode,"budgets":{"files":MAX_FILES,"total_bytes":MAX_BYTES,"per_file_bytes":4*1024*1024}});
+            if c.kind == "session_start" {
+                let barrier: i64 =
+                    tx.query_row("SELECT COALESCE(MAX(seq),0) FROM analysis_calls", [], |r| {
+                        r.get(0)
+                    })?;
+                d.facts["index_use_barrier_seq"] = json!(barrier);
+            }
+            let seq: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_gate_decisions",
+                [],
+                |r| r.get(0),
+            )?;
+            let id = uuid::Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT INTO analysis_gate_decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                params![
+                    seq,
+                    id,
+                    session,
+                    task,
+                    rev,
+                    at,
+                    mode.as_str(),
+                    c.kind,
+                    d.verdict,
+                    d.rule,
+                    serde_json::to_string(&d.facts)?
+                ],
+            )?;
+            let counters = summary(&tx, Some(&task), 5)?;
+            tx.commit()?;
+            Ok(
+                json!({"decision_id":id,"seq":seq,"session_id":session,"task":task,"index_rev":rev,"verdict":d.verdict,"rule":d.rule,"reason":d.reason,"context":d.context,"facts":d.facts,"hook":d.hook(),"counters":counters,"command_executed":false,"client_hook_installed":false,"not_checked":["command_safety","runtime_authorization","unindexed_new_files","whether_prior_queries_covered_target_project"]}),
+            )
+        })
     }
 }
 pub(crate) fn summary(conn: &Connection, task: Option<&str>, limit: usize) -> Result<Value> {
@@ -727,7 +741,7 @@ mod tests {
             }
         }
         fn call(&self, mode: Mode) -> Value {
-            self.store
+            crate::gate::Gate::new(&self.store)
                 .analysis_gate(
                     "s",
                     &Payload {
@@ -802,7 +816,7 @@ mod tests {
             tool_name: "ragraf_symbol".into(),
             ..Default::default()
         };
-        f.store
+        crate::gate::Gate::new(&f.store)
             .analysis_gate("s", &fake, Mode::Warn, std::slice::from_ref(&f.root))
             .unwrap();
         f.use_index(false, Some(10));
@@ -841,7 +855,7 @@ mod tests {
             )
             .unwrap();
         assert!(!text.contains("SECRET_COMMAND_INPUT"));
-        f.store
+        crate::gate::Gate::new(&f.store)
             .analysis_gate(
                 "s",
                 &Payload {
@@ -915,12 +929,13 @@ mod tests {
             tool_input: json!({"path":"main.rs"}),
             ..Default::default()
         };
-        let r = f
-            .store
+        let r = crate::gate::Gate::new(&f.store)
             .analysis_gate("s", &p, Mode::Deny, std::slice::from_ref(&f.root))
             .unwrap();
         assert_eq!(r["verdict"], "allow");
-        let r = f.store.analysis_gate("s", &p, Mode::Off, &[]).unwrap();
+        let r = crate::gate::Gate::new(&f.store)
+            .analysis_gate("s", &p, Mode::Off, &[])
+            .unwrap();
         assert_eq!(r["verdict"], "off");
         assert_eq!(r["facts"]["checked_bytes"], 0);
     }
@@ -936,8 +951,7 @@ mod tests {
         assert_eq!(f.call(Mode::Deny)["rule"], "index_unused");
         std::fs::remove_file(&f.path).unwrap();
         assert_eq!(f.call(Mode::Deny)["facts"]["fresh"], false);
-        let r = f
-            .store
+        let r = crate::gate::Gate::new(&f.store)
             .analysis_gate(
                 "different",
                 &Payload {
