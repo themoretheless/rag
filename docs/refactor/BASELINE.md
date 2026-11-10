@@ -20,16 +20,28 @@ not in a `#[cfg(test)]` item, not `#[test]`, not in a test file), plus the two
 
 | metric | before (facf533) | after Stage 1 | after Stage 2 | after Stage 3 | after Stage 4 | final |
 |---|---:|---:|---:|---:|---:|---:|
-| Rust LOC, root crate `src/` | 149 172 | | | | | |
-| Rust LOC, `crates/` | 21 620 | | | | | |
-| Rust LOC, `tests/` | 5 162 | | | | | |
-| production functions | 3 083 | | | | | |
-| production functions > 80 lines | 255 (218 `src/`, 37 `crates/`) | | | | | |
-| `impl Store` blocks (`grep -rnE '^\s*impl(<[^>]*>)? Store\b' src`) | 46 (27 in `src/db`, 19 outside) | | | | | |
-| `Store` methods (production) | 258 (218 in `src/db`, 40 outside) | | | | | |
-| `self.lock()` sites in `src/db` (`grep -rn 'self\.lock()'`) | 140 | | | | | |
-| `self.lock()` sites outside `src/db` | 33 | | | | | |
-| integration test binaries linking DuckDB | 4 (`it`, `file_ingest_test`, `query_transform_test`, `rerank_test`) | 1 (`it`) | | | | |
+| Rust LOC, root crate `src/` | 149 172 | | | 153 170 | | |
+| Rust LOC, `crates/` | 21 620 | | | 21 620 | | |
+| Rust LOC, `tests/` | 5 162 | | | 6 345 | | |
+| production functions | 3 083 | | | 3 103 | | |
+| production functions > 80 lines | 255 (218 `src/`, 37 `crates/`) | | | 256 (219 `src/`, 37 `crates/`) | | |
+| `impl Store` blocks (`grep -rnE '^\s*impl(<[^>]*>)? Store\b' src`) | 46 (27 in `src/db`, 19 outside) | | | 3 (all in `src/db`) | | |
+| `Store` methods (production) | 258 (218 in `src/db`, 40 outside) | | | 37 (8 core, 14 accessors, 15 kept for rag-mcp-ui), 0 outside | | |
+| `self.lock()` sites in `src/db` (`grep -rn 'self\.lock()'`) | 140 | | | 1 (repositories use `self.store.lock()`: 168) | | |
+| `self.lock()` sites outside `src/db` | 33 | | | 0 | | |
+| integration test binaries linking DuckDB | 4 (`it`, `file_ingest_test`, `query_transform_test`, `rerank_test`) | 1 (`it`) | | 1 | | |
+
+After Stage 3 (`10417d2` + the test moves, 2026-11-10): the Store methods
+moved into 14 repository types reached through accessors
+(`store.documents()`, `store.graph()`, …). Production methods per
+repository: `Documents` 60, `GraphRepo` 35, `Maintenance` 18, `Chunks` 13,
+`SyncRepo` 13, `OpsLog` 11, `KgRepo` 8, `WikiIndexRepo` 8,
+`EmbeddingManifestRepo` 8, `CorpusLane` 7, `Recovery` 6,
+`SourceManifestRepo` 6, `ReembedProgress` 5, `Collections` 4 (202 in all;
+counted as `fn` items directly inside `impl <Repo><'_>` blocks). The 15
+Store methods kept for `rag-mcp-ui` forward to these. Tests: 1 540 run
+(+3 new, −3 deleted with the Storage/Markdown code, see the Stage 3
+commits), all passing.
 
 PLAN.md quotes "261 methods, ~59 outside db" and "103+ functions over 80
 lines" from the earlier read-only inventories. The numbers above are what the

@@ -47,9 +47,11 @@ Consequences that follow from the rule:
 - An architecture test (`tests/it/architecture_test.rs`, Stage 2) parses
   `crate::` edges between top-level modules and fails on an edge that breaks
   the rule. Its allow-list holds the edges still pending: `http_api → mcp`
-  (Stage 4), `db → analysis_tasks|gate|calibration|external_db` (intel DDL run
-  by `db::schema::migrate`, Stage 3), `code_index → file_ingest`
-  (`decode_text`, Stage 4).
+  (Stage 4) and `code_index → file_ingest` (`decode_text`, Stage 4). The
+  `db → analysis_tasks|gate|calibration|external_db` edges went in Stage 3:
+  those modules export a `db::schema::SchemaExtension` that composition
+  registers (`storage::register_schema_extensions`) and their repositories
+  ensure (`Store::ensure_schema_extensions`).
 
 ## Composition root
 
@@ -92,8 +94,8 @@ Cycles:
   `rag_mcp_markup` directly; `graph` no longer re-exports `db::graph::resolve`
   (callers use `db::graph::resolve::rebuild_document_graph`; the crate-root
   `rag_mcp::rebuild_document_graph` re-export is kept).
-- `db → external_db`: `src/db/schema.rs:401` runs `external_db::DDL`;
-  `external_db` implements `Store` methods.
+- ~~`db → external_db`~~: resolved in Stage 3 (DDL registered at composition;
+  `ExternalDb` repository since Stage 2).
 - `code_index ↔ external_db`: `src/external_db/write_check.rs:540` ↔
   `src/code_index/sql.rs:1405`.
 - ~~`config →` upper layers~~: resolved in Stage 2. Provider enums live in
@@ -111,6 +113,15 @@ Cycles:
   the registry and the bin mounts `/mcp`. Allow-listed in the architecture test.
 
 Leaks across layers:
+
+- ~~`Store` god object~~: resolved in Stage 3. Store keeps open/lock/tx and
+  repository accessors (`store.documents()`, `store.chunks()`,
+  `store.graph()`, `store.kg()`, `store.ops_log()`,
+  `store.embedding_manifest()`, `store.wiki_index()`, `store.sync()`,
+  `store.corpus_lane()`, `store.collections()`, `store.reembed_progress()`,
+  `store.maintenance()`, `store.source_manifest()`, `store.recovery()`).
+  15 forwarding methods stay in `db/store/ui_compat.rs` for rag-mcp-ui's
+  direct-db reader until the UI crate moves (Stage 6).
 
 - ~~`Store::lock` is `pub(crate)`; 19 `impl Store` blocks outside `src/db`~~:
   resolved in Stage 2. calibration, gate, analysis_tasks, external_db and
