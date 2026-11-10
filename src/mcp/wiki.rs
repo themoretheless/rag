@@ -76,7 +76,7 @@ impl RagServer {
                     uri: doc.uri,
                     title: doc.title,
                     content: doc.content,
-                    layer: doc.layer,
+                    layer: doc.layer.to_string(),
                     kind: doc.kind.to_string(),
                     content_hash: doc.content_hash,
                     created_at: doc.created_at.to_rfc3339(),
@@ -381,7 +381,7 @@ impl RagServer {
                             document_id: doc.id,
                             uri: doc.uri,
                             title: doc.title,
-                            layer: doc.layer,
+                            layer: doc.layer.to_string(),
                             kind: doc.kind.to_string(),
                             content: doc.content,
                         });

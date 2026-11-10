@@ -277,7 +277,7 @@ pub fn maintain_compress(
                             remove_title: Some(doc.title.clone()),
                             content_hash: Some(group.content_hash.clone()),
                             cosine: None,
-                            remove_layer: Some(doc.layer.clone()),
+                            remove_layer: Some(doc.layer.to_string()),
                             disposition: "skipped".into(),
                             reason: Some("max_docs budget exhausted".into()),
                         });
@@ -332,7 +332,7 @@ pub fn maintain_compress(
                         remove_title: Some(doc.title.clone()),
                         content_hash: Some(group.content_hash.clone()),
                         cosine: None,
-                        remove_layer: Some(doc.layer.clone()),
+                        remove_layer: Some(doc.layer.to_string()),
                         disposition: disposition.into(),
                         reason,
                     });
@@ -408,7 +408,7 @@ pub fn maintain_compress(
                         remove_title: Some(remove.title.clone()),
                         content_hash: None,
                         cosine: Some(pair.cosine),
-                        remove_layer: Some(remove.layer.clone()),
+                        remove_layer: Some(remove.layer.to_string()),
                         disposition: "listed".into(),
                         reason: Some(format!("cosine={:.3}", pair.cosine)),
                     });
@@ -427,7 +427,7 @@ pub fn maintain_compress(
                         remove_title: Some(remove.title.clone()),
                         content_hash: None,
                         cosine: Some(pair.cosine),
-                        remove_layer: Some(remove.layer.clone()),
+                        remove_layer: Some(remove.layer.to_string()),
                         disposition: "skipped".into(),
                         reason: Some("max_docs budget exhausted".into()),
                     });
@@ -451,7 +451,7 @@ pub fn maintain_compress(
                         remove_title: Some(remove.title.clone()),
                         content_hash: None,
                         cosine: Some(pair.cosine),
-                        remove_layer: Some(remove.layer.clone()),
+                        remove_layer: Some(remove.layer.to_string()),
                         disposition: "tombstoned".into(),
                         reason: Some("raw layer protected; allow_raw_delete=false".into()),
                     });
@@ -472,7 +472,7 @@ pub fn maintain_compress(
                         remove_title: Some(remove.title.clone()),
                         content_hash: None,
                         cosine: Some(pair.cosine),
-                        remove_layer: Some(remove.layer.clone()),
+                        remove_layer: Some(remove.layer.to_string()),
                         disposition: "deleted".into(),
                         reason: Some(format!("cosine={:.3}", pair.cosine)),
                     });

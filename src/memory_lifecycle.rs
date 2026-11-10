@@ -61,9 +61,9 @@ pub fn list_candidates(
             id: doc.id,
             uri: doc.uri,
             title: doc.title,
-            layer: doc.layer,
+            layer: doc.layer.to_string(),
             kind: doc.kind.to_string(),
-            status: doc.status,
+            status: doc.status.to_string(),
             updated_at: doc.updated_at,
         })
         .collect())

@@ -19,6 +19,14 @@ fn default_kind() -> DocumentKind {
     DocumentKind::Document
 }
 
+fn default_document_layer() -> DocumentLayer {
+    DocumentLayer::Raw
+}
+
+fn default_document_status() -> DocStatus {
+    DocStatus::Active
+}
+
 fn default_doc_status() -> String {
     "active".into()
 }
@@ -128,8 +136,8 @@ pub struct Document {
     #[serde(default)]
     pub source_file: Option<String>,
     /// `raw` | `wiki` | `diary` | `schema` | `index` | `log`
-    #[serde(default = "default_layer")]
-    pub layer: String,
+    #[serde(default = "default_document_layer")]
+    pub layer: DocumentLayer,
     /// `document` | `wiki` | `entity` | `concept` | `source_summary` | `diary` | `schema`
     #[serde(default = "default_kind")]
     pub kind: DocumentKind,
@@ -137,8 +145,8 @@ pub struct Document {
     #[serde(default)]
     pub content_hash: Option<String>,
     /// Lifecycle: `active` | `draft` | `consolidated` | `archived` | `tombstone`.
-    #[serde(default = "default_doc_status")]
-    pub status: String,
+    #[serde(default = "default_document_status")]
+    pub status: DocStatus,
     /// Surface first in lists / wake_up when true.
     #[serde(default = "default_false")]
     pub pinned: bool,
@@ -267,10 +275,10 @@ impl Default for Document {
             wing: None,
             room: None,
             source_file: None,
-            layer: default_layer(),
+            layer: default_document_layer(),
             kind: default_kind(),
             content_hash: None,
-            status: default_doc_status(),
+            status: default_document_status(),
             pinned: false,
             boost: default_boost(),
             revision: default_revision(),
@@ -588,6 +596,37 @@ finding_codes! {
         Concept => "concept",
         Diary => "diary",
         Document => "document",
+    }
+}
+
+finding_codes! {
+    /// A document's stored layer: the known [`Layer`]s plus `Other` for any
+    /// other stored spelling. Stored and sent as the plain string.
+    DocumentLayer {
+        Raw => "raw",
+        Wiki => "wiki",
+        Schema => "schema",
+        Diary => "diary",
+        Document => "document",
+    }
+}
+
+impl DocumentLayer {
+    /// The known layer this value names (ASCII case ignored), if any.
+    pub fn known(&self) -> Option<Layer> {
+        Layer::parse(self.as_str())
+    }
+}
+
+finding_codes! {
+    /// A document's lifecycle status; `Other` keeps statuses this build does
+    /// not name. Stored and sent as the plain string.
+    DocStatus {
+        Active => "active",
+        Draft => "draft",
+        Consolidated => "consolidated",
+        Archived => "archived",
+        Tombstone => "tombstone",
     }
 }
 
@@ -1122,12 +1161,12 @@ impl From<&Document> for DrawerListItem {
             wing: d.wing.clone(),
             room: d.room.clone(),
             source_file: d.source_file.clone(),
-            layer: d.layer.clone(),
+            layer: d.layer.to_string(),
             kind: d.kind.to_string(),
             content_hash: d.content_hash.clone(),
             pinned: d.pinned,
             boost: d.boost,
-            status: d.status.clone(),
+            status: d.status.to_string(),
             created_at: d.created_at,
             updated_at: d.updated_at,
         }
@@ -1271,6 +1310,30 @@ mod tests {
         let defaulted: Document = serde_json::from_value(wire).unwrap();
         assert_eq!(defaulted.kind, DocumentKind::Document);
         assert!(DocumentKind::Wiki == "wiki");
+    }
+
+    #[test]
+    fn document_layer_and_status_keep_wire_strings() {
+        use super::{DocStatus, DocumentLayer, Layer};
+        let doc = Document {
+            layer: "index".into(),
+            status: "draft".into(),
+            ..Document::default()
+        };
+        let mut wire = serde_json::to_value(&doc).unwrap();
+        assert_eq!(wire["layer"], "index");
+        assert_eq!(wire["status"], "draft");
+        let back: Document = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(back.layer, DocumentLayer::Other("index".into()));
+        assert_eq!(back.layer.known(), None);
+        assert_eq!(back.status, DocStatus::Draft);
+        let obj = wire.as_object_mut().unwrap();
+        obj.remove("layer");
+        obj.remove("status");
+        let defaulted: Document = serde_json::from_value(wire).unwrap();
+        assert_eq!(defaulted.layer, DocumentLayer::Raw);
+        assert_eq!(defaulted.layer.known(), Some(Layer::Raw));
+        assert_eq!(defaulted.status, DocStatus::Active);
     }
 
     #[test]

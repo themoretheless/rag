@@ -113,7 +113,8 @@ pub(crate) fn document(row: &duckdb::Row<'_>) -> Result<Document> {
         layer: row
             .get::<_, Option<String>>(9)?
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "raw".into()),
+            .unwrap_or_else(|| "raw".into())
+            .into(),
         kind: row
             .get::<_, Option<String>>(10)?
             .filter(|value| !value.is_empty())
@@ -124,7 +125,8 @@ pub(crate) fn document(row: &duckdb::Row<'_>) -> Result<Document> {
         status: row
             .get::<_, Option<String>>(13)?
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "active".into()),
+            .unwrap_or_else(|| "active".into())
+            .into(),
         pinned: row.get::<_, Option<bool>>(14)?.unwrap_or(false),
         boost: row.get::<_, Option<f64>>(15)?.unwrap_or(1.0),
         revision: row.get::<_, Option<i64>>(16)?.unwrap_or(1),

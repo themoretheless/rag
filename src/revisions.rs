@@ -137,7 +137,7 @@ impl<'a> RevisionService<'a> {
                 command.if_match_revision + 1
             ),
             entity_id: Some(document_id.to_string()),
-            entity_kind: Some(restored.layer.clone()),
+            entity_kind: Some(restored.layer.to_string()),
             payload_json: serde_json::json!({
                 "from_revision": command.revision,
                 "previous_revision": command.if_match_revision,

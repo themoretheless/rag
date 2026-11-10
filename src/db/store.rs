@@ -1043,13 +1043,13 @@ fn apply_document_meta_update(
     if let Some(ref status) = update.status {
         let status = status.trim();
         if !status.is_empty() {
-            doc.status = status.to_string();
+            doc.status = status.into();
         }
     }
     if let Some(ref layer) = update.layer {
         let layer = layer.trim();
         if !layer.is_empty() {
-            doc.layer = crate::models::Layer::canonicalize(layer).into_owned();
+            doc.layer = crate::models::Layer::canonicalize(layer).as_ref().into();
         }
     }
     if let Some(ref kind) = update.kind {

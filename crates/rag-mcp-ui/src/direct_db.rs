@@ -73,7 +73,7 @@ pub fn fetch_document_db(
         id: doc.id,
         uri: doc.uri,
         title: doc.title,
-        layer: doc.layer,
+        layer: doc.layer.to_string(),
         kind: doc.kind.to_string(),
         content: doc.content,
         content_hash: doc.content_hash,

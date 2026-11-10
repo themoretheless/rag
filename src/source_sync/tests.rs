@@ -736,7 +736,7 @@ async fn source_commit_keeps_the_revision_captured_before_embedding() {
             wing: existing.wing.clone(),
             room: existing.room.clone(),
             source_file: existing.source_file.clone(),
-            layer: existing.layer.clone(),
+            layer: existing.layer.to_string(),
             kind: existing.kind.to_string(),
             immutable: false,
         })

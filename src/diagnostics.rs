@@ -298,7 +298,7 @@ impl<'a> DiagnosticsService<'a> {
                     wing: document.wing.clone(),
                     room: document.room.clone(),
                     source_file: document.source_file.clone(),
-                    layer: document.layer.clone(),
+                    layer: document.layer.to_string(),
                     kind: document.kind.to_string(),
                     immutable: false,
                 })

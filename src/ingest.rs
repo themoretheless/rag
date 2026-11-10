@@ -702,7 +702,7 @@ impl<'a> IngestService<'a> {
             source_file: command
                 .source_file
                 .or_else(|| existing.as_ref().and_then(|doc| doc.source_file.clone())),
-            layer: command.layer,
+            layer: command.layer.into(),
             kind: command.kind.into(),
             content_hash: Some(new_hash.clone()),
             ..existing.unwrap_or_default()
@@ -853,11 +853,11 @@ impl<'a> IngestService<'a> {
             title: document.title,
             wing: document.wing,
             room: document.room,
-            status: document.status,
+            status: document.status.to_string(),
             pinned: document.pinned,
             boost: document.boost,
             metadata_json: document.metadata_json,
-            layer: document.layer,
+            layer: document.layer.to_string(),
             kind: document.kind.to_string(),
             source_file: document.source_file,
             content_changed: applied.content_changed,
