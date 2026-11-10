@@ -528,17 +528,13 @@ mod tests {
         };
         let store = Store::open(&config.db_path).unwrap();
         let embedder = crate::embeddings::build_provider(&config).unwrap();
-        let mcp = crate::mcp::mcp_http_service(
-            store.clone(),
-            embedder.clone(),
-            config.clone(),
+        let mcp = crate::mcp::mcp_http_service_for(
+            crate::context::AppContext::new(store.clone(), embedder.clone(), config.clone()),
             tokio_util::sync::CancellationToken::new(),
         );
-        let api = super::super::api_router(super::super::HttpState::new(
-            Arc::new(store.clone()),
+        let api = super::super::api_router(super::super::HttpState::from_context(
+            crate::context::AppContext::with_store(Arc::new(store.clone()), embedder, config),
             true,
-            config,
-            embedder,
         ));
         let app = super::super::authenticated_gateway_layers(
             api.nest_service("/mcp", mcp),

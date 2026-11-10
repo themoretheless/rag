@@ -48,7 +48,7 @@ fn app() -> Router {
         api_router(HttpState {
             store,
             mcp_http: false,
-            config,
+            config: config.into(),
             embedder,
             jobs: jobs::JobRegistry::default(),
             llm: None,
@@ -285,17 +285,15 @@ async fn mounted_mcp_rejects_streamed_oversized_bodies() {
     };
     let store = Store::open(&config.db_path).unwrap();
     let embedder = build_provider(&config).unwrap();
-    let mcp = crate::mcp::mcp_http_service(
-        store.clone(),
-        embedder.clone(),
-        config.clone(),
+    let mcp = crate::mcp::mcp_http_service_for(
+        crate::context::AppContext::new(store.clone(), embedder.clone(), config.clone()),
         CancellationToken::new(),
     );
     let allowed_hosts = configured_http_allowed_hosts(&config, None);
     let api = api_router(HttpState {
         store: Arc::new(store),
         mcp_http: true,
-        config,
+        config: config.into(),
         embedder,
         jobs: jobs::JobRegistry::default(),
         llm: None,
@@ -333,10 +331,8 @@ async fn mounted_mcp_enforces_dns_rebinding_host_allowlist() {
     let service = |store: Store| {
         Router::new().nest_service(
             "/mcp",
-            crate::mcp::mcp_http_service(
-                store,
-                embedder.clone(),
-                config.clone(),
+            crate::mcp::mcp_http_service_for(
+                crate::context::AppContext::new(store, embedder.clone(), config.clone()),
                 CancellationToken::new(),
             ),
         )
@@ -412,7 +408,7 @@ async fn revision_timeline_is_lean_paginated_and_snapshot_is_lazy() {
         api_router(HttpState {
             store,
             mcp_http: false,
-            config,
+            config: config.into(),
             embedder,
             jobs: jobs::JobRegistry::default(),
             llm: None,

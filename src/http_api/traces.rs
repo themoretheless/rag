@@ -114,7 +114,7 @@ mod tests {
             store: Arc::new(Store::open(&config.db_path).unwrap()),
             mcp_http: false,
             embedder: Arc::new(MockEmbedder::new(16)),
-            config,
+            config: config.into(),
             jobs: JobRegistry::default(),
             llm: None,
             auth: crate::http_api::auth::AuthPosture::default(),

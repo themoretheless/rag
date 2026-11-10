@@ -9,9 +9,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{configured_http_allowed_hosts, Config};
-use crate::db::Store;
-use crate::embeddings::EmbeddingProvider;
+use crate::config::configured_http_allowed_hosts;
 
 use super::RagServer;
 
@@ -24,28 +22,6 @@ pub fn mcp_http_router(
     cancellation_token: CancellationToken,
 ) -> Router {
     Router::new().nest_service("/mcp", mcp_http_service_for(context, cancellation_token))
-}
-
-/// Build streamable-HTTP MCP service that shares `store` / embedder / config.
-///
-/// Each MCP request gets a fresh [`RagServer`] clone of the same DuckDB `Store`.
-///
-/// The gateway intentionally runs without server-side MCP sessions. All durable
-/// state belongs to DuckDB and every tool call is self-contained, so retaining
-/// an in-memory session only makes reconnects fragile: after a client closes a
-/// session, a delayed SSE `GET /mcp` must receive 404 by the MCP specification.
-/// Stateless Streamable HTTP avoids that stale-session loop while keeping SSE
-/// request/response framing for clients that do not support JSON responses.
-pub fn mcp_http_service(
-    store: Store,
-    embedder: Arc<dyn EmbeddingProvider>,
-    config: Config,
-    cancellation_token: CancellationToken,
-) -> StreamableHttpService<RagServer, LocalSessionManager> {
-    mcp_http_service_for(
-        crate::context::AppContext::new(store, embedder, config),
-        cancellation_token,
-    )
 }
 
 /// Streamable-HTTP MCP over the shared [`crate::context::AppContext`].

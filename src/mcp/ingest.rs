@@ -1,5 +1,6 @@
 //! Ingest, source inventory, document integrity, taxonomy, and health tools.
 
+use crate::config::Config;
 use std::path::PathBuf;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -87,7 +88,7 @@ impl RagServer {
         let outcome = sync_sources_nonblocking(
             self.store.clone(),
             self.embedder.clone(),
-            self.config.clone(),
+            Config::clone(&self.config),
             SourceSyncCommand {
                 path: PathBuf::from(params.path),
                 remove_deleted: params.remove_deleted.unwrap_or(false),

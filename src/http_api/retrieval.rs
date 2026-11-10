@@ -644,11 +644,13 @@ mod tests {
             ..crate::config::Config::for_tests()
         };
         let store = std::sync::Arc::new(crate::Store::open(&config.db_path).unwrap());
-        let state = HttpState::new(
-            store,
+        let state = HttpState::from_context(
+            crate::context::AppContext::with_store(
+                store,
+                std::sync::Arc::new(crate::embeddings::MockEmbedder::new(2)),
+                config,
+            ),
             false,
-            config,
-            std::sync::Arc::new(crate::embeddings::MockEmbedder::new(2)),
         );
         for budget in [0, 1, 32] {
             let input: PackContextBody = serde_json::from_value(json!({

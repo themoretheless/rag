@@ -111,7 +111,7 @@ impl RagServer {
                 })
                 .unwrap_or(out.clone());
 
-            let mut allowed = config.ingest_roots;
+            let mut allowed = config.ingest_roots.clone();
             if let Some(parent) = store.path().parent() {
                 allowed.push(parent.to_path_buf());
             }

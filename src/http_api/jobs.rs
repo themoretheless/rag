@@ -1,5 +1,6 @@
 //! `/v1/jobs*` routes over [`crate::jobs`].
 
+use crate::config::Config;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -31,7 +32,7 @@ async fn start_sync(
         request,
         state.store.clone(),
         state.embedder.clone(),
-        state.config.clone(),
+        Config::clone(&state.config),
     ) {
         Ok(snapshot) => snapshot,
         Err(error) => return api_err(error),
@@ -73,7 +74,7 @@ async fn requeue_job(State(state): State<HttpState>, Path(id): Path<String>) -> 
         &id,
         state.store.clone(),
         state.embedder.clone(),
-        state.config.clone(),
+        Config::clone(&state.config),
     ) {
         Ok(snapshot) => (
             StatusCode::ACCEPTED,

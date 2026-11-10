@@ -261,11 +261,13 @@ mod tests {
             ..crate::config::Config::for_tests()
         };
         let store = Arc::new(Store::open(&config.db_path).unwrap());
-        HttpState::new(
-            store,
+        HttpState::from_context(
+            crate::context::AppContext::with_store(
+                store,
+                Arc::new(crate::embeddings::MockEmbedder::new(8)),
+                config,
+            ),
             false,
-            config,
-            Arc::new(crate::embeddings::MockEmbedder::new(8)),
         )
     }
 

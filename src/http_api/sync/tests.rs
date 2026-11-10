@@ -12,11 +12,13 @@ fn state(root: &std::path::Path, name: &str) -> HttpState {
         embedding_dims: 16,
         ..crate::Config::for_tests()
     };
-    HttpState::new(
-        Arc::new(crate::Store::open(&config.db_path).unwrap()),
+    HttpState::from_context(
+        crate::context::AppContext::with_store(
+            Arc::new(crate::Store::open(&config.db_path).unwrap()),
+            Arc::new(crate::embeddings::MockEmbedder::new(16)),
+            config,
+        ),
         false,
-        config,
-        Arc::new(crate::embeddings::MockEmbedder::new(16)),
     )
 }
 

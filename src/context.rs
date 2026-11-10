@@ -16,7 +16,7 @@ use crate::llm::ChatClient;
 pub struct AppContext {
     pub store: Arc<Store>,
     pub embedder: Arc<dyn EmbeddingProvider>,
-    pub config: Config,
+    pub config: Arc<Config>,
     /// Built from `RAG_LLM_*`; `None` when the client cannot be constructed.
     pub llm: Option<ChatClient>,
 }
@@ -25,6 +25,15 @@ impl AppContext {
     /// Record the embedding manifest when missing and build the chat client.
     /// Both failures are logged and tolerated, as at every previous call site.
     pub fn new(store: Store, embedder: Arc<dyn EmbeddingProvider>, config: Config) -> Self {
+        Self::with_store(Arc::new(store), embedder, config)
+    }
+
+    /// Same as [`Self::new`] over a store handle that is already shared.
+    pub fn with_store(
+        store: Arc<Store>,
+        embedder: Arc<dyn EmbeddingProvider>,
+        config: Config,
+    ) -> Self {
         if let Err(error) = store
             .embedding_manifest()
             .ensure_embedding_manifest(&config)
@@ -39,9 +48,9 @@ impl AppContext {
             }
         };
         Self {
-            store: Arc::new(store),
+            store,
             embedder,
-            config,
+            config: Arc::new(config),
             llm,
         }
     }

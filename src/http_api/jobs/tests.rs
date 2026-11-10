@@ -22,7 +22,7 @@ fn state(root: &std::path::Path) -> HttpState {
         store: Arc::new(Store::open(&config.db_path).unwrap()),
         mcp_http: false,
         embedder: Arc::new(MockEmbedder::new(16)),
-        config,
+        config: config.into(),
         jobs: JobRegistry::default(),
         llm: None,
         auth: crate::http_api::auth::AuthPosture::default(),
@@ -112,7 +112,7 @@ async fn source_sync_job_reports_lifecycle_and_result() {
             },
             state.store.clone(),
             state.embedder.clone(),
-            state.config.clone(),
+            (*state.config).clone(),
         )
         .unwrap();
     assert_eq!(job.status, JobStatus::Queued);
@@ -166,7 +166,7 @@ async fn per_file_errors_are_terminal_but_not_reported_as_success() {
             },
             state.store.clone(),
             state.embedder.clone(),
-            state.config.clone(),
+            (*state.config).clone(),
         )
         .unwrap();
 
@@ -198,7 +198,7 @@ async fn code_index_failure_is_completed_with_errors_and_keeps_sources() {
             },
             state.store.clone(),
             state.embedder.clone(),
-            state.config.clone(),
+            (*state.config).clone(),
         )
         .unwrap();
     let finished = wait_for_terminal(&state.jobs, &job.id).await;
@@ -224,7 +224,8 @@ async fn final_fts_failure_is_completed_with_errors_and_retains_report() {
         .maintenance()
         .ensure_fts(&state.config.fts_stemmer)
         .unwrap();
-    state.config.fts_stemmer = crate::db::fts::test_fault::fail("source-sync");
+    std::sync::Arc::make_mut(&mut state.config).fts_stemmer =
+        crate::db::fts::test_fault::fail("source-sync");
     let job = state
         .jobs
         .start_source_sync(
@@ -237,7 +238,7 @@ async fn final_fts_failure_is_completed_with_errors_and_retains_report() {
             },
             state.store.clone(),
             state.embedder.clone(),
-            state.config.clone(),
+            (*state.config).clone(),
         )
         .unwrap();
 
@@ -295,7 +296,7 @@ async fn queued_job_can_be_cancelled_before_it_enters_writer_lane() {
             },
             state.store.clone(),
             state.embedder.clone(),
-            state.config.clone(),
+            (*state.config).clone(),
         )
         .unwrap();
     let cancelled = state.jobs.cancel(&job.id).unwrap();
@@ -737,7 +738,7 @@ async fn requeue_refuses_active_job() {
             "job-1",
             state.store.clone(),
             state.embedder.clone(),
-            state.config.clone(),
+            (*state.config).clone(),
         )
         .unwrap_err();
     assert!(matches!(err, AppError::Conflict(_)));
@@ -769,7 +770,7 @@ async fn admission_refuses_a_burst_when_all_slots_are_active() {
             },
             state.store.clone(),
             state.embedder.clone(),
-            state.config.clone(),
+            (*state.config).clone(),
         )
         .unwrap_err();
 

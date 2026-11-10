@@ -450,7 +450,10 @@ mod tests {
             ..Config::for_tests()
         };
         let store = Arc::new(Store::open(&config.db_path).unwrap());
-        let st = HttpState::new(store, false, config, Arc::new(MockEmbedder::new(16)));
+        let st = HttpState::from_context(
+            crate::context::AppContext::with_store(store, Arc::new(MockEmbedder::new(16)), config),
+            false,
+        );
         let p = crate::wiki::write_wiki_page(
             &st.store,
             &st.embedder,

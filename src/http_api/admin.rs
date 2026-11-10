@@ -440,11 +440,13 @@ mod tests {
                 )
                 .unwrap();
         }
-        let st = HttpState::new(
-            store,
+        let st = HttpState::from_context(
+            crate::context::AppContext::with_store(
+                store,
+                Arc::new(crate::embeddings::MockEmbedder::new(8)),
+                config,
+            ),
             false,
-            config,
-            Arc::new(crate::embeddings::MockEmbedder::new(8)),
         );
         let query = |agent: Option<&str>, prefix: Option<&str>, id: Option<&str>| OpsLogQuery {
             limit: None,

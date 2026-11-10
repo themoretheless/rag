@@ -146,7 +146,11 @@ async fn pack_context_mcp_enforces_complete_context_budget() {
     let path = root.path().join("pack-mcp.duckdb");
     let config = test_config(path.clone(), Vec::new(), 2);
     let store = Store::open(&path).unwrap();
-    let server = RagServer::new(store, Arc::new(MockEmbedder::new(2)), config);
+    let server = RagServer::from_context(crate::context::AppContext::new(
+        store,
+        Arc::new(MockEmbedder::new(2)),
+        config,
+    ));
     for budget in [0, 1, 32] {
         let params: PackContextParams = serde_json::from_value(serde_json::json!({
             "max_tokens": budget,
@@ -177,7 +181,7 @@ fn status_and_doctor_empty_corpus() {
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let status = server.status_report().expect("status");
     assert_eq!(status.backend, "duckdb");
@@ -208,7 +212,7 @@ async fn doctor_repair_rebuilds_missing_chunks() {
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let now = Utc::now();
     server
         .store
@@ -310,7 +314,7 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
     let config = test_config(path.clone(), vec![dir.path().to_path_buf()], dims);
     let store = Store::open(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     server
         .store
         .maintenance()
@@ -322,7 +326,7 @@ async fn import_bundle_finishes_with_generation_clean_fts() {
         version: BUNDLE_VERSION,
         exported_at: Utc::now(),
         embedding_manifest: Some(crate::db::store::embedding_manifest_from_config(
-            &server.config,
+            server.config.as_ref(),
         )),
         documents: vec![BundleDocument {
             document: Document {
@@ -419,7 +423,7 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     let config = test_config(path.clone(), vec![dir.path().to_path_buf()], dims);
     let store = Store::open(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let body = "legacy vector must be replaced";
     let legacy_vector = vec![42.0; dims];
     let bundle = RecoveryBundle {
@@ -499,7 +503,7 @@ async fn legacy_bundle_requires_opt_in_and_reembeds_before_import() {
     assert!(server
         .store
         .embedding_manifest()
-        .embedding_manifest_matches_config(&server.config)
+        .embedding_manifest_matches_config(server.config.as_ref())
         .unwrap());
 }
 
@@ -558,7 +562,7 @@ async fn bulk_maintenance_apply_paths_refuse_active_guarded_search() {
     let config = test_config(path.clone(), Vec::new(), dims);
     let store = Store::open(&path).expect("open");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let search_guard = server
         .store
         .corpus_lane()
@@ -707,7 +711,7 @@ async fn dropped_apply_request_leaves_owned_mutation_workflow_running() {
         release: release.clone(),
         dims,
     });
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let request_server = server.clone();
     let waiter = tokio::spawn(async move {
         request_server
@@ -767,7 +771,7 @@ async fn retrieval_helpers_multi_get_expand_and_find_similar() {
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let first = server
         .ingest_pipeline(IngestCommand {
             text: "alpha architecture and duckdb reliability ".repeat(80),
@@ -844,7 +848,7 @@ async fn llm_status_reports_config_and_unreachable_when_no_server() {
     config.llm_model = "test-model".to_string();
     config.embedding_model = "mock-embed".to_string();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     assert!(server.llm.is_some(), "ChatClient should wire from config");
 
@@ -881,7 +885,7 @@ fn doctor_detects_manifest_dim_mismatch_and_roots() {
     let dims = 32usize;
     let config = test_config(path.clone(), vec![PathBuf::from("/allowed")], dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let doctor = server.doctor_report().expect("doctor");
     assert!(!doctor.embed_ok);
@@ -902,7 +906,7 @@ async fn status_ready_for_search_after_ingest() {
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     server
         .ingest_pipeline(IngestCommand {
@@ -940,7 +944,7 @@ async fn list_wings_rooms_taxonomy_and_status_wings() {
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     for (text, uri, wing, room) in [
         ("alpha body", "raw://a", "research", "rag"),
@@ -1009,7 +1013,7 @@ async fn update_document_meta_skips_reembed_unless_content_changes() {
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     // Wiki layer so body updates are allowed (raw is immutable).
     let ing = server
@@ -1126,7 +1130,7 @@ async fn check_duplicate_and_delete_by_source_tools() {
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let body = "duplicate candidate body";
     let src = "/vault/shared.md";
@@ -1210,7 +1214,11 @@ async fn delete_by_source_preview_matches_archived_and_tombstone_apply_scope() {
     let store = Store::open(&path).expect("open");
     let dims = 8usize;
     let config = test_config(path, Vec::new(), dims);
-    let server = RagServer::new(store, Arc::new(MockEmbedder::new(dims)), config);
+    let server = RagServer::from_context(crate::context::AppContext::new(
+        store,
+        Arc::new(MockEmbedder::new(dims)),
+        config,
+    ));
     let source = "/vault/all-lifecycle-states.md";
     let now = Utc::now();
     for (id, status) in [
@@ -1285,11 +1293,11 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
     let path = dir.path().join("delete-source-finalize-failure.duckdb");
     let dims = 8usize;
     let config = test_config(path.clone(), Vec::new(), dims);
-    let mut server = RagServer::new(
+    let mut server = RagServer::from_context(crate::context::AppContext::new(
         Store::open(&path).expect("open"),
         Arc::new(MockEmbedder::new(dims)),
         config,
-    );
+    ));
     let source = "/vault/finalization-failure.md";
     let ingested = server
         .ingest_pipeline(IngestCommand {
@@ -1311,7 +1319,8 @@ async fn delete_by_source_finalization_failure_returns_committed_report() {
         .maintenance()
         .ensure_fts(&server.config.fts_stemmer)
         .unwrap();
-    server.config.fts_stemmer = crate::db::fts::test_fault::fail("facade");
+    std::sync::Arc::make_mut(&mut server.config).fts_stemmer =
+        crate::db::fts::test_fault::fail("facade");
 
     let result = server
         .delete_by_source(Parameters(DeleteBySourceParams {
@@ -1357,7 +1366,7 @@ async fn cleanup_source_duplicates_defaults_safe_requires_confirm_and_respects_l
     let dims = 16usize;
     let config = test_config(path, Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let source = "/vault/tool.md";
     let body = "tool duplicate";
     let hash = content_hash(body);
@@ -1499,7 +1508,7 @@ async fn ingest_raw_list_sources_get_source_immutable() {
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let r1 = server
         .ingest_pipeline(IngestCommand {
@@ -1597,7 +1606,7 @@ async fn ingest_file_respects_allowlist() {
     let dims = 32usize;
     let config = test_config(db_path.clone(), vec![allowed.clone()], dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     // Outside root refused before read.
     let err = check_path_allowlist(Path::new(&outside), &server.config.ingest_roots)
@@ -1641,7 +1650,7 @@ async fn add_drawer_check_duplicate_delete_by_source() {
     let dims = 32usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let body = "verbatim drawer body for parity";
     let hash = content_hash(body);
@@ -1785,7 +1794,7 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
         calls: calls.clone(),
         dims,
     });
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let ingest = server
         .ingest_pipeline(IngestCommand {
@@ -1816,7 +1825,8 @@ async fn single_reembed_refuses_identity_migration_until_full_reembed() {
 
     // Same provider/model/dims is still a mismatch when a persisted
     // fingerprint says the vectors came from another endpoint identity.
-    let mut stale_manifest = crate::db::store::embedding_manifest_from_config(&server.config);
+    let mut stale_manifest =
+        crate::db::store::embedding_manifest_from_config(server.config.as_ref());
     stale_manifest.content_fingerprint = Some("stale-fingerprint".into());
     server
         .store
@@ -1934,7 +1944,7 @@ async fn recovery_tools_refuse_oversized_io_without_publishing_an_artifact() {
     let store = Store::open(&db_path).unwrap();
     let config = test_config(db_path, vec![root.path().to_path_buf()], 32);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(32));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let oversized_input = root.path().join("oversized.json");
     let file = std::fs::File::create(&oversized_input).unwrap();
@@ -2015,7 +2025,7 @@ async fn multi_query_search_fails_busy_before_embedding_any_rewrite() {
     });
     let mut config = test_config(path, Vec::new(), dims);
     config.default_search_mode = SearchMode::Hybrid;
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
     let sync_guard = server
         .store
         .corpus_lane()
@@ -2056,7 +2066,11 @@ async fn vector_search_holds_corpus_guard_across_async_embedding() {
         release: release.clone(),
         dims,
     });
-    let server = RagServer::new(store, embedder, test_config(path, Vec::new(), dims));
+    let server = RagServer::from_context(crate::context::AppContext::new(
+        store,
+        embedder,
+        test_config(path, Vec::new(), dims),
+    ));
     let request_server = server.clone();
     let search_task = tokio::spawn(async move {
         request_server
@@ -2118,7 +2132,7 @@ fn kg_store_roundtrip_via_server() {
     let dims = 16usize;
     let config = test_config(path.clone(), Vec::new(), dims);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
-    let server = RagServer::new(store, embedder, config);
+    let server = RagServer::from_context(crate::context::AppContext::new(store, embedder, config));
 
     let f = server
         .store

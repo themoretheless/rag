@@ -444,11 +444,13 @@ mod tests {
             tool_surface: "spine".parse().unwrap(),
             ..Config::for_tests()
         };
-        HttpState::new(
-            Arc::new(crate::db::Store::open(&config.db_path).unwrap()),
+        HttpState::from_context(
+            crate::context::AppContext::with_store(
+                Arc::new(crate::db::Store::open(&config.db_path).unwrap()),
+                Arc::new(MockEmbedder::new(16)),
+                config,
+            ),
             mcp_http,
-            config,
-            Arc::new(MockEmbedder::new(16)),
         )
     }
 

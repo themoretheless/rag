@@ -16,7 +16,10 @@ fn test_state(name: &str) -> HttpState {
         ..Config::for_tests()
     };
     let store = Arc::new(crate::db::Store::open(&config.db_path).unwrap());
-    HttpState::new(store, false, config, Arc::new(MockEmbedder::new(16)))
+    HttpState::from_context(
+        crate::context::AppContext::with_store(store, Arc::new(MockEmbedder::new(16)), config),
+        false,
+    )
 }
 
 #[tokio::test]
@@ -102,8 +105,8 @@ async fn wiki_http_routes_reject_mismatched_embedding_identity_on_create_and_upd
             .unwrap(),
     )
     .unwrap();
-    state.config.embedding_dims = 8;
-    state.config.embedding_model = "changed-model".into();
+    std::sync::Arc::make_mut(&mut state.config).embedding_dims = 8;
+    std::sync::Arc::make_mut(&mut state.config).embedding_model = "changed-model".into();
     state.embedder = Arc::new(MockEmbedder::new(8));
     let router = super::super::api_router(state.clone());
     for payload in [

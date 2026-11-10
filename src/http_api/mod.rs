@@ -80,7 +80,7 @@ pub struct HttpState {
     /// True when streamable MCP is mounted at `/mcp`.
     pub mcp_http: bool,
     /// Config for wiki write (chunking / embed dims). Built in [`serve`] from env.
-    pub config: Config,
+    pub config: Arc<Config>,
     /// Embedder for wiki write re-chunk path.
     pub embedder: Arc<dyn EmbeddingProvider>,
     /// Process-local background job registry and single writer lane.
@@ -94,35 +94,6 @@ pub struct HttpState {
 }
 
 impl HttpState {
-    /// Construct HTTP state with an isolated background-job registry. Prefer
-    /// this over struct literals so internal route state can evolve without
-    /// forcing downstream callers to know private implementation details.
-    pub fn new(
-        store: Arc<Store>,
-        mcp_http: bool,
-        config: Config,
-        embedder: Arc<dyn EmbeddingProvider>,
-    ) -> Self {
-        let llm = match crate::llm::ChatClient::from_config(&config) {
-            Ok(client) => Some(client),
-            Err(error) => {
-                if config.llm_enabled {
-                    tracing::warn!(%error, "LLM enabled but chat client config is invalid; LLM features disabled");
-                }
-                None
-            }
-        };
-        Self::from_context(
-            crate::context::AppContext {
-                store,
-                embedder,
-                config,
-                llm,
-            },
-            mcp_http,
-        )
-    }
-
     /// HTTP state over the process-wide [`crate::context::AppContext`].
     pub fn from_context(context: crate::context::AppContext, mcp_http: bool) -> Self {
         let store = context.store;
@@ -146,7 +117,7 @@ impl HttpState {
         crate::app::SearchUseCase::new(
             self.store.clone(),
             self.embedder.clone(),
-            Arc::new(self.config.clone()),
+            self.config.clone(),
         )
     }
 
@@ -155,7 +126,7 @@ impl HttpState {
         crate::app::WikiUseCase::new(
             self.store.clone(),
             self.embedder.clone(),
-            Arc::new(self.config.clone()),
+            self.config.clone(),
         )
     }
 

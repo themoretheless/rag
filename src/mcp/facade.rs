@@ -45,8 +45,9 @@ pub struct RagServer {
     pub(super) embedder: Arc<dyn EmbeddingProvider>,
     /// OpenAI-compatible chat client for wiki compile / maintenance (Ollama default).
     pub(super) llm: Option<ChatClient>,
-    pub(super) config: Config,
-    tool_router: ToolRouter<Self>,
+    pub(super) config: Arc<Config>,
+    /// Built once per process and shared by every server clone.
+    tool_router: Arc<ToolRouter<Self>>,
     /// Transport label recorded in the call log (`stdio` | `http-mcp`).
     transport: &'static str,
     analysis_session: String,
@@ -172,14 +173,6 @@ impl RagServer {
             .collect()
     }
 
-    /// Build a server with an initialized tool router.
-    ///
-    /// Records `embedding_manifest` when the store has none (server start path).
-    /// Builds [`ChatClient`] from `RAG_LLM_*` when possible (warns and continues on failure).
-    pub fn new(store: Store, embedder: Arc<dyn EmbeddingProvider>, config: Config) -> Self {
-        Self::from_context(crate::context::AppContext::new(store, embedder, config))
-    }
-
     /// Build a server over an already-initialized [`crate::context::AppContext`].
     pub fn from_context(context: crate::context::AppContext) -> Self {
         let server = Self {
@@ -188,7 +181,7 @@ impl RagServer {
             embedder: context.embedder,
             llm: context.llm,
             config: context.config,
-            tool_router: Self::all_tools_router(),
+            tool_router: Self::shared_tool_router(),
             transport: "stdio",
         };
         let advertised_tool_count = match server.config.tool_surface {
@@ -209,7 +202,7 @@ impl RagServer {
         crate::app::SearchUseCase::new(
             self.store.clone(),
             self.embedder.clone(),
-            Arc::new(self.config.clone()),
+            self.config.clone(),
         )
     }
 
@@ -218,7 +211,7 @@ impl RagServer {
         crate::app::WikiUseCase::new(
             self.store.clone(),
             self.embedder.clone(),
-            Arc::new(self.config.clone()),
+            self.config.clone(),
         )
     }
 
@@ -268,10 +261,10 @@ impl RagServer {
         crate::util::blocking_section(|| {
             self.store
                 .embedding_manifest()
-                .ensure_embedding_manifest(&self.config)?;
+                .ensure_embedding_manifest(self.config.as_ref())?;
             self.store
                 .embedding_manifest()
-                .require_embedding_manifest_match(&self.config)
+                .require_embedding_manifest_match(self.config.as_ref())
         })
     }
 
@@ -701,7 +694,7 @@ impl RagServer {
                 if let Err(error) = Self::run_file_watcher(
                     self.store.clone(),
                     self.embedder.clone(),
-                    self.config.clone(),
+                    Config::clone(&self.config),
                     roots,
                     debounce,
                     min_sync_interval,
@@ -966,12 +959,16 @@ mod task_scope_tests {
             embedding_dims: 8,
             ..Config::for_tests()
         };
-        let one = RagServer::new(
+        let one = RagServer::from_context(crate::context::AppContext::new(
             store.clone(),
             Arc::new(MockEmbedder::new(8)),
             config.clone(),
-        );
-        let two = RagServer::new(store, Arc::new(MockEmbedder::new(8)), config);
+        ));
+        let two = RagServer::from_context(crate::context::AppContext::new(
+            store,
+            Arc::new(MockEmbedder::new(8)),
+            config,
+        ));
         assert_ne!(
             one.analysis_scope(None).unwrap(),
             two.analysis_scope(None).unwrap()
