@@ -20,11 +20,11 @@ not in a `#[cfg(test)]` item, not `#[test]`, not in a test file), plus the two
 
 | metric | before (facf533) | after Stage 1 | after Stage 2 | after Stage 3 | after Stage 4 | final |
 |---|---:|---:|---:|---:|---:|---:|
-| Rust LOC, root crate `src/` | 149 172 | | | 153 170 | 153 727 | |
+| Rust LOC, root crate `src/` | 149 172 | | | 153 170 | 154 830 | |
 | Rust LOC, `crates/` | 21 620 | | | 21 620 | 21 620 | |
-| Rust LOC, `tests/` | 5 162 | | | 6 345 | 6 404 | |
-| production functions | 3 083 | | | 3 103 | 3 146 | |
-| production functions > 80 lines | 255 (218 `src/`, 37 `crates/`) | | | 256 (219 `src/`, 37 `crates/`) | 251 (214 `src/`, 37 `crates/`) | |
+| Rust LOC, `tests/` | 5 162 | | | 6 345 | 6 646 | |
+| production functions | 3 083 | | | 3 103 | 3 204 | |
+| production functions > 80 lines | 255 (218 `src/`, 37 `crates/`) | | | 256 (219 `src/`, 37 `crates/`) | 253 (216 `src/`, 37 `crates/`) | |
 | `impl Store` blocks (`grep -rnE '^\s*impl(<[^>]*>)? Store\b' src`) | 46 (27 in `src/db`, 19 outside) | | | 3 (all in `src/db`) | | |
 | `Store` methods (production) | 258 (218 in `src/db`, 40 outside) | | | 37 (8 core, 14 accessors, 15 kept for rag-mcp-ui), 0 outside | | |
 | `self.lock()` sites in `src/db` (`grep -rn 'self\.lock()'`) | 140 | | | 1 (repositories use `self.store.lock()`: 168) | | |
@@ -42,6 +42,20 @@ counted as `fn` items directly inside `impl <Repo><'_>` blocks). The 15
 Store methods kept for `rag-mcp-ui` forward to these. Tests: 1 540 run
 (+3 new, −3 deleted with the Storage/Markdown code, see the Stage 3
 commits), all passing.
+
+After Stage 4 (second pass, 2026-11-10): `maintain_compress` 451 → 119
+(longest phase, `plan_near_merges`), `maintain_organize` 356 → 131,
+`reembed_all` 263 → 146 lines. Functions over 80 lines rose by two
+(251 → 253): the splits left `plan_near_merges`, `apply_refiles`,
+`reembed_batches` and `plan_exact_merges` just over the line, and the clap
+`validate_args` in `bin/eval.rs` is 95 lines; the 192-line `parse_args_from`
+is gone. `blocking_section` call sites outside `util`: 86 (from 166 at the
+start of the pass; the remaining ones are listed in INVENTORY.md, Stage 4
+status). Tests: lib 1 282, `it` 79 (+5: 3 admin parity tests, 2 bin CLI
+tests), all passing. Eval gates (mock embeddings, 32 dims, the CI commands in
+`.github/workflows/checks.yml`): example set lex recall@k 1.0 / MRR 1.0;
+`data/eval/repository-v1.json` lex recall@k 0.958 / MRR 0.800 (gates 0.9 /
+0.75).
 
 PLAN.md quotes "261 methods, ~59 outside db" and "103+ functions over 80
 lines" from the earlier read-only inventories. The numbers above are what the

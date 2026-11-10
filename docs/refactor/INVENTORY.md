@@ -35,12 +35,12 @@ local cleanup, P3 = leave.
 | src/code_index | 49823 | 107 | `walk` 425 (ruby.rs:274); `walk` 402 (csharp.rs:300); `code_read` 382 (code_read.rs:85); `parse_unit` 339 (sql.rs:671); `docker` 339 (infrastructure/docker.rs:190) | ~~13 `impl Store` blocks with raw SQL via `self.lock()`~~; ~~called from inside the store write path (`db/store.rs:1174`)~~ (Stage 2: `DocumentWriteHook`); cycle with `external_db` (sql.rs:1405); per-language `walk` monoliths; ~~13 `impl Store` blocks~~ (Stage 2: `CodeIndex` repository over `Store::with_conn`) | P0 (boundary), P2 (walkers) | Stage 2: boundary done |
 | src/db | 29239 | 27 | `migrate` 234 (schema.rs:397); `import_recovery_bundle` 198 (recovery/import.rs:251); `upsert_document_cas_locked` 171 (store.rs:1169) | ~~god object `Store` (218 methods here)~~ (Stage 3: repositories `Documents`, `Chunks`, `GraphRepo`, `KgRepo`, `OpsLog`, `EmbeddingManifestRepo`, `WikiIndexRepo`, `SyncRepo`, `CorpusLane`, `Collections`, `ReembedProgress`, `Maintenance`, `SourceManifestRepo`, `Recovery`); ~~`lock` is `pub(crate)`~~ (Stage 2: private to `db` outside tests); ~~calls up into `external_db`~~ (Stage 3: `SchemaExtension` registration); process-global vector snapshot cache (search.rs:982) built under the Store mutex; embeddings stored as JSON text; ~~"mark changed + delete chunks" repeated~~ (Stage 3: `replace_chunks_locked`); ~~recovery import has its own document INSERT~~ (Stage 3: `insert_document_row_locked`, normalization bug fixed); env reads (store.rs `apply_performance_pragmas`); `Documents` is still the largest repository (60 methods) | P0 | Stage 3: done (Stage 5: schema/vector cache) |
 | src/http_api | 9962 | 5 | `sync_once` 100 (sync.rs:317); `non_admin_http_role` 98 (auth.rs:175); `run_one` 91 (feedback.rs:328) | handlers rebuild commands that MCP tools also build (drift list in PLAN.md); depends on `mcp` (mod.rs:68, ops.rs:18; kept for Stage 4, no neutral home before the app-layer tool registry); `Config` cloned per request (retrieval.rs pack/revision handlers); `feedback`/`eval_ops` call the search handler and re-parse its bytes; `mod.rs` is 1445 lines | P1 | partly done (Stage 4: use cases, no `mcp` edge, `Arc<Config>`, eval/feedback call the use case; `mod.rs` size open) |
-| src/maintain | 9340 | 14 | `maintain_compress` 448 (compress.rs:187); `maintain_organize` 346 (organize.rs:175); `reembed_all` 256 (refresh.rs:475) | action list ×4 (plan.rs:40,82,112,194); 26-arm dispatch (apply.rs:322); `serde_json::Value` params; monolithic phases; 5 `test_config` copies | P1 | todo |
+| src/maintain | 9340 | 14 | `maintain_compress` 448 (compress.rs:187); `maintain_organize` 346 (organize.rs:175); `reembed_all` 256 (refresh.rs:475) | action list ×4 (plan.rs:40,82,112,194); 26-arm dispatch (apply.rs:322); `serde_json::Value` params; monolithic phases; 5 `test_config` copies | P1 | done (Stage 4: whitelist declared once, typed params per action, `trait MaintenanceStep`, compress/organize/reembed_all split into phases — now 119/131/146 lines; `maintain_refresh` 226 and `analyze_corpus` 222 open) |
 | src/mcp | 9146 | 6 | `call_tool` 118 (facade.rs:420); `prepare_recovery_bundle_for_import` 109 (recovery.rs:247); `search_wiki` 96 (wiki.rs:406) | ~37 tools in analysis.rs run sync DuckDB inline; tool names in several hand lists (`access.rs:40` 150-line match, `telemetry.rs:253`, `surface.rs:13`, `analysis_tasks.rs`); tool methods are `pub(super)`, so nothing outside can call a use case without the transport; `Config` owned by value in `RagServer` | P1 | todo |
 | src/wiki | 5394 | 9 | `lint_wiki` 302 (lint.rs:6); `write_wiki_page_synced_command` 298 (write.rs:147); `consolidate` 203 (consolidate.rs:36) | several write entrypoints (`write_wiki_page`, `write_wiki_page_command`, `update_wiki_page_cas`, `put_wiki_page`, …) with different defaults; 8 hand-built ops-log entries; tests.rs 2388 lines | P1 | todo |
 | src/external_db | 4520 | 9 | `check_write_plan` 246 (write_check.rs:524); `eval` 211 (check_expr.rs:88); `infer` 142 (relations.rs:163) | ~~3 `impl Store` blocks~~ (Stage 2: `ExternalDb` repository); ~~its DDL is run by `db/schema.rs:401`~~ (Stage 3: `external_db::SCHEMA`, registered at composition); cycle with `code_index`; 6 env reads in mod.rs | P0 (boundary) | Stage 3: DDL done |
 | src/source_sync | 2851 | 3 | `sync_with_control` 313 (source_sync.rs:263); `prepare_source_file` 106 (:577) | one 313-line orchestration function; tests build `Config` literals 17 times | P2 | todo |
-| src/bin | 2680 | 7 | `parse_args_from` 192 (eval.rs:180); `evaluate` 141 (eval.rs:604); `run` 130 (ingest_project.rs:119) | hand-written argument parsing; `eval` re-implements search wiring | P2 | todo |
+| src/bin | 2680 | 7 | `parse_args_from` 192 (eval.rs:180); `evaluate` 141 (eval.rs:604); `run` 130 (ingest_project.rs:119) | hand-written argument parsing; `eval` re-implements search wiring | P2 | partly done (Stage 4: clap in every bin; `eval` still calls `db::search` directly) |
 | src/eval | 1899 | 0 | `compare_query_metrics` 76 (compare.rs:50) | logic split between here, `bin/eval.rs` and `http_api/eval_ops.rs` | P2 | todo |
 | src/ingest | 1568 | 3 | `ingest_url` 111 (ingest.rs:258); `update_document` 99 (:770); `prepare_ingest` 95 (:627) | hand-built ops-log entries; own `test_config` | P2 | todo |
 | src/models | 1442 | 0 | `from_document` 39 (models.rs:1019) | ~~`duckdb` trait impls in a domain file~~ (moved to `db/sql_types.rs`); ~~`layer`/`status` are strings~~ (Stage 3: `DocumentLayer`, `DocStatus`, open enums with the same wire/DB strings) | P0 (small) | Stage 3: done |
@@ -90,11 +90,31 @@ constructors gone; eval/feedback call the search use case; `BackgroundTasks`;
 maintain whitelist declared once, five unimplemented actions deleted, rule
 table for `heuristic_plan`; clap in four bins; `storage::open_store`.
 
-Open (carried to the backlog): `IngestUseCase` / `AdminUseCase`; typed
-serde-tagged maintenance params and `trait MaintenanceStep`; splitting the
-large `maintain` functions; one prompts module / one LLM trait; `bin/eval.rs`
-still calls `db::search` directly (it measures embedding and search time per
-leg, which the production use case folds together); clap for `recovery`,
-`ingest_project` and `eval`; 201 remaining `blocking_section` call sites
-outside `mcp/analysis.rs`.
+Done in the second pass: `IngestUseCase` and `AdminUseCase` (MCP ingest and
+admin reads, HTTP ingest/url and the console reads; rooms wing filter
+aligned); typed params per maintenance action read once from the unchanged
+wire object, `trait MaintenanceStep` with one implementation per action;
+`maintain_compress` (451 → phases ≤119 lines), `maintain_organize`
+(356 → 131) and `reembed_all` (263 → 146) split into named phases; one LLM
+trait (`TransformLlm` folded into `ChatCompleter`) and the maintenance
+prompts in `maintain/prompts.rs`; clap in `recovery`, `ingest_project` and
+`eval`; 80 `blocking_section` sites in `mcp/*` and `http_api/*` moved to the
+blocking pool (`RagServer::blocking_tool`, `HttpState::blocking_response`,
+`HttpState::blocking`).
+
+Open (carried to the backlog): `bin/eval.rs` still calls `db::search`
+directly (it measures embedding and search time per leg, which the
+production use case folds together). 86 `blocking_section` sites remain,
+kept on purpose: synchronous domain APIs that take `&Store` and are called
+from both async and blocking contexts (`db/payload_kv`, `diagnostics`,
+`revisions`, `diary`, `db/store/corpus_lane`, `maintain/audit`); async
+domain workflows that borrow `&Store` / `&Config` / `&dyn EmbeddingProvider`
+or a held corpus guard across the call (`ingest`, `maintain/*`, `wiki/*`,
+`retrieval`, `jobs`, `document_indexer`; `run_blocking` needs `'static`
+data, `block_in_place` keeps the borrow); `mcp` `graph_expand_search` and
+`search_wiki` (borrow the held corpus guard); `require_vec_compatible` and
+`http_api::sync::spawn_worker` (synchronous); `previously_applied_sync`
+(its `WikiSyncWrite` borrows the request). `maintain_refresh` (226 lines)
+and `analyze_corpus` (222) are still long. Wiki compile/consolidate and the
+answer judge keep their prompts in their own modules.
 

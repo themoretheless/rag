@@ -56,9 +56,22 @@ Consequences that follow from the rule:
 
 - `src/app/`: `SearchUseCase` (search, `pack_context`, `multi_get`),
   `GraphUseCase` (neighbors), `WikiUseCase` (one write entrypoint with
-  `WikiWriteMode::{Create, Upsert, Cas}`). MCP tools and HTTP handlers decode
-  their parameters into these typed commands and wrap the result in their own
+  `WikiWriteMode::{Create, Upsert, Cas}`), `IngestUseCase` (text, file and
+  URL ingest), `AdminUseCase` (taxonomy, wings, rooms, KG reads, wiki lint,
+  reembed and LLM status). MCP tools and HTTP handlers decode their
+  parameters into these typed commands and wrap the result in their own
   envelope.
+- Edges run store work on the blocking pool: `RagServer::blocking_tool` /
+  `RagServer::blocking` and `HttpState::blocking_response` /
+  `HttpState::blocking` (`util::run_blocking`). `util::blocking_section`
+  (`block_in_place`) stays only where the data is borrowed or the caller is
+  synchronous (INVENTORY.md, Stage 4 status).
+- `maintain`: the plan step wire shape `{action, reason?, target_id?,
+  params}` is fixed; `maintain/apply/params.rs` reads one typed struct per
+  action from `params`, `maintain/apply/steps.rs` holds `trait
+  MaintenanceStep` with one implementation per action. One LLM seam,
+  `llm::ChatCompleter` (query transforms included); maintenance prompt text
+  lives in `maintain/prompts.rs`.
 - `src/tool_spec.rs` (domain): one `ToolSpec` row per MCP tool (role,
   telemetry group, spine flag, index-evidence flag) read by `access`,
   `telemetry`, `mcp::surface` and `analysis_tasks`.
