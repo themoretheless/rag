@@ -44,8 +44,12 @@ Consequences that follow from the rule:
   identity) are passed at construction instead of being pushed into globals by
   `Config::apply_process_limits`.
 - Environment variables are read in one place (`Config::from_env`).
-- An architecture test in `tests/it` (Stage 2) greps `use crate::` edges and
-  fails on an edge that breaks the rule.
+- An architecture test (`tests/it/architecture_test.rs`, Stage 2) parses
+  `crate::` edges between top-level modules and fails on an edge that breaks
+  the rule. Its allow-list holds the edges still pending: `http_api → mcp`
+  (Stage 4), `db → analysis_tasks|gate|calibration|external_db` (intel DDL run
+  by `db::schema::migrate`, Stage 3), `code_index → file_ingest`
+  (`decode_text`, Stage 4).
 
 ## Composition root
 
@@ -108,9 +112,12 @@ Cycles:
 
 Leaks across layers:
 
-- `Store::lock` is `pub(crate)` (`src/db/store.rs:294`); 19 `impl Store` blocks
-  with 40 methods and 33 `self.lock()` call sites live outside `src/db`
-  (code_index, external_db, analysis_tasks, gate, calibration).
+- `Store::lock` is `pub(crate)` (`src/db/store.rs`). Stage 2 converted the
+  `impl Store` blocks of calibration, gate, analysis_tasks and external_db to
+  repository types (`Calibrations`, `Gate`, `AnalysisTasks`, `ExternalDb`) over
+  `Store::with_conn` / `with_tx`. Still open: the 13 `impl Store` blocks in
+  `code_index` (26 methods, ~650 call sites in 44 files), above the ~30-file
+  limit for one step; `lock` stays crate-visible until they are converted.
 - No `app` layer: MCP tools and HTTP handlers each rebuild commands, limits and
   defaults (see "Known MCP/HTTP drifts" in PLAN.md).
 - Environment reads outside `config`: `src/db/store.rs:1545,1552`,

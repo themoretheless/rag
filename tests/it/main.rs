@@ -1,6 +1,7 @@
 //! All integration tests in one binary: each `tests/*.rs` target used to link
 //! its own copy of bundled DuckDB. Modules keep the former file boundaries.
 
+mod architecture_test;
 mod bin_cli_test;
 mod file_ingest_test;
 mod graph_test;
