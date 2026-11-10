@@ -194,13 +194,15 @@ fn concurrent_overwrite_publications_are_serialized_as_complete_generations() {
     let (release_first_tx, release_first_rx) = mpsc::channel();
     let first_backup = backup.clone();
     let first = thread::spawn(move || {
-        store_a.backup_database_with_publish_hook(&first_backup, false, true, |stage| {
-            if stage == BackupPublishStage::SidecarPublished {
-                first_staged_tx.send(()).unwrap();
-                release_first_rx.recv().unwrap();
-            }
-            Ok(())
-        })
+        store_a
+            .recovery()
+            .backup_database_with_publish_hook(&first_backup, false, true, |stage| {
+                if stage == BackupPublishStage::SidecarPublished {
+                    first_staged_tx.send(()).unwrap();
+                    release_first_rx.recv().unwrap();
+                }
+                Ok(())
+            })
     });
     first_staged_rx
         .recv_timeout(Duration::from_secs(30))
@@ -210,12 +212,14 @@ fn concurrent_overwrite_publications_are_serialized_as_complete_generations() {
     let second_backup = backup.clone();
     let second_source = source_b.clone();
     let second = thread::spawn(move || {
-        store_b.backup_database_with_publish_hook(&second_backup, false, true, |stage| {
-            if stage == BackupPublishStage::SidecarPublished {
-                second_staged_tx.send(()).unwrap();
-            }
-            Ok(())
-        })
+        store_b
+            .recovery()
+            .backup_database_with_publish_hook(&second_backup, false, true, |stage| {
+                if stage == BackupPublishStage::SidecarPublished {
+                    second_staged_tx.send(()).unwrap();
+                }
+                Ok(())
+            })
     });
     assert!(
         second_staged_rx
@@ -268,13 +272,18 @@ fn online_snapshot_copy_does_not_hold_store_mutex_and_preserves_semantics() {
     let backup_store = store.clone();
     let backup_path = backup.clone();
     let backup_thread = thread::spawn(move || {
-        backup_store.backup_database_with_publish_hook(&backup_path, false, false, |stage| {
-            if stage == BackupPublishStage::SnapshotConnectionReady {
-                copy_ready_tx.send(()).unwrap();
-                release_copy_rx.recv().unwrap();
-            }
-            Ok(())
-        })
+        backup_store.recovery().backup_database_with_publish_hook(
+            &backup_path,
+            false,
+            false,
+            |stage| {
+                if stage == BackupPublishStage::SnapshotConnectionReady {
+                    copy_ready_tx.send(()).unwrap();
+                    release_copy_rx.recv().unwrap();
+                }
+                Ok(())
+            },
+        )
     });
     copy_ready_rx
         .recv_timeout(Duration::from_secs(30))
@@ -1030,6 +1039,7 @@ fn backup_failure_after_sidecar_publish_removes_group_and_retry_succeeds() {
     let store = Store::open(&source).unwrap();
 
     let error = store
+        .recovery()
         .backup_database_with_publish_hook(&backup, false, false, |stage| match stage {
             BackupPublishStage::SnapshotConnectionReady => Ok(()),
             BackupPublishStage::SidecarPublished => {
@@ -1060,6 +1070,7 @@ fn backup_failure_after_main_verification_removes_group_and_retry_succeeds() {
     let store = Store::open(&source).unwrap();
 
     let error = store
+        .recovery()
         .backup_database_with_publish_hook(&backup, false, false, |stage| match stage {
             BackupPublishStage::SnapshotConnectionReady => Ok(()),
             BackupPublishStage::SidecarPublished => Ok(()),

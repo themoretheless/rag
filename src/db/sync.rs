@@ -450,286 +450,6 @@ pub(crate) fn commit_sync_write_locked(
     }
 }
 
-impl Store {
-    /// True when a sync change from this origin node and sequence is already stored.
-    pub fn has_sync_change(&self, origin_node: &str, origin_seq: i64) -> Result<bool> {
-        let conn = self.lock()?;
-        Ok(stored_event_locked(&conn, origin_node, origin_seq)?.is_some())
-    }
-
-    pub(crate) fn previously_applied_sync(&self, mode: &WikiSyncWrite<'_>) -> Result<Option<i64>> {
-        let conn = self.lock()?;
-        sync_duplicate_locked(&conn, mode)
-    }
-
-    pub(crate) fn preflight_sync_batch(
-        &self,
-        origin_node: &str,
-        changes: &[SyncChangeInput],
-    ) -> Result<()> {
-        validate_token("origin_node", origin_node)?;
-        if changes.len() > MAX_SYNC_BATCH {
-            return Err(AppError::config(format!(
-                "sync batch exceeds {MAX_SYNC_BATCH} changes"
-            )));
-        }
-        let mut identities = HashMap::new();
-        let conn = self.lock()?;
-        for change in changes {
-            validate_wiki_change(change)?;
-            let canonical = canonical_change(change)?;
-            if identities
-                .insert(change.origin_seq, canonical.clone())
-                .is_some_and(|previous| previous != canonical)
-            {
-                return Err(AppError::conflict(
-                    "sync batch reuses event identity with different content",
-                ));
-            }
-            existing_change_locked(&conn, origin_node, change)?;
-        }
-        Ok(())
-    }
-
-    /// Low-level journal append. Application wiki writes use the atomic page+journal seam.
-    pub fn journal_local_sync_change(
-        &self,
-        entity_kind: &str,
-        entity_id: &str,
-        operation: &str,
-        payload_json: &str,
-        content_hash: Option<&str>,
-    ) -> Result<i64> {
-        let prototype = new_change(
-            entity_kind,
-            entity_id,
-            operation,
-            payload_json,
-            content_hash,
-        );
-        validate_wiki_change(&prototype)?;
-        let identity = SyncIdentity::current()?;
-        self.with_tx(|tx| {
-            let assigned = local_change_locked(tx, &identity, &prototype)?;
-            Ok(assigned)
-        })
-    }
-
-    /// Append a local change to the sync outbox and return its local sequence.
-    pub fn enqueue_sync_change(
-        &self,
-        entity_kind: &str,
-        entity_id: &str,
-        operation: &str,
-        payload_json: &str,
-        content_hash: Option<&str>,
-    ) -> Result<i64> {
-        let prototype = new_change(
-            entity_kind,
-            entity_id,
-            operation,
-            payload_json,
-            content_hash,
-        );
-        validate_wiki_change(&prototype)?;
-        self.with_tx(|tx| {
-            let next = enqueue_change_locked(tx, &prototype, None)?;
-            Ok(next)
-        })
-    }
-
-    /// Unsent sync outbox changes in local order, up to `limit`.
-    pub fn pending_sync_outbox(&self, limit: usize) -> Result<Vec<SyncChangeInput>> {
-        let limit = limit.clamp(1, MAX_SYNC_BATCH);
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT local_seq, entity_kind, entity_id, operation, payload_json, content_hash, \
-            strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM sync_outbox WHERE sent_at IS NULL \
-            ORDER BY local_seq LIMIT {limit}"
-        ))?;
-        let rows = stmt.query_map([], |row| {
-            Ok(SyncChangeInput {
-                origin_seq: row.get(0)?,
-                entity_kind: row.get(1)?,
-                entity_id: row.get(2)?,
-                operation: row.get(3)?,
-                payload_json: row.get(4)?,
-                content_hash: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    }
-
-    /// Record primary sequence numbers for sent outbox entries.
-    pub fn mark_sync_outbox_sent(&self, assignments: &[(i64, i64)]) -> Result<()> {
-        self.with_tx(|tx| {
-            for (local_seq, primary_seq) in assignments {
-                if *local_seq < 1 || *primary_seq < 1 {
-                    return Err(AppError::config("sync assignments must be positive"));
-                }
-                let existing: Option<i64> = tx.query_row(
-                    "SELECT MAX(primary_seq) FROM sync_outbox WHERE local_seq = ?",
-                    params![local_seq],
-                    |row| row.get(0),
-                )?;
-                if existing.is_some_and(|existing| existing != *primary_seq) {
-                    return Err(AppError::conflict("outbox canonical sequence changed"));
-                }
-                let updated = tx.execute(
-                    "UPDATE sync_outbox SET sent_at = CURRENT_TIMESTAMP, \
-                primary_seq = ? WHERE local_seq = ?",
-                    params![primary_seq, local_seq],
-                )?;
-                if updated == 0 {
-                    return Err(AppError::conflict(
-                        "outbox acknowledgement has no local event",
-                    ));
-                }
-            }
-            Ok(())
-        })
-    }
-
-    /// Register or refresh a sync node's hostname and role.
-    pub fn register_sync_node(&self, node_id: &str, hostname: &str, role: &str) -> Result<()> {
-        self.with_tx(|tx| {
-            register_node_locked(tx, node_id, hostname, role)?;
-            Ok(())
-        })
-    }
-
-    /// Low-level journal import; HTTP uses the atomic page+journal apply path.
-    pub fn accept_sync_changes(
-        &self,
-        origin_node: &str,
-        changes: &[SyncChangeInput],
-    ) -> Result<Vec<i64>> {
-        self.preflight_sync_batch(origin_node, changes)?;
-        self.with_tx(|tx| {
-            let mut assigned = Vec::with_capacity(changes.len());
-            for change in changes {
-                assigned.push(accept_change_locked(tx, origin_node, change)?);
-            }
-            Ok(assigned)
-        })
-    }
-
-    /// The canonical stream includes a node's own events, so every replica replays
-    /// the same ordering and converges after conflicting offline edits.
-    pub fn pull_sync_changes(
-        &self,
-        node_id: &str,
-        after: i64,
-        limit: usize,
-    ) -> Result<Vec<SyncChange>> {
-        validate_token("node_id", node_id)?;
-        if after < 0 {
-            return Err(AppError::config("sync cursor must be >= 0"));
-        }
-        let limit = limit.clamp(1, MAX_SYNC_BATCH);
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT primary_seq, origin_node, origin_seq, entity_kind, entity_id, operation, \
-            payload_json, content_hash, strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM \
-            sync_changes WHERE primary_seq > ? ORDER BY primary_seq LIMIT {limit}"
-        ))?;
-        let rows = stmt.query_map(params![after], |row| {
-            Ok(SyncChange {
-                primary_seq: row.get(0)?,
-                origin_node: row.get(1)?,
-                change: SyncChangeInput {
-                    origin_seq: row.get(2)?,
-                    entity_kind: row.get(3)?,
-                    entity_id: row.get(4)?,
-                    operation: row.get(5)?,
-                    payload_json: row.get(6)?,
-                    content_hash: row.get(7)?,
-                    created_at: row.get(8)?,
-                },
-            })
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    }
-
-    /// Primary-side delivery acknowledgement. Replica cursors advance only in
-    /// the transaction that records and applies (or defers) the canonical event.
-    pub fn acknowledge_sync_cursor(&self, node_id: &str, cursor: i64) -> Result<()> {
-        validate_token("node_id", node_id)?;
-        if cursor < 0 {
-            return Err(AppError::config("sync cursor must be >= 0"));
-        }
-        let conn = self.lock()?;
-        let latest: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(primary_seq), 0) FROM sync_changes",
-            [],
-            |row| row.get(0),
-        )?;
-        if cursor > latest {
-            return Err(AppError::config("sync cursor exceeds canonical journal"));
-        }
-        let updated = conn.execute(
-            "UPDATE sync_nodes SET last_seen_at = CURRENT_TIMESTAMP, \
-        pull_cursor = GREATEST(pull_cursor, ?) WHERE node_id = ?",
-            params![cursor, node_id],
-        )?;
-        if updated == 0 {
-            return Err(AppError::not_found("sync node is not registered"));
-        }
-        Ok(())
-    }
-    /// This node's pull cursor: what a replica's sync cycle needs, without
-    /// the counts and node listing of [`Store::sync_status`].
-    pub fn sync_pull_cursor(&self, node_id: &str) -> Result<i64> {
-        let conn = self.lock()?;
-        cursor_locked(&conn, node_id)
-    }
-
-    /// Summarize sync journal, outbox and cursor state for this node.
-    pub fn sync_status(
-        &self,
-        role: &str,
-        node_id: &str,
-        primary_url: Option<String>,
-    ) -> Result<SyncStatus> {
-        let conn = self.lock()?;
-        let latest_primary_seq: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(primary_seq), 0) FROM sync_changes",
-            [],
-            |row| row.get(0),
-        )?;
-        let mut stmt = conn.prepare(
-            "SELECT node_id, hostname, role, CAST(last_seen_at AS VARCHAR), last_push_seq, pull_cursor, last_error FROM sync_nodes ORDER BY role, hostname",
-        )?;
-        let nodes = stmt
-            .query_map([], |row| {
-                Ok(SyncNode {
-                    node_id: row.get(0)?,
-                    hostname: row.get(1)?,
-                    role: row.get(2)?,
-                    last_seen_at: row.get(3)?,
-                    last_push_seq: row.get(4)?,
-                    pull_cursor: row.get(5)?,
-                    last_error: row.get(6)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let pending_outbox: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sync_outbox WHERE sent_at IS NULL",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(SyncStatus {
-            role: role.into(),
-            node_id: node_id.into(),
-            primary_url,
-            latest_primary_seq,
-            pending_outbox,
-            nodes,
-        })
-    }
-}
-
 fn new_change(
     entity_kind: &str,
     entity_id: &str,
@@ -780,6 +500,295 @@ fn validate_change(change: &SyncChangeInput) -> Result<()> {
     chrono::DateTime::parse_from_rfc3339(&change.created_at)
         .map_err(|error| AppError::config(format!("created_at must be RFC3339: {error}")))?;
     Ok(())
+}
+
+/// Wiki replication: journal, outbox, cursors and peer registry.
+///
+/// A repository over the shared Store connection; get one from [`Store::sync`].
+#[derive(Clone, Copy)]
+pub struct SyncRepo<'a> {
+    pub(in crate::db) store: &'a Store,
+}
+
+impl SyncRepo<'_> {
+    /// True when a sync change from this origin node and sequence is already stored.
+    pub fn has_sync_change(&self, origin_node: &str, origin_seq: i64) -> Result<bool> {
+        let conn = self.store.lock()?;
+        Ok(stored_event_locked(&conn, origin_node, origin_seq)?.is_some())
+    }
+
+    pub(crate) fn previously_applied_sync(&self, mode: &WikiSyncWrite<'_>) -> Result<Option<i64>> {
+        let conn = self.store.lock()?;
+        sync_duplicate_locked(&conn, mode)
+    }
+
+    pub(crate) fn preflight_sync_batch(
+        &self,
+        origin_node: &str,
+        changes: &[SyncChangeInput],
+    ) -> Result<()> {
+        validate_token("origin_node", origin_node)?;
+        if changes.len() > MAX_SYNC_BATCH {
+            return Err(AppError::config(format!(
+                "sync batch exceeds {MAX_SYNC_BATCH} changes"
+            )));
+        }
+        let mut identities = HashMap::new();
+        let conn = self.store.lock()?;
+        for change in changes {
+            validate_wiki_change(change)?;
+            let canonical = canonical_change(change)?;
+            if identities
+                .insert(change.origin_seq, canonical.clone())
+                .is_some_and(|previous| previous != canonical)
+            {
+                return Err(AppError::conflict(
+                    "sync batch reuses event identity with different content",
+                ));
+            }
+            existing_change_locked(&conn, origin_node, change)?;
+        }
+        Ok(())
+    }
+
+    /// Low-level journal append. Application wiki writes use the atomic page+journal seam.
+    pub fn journal_local_sync_change(
+        &self,
+        entity_kind: &str,
+        entity_id: &str,
+        operation: &str,
+        payload_json: &str,
+        content_hash: Option<&str>,
+    ) -> Result<i64> {
+        let prototype = new_change(
+            entity_kind,
+            entity_id,
+            operation,
+            payload_json,
+            content_hash,
+        );
+        validate_wiki_change(&prototype)?;
+        let identity = SyncIdentity::current()?;
+        self.store.with_tx(|tx| {
+            let assigned = local_change_locked(tx, &identity, &prototype)?;
+            Ok(assigned)
+        })
+    }
+
+    /// Append a local change to the sync outbox and return its local sequence.
+    pub fn enqueue_sync_change(
+        &self,
+        entity_kind: &str,
+        entity_id: &str,
+        operation: &str,
+        payload_json: &str,
+        content_hash: Option<&str>,
+    ) -> Result<i64> {
+        let prototype = new_change(
+            entity_kind,
+            entity_id,
+            operation,
+            payload_json,
+            content_hash,
+        );
+        validate_wiki_change(&prototype)?;
+        self.store.with_tx(|tx| {
+            let next = enqueue_change_locked(tx, &prototype, None)?;
+            Ok(next)
+        })
+    }
+
+    /// Unsent sync outbox changes in local order, up to `limit`.
+    pub fn pending_sync_outbox(&self, limit: usize) -> Result<Vec<SyncChangeInput>> {
+        let limit = limit.clamp(1, MAX_SYNC_BATCH);
+        let conn = self.store.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT local_seq, entity_kind, entity_id, operation, payload_json, content_hash, \
+            strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM sync_outbox WHERE sent_at IS NULL \
+            ORDER BY local_seq LIMIT {limit}"
+        ))?;
+        let rows = stmt.query_map([], |row| {
+            Ok(SyncChangeInput {
+                origin_seq: row.get(0)?,
+                entity_kind: row.get(1)?,
+                entity_id: row.get(2)?,
+                operation: row.get(3)?,
+                payload_json: row.get(4)?,
+                content_hash: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Record primary sequence numbers for sent outbox entries.
+    pub fn mark_sync_outbox_sent(&self, assignments: &[(i64, i64)]) -> Result<()> {
+        self.store.with_tx(|tx| {
+            for (local_seq, primary_seq) in assignments {
+                if *local_seq < 1 || *primary_seq < 1 {
+                    return Err(AppError::config("sync assignments must be positive"));
+                }
+                let existing: Option<i64> = tx.query_row(
+                    "SELECT MAX(primary_seq) FROM sync_outbox WHERE local_seq = ?",
+                    params![local_seq],
+                    |row| row.get(0),
+                )?;
+                if existing.is_some_and(|existing| existing != *primary_seq) {
+                    return Err(AppError::conflict("outbox canonical sequence changed"));
+                }
+                let updated = tx.execute(
+                    "UPDATE sync_outbox SET sent_at = CURRENT_TIMESTAMP, \
+                primary_seq = ? WHERE local_seq = ?",
+                    params![primary_seq, local_seq],
+                )?;
+                if updated == 0 {
+                    return Err(AppError::conflict(
+                        "outbox acknowledgement has no local event",
+                    ));
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Register or refresh a sync node's hostname and role.
+    pub fn register_sync_node(&self, node_id: &str, hostname: &str, role: &str) -> Result<()> {
+        self.store.with_tx(|tx| {
+            register_node_locked(tx, node_id, hostname, role)?;
+            Ok(())
+        })
+    }
+
+    /// Low-level journal import; HTTP uses the atomic page+journal apply path.
+    pub fn accept_sync_changes(
+        &self,
+        origin_node: &str,
+        changes: &[SyncChangeInput],
+    ) -> Result<Vec<i64>> {
+        self.preflight_sync_batch(origin_node, changes)?;
+        self.store.with_tx(|tx| {
+            let mut assigned = Vec::with_capacity(changes.len());
+            for change in changes {
+                assigned.push(accept_change_locked(tx, origin_node, change)?);
+            }
+            Ok(assigned)
+        })
+    }
+
+    /// The canonical stream includes a node's own events, so every replica replays
+    /// the same ordering and converges after conflicting offline edits.
+    pub fn pull_sync_changes(
+        &self,
+        node_id: &str,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<SyncChange>> {
+        validate_token("node_id", node_id)?;
+        if after < 0 {
+            return Err(AppError::config("sync cursor must be >= 0"));
+        }
+        let limit = limit.clamp(1, MAX_SYNC_BATCH);
+        let conn = self.store.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT primary_seq, origin_node, origin_seq, entity_kind, entity_id, operation, \
+            payload_json, content_hash, strftime(created_at, '%Y-%m-%dT%H:%M:%S.%fZ') FROM \
+            sync_changes WHERE primary_seq > ? ORDER BY primary_seq LIMIT {limit}"
+        ))?;
+        let rows = stmt.query_map(params![after], |row| {
+            Ok(SyncChange {
+                primary_seq: row.get(0)?,
+                origin_node: row.get(1)?,
+                change: SyncChangeInput {
+                    origin_seq: row.get(2)?,
+                    entity_kind: row.get(3)?,
+                    entity_id: row.get(4)?,
+                    operation: row.get(5)?,
+                    payload_json: row.get(6)?,
+                    content_hash: row.get(7)?,
+                    created_at: row.get(8)?,
+                },
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Primary-side delivery acknowledgement. Replica cursors advance only in
+    /// the transaction that records and applies (or defers) the canonical event.
+    pub fn acknowledge_sync_cursor(&self, node_id: &str, cursor: i64) -> Result<()> {
+        validate_token("node_id", node_id)?;
+        if cursor < 0 {
+            return Err(AppError::config("sync cursor must be >= 0"));
+        }
+        let conn = self.store.lock()?;
+        let latest: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(primary_seq), 0) FROM sync_changes",
+            [],
+            |row| row.get(0),
+        )?;
+        if cursor > latest {
+            return Err(AppError::config("sync cursor exceeds canonical journal"));
+        }
+        let updated = conn.execute(
+            "UPDATE sync_nodes SET last_seen_at = CURRENT_TIMESTAMP, \
+        pull_cursor = GREATEST(pull_cursor, ?) WHERE node_id = ?",
+            params![cursor, node_id],
+        )?;
+        if updated == 0 {
+            return Err(AppError::not_found("sync node is not registered"));
+        }
+        Ok(())
+    }
+
+    /// This node's pull cursor: what a replica's sync cycle needs, without
+    /// the counts and node listing of [`Store::sync_status`].
+    pub fn sync_pull_cursor(&self, node_id: &str) -> Result<i64> {
+        let conn = self.store.lock()?;
+        cursor_locked(&conn, node_id)
+    }
+
+    /// Summarize sync journal, outbox and cursor state for this node.
+    pub fn sync_status(
+        &self,
+        role: &str,
+        node_id: &str,
+        primary_url: Option<String>,
+    ) -> Result<SyncStatus> {
+        let conn = self.store.lock()?;
+        let latest_primary_seq: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(primary_seq), 0) FROM sync_changes",
+            [],
+            |row| row.get(0),
+        )?;
+        let mut stmt = conn.prepare(
+            "SELECT node_id, hostname, role, CAST(last_seen_at AS VARCHAR), last_push_seq, pull_cursor, last_error FROM sync_nodes ORDER BY role, hostname",
+        )?;
+        let nodes = stmt
+            .query_map([], |row| {
+                Ok(SyncNode {
+                    node_id: row.get(0)?,
+                    hostname: row.get(1)?,
+                    role: row.get(2)?,
+                    last_seen_at: row.get(3)?,
+                    last_push_seq: row.get(4)?,
+                    pull_cursor: row.get(5)?,
+                    last_error: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let pending_outbox: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sync_outbox WHERE sent_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(SyncStatus {
+            role: role.into(),
+            node_id: node_id.into(),
+            primary_url,
+            latest_primary_seq,
+            pending_outbox,
+            nodes,
+        })
+    }
 }
 
 #[cfg(test)]

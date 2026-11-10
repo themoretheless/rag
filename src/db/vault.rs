@@ -1,12 +1,12 @@
 //! Git-friendly Markdown vault export.
 
+use super::store::Recovery;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::Serialize;
 
-use super::Store;
 use crate::error::{AppError, Result};
 use crate::models::GraphFilter;
 
@@ -38,7 +38,85 @@ struct VaultManifest<'a> {
     embedding_manifest: &'a Option<crate::models::EmbeddingManifest>,
 }
 
-impl Store {
+fn document_path(document: &crate::models::Document) -> PathBuf {
+    let wing = safe_segment(document.wing.as_deref().unwrap_or("unfiled"));
+    let room = safe_segment(document.room.as_deref().unwrap_or("unfiled"));
+    let layer = safe_segment(&document.layer);
+    let title = safe_segment(&document.title);
+    let id = safe_segment(
+        &document
+            .id
+            .chars()
+            .take(VAULT_ID_SUFFIX_CHARS)
+            .collect::<String>(),
+    );
+    PathBuf::from("projects")
+        .join(wing)
+        .join(room)
+        .join(layer)
+        .join(format!("{title}--{id}.md"))
+}
+
+fn safe_segment(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.trim().chars() {
+        if ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out = out.trim_matches(['-', '.']).to_string();
+    if out.is_empty() {
+        "untitled".into()
+    } else {
+        out.chars().take(VAULT_SEGMENT_MAX_CHARS).collect()
+    }
+}
+
+fn markdown_document(document: &crate::models::Document) -> Result<String> {
+    let scalar = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into());
+    Ok(format!(
+        "---\nid: {}\nuri: {}\ntitle: {}\nwing: {}\nroom: {}\nlayer: {}\nkind: {}\nstatus: \
+        {}\npinned: {}\nboost: {}\nrevision: {}\ncontent_hash: {}\nsource_file: {}\ncreated_at: \
+        {}\nupdated_at: {}\nmetadata_json: {}\n---\n\n{}\n",
+        scalar(&document.id),
+        scalar(&document.uri),
+        scalar(&document.title),
+        scalar(document.wing.as_deref().unwrap_or("")),
+        scalar(document.room.as_deref().unwrap_or("")),
+        scalar(&document.layer),
+        scalar(&document.kind),
+        scalar(&document.status),
+        document.pinned,
+        document.boost,
+        document.revision,
+        scalar(document.content_hash.as_deref().unwrap_or("")),
+        scalar(document.source_file.as_deref().unwrap_or("")),
+        scalar(&document.created_at.to_rfc3339()),
+        scalar(&document.updated_at.to_rfc3339()),
+        scalar(&document.metadata_json),
+        document.content
+    ))
+}
+
+fn available_previous_path(path: &Path) -> PathBuf {
+    let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let base = format!(
+        "{}.previous-{stamp}",
+        path.file_name().and_then(|v| v.to_str()).unwrap_or("vault")
+    );
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut candidate = parent.join(&base);
+    let mut suffix = 2;
+    while candidate.exists() {
+        candidate = parent.join(format!("{base}-{suffix}"));
+        suffix += 1;
+    }
+    candidate
+}
+
+impl Recovery<'_> {
     /// Export human-readable Markdown plus machine-readable graph metadata.
     ///
     /// A complete vault is assembled in a sibling staging directory and then
@@ -50,10 +128,10 @@ impl Store {
         dry_run: bool,
         overwrite: bool,
     ) -> Result<VaultExportReport> {
-        let documents = self.list_documents()?;
-        let graph = self.get_graph_view(GraphFilter::default())?;
-        let manifest = self.get_embedding_manifest()?;
-        let ops = self.list_ops_log(500)?;
+        let documents = self.store.documents().list_documents()?;
+        let graph = self.store.graph().get_graph_view(GraphFilter::default())?;
+        let manifest = self.store.embedding_manifest().get_embedding_manifest()?;
+        let ops = self.store.ops_log().list_ops_log(500)?;
         let files = documents.len() as u64 + 3;
         let exists = path.exists();
         if exists && !overwrite {
@@ -147,87 +225,11 @@ impl Store {
     }
 }
 
-fn document_path(document: &crate::models::Document) -> PathBuf {
-    let wing = safe_segment(document.wing.as_deref().unwrap_or("unfiled"));
-    let room = safe_segment(document.room.as_deref().unwrap_or("unfiled"));
-    let layer = safe_segment(&document.layer);
-    let title = safe_segment(&document.title);
-    let id = safe_segment(
-        &document
-            .id
-            .chars()
-            .take(VAULT_ID_SUFFIX_CHARS)
-            .collect::<String>(),
-    );
-    PathBuf::from("projects")
-        .join(wing)
-        .join(room)
-        .join(layer)
-        .join(format!("{title}--{id}.md"))
-}
-
-fn safe_segment(value: &str) -> String {
-    let mut out = String::new();
-    for ch in value.trim().chars() {
-        if ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-            out.push(ch);
-        } else if !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    let out = out.trim_matches(['-', '.']).to_string();
-    if out.is_empty() {
-        "untitled".into()
-    } else {
-        out.chars().take(VAULT_SEGMENT_MAX_CHARS).collect()
-    }
-}
-
-fn markdown_document(document: &crate::models::Document) -> Result<String> {
-    let scalar = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into());
-    Ok(format!(
-        "---\nid: {}\nuri: {}\ntitle: {}\nwing: {}\nroom: {}\nlayer: {}\nkind: {}\nstatus: \
-        {}\npinned: {}\nboost: {}\nrevision: {}\ncontent_hash: {}\nsource_file: {}\ncreated_at: \
-        {}\nupdated_at: {}\nmetadata_json: {}\n---\n\n{}\n",
-        scalar(&document.id),
-        scalar(&document.uri),
-        scalar(&document.title),
-        scalar(document.wing.as_deref().unwrap_or("")),
-        scalar(document.room.as_deref().unwrap_or("")),
-        scalar(&document.layer),
-        scalar(&document.kind),
-        scalar(&document.status),
-        document.pinned,
-        document.boost,
-        document.revision,
-        scalar(document.content_hash.as_deref().unwrap_or("")),
-        scalar(document.source_file.as_deref().unwrap_or("")),
-        scalar(&document.created_at.to_rfc3339()),
-        scalar(&document.updated_at.to_rfc3339()),
-        scalar(&document.metadata_json),
-        document.content
-    ))
-}
-
-fn available_previous_path(path: &Path) -> PathBuf {
-    let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
-    let base = format!(
-        "{}.previous-{stamp}",
-        path.file_name().and_then(|v| v.to_str()).unwrap_or("vault")
-    );
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut candidate = parent.join(&base);
-    let mut suffix = 2;
-    while candidate.exists() {
-        candidate = parent.join(format!("{base}-{suffix}"));
-        suffix += 1;
-    }
-    candidate
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+
+    use crate::db::Store;
     use tempfile::TempDir;
 
     use super::*;

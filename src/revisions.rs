@@ -188,6 +188,7 @@ impl<'a> RevisionService<'a> {
                     crate::db::sync::SyncIdentity::current()?,
                 );
                 self.store
+                    .documents()
                     .write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
                         doc: &restored,
                         if_match_revision: Some(command.if_match_revision),

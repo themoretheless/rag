@@ -1,10 +1,11 @@
 //! Lean document catalog and project dashboard queries.
 
+use super::store::Documents;
 use chrono::{DateTime, Utc};
 use duckdb::types::ToSql;
 use serde::{Deserialize, Serialize};
 
-use super::store::{compiled_link_exists, Store};
+use super::store::compiled_link_exists;
 use crate::error::{AppError, Result};
 use crate::models::DrawerListItem;
 use crate::util::parse_db_timestamp;
@@ -37,14 +38,73 @@ pub struct DocumentCatalogPage {
     pub total: u64,
 }
 
-impl Store {
+fn catalog_where(filter: &DocumentCatalogFilter, alias: &str) -> (String, Vec<String>) {
+    let mut clauses = Vec::new();
+    let mut binds = Vec::new();
+    for (column, value) in [
+        ("wing", filter.wing.as_deref()),
+        ("room", filter.room.as_deref()),
+        ("source_file", filter.source_file.as_deref()),
+        ("layer", filter.layer.as_deref()),
+        ("kind", filter.kind.as_deref()),
+        ("status", filter.status.as_deref()),
+    ] {
+        if let Some(value) = value.and_then(clean) {
+            clauses.push(format!("{alias}.{column} = ?"));
+            binds.push(value.to_string());
+        }
+    }
+    if let Some(compiled) = filter.compiled {
+        let link = compiled_link_exists(alias);
+        clauses.push(if compiled {
+            link
+        } else {
+            format!("NOT {link}")
+        });
+    }
+    if filter.status.as_deref().and_then(clean).is_none() && !filter.include_archived {
+        clauses.push(crate::db::sql::active_document_sql(alias));
+    }
+    if let Some(query) = filter.q.as_deref().and_then(clean) {
+        clauses.push(format!(
+            "LOWER(COALESCE({alias}.title, '') || '\n' || COALESCE({alias}.uri, '') || '\n' || COALESCE({alias}.source_file, '')) LIKE ?"
+        ));
+        binds.push(format!("%{}%", query.to_lowercase()));
+    }
+    let where_sql = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
+    (where_sql, binds)
+}
+
+fn dynamic_params(values: &[String]) -> Vec<&dyn ToSql> {
+    values.iter().map(|value| value as &dyn ToSql).collect()
+}
+
+fn clean(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn timestamp(raw: String) -> Result<DateTime<Utc>> {
+    parse_db_timestamp(&raw)
+        .ok_or_else(|| AppError::db(format!("invalid catalog timestamp: {raw}")))
+}
+
+fn count(value: i64) -> u64 {
+    value.max(0) as u64
+}
+
+impl Documents<'_> {
     /// Return one lean catalog page without loading document bodies.
     pub fn list_document_catalog(
         &self,
         filter: &DocumentCatalogFilter,
     ) -> Result<DocumentCatalogPage> {
         let (where_sql, binds) = catalog_where(filter, "d");
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let count_sql = format!("SELECT COUNT(*)::BIGINT FROM documents d {where_sql}");
         let total: i64 = conn.query_row(&count_sql, dynamic_params(&binds).as_slice(), |row| {
             row.get(0)
@@ -101,7 +161,7 @@ impl Store {
         if project_id.is_empty() {
             return Err(AppError::config("project must be non-empty"));
         }
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let row = conn.query_row(
             r#"
             SELECT
@@ -164,7 +224,10 @@ impl Store {
             |row| row.get(0),
         )?;
         drop(conn);
-        let source_roots = self.list_source_roots(Some(project_id))?;
+        let source_roots = self
+            .store
+            .source_manifest()
+            .list_source_roots(Some(project_id))?;
         Ok(ProjectHome {
             project_id: project_id.to_string(),
             documents: count(row.0),
@@ -184,68 +247,10 @@ impl Store {
     }
 }
 
-fn catalog_where(filter: &DocumentCatalogFilter, alias: &str) -> (String, Vec<String>) {
-    let mut clauses = Vec::new();
-    let mut binds = Vec::new();
-    for (column, value) in [
-        ("wing", filter.wing.as_deref()),
-        ("room", filter.room.as_deref()),
-        ("source_file", filter.source_file.as_deref()),
-        ("layer", filter.layer.as_deref()),
-        ("kind", filter.kind.as_deref()),
-        ("status", filter.status.as_deref()),
-    ] {
-        if let Some(value) = value.and_then(clean) {
-            clauses.push(format!("{alias}.{column} = ?"));
-            binds.push(value.to_string());
-        }
-    }
-    if let Some(compiled) = filter.compiled {
-        let link = compiled_link_exists(alias);
-        clauses.push(if compiled {
-            link
-        } else {
-            format!("NOT {link}")
-        });
-    }
-    if filter.status.as_deref().and_then(clean).is_none() && !filter.include_archived {
-        clauses.push(crate::db::sql::active_document_sql(alias));
-    }
-    if let Some(query) = filter.q.as_deref().and_then(clean) {
-        clauses.push(format!(
-            "LOWER(COALESCE({alias}.title, '') || '\n' || COALESCE({alias}.uri, '') || '\n' || COALESCE({alias}.source_file, '')) LIKE ?"
-        ));
-        binds.push(format!("%{}%", query.to_lowercase()));
-    }
-    let where_sql = if clauses.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", clauses.join(" AND "))
-    };
-    (where_sql, binds)
-}
-
-fn dynamic_params(values: &[String]) -> Vec<&dyn ToSql> {
-    values.iter().map(|value| value as &dyn ToSql).collect()
-}
-
-fn clean(value: &str) -> Option<&str> {
-    let value = value.trim();
-    (!value.is_empty()).then_some(value)
-}
-
-fn timestamp(raw: String) -> Result<DateTime<Utc>> {
-    parse_db_timestamp(&raw)
-        .ok_or_else(|| AppError::db(format!("invalid catalog timestamp: {raw}")))
-}
-
-fn count(value: i64) -> u64 {
-    value.max(0) as u64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Store;
     use crate::models::{Chunk, Document, GraphEdge, GraphNode};
 
     /// The compile queue: the catalog's `compiled` filter must agree with the

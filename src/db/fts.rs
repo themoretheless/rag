@@ -854,6 +854,7 @@ fn drop_derived_fts_catalog(conn: &Connection) -> Result<()> {
         }
         drops = remaining;
     }
+
     #[cfg(test)]
     test_fts_crashpoint(conn, "leaves");
     // No CASCADE: replay must see an already empty schema, and unexpected

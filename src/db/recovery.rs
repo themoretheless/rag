@@ -206,6 +206,7 @@ mod import;
 mod publish;
 
 pub use self::bundle::*;
+pub use self::import::Recovery;
 use self::import::*;
 pub use self::publish::*;
 

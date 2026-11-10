@@ -5,10 +5,18 @@ use super::*;
 /// Largest uncompiled-raw sample or shelf queue read at once.
 const MAX_UNCOMPILED_ROWS: usize = 200;
 
-impl Store {
+/// Store health, statistics, FTS state, checkpoint/vacuum and duplicate-source cleanup.
+///
+/// A repository over the shared Store connection; get one from [`Store::maintenance`].
+#[derive(Clone, Copy)]
+pub struct Maintenance<'a> {
+    pub(in crate::db) store: &'a Store,
+}
+
+impl Maintenance<'_> {
     /// Counts: `(documents, chunks, graph_nodes, graph_edges)`.
     pub fn stats(&self) -> Result<(u64, u64, u64, u64)> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let docs: i64 = conn.query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))?;
         let chunks: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         let nodes: i64 = conn.query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0))?;
@@ -18,7 +26,7 @@ impl Store {
 
     /// Count raw/wiki compilation health in SQL without materializing document bodies.
     pub(crate) fn layer_health_counts(&self) -> Result<LayerHealthCounts> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
         let counts = conn.query_row(
             &format!(
@@ -82,7 +90,7 @@ impl Store {
     /// ([`Store::list_document_catalog`] with `layer=raw` and `compiled=false`).
     pub fn list_uncompiled_raw_sample(&self, limit: usize) -> Result<Vec<UncompiledRawSample>> {
         let limit = limit.clamp(1, MAX_UNCOMPILED_ROWS) as i64;
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
         let mut stmt = conn.prepare(&format!(
             r#"
@@ -118,7 +126,7 @@ impl Store {
     /// shelves. Counting in SQL ranks every shelf instead.
     pub(crate) fn uncompiled_raw_shelves(&self, limit: usize) -> Result<UncompiledShelfQueue> {
         let limit = limit.clamp(1, MAX_UNCOMPILED_ROWS) as i64;
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let uncompiled = format!("NOT {}", compiled_link_exists("raw"));
         // One predicate text for both the ranking and the queue width, so the two
         // numbers in the answer can't describe different corpora.
@@ -161,24 +169,24 @@ impl Store {
 
     /// Filesystem size of the main DuckDB file, when readable.
     pub fn db_file_size_bytes(&self) -> Option<u64> {
-        std::fs::metadata(&self.path).ok().map(|m| m.len())
+        std::fs::metadata(&self.store.path).ok().map(|m| m.len())
     }
 
     /// Size in bytes of the DuckDB WAL file, or 0 when absent.
     pub fn wal_file_size_bytes(&self) -> u64 {
-        let wal = PathBuf::from(format!("{}.wal", self.path.display()));
+        let wal = PathBuf::from(format!("{}.wal", self.store.path.display()));
         std::fs::metadata(wal).map(|m| m.len()).unwrap_or(0)
     }
 
     /// Run a DuckDB `CHECKPOINT`.
     pub fn checkpoint(&self) -> Result<()> {
-        self.lock()?.execute_batch("CHECKPOINT")?;
+        self.store.lock()?.execute_batch("CHECKPOINT")?;
         Ok(())
     }
 
     /// Counts for relationships that DuckDB does not enforce with foreign keys.
     pub fn integrity_counts(&self) -> Result<(u64, u64, u64, u64, u64)> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let scalar = |sql: &str| -> Result<u64> {
             let count: i64 = conn.query_row(sql, [], |row| row.get(0))?;
             Ok(count.max(0) as u64)
@@ -237,7 +245,7 @@ impl Store {
         if dry_run || (chunks == 0 && nodes == 0 && edges == 0) {
             return Ok((chunks, nodes, edges));
         }
-        let mut conn = self.lock()?;
+        let mut conn = self.store.lock()?;
         // A real transaction handle: any failing statement drops `tx` and rolls
         // back, so the shared connection never stays inside an open transaction.
         let tx = conn.transaction()?;
@@ -276,11 +284,11 @@ impl Store {
     /// Safe L0 maintenance: flushes the WAL into the main database file. Does not
     /// delete rows. Appends an `ops_log` entry (`op=vacuum_store`).
     pub fn vacuum_store(&self) -> Result<VacuumStoreReport> {
-        let db_path = self.path.display().to_string();
+        let db_path = self.store.path.display().to_string();
         let bytes_before = self.db_file_size_bytes();
 
         {
-            let conn = self.lock()?;
+            let conn = self.store.lock()?;
             conn.execute_batch("CHECKPOINT")?;
         }
 
@@ -304,7 +312,7 @@ impl Store {
             "bytes_delta": report.bytes_delta,
             "checkpointed": report.checkpointed,
         });
-        self.ops_log().record(
+        self.store.ops_log().record(
             &OpsLogEntry::new("vacuum_store", "MAINT", "DuckDB CHECKPOINT")
                 .entity(None, "store")
                 .payload(payload.to_string()),
@@ -315,7 +323,7 @@ impl Store {
 
     /// Highest applied schema version, if recorded.
     pub fn schema_version(&self) -> Result<Option<i32>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         schema::current_schema_version(&conn)
     }
 
@@ -324,19 +332,19 @@ impl Store {
     /// False under term-frequency fallback (lex still works via Rust TF).
     /// Does not INSTALL/LOAD the extension; observational only for status/doctor.
     pub fn fts_ready(&self) -> Result<bool> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         Ok(crate::db::fts::fts_index_present(&conn))
     }
 
     /// Last-known FTS backend from `meta`, if `ensure_fts` has run.
     pub fn fts_status(&self) -> Result<Option<crate::db::fts::FtsState>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         crate::db::fts::fts_status(&conn)
     }
 
     /// Rebuild the lexical index now; `None`/blank keeps the recorded stemmer.
     pub fn reindex_fts(&self, stemmer: Option<&str>) -> Result<crate::db::fts::FtsState> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         match stemmer.map(str::trim).filter(|s| !s.is_empty()) {
             Some(stemmer) => crate::db::fts::reindex_with_stemmer(&conn, stemmer),
             None => crate::db::fts::reindex(&conn),
@@ -345,7 +353,7 @@ impl Store {
 
     /// Generation counter bumped by every chunk text/row mutation.
     pub fn chunks_generation(&self) -> Result<u64> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         crate::db::fts::chunks_generation(&conn)
     }
 
@@ -355,7 +363,12 @@ impl Store {
     /// [`Store::open`] on server start so lex/hybrid search has a backend before
     /// the first MCP tool request.
     pub fn ensure_fts(&self, stemmer: &str) -> Result<crate::db::fts::FtsState> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         crate::db::fts::ensure_fts_with_stemmer(&conn, stemmer)
+    }
+
+    pub fn fts_generation_state(&self) -> Result<crate::db::fts::FtsGenerationState> {
+        let conn = self.store.lock()?;
+        crate::db::fts::fts_generation_state(&conn)
     }
 }

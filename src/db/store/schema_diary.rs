@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl Store {
+impl Documents<'_> {
     /// Schema document (`uri=schema://agents`) if present.
     ///
     /// Prefer exact URI match; fall back to the first `layer=schema` document.
@@ -64,7 +64,7 @@ impl Store {
              ORDER BY created_at DESC, id DESC \
              LIMIT {limit}"
         );
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(duckdb::params_from_iter(binds.iter()))?;
         let mut out = Vec::new();
@@ -85,7 +85,7 @@ impl Store {
         Ok(out)
     }
 
-    fn list_diary_entries_with(
+    pub(in crate::db) fn list_diary_entries_with(
         &self,
         agent_name: Option<&str>,
         limit: usize,
@@ -94,7 +94,7 @@ impl Store {
         let limit = limit.max(1);
         let agent = agent_name.map(str::trim).filter(|s| !s.is_empty());
 
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut out = Vec::new();
         if let Some(name) = agent {
             let wing = Self::diary_wing_for_agent(name);
@@ -137,7 +137,7 @@ impl Store {
     /// Order: boost DESC, updated_at DESC, title ASC. Excludes archived/tombstone.
     pub fn list_pinned_documents(&self, limit: usize) -> Result<Vec<Document>> {
         let limit = limit.max(1);
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!(
             "SELECT {DOCUMENT_SELECT} FROM documents \
              WHERE COALESCE(pinned, false) = true \

@@ -2,16 +2,155 @@
 
 use super::*;
 
-impl Store {
+/// Whitespace / punctuation tokenization for index query matching.
+pub(super) fn tokenize_index_query(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_ascii_lowercase())
+        .collect()
+}
+
+/// Field-weighted catalog score so top_k discriminates (slug > title > summary > kind).
+///
+/// Whole-token match (same tokenizer as query). Exact phrase on slug/title boosts hard.
+pub(super) fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32 {
+    if terms.is_empty() {
+        return 1.0;
+    }
+    let slug_tokens = tokenize_index_query(&entry.slug);
+    let title_tokens = tokenize_index_query(&entry.title);
+    let summary_tokens = tokenize_index_query(entry.summary.as_deref().unwrap_or(""));
+    let kind_tokens = tokenize_index_query(&entry.kind);
+    let cat_tokens = tokenize_index_query(entry.category.as_deref().unwrap_or(""));
+
+    let slug_lc = entry.slug.to_ascii_lowercase();
+    let title_lc = entry.title.to_ascii_lowercase();
+    let summary_lc = entry.summary.as_deref().unwrap_or("").to_ascii_lowercase();
+
+    let mut score = 0.0f32;
+    let mut terms_hit = 0u32;
+    for t in terms {
+        let mut hit = false;
+        if slug_tokens.iter().any(|h| h == t) {
+            score += 4.0;
+            hit = true;
+        }
+        if title_tokens.iter().any(|h| h == t) {
+            score += 3.0;
+            hit = true;
+        }
+        if summary_tokens.iter().any(|h| h == t) {
+            score += 1.5;
+            hit = true;
+        }
+        if kind_tokens.iter().any(|h| h == t) || cat_tokens.iter().any(|h| h == t) {
+            score += 0.5;
+            hit = true;
+        }
+        // Substring on slug/title only (e.g. "spine" in "spine-tools")
+        if !hit {
+            if slug_lc.contains(t.as_str()) {
+                score += 2.0;
+                hit = true;
+            } else if title_lc.contains(t.as_str()) {
+                score += 1.5;
+                hit = true;
+            } else if summary_lc.contains(t.as_str()) {
+                score += 0.75;
+                hit = true;
+            }
+        }
+        if hit {
+            terms_hit += 1;
+        }
+    }
+    if terms_hit == 0 {
+        return 0.0;
+    }
+
+    // Average per query term so longer queries do not dominate by raw sum alone.
+    score /= terms.len() as f32;
+
+    // Full-phrase identity / containment boosts ranking head.
+    let phrase = terms.join(" ");
+    let slug_phrase = slug_tokens.join(" ");
+    let title_phrase = title_tokens.join(" ");
+    if slug_phrase == phrase || title_phrase == phrase {
+        score += 2.0;
+    } else if slug_lc.contains(&phrase) || title_lc.contains(&phrase) {
+        score += 1.0;
+    }
+    // Prefer covering all query terms.
+    if terms_hit as usize == terms.len() {
+        score += 0.5;
+    }
+    score
+}
+
+pub(super) fn slugify(s: &str) -> String {
+    shared_slugify(s, SlugPolicy::IndexLookup)
+}
+
+// ---------------------------------------------------------------------------
+// Wiki catalog listing: SQL filter/count/page + lean DTO map
+// (kept free of search ranking and CAS upsert paths)
+// ---------------------------------------------------------------------------
+
+pub(super) fn upsert_wiki_index_entry_locked(
+    conn: &Connection,
+    entry: &WikiIndexEntry,
+) -> Result<()> {
+    let title = if entry.title.is_empty() {
+        entry.slug.clone()
+    } else {
+        entry.title.clone()
+    };
+    let label = title.clone();
+    let page_id = entry.page_id.clone();
+    let document_id = page_id.clone();
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO wiki_index
+          (id, slug, title, label, kind, summary, category, document_id, page_id, updated_at)
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
+        "#,
+        params![
+            entry.id,
+            entry.slug,
+            title,
+            label,
+            entry.kind,
+            entry.summary,
+            entry.category,
+            document_id,
+            page_id,
+            format_ts(entry.updated_at),
+        ],
+    )?;
+    Ok(())
+}
+
+/// The wiki content catalog (`wiki_index`).
+///
+/// A repository over the shared Store connection; get one from [`Store::wiki_index`].
+#[derive(Clone, Copy)]
+pub struct WikiIndexRepo<'a> {
+    pub(in crate::db) store: &'a Store,
+}
+
+impl WikiIndexRepo<'_> {
     /// Upsert a wiki index catalog entry (by primary key `id` or by `slug`).
     pub fn upsert_wiki_index_entry(&self, entry: &WikiIndexEntry) -> Result<()> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         upsert_wiki_index_entry_locked(&conn, entry)
     }
 
     /// List all wiki index entries (catalog).
     pub fn list_wiki_index(&self) -> Result<Vec<WikiIndexEntry>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT id,
@@ -31,7 +170,7 @@ impl Store {
 
     /// Find wiki index entry by slug.
     pub fn get_wiki_index_by_slug(&self, slug: &str) -> Result<Option<WikiIndexEntry>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT id,
@@ -55,7 +194,7 @@ impl Store {
 
     /// Delete wiki index entry by id.
     pub fn delete_wiki_index_entry(&self, id: &str) -> Result<bool> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let n = conn.execute("DELETE FROM wiki_index WHERE id = ?", params![id])?;
         Ok(n > 0)
     }
@@ -66,7 +205,7 @@ impl Store {
     /// (or `metadata_json.summary` when present). Category from
     /// `metadata_json.category` when set.
     pub fn rebuild_wiki_index_from_docs(&self) -> Result<usize> {
-        let docs = self.list_documents_by_layer("wiki")?;
+        let docs = self.store.documents().list_documents_by_layer("wiki")?;
         let now = Utc::now();
         let entries: Vec<WikiIndexEntry> = docs
             .into_iter()
@@ -93,7 +232,7 @@ impl Store {
             .collect();
         // Clear and refill atomically: readers never observe an empty or
         // half-built catalog, and the rebuild is one commit instead of N.
-        self.with_tx(|tx| {
+        self.store.with_tx(|tx| {
             tx.execute("DELETE FROM wiki_index", [])?;
             for entry in &entries {
                 upsert_wiki_index_entry_locked(tx, entry)?;
@@ -254,135 +393,4 @@ impl Store {
             .map(|(score, entry)| crate::models::IndexQueryMatch { entry, score })
             .collect())
     }
-}
-
-/// Whitespace / punctuation tokenization for index query matching.
-pub(super) fn tokenize_index_query(query: &str) -> Vec<String> {
-    query
-        .split(|c: char| !c.is_alphanumeric())
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(|t| t.to_ascii_lowercase())
-        .collect()
-}
-
-/// Field-weighted catalog score so top_k discriminates (slug > title > summary > kind).
-///
-/// Whole-token match (same tokenizer as query). Exact phrase on slug/title boosts hard.
-pub(super) fn score_index_entry(entry: &WikiIndexEntry, terms: &[String]) -> f32 {
-    if terms.is_empty() {
-        return 1.0;
-    }
-    let slug_tokens = tokenize_index_query(&entry.slug);
-    let title_tokens = tokenize_index_query(&entry.title);
-    let summary_tokens = tokenize_index_query(entry.summary.as_deref().unwrap_or(""));
-    let kind_tokens = tokenize_index_query(&entry.kind);
-    let cat_tokens = tokenize_index_query(entry.category.as_deref().unwrap_or(""));
-
-    let slug_lc = entry.slug.to_ascii_lowercase();
-    let title_lc = entry.title.to_ascii_lowercase();
-    let summary_lc = entry.summary.as_deref().unwrap_or("").to_ascii_lowercase();
-
-    let mut score = 0.0f32;
-    let mut terms_hit = 0u32;
-    for t in terms {
-        let mut hit = false;
-        if slug_tokens.iter().any(|h| h == t) {
-            score += 4.0;
-            hit = true;
-        }
-        if title_tokens.iter().any(|h| h == t) {
-            score += 3.0;
-            hit = true;
-        }
-        if summary_tokens.iter().any(|h| h == t) {
-            score += 1.5;
-            hit = true;
-        }
-        if kind_tokens.iter().any(|h| h == t) || cat_tokens.iter().any(|h| h == t) {
-            score += 0.5;
-            hit = true;
-        }
-        // Substring on slug/title only (e.g. "spine" in "spine-tools")
-        if !hit {
-            if slug_lc.contains(t.as_str()) {
-                score += 2.0;
-                hit = true;
-            } else if title_lc.contains(t.as_str()) {
-                score += 1.5;
-                hit = true;
-            } else if summary_lc.contains(t.as_str()) {
-                score += 0.75;
-                hit = true;
-            }
-        }
-        if hit {
-            terms_hit += 1;
-        }
-    }
-    if terms_hit == 0 {
-        return 0.0;
-    }
-
-    // Average per query term so longer queries do not dominate by raw sum alone.
-    score /= terms.len() as f32;
-
-    // Full-phrase identity / containment boosts ranking head.
-    let phrase = terms.join(" ");
-    let slug_phrase = slug_tokens.join(" ");
-    let title_phrase = title_tokens.join(" ");
-    if slug_phrase == phrase || title_phrase == phrase {
-        score += 2.0;
-    } else if slug_lc.contains(&phrase) || title_lc.contains(&phrase) {
-        score += 1.0;
-    }
-    // Prefer covering all query terms.
-    if terms_hit as usize == terms.len() {
-        score += 0.5;
-    }
-    score
-}
-
-pub(super) fn slugify(s: &str) -> String {
-    shared_slugify(s, SlugPolicy::IndexLookup)
-}
-
-// ---------------------------------------------------------------------------
-// Wiki catalog listing: SQL filter/count/page + lean DTO map
-// (kept free of search ranking and CAS upsert paths)
-// ---------------------------------------------------------------------------
-
-pub(super) fn upsert_wiki_index_entry_locked(
-    conn: &Connection,
-    entry: &WikiIndexEntry,
-) -> Result<()> {
-    let title = if entry.title.is_empty() {
-        entry.slug.clone()
-    } else {
-        entry.title.clone()
-    };
-    let label = title.clone();
-    let page_id = entry.page_id.clone();
-    let document_id = page_id.clone();
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO wiki_index
-          (id, slug, title, label, kind, summary, category, document_id, page_id, updated_at)
-        VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP))
-        "#,
-        params![
-            entry.id,
-            entry.slug,
-            title,
-            label,
-            entry.kind,
-            entry.summary,
-            entry.category,
-            document_id,
-            page_id,
-            format_ts(entry.updated_at),
-        ],
-    )?;
-    Ok(())
 }

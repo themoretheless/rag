@@ -5,10 +5,10 @@ use super::*;
 /// Largest page of document revisions read at once.
 const MAX_REVISIONS_PAGE: usize = 200;
 
-impl Store {
+impl Documents<'_> {
     /// Historical document snapshots, newest revision first.
     pub fn list_document_revisions(&self, document_id: &str) -> Result<Vec<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, \
             room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS \
@@ -33,7 +33,7 @@ impl Store {
             return Err(AppError::config("document_id must be non-empty"));
         }
         let limit = limit.clamp(1, MAX_REVISIONS_PAGE);
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let total: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM document_revisions WHERE document_id = ?",
             params![document_id],
@@ -88,7 +88,7 @@ impl Store {
         if revision < 1 {
             return Err(AppError::config("revision must be >= 1"));
         }
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             "SELECT document_id AS id, uri, title, content, metadata_json, content_hash, wing, \
             room, source_file, layer, kind, CAST(created_at AS VARCHAR), CAST(updated_at AS \

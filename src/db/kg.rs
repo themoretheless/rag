@@ -43,7 +43,109 @@ pub struct KgSupersedeInput<'a> {
     pub confidence: Option<f64>,
 }
 
-impl Store {
+fn load_fact_locked(conn: &duckdb::Connection, id: &str) -> Result<Option<KgFact>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {KG_FACT_SELECT} FROM kg_facts WHERE id = ? LIMIT 1"
+    ))?;
+    let mut rows = stmt.query(params![id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row_to_kg_fact(row)?)),
+        None => Ok(None),
+    }
+}
+
+fn row_to_kg_fact(row: &duckdb::Row<'_>) -> Result<KgFact> {
+    let valid_from = opt_parse_ts(row.get::<_, Option<String>>(4)?)?;
+    let valid_to = opt_parse_ts(row.get::<_, Option<String>>(5)?)?;
+    let created_raw: String = row.get(12)?;
+    let updated_raw: Option<String> = row.get(13)?;
+    let invalidated_at = opt_parse_ts(row.get::<_, Option<String>>(14)?)?;
+
+    let created_at = parse_ts(&created_raw)?;
+    let updated_at = match updated_raw {
+        Some(s) if !s.trim().is_empty() => parse_ts(&s)?,
+        _ => created_at,
+    };
+
+    let status: Option<String> = row.get(6)?;
+    let metadata: Option<String> = row.get(11)?;
+
+    Ok(KgFact {
+        id: row.get(0)?,
+        subject: row.get(1)?,
+        predicate: row.get(2)?,
+        object: row.get(3)?,
+        valid_from,
+        valid_to,
+        status: status
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "active".into()),
+        superseded_by: row.get(7)?,
+        source_document_id: row.get(8)?,
+        source: row.get(9)?,
+        confidence: row.get(10)?,
+        metadata_json: metadata
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "{}".into()),
+        created_at,
+        updated_at,
+        invalidated_at,
+    })
+}
+
+fn require_nonempty(s: &str, field: &str) -> Result<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        return Err(AppError::config(format!("kg: {field} must be non-empty")));
+    }
+    Ok(t.to_string())
+}
+
+fn normalize_predicate(predicate: &str) -> Result<String> {
+    let t = require_nonempty(predicate, "predicate")?;
+    Ok(t.to_ascii_lowercase().replace(' ', "_"))
+}
+
+fn opt_trim(s: Option<&str>) -> Option<String> {
+    s.map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(|x| x.to_string())
+}
+
+fn check_window(valid_from: Option<DateTime<Utc>>, valid_to: Option<DateTime<Utc>>) -> Result<()> {
+    if let (Some(from), Some(to)) = (valid_from, valid_to) {
+        if to < from {
+            return Err(AppError::config(format!(
+                "kg: valid_to ({}) is before valid_from ({})",
+                format_ts(to),
+                format_ts(from)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn opt_parse_ts(raw: Option<String>) -> Result<Option<DateTime<Utc>>> {
+    match raw {
+        Some(s) if !s.trim().is_empty() => Ok(Some(parse_ts(&s)?)),
+        _ => Ok(None),
+    }
+}
+
+fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
+    parse_flexible_timestamp(s)
+        .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
+}
+
+/// Temporal knowledge-graph facts.
+///
+/// A repository over the shared Store connection; get one from [`Store::kg`].
+#[derive(Clone, Copy)]
+pub struct KgRepo<'a> {
+    pub(in crate::db) store: &'a Store,
+}
+
+impl KgRepo<'_> {
     /// Insert a temporal fact. Idempotent for open active SPO matches (returns existing).
     ///
     /// Validity is half-open `[valid_from, valid_to)`. Rejects inverted windows.
@@ -71,7 +173,7 @@ impl Store {
         let now = Utc::now();
         let now_s = format_ts(now);
 
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
 
         // Idempotent: same open active SPO already present.
         {
@@ -129,7 +231,7 @@ impl Store {
     }
 
     /// SQL and binds for the SPO / point-in-time filters of [`Self::kg_query`].
-    fn kg_query_sql(
+    pub(in crate::db) fn kg_query_sql(
         subject: Option<&str>,
         predicate: Option<&str>,
         object: Option<&str>,
@@ -202,7 +304,7 @@ impl Store {
         limit: Option<usize>,
     ) -> Result<(Vec<KgFact>, usize)> {
         let (sql, binds) = Self::kg_query_sql(subject, predicate, object, at_time)?;
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let param_refs: Vec<&dyn duckdb::ToSql> =
             binds.iter().map(|s| s as &dyn duckdb::ToSql).collect();
         let Some(limit) = limit else {
@@ -238,7 +340,7 @@ impl Store {
         let ended_s = format_ts(ended);
         let now_s = format_ts(Utc::now());
 
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
 
         // Collect ids first so we can validate windows and return updated rows.
         let mut ids: Vec<String> = Vec::new();
@@ -323,7 +425,7 @@ impl Store {
         let source_document_id = opt_trim(source_document_id);
         let conf = confidence.unwrap_or(1.0);
 
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
 
         // Close open old facts at the shared boundary.
         let mut old_ids: Vec<String> = Vec::new();
@@ -423,7 +525,7 @@ impl Store {
     /// Chronological facts for a subject (any status), ordered by `valid_from`.
     pub fn kg_timeline(&self, subject: &str) -> Result<Vec<KgFact>> {
         let subject = require_nonempty(subject, "subject")?;
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
             r#"
             SELECT {KG_FACT_SELECT}
@@ -438,7 +540,7 @@ impl Store {
 
     /// Aggregate counts and distinct relationship types.
     pub fn kg_stats(&self) -> Result<KgStats> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
 
         let total_facts: i64 = conn.query_row("SELECT COUNT(*) FROM kg_facts", [], |r| r.get(0))?;
         let active_facts: i64 = conn.query_row(
@@ -488,103 +590,9 @@ impl Store {
 
     /// Load one fact by primary key.
     pub fn kg_get(&self, fact_id: &str) -> Result<Option<KgFact>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         load_fact_locked(&conn, fact_id)
     }
-}
-
-fn load_fact_locked(conn: &duckdb::Connection, id: &str) -> Result<Option<KgFact>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {KG_FACT_SELECT} FROM kg_facts WHERE id = ? LIMIT 1"
-    ))?;
-    let mut rows = stmt.query(params![id])?;
-    match rows.next()? {
-        Some(row) => Ok(Some(row_to_kg_fact(row)?)),
-        None => Ok(None),
-    }
-}
-
-fn row_to_kg_fact(row: &duckdb::Row<'_>) -> Result<KgFact> {
-    let valid_from = opt_parse_ts(row.get::<_, Option<String>>(4)?)?;
-    let valid_to = opt_parse_ts(row.get::<_, Option<String>>(5)?)?;
-    let created_raw: String = row.get(12)?;
-    let updated_raw: Option<String> = row.get(13)?;
-    let invalidated_at = opt_parse_ts(row.get::<_, Option<String>>(14)?)?;
-
-    let created_at = parse_ts(&created_raw)?;
-    let updated_at = match updated_raw {
-        Some(s) if !s.trim().is_empty() => parse_ts(&s)?,
-        _ => created_at,
-    };
-
-    let status: Option<String> = row.get(6)?;
-    let metadata: Option<String> = row.get(11)?;
-
-    Ok(KgFact {
-        id: row.get(0)?,
-        subject: row.get(1)?,
-        predicate: row.get(2)?,
-        object: row.get(3)?,
-        valid_from,
-        valid_to,
-        status: status
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "active".into()),
-        superseded_by: row.get(7)?,
-        source_document_id: row.get(8)?,
-        source: row.get(9)?,
-        confidence: row.get(10)?,
-        metadata_json: metadata
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "{}".into()),
-        created_at,
-        updated_at,
-        invalidated_at,
-    })
-}
-
-fn require_nonempty(s: &str, field: &str) -> Result<String> {
-    let t = s.trim();
-    if t.is_empty() {
-        return Err(AppError::config(format!("kg: {field} must be non-empty")));
-    }
-    Ok(t.to_string())
-}
-
-fn normalize_predicate(predicate: &str) -> Result<String> {
-    let t = require_nonempty(predicate, "predicate")?;
-    Ok(t.to_ascii_lowercase().replace(' ', "_"))
-}
-
-fn opt_trim(s: Option<&str>) -> Option<String> {
-    s.map(str::trim)
-        .filter(|x| !x.is_empty())
-        .map(|x| x.to_string())
-}
-
-fn check_window(valid_from: Option<DateTime<Utc>>, valid_to: Option<DateTime<Utc>>) -> Result<()> {
-    if let (Some(from), Some(to)) = (valid_from, valid_to) {
-        if to < from {
-            return Err(AppError::config(format!(
-                "kg: valid_to ({}) is before valid_from ({})",
-                format_ts(to),
-                format_ts(from)
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn opt_parse_ts(raw: Option<String>) -> Result<Option<DateTime<Utc>>> {
-    match raw {
-        Some(s) if !s.trim().is_empty() => Ok(Some(parse_ts(&s)?)),
-        _ => Ok(None),
-    }
-}
-
-fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
-    parse_flexible_timestamp(s)
-        .ok_or_else(|| AppError::db(format!("invalid timestamp value: {}", s.trim())))
 }
 
 #[cfg(test)]

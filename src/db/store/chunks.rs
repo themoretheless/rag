@@ -11,10 +11,18 @@ pub(crate) struct ChunkBody {
     pub metadata_json: String,
 }
 
-impl Store {
+/// Chunk rows and their embeddings.
+///
+/// A repository over the shared Store connection; get one from [`Store::chunks`].
+#[derive(Clone, Copy)]
+pub struct Chunks<'a> {
+    pub(in crate::db) store: &'a Store,
+}
+
+impl Chunks<'_> {
     /// List chunks for a document ordered by `chunk_index`.
     pub fn list_chunks_for_document(&self, doc_id: &str) -> Result<Vec<Chunk>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         list_chunks_for_document_locked(&conn, doc_id)
     }
 
@@ -33,7 +41,7 @@ impl Store {
         low: i32,
         high: i32,
     ) -> Result<Vec<ChunkBody>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare_cached(
             r#"
             SELECT id, chunk_index, content, metadata_json
@@ -64,7 +72,7 @@ impl Store {
             return Ok(out);
         }
         let placeholders = crate::db::sql::in_placeholders(document_ids.len());
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT content, embedding_json FROM chunks WHERE document_id IN ({placeholders})"
         ))?;
@@ -92,7 +100,7 @@ impl Store {
             return Ok(std::collections::HashMap::new());
         }
         let placeholders = crate::db::sql::in_placeholders(chunk_ids.len());
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT id, metadata_json FROM chunks WHERE id IN ({placeholders})"
         ))?;
@@ -169,7 +177,7 @@ impl Store {
             "#
         );
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut statement = conn.prepare(&sql)?;
         let mut rows = statement.query(params![limit])?;
         let mut samples = Vec::new();
@@ -203,7 +211,7 @@ impl Store {
             return Ok(out);
         }
         let placeholders = crate::db::sql::in_placeholders(document_ids.len());
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
             r#"
             WITH firsts AS (
@@ -238,7 +246,7 @@ impl Store {
 
     /// Load every chunk with its embedding (for in-process vector search).
     pub fn all_chunks_with_embeddings(&self) -> Result<Vec<Chunk>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
@@ -254,7 +262,8 @@ impl Store {
     /// Atomically replace all chunks for a document, preserving caller-supplied ids.
     pub fn replace_chunks_for_document(&self, document_id: &str, chunks: &[Chunk]) -> Result<()> {
         let embedding_json = embedding_json(chunks)?;
-        self.with_tx(|tx| replace_chunks_locked(tx, document_id, chunks, &embedding_json))
+        self.store
+            .with_tx(|tx| replace_chunks_locked(tx, document_id, chunks, &embedding_json))
     }
 
     /// Atomically replace only the embeddings of an unchanged chunk set.
@@ -287,7 +296,7 @@ impl Store {
         )
     }
 
-    pub(super) fn update_chunk_embeddings_atomic_with(
+    pub(in crate::db) fn update_chunk_embeddings_atomic_with(
         &self,
         document_id: &str,
         if_match_revision: i64,
@@ -359,7 +368,7 @@ impl Store {
             .map(serde_json::to_string)
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        self.with_tx(|tx| {
+        self.store.with_tx(|tx| {
             let current_revision = match tx.query_row(
                 "SELECT COALESCE(revision, 1) FROM documents WHERE id = ?",
                 params![document_id],
@@ -420,5 +429,37 @@ impl Store {
         })
     }
 
-    // --- Karpathy wiki: ops_log + wiki_index + layer helpers ---
+    /// Insert chunk rows. Embeddings are stored as JSON float arrays in `embedding_json`.
+    pub fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()> {
+        if chunks.is_empty() {
+            return Ok(());
+        }
+
+        let embedding_json = embedding_json(chunks)?;
+        let documents: std::collections::BTreeSet<&str> = chunks
+            .iter()
+            .map(|chunk| chunk.document_id.as_str())
+            .collect();
+        let documents: Vec<&str> = documents.into_iter().collect();
+        let conn = self.store.lock()?;
+        crate::db::fts::mark_chunks_changed_for(&conn, &documents)?;
+        insert_chunks_locked(&conn, chunks, &embedding_json)
+    }
+
+    /// Count chunks without loading their text or vectors.
+    pub(crate) fn count_chunks_for_document(&self, document_id: &str) -> Result<u64> {
+        let conn = self.store.lock()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
+            params![document_id],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
+    pub fn delete_chunks_for_document(&self, document_id: &str) -> Result<()> {
+        let conn = self.store.lock()?;
+        replace_chunks_locked(&conn, document_id, &[], &[])
+    }
 }

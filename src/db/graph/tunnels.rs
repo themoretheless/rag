@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl Store {
+impl GraphRepo<'_> {
     /// Create an explicit tunnel edge between two existing nodes.
     ///
     /// Tunnels are treated as undirected for dedup: a second call with the same
@@ -44,7 +44,7 @@ impl Store {
         }
 
         if let Some(existing) = self.find_tunnel_between(source_id, target_id)? {
-            let conn = self.lock()?;
+            let conn = self.store.lock()?;
             let ctx = context.map(str::trim).filter(|s| !s.is_empty());
             conn.execute(
                 r#"
@@ -83,7 +83,7 @@ impl Store {
     ///
     /// Ordered by `id` ascending. Empty graph → empty vec.
     pub fn list_tunnels(&self, node_id: Option<&str>) -> Result<Vec<GraphEdge>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let node_id = node_id.map(str::trim).filter(|s| !s.is_empty());
         let mut out = Vec::new();
         if let Some(nid) = node_id {
@@ -127,7 +127,7 @@ impl Store {
                 "delete_tunnel requires non-empty tunnel_id",
             ));
         }
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let n = conn.execute(
             "DELETE FROM graph_edges WHERE id = ? AND rel_type = ?",
             params![tunnel_id, REL_TUNNEL],
@@ -150,7 +150,7 @@ impl Store {
             ));
         }
 
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         if load_node_locked(&conn, node_id)?.is_none() {
             return Ok(GraphView::default());
         }
@@ -191,7 +191,7 @@ impl Store {
 
         let mut edges = if let (Some(a), Some(b)) = (node_id, other_node_id) {
             // Pair: tunnels between a and b (either direction).
-            let conn = self.lock()?;
+            let conn = self.store.lock()?;
             let mut stmt = conn.prepare(
                 r#"
                 SELECT id, source_id, target_id, rel_type, weight, context
@@ -234,7 +234,7 @@ impl Store {
     }
 
     /// Which of `node_ids` are linked to a document in `wing`, in one query.
-    pub(super) fn nodes_in_wing(
+    pub(in crate::db) fn nodes_in_wing(
         &self,
         node_ids: &[&str],
         wing: &str,
@@ -243,7 +243,7 @@ impl Store {
             return Ok(std::collections::HashSet::new());
         }
         let placeholders = crate::db::sql::in_placeholders(node_ids.len());
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT n.id FROM graph_nodes n JOIN documents d ON d.id = n.document_id \
              WHERE d.wing = ? AND n.id IN ({placeholders})"
@@ -257,8 +257,8 @@ impl Store {
     }
 
     /// Existing tunnel edge between two nodes (either direction), if any.
-    pub(super) fn find_tunnel_between(&self, a: &str, b: &str) -> Result<Option<GraphEdge>> {
-        let conn = self.lock()?;
+    pub(in crate::db) fn find_tunnel_between(&self, a: &str, b: &str) -> Result<Option<GraphEdge>> {
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT id, source_id, target_id, rel_type, weight, context

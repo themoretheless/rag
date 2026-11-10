@@ -314,7 +314,7 @@ impl<'a> DiagnosticsService<'a> {
             }
         }
         let (orphan_chunks_pruned, orphan_document_nodes_pruned, orphan_edges_pruned) =
-            crate::util::blocking_section(|| self.store.prune_orphans(dry_run))?;
+            crate::util::blocking_section(|| self.store.maintenance().prune_orphans(dry_run))?;
         if !dry_run {
             if !documents_repaired.is_empty() || orphan_chunks_pruned > 0 {
                 // Repair is a bounded corpus operation. Publish its derived

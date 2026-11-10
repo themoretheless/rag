@@ -10,16 +10,57 @@ pub(crate) struct DocumentRef {
     pub layer: String,
 }
 
-impl Store {
+/// `(label, document key)` of each wikilink source in a backlinks `view` of
+/// `target_id`, sorted by label with adjacent duplicate keys collapsed.
+pub fn wiki_backlink_rows(
+    target_id: &str,
+    view: &crate::models::GraphView,
+) -> Vec<(String, String)> {
+    let nodes: std::collections::HashMap<&str, &crate::models::GraphNode> = view
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
+    let mut out = Vec::new();
+    for e in &view.edges {
+        if e.target_id != target_id || e.rel_type != "wikilink" {
+            continue;
+        }
+        let Some(src) = nodes.get(e.source_id.as_str()) else {
+            continue;
+        };
+        let key = src.document_id.clone().unwrap_or_else(|| src.id.clone());
+        out.push((src.label.clone(), key));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.dedup_by(|a, b| a.1 == b.1);
+    out
+}
+
+/// [`DOCUMENT_SELECT`] with an empty `content`, for listings that never read
+/// document bodies.
+pub(super) fn document_select_without_body() -> String {
+    DOCUMENT_SELECT.replacen("content,", "'' AS content,", 1)
+}
+
+/// Document rows: reads, catalog, placement and metadata, revisions, diary and schema documents, and the atomic document writers.
+///
+/// A repository over the shared Store connection; get one from [`Store::documents`].
+#[derive(Clone, Copy)]
+pub struct Documents<'a> {
+    pub(in crate::db) store: &'a Store,
+}
+
+impl Documents<'_> {
     /// Fetch a document by id.
     pub fn get_document(&self, id: &str) -> Result<Option<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         get_document_locked(&conn, id)
     }
 
     /// Fetch a document by stable URI (re-ingest lookup).
     pub fn find_by_uri(&self, uri: &str) -> Result<Option<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents WHERE uri = ? LIMIT 1");
         let mut stmt = conn.prepare(&sql)?;
 
@@ -50,7 +91,7 @@ impl Store {
             return Ok(std::collections::HashMap::new());
         }
         let placeholders = crate::db::sql::in_placeholders(ids.len());
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT id, content_hash FROM documents WHERE id IN ({placeholders})"
         ))?;
@@ -68,7 +109,7 @@ impl Store {
 
     /// All documents with the given `content_hash`, ordered by `created_at` ascending.
     pub fn list_by_content_hash(&self, hash: &str) -> Result<Vec<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!(
             "SELECT {DOCUMENT_SELECT} FROM documents WHERE content_hash = ? ORDER BY created_at ASC"
         );
@@ -167,7 +208,7 @@ impl Store {
 
     /// List all documents ordered by `created_at` ascending.
     pub fn list_documents(&self) -> Result<Vec<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!("SELECT {DOCUMENT_SELECT} FROM documents ORDER BY created_at ASC");
         let mut stmt = conn.prepare(&sql)?;
 
@@ -177,7 +218,7 @@ impl Store {
 
     /// Current `revision` of one document, without loading its body.
     pub(crate) fn document_revision(&self, id: &str) -> Result<Option<i64>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare_cached("SELECT revision FROM documents WHERE id = ?")?;
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
@@ -188,7 +229,7 @@ impl Store {
 
     /// `(id, uri)` of one document, without loading its body.
     pub(crate) fn document_id_and_uri(&self, id: &str) -> Result<Option<(String, String)>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare_cached("SELECT id, uri FROM documents WHERE id = ?")?;
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
@@ -199,7 +240,7 @@ impl Store {
 
     /// `(id, uri, layer)` of every document ordered by `created_at`, without bodies.
     pub(crate) fn list_document_refs(&self) -> Result<Vec<DocumentRef>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt =
             conn.prepare("SELECT id, uri, layer FROM documents ORDER BY created_at ASC")?;
         crate::db::rows::query_vec(&mut stmt, [], |row| {
@@ -213,7 +254,7 @@ impl Store {
 
     /// Count documents without loading document bodies.
     pub(crate) fn count_documents(&self) -> Result<usize> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let count: i64 = conn.query_row("SELECT COUNT(*)::BIGINT FROM documents", [], |row| {
             row.get(0)
         })?;
@@ -222,7 +263,7 @@ impl Store {
 
     /// Count documents in one layer without loading their bodies.
     pub(crate) fn count_documents_by_layer(&self, layer: &str) -> Result<usize> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM documents WHERE layer = ?",
             params![layer],
@@ -233,7 +274,7 @@ impl Store {
 
     /// Count documents eligible for a graph rebuild.
     pub(crate) fn count_graph_rebuild_candidates(&self, dirty_only: bool) -> Result<usize> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             r#"
             SELECT COUNT(*)::BIGINT
@@ -259,7 +300,7 @@ impl Store {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!(
             "SELECT {DOCUMENT_SELECT} FROM documents d \
              WHERE (NOT ? OR NOT EXISTS (SELECT 1 FROM graph_nodes n WHERE n.document_id = d.id)) \
@@ -284,7 +325,7 @@ impl Store {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut statement =
             conn.prepare("SELECT id FROM documents WHERE id > ? ORDER BY id ASC LIMIT ?")?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
@@ -301,7 +342,7 @@ impl Store {
         if limit == 0 {
             return Ok(0);
         }
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let count: i64 = conn.query_row(
             r#"
@@ -327,7 +368,7 @@ impl Store {
         keep_id: &str,
         limit: usize,
     ) -> Result<(usize, Vec<String>)> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*)::BIGINT FROM documents WHERE content_hash = ? AND id <> ?",
             params![hash, keep_id],
@@ -357,7 +398,7 @@ impl Store {
         &self,
         limit: usize,
     ) -> Result<(usize, Vec<Document>)> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let predicate = format!(
             r#"
             {ACTIVE_DOCUMENT_SQL}
@@ -391,7 +432,7 @@ impl Store {
         &self,
         limit: usize,
     ) -> Result<(usize, Vec<Document>)> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let predicate = r#"
             LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) <> 'schema'
             AND TRIM(COALESCE(content, '')) <> ''
@@ -416,7 +457,7 @@ impl Store {
 
     /// List documents with the given `layer` (`raw`, `wiki`, …), ordered by `created_at`.
     pub fn list_documents_by_layer(&self, layer: &str) -> Result<Vec<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!(
             "SELECT {DOCUMENT_SELECT} FROM documents WHERE layer = ? ORDER BY created_at ASC"
         );
@@ -432,7 +473,7 @@ impl Store {
         &self,
         layer: &str,
     ) -> Result<Vec<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!(
             "SELECT {} FROM documents WHERE layer = ? ORDER BY created_at ASC",
             document_select_without_body()
@@ -450,7 +491,7 @@ impl Store {
             return Ok(std::collections::HashMap::new());
         }
         let placeholders = crate::db::sql::in_placeholders(ids.len());
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT id, content FROM documents WHERE id IN ({placeholders})"
         ))?;
@@ -485,7 +526,7 @@ impl Store {
         &self,
         filter: &WikiPageMetaFilter,
     ) -> Result<(Vec<crate::models::WikiPageListItem>, usize)> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         fetch_wiki_page_meta_items(&conn, filter)
     }
 
@@ -502,10 +543,10 @@ impl Store {
         &self,
         document_id: &str,
     ) -> Result<Option<(String, crate::models::GraphView)>> {
-        let Some(node) = self.find_node_by_document_id(document_id)? else {
+        let Some(node) = self.store.graph().find_node_by_document_id(document_id)? else {
             return Ok(None);
         };
-        let view = self.backlinks(&node.id)?;
+        let view = self.store.graph().backlinks(&node.id)?;
         Ok(Some((node.id, view)))
     }
 
@@ -524,7 +565,7 @@ impl Store {
         if document_id.is_empty() || wing.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT MIN(source_node.label), source_node.document_id
@@ -553,7 +594,7 @@ impl Store {
 
     /// List documents in the given `wing`, ordered by `created_at`.
     pub fn list_documents_by_wing(&self, wing: &str) -> Result<Vec<Document>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let sql = format!(
             "SELECT {DOCUMENT_SELECT} FROM documents WHERE wing = ? ORDER BY created_at ASC"
         );
@@ -620,7 +661,7 @@ impl Store {
             sql.push_str(&format!(" LIMIT {}", limit.max(1)));
         }
 
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&sql)?;
         let params_dyn: Vec<&dyn duckdb::types::ToSql> = binds
             .iter()
@@ -632,7 +673,7 @@ impl Store {
 
     /// Distinct wings with document counts (non-null, non-empty wing), sorted by name.
     pub fn list_wings(&self) -> Result<Vec<WingCount>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT wing, COUNT(*)::BIGINT
@@ -672,7 +713,7 @@ impl Store {
     /// When `wing` is `Some`, only rooms under that wing are returned (with wing set).
     /// When `None`, returns all rooms globally (wing column may vary per row).
     pub fn list_rooms(&self, wing: Option<&str>) -> Result<Vec<RoomCount>> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         if let Some(w) = wing {
             let mut stmt = conn.prepare(
                 r#"
@@ -743,7 +784,7 @@ impl Store {
             });
         }
 
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let total: i64 = conn.query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))?;
         let unscoped: i64 = conn.query_row(
             r#"
@@ -789,7 +830,7 @@ impl Store {
         self.update_document_meta_with_identity(id, update, Some(identity))
     }
 
-    pub(super) fn update_document_meta_with_identity(
+    pub(in crate::db) fn update_document_meta_with_identity(
         &self,
         id: &str,
         update: &DocumentMetaUpdate,
@@ -833,37 +874,489 @@ impl Store {
     ) -> Result<Option<Document>> {
         Ok(self.update_document_meta(id, update)?.map(|r| r.document))
     }
-}
 
-/// `(label, document key)` of each wikilink source in a backlinks `view` of
-/// `target_id`, sorted by label with adjacent duplicate keys collapsed.
-pub fn wiki_backlink_rows(
-    target_id: &str,
-    view: &crate::models::GraphView,
-) -> Vec<(String, String)> {
-    let nodes: std::collections::HashMap<&str, &crate::models::GraphNode> = view
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect();
-    let mut out = Vec::new();
-    for e in &view.edges {
-        if e.target_id != target_id || e.rel_type != "wikilink" {
-            continue;
-        }
-        let Some(src) = nodes.get(e.source_id.as_str()) else {
-            continue;
-        };
-        let key = src.document_id.clone().unwrap_or_else(|| src.id.clone());
-        out.push((src.label.clone(), key));
+    /// Insert or replace a document row by primary key `id` (last-write-wins).
+    ///
+    /// Bumps `revision` based on the previous row for this `id` (or starts at 1).
+    /// When `doc.content_hash` is empty/`None`, computes [`content_hash`] of
+    /// `doc.content` and stores that fingerprint.
+    pub fn upsert_document(&self, doc: &Document) -> Result<()> {
+        self.upsert_document_cas(doc, None).map(|_| ())
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out.dedup_by(|a, b| a.1 == b.1);
-    out
-}
 
-/// [`DOCUMENT_SELECT`] with an empty `content`, for listings that never read
-/// document bodies.
-pub(super) fn document_select_without_body() -> String {
-    DOCUMENT_SELECT.replacen("content,", "'' AS content,", 1)
+    /// CAS upsert: if `if_match_revision` is `Some`, the existing row (by `id`)
+    /// must have that revision or [`AppError::Conflict`] is returned.
+    ///
+    /// Returns the **new** revision written (1 for insert).
+    pub fn upsert_document_cas(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+    ) -> Result<i64> {
+        self.store.with_tx(|tx| {
+            let new_rev = upsert_document_cas_locked(tx, doc, if_match_revision)?;
+            Ok(new_rev)
+        })
+    }
+
+    /// Persist a document and its derived state under one DuckDB transaction.
+    ///
+    /// Callers must finish chunking and embedding before entering this method.
+    /// Embedding JSON is also prepared before the database lock/transaction so
+    /// serialization failures cannot leave a partially-updated document.
+    pub(crate) fn write_document_atomic(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+        derived: DocumentDerivedWrite<'_>,
+    ) -> Result<AtomicDocumentWriteResult> {
+        self.write_document_atomic_with_manifest(doc, if_match_revision, derived, None, None)
+    }
+
+    /// Persist an unchunked document (e.g. `schema://agents`), rebuild its
+    /// outgoing graph slice and append its audit row in one transaction.
+    ///
+    /// Either all three land or none do: a graph or ops-log failure leaves the
+    /// previous document, graph and log untouched.
+    pub(crate) fn write_unchunked_document_with_audit(
+        &self,
+        doc: &Document,
+        audit: &OpsLogEntry,
+    ) -> Result<AtomicDocumentWriteResult> {
+        self.store.with_tx(|tx| {
+            let revision = upsert_document_cas_locked(tx, doc, None)?;
+            let (node_id, edge_count) =
+                crate::db::graph::resolve::rebuild_document_graph_locked(tx, doc)?;
+            append_ops_log_locked(tx, audit)?;
+            Ok(AtomicDocumentWriteResult {
+                revision,
+                node_id: Some(node_id),
+                edge_count,
+            })
+        })
+    }
+
+    /// Persist a synchronized source document and its manifest ownership in the
+    /// same transaction as chunks and graph state.
+    pub(crate) fn write_source_document_atomic(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+        chunks: &[Chunk],
+        manifest: crate::db::SourceManifestWrite<'_>,
+    ) -> Result<AtomicDocumentWriteResult> {
+        if manifest.document_id != doc.id {
+            return Err(AppError::config(format!(
+                "source manifest document {} does not match {}",
+                manifest.document_id, doc.id
+            )));
+        }
+        let document_hash = doc
+            .content_hash
+            .clone()
+            .unwrap_or_else(|| content_hash(&doc.content));
+        if manifest.content_hash != document_hash {
+            return Err(AppError::config(
+                "source manifest content hash does not match document",
+            ));
+        }
+        self.write_document_atomic_with_manifest(
+            doc,
+            if_match_revision,
+            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
+            Some(manifest),
+            None,
+        )
+    }
+
+    pub(in crate::db) fn write_document_atomic_with_manifest(
+        &self,
+        doc: &Document,
+        if_match_revision: Option<i64>,
+        derived: DocumentDerivedWrite<'_>,
+        manifest: Option<crate::db::SourceManifestWrite<'_>>,
+        sync_identity: Option<&crate::db::sync::SyncIdentity>,
+    ) -> Result<AtomicDocumentWriteResult> {
+        let prepared_embeddings = match &derived {
+            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks) => {
+                Some(owned_embedding_json(&doc.id, chunks)?)
+            }
+            DocumentDerivedWrite::Preserve | DocumentDerivedWrite::RefreshGraphLabel => None,
+        };
+
+        self.store.with_tx(|tx| {
+            let previous = if canonical_wiki_slug(&doc.uri).is_some() {
+                get_document_locked(tx, &doc.id)?
+            } else {
+                None
+            };
+            let result = write_document_locked(
+                tx,
+                doc,
+                if_match_revision,
+                derived,
+                prepared_embeddings.as_deref(),
+                manifest,
+            )?;
+            journal_generic_wiki_change_locked(tx, previous.as_ref(), doc, sync_identity)?;
+            Ok(result)
+        })
+    }
+
+    /// Persist a wiki document and its chunks, graph, catalog row, and audit
+    /// event, replication journal and applied cursor under one transaction.
+    pub(crate) fn write_wiki_document_atomic(
+        &self,
+        write: WikiDocumentWrite<'_>,
+    ) -> Result<(Option<AtomicDocumentWriteResult>, i64)> {
+        let WikiDocumentWrite {
+            doc,
+            if_match_revision,
+            chunks,
+            index_entry,
+            audit_entry,
+            sync,
+            create_only,
+        } = write;
+        if index_entry.page_id.as_deref() != Some(doc.id.as_str()) {
+            return Err(AppError::config(format!(
+                "wiki index page id {:?} does not match document {}",
+                index_entry.page_id, doc.id
+            )));
+        }
+        if let Some(entity_id) = audit_entry.entity_id.as_deref() {
+            if entity_id != doc.id {
+                return Err(AppError::config(format!(
+                    "wiki audit entity id {entity_id} does not match document {}",
+                    doc.id
+                )));
+            }
+        }
+        let prepared_embeddings = owned_embedding_json(&doc.id, chunks)?;
+
+        let local_event = crate::db::sync::SyncChangeInput {
+            origin_seq: 1,
+            entity_kind: "wiki".into(),
+            entity_id: doc.uri.clone(),
+            operation: "upsert".into(),
+            payload_json: serde_json::to_string(&crate::db::sync::WikiSyncPayload {
+                slug: index_entry.slug.clone(),
+                title: doc.title.clone(),
+                content: doc.content.clone(),
+                wing: doc.wing.clone(),
+                room: doc.room.clone(),
+                kind: Some(doc.kind.to_string()),
+                category: index_entry.category.clone(),
+                summary: index_entry.summary.clone(),
+                metadata_json: Some(doc.metadata_json.clone()),
+            })?,
+            content_hash: doc.content_hash.clone(),
+            created_at: doc
+                .updated_at
+                .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+        };
+        crate::db::sync::validate_wiki_change(&local_event)?;
+        let incoming = match sync {
+            crate::db::sync::WikiSyncWrite::Local(_) => None,
+            crate::db::sync::WikiSyncWrite::Push { change, .. } => Some(*change),
+            crate::db::sync::WikiSyncWrite::Pull { event, .. } => Some(&event.change),
+        };
+        if incoming.is_some_and(|event| event.entity_id != doc.uri) {
+            return Err(AppError::config(
+                "sync event does not belong to prepared wiki document",
+            ));
+        }
+        let mut conn = self.store.lock()?;
+        let tx = conn.transaction()?;
+        if create_only {
+            let existing: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM documents WHERE uri = ? OR id = ?",
+                params![&doc.uri, &doc.id],
+                |row| row.get(0),
+            )?;
+            if existing != 0 {
+                return Err(AppError::conflict("wiki page already exists"));
+            }
+        }
+        if let Some(sequence) = crate::db::sync::sync_duplicate_locked(&tx, sync)? {
+            return Ok((None, sequence));
+        }
+        if crate::db::sync::defer_pulled_document_locked(&tx, sync, &doc.uri)? {
+            let sequence = crate::db::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
+            tx.commit()?;
+            return Ok((None, sequence));
+        }
+        crate::db::review::accept_locked(&tx, doc, audit_entry)?;
+        let result = write_document_locked(
+            &tx,
+            doc,
+            if_match_revision,
+            DocumentDerivedWrite::ReplaceChunksAndGraph(chunks),
+            Some(&prepared_embeddings),
+            None,
+        )?;
+        upsert_wiki_index_entry_locked(&tx, index_entry)?;
+        #[cfg(test)]
+        if audit_entry.op == TEST_FAIL_WIKI_WRITE_AFTER_INDEX_OP {
+            return Err(AppError::db(
+                "injected wiki write failure after catalog update",
+            ));
+        }
+        append_ops_log_locked(&tx, audit_entry)?;
+        let sequence = crate::db::sync::commit_sync_write_locked(&tx, sync, &local_event)?;
+        #[cfg(test)]
+        if audit_entry.op == "__test_fail_wiki_after_sync_journal__" {
+            return Err(AppError::db("injected wiki failure after sync journal"));
+        }
+        tx.commit()?;
+        Ok((Some(result), sequence))
+    }
+
+    /// Delete a document, its chunks, and its graph node + incident edges.
+    ///
+    /// Returns `true` if a document row was removed.
+    pub fn delete_document(&self, id: &str) -> Result<bool> {
+        self.store.with_tx(|tx| {
+            let deleted = delete_document_locked(tx, id)?;
+            Ok(deleted)
+        })
+    }
+
+    /// Apply a maintenance batch of hard deletes and tombstones atomically.
+    ///
+    /// Every target must exist and an id may occur only once across the two
+    /// lists. Any validation or storage failure rolls back the entire group, so
+    /// a compression caller never loses a partial prefix without a report.
+    pub(crate) fn apply_document_dispositions_atomic(
+        &self,
+        delete_ids: &[String],
+        tombstone_ids: &[String],
+    ) -> Result<(u64, u64, u64)> {
+        let mut seen = std::collections::HashSet::new();
+        for id in delete_ids.iter().chain(tombstone_ids) {
+            if id.trim().is_empty() || !seen.insert(id.as_str()) {
+                return Err(AppError::config(format!(
+                    "duplicate or empty document disposition id '{id}'"
+                )));
+            }
+        }
+
+        self.store.with_tx(|tx| {
+            let mut deleted = 0u64;
+            let mut tombstoned = 0u64;
+            let mut chunks_deleted = 0u64;
+
+            for id in tombstone_ids {
+                let Some(document) = get_document_locked(tx, id)? else {
+                    return Err(AppError::not_found(format!(
+                        "document not found for tombstone: {id}"
+                    )));
+                };
+                let expected_revision = document.revision;
+                let mut applied = apply_document_meta_update(
+                    document,
+                    &DocumentMetaUpdate {
+                        status: Some("tombstone".into()),
+                        ..Default::default()
+                    },
+                )?;
+                applied.document.revision =
+                    upsert_document_cas_locked(tx, &applied.document, Some(expected_revision))?;
+                tombstoned += 1;
+            }
+
+            for id in delete_ids {
+                let chunk_count: i64 = tx.query_row(
+                    "SELECT COUNT(*)::BIGINT FROM chunks WHERE document_id = ?",
+                    params![id],
+                    |row| row.get(0),
+                )?;
+                if !delete_document_locked(tx, id)? {
+                    return Err(AppError::not_found(format!(
+                        "document not found for delete: {id}"
+                    )));
+                }
+                deleted += 1;
+                chunks_deleted = chunks_deleted.saturating_add(chunk_count.max(0) as u64);
+            }
+            Ok((deleted, tombstoned, chunks_deleted))
+        })
+    }
+
+    /// Validate and apply one exact-content duplicate group atomically.
+    ///
+    /// Actual document bodies are hashed inside the transaction; persisted
+    /// `content_hash` values and caller-provided ids are never trusted as proof
+    /// of equality. All sources are validated before the first mutation and any
+    /// later storage failure rolls the whole group back.
+    pub(crate) fn merge_exact_duplicates_atomic(
+        &self,
+        keep_id: &str,
+        source_ids: &[String],
+        declared_hash: Option<&str>,
+        hard_delete: bool,
+        allow_raw_delete: bool,
+    ) -> Result<ExactDuplicateMergeResult> {
+        self.merge_exact_duplicates_atomic_with(
+            keep_id,
+            source_ids,
+            declared_hash,
+            hard_delete,
+            allow_raw_delete,
+            |_| Ok(()),
+        )
+    }
+
+    pub(in crate::db) fn merge_exact_duplicates_atomic_with(
+        &self,
+        keep_id: &str,
+        source_ids: &[String],
+        declared_hash: Option<&str>,
+        hard_delete: bool,
+        allow_raw_delete: bool,
+        mut after_mutation: impl FnMut(usize) -> Result<()>,
+    ) -> Result<ExactDuplicateMergeResult> {
+        let keep_id = keep_id.trim();
+        if keep_id.is_empty() {
+            return Err(AppError::config(
+                "merge_exact_dup requires a non-empty canonical document id",
+            ));
+        }
+        if source_ids.is_empty() {
+            return Err(AppError::config(
+                "merge_exact_dup requires at least one source document id",
+            ));
+        }
+        let mut seen = std::collections::HashSet::with_capacity(source_ids.len());
+        for source_id in source_ids {
+            let normalized = source_id.trim();
+            if normalized.is_empty()
+                || normalized != source_id
+                || normalized == keep_id
+                || !seen.insert(normalized)
+            {
+                return Err(AppError::config(format!(
+                    "merge_exact_dup source ids must be non-empty, unique, and different from canonical id '{keep_id}'"
+                )));
+            }
+        }
+
+        self.store.with_tx(|tx| {
+            let keep = get_document_locked(tx, keep_id)?
+                .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
+            let expected_hash = content_hash(&keep.content);
+            if declared_hash.is_some_and(|declared| declared != expected_hash) {
+                return Err(AppError::conflict(format!(
+                    "merge_exact_dup declared content_hash does not match canonical document {keep_id}"
+                )));
+            }
+
+            let mut sources = Vec::with_capacity(source_ids.len());
+            for source_id in source_ids {
+                let source = get_document_locked(tx, source_id)?
+                    .ok_or_else(|| AppError::not_found(format!("document not found: {source_id}")))?;
+                if content_hash(&source.content) != expected_hash {
+                    return Err(AppError::conflict(format!(
+                        "merge_exact_dup source {source_id} is not an exact content duplicate of {keep_id}"
+                    )));
+                }
+                sources.push(source);
+            }
+
+            let mut merged = Vec::with_capacity(sources.len());
+            let mut raw_protected = Vec::new();
+            for (index, source) in sources.into_iter().enumerate() {
+                if hard_delete && (!crate::models::Layer::Raw.is(&source.layer) || allow_raw_delete) {
+                    if !delete_document_locked(tx, &source.id)? {
+                        return Err(AppError::not_found(format!(
+                            "document disappeared during merge_exact_dup: {}",
+                            source.id
+                        )));
+                    }
+                } else {
+                    let expected_revision = source.revision;
+                    let mut applied = apply_document_meta_update(
+                        source,
+                        &DocumentMetaUpdate {
+                            status: Some("archived".into()),
+                            ..Default::default()
+                        },
+                    )?;
+                    let source_id = applied.document.id.clone();
+                    applied.document.revision =
+                        upsert_document_cas_locked(tx, &applied.document, Some(expected_revision))?;
+                    if hard_delete {
+                        raw_protected.push(source_id);
+                    }
+                }
+                merged.push(source_ids[index].clone());
+                after_mutation(index + 1)?;
+            }
+            Ok(ExactDuplicateMergeResult {
+                merged,
+                raw_protected,
+            })
+        })
+    }
+
+    /// Delete all documents whose `source_file` equals `source`, plus their chunks.
+    ///
+    /// Returns the number of document rows removed.
+    pub fn delete_by_source(&self, source: &str) -> Result<u64> {
+        self.delete_by_source_ids(source)
+            .map(|document_ids| document_ids.len() as u64)
+    }
+
+    /// Delete by exact source and return the ids selected inside the same
+    /// transaction that performs the deletion.
+    pub fn delete_by_source_ids(&self, source: &str) -> Result<Vec<String>> {
+        self.delete_source_state_ids_with(source, |_| Ok(()))
+            .map(|(document_ids, _)| document_ids)
+    }
+
+    /// Atomically remove every document/derived row and manifest ownership for
+    /// one filesystem source. Returns `(documents_deleted, manifest_deleted)`.
+    pub(crate) fn delete_source_state(&self, source: &str) -> Result<(u64, bool)> {
+        self.delete_source_state_with(source, |_| Ok(()))
+    }
+
+    pub(in crate::db) fn delete_source_state_with(
+        &self,
+        source: &str,
+        after_document: impl FnMut(usize) -> Result<()>,
+    ) -> Result<(u64, bool)> {
+        self.delete_source_state_ids_with(source, after_document)
+            .map(|(document_ids, manifest_deleted)| (document_ids.len() as u64, manifest_deleted))
+    }
+
+    pub(in crate::db) fn delete_source_state_ids_with(
+        &self,
+        source: &str,
+        mut after_document: impl FnMut(usize) -> Result<()>,
+    ) -> Result<(Vec<String>, bool)> {
+        self.store.with_tx(|tx| {
+            let manifest_present: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM source_manifest WHERE canonical_path = ?)",
+                params![source],
+                |row| row.get(0),
+            )?;
+            let mut ids = Vec::new();
+            {
+                let mut stmt = tx.prepare("SELECT id FROM documents WHERE source_file = ?")?;
+                crate::db::rows::for_each_row(&mut stmt, params![source], |row| {
+                    ids.push(row.get::<_, String>(0)?);
+                    Ok(())
+                })?;
+            }
+            for (index, id) in ids.iter().enumerate() {
+                delete_document_locked(tx, id)?;
+                after_document(index + 1)?;
+            }
+            tx.execute(
+                "DELETE FROM source_manifest WHERE canonical_path = ?",
+                params![source],
+            )?;
+            Ok((ids, manifest_present))
+        })
+    }
 }

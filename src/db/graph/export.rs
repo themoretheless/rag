@@ -3,163 +3,6 @@
 
 use super::*;
 
-impl Store {
-    /// Topology export for the optional inspector (`rag-mcp-ui --db`) and Mode C
-    /// snapshot dumps.
-    ///
-    /// Applies PKB defaults (GRAPH_DESIGN §7.1 / EGUI_GRAPH_VIEW):
-    /// - `rel_types = [wikilink, related]`
-    /// - kinds: document, stub, entity (tags excluded unless `include_tags`)
-    /// - `max_nodes` defaults to [`crate::models::UI_GRAPH_EXPORT_MAX_NODES`] (100,000)
-    ///
-    /// Returns pure topology (no positions). Prefer this over a bare
-    /// [`Self::get_graph_view`] call when building a UI-oriented export so PKB
-    /// defaults stay centralized (no egui dependency).
-    pub fn export_graph_for_ui(
-        &self,
-        max_nodes: Option<u32>,
-        include_tags: bool,
-    ) -> Result<GraphView> {
-        self.get_graph_view(GraphFilter::pkb_ui_export(max_nodes, include_tags))
-    }
-
-    /// Export a UI graph whose document nodes belong to one project (`documents.wing`).
-    ///
-    /// The project predicate is applied before the UI node cap. Unresolved stubs,
-    /// entities, and optional tags directly connected to a project document are
-    /// retained, while document nodes from other projects are not pulled through
-    /// cross-project edges.
-    pub fn export_project_graph_for_ui(
-        &self,
-        project: &str,
-        max_nodes: Option<u32>,
-        include_tags: bool,
-    ) -> Result<GraphView> {
-        let project = require_project(project)?;
-        let max_nodes = max_nodes
-            .unwrap_or(crate::models::UI_GRAPH_EXPORT_MAX_NODES)
-            .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
-        let conn = self.lock()?;
-        let mut nodes = load_bounded_project_nodes_locked(&conn, project, max_nodes)?;
-        if nodes.len() < max_nodes {
-            let project_node_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
-            nodes.extend(load_bounded_project_companions_locked(
-                &conn,
-                &project_node_ids,
-                max_nodes - nodes.len(),
-                include_tags,
-            )?);
-        }
-        enrich_document_placements_locked(&conn, &mut nodes)?;
-        let node_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
-        let edges = load_bounded_edges_locked(&conn, Some(project), &node_ids, include_tags)?;
-        Ok(GraphView { nodes, edges })
-    }
-
-    /// Resolve and expand a seed strictly inside one project's graph topology.
-    pub fn export_project_neighbors_for_ui(
-        &self,
-        project: &str,
-        seed: &str,
-        depth: u32,
-        max_nodes: u32,
-        include_tags: bool,
-    ) -> Result<GraphView> {
-        let project = require_project(project)?;
-        let seed = seed.trim();
-        if seed.is_empty() {
-            return Ok(GraphView::default());
-        }
-        let depth = depth.clamp(1, 3);
-        let max_nodes = max_nodes.clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
-        let conn = self.lock()?;
-        let Some(seed_node) = resolve_project_seed_locked(&conn, project, seed, include_tags)?
-        else {
-            return Ok(GraphView::default());
-        };
-
-        let visited = expand_frontier(&seed_node.id, depth, max_nodes, |frontier, limit| {
-            discover_neighbors_locked(&conn, Some(project), frontier, limit, include_tags)
-        })?;
-
-        let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
-        enrich_document_placements_locked(&conn, &mut nodes)?;
-        let edges = load_bounded_edges_locked(&conn, Some(project), &visited, include_tags)?;
-        Ok(GraphView { nodes, edges })
-    }
-
-    /// Resolve and expand a seed with the same PKB relation/kind policy as the
-    /// global UI graph export.
-    ///
-    /// Filtering happens while discovering neighbors, before `max_nodes` is
-    /// applied. This prevents hidden tag, tunnel, or dependency edges from
-    /// consuming the focused-view budget.
-    pub fn export_pkb_neighbors_for_ui(
-        &self,
-        seed: &str,
-        depth: u32,
-        max_nodes: u32,
-        include_tags: bool,
-    ) -> Result<GraphView> {
-        let seed = seed.trim();
-        if seed.is_empty() {
-            return Ok(GraphView::default());
-        }
-        let depth = depth.clamp(1, 3);
-        let max_nodes = max_nodes.clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
-        let conn = self.lock()?;
-        let Some(seed_node) = resolve_ui_seed_locked(&conn, seed, include_tags)? else {
-            return Ok(GraphView::default());
-        };
-
-        let visited = expand_frontier(&seed_node.id, depth, max_nodes, |frontier, limit| {
-            discover_neighbors_locked(&conn, None, frontier, limit, include_tags)
-        })?;
-
-        let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
-        enrich_document_placements_locked(&conn, &mut nodes)?;
-        let edges = load_bounded_edges_locked(&conn, None, &visited, include_tags)?;
-        Ok(GraphView { nodes, edges })
-    }
-
-    /// Resolve a UI seed string: exact node id, then `document_id`, then exact label.
-    ///
-    /// Label matches prefer resolved `document` nodes, then any document, else first hit.
-    /// Empty / whitespace-only query → `Ok(None)`.
-    pub fn find_seed_node(&self, query: &str) -> Result<Option<GraphNode>> {
-        let q = query.trim();
-        if q.is_empty() {
-            return Ok(None);
-        }
-        if let Some(n) = self.find_node_by_id(q)? {
-            return Ok(Some(n));
-        }
-        if let Some(n) = self.find_node_by_document_id(q)? {
-            return Ok(Some(n));
-        }
-        Ok(prefer_document_node(self.find_nodes_by_label(q)?))
-    }
-
-    /// Local undirected neighborhood for UI: resolve seed, then BFS via
-    /// [`Self::neighbors`]. Missing seed → empty view (not an error).
-    ///
-    /// `depth` / `max_nodes` follow [`Self::neighbors`] (`max_nodes == 0` → 100).
-    /// Note: BFS currently follows all rel types; paint-side filters may still
-    /// hide non-PKB edges. Prefer [`Self::export_graph_for_ui`] + client BFS when
-    /// the full capped PKB export is already loaded.
-    pub fn export_neighbors_for_ui(
-        &self,
-        seed: &str,
-        depth: u32,
-        max_nodes: u32,
-    ) -> Result<GraphView> {
-        let Some(node) = self.find_seed_node(seed)? else {
-            return Ok(GraphView::default());
-        };
-        self.neighbors(&node.id, depth, max_nodes)
-    }
-}
-
 pub(super) fn require_project(project: &str) -> Result<&str> {
     let project = project.trim();
     if project.is_empty() {
@@ -776,4 +619,161 @@ pub(super) fn load_bounded_edges_locked(
         params_from_iter(binds.iter()),
         crate::db::rows::graph_edge,
     )
+}
+
+impl GraphRepo<'_> {
+    /// Topology export for the optional inspector (`rag-mcp-ui --db`) and Mode C
+    /// snapshot dumps.
+    ///
+    /// Applies PKB defaults (GRAPH_DESIGN §7.1 / EGUI_GRAPH_VIEW):
+    /// - `rel_types = [wikilink, related]`
+    /// - kinds: document, stub, entity (tags excluded unless `include_tags`)
+    /// - `max_nodes` defaults to [`crate::models::UI_GRAPH_EXPORT_MAX_NODES`] (100,000)
+    ///
+    /// Returns pure topology (no positions). Prefer this over a bare
+    /// [`Self::get_graph_view`] call when building a UI-oriented export so PKB
+    /// defaults stay centralized (no egui dependency).
+    pub fn export_graph_for_ui(
+        &self,
+        max_nodes: Option<u32>,
+        include_tags: bool,
+    ) -> Result<GraphView> {
+        self.get_graph_view(GraphFilter::pkb_ui_export(max_nodes, include_tags))
+    }
+
+    /// Export a UI graph whose document nodes belong to one project (`documents.wing`).
+    ///
+    /// The project predicate is applied before the UI node cap. Unresolved stubs,
+    /// entities, and optional tags directly connected to a project document are
+    /// retained, while document nodes from other projects are not pulled through
+    /// cross-project edges.
+    pub fn export_project_graph_for_ui(
+        &self,
+        project: &str,
+        max_nodes: Option<u32>,
+        include_tags: bool,
+    ) -> Result<GraphView> {
+        let project = require_project(project)?;
+        let max_nodes = max_nodes
+            .unwrap_or(crate::models::UI_GRAPH_EXPORT_MAX_NODES)
+            .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
+        let conn = self.store.lock()?;
+        let mut nodes = load_bounded_project_nodes_locked(&conn, project, max_nodes)?;
+        if nodes.len() < max_nodes {
+            let project_node_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
+            nodes.extend(load_bounded_project_companions_locked(
+                &conn,
+                &project_node_ids,
+                max_nodes - nodes.len(),
+                include_tags,
+            )?);
+        }
+        enrich_document_placements_locked(&conn, &mut nodes)?;
+        let node_ids = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
+        let edges = load_bounded_edges_locked(&conn, Some(project), &node_ids, include_tags)?;
+        Ok(GraphView { nodes, edges })
+    }
+
+    /// Resolve and expand a seed strictly inside one project's graph topology.
+    pub fn export_project_neighbors_for_ui(
+        &self,
+        project: &str,
+        seed: &str,
+        depth: u32,
+        max_nodes: u32,
+        include_tags: bool,
+    ) -> Result<GraphView> {
+        let project = require_project(project)?;
+        let seed = seed.trim();
+        if seed.is_empty() {
+            return Ok(GraphView::default());
+        }
+        let depth = depth.clamp(1, 3);
+        let max_nodes = max_nodes.clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
+        let conn = self.store.lock()?;
+        let Some(seed_node) = resolve_project_seed_locked(&conn, project, seed, include_tags)?
+        else {
+            return Ok(GraphView::default());
+        };
+
+        let visited = expand_frontier(&seed_node.id, depth, max_nodes, |frontier, limit| {
+            discover_neighbors_locked(&conn, Some(project), frontier, limit, include_tags)
+        })?;
+
+        let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        enrich_document_placements_locked(&conn, &mut nodes)?;
+        let edges = load_bounded_edges_locked(&conn, Some(project), &visited, include_tags)?;
+        Ok(GraphView { nodes, edges })
+    }
+
+    /// Resolve and expand a seed with the same PKB relation/kind policy as the
+    /// global UI graph export.
+    ///
+    /// Filtering happens while discovering neighbors, before `max_nodes` is
+    /// applied. This prevents hidden tag, tunnel, or dependency edges from
+    /// consuming the focused-view budget.
+    pub fn export_pkb_neighbors_for_ui(
+        &self,
+        seed: &str,
+        depth: u32,
+        max_nodes: u32,
+        include_tags: bool,
+    ) -> Result<GraphView> {
+        let seed = seed.trim();
+        if seed.is_empty() {
+            return Ok(GraphView::default());
+        }
+        let depth = depth.clamp(1, 3);
+        let max_nodes = max_nodes.clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES) as usize;
+        let conn = self.store.lock()?;
+        let Some(seed_node) = resolve_ui_seed_locked(&conn, seed, include_tags)? else {
+            return Ok(GraphView::default());
+        };
+
+        let visited = expand_frontier(&seed_node.id, depth, max_nodes, |frontier, limit| {
+            discover_neighbors_locked(&conn, None, frontier, limit, include_tags)
+        })?;
+
+        let mut nodes = load_nodes_by_ids_locked(&conn, &visited)?;
+        enrich_document_placements_locked(&conn, &mut nodes)?;
+        let edges = load_bounded_edges_locked(&conn, None, &visited, include_tags)?;
+        Ok(GraphView { nodes, edges })
+    }
+
+    /// Resolve a UI seed string: exact node id, then `document_id`, then exact label.
+    ///
+    /// Label matches prefer resolved `document` nodes, then any document, else first hit.
+    /// Empty / whitespace-only query → `Ok(None)`.
+    pub fn find_seed_node(&self, query: &str) -> Result<Option<GraphNode>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(None);
+        }
+        if let Some(n) = self.find_node_by_id(q)? {
+            return Ok(Some(n));
+        }
+        if let Some(n) = self.find_node_by_document_id(q)? {
+            return Ok(Some(n));
+        }
+        Ok(prefer_document_node(self.find_nodes_by_label(q)?))
+    }
+
+    /// Local undirected neighborhood for UI: resolve seed, then BFS via
+    /// [`Self::neighbors`]. Missing seed → empty view (not an error).
+    ///
+    /// `depth` / `max_nodes` follow [`Self::neighbors`] (`max_nodes == 0` → 100).
+    /// Note: BFS currently follows all rel types; paint-side filters may still
+    /// hide non-PKB edges. Prefer [`Self::export_graph_for_ui`] + client BFS when
+    /// the full capped PKB export is already loaded.
+    pub fn export_neighbors_for_ui(
+        &self,
+        seed: &str,
+        depth: u32,
+        max_nodes: u32,
+    ) -> Result<GraphView> {
+        let Some(node) = self.find_seed_node(seed)? else {
+            return Ok(GraphView::default());
+        };
+        self.neighbors(&node.id, depth, max_nodes)
+    }
 }

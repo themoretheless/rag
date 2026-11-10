@@ -762,6 +762,7 @@ pub(super) fn refuse_same_file(source: &Path, destination: &Path) -> Result<()> 
             "backup destination is the live database",
         ));
     }
+
     #[cfg(unix)]
     if let (Ok(a), Ok(b)) = (fs::metadata(source), fs::metadata(destination)) {
         if a.dev() == b.dev() && a.ino() == b.ino() {

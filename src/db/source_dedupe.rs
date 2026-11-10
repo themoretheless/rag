@@ -7,7 +7,8 @@
 //! and deletion happens in one DuckDB transaction.
 
 use super::rows;
-use super::store::{delete_document_locked, Store, DOCUMENT_SELECT};
+use super::store::Maintenance;
+use super::store::{delete_document_locked, DOCUMENT_SELECT};
 use crate::error::{AppError, Result};
 use crate::models::Document;
 use duckdb::{params, params_from_iter, Connection};
@@ -311,152 +312,6 @@ group_metrics AS (
   FROM classified
 )
 "#;
-
-impl Store {
-    /// Preview or atomically remove legacy raw documents that duplicate the
-    /// canonical `file://<source_file>` document.
-    ///
-    /// Apply requires both `dry_run=false` and `confirm=true`. Each invocation
-    /// selects at most `max_candidates` in stable `(source_file, content_hash,
-    /// document_id)` order, so a large group can be drained safely over repeated
-    /// calls. Groups with no unique canonical survivor, protected references,
-    /// ambiguous manifest ownership, or candidate revision history are skipped.
-    pub fn cleanup_source_duplicates(
-        &self,
-        dry_run: bool,
-        confirm: bool,
-        max_candidates: usize,
-    ) -> Result<SourceDuplicateCleanupReport> {
-        if max_candidates == 0 {
-            return Err(AppError::config(
-                "cleanup_source_duplicates max_candidates must be >= 1",
-            ));
-        }
-        if !dry_run && !confirm {
-            return Err(AppError::config(
-                "cleanup_source_duplicates apply requires confirm=true",
-            ));
-        }
-
-        self.with_tx(|tx| {
-            let scanned_active_raw_documents = tx.query_row(
-                r#"
-                SELECT COUNT(*)::BIGINT
-                FROM documents
-                WHERE LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) = 'raw'
-                  AND LOWER(COALESCE(NULLIF(TRIM(status), ''), 'active')) = 'active'
-                  AND source_file IS NOT NULL AND TRIM(source_file) <> ''
-                  AND content_hash IS NOT NULL AND TRIM(content_hash) <> ''
-                "#,
-                [],
-                |row| row.get::<_, i64>(0),
-            )?;
-            let totals = load_cleanup_totals(tx)?;
-            let batch = load_batch(tx, max_candidates)?;
-            let batch_candidates = batch
-                .iter()
-                .map(|selection| selection.candidate_ids.len() as u64)
-                .sum::<u64>();
-            let fully_drained_groups = batch
-                .iter()
-                .filter(|selection| {
-                    selection.candidate_ids.len() as u64 >= selection.metrics.candidate_count
-                })
-                .count();
-            let remaining_candidates = totals.candidate_count.saturating_sub(batch_candidates);
-            let remaining_groups = totals
-                .actionable_groups
-                .saturating_sub(fully_drained_groups);
-            let cap_exceeded = remaining_candidates > 0;
-
-            let groups = load_report_groups(tx, &batch, totals.matched_groups)?;
-            let reported_groups = groups.len();
-            let groups_truncated = reported_groups < totals.matched_groups;
-            let reported_members = groups.iter().map(|group| group.members.len()).sum();
-            let members_truncated =
-                groups_truncated || groups.iter().any(|group| group.members_truncated);
-
-            let mut report = SourceDuplicateCleanupReport {
-                success: true,
-                errors: Vec::new(),
-                dry_run,
-                confirmed: confirm,
-                max_candidates,
-                scanned_active_raw_documents: scanned_active_raw_documents.max(0) as u64,
-                matched_groups: totals.matched_groups,
-                actionable_groups: totals.actionable_groups,
-                skipped_groups: totals
-                    .matched_groups
-                    .saturating_sub(totals.actionable_groups),
-                candidate_count: totals.candidate_count,
-                batch_groups: batch.len(),
-                batch_candidates,
-                remaining_groups,
-                remaining_candidates,
-                cap_exceeded,
-                applied: false,
-                deleted_documents: 0,
-                rewired_graph_edge_endpoints: 0,
-                deduplicated_graph_edges: 0,
-                removed_graph_self_edges: 0,
-                rewired_kg_facts: 0,
-                rebound_source_manifests: 0,
-                reported_groups,
-                groups_truncated,
-                reported_members,
-                members_truncated,
-                groups,
-            };
-
-            for selection in if dry_run { &[][..] } else { batch.as_slice() } {
-                let survivor_id = selection
-                    .metrics
-                    .survivor_document_id
-                    .as_deref()
-                    .expect("actionable group has one survivor");
-                let survivor = load_document_locked(tx, survivor_id)?.ok_or_else(|| {
-                    AppError::conflict(format!(
-                        "canonical source document disappeared during cleanup: {survivor_id}"
-                    ))
-                })?;
-                let candidate_ids = selection
-                    .candidate_ids
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>();
-
-                let graph = rewire_graph_to_survivor(tx, &survivor, &candidate_ids)?;
-                report.rewired_graph_edge_endpoints += graph.rewired_endpoints;
-                report.deduplicated_graph_edges += graph.deduplicated_edges;
-                report.removed_graph_self_edges += graph.removed_self_edges;
-
-                for candidate_id in &candidate_ids {
-                    report.rewired_kg_facts += tx.execute(
-                        "UPDATE kg_facts SET source_document_id = ?, updated_at = now() WHERE source_document_id = ?",
-                        params![survivor_id, candidate_id],
-                    )? as u64;
-                }
-                report.rebound_source_manifests += tx.execute(
-                    "UPDATE source_manifest SET document_id = ? WHERE canonical_path = ? AND document_id <> ?",
-                    params![survivor_id, selection.metrics.key.source_file, survivor_id],
-                )? as u64;
-
-                for candidate_id in candidate_ids {
-                    if delete_document_locked(tx, candidate_id)? {
-                        report.deleted_documents += 1;
-                    } else {
-                        return Err(AppError::conflict(format!(
-                            "duplicate candidate disappeared during cleanup: {candidate_id}"
-                        )));
-                    }
-                }
-            }
-
-            report.applied = !dry_run && report.deleted_documents > 0;
-            Ok(report)
-        })
-    }
-}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct CleanupTotals {
@@ -968,12 +823,159 @@ fn nonnegative(value: i64) -> u64 {
     value.max(0) as u64
 }
 
+impl Maintenance<'_> {
+    /// Preview or atomically remove legacy raw documents that duplicate the
+    /// canonical `file://<source_file>` document.
+    ///
+    /// Apply requires both `dry_run=false` and `confirm=true`. Each invocation
+    /// selects at most `max_candidates` in stable `(source_file, content_hash,
+    /// document_id)` order, so a large group can be drained safely over repeated
+    /// calls. Groups with no unique canonical survivor, protected references,
+    /// ambiguous manifest ownership, or candidate revision history are skipped.
+    pub fn cleanup_source_duplicates(
+        &self,
+        dry_run: bool,
+        confirm: bool,
+        max_candidates: usize,
+    ) -> Result<SourceDuplicateCleanupReport> {
+        if max_candidates == 0 {
+            return Err(AppError::config(
+                "cleanup_source_duplicates max_candidates must be >= 1",
+            ));
+        }
+        if !dry_run && !confirm {
+            return Err(AppError::config(
+                "cleanup_source_duplicates apply requires confirm=true",
+            ));
+        }
+
+        self.store.with_tx(|tx| {
+            let scanned_active_raw_documents = tx.query_row(
+                r#"
+                SELECT COUNT(*)::BIGINT
+                FROM documents
+                WHERE LOWER(COALESCE(NULLIF(TRIM(layer), ''), 'raw')) = 'raw'
+                  AND LOWER(COALESCE(NULLIF(TRIM(status), ''), 'active')) = 'active'
+                  AND source_file IS NOT NULL AND TRIM(source_file) <> ''
+                  AND content_hash IS NOT NULL AND TRIM(content_hash) <> ''
+                "#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let totals = load_cleanup_totals(tx)?;
+            let batch = load_batch(tx, max_candidates)?;
+            let batch_candidates = batch
+                .iter()
+                .map(|selection| selection.candidate_ids.len() as u64)
+                .sum::<u64>();
+            let fully_drained_groups = batch
+                .iter()
+                .filter(|selection| {
+                    selection.candidate_ids.len() as u64 >= selection.metrics.candidate_count
+                })
+                .count();
+            let remaining_candidates = totals.candidate_count.saturating_sub(batch_candidates);
+            let remaining_groups = totals
+                .actionable_groups
+                .saturating_sub(fully_drained_groups);
+            let cap_exceeded = remaining_candidates > 0;
+
+            let groups = load_report_groups(tx, &batch, totals.matched_groups)?;
+            let reported_groups = groups.len();
+            let groups_truncated = reported_groups < totals.matched_groups;
+            let reported_members = groups.iter().map(|group| group.members.len()).sum();
+            let members_truncated =
+                groups_truncated || groups.iter().any(|group| group.members_truncated);
+
+            let mut report = SourceDuplicateCleanupReport {
+                success: true,
+                errors: Vec::new(),
+                dry_run,
+                confirmed: confirm,
+                max_candidates,
+                scanned_active_raw_documents: scanned_active_raw_documents.max(0) as u64,
+                matched_groups: totals.matched_groups,
+                actionable_groups: totals.actionable_groups,
+                skipped_groups: totals
+                    .matched_groups
+                    .saturating_sub(totals.actionable_groups),
+                candidate_count: totals.candidate_count,
+                batch_groups: batch.len(),
+                batch_candidates,
+                remaining_groups,
+                remaining_candidates,
+                cap_exceeded,
+                applied: false,
+                deleted_documents: 0,
+                rewired_graph_edge_endpoints: 0,
+                deduplicated_graph_edges: 0,
+                removed_graph_self_edges: 0,
+                rewired_kg_facts: 0,
+                rebound_source_manifests: 0,
+                reported_groups,
+                groups_truncated,
+                reported_members,
+                members_truncated,
+                groups,
+            };
+
+            for selection in if dry_run { &[][..] } else { batch.as_slice() } {
+                let survivor_id = selection
+                    .metrics
+                    .survivor_document_id
+                    .as_deref()
+                    .expect("actionable group has one survivor");
+                let survivor = load_document_locked(tx, survivor_id)?.ok_or_else(|| {
+                    AppError::conflict(format!(
+                        "canonical source document disappeared during cleanup: {survivor_id}"
+                    ))
+                })?;
+                let candidate_ids = selection
+                    .candidate_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>();
+
+                let graph = rewire_graph_to_survivor(tx, &survivor, &candidate_ids)?;
+                report.rewired_graph_edge_endpoints += graph.rewired_endpoints;
+                report.deduplicated_graph_edges += graph.deduplicated_edges;
+                report.removed_graph_self_edges += graph.removed_self_edges;
+
+                for candidate_id in &candidate_ids {
+                    report.rewired_kg_facts += tx.execute(
+                        "UPDATE kg_facts SET source_document_id = ?, updated_at = now() WHERE source_document_id = ?",
+                        params![survivor_id, candidate_id],
+                    )? as u64;
+                }
+                report.rebound_source_manifests += tx.execute(
+                    "UPDATE source_manifest SET document_id = ? WHERE canonical_path = ? AND document_id <> ?",
+                    params![survivor_id, selection.metrics.key.source_file, survivor_id],
+                )? as u64;
+
+                for candidate_id in candidate_ids {
+                    if delete_document_locked(tx, candidate_id)? {
+                        report.deleted_documents += 1;
+                    } else {
+                        return Err(AppError::conflict(format!(
+                            "duplicate candidate disappeared during cleanup: {candidate_id}"
+                        )));
+                    }
+                }
+            }
+
+            report.applied = !dry_run && report.deleted_documents > 0;
+            Ok(report)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
 
     use super::*;
     use crate::db::SourceManifestWrite;
+    use crate::db::Store;
     use crate::models::{Chunk, GraphEdge, GraphNode};
     use crate::util::content_hash;
 

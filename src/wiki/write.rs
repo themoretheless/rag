@@ -389,28 +389,32 @@ pub(crate) async fn write_wiki_page_synced_command(
         crate::db::sync::WikiSyncWrite::Local(identity) => {
             let store = store.clone();
             crate::util::run_blocking("wiki write commit", move || {
-                store.write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                store
+                    .documents()
+                    .write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                        doc: &doc,
+                        if_match_revision: if_match,
+                        chunks: &chunks,
+                        index_entry: &index_entry,
+                        audit_entry: &audit_entry,
+                        sync: &crate::db::sync::WikiSyncWrite::Local(identity),
+                        create_only,
+                    })
+            })
+            .await?
+        }
+        replicated => crate::util::blocking_section(|| {
+            store
+                .documents()
+                .write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
                     doc: &doc,
                     if_match_revision: if_match,
                     chunks: &chunks,
                     index_entry: &index_entry,
                     audit_entry: &audit_entry,
-                    sync: &crate::db::sync::WikiSyncWrite::Local(identity),
+                    sync: &replicated,
                     create_only,
                 })
-            })
-            .await?
-        }
-        replicated => crate::util::blocking_section(|| {
-            store.write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
-                doc: &doc,
-                if_match_revision: if_match,
-                chunks: &chunks,
-                index_entry: &index_entry,
-                audit_entry: &audit_entry,
-                sync: &replicated,
-                create_only,
-            })
         })?,
     };
     let Some(write) = write else {

@@ -42,7 +42,56 @@ pub struct SourceManifestWrite<'a> {
     pub document_id: &'a str,
 }
 
-impl Store {
+pub(super) fn upsert_source_manifest_locked(
+    conn: &duckdb::Connection,
+    entry: SourceManifestWrite<'_>,
+) -> Result<()> {
+    let size_bytes = i64::try_from(entry.size_bytes)
+        .map_err(|_| AppError::config("source file size exceeds BIGINT"))?;
+    conn.execute(
+        r#"
+        INSERT INTO source_manifest
+          (canonical_path, canonical_root, size_bytes, mtime_ns, content_hash,
+           document_id, last_seen, last_synced)
+        VALUES (?, ?, ?, ?, ?, ?, now(), now())
+        ON CONFLICT (canonical_path) DO UPDATE SET
+          canonical_root = excluded.canonical_root,
+          size_bytes = excluded.size_bytes,
+          mtime_ns = excluded.mtime_ns,
+          content_hash = excluded.content_hash,
+          document_id = excluded.document_id,
+          last_seen = now(),
+          last_synced = now()
+        "#,
+        params![
+            entry.canonical_path,
+            entry.canonical_root,
+            size_bytes,
+            entry.mtime_ns,
+            entry.content_hash,
+            entry.document_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn root_prefix(root: &str) -> String {
+    if root.ends_with(MAIN_SEPARATOR) {
+        root.to_string()
+    } else {
+        format!("{root}{MAIN_SEPARATOR}")
+    }
+}
+
+/// Filesystem source manifest ownership.
+///
+/// A repository over the shared Store connection; get one from [`Store::source_manifest`].
+#[derive(Clone, Copy)]
+pub struct SourceManifestRepo<'a> {
+    pub(in crate::db) store: &'a Store,
+}
+
+impl SourceManifestRepo<'_> {
     /// List synchronized roots, optionally restricted to one project (`wing`).
     pub fn list_source_roots(&self, project: Option<&str>) -> Result<Vec<SourceRootSummary>> {
         let project = project.map(str::trim).filter(|value| !value.is_empty());
@@ -65,7 +114,7 @@ impl Store {
             ORDER BY sm.canonical_root ASC
             "#
         );
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = match project {
             Some(project) => stmt.query(params![project])?,
@@ -96,7 +145,7 @@ impl Store {
     ) -> Result<HashMap<String, SourceManifestEntry>> {
         let root = canonical_root.display().to_string();
         let prefix = root_prefix(&root);
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
             WITH root_documents AS (
@@ -196,7 +245,7 @@ impl Store {
 
     /// Publish metadata/hash/document linkage after a successful sync.
     pub fn upsert_source_manifest(&self, entry: SourceManifestWrite<'_>) -> Result<()> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         upsert_source_manifest_locked(&conn, entry)
     }
 
@@ -205,7 +254,7 @@ impl Store {
         if entries.is_empty() {
             return Ok(());
         }
-        self.with_tx(|tx| {
+        self.store.with_tx(|tx| {
             for entry in entries {
                 upsert_source_manifest_locked(tx, *entry)?;
             }
@@ -224,7 +273,7 @@ impl Store {
             return Ok(());
         }
         let root = canonical_root.display().to_string();
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         for paths in canonical_paths.chunks(500) {
             let placeholders = crate::db::sql::in_placeholders(paths.len());
             let sql = format!(
@@ -241,52 +290,11 @@ impl Store {
 
     /// Delete one manifest record. Returns true when a row was removed.
     pub fn delete_source_manifest(&self, canonical_path: &str) -> Result<bool> {
-        let conn = self.lock()?;
+        let conn = self.store.lock()?;
         let deleted = conn.execute(
             "DELETE FROM source_manifest WHERE canonical_path = ?",
             params![canonical_path],
         )?;
         Ok(deleted > 0)
-    }
-}
-
-pub(super) fn upsert_source_manifest_locked(
-    conn: &duckdb::Connection,
-    entry: SourceManifestWrite<'_>,
-) -> Result<()> {
-    let size_bytes = i64::try_from(entry.size_bytes)
-        .map_err(|_| AppError::config("source file size exceeds BIGINT"))?;
-    conn.execute(
-        r#"
-        INSERT INTO source_manifest
-          (canonical_path, canonical_root, size_bytes, mtime_ns, content_hash,
-           document_id, last_seen, last_synced)
-        VALUES (?, ?, ?, ?, ?, ?, now(), now())
-        ON CONFLICT (canonical_path) DO UPDATE SET
-          canonical_root = excluded.canonical_root,
-          size_bytes = excluded.size_bytes,
-          mtime_ns = excluded.mtime_ns,
-          content_hash = excluded.content_hash,
-          document_id = excluded.document_id,
-          last_seen = now(),
-          last_synced = now()
-        "#,
-        params![
-            entry.canonical_path,
-            entry.canonical_root,
-            size_bytes,
-            entry.mtime_ns,
-            entry.content_hash,
-            entry.document_id,
-        ],
-    )?;
-    Ok(())
-}
-
-fn root_prefix(root: &str) -> String {
-    if root.ends_with(MAIN_SEPARATOR) {
-        root.to_string()
-    } else {
-        format!("{root}{MAIN_SEPARATOR}")
     }
 }
