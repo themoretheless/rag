@@ -13,9 +13,9 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
+use crate::app::{MultiGetCommand, PackContextRequest, TraceOptions};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
-use crate::app::{MultiGetCommand, PackContextRequest, TraceOptions};
 use crate::eval::{source_versions_json, RetrievalTrace, SpanBuilder};
 use crate::models::SearchHit;
 use crate::retrieval::{self, SimilarDocumentsQuery};
