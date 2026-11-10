@@ -15,6 +15,7 @@ use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
 use crate::llm::json::{parse_model_object, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
+use crate::maintain::prompts::ORGANIZE_SYSTEM;
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
 use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
 use crate::util::excerpt_chars as truncate_chars;
@@ -984,32 +985,10 @@ async fn suggest_llm(
         tax = truncate_chars(&tax_json, 8000),
         docs = truncate_chars(&sample_json, 16_000),
     );
-    let system = r#"You organize a personal knowledge base into wings (top shelves) and rooms (sub-areas).
-Given taxonomy and unscoped documents (missing wing), propose refile targets.
-
-Rules:
-- Prefer existing wing/room names from the taxonomy when they fit.
-- You may propose a new wing only when nothing fits; use short kebab-case or single words.
-- Never invent document_ids; only use ids from the input list.
-- Return ONLY valid JSON (no markdown fences):
-{
-  "suggestions": [
-    {
-      "document_id": "...",
-      "wing": "...",
-      "room": "optional",
-      "reason": "short",
-      "confidence": 0.0
-    }
-  ],
-  "notes": "optional"
-}
-confidence is 0..1.
-"#;
     let messages = [
         ChatMessage {
             role: "system".into(),
-            content: system.into(),
+            content: ORGANIZE_SYSTEM.into(),
         },
         ChatMessage {
             role: "user".into(),

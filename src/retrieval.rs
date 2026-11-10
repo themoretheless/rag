@@ -629,7 +629,7 @@ pub async fn execute_search_with_llm(
     embedder: &dyn EmbeddingProvider,
     config: &Config,
     command: SearchCommand,
-    transform_llm: Option<&dyn crate::query_transform::TransformLlm>,
+    transform_llm: Option<&dyn crate::llm::ChatCompleter>,
 ) -> Result<Vec<SearchHit>, AppError> {
     let started = std::time::Instant::now();
     let budget = std::time::Duration::from_millis(command.timeout_ms.unwrap_or(5_000).max(1));
@@ -793,7 +793,7 @@ impl TransformOutcome {
 
 async fn run_query_transforms(
     config: &Config,
-    llm_override: Option<&dyn crate::query_transform::TransformLlm>,
+    llm_override: Option<&dyn crate::llm::ChatCompleter>,
     query: &str,
     rewrite_requested: bool,
     hyde_requested: bool,
@@ -853,8 +853,8 @@ async fn run_query_transforms(
     };
 
     if rewrite_requested {
-        let llm: Option<&dyn qt::TransformLlm> =
-            llm_override.or_else(|| rewrite_client.as_ref().map(|c| c as &dyn qt::TransformLlm));
+        let llm: Option<&dyn crate::llm::ChatCompleter> =
+            llm_override.or_else(|| rewrite_client.as_ref().map(|c| c as &dyn crate::llm::ChatCompleter));
         match llm {
             Some(llm) => {
                 let started = std::time::Instant::now();
@@ -877,8 +877,8 @@ async fn run_query_transforms(
         }
     }
     if hyde_requested {
-        let llm: Option<&dyn qt::TransformLlm> =
-            llm_override.or_else(|| hyde_client.as_ref().map(|c| c as &dyn qt::TransformLlm));
+        let llm: Option<&dyn crate::llm::ChatCompleter> =
+            llm_override.or_else(|| hyde_client.as_ref().map(|c| c as &dyn crate::llm::ChatCompleter));
         match llm {
             Some(llm) => {
                 let started = std::time::Instant::now();

@@ -19,7 +19,7 @@ use rag_mcp::chunking::{from_config, Chunker};
 use rag_mcp::embeddings::{EmbeddingProvider, MockEmbedder};
 use rag_mcp::error::{AppError, Result as RagResult};
 use rag_mcp::models::{Chunk, Document, SearchMode};
-use rag_mcp::query_transform::TransformLlm;
+use rag_mcp::llm::{ChatCompleter, ChatMessage};
 use rag_mcp::retrieval::{execute_search_with_llm, SearchCommand};
 use rag_mcp::testkit::open_temp_store;
 use rag_mcp::{Config, Store};
@@ -34,27 +34,35 @@ struct StubLlm {
 }
 
 #[async_trait]
-impl TransformLlm for StubLlm {
-    async fn complete(&self, _: &str, _: &str, _: u32) -> RagResult<String> {
+impl ChatCompleter for StubLlm {
+    async fn complete(&self, _: &[ChatMessage]) -> RagResult<String> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         Ok(self.reply.clone())
     }
 
-    fn cache_identity(&self) -> String {
-        "stub/itest".into()
+    async fn complete_with_max_tokens(&self, m: &[ChatMessage], _: u32) -> RagResult<String> {
+        self.complete(m).await
+    }
+
+    fn model(&self) -> &str {
+        "stub/itest"
     }
 }
 
 struct FailingLlm;
 
 #[async_trait]
-impl TransformLlm for FailingLlm {
-    async fn complete(&self, _: &str, _: &str, _: u32) -> RagResult<String> {
+impl ChatCompleter for FailingLlm {
+    async fn complete(&self, _: &[ChatMessage]) -> RagResult<String> {
         Err(AppError::llm("stub llm unavailable"))
     }
 
-    fn cache_identity(&self) -> String {
-        "stub/failing-itest".into()
+    async fn complete_with_max_tokens(&self, m: &[ChatMessage], _: u32) -> RagResult<String> {
+        self.complete(m).await
+    }
+
+    fn model(&self) -> &str {
+        "stub/failing-itest"
     }
 }
 
