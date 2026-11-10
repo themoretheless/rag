@@ -30,13 +30,25 @@ fn validate_entries(conn: &Connection, entries: &[CollectionEntry]) -> Result<()
             "collection document ids must be non-empty and unique",
         ));
     }
+    // Which members exist, in one query (was one count per entry).
+    let existing: HashSet<String> = if entries.is_empty() {
+        HashSet::new()
+    } else {
+        let member_ids: Vec<&str> = entries.iter().map(|e| e.document_id.as_str()).collect();
+        let placeholders = crate::db::sql::in_placeholders(member_ids.len());
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id FROM documents WHERE id IN ({placeholders})"
+        ))?;
+        crate::db::rows::query_vec(
+            &mut stmt,
+            duckdb::params_from_iter(member_ids.iter()),
+            |row| Ok(row.get::<_, String>(0)?),
+        )?
+        .into_iter()
+        .collect()
+    };
     for entry in entries {
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM documents WHERE id = ?",
-            params![entry.document_id],
-            |row| row.get(0),
-        )?;
-        if exists == 0 {
+        if !existing.contains(&entry.document_id) {
             return Err(AppError::not_found(format!(
                 "document not found: {}",
                 entry.document_id
@@ -135,25 +147,50 @@ fn replace_entries(
         "DELETE FROM collection_entries WHERE collection_id = ?",
         params![collection_id],
     )?;
-    for (position, entry) in entries.iter().enumerate() {
-        conn.execute(
-            r#"INSERT INTO collection_entries
-               (collection_id, document_id, position, parent_document_id) VALUES (?, ?, ?, ?)"#,
-            params![
-                collection_id,
-                entry.document_id,
-                position as i32,
-                entry.parent_document_id
-            ],
-        )?;
-        for dependency in &entry.depends_on {
-            conn.execute(
-                r#"INSERT INTO collection_dependencies
-                   (collection_id, document_id, depends_on_document_id) VALUES (?, ?, ?)"#,
-                params![collection_id, entry.document_id, dependency],
-            )?;
-        }
-    }
+    // Multi-row inserts instead of one statement per entry and dependency.
+    let positioned: Vec<(i32, &CollectionEntry)> = entries
+        .iter()
+        .enumerate()
+        .map(|(position, entry)| (position as i32, entry))
+        .collect();
+    crate::db::rows::insert_rows(
+        conn,
+        "INSERT INTO collection_entries \
+         (collection_id, document_id, position, parent_document_id) VALUES",
+        "(?, ?, ?, ?)",
+        &positioned,
+        |(position, entry), values| {
+            values.extend([
+                &collection_id as &dyn duckdb::ToSql,
+                &entry.document_id,
+                position,
+                &entry.parent_document_id,
+            ]);
+        },
+    )?;
+    let dependencies: Vec<(&str, &str)> = entries
+        .iter()
+        .flat_map(|entry| {
+            entry
+                .depends_on
+                .iter()
+                .map(move |dependency| (entry.document_id.as_str(), dependency.as_str()))
+        })
+        .collect();
+    crate::db::rows::insert_rows(
+        conn,
+        "INSERT INTO collection_dependencies \
+         (collection_id, document_id, depends_on_document_id) VALUES",
+        "(?, ?, ?)",
+        &dependencies,
+        |(document_id, dependency), values| {
+            values.extend([
+                &collection_id as &dyn duckdb::ToSql,
+                document_id,
+                dependency,
+            ]);
+        },
+    )?;
     Ok(())
 }
 
@@ -246,21 +283,30 @@ impl Collections<'_> {
                FROM collection_entries WHERE collection_id = ?
                ORDER BY position ASC, document_id ASC"#,
         )?;
+        // Every member's dependencies in one query (was one per entry).
+        let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+        {
+            let mut deps_stmt = conn.prepare(
+                r#"SELECT document_id, depends_on_document_id FROM collection_dependencies
+                   WHERE collection_id = ?
+                   ORDER BY document_id ASC, depends_on_document_id ASC"#,
+            )?;
+            crate::db::rows::for_each_row(&mut deps_stmt, params![id], |row| {
+                dependencies
+                    .entry(row.get(0)?)
+                    .or_default()
+                    .push(row.get(1)?);
+                Ok(())
+            })?;
+        }
         let entries = crate::db::rows::query_vec(&mut stmt, params![id], |row| {
             let document_id: String = row.get(0)?;
-            let mut deps_stmt = conn.prepare(
-                r#"SELECT depends_on_document_id FROM collection_dependencies
-                   WHERE collection_id = ? AND document_id = ?
-                   ORDER BY depends_on_document_id ASC"#,
-            )?;
-            let deps = deps_stmt
-                .query_map(params![id, document_id], |r| r.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let depends_on = dependencies.remove(&document_id).unwrap_or_default();
             Ok(CollectionEntry {
                 document_id,
                 position: row.get(1)?,
                 parent_document_id: row.get(2)?,
-                depends_on: deps,
+                depends_on,
             })
         })?;
         let (dependency_order, dependency_cycle_members) = dependency_order(&entries);

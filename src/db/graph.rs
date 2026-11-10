@@ -394,27 +394,63 @@ impl GraphRepo<'_> {
                     params![node_id, rag_mcp_markup::REL_TAGGED],
                 )?;
             }
-            for label in labels {
-                let tag_id = resolve::upsert_tag_node(tx, label)?;
-                let exists: i64 = tx.query_row(
-                    "SELECT COUNT(*)::BIGINT FROM graph_edges WHERE source_id = ? AND target_id = ? AND rel_type = ?",
-                    params![node_id, tag_id.as_str(), rag_mcp_markup::REL_TAGGED],
-                    |row| row.get(0),
+            // Existing tag edges in one read, new ones in one insert (was a
+            // count query and an insert per label).
+            let mut tagged: std::collections::HashSet<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT target_id FROM graph_edges WHERE source_id = ? AND rel_type = ?",
                 )?;
-                if exists == 0 {
-                    insert_graph_edges_locked(
-                        tx,
-                        &[GraphEdge {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            source_id: node_id.to_string(),
-                            target_id: tag_id,
-                            rel_type: rag_mcp_markup::REL_TAGGED.into(),
-                            weight: 1.0,
-                            context: None,
-                        }],
-                    )?;
+                crate::db::rows::query_vec(
+                    &mut stmt,
+                    params![node_id, rag_mcp_markup::REL_TAGGED],
+                    |row| Ok(row.get::<_, String>(0)?),
+                )?
+                .into_iter()
+                .collect()
+            };
+            // Tag hubs already stored under their canonical `tag://{key}` uri,
+            // in one query with the same order as `find_node_by_uri` (resolved
+            // first, then first writer, then id); other labels take the full
+            // resolve path (legacy label match, or a new hub).
+            let uris: Vec<String> = labels
+                .iter()
+                .map(|label| format!("tag://{}", rag_mcp_markup::normalize::tag_key(label)))
+                .collect();
+            let mut hubs: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            if !uris.is_empty() {
+                let placeholders = crate::db::sql::in_placeholders(uris.len());
+                let mut stmt = tx.prepare(&format!(
+                    "SELECT uri, id FROM graph_nodes WHERE uri IN ({placeholders}) \
+                     ORDER BY uri, COALESCE(resolved, FALSE) DESC, created_at, id"
+                ))?;
+                crate::db::rows::for_each_row(&mut stmt, params_from_iter(uris.iter()), |row| {
+                    hubs.entry(row.get(0)?).or_insert(row.get(1)?);
+                    Ok(())
+                })?;
+            }
+            let mut edges = Vec::new();
+            for (label, uri) in labels.iter().zip(&uris) {
+                let tag_id = match hubs.get(uri) {
+                    Some(id) => id.clone(),
+                    None => {
+                        let id = resolve::upsert_tag_node(tx, label)?;
+                        hubs.insert(uri.clone(), id.clone());
+                        id
+                    }
+                };
+                if tagged.insert(tag_id.clone()) {
+                    edges.push(GraphEdge {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        source_id: node_id.to_string(),
+                        target_id: tag_id,
+                        rel_type: rag_mcp_markup::REL_TAGGED.into(),
+                        weight: 1.0,
+                        context: None,
+                    });
                 }
             }
+            insert_graph_edges_locked(tx, &edges)?;
             Ok(())
         })
     }

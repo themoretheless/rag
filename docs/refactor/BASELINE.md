@@ -340,3 +340,45 @@ Kept. Against a ~90 ms hybrid search the saving is small (0.02–0.04 % of the
 call), but it grows with result size and applies to every tool call. An
 end-to-end `tools/call` latency was not measured: the transport, JSON-RPC
 framing and the search itself dominate and vary far more than 35 µs.
+
+### Item 5: N+1 fixes
+
+Changes:
+
+- `set_document_tags`: existing tag edges in one read and new edges in one
+  multi-row insert (was a count query and an insert per label); tag hubs
+  already stored under `tag://{key}` are looked up in one `IN` query with the
+  order `find_node_by_uri` uses, and only unknown labels take the per-label
+  resolve path (legacy label match or a new hub).
+- Collections: member existence in one `IN` query (was a count per entry);
+  entries and dependencies written with multi-row inserts (was one statement
+  each); `get_collection` reads all dependencies in one query (was one query
+  per entry).
+- KG: `kg_stats` computes its six counts in one scan (`FILTER` aggregates;
+  was six queries). Batching the per-id `UPDATE` and reload in
+  `kg_invalidate` / `kg_supersede` was measured and reverted: `kg_add` keeps
+  open facts unique per subject/predicate/object, so those loops run once
+  and the batched form did the same work (769.9 → 726.9 ms for 200 calls,
+  within run-to-run spread of 698–811 ms).
+- `health` chunkless count: one query (chunkless ids in a CTE, then the
+  non-blank body check joined to those rows) instead of listing the ids and
+  counting them in 512-id batches.
+
+Method: ignored test `db::n_plus_one_timing_tests::timing_n_plus_one`,
+release profile, one seeded store per run: 2 000 documents with one chunk
+each plus 200 documents without chunks; 100 nodes × 20 shared tag labels
+(3 rounds, replace and merge alternating); a 200-member collection where each
+member depends on the previous one (3 creates + gets); 2 000 KG facts
+(`kg_stats` × 20, then 200 `kg_invalidate` calls); `integrity_counts` × 20.
+Medians; before and after binaries alternated, 3 runs each, load 1.6–3.5.
+
+| operation | before | after |
+|---|---:|---:|
+| `set_document_tags`, 100 nodes × 20 labels | 6 691.6 ms | **706.9 ms** |
+| `create_collection`, 200 members | 440.1 ms | **23.6 ms** |
+| `get_collection`, 200 members | 160.6 ms | **3.1 ms** |
+| `kg_stats` (2 000 facts) | 5.81 ms | **2.45 ms** |
+| `kg_invalidate` × 200 (reverted, see above) | 769.9 ms | 726.9 ms |
+| `integrity_counts` (`/health`), 2 200 documents | 12.10 ms | **9.43 ms** |
+
+All kept except the `kg_invalidate` / `kg_supersede` batching.

@@ -542,30 +542,24 @@ impl KgRepo<'_> {
     pub fn kg_stats(&self) -> Result<KgStats> {
         let conn = self.store.lock()?;
 
-        let total_facts: i64 = conn.query_row("SELECT COUNT(*) FROM kg_facts", [], |r| r.get(0))?;
-        let active_facts: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM kg_facts WHERE status = 'active'",
+        // All counts in one scan (was six queries).
+        let (
+            total_facts,
+            active_facts,
+            invalidated_facts,
+            superseded_facts,
+            distinct_subjects,
+            distinct_predicates,
+        ): (i64, i64, i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), \
+                    COUNT(*) FILTER (WHERE status = 'active'), \
+                    COUNT(*) FILTER (WHERE status = 'invalidated'), \
+                    COUNT(*) FILTER (WHERE status = 'superseded'), \
+                    COUNT(DISTINCT subject), COUNT(DISTINCT predicate) \
+             FROM kg_facts",
             [],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )?;
-        let invalidated_facts: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM kg_facts WHERE status = 'invalidated'",
-            [],
-            |r| r.get(0),
-        )?;
-        let superseded_facts: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM kg_facts WHERE status = 'superseded'",
-            [],
-            |r| r.get(0),
-        )?;
-        let distinct_subjects: i64 =
-            conn.query_row("SELECT COUNT(DISTINCT subject) FROM kg_facts", [], |r| {
-                r.get(0)
-            })?;
-        let distinct_predicates: i64 =
-            conn.query_row("SELECT COUNT(DISTINCT predicate) FROM kg_facts", [], |r| {
-                r.get(0)
-            })?;
 
         let mut relationship_types = Vec::new();
         {
