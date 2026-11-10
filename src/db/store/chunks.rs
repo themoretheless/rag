@@ -254,15 +254,7 @@ impl Store {
     /// Atomically replace all chunks for a document, preserving caller-supplied ids.
     pub fn replace_chunks_for_document(&self, document_id: &str, chunks: &[Chunk]) -> Result<()> {
         let embedding_json = embedding_json(chunks)?;
-        self.with_tx(|tx| {
-            crate::db::fts::mark_chunks_changed_for(tx, &[document_id])?;
-            tx.execute(
-                "DELETE FROM chunks WHERE document_id = ?",
-                params![document_id],
-            )?;
-            insert_chunks_locked(tx, chunks, &embedding_json)?;
-            Ok(())
-        })
+        self.with_tx(|tx| replace_chunks_locked(tx, document_id, chunks, &embedding_json))
     }
 
     /// Atomically replace only the embeddings of an unchanged chunk set.

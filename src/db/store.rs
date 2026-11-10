@@ -788,12 +788,7 @@ impl Store {
     /// Delete only chunks for a document (used on uri re-ingest to keep graph node stable).
     pub fn delete_chunks_for_document(&self, document_id: &str) -> Result<()> {
         let conn = self.lock()?;
-        super::fts::mark_chunks_changed_for(&conn, &[document_id])?;
-        conn.execute(
-            "DELETE FROM chunks WHERE document_id = ?",
-            params![document_id],
-        )?;
-        Ok(())
+        replace_chunks_locked(&conn, document_id, &[], &[])
     }
 
     /// Delete all documents whose `source_file` equals `source`, plus their chunks.
@@ -988,9 +983,7 @@ fn write_document_locked(
             (refresh_document_graph_label_locked(conn, doc)?, 0)
         }
         (DocumentDerivedWrite::ReplaceChunksAndGraph(chunks), Some(embedding_json)) => {
-            super::fts::mark_chunks_changed_for(conn, &[doc.id.as_str()])?;
-            conn.execute("DELETE FROM chunks WHERE document_id = ?", params![doc.id])?;
-            insert_chunks_locked(conn, chunks, embedding_json)?;
+            replace_chunks_locked(conn, &doc.id, chunks, embedding_json)?;
             let (node_id, edge_count) =
                 super::graph::resolve::rebuild_document_graph_locked(conn, doc)?;
             (Some(node_id), edge_count)
@@ -1148,11 +1141,10 @@ pub(super) fn delete_document_locked(conn: &duckdb::Connection, id: &str) -> Res
     if !exists {
         return Ok(false);
     }
-    super::fts::mark_chunks_changed_for(conn, &[id])?;
     // GRAPH_DESIGN.md §6.3: never wipe incident edges here. The node is demoted to
     // an unresolved stub and edges from other notes survive.
     super::graph::demote_graph_for_document_locked(conn, id)?;
-    conn.execute("DELETE FROM chunks WHERE document_id = ?", params![id])?;
+    replace_chunks_locked(conn, id, &[], &[])?;
     conn.execute(
         "DELETE FROM wiki_index WHERE document_id = ? OR page_id = ?",
         params![id, id],
@@ -1188,26 +1180,6 @@ fn upsert_document_cas_locked(
 ) -> Result<i64> {
     let normalized = super::write_hook::run_document_write_hooks(conn, doc)?;
     let doc = normalized.as_ref();
-    let hash = match doc.content_hash.as_deref() {
-        Some(h) if !h.is_empty() => h.to_string(),
-        _ => content_hash(&doc.content),
-    };
-    let layer = if doc.layer.trim().is_empty() {
-        std::borrow::Cow::Borrowed("raw")
-    } else {
-        crate::models::Layer::canonicalize(&doc.layer)
-    };
-    let layer = layer.as_ref();
-    let kind = if doc.kind.is_empty() {
-        "document"
-    } else {
-        doc.kind.as_str()
-    };
-    let status = if doc.status.is_empty() {
-        "active"
-    } else {
-        doc.status.as_str()
-    };
 
     let conflicting_uri_owner = {
         let mut stmt =
@@ -1262,12 +1234,8 @@ fn upsert_document_cas_locked(
         }
     };
 
-    let boost = if doc.boost.is_finite() && doc.boost > 0.0 {
-        doc.boost
-    } else {
-        1.0
-    };
     if current_rev.is_some() {
+        let columns = DocumentColumns::of(doc);
         conn.execute(
             r#"
             INSERT INTO document_revisions
@@ -1300,15 +1268,15 @@ fn upsert_document_cas_locked(
                 doc.title,
                 doc.content,
                 doc.metadata_json,
-                hash,
+                columns.hash,
                 doc.wing,
                 doc.room,
                 doc.source_file,
-                layer,
-                kind,
-                status,
+                columns.layer.as_ref(),
+                columns.kind,
+                columns.status,
                 doc.pinned,
-                boost,
+                columns.boost,
                 new_rev,
                 format_ts(doc.created_at),
                 format_ts(doc.updated_at),
@@ -1316,41 +1284,100 @@ fn upsert_document_cas_locked(
             ],
         )?;
     } else {
-        conn.execute(
-            r#"
-            INSERT INTO documents
-              (id, uri, title, content, metadata_json,
-               content_hash, wing, room, source_file, layer, kind, status,
-               pinned, boost, revision,
-               created_at, updated_at)
-            VALUES
-              (?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?,
-               CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))
-            "#,
-            params![
-                doc.id,
-                doc.uri,
-                doc.title,
-                doc.content,
-                doc.metadata_json,
-                hash,
-                doc.wing,
-                doc.room,
-                doc.source_file,
-                layer,
-                kind,
-                status,
-                doc.pinned,
-                boost,
-                new_rev,
-                format_ts(doc.created_at),
-                format_ts(doc.updated_at),
-            ],
-        )?;
+        insert_document_row_locked(conn, doc, new_rev)?;
     }
     Ok(new_rev)
+}
+
+/// Document columns as they are stored: an empty hash is computed from the
+/// content, the layer is canonical (`raw` when blank), a blank kind/status
+/// becomes `document`/`active` and a non-positive or non-finite boost `1.0`.
+struct DocumentColumns<'a> {
+    hash: String,
+    layer: std::borrow::Cow<'a, str>,
+    kind: &'a str,
+    status: &'a str,
+    boost: f64,
+}
+
+impl<'a> DocumentColumns<'a> {
+    fn of(doc: &'a Document) -> Self {
+        let hash = match doc.content_hash.as_deref() {
+            Some(h) if !h.is_empty() => h.to_string(),
+            _ => content_hash(&doc.content),
+        };
+        let layer = if doc.layer.trim().is_empty() {
+            std::borrow::Cow::Borrowed("raw")
+        } else {
+            crate::models::Layer::canonicalize(&doc.layer)
+        };
+        let kind = if doc.kind.is_empty() {
+            "document"
+        } else {
+            doc.kind.as_str()
+        };
+        let status = if doc.status.is_empty() {
+            "active"
+        } else {
+            doc.status.as_str()
+        };
+        let boost = if doc.boost.is_finite() && doc.boost > 0.0 {
+            doc.boost
+        } else {
+            1.0
+        };
+        Self {
+            hash,
+            layer,
+            kind,
+            status,
+            boost,
+        }
+    }
+}
+
+/// INSERT one `documents` row at `revision`, with the columns normalized by
+/// [`DocumentColumns`]. Every document insert goes through here.
+pub(super) fn insert_document_row_locked(
+    conn: &Connection,
+    doc: &Document,
+    revision: i64,
+) -> Result<()> {
+    let columns = DocumentColumns::of(doc);
+    conn.execute(
+        r#"
+        INSERT INTO documents
+          (id, uri, title, content, metadata_json,
+           content_hash, wing, room, source_file, layer, kind, status,
+           pinned, boost, revision,
+           created_at, updated_at)
+        VALUES
+          (?, ?, ?, ?, ?,
+           ?, ?, ?, ?, ?, ?, ?,
+           ?, ?, ?,
+           CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))
+        "#,
+        params![
+            doc.id,
+            doc.uri,
+            doc.title,
+            doc.content,
+            doc.metadata_json,
+            columns.hash,
+            doc.wing,
+            doc.room,
+            doc.source_file,
+            columns.layer.as_ref(),
+            columns.kind,
+            columns.status,
+            doc.pinned,
+            columns.boost,
+            revision,
+            format_ts(doc.created_at),
+            format_ts(doc.updated_at),
+        ],
+    )?;
+    Ok(())
 }
 
 /// JSON-encode chunk embeddings for [`insert_chunks_locked`], before any lock
@@ -1371,6 +1398,23 @@ pub(crate) fn owned_embedding_json(document_id: &str, chunks: &[Chunk]) -> Resul
         )));
     }
     embedding_json(chunks)
+}
+
+/// Replace every chunk of `document_id` with `chunks` (none clears them):
+/// records the chunk change for FTS, deletes the old rows and inserts the new
+/// ones with their prepared `embedding_json`.
+pub(crate) fn replace_chunks_locked(
+    conn: &Connection,
+    document_id: &str,
+    chunks: &[Chunk],
+    embedding_json: &[String],
+) -> Result<()> {
+    super::fts::mark_chunks_changed_for(conn, &[document_id])?;
+    conn.execute(
+        "DELETE FROM chunks WHERE document_id = ?",
+        params![document_id],
+    )?;
+    insert_chunks_locked(conn, chunks, embedding_json)
 }
 
 pub(crate) fn insert_chunks_locked(
