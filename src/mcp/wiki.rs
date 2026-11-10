@@ -64,14 +64,11 @@ impl RagServer {
         self.blocking_tool("get_schema", move |store| {
             let no_default = params.no_default.unwrap_or(false);
             if no_default {
-                let doc = store
-                    .documents()
-                    .get_schema_document()?
-                    .ok_or_else(|| {
-                        McpError::from(AppError::not_found(
-                            "schema document not found at schema://agents",
-                        ))
-                    })?;
+                let doc = store.documents().get_schema_document()?.ok_or_else(|| {
+                    McpError::from(AppError::not_found(
+                        "schema document not found at schema://agents",
+                    ))
+                })?;
                 let body = crate::wiki::SchemaDocumentView {
                     document_id: doc.id,
                     uri: doc.uri,
@@ -255,11 +252,10 @@ impl RagServer {
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let has_key = id.is_some() || params.seq.is_some();
-            let rows = store.ops_log().read_ops_log(
-                id,
-                params.seq,
-                params.limit.map(|n| n as usize),
-            )?;
+            let rows =
+                store
+                    .ops_log()
+                    .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))?;
             if has_key {
                 let entry = rows.into_iter().next().ok_or_else(|| {
                     McpError::from(AppError::not_found(format!(
@@ -650,14 +646,14 @@ impl RagServer {
         let _ = self
             .blocking("rebuild_index log", move |store| {
                 store.ops_log().append(
-                &OpsLogEntry::new(
-                    "index_rebuild",
-                    "INDEX",
-                    format!("rebuilt wiki_index ({count} entries)"),
+                    &OpsLogEntry::new(
+                        "index_rebuild",
+                        "INDEX",
+                        format!("rebuilt wiki_index ({count} entries)"),
+                    )
+                    .entity(None, "wiki_index")
+                    .payload(serde_json::json!({ "count": count }).to_string()),
                 )
-                .entity(None, "wiki_index")
-                .payload(serde_json::json!({ "count": count }).to_string()),
-            )
             })
             .await?;
 

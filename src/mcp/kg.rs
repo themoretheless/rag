@@ -94,17 +94,15 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         self.blocking_tool("kg_supersede", move |store| {
             let at = parse_optional_timestamp(params.at.as_deref())?;
-            let fact = store
-                .kg()
-                .kg_supersede(crate::db::kg::KgSupersedeInput {
-                    subject: &params.subject,
-                    predicate: &params.predicate,
-                    old_object: &params.old_object,
-                    new_object: &params.new_object,
-                    at,
-                    source_document_id: params.source_document_id.as_deref(),
-                    confidence: params.confidence,
-                })?;
+            let fact = store.kg().kg_supersede(crate::db::kg::KgSupersedeInput {
+                subject: &params.subject,
+                predicate: &params.predicate,
+                old_object: &params.old_object,
+                new_object: &params.new_object,
+                at,
+                source_document_id: params.source_document_id.as_deref(),
+                confidence: params.confidence,
+            })?;
             Self::json_result(&fact)
         })
         .await

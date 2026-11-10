@@ -284,10 +284,7 @@ struct TunnelsQuery {
 
 async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> impl IntoResponse {
     st.blocking_response("tunnels", move |store| {
-        match store
-            .graph()
-            .list_tunnels(non_blank(q.node_id).as_deref())
-        {
+        match store.graph().list_tunnels(non_blank(q.node_id).as_deref()) {
             Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
             Err(error) => api_err(error),
         }

@@ -31,8 +31,8 @@ async fn live() -> impl IntoResponse {
 async fn ready(State(st): State<HttpState>) -> impl IntoResponse {
     st.blocking_response("ready", move |store| {
         let runtime = crate::ops::runtime_snapshot();
-        let store_ok = store.maintenance().stats().is_ok()
-            && store.maintenance().fts_ready().unwrap_or(false);
+        let store_ok =
+            store.maintenance().stats().is_ok() && store.maintenance().fts_ready().unwrap_or(false);
         let ok = runtime.ready && store_ok;
         let status = if ok {
             StatusCode::OK
