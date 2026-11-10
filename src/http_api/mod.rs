@@ -159,6 +159,15 @@ impl HttpState {
         )
     }
 
+    /// Wiki write use case over this state's store, embedder and config.
+    pub(crate) fn wiki_use_case(&self) -> crate::app::WikiUseCase {
+        crate::app::WikiUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            Arc::new(self.config.clone()),
+        )
+    }
+
     /// Graph read use cases over this state's store.
     pub(crate) fn graph_use_case(&self) -> crate::app::GraphUseCase {
         crate::app::GraphUseCase::new(self.store.clone())

@@ -213,6 +213,15 @@ impl RagServer {
         )
     }
 
+    /// Wiki write use case over this server's store, embedder and config.
+    pub(super) fn wiki_use_case(&self) -> crate::app::WikiUseCase {
+        crate::app::WikiUseCase::new(
+            self.store.clone(),
+            self.embedder.clone(),
+            Arc::new(self.config.clone()),
+        )
+    }
+
     /// Graph read use cases over this server's store.
     pub(super) fn graph_use_case(&self) -> crate::app::GraphUseCase {
         crate::app::GraphUseCase::new(self.store.clone())

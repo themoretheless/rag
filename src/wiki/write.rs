@@ -88,7 +88,7 @@ pub async fn write_wiki_page(
 /// Borrowed fields for [`update_wiki_page_cas`]. `None` title/kind keep the
 /// page's current values.
 #[derive(Debug, Clone, Copy)]
-pub struct WikiPageUpdate<'a> {
+pub(crate) struct WikiPageUpdate<'a> {
     /// Document id, `wiki://slug`, or bare slug of an existing wiki page.
     pub id_or_slug: &'a str,
     pub title: Option<&'a str>,
@@ -97,6 +97,9 @@ pub struct WikiPageUpdate<'a> {
     pub category: Option<&'a str>,
     pub summary: Option<&'a str>,
     pub agent: Option<&'a str>,
+    /// Project placement; `None` keeps the current value.
+    pub wing: Option<&'a str>,
+    pub room: Option<&'a str>,
     /// Optimistic concurrency: must match the current revision when set.
     pub if_match_revision: Option<i64>,
 }
@@ -509,7 +512,7 @@ pub(super) fn metadata_string_field<'a>(
 /// Requires an existing `layer=wiki` document. Re-chunks, re-embeds, and
 /// re-runs wikilink/tag graph extract. Rejects raw-layer documents. Honors
 /// optional `if_match_revision` (multi-LLM CAS).
-pub async fn update_wiki_page_cas(
+pub(crate) async fn update_wiki_page_cas(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
@@ -523,6 +526,8 @@ pub async fn update_wiki_page_cas(
         category,
         summary,
         agent,
+        wing,
+        room,
         if_match_revision,
     } = update;
     let existing = get_wiki_page(store, id_or_slug)?;
@@ -546,8 +551,8 @@ pub async fn update_wiki_page_cas(
             slug,
             title: title.to_string(),
             content: content.to_string(),
-            wing: None,
-            room: None,
+            wing: wing.map(str::to_string),
+            room: room.map(str::to_string),
             kind: kind.to_string(),
             category: category.map(str::to_string),
             summary: summary.map(str::to_string),

@@ -624,7 +624,7 @@ async fn wiki_create_returns_the_same_fields_on_both_transports() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn wiki_create_on_an_existing_slug_differs_by_entrypoint() {
+async fn wiki_create_on_an_existing_slug_conflicts_on_both_transports() {
     let harness = Harness::new();
     let page = |slug: &str, content: &str| json!({ "slug": slug, "title": "Occupied", "content": content });
     harness
@@ -636,19 +636,25 @@ async fn wiki_create_on_an_existing_slug_differs_by_entrypoint() {
         .await;
     assert_eq!(status, StatusCode::OK);
 
-    // DRIFT: create semantics. MCP has no create-only tool: `write_wiki_page`
-    // on an existing slug overwrites it (revision 2). HTTP `POST /v1/wiki` is
-    // create-only and answers 409 CONFLICT; HTTP `PUT` is the upsert.
-    let mcp = harness
-        .mcp("write_wiki_page", page("occupied-mcp", "second"))
-        .await
-        .ok();
-    assert_eq!(mcp["revision"], json!(2));
+    // Stage 4 aligned: one write entrypoint with modes. Create-only is
+    // `create_only=true` on MCP `write_wiki_page` and `POST /v1/wiki` on
+    // HTTP; both answer CONFLICT on an occupied slug. The upsert is
+    // `write_wiki_page` / `PUT /v1/wiki`.
+    let mut create_only = page("occupied-mcp", "second");
+    create_only["create_only"] = json!(true);
+    let mcp = harness.mcp("write_wiki_page", create_only).await.err();
+    assert_eq!(mcp["code"], json!(JSONRPC_INVALID_PARAMS));
+    assert_eq!(mcp["data"]["code"], json!("CONFLICT"));
     let (status, http) = harness
         .http("POST", "/v1/wiki", Some(page("occupied-http", "second")))
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(http["code"], json!("CONFLICT"));
+    let mcp = harness
+        .mcp("write_wiki_page", page("occupied-mcp", "second"))
+        .await
+        .ok();
+    assert_eq!(mcp["revision"], json!(2));
     let (status, http) = harness
         .http("PUT", "/v1/wiki", Some(page("occupied-http", "second")))
         .await;
@@ -675,9 +681,9 @@ async fn wiki_cas_update_and_stale_write_agree_on_revision_and_conflict_code() {
         .await;
 
     // CAS update with the current revision succeeds on both.
-    // DRIFT: entrypoint. MCP updates through `update_wiki_page` (preserves
-    // omitted kind/category/summary); HTTP uses the same `PUT /v1/wiki` as
-    // create, with `if_match_revision` in the body.
+    // Stage 4 aligned: both route to one wiki write use case; MCP
+    // `update_wiki_page` is mode Cas, HTTP `PUT` is mode Upsert, and an
+    // existing page keeps omitted kind/category/summary on both.
     let mcp = harness
         .mcp("update_wiki_page", page("cas-mcp", "v2", Some(1)))
         .await
@@ -699,8 +705,9 @@ async fn wiki_cas_update_and_stale_write_agree_on_revision_and_conflict_code() {
     let (status, http) = harness
         .http("PUT", "/v1/wiki", Some(page("cas-http", "v3", Some(1))))
         .await;
-    // DRIFT: conflict signalling. MCP has no distinct conflict class: JSON-RPC
-    // -32602 (invalid_params) with `data.code = "CONFLICT"`. HTTP: 409.
+    // One CAS conflict meaning: a stale if_match is CONFLICT and changes
+    // nothing. Transport envelope (not drift): JSON-RPC -32602 with
+    // `data.code = "CONFLICT"` on MCP; 409 on HTTP.
     assert_eq!(mcp["code"], json!(JSONRPC_INVALID_PARAMS));
     assert_eq!(status, StatusCode::CONFLICT);
     // Agreement: the wire code.

@@ -651,76 +651,37 @@ impl RagServer {
 
     #[tool(
         name = "write_wiki_page",
-        description = "Create/overwrite a compiled wiki page (layer=wiki, uri wiki://slug); re-embeds and rebuilds graph + index entry."
+        description = "Create or update a compiled wiki page (layer=wiki, uri wiki://slug); \
+        re-embeds and rebuilds graph + index entry. On an existing page omitted \
+        kind/category/summary/placement are kept; create_only=true refuses an existing page \
+        (CONFLICT). if_match_revision/etag enforce CAS."
     )]
     pub(super) async fn write_wiki_page(
         &self,
         Parameters(params): Parameters<WriteWikiPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
-        let if_match = crate::models::resolve_if_match(
-            params.if_match_revision,
-            params.if_match_etag.as_deref(),
-        )?;
-        let res = wiki::write_wiki_page_command(
-            &self.store,
-            &self.embedder,
-            &self.config,
-            wiki::WikiWriteCommand {
-                slug: params.slug,
-                title: params.title,
-                content: params.content,
-                wing: params.wing,
-                room: params.room,
-                kind: params
-                    .kind
-                    .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
-                category: params.category,
-                summary: params.summary,
-                agent: params.agent,
-                options: wiki::WriteWikiOpts {
-                    if_match_revision: if_match,
-                    ..Default::default()
-                },
-            },
-        )
-        .await?;
-        Self::json_result(&res)
+        let mode = if params.create_only.unwrap_or(false) {
+            crate::app::WikiWriteMode::Create
+        } else {
+            crate::app::WikiWriteMode::Upsert
+        };
+        self.write_wiki(mode, params).await
     }
 
     #[tool(
         name = "update_wiki_page",
-        description = "Update an existing wiki page by slug. Omitted kind/category/summary \
-        preserve their current values, as do project placement, status, pin/boost state, source \
-        ownership and unrelated metadata. Pass if_match_revision/etag from get_wiki_page to \
-        avoid clobbering concurrent writes; use write_wiki_page to create a page."
+        description = "Update an existing wiki page by slug, wiki://uri or document id. Omitted \
+        kind/category/summary preserve their current values, as do project placement, status, \
+        pin/boost state, source ownership and unrelated metadata. Pass if_match_revision/etag \
+        from get_wiki_page to avoid clobbering concurrent writes; use write_wiki_page to create \
+        a page."
     )]
     pub(super) async fn update_wiki_page(
         &self,
         Parameters(params): Parameters<WriteWikiPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
-        let if_match = crate::models::resolve_if_match(
-            params.if_match_revision,
-            params.if_match_etag.as_deref(),
-        )?;
-        let res = wiki::update_wiki_page_cas(
-            &self.store,
-            &self.embedder,
-            &self.config,
-            wiki::WikiPageUpdate {
-                id_or_slug: &params.slug,
-                title: Some(&params.title),
-                content: &params.content,
-                kind: params.kind.as_deref(),
-                category: params.category.as_deref(),
-                summary: params.summary.as_deref(),
-                agent: params.agent.as_deref(),
-                if_match_revision: if_match,
-            },
-        )
-        .await?;
-        Self::json_result(&res)
+        self.write_wiki(crate::app::WikiWriteMode::Cas, params)
+            .await
     }
 
     #[tool(
@@ -989,6 +950,36 @@ struct ReadIndexResult {
 #[derive(Debug, Serialize)]
 struct RebuildIndexResult {
     count: usize,
+}
+
+impl RagServer {
+    /// Shared adapter for the wiki write tools: one use case, one mode each.
+    async fn write_wiki(
+        &self,
+        mode: crate::app::WikiWriteMode,
+        params: WriteWikiPageParams,
+    ) -> Result<CallToolResult, McpError> {
+        self.require_vec_compatible()?;
+        let res = self
+            .wiki_use_case()
+            .write(crate::app::WikiWriteCommand {
+                mode,
+                slug: Some(params.slug),
+                title: params.title,
+                content: params.content,
+                wing: params.wing,
+                room: params.room,
+                kind: params.kind,
+                category: params.category,
+                summary: params.summary,
+                agent: params.agent,
+                if_match_revision: params.if_match_revision,
+                if_match_etag: params.if_match_etag,
+                ..Default::default()
+            })
+            .await?;
+        Self::json_result(&res)
+    }
 }
 
 #[cfg(test)]

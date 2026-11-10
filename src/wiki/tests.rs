@@ -298,6 +298,8 @@ async fn wiki_write_rejects_identity_mismatch_before_embedding_or_mutation() {
                 category: None,
                 summary: None,
                 agent: None,
+                wing: None,
+                room: None,
                 if_match_revision: Some(created.revision),
             },
         )
@@ -1211,6 +1213,8 @@ async fn wiki_crud_write_get_list_update() {
             category: None,
             summary: Some("updated summary"),
             agent: None,
+            wing: None,
+            room: None,
             if_match_revision: None,
         },
     )
@@ -1286,6 +1290,8 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
             category: None,
             summary: None,
             agent: None,
+            wing: None,
+            room: None,
             if_match_revision: Some(persisted.revision),
         },
     )
@@ -1330,6 +1336,8 @@ async fn wiki_update_preserves_omitted_placement_state_and_arbitrary_metadata() 
             category: Some("systems"),
             summary: Some("new summary"),
             agent: None,
+            wing: None,
+            room: None,
             if_match_revision: Some(after.revision),
         },
     )
@@ -1830,6 +1838,8 @@ async fn wiki_graph_fault_rolls_back_document_chunks_graph_and_side_effects() {
             category: None,
             summary: Some("changed summary"),
             agent: Some("agent-test"),
+            wing: None,
+            room: None,
             if_match_revision: Some(written.revision),
         },
     )

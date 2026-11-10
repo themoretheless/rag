@@ -182,3 +182,18 @@ form with its variant prefix.
    gain those flat fields; MCP items gain `document`.
 4. **`pack_context` (drift 16).** MCP accepts `include_trace`,
    `persist_trace` and `prior_trace` like HTTP and returns `trace` when asked.
+5. **Wiki writes (drifts 5, 9, 10).** One entrypoint,
+   `app::WikiUseCase::write(WikiWriteCommand { mode: Create | Upsert | Cas })`
+   over `wiki::write_page`. MCP `write_wiki_page` → `Upsert` (new optional
+   `create_only=true` → `Create`), MCP `update_wiki_page` → `Cas` (now also
+   accepts a `wiki://` uri or document id in `slug`), HTTP `POST /v1/wiki` →
+   `Create`, `PUT /v1/wiki` → `Upsert`. Changes: MCP `write_wiki_page` on an
+   existing page now keeps omitted `kind`/`category`/`summary` (it reset kind
+   to `wiki` and cleared category/summary); `update_wiki_page` and `PUT` on an
+   existing page now apply a given `wing`/`room` (they ignored it). CAS
+   conflict has one meaning on both: a stale `if_match_*` (or `Create` on an
+   occupied slug) is `CONFLICT` and leaves the page unchanged. The removed
+   transport entrypoints: `put_wiki_page`/`WikiPutCommand` (replaced by
+   `write_page`); `update_wiki_page_cas` is now crate-internal.
+   `write_wiki_page`/`write_wiki_page_command` stay as internal writers for
+   maintenance, compile and review jobs (ops-log options), not transports.

@@ -180,6 +180,9 @@ pub struct WriteWikiPageParams {
     /// Same as `if_match_revision` but as etag string (`W/"3"`, `"3"`, `r3`).
     #[serde(default)]
     pub if_match_etag: Option<String>,
+    /// `write_wiki_page` only: refuse to touch an existing page (CONFLICT).
+    #[serde(default)]
+    pub create_only: Option<bool>,
 }
 
 /// Parameters for `get_wiki_page`.

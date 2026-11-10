@@ -13,11 +13,11 @@ use serde_json::json;
 use crate::db::store::WikiPageMetaFilter;
 use crate::db::{DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
-use crate::models::resolve_if_match;
 use crate::wiki;
 
 use super::error::{api_err, api_ok};
 use super::HttpState;
+use crate::app::{WikiWriteCommand, WikiWriteMode};
 
 /// Wiki routes: `GET|POST|PUT /v1/wiki`, `GET /v1/backlinks`.
 pub(super) fn routes() -> Router<HttpState> {
@@ -189,7 +189,7 @@ struct WikiPutBody {
     if_match_etag: Option<String>,
 }
 
-/// Create/overwrite a wiki page via [`wiki::put_wiki_page`].
+/// Create or update a wiki page (`WikiWriteMode::Upsert`).
 ///
 /// Optional `if_match_revision` / `if_match_etag` enforce CAS; mismatch → **409**.
 async fn wiki_put(State(st): State<HttpState>, Json(body): Json<WikiPutBody>) -> impl IntoResponse {
@@ -208,11 +208,12 @@ async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Resp
     if body.content.len() > super::MAX_HTTP_BODY_BYTES {
         return api_err(AppError::invalid("wiki content exceeds HTTP body limit"));
     }
-    let if_match = match resolve_if_match(body.if_match_revision, body.if_match_etag.as_deref()) {
-        Ok(v) => v,
-        Err(e) => return api_err(e),
-    };
-    let command = wiki::WikiPutCommand {
+    let command = WikiWriteCommand {
+        mode: if create_only {
+            WikiWriteMode::Create
+        } else {
+            WikiWriteMode::Upsert
+        },
         slug: body.slug,
         uri: body.uri,
         id: body.id,
@@ -224,23 +225,11 @@ async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Resp
         category: body.category,
         summary: body.summary,
         agent: body.agent,
-        if_match_revision: if_match,
-        create_only,
+        if_match_revision: body.if_match_revision,
+        if_match_etag: body.if_match_etag,
     };
-    let result = wiki::put_wiki_page(&st.store, &st.embedder, &st.config, command).await;
-    match result {
-        Ok(res) => api_ok(json!({
-            "ok": true,
-            "document_id": res.document_id,
-            "uri": res.uri,
-            "slug": res.slug,
-            "chunk_count": res.chunk_count,
-            "node_id": res.node_id,
-            "edge_count": res.edge_count,
-            "index_id": res.index_id,
-            "revision": res.revision,
-            "etag": res.etag,
-        })),
+    match st.wiki_use_case().write(command).await {
+        Ok(res) => api_ok(super::retrieval::with_ok(res)),
         Err(e) => api_err(e),
     }
 }

@@ -8,9 +8,11 @@
 
 pub mod graph;
 pub mod search;
+pub mod wiki;
 
 pub use graph::{GraphUseCase, NeighborsCommand};
 pub use search::{
     MultiGetCommand, MultiGetItem, MultiGetResponse, PackContextRequest, PackContextResponse,
     SearchUseCase, TraceOptions,
 };
+pub use wiki::{WikiUseCase, WikiWriteCommand, WikiWriteMode};
