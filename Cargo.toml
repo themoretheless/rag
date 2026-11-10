@@ -137,6 +137,10 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+# Light optimisation for dependencies only (DuckDB glue, serde, tokio,
+# tree-sitter): our own crates stay at opt-level 0 for fast rebuilds. The test
+# profile inherits from dev. Measured in docs/refactor/BASELINE.md.
+opt-level = 1
 
 [profile.test]
 debug = "line-tables-only"
