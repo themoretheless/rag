@@ -965,7 +965,10 @@ fn drop_legacy_embedding_column(conn: &Connection) -> Result<()> {
     })?;
     drop(stmt);
     for (name, _) in &indexes {
-        conn.execute_batch(&format!("DROP INDEX IF EXISTS \"{}\"", name.replace('"', "\"\"")))?;
+        conn.execute_batch(&format!(
+            "DROP INDEX IF EXISTS \"{}\"",
+            name.replace('"', "\"\"")
+        ))?;
     }
     conn.execute_batch("ALTER TABLE chunks DROP COLUMN embedding_json")?;
     for (_, sql) in &indexes {

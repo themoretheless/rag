@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::db::search::{search, SearchQuery};
-use crate::models::SearchMode;
 use crate::db::Store;
+use crate::models::SearchMode;
 use crate::models::{Chunk, Document};
 use chrono::{DateTime, Utc};
 
@@ -329,7 +329,11 @@ fn legacy_json_embeddings_migrate_to_float_arrays_with_identical_answers() {
             .map(|chunk| {
                 (
                     chunk.id.clone(),
-                    chunk.embedding.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    chunk
+                        .embedding
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>(),
                 )
             })
             .collect::<Vec<_>>()
@@ -379,7 +383,10 @@ fn interrupted_embedding_backfill_resumes_on_next_open() {
             )
             .unwrap();
         assert_eq!(pending as usize, DOCS * CHUNKS_PER_DOC - 4);
-        assert!(current_schema_version(&conn).is_err() || current_schema_version(&conn).unwrap().is_none());
+        assert!(
+            current_schema_version(&conn).is_err()
+                || current_schema_version(&conn).unwrap().is_none()
+        );
     }
     let resumed = Store::open(&path).unwrap();
     {
