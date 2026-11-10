@@ -232,7 +232,7 @@ struct PullReply {
 
 /// Start the replica loop when `RAG_PRIMARY_URL` is configured. The primary
 /// intentionally does not call itself.
-pub(super) fn spawn_worker(st: HttpState) {
+pub(super) fn spawn_worker(st: HttpState, tasks: &crate::background::BackgroundTasks) {
     let (role, node_id, configured_primary) = match identity() {
         Ok(value) => value,
         Err(error) => {
@@ -278,7 +278,8 @@ pub(super) fn spawn_worker(st: HttpState) {
             return;
         }
     };
-    tokio::spawn(async move {
+    let loop_tasks = tasks.clone();
+    tasks.spawn("sync-worker", async move {
         let base = primary_url.trim_end_matches('/').to_string();
         let _ = crate::util::blocking_section(|| {
             st.store
@@ -289,7 +290,12 @@ pub(super) fn spawn_worker(st: HttpState) {
             if let Err(error) = sync_once(&st, &client, &base, &node_id, &hostname).await {
                 tracing::warn!(%error, %node_id, "database sync cycle failed");
             }
-            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+            if !loop_tasks
+                .pause(std::time::Duration::from_secs(interval_secs))
+                .await
+            {
+                break;
+            }
         }
     });
 }

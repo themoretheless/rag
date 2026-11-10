@@ -578,16 +578,23 @@ fn repair_hint(
 /// `threshold == 0` disables auto-reindex entirely; staleness remains visible
 /// in `/v1/status` either way. Interval: `config.fts_maint_interval_secs`
 /// (0 disables the loop).
-pub fn spawn_fts_maintenance(store: Store, config: Config) {
+pub fn spawn_fts_maintenance(
+    tasks: &crate::background::BackgroundTasks,
+    store: Store,
+    config: &Config,
+) {
     if config.fts_stale_generation_threshold == 0 || config.fts_maint_interval_secs == 0 {
         return;
     }
     let threshold = config.fts_stale_generation_threshold;
     let stemmer = config.fts_stemmer.clone();
     let interval = std::time::Duration::from_secs(config.fts_maint_interval_secs);
-    tokio::spawn(async move {
+    let loop_tasks = tasks.clone();
+    tasks.spawn("fts-maintenance", async move {
         loop {
-            tokio::time::sleep(interval).await;
+            if !loop_tasks.pause(interval).await {
+                break;
+            }
             let check_store = store.clone();
             let stemmer = stemmer.clone();
             let outcome = tokio::task::spawn_blocking(move || -> Result<Option<u64>, AppError> {

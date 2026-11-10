@@ -55,7 +55,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::db::Store;
@@ -167,17 +166,25 @@ pub async fn serve(
     context: crate::context::AppContext,
     mcp: Option<Router>,
 ) -> Result<(), std::io::Error> {
-    serve_with_shutdown(bind, context, mcp, CancellationToken::new()).await
+    serve_with_shutdown(
+        bind,
+        context,
+        mcp,
+        crate::background::BackgroundTasks::new(),
+    )
+    .await
 }
 
-/// Stop accepting connections on cancellation and let accepted requests drain.
+/// Stop accepting connections when `background`'s token is cancelled and let
+/// accepted requests drain; the replica sync worker registers on `background`.
 /// The executable bounds that drain before its final database checkpoint.
 pub async fn serve_with_shutdown(
     bind: SocketAddr,
     context: crate::context::AppContext,
     mcp: Option<Router>,
-    shutdown: CancellationToken,
+    background: crate::background::BackgroundTasks,
 ) -> Result<(), std::io::Error> {
+    let shutdown = background.token();
     let auth = auth::HttpAuth::from_config(&context.config)
         .and_then(|auth| {
             auth.validate_bind(bind)?;
@@ -200,7 +207,7 @@ pub async fn serve_with_shutdown(
         );
     }
     let state = HttpState::from_context(context, mcp_http).with_auth_posture(posture);
-    sync::spawn_worker(state.clone());
+    sync::spawn_worker(state.clone(), &background);
     let api = api_router(state);
 
     let app = if let Some(mcp_router) = mcp {

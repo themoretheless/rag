@@ -111,7 +111,7 @@ impl RagServer {
     }
     /// Start optional incremental source synchronization. Disabled unless
     /// `RAG_AUTO_SYNC_ROOTS` contains one or more `;`-separated directories.
-    pub fn spawn_auto_sync(self) {
+    pub fn spawn_auto_sync(self, tasks: &crate::background::BackgroundTasks) {
         let roots = self.config.auto_sync_roots.clone();
         if roots.is_empty() {
             return;
@@ -119,7 +119,8 @@ impl RagServer {
         let interval = self.config.auto_sync_interval_secs;
         let interval_duration = std::time::Duration::from_secs(interval);
         crate::ops::configure_autosync(interval_duration);
-        tokio::spawn(async move {
+        let loop_tasks = tasks.clone();
+        tasks.spawn("auto-sync", async move {
             loop {
                 crate::ops::mark_autosync_running();
                 let mut cycle_error = None;
@@ -151,7 +152,9 @@ impl RagServer {
                 } else {
                     crate::ops::mark_autosync_success(interval_duration);
                 }
-                tokio::time::sleep(interval_duration).await;
+                if !loop_tasks.pause(interval_duration).await {
+                    break;
+                }
             }
         });
     }
@@ -676,7 +679,7 @@ impl RagServer {
 }
 
 impl RagServer {
-    pub fn spawn_file_watcher(self) {
+    pub fn spawn_file_watcher(self, tasks: &crate::background::BackgroundTasks) {
         let watch_config = match crate::watch::config_from(&self.config) {
             Ok(Some(config)) => config,
             Ok(None) => return,
@@ -688,21 +691,20 @@ impl RagServer {
         let roots = watch_config.roots.clone();
         let debounce = watch_config.debounce;
         let min_sync_interval = watch_config.min_sync_interval;
-        if let Err(error) = std::thread::Builder::new()
-            .name("rag-file-watch".into())
-            .spawn(move || {
-                if let Err(error) = Self::run_file_watcher(
-                    self.store.clone(),
-                    self.embedder.clone(),
-                    Config::clone(&self.config),
-                    roots,
-                    debounce,
-                    min_sync_interval,
-                ) {
-                    tracing::error!(error = %error, "file watcher stopped");
-                }
-            })
-        {
+        let token = tasks.token();
+        if let Err(error) = tasks.spawn_thread("rag-file-watch", move || {
+            if let Err(error) = Self::run_file_watcher(
+                self.store.clone(),
+                self.embedder.clone(),
+                Config::clone(&self.config),
+                roots,
+                debounce,
+                min_sync_interval,
+                token,
+            ) {
+                tracing::error!(error = %error, "file watcher stopped");
+            }
+        }) {
             tracing::error!(error = %error, "failed to spawn file watcher thread");
         }
     }
@@ -716,6 +718,7 @@ impl RagServer {
         roots: Vec<PathBuf>,
         debounce: std::time::Duration,
         min_sync_interval: std::time::Duration,
+        token: tokio_util::sync::CancellationToken,
     ) -> Result<(), AppError> {
         use crate::watch::{NotifyEventSource, SyncDebouncer};
 
@@ -784,7 +787,7 @@ impl RagServer {
                     }
                 }
             },
-            || false,
+            || token.is_cancelled(),
             poll,
         );
         tracing::info!(

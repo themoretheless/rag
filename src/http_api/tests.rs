@@ -287,7 +287,7 @@ async fn mounted_mcp_rejects_streamed_oversized_bodies() {
     let embedder = build_provider(&config).unwrap();
     let mcp = crate::mcp::mcp_http_service_for(
         crate::context::AppContext::new(store.clone(), embedder.clone(), config.clone()),
-        CancellationToken::new(),
+        tokio_util::sync::CancellationToken::new(),
     );
     let allowed_hosts = configured_http_allowed_hosts(&config, None);
     let api = api_router(HttpState {
@@ -333,7 +333,7 @@ async fn mounted_mcp_enforces_dns_rebinding_host_allowlist() {
             "/mcp",
             crate::mcp::mcp_http_service_for(
                 crate::context::AppContext::new(store, embedder.clone(), config.clone()),
-                CancellationToken::new(),
+                tokio_util::sync::CancellationToken::new(),
             ),
         )
     };
@@ -743,7 +743,7 @@ async fn legacy_console_mutations_are_not_mounted() {
 
 #[tokio::test]
 async fn cancellation_token_wakes_http_shutdown_future() {
-    let token = CancellationToken::new();
+    let token = tokio_util::sync::CancellationToken::new();
     let waiter = token.clone();
     let task = tokio::spawn(async move {
         waiter.cancelled().await;

@@ -18,6 +18,7 @@ pub mod access;
 pub mod activity;
 pub mod analysis_tasks;
 pub mod app;
+pub mod background;
 pub mod bootstrap;
 pub mod calibration;
 pub mod chunking;

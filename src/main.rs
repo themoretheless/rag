@@ -10,7 +10,6 @@ use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
 use rag_mcp::http_api;
 use rag_mcp::mcp::RagServer;
 use rmcp::{transport::stdio, ServiceExt};
-use tokio_util::sync::CancellationToken;
 
 fn main() -> anyhow::Result<()> {
     rag_mcp::bootstrap::init_tracing("info");
@@ -160,20 +159,23 @@ async fn run_serve_modes(
     embedder: Arc<dyn EmbeddingProvider>,
     config: Config,
 ) -> anyhow::Result<()> {
-    rag_mcp::ops::spawn_auto_backup(store.clone(), &config);
+    // Every background loop registers on one BackgroundTasks and stops on
+    // its shared token; shutdown waits for them before the checkpoint.
+    let background = rag_mcp::background::BackgroundTasks::new();
+    rag_mcp::ops::spawn_auto_backup(&background, store.clone(), &config);
     // One context for every transport: config parsed once, one embedder, one
     // chat client, one manifest check.
-    rag_mcp::diagnostics::spawn_fts_maintenance(store.clone(), config.clone());
+    rag_mcp::diagnostics::spawn_fts_maintenance(&background, store.clone(), &config);
     let context = rag_mcp::context::AppContext::new(store, embedder, config);
     let config = context.config.clone();
-    RagServer::from_context(context.clone()).spawn_auto_sync();
-    RagServer::from_context(context.clone()).spawn_file_watcher();
+    RagServer::from_context(context.clone()).spawn_auto_sync(&background);
+    RagServer::from_context(context.clone()).spawn_file_watcher(&background);
     let http_only = config.http_only;
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
     let mcp_http_enabled = config.mcp_http;
 
     let http_bind = config.http_bind.clone();
-    let shutdown = CancellationToken::new();
+    let shutdown = background.token();
     let mut http_task = None;
     if let Some(ref bind_str) = http_bind {
         let addr = http_api::parse_bind(bind_str)
@@ -198,7 +200,7 @@ async fn run_serve_modes(
                 addr
             );
             let running =
-                http_api::serve_with_shutdown(addr, http_context, mcp_svc, shutdown.clone());
+                http_api::serve_with_shutdown(addr, http_context, mcp_svc, background.clone());
             tokio::pin!(running);
             tokio::select! {
                 result=&mut running=>{ result.context("HTTP API server error")?; }
@@ -212,13 +214,14 @@ async fn run_serve_modes(
                     }
                 }
             }
+            background.shutdown(BACKGROUND_SHUTDOWN).await;
             return Ok(());
         }
 
-        let http_shutdown = shutdown.clone();
+        let http_background = background.clone();
         http_task = Some(tokio::spawn(async move {
             let result =
-                http_api::serve_with_shutdown(addr, http_context, mcp_svc, http_shutdown).await;
+                http_api::serve_with_shutdown(addr, http_context, mcp_svc, http_background).await;
             if let Err(error) = &result {
                 tracing::error!(error=%error,"HTTP API exited");
             }
@@ -276,8 +279,12 @@ async fn run_serve_modes(
             }
         }
     }
+    background.shutdown(BACKGROUND_SHUTDOWN).await;
     outcome
 }
+
+/// Bound on waiting for background loops after the shutdown signal.
+const BACKGROUND_SHUTDOWN: std::time::Duration = std::time::Duration::from_secs(10);
 
 async fn shutdown_signal() -> std::io::Result<()> {
     #[cfg(unix)]

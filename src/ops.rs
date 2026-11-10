@@ -378,7 +378,11 @@ fn inventory_at(settings: &AutoBackupSettings) -> AutoBackupInventory {
 
 /// Spawn the optional automatic backup loop. Disabled unless
 /// `RAG_AUTO_BACKUP_DIR` is configured.
-pub fn spawn_auto_backup(store: Store, config: &Config) {
+pub fn spawn_auto_backup(
+    tasks: &crate::background::BackgroundTasks,
+    store: Store,
+    config: &Config,
+) {
     let Some(settings) = auto_backup_settings(config) else {
         return;
     };
@@ -395,7 +399,8 @@ pub fn spawn_auto_backup(store: Store, config: &Config) {
             .map(|completed| completed + chrono::Duration::from_std(interval).unwrap_or_default())
             .or_else(|| Some(Utc::now()));
     }
-    tokio::spawn(async move {
+    let loop_tasks = tasks.clone();
+    tasks.spawn("auto-backup", async move {
         loop {
             RUNTIME
                 .write()
@@ -444,7 +449,9 @@ pub fn spawn_auto_backup(store: Store, config: &Config) {
                             .unwrap_or_default(),
                 );
             }
-            tokio::time::sleep(interval.min(AUTO_BACKUP_MAX_SLEEP)).await;
+            if !loop_tasks.pause(interval.min(AUTO_BACKUP_MAX_SLEEP)).await {
+                break;
+            }
         }
     });
 }
