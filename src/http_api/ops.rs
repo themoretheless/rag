@@ -192,8 +192,9 @@ async fn status(
     State(st): State<HttpState>,
     Query(query): Query<StatusQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        let service = DiagnosticsService::new(&st.store, &st.config);
+    let config = st.config.clone();
+    st.blocking_response("status", move |store| {
+        let service = DiagnosticsService::new(store, &config);
         let result = if query.summary {
             service.status_summary().map(api_ok)
         } else {
@@ -201,14 +202,17 @@ async fn status(
         };
         result.unwrap_or_else(api_err)
     })
+    .await
 }
 async fn doctor(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        match DiagnosticsService::new(&st.store, &st.config).doctor() {
+    let config = st.config.clone();
+    st.blocking_response("doctor", move |store| {
+        match DiagnosticsService::new(store, &config).doctor() {
             Ok(value) => api_ok(value),
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 async fn version() -> impl IntoResponse {
     api_ok(
@@ -216,10 +220,13 @@ async fn version() -> impl IntoResponse {
     )
 }
 async fn projects(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.documents().list_projects() {
-        Ok(items) => api_ok(json!({"ok":true, "items":items})),
-        Err(error) => api_err(error),
+    st.blocking_response("projects", move |store| {
+        match store.documents().list_projects() {
+            Ok(items) => api_ok(json!({"ok":true, "items":items})),
+            Err(error) => api_err(error),
+        }
     })
+    .await
 }
 #[derive(Deserialize)]
 struct ProjectHomeQuery {
@@ -230,17 +237,23 @@ async fn project_home(
     State(st): State<HttpState>,
     Query(query): Query<ProjectHomeQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.documents().project_home(&query.project) {
-        Ok(value) => api_ok(json!({"ok": true, "project": value})),
-        Err(error) => api_err(error),
+    st.blocking_response("project_home", move |store| {
+        match store.documents().project_home(&query.project) {
+            Ok(value) => api_ok(json!({"ok": true, "project": value})),
+            Err(error) => api_err(error),
+        }
     })
+    .await
 }
 
 async fn checkpoint(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.maintenance().vacuum_store() {
-        Ok(report) => api_ok(json!({"ok": true, "report": report})),
-        Err(error) => api_err(error),
+    st.blocking_response("checkpoint", move |store| {
+        match store.maintenance().vacuum_store() {
+            Ok(report) => api_ok(json!({"ok": true, "report": report})),
+            Err(error) => api_err(error),
+        }
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -375,12 +388,15 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         entry.last_tool = Some(activity.last_tool);
         entry.p95_ms = activity.p95_ms;
     }
-    let ops =
-        match crate::util::blocking_section(|| st.store.ops_log().list_recent_ops(AGENT_SCAN_ROWS))
-        {
-            Ok(value) => value,
-            Err(error) => return api_err(error),
-        };
+    let ops = match st
+        .blocking("recent ops", |store| {
+            store.ops_log().list_recent_ops(AGENT_SCAN_ROWS)
+        })
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => return api_err(error),
+    };
     for op in ops {
         let Some(name) = op.agent_name.as_deref().filter(|n| !n.trim().is_empty()) else {
             continue;
@@ -393,11 +409,12 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         }
     }
     // Counts and timestamps only: read diary rows without their bodies.
-    let diary = match crate::util::blocking_section(|| {
-        st.store
-            .documents()
-            .list_diary_activity(None, AGENT_SCAN_ROWS)
-    }) {
+    let diary = match st
+        .blocking("diary activity", |store| {
+            store.documents().list_diary_activity(None, AGENT_SCAN_ROWS)
+        })
+        .await
+    {
         Ok(value) => value,
         Err(error) => return api_err(error),
     };

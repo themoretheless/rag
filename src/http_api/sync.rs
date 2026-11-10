@@ -45,16 +45,17 @@ fn identity() -> Result<(String, String, Option<String>), AppError> {
 }
 
 async fn status(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
+    st.blocking_response("status", move |store| {
         let (role, node_id, primary_url) = match identity() {
             Ok(value) => value,
             Err(error) => return api_err(error),
         };
-        match st.store.sync().sync_status(&role, &node_id, primary_url) {
+        match store.sync().sync_status(&role, &node_id, primary_url) {
             Ok(value) => api_ok(json!({"ok": true, "sync": value})),
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -72,9 +73,8 @@ async fn register(
     State(st): State<HttpState>,
     Json(body): Json<RegisterBody>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        match st
-            .store
+    st.blocking_response("register", move |store| {
+        match store
             .sync()
             .register_sync_node(&body.node_id, &body.hostname, &body.role)
         {
@@ -82,6 +82,7 @@ async fn register(
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -102,11 +103,13 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
     }
     // Validate the whole batch before the first mutation. Each accepted event then
     // commits page+journal together; a retry safely resumes any committed prefix.
-    if let Err(error) = crate::util::blocking_section(|| {
-        st.store
-            .sync()
-            .preflight_sync_batch(&body.node_id, &body.changes)
-    }) {
+    let (node_id, changes) = (body.node_id.clone(), body.changes.clone());
+    if let Err(error) = st
+        .blocking("sync preflight", move |store| {
+            store.sync().preflight_sync_batch(&node_id, &changes)
+        })
+        .await
+    {
         return api_err(error);
     }
     let embedder = batch_embedder(&st, body.changes.iter()).await;
@@ -281,11 +284,14 @@ pub(super) fn spawn_worker(st: HttpState, tasks: &crate::background::BackgroundT
     let loop_tasks = tasks.clone();
     tasks.spawn("sync-worker", async move {
         let base = primary_url.trim_end_matches('/').to_string();
-        let _ = crate::util::blocking_section(|| {
-            st.store
-                .sync()
-                .register_sync_node(&node_id, &hostname, "replica")
-        });
+        let (register_node, register_host) = (node_id.clone(), hostname.clone());
+        let _ = st
+            .blocking("sync register", move |store| {
+                store
+                    .sync()
+                    .register_sync_node(&register_node, &register_host, "replica")
+            })
+            .await;
         loop {
             if let Err(error) = sync_once(&st, &client, &base, &node_id, &hostname).await {
                 tracing::warn!(%error, %node_id, "database sync cycle failed");
@@ -343,10 +349,10 @@ async fn sync_once(
         .error_for_status()
         .map_err(|error| AppError::db(format!("sync register response: {error}")))?;
 
-    let pending = bounded_sync_batch(
-        node_id,
-        &crate::util::blocking_section(|| st.store.sync().pending_sync_outbox(100))?,
-    )?;
+    let outbox = st
+        .blocking("sync outbox", |store| store.sync().pending_sync_outbox(100))
+        .await?;
+    let pending = bounded_sync_batch(node_id, &outbox)?;
     if !pending.is_empty() {
         let reply = client
             .post(format!("{base}/v1/sync/push"))
@@ -367,10 +373,18 @@ async fn sync_once(
             .zip(reply.primary_sequences)
             .map(|(change, primary)| (change.origin_seq, primary))
             .collect::<Vec<_>>();
-        crate::util::blocking_section(|| st.store.sync().mark_sync_outbox_sent(&assignments))?;
+        st.blocking("sync outbox sent", move |store| {
+            store.sync().mark_sync_outbox_sent(&assignments)
+        })
+        .await?;
     }
 
-    let cursor = crate::util::blocking_section(|| st.store.sync().sync_pull_cursor(node_id))?;
+    let cursor_node = node_id.to_string();
+    let cursor = st
+        .blocking("sync cursor", move |store| {
+            store.sync().sync_pull_cursor(&cursor_node)
+        })
+        .await?;
     let reply = client
         .get(format!("{base}/v1/sync/pull"))
         .query(&[
@@ -441,9 +455,8 @@ fn default_limit() -> usize {
 }
 
 async fn pull(State(st): State<HttpState>, Query(query): Query<PullQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        match st
-            .store
+    st.blocking_response("pull", move |store| {
+        match store
             .sync()
             .pull_sync_changes(&query.node_id, query.after, query.limit)
         {
@@ -459,6 +472,7 @@ async fn pull(State(st): State<HttpState>, Query(query): Query<PullQuery>) -> im
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -468,9 +482,8 @@ struct AckBody {
 }
 
 async fn ack(State(st): State<HttpState>, Json(body): Json<AckBody>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        match st
-            .store
+    st.blocking_response("ack", move |store| {
+        match store
             .sync()
             .acknowledge_sync_cursor(&body.node_id, body.cursor)
         {
@@ -478,6 +491,7 @@ async fn ack(State(st): State<HttpState>, Json(body): Json<AckBody>) -> impl Int
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 #[cfg(test)]

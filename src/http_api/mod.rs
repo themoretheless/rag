@@ -148,6 +148,37 @@ impl HttpState {
         crate::app::AdminUseCase::new(self.store.clone(), self.config.clone())
     }
 
+    /// Run a handler body that needs only the store on the blocking pool and
+    /// builds its response there (DuckDB work never runs on an async worker).
+    pub(crate) async fn blocking_response<F>(
+        &self,
+        operation: &'static str,
+        work: F,
+    ) -> axum::response::Response
+    where
+        F: FnOnce(&crate::db::Store) -> axum::response::Response + Send + 'static,
+    {
+        let store = self.store.clone();
+        match crate::util::run_blocking(operation, move || Ok(work(&store))).await {
+            Ok(response) => response,
+            Err(error) => error::api_err(error),
+        }
+    }
+
+    /// Run store work on the blocking pool with a shared store handle.
+    pub(crate) async fn blocking<T, F>(
+        &self,
+        operation: &'static str,
+        work: F,
+    ) -> Result<T, crate::error::AppError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&crate::db::Store) -> Result<T, crate::error::AppError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        crate::util::run_blocking(operation, move || work(&store)).await
+    }
+
     /// Attach the posture parsed from the listener's configured tokens.
     pub(crate) fn with_auth_posture(mut self, auth: auth::AuthPosture) -> Self {
         self.auth = auth;

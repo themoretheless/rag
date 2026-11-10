@@ -254,9 +254,12 @@ async fn compare(State(st): State<HttpState>, Json(body): Json<CompareBody>) -> 
     }
 }
 async fn compare_runs(st: HttpState, body: CompareBody) -> Result<Value> {
-    let questions = crate::util::blocking_section(|| {
-        load_feedback_questions(&st.store, body.question_ids.as_deref())
-    })?;
+    let question_ids = body.question_ids.clone();
+    let questions = st
+        .blocking("feedback questions", move |store| {
+            load_feedback_questions(store, question_ids.as_deref())
+        })
+        .await?;
     let mut results = Vec::new();
     let mut regressions = Vec::new();
     const EPSILON: f64 = 1e-9;
@@ -311,7 +314,11 @@ async fn compare_runs(st: HttpState, body: CompareBody) -> Result<Value> {
         "results": results,
         "regressions": regressions,
     });
-    crate::util::blocking_section(|| persist_eval_run(&st.store, &report))?;
+    let persisted = report.clone();
+    st.blocking("persist eval run", move |store| {
+        persist_eval_run(store, &persisted)
+    })
+    .await?;
     Ok(report)
 }
 async fn run(State(st): State<HttpState>, Json(body): Json<Run>) -> Response {
@@ -327,33 +334,32 @@ async fn run_one(
     answer_text: Option<String>,
     use_llm: bool,
 ) -> Result<Value> {
-    let payload = crate::util::blocking_section(|| {
-        super::payload_kv::get_payload_raw(
-            &st.store,
-            super::payload_kv::PayloadTable::SearchFeedback,
-            &id,
-        )
-    })?;
+    let key = id.clone();
+    let payload = st
+        .blocking("feedback question", move |store| {
+            super::payload_kv::get_payload_raw(
+                store,
+                super::payload_kv::PayloadTable::SearchFeedback,
+                &key,
+            )
+        })
+        .await?;
     let item: Feedback =
         serde_json::from_str(&payload.ok_or_else(|| AppError::not_found("question not found"))?)?;
-    if crate::util::blocking_section(|| stale(&st.store, &item))? {
+    if is_stale(&st, &item).await? {
         let result = json!({
             "id": id,
             "status": "source_changed",
             "hint": "Recheck labels against current sources"
         });
-        crate::util::blocking_section(|| {
-            persist_feedback_run(&st.store, &id, &item.search, &result)
-        })?;
+        save_feedback_run(&st, &id, &item.search, &result).await?;
         return Ok(result);
     }
     let (search_result, hits) =
         search_with_body(st.clone(), serde_json::from_value(item.search.clone())?).await?;
-    if crate::util::blocking_section(|| stale(&st.store, &item))? {
+    if is_stale(&st, &item).await? {
         let result = json!({"id":id,"status":"source_changed"});
-        crate::util::blocking_section(|| {
-            persist_feedback_run(&st.store, &id, &item.search, &result)
-        })?;
+        save_feedback_run(&st, &id, &item.search, &result).await?;
         return Ok(result);
     }
     let (recall, mrr) = score_hits(&item, &hits);
@@ -388,6 +394,11 @@ async fn run_one(
         }
     }
     let citation_judge = answer_judge.citation.clone();
+    let manifest = st
+        .blocking("embedding manifest", |store| {
+            store.embedding_manifest().get_embedding_manifest()
+        })
+        .await?;
     let result = json!({
         "id": id,
         "status": "evaluated",
@@ -404,13 +415,34 @@ async fn run_one(
         "empty_result_for_no_answer": item.no_answer.then_some(hits.is_empty()),
         "result_count": hits.len(),
         "timings": search_result["timings"],
-        "embedding_manifest": crate::util::blocking_section(|| st.store.embedding_manifest().get_embedding_manifest())?,
+        "embedding_manifest": manifest,
         "scope": "current corpus; only supplied positive labels; empty retrieval is not answer \
         correctness; citation_judge is deterministic expected-doc coverage; answer_judge is \
         heuristic unless use_llm and RAG_LLM_ENABLED"
     });
-    crate::util::blocking_section(|| persist_feedback_run(&st.store, &id, &item.search, &result))?;
+    save_feedback_run(&st, &id, &item.search, &result).await?;
     Ok(result)
+}
+
+/// `stale` on the blocking pool.
+async fn is_stale(st: &HttpState, item: &Feedback) -> Result<bool> {
+    let item = item.clone();
+    st.blocking("feedback stale check", move |store| stale(store, &item))
+        .await
+}
+
+/// `persist_feedback_run` on the blocking pool.
+async fn save_feedback_run(
+    st: &HttpState,
+    id: &str,
+    settings: &Value,
+    result: &Value,
+) -> Result<()> {
+    let (id, settings, result) = (id.to_string(), settings.clone(), result.clone());
+    st.blocking("persist feedback run", move |store| {
+        persist_feedback_run(store, &id, &settings, &result)
+    })
+    .await
 }
 fn persist_feedback_run(
     store: &Store,

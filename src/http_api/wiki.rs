@@ -240,7 +240,7 @@ async fn wiki_backlinks(
     State(st): State<HttpState>,
     Query(q): Query<BacklinksQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
+    st.blocking_response("wiki_backlinks", move |store| {
         let id = q.id.trim();
         if id.is_empty() {
             return api_err(AppError::invalid("id query param required"));
@@ -251,13 +251,12 @@ async fn wiki_backlinks(
             .map(str::trim)
             .filter(|wing| !wing.is_empty());
         // One backlinks read serves both the rows and their contexts.
-        let view = match st.store.documents().wiki_backlink_view(id) {
+        let view = match store.documents().wiki_backlink_view(id) {
             Ok(view) => view,
             Err(error) => return api_err(error),
         };
         let rows = match wing {
-            Some(wing) => st
-                .store
+            Some(wing) => store
                 .documents()
                 .wiki_backlinks_for_document_in_wing(id, wing),
             None => Ok(view
@@ -309,6 +308,7 @@ async fn wiki_backlinks(
             Err(e) => api_err(e),
         }
     })
+    .await
 }
 
 #[derive(Debug, Deserialize)]

@@ -79,7 +79,7 @@ struct OpsLogQuery {
 }
 
 async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
+    st.blocking_response("ops_log", move |store| {
         // Page size is bounded by `Store` (MAX_OPS_LOG_PAGE) for every transport.
         let limit = q
             .limit
@@ -87,8 +87,7 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
             .clamp(1, crate::db::store::MAX_OPS_LOG_PAGE);
         let id = non_blank(q.id);
         let has_key = id.is_some() || q.seq.is_some();
-        match st
-            .store
+        match store
             .ops_log()
             .read_ops_log(id.as_deref(), q.seq, Some(limit))
         {
@@ -115,7 +114,7 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
                         })
                     })
                     .collect();
-                let next_seq = st.store.ops_log().next_ops_seq().ok();
+                let next_seq = store.ops_log().next_ops_seq().ok();
                 api_ok(
                     json!({"ok": true, "count": items.len(), "next_seq": next_seq, "items": items}),
                 )
@@ -123,6 +122,7 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 async fn taxonomy(State(st): State<HttpState>) -> impl IntoResponse {
@@ -210,9 +210,8 @@ async fn diary(State(st): State<HttpState>, Query(q): Query<DiaryQuery>) -> impl
         .limit
         .unwrap_or(DEFAULT_DIARY_LIMIT)
         .clamp(1, MAX_DIARY_LIMIT);
-    crate::util::blocking_section(|| {
-        match st
-            .store
+    st.blocking_response("diary", move |store| {
+        match store
             .documents()
             .list_diary_entries(non_blank(q.agent).as_deref(), limit)
         {
@@ -220,6 +219,7 @@ async fn diary(State(st): State<HttpState>, Query(q): Query<DiaryQuery>) -> impl
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -283,9 +283,8 @@ struct TunnelsQuery {
 }
 
 async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
-        match st
-            .store
+    st.blocking_response("tunnels", move |store| {
+        match store
             .graph()
             .list_tunnels(non_blank(q.node_id).as_deref())
         {
@@ -293,6 +292,7 @@ async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> 
             Err(error) => api_err(error),
         }
     })
+    .await
 }
 
 async fn lint_wiki(State(st): State<HttpState>) -> impl IntoResponse {
