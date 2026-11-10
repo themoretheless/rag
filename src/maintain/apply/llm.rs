@@ -7,7 +7,7 @@ pub(super) async fn apply_compile_source(
     index: usize,
     name: &str,
     target: Option<&str>,
-    params: &serde_json::Value,
+    params: &CompileSourceParams,
 ) -> Result<StepResult> {
     let store = context.store;
     let embedder = context.embedder;
@@ -19,8 +19,7 @@ pub(super) async fn apply_compile_source(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .or_else(|| param_str(params, "source_id_or_uri"))
-        .or_else(|| param_str(params, "source_id"))
+        .or_else(|| params.source_id_or_uri.clone())
         .ok_or_else(|| {
             AppError::invalid("compile_source requires target_id or params.source_id_or_uri")
         })?;
@@ -90,7 +89,7 @@ pub(super) async fn apply_consolidate(
     index: usize,
     name: &str,
     target: Option<&str>,
-    params: &serde_json::Value,
+    params: &ConsolidateParams,
 ) -> Result<StepResult> {
     let store = context.store;
     let embedder = context.embedder;
@@ -99,7 +98,7 @@ pub(super) async fn apply_consolidate(
     let agent = context.agent;
     // Persist a pre-synthesized page (title+content). Full LLM consolidate is
     // agent/MCP-side; apply only writes when body is present.
-    let title = match param_str(params, "title") {
+    let title = match params.title.clone() {
         Some(t) => t,
         None => {
             return Ok(StepResult {
@@ -113,7 +112,7 @@ pub(super) async fn apply_consolidate(
             });
         }
     };
-    let content = match param_str(params, "content").or_else(|| param_str(params, "body")) {
+    let content = match params.content.clone() {
         Some(c) => c,
         None => {
             return Ok(StepResult {
@@ -127,11 +126,13 @@ pub(super) async fn apply_consolidate(
             });
         }
     };
-    let slug = param_str(params, "slug").unwrap_or_else(|| title.clone());
-    let kind = param_str(params, "kind")
+    let slug = params.slug.clone().unwrap_or_else(|| title.clone());
+    let kind = params
+        .kind
+        .clone()
         .unwrap_or_else(|| crate::models::DocumentKind::Concept.as_str().into());
-    let category = param_str(params, "category");
-    let summary = param_str(params, "summary");
+    let category = params.category.clone();
+    let summary = params.summary.clone();
 
     if dry_run {
         return Ok(StepResult {
@@ -184,7 +185,7 @@ pub(super) async fn apply_refresh_stale(
     context: &MaintenanceExecutionContext<'_>,
     index: usize,
     name: &str,
-    params: &serde_json::Value,
+    params: &RefreshStaleParams,
 ) -> Result<StepResult> {
     let store = context.store;
     let embedder = context.embedder;
@@ -192,10 +193,10 @@ pub(super) async fn apply_refresh_stale(
     let llm = context.llm;
     let dry_run = context.dry_run;
     let agent = context.agent;
-    let max_docs = param_usize(params, "max_docs")?;
+    let max_docs = params.max_docs;
     // A nested action may opt into preview inside an applying plan, but it may
     // never override the plan-wide safety boundary in the mutating direction.
-    let nested_dry = dry_run || param_bool(params, "dry_run").unwrap_or(false);
+    let nested_dry = dry_run || params.dry_run;
     let llm_ref = if !nested_dry && config.llm_enabled {
         llm
     } else {
@@ -225,23 +226,23 @@ pub(super) async fn apply_file_answer(
     context: &MaintenanceExecutionContext<'_>,
     index: usize,
     name: &str,
-    params: &serde_json::Value,
+    params: &FileAnswerParams,
 ) -> Result<StepResult> {
     let store = context.store;
     let embedder = context.embedder;
     let config = context.config;
     let dry_run = context.dry_run;
     let agent = context.agent;
-    let title = param_str(params, "title")
+    let title = params
+        .title
+        .clone()
         .ok_or_else(|| AppError::invalid("file_answer requires params.title"))?;
-    let body = param_str(params, "body")
-        .or_else(|| param_str(params, "content"))
+    let body = params
+        .body
+        .clone()
         .ok_or_else(|| AppError::invalid("file_answer requires params.body or params.content"))?;
-    let slug = param_str(params, "slug");
-
-    let citations: Option<Vec<FileAnswerCitation>> = params
-        .get("citations")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let slug = params.slug.clone();
+    let citations = params.citations.clone();
 
     if dry_run {
         return Ok(StepResult {

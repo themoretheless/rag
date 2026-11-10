@@ -494,7 +494,7 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
         &store,
         0,
         "drop_tombstones",
-        &json!({"max_docs": 99, "allow_raw_delete": true}),
+        &DropTombstonesParams::parse(&json!({"max_docs": 99, "allow_raw_delete": true})).unwrap(),
         &config,
         false,
     )
@@ -517,7 +517,7 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
         &raw_store,
         0,
         "drop_tombstones",
-        &json!({"max_docs": 50, "allow_raw_delete": false}),
+        &DropTombstonesParams::parse(&json!({"max_docs": 50, "allow_raw_delete": false})).unwrap(),
         &raw_config,
         false,
     )

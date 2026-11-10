@@ -302,107 +302,26 @@ struct MaintenanceExecutionContext<'a> {
     remaining_docs: usize,
 }
 
+/// Run one validated item through its [`steps::MaintenanceStep`].
 async fn execute_one(
     context: &MaintenanceExecutionContext<'_>,
     action: &MaintenancePlanItem,
     index: usize,
 ) -> StepResult {
-    let MaintenanceExecutionContext {
-        store,
-        embedder,
-        config,
-        dry_run,
-        ..
-    } = context;
-    let dry_run = *dry_run;
-    let name = action.action.as_str();
-    let target = action.target_id.as_deref();
-    let params = &action.params;
-
-    let result = match action.action {
-        MaintenanceAction::Noop => Ok(StepResult {
-            outcome: ok_outcome(
-                index,
-                name,
-                target,
-                dry_run,
-                "noop",
-                Some(json!({"reason": action.reason})),
-            ),
-            docs_delta: 0,
-        }),
-        MaintenanceAction::Refile => {
-            blocking_section(|| apply_refile(store, index, name, target, params, dry_run))
-        }
-        MaintenanceAction::Pin => {
-            blocking_section(|| apply_pin(store, index, name, target, true, dry_run))
-        }
-        MaintenanceAction::Unpin => {
-            blocking_section(|| apply_pin(store, index, name, target, false, dry_run))
-        }
-        MaintenanceAction::SetBoost => {
-            blocking_section(|| apply_set_boost(store, index, name, target, params, dry_run))
-        }
-        MaintenanceAction::SetTags => {
-            blocking_section(|| apply_set_tags(store, index, name, target, params, dry_run))
-        }
-        MaintenanceAction::Archive => {
-            blocking_section(|| apply_status(store, index, name, target, "archived", dry_run))
-        }
-        MaintenanceAction::Unarchive => {
-            blocking_section(|| apply_status(store, index, name, target, "active", dry_run))
-        }
-        MaintenanceAction::RebuildIndex => {
-            blocking_section(|| apply_rebuild_index(store, index, name, dry_run))
-        }
-        MaintenanceAction::RebuildGraph => {
-            blocking_section(|| apply_rebuild_graph(store, index, name, params, config, dry_run))
-        }
-        MaintenanceAction::ReindexFts => {
-            apply_reindex_fts(store, index, name, config, dry_run).await
-        }
-        MaintenanceAction::Reembed => {
-            apply_reembed_one(store, embedder, config, index, name, target, dry_run).await
-        }
-        MaintenanceAction::ReembedAll => {
-            apply_reembed_all(store, embedder, config, index, name, params, dry_run).await
-        }
-        MaintenanceAction::CompileSource => {
-            apply_compile_source(context, index, name, target, params).await
-        }
-        MaintenanceAction::Consolidate => {
-            apply_consolidate(context, index, name, target, params).await
-        }
-        MaintenanceAction::RefreshStaleWiki => {
-            apply_refresh_stale(context, index, name, params).await
-        }
-        MaintenanceAction::FileAnswer => apply_file_answer(context, index, name, params).await,
-        MaintenanceAction::MergeExactDup => blocking_section(|| {
-            apply_merge_exact_dup(
-                store,
-                index,
-                name,
-                target,
-                params,
-                dry_run,
-                context.remaining_docs,
-            )
-        }),
-        MaintenanceAction::DropTombstones => {
-            blocking_section(|| apply_drop_tombstones(store, index, name, params, config, dry_run))
-        }
-        MaintenanceAction::Vacuum | MaintenanceAction::Checkpoint => {
-            blocking_section(|| apply_vacuum(store, index, name, dry_run))
-        }
+    let input = steps::StepInput {
+        index,
+        name: action.action.as_str(),
+        target: action.target_id.as_deref(),
+        reason: action.reason.as_deref(),
     };
-
-    match result {
-        Ok(s) => s,
-        Err(e) => StepResult {
-            outcome: err_outcome(index, name, target, e.to_string()),
-            docs_delta: 0,
-        },
-    }
+    let result = match steps::step_for(action) {
+        Ok(step) => step.run(context, &input).await,
+        Err(e) => Err(e),
+    };
+    result.unwrap_or_else(|e| StepResult {
+        outcome: err_outcome(index, input.name, input.target, e.to_string()),
+        docs_delta: 0,
+    })
 }
 
 // --- helpers: outcomes ---
@@ -530,77 +449,16 @@ fn log_action(
     blocking_section(|| store.ops_log().record(&entry)).map(|written| written.id)
 }
 
-// --- param helpers ---
-
-fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
-fn param_f64(params: &serde_json::Value, key: &str) -> Option<f64> {
-    params.get(key).and_then(|v| {
-        v.as_f64()
-            .or_else(|| v.as_i64().map(|i| i as f64))
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    })
-}
-
-/// Non-negative integer param (e.g. `max_docs`). Absent → `Ok(None)`;
-/// negative, NaN or infinite values are rejected; fractions truncate.
-fn param_usize(params: &serde_json::Value, key: &str) -> Result<Option<usize>> {
-    match param_f64(params, key) {
-        None => Ok(None),
-        Some(n) if n.is_finite() && n >= 0.0 => Ok(Some(n.min(usize::MAX as f64) as usize)),
-        Some(n) => Err(AppError::invalid(format!(
-            "maintenance param '{key}' must be a non-negative finite number, got {n}"
-        ))),
-    }
-}
-
-fn param_bool(params: &serde_json::Value, key: &str) -> Option<bool> {
-    params.get(key).and_then(|v| {
-        v.as_bool().or_else(|| match v.as_str() {
-            Some("true") | Some("1") | Some("yes") => Some(true),
-            Some("false") | Some("0") | Some("no") => Some(false),
-            _ => None,
-        })
-    })
-}
-
-fn param_str_list(params: &serde_json::Value, key: &str) -> Vec<String> {
-    let Some(v) = params.get(key) else {
-        return Vec::new();
-    };
-    if let Some(arr) = v.as_array() {
-        return arr
-            .iter()
-            .filter_map(|x| x.as_str().map(str::trim).filter(|s| !s.is_empty()))
-            .map(|s| s.to_string())
-            .collect();
-    }
-    if let Some(s) = v.as_str() {
-        return s
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(|t| t.to_string())
-            .collect();
-    }
-    Vec::new()
-}
-
 // --- action executors ---
 
 mod dedupe;
 mod index;
 mod llm;
 mod metadata;
+mod params;
+mod steps;
 
-use self::{dedupe::*, index::*, llm::*, metadata::*};
+use self::{dedupe::*, index::*, llm::*, metadata::*, params::*};
 
 #[cfg(test)]
 mod tests;

@@ -8,7 +8,7 @@ pub(super) fn apply_merge_exact_dup(
     index: usize,
     name: &str,
     target: Option<&str>,
-    params: &serde_json::Value,
+    params: &MergeExactDupParams,
     dry_run: bool,
     remaining_docs: usize,
 ) -> Result<StepResult> {
@@ -16,7 +16,7 @@ pub(super) fn apply_merge_exact_dup(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .or_else(|| param_str(params, "keep_id"))
+        .or_else(|| params.keep_id.clone())
         .ok_or_else(|| {
             AppError::invalid("merge_exact_dup requires target_id or params.keep_id (canonical)")
         })?;
@@ -26,7 +26,7 @@ pub(super) fn apply_merge_exact_dup(
         .get_document(&keep_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
     let expected_hash = crate::util::content_hash(&keep.content);
-    let declared_hash = param_str(params, "content_hash");
+    let declared_hash = params.content_hash.clone();
     if declared_hash
         .as_deref()
         .is_some_and(|declared| declared != expected_hash)
@@ -36,18 +36,7 @@ pub(super) fn apply_merge_exact_dup(
         )));
     }
 
-    let mut source_ids = param_str_list(params, "source_ids");
-    if source_ids.is_empty() {
-        source_ids = param_str_list(params, "document_ids");
-    }
-    if let Some(b) = param_str(params, "document_id_b")
-        .or_else(|| param_str(params, "drop_id"))
-        .or_else(|| param_str(params, "source_id"))
-    {
-        if !source_ids.contains(&b) {
-            source_ids.push(b);
-        }
-    }
+    let mut source_ids = params.source_ids.clone();
     let mut seen = std::collections::HashSet::new();
     source_ids = source_ids
         .into_iter()
@@ -88,8 +77,8 @@ pub(super) fn apply_merge_exact_dup(
         });
     }
 
-    let allow_raw_delete = param_bool(params, "allow_raw_delete").unwrap_or(false);
-    let hard_delete = param_bool(params, "delete").unwrap_or(false);
+    let allow_raw_delete = params.allow_raw_delete;
+    let hard_delete = params.delete;
 
     if dry_run {
         // Dry-run uses the same fail-closed body proof without invoking the
@@ -169,15 +158,12 @@ pub(super) fn apply_drop_tombstones(
     store: &Store,
     index: usize,
     name: &str,
-    params: &serde_json::Value,
+    params: &DropTombstonesParams,
     config: &Config,
     dry_run: bool,
 ) -> Result<StepResult> {
-    let allow_raw_delete = param_bool(params, "allow_raw_delete").unwrap_or(false);
-    let max_docs = param_usize(params, "max_docs")?
-        .unwrap_or(config.maint_max_docs)
-        .max(1)
-        .min(config.maint_max_docs.max(1));
+    let allow_raw_delete = params.allow_raw_delete;
+    let max_docs = capped_max_docs(params.max_docs, config);
 
     let candidates = crate::db::analytics::tombstone_candidates(store, max_docs)?;
 
