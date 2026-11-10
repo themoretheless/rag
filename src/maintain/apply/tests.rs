@@ -88,7 +88,7 @@ async fn dry_run_default_does_not_mutate() {
     assert!(report.dry_run);
     assert_eq!(report.applied.len(), 1);
     assert!(report.applied[0].message.starts_with("would_apply:"));
-    let doc = store.get_document("d1").unwrap().unwrap();
+    let doc = store.documents().get_document("d1").unwrap().unwrap();
     assert!(doc.wing.is_none());
     assert!(report.ops_log_id.is_some());
 }
@@ -106,14 +106,14 @@ async fn plan_dry_run_cannot_be_disabled_by_refresh_stale_action() {
 
     seed_doc(&store, "raw", "Raw", "new source body", "raw");
     seed_doc(&store, "wiki", "Wiki", "compiled body", "wiki");
-    let mut raw = store.get_document("raw").unwrap().unwrap();
+    let mut raw = store.documents().get_document("raw").unwrap().unwrap();
     raw.updated_at = Utc::now();
-    store.upsert_document(&raw).unwrap();
-    let mut wiki = store.get_document("wiki").unwrap().unwrap();
+    store.documents().upsert_document(&raw).unwrap();
+    let mut wiki = store.documents().get_document("wiki").unwrap().unwrap();
     wiki.updated_at = raw.updated_at - chrono::Duration::days(1);
     wiki.metadata_json = json!({"source_id": raw.id}).to_string();
-    store.upsert_document(&wiki).unwrap();
-    let wiki_before = store.get_document("wiki").unwrap().unwrap();
+    store.documents().upsert_document(&wiki).unwrap();
+    let wiki_before = store.documents().get_document("wiki").unwrap().unwrap();
 
     // If the nested `dry_run=false` escaped the plan-wide boundary, this
     // unreachable client would be called and the action would fail instead
@@ -139,7 +139,7 @@ async fn plan_dry_run_cannot_be_disabled_by_refresh_stale_action() {
     assert_eq!(report.applied.len(), 1);
     assert!(report.applied[0].message.starts_with("would_apply:"));
     assert_eq!(report.applied[0].detail.as_ref().unwrap()["dry_run"], true);
-    let wiki_after = store.get_document("wiki").unwrap().unwrap();
+    let wiki_after = store.documents().get_document("wiki").unwrap().unwrap();
     assert_eq!(wiki_after.revision, wiki_before.revision);
     assert_eq!(wiki_after.content, wiki_before.content);
 }
@@ -178,7 +178,7 @@ async fn apply_refile_pin_archive() {
     assert!(!report.dry_run);
     assert_eq!(report.errors.len(), 0);
     assert_eq!(report.applied.len(), 4);
-    let doc = store.get_document("d1").unwrap().unwrap();
+    let doc = store.documents().get_document("d1").unwrap().unwrap();
     assert_eq!(doc.wing.as_deref(), Some("w1"));
     assert_eq!(doc.room.as_deref(), Some("r1"));
     assert!(doc.pinned);
@@ -210,9 +210,30 @@ async fn respects_max_docs_cap() {
     assert_eq!(report.max_docs, 2);
     assert_eq!(report.applied.len(), 2);
     assert_eq!(report.skipped.len(), 2);
-    assert!(store.get_document("d0").unwrap().unwrap().pinned);
-    assert!(store.get_document("d1").unwrap().unwrap().pinned);
-    assert!(!store.get_document("d2").unwrap().unwrap().pinned);
+    assert!(
+        store
+            .documents()
+            .get_document("d0")
+            .unwrap()
+            .unwrap()
+            .pinned
+    );
+    assert!(
+        store
+            .documents()
+            .get_document("d1")
+            .unwrap()
+            .unwrap()
+            .pinned
+    );
+    assert!(
+        !store
+            .documents()
+            .get_document("d2")
+            .unwrap()
+            .unwrap()
+            .pinned
+    );
 }
 
 #[tokio::test]
@@ -242,15 +263,30 @@ async fn merge_exact_dup_archives_sources() {
     assert_eq!(report.errors.len(), 0, "{:?}", report.errors);
     assert_eq!(report.applied.len(), 1);
     assert_eq!(
-        store.get_document("dup1").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("dup1")
+            .unwrap()
+            .unwrap()
+            .status,
         "archived"
     );
     assert_eq!(
-        store.get_document("dup2").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("dup2")
+            .unwrap()
+            .unwrap()
+            .status,
         "archived"
     );
     assert_eq!(
-        store.get_document("keep").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("keep")
+            .unwrap()
+            .unwrap()
+            .status,
         "active"
     );
 }
@@ -265,9 +301,13 @@ async fn merge_exact_dup_rejects_one_unrelated_source_without_partial_mutation()
     seed_doc(&store, "keep", "Keep", "same body", "wiki");
     seed_doc(&store, "dup", "Dup", "same body", "wiki");
     seed_doc(&store, "unrelated", "Other", "different body", "wiki");
-    let mut unrelated = store.get_document("unrelated").unwrap().unwrap();
+    let mut unrelated = store
+        .documents()
+        .get_document("unrelated")
+        .unwrap()
+        .unwrap();
     unrelated.content_hash = Some(content_hash("same body"));
-    store.upsert_document(&unrelated).unwrap();
+    store.documents().upsert_document(&unrelated).unwrap();
 
     let report = apply_maintenance_plan(
         &store,
@@ -292,7 +332,11 @@ async fn merge_exact_dup_rejects_one_unrelated_source_without_partial_mutation()
         .message
         .contains("not an exact content duplicate"));
     for id in ["keep", "dup", "unrelated"] {
-        let document = store.get_document(id).unwrap().expect("document retained");
+        let document = store
+            .documents()
+            .get_document(id)
+            .unwrap()
+            .expect("document retained");
         assert_eq!(document.status, "active");
     }
 }
@@ -306,9 +350,9 @@ async fn merge_exact_dup_fallback_hashes_canonical_body_instead_of_trusting_colu
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
     seed_doc(&store, "keep", "Keep", "same body", "wiki");
     seed_doc(&store, "dup", "Dup", "same body", "wiki");
-    let mut keep = store.get_document("keep").unwrap().unwrap();
+    let mut keep = store.documents().get_document("keep").unwrap().unwrap();
     keep.content_hash = Some("forged-canonical-hash".into());
-    store.upsert_document(&keep).unwrap();
+    store.documents().upsert_document(&keep).unwrap();
 
     let report = apply_maintenance_plan(
         &store,
@@ -330,7 +374,12 @@ async fn merge_exact_dup_fallback_hashes_canonical_body_instead_of_trusting_colu
 
     assert!(report.errors.is_empty(), "{:?}", report.errors);
     assert_eq!(
-        store.get_document("dup").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("dup")
+            .unwrap()
+            .unwrap()
+            .status,
         "archived"
     );
 }
@@ -369,11 +418,21 @@ async fn merge_exact_dup_uses_unique_sources_and_remaining_global_cap() {
     assert_eq!(report.docs_touched, 1);
     assert_eq!(report.applied[0].detail.as_ref().unwrap()["skipped_cap"], 1);
     assert_eq!(
-        store.get_document("dup1").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("dup1")
+            .unwrap()
+            .unwrap()
+            .status,
         "archived"
     );
     assert_eq!(
-        store.get_document("dup2").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("dup2")
+            .unwrap()
+            .unwrap()
+            .status,
         "active"
     );
 }
@@ -407,7 +466,7 @@ async fn merge_exact_dup_raw_guard_is_case_insensitive() {
     .unwrap();
 
     assert!(report.errors.is_empty(), "{:?}", report.errors);
-    let source = store.get_document("raw-dup").unwrap().unwrap();
+    let source = store.documents().get_document("raw-dup").unwrap().unwrap();
     assert_eq!(source.status, "archived");
     assert_eq!(
         report.applied[0].detail.as_ref().unwrap()["blocked"]
@@ -426,9 +485,9 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
     let config = test_config(path, 1);
     for (id, layer) in [("wiki-a", "wiki"), ("wiki-b", "wiki"), ("raw", "RaW")] {
         seed_doc(&store, id, id, "body", layer);
-        let mut document = store.get_document(id).unwrap().unwrap();
+        let mut document = store.documents().get_document(id).unwrap().unwrap();
         document.status = "tombstone".into();
-        store.upsert_document(&document).unwrap();
+        store.documents().upsert_document(&document).unwrap();
     }
 
     let first = apply_drop_tombstones(
@@ -443,7 +502,7 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
     assert_eq!(first.outcome.detail.as_ref().unwrap()["max_docs"], 1);
     let remaining_after_cap = ["wiki-a", "wiki-b", "raw"]
         .into_iter()
-        .filter(|id| store.get_document(id).unwrap().is_some())
+        .filter(|id| store.documents().get_document(id).unwrap().is_some())
         .count();
     assert_eq!(remaining_after_cap, 2);
 
@@ -451,9 +510,9 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
     let raw_store = Store::open(&raw_only_path).unwrap();
     let raw_config = test_config(raw_only_path, 50);
     seed_doc(&raw_store, "raw", "Raw", "body", "rAw");
-    let mut raw = raw_store.get_document("raw").unwrap().unwrap();
+    let mut raw = raw_store.documents().get_document("raw").unwrap().unwrap();
     raw.status = "tombstone".into();
-    raw_store.upsert_document(&raw).unwrap();
+    raw_store.documents().upsert_document(&raw).unwrap();
     let guarded = apply_drop_tombstones(
         &raw_store,
         0,
@@ -463,7 +522,7 @@ fn drop_tombstones_clamps_cap_and_guards_raw_case_insensitively() {
         false,
     )
     .unwrap();
-    assert!(raw_store.get_document("raw").unwrap().is_some());
+    assert!(raw_store.documents().get_document("raw").unwrap().is_some());
     assert_eq!(guarded.outcome.detail.as_ref().unwrap()["skipped_raw"], 1);
 }
 
@@ -490,8 +549,12 @@ async fn set_tags_links_graph() {
         .unwrap();
     assert_eq!(report.errors.len(), 0, "{:?}", report.errors);
     assert_eq!(report.applied.len(), 1);
-    let node = store.find_node_by_document_id("d1").unwrap().unwrap();
-    let view = store.neighbors(&node.id, 1, 50).unwrap();
+    let node = store
+        .graph()
+        .find_node_by_document_id("d1")
+        .unwrap()
+        .unwrap();
+    let view = store.graph().neighbors(&node.id, 1, 50).unwrap();
     let tag_labels: Vec<_> = view
         .nodes
         .iter()
@@ -563,7 +626,7 @@ async fn rebuild_index_and_noop() {
         .await
         .unwrap();
     assert_eq!(report.applied.len(), 2);
-    assert_eq!(store.list_wiki_index().unwrap().len(), 1);
+    assert_eq!(store.wiki_index().list_wiki_index().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -573,9 +636,12 @@ async fn reembed_plan_finishes_with_generation_clean_fts() {
     let store = Store::open(&path).unwrap();
     let config = test_config(path, 50);
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
-    store.ensure_embedding_manifest(&config).unwrap();
+    store
+        .embedding_manifest()
+        .ensure_embedding_manifest(&config)
+        .unwrap();
     seed_doc(&store, "d1", "Alpha", "searchable reembed body", "wiki");
-    store.ensure_fts(&config.fts_stemmer).unwrap();
+    store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
 
     let plan = vec![item(MaintenanceAction::Reembed, Some("d1"), json!({}))];
     let report = apply_maintenance_plan(
@@ -628,6 +694,7 @@ async fn partial_reembed_failure_is_structured_error_and_keeps_migration_marker(
     old_config.embedding_model = "old-model".into();
     config.embedding_model = "target-model".into();
     store
+        .embedding_manifest()
         .write_embedding_manifest_from_config(&old_config)
         .unwrap();
     seed_doc(&store, "d1", "One", "first body", "wiki");
@@ -673,12 +740,14 @@ async fn partial_reembed_failure_is_structured_error_and_keeps_migration_marker(
         1
     );
     let target_error = store
+        .embedding_manifest()
         .require_embedding_manifest_match(&config)
         .expect_err("target identity must stay blocked after partial migration");
     assert!(target_error
         .to_string()
         .contains("incomplete corpus migration"));
     store
+        .embedding_manifest()
         .require_embedding_manifest_match(&old_config)
         .expect_err("configuration rollback must also stay blocked");
 }
@@ -689,7 +758,10 @@ async fn capped_reembed_is_structured_plan_error() {
     let path = dir.path().join("capped-reembed-plan.duckdb");
     let store = Store::open(&path).unwrap();
     let config = test_config(path, 50);
-    store.write_embedding_manifest_from_config(&config).unwrap();
+    store
+        .embedding_manifest()
+        .write_embedding_manifest_from_config(&config)
+        .unwrap();
     seed_doc(&store, "d1", "One", "first body", "wiki");
     seed_doc(&store, "d2", "Two", "second body", "wiki");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
@@ -730,7 +802,7 @@ async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
     let body = "same durable body before failed finalization";
     seed_doc(&store, "keep", "Keep", body, "wiki");
     seed_doc(&store, "drop", "Drop", body, "wiki");
-    store.ensure_fts(&config.fts_stemmer).unwrap();
+    store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     config.fts_stemmer = db::fts::test_fault::fail("apply");
 
     let report = apply_maintenance_plan(
@@ -751,8 +823,8 @@ async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
     .await
     .expect("aggregate report survives final FTS failure");
 
-    assert!(store.get_document("keep").unwrap().is_some());
-    assert!(store.get_document("drop").unwrap().is_none());
+    assert!(store.documents().get_document("keep").unwrap().is_some());
+    assert!(store.documents().get_document("drop").unwrap().is_none());
     assert_eq!(report.applied.len(), 1);
     let finalization = report
         .errors
@@ -776,6 +848,7 @@ async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
 
     let summary_id = report.ops_log_id.as_deref().expect("terminal summary id");
     let summary = store
+        .ops_log()
         .list_ops_log(10)
         .unwrap()
         .into_iter()
@@ -783,6 +856,7 @@ async fn final_fts_failure_returns_mutation_report_and_terminal_ops_log() {
         .expect("terminal summary ops_log row");
     assert_eq!(summary.op, "apply_maintenance_plan");
     assert!(store
+        .ops_log()
         .list_ops_log(10)
         .unwrap()
         .iter()

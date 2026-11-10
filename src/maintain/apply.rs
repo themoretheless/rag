@@ -119,7 +119,9 @@ pub async fn apply_maintenance_plan(
     let chunks_generation_before = if dry_run {
         None
     } else {
-        Some(blocking_section(|| store.chunks_generation())?)
+        Some(blocking_section(|| {
+            store.maintenance().chunks_generation()
+        })?)
     };
 
     for (index, raw) in actions.into_iter().enumerate() {
@@ -194,7 +196,7 @@ pub async fn apply_maintenance_plan(
     }
 
     if let Some(chunks_generation_before) = chunks_generation_before {
-        let chunks_generation_after = blocking_section(|| store.chunks_generation())?;
+        let chunks_generation_after = blocking_section(|| store.maintenance().chunks_generation())?;
         if chunks_generation_after != chunks_generation_before {
             // A plan may combine reindex with later delete/re-embed/write
             // actions. Reconcile once at the plan boundary, independent of
@@ -208,7 +210,7 @@ pub async fn apply_maintenance_plan(
                 // marker for the next lexical read plus the canonical
                 // `fts_finalization_failed` audit row.
                 let failure = blocking_section(|| {
-                    store.record_fts_finalization_failure(
+                    store.corpus_lane().record_fts_finalization_failure(
                         "apply_maintenance_plan",
                         true,
                         &error_message,

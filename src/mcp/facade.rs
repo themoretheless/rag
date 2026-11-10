@@ -78,7 +78,7 @@ fn ensure_fts_for_finalization(store: &Store, stemmer: &str) -> Result<(), AppEr
     #[cfg(test)]
     crate::db::fts::test_fault::check("facade", stemmer)?;
 
-    store.ensure_fts(stemmer)?;
+    store.maintenance().ensure_fts(stemmer)?;
     Ok(())
 }
 
@@ -243,8 +243,12 @@ impl RagServer {
     /// Ensure corpus manifest exists; refuse when its full identity differs.
     pub(super) fn require_vec_compatible(&self) -> Result<(), AppError> {
         crate::util::blocking_section(|| {
-            self.store.ensure_embedding_manifest(&self.config)?;
-            self.store.require_embedding_manifest_match(&self.config)
+            self.store
+                .embedding_manifest()
+                .ensure_embedding_manifest(&self.config)?;
+            self.store
+                .embedding_manifest()
+                .require_embedding_manifest_match(&self.config)
         })
     }
 
@@ -284,6 +288,7 @@ impl RagServer {
             .unwrap_or_else(|_| Err(AppError::fts("corpus FTS finalization panicked")));
             refresh_result.map_err(|error| {
                 store
+                    .corpus_lane()
                     .record_fts_finalization_failure(operation, true, &error.to_string())
                     .message
             })
@@ -302,6 +307,7 @@ impl RagServer {
                 guard: None,
                 error: Some(
                     self.store
+                        .corpus_lane()
                         .record_fts_finalization_failure(
                             operation,
                             true,

@@ -12,6 +12,7 @@ pub(super) fn apply_refile(
 ) -> Result<StepResult> {
     let id = require_target(target, name)?;
     let doc = store
+        .documents()
         .get_document(id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
 
@@ -83,6 +84,7 @@ pub(super) fn apply_refile(
     }
 
     let applied = store
+        .documents()
         .update_document_meta(id, &update)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
     Ok(StepResult {
@@ -111,6 +113,7 @@ pub(super) fn apply_pin(
 ) -> Result<StepResult> {
     let id = require_target(target, name)?;
     let _doc = store
+        .documents()
         .get_document(id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
     if dry_run {
@@ -126,7 +129,7 @@ pub(super) fn apply_pin(
             docs_delta: 1,
         });
     }
-    store.update_document_meta(
+    store.documents().update_document_meta(
         id,
         &DocumentMetaUpdate {
             pinned: Some(pinned),
@@ -163,6 +166,7 @@ pub(super) fn apply_set_boost(
         )));
     }
     let _doc = store
+        .documents()
         .get_document(id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
     if dry_run {
@@ -178,7 +182,7 @@ pub(super) fn apply_set_boost(
             docs_delta: 1,
         });
     }
-    store.update_document_meta(
+    store.documents().update_document_meta(
         id,
         &DocumentMetaUpdate {
             boost: Some(boost),
@@ -208,6 +212,7 @@ pub(super) fn apply_status(
 ) -> Result<StepResult> {
     let id = require_target(target, name)?;
     let doc = store
+        .documents()
         .get_document(id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
     if dry_run {
@@ -223,7 +228,7 @@ pub(super) fn apply_status(
             docs_delta: 1,
         });
     }
-    store.update_document_meta(
+    store.documents().update_document_meta(
         id,
         &DocumentMetaUpdate {
             status: Some(status.into()),
@@ -279,6 +284,7 @@ pub(super) fn apply_set_tags_inner(
     dry_run: bool,
 ) -> Result<StepResult> {
     let _doc = store
+        .documents()
         .get_document(id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
     let mode = param_str(params, "mode").unwrap_or_else(|| "replace".into());
@@ -298,14 +304,15 @@ pub(super) fn apply_set_tags_inner(
         });
     }
 
-    let doc_node = match store.find_node_by_document_id(id)? {
+    let doc_node = match store.graph().find_node_by_document_id(id)? {
         Some(n) => n,
         None => {
             let doc = store
+                .documents()
                 .get_document(id)?
                 .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
             let (node_id, _) = rebuild_document_graph(store, &doc)?;
-            store.find_node_by_id(&node_id)?.ok_or_else(|| {
+            store.graph().find_node_by_id(&node_id)?.ok_or_else(|| {
                 AppError::db(format!("graph node missing after rebuild: {node_id}"))
             })?
         }
@@ -315,7 +322,9 @@ pub(super) fn apply_set_tags_inner(
         .iter()
         .map(|tag| tag.trim().trim_start_matches('#').to_string())
         .collect();
-    store.set_document_tags(&doc_node.id, &labels, replace)?;
+    store
+        .graph()
+        .set_document_tags(&doc_node.id, &labels, replace)?;
     let linked = tags;
 
     Ok(StepResult {

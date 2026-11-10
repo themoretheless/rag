@@ -187,7 +187,11 @@ pub async fn maintain_organize(
     let _mutation_guard = if dry_run {
         None
     } else {
-        Some(store.try_corpus_mutation_guard("maintenance organize")?)
+        Some(
+            store
+                .corpus_lane()
+                .try_corpus_mutation_guard("maintenance organize")?,
+        )
     };
     let _search_guard = if dry_run {
         Some(crate::db::search::acquire_corpus_search_guard(
@@ -199,8 +203,8 @@ pub async fn maintain_organize(
     };
     let (taxonomy, (unscoped_total, considered)) = crate::util::blocking_section(|| {
         Ok::<_, AppError>((
-            store.get_taxonomy()?,
-            store.list_active_unscoped_documents(max_docs)?,
+            store.documents().get_taxonomy()?,
+            store.documents().list_active_unscoped_documents(max_docs)?,
         ))
     })?;
     let skipped_cap = unscoped_total.saturating_sub(considered.len());
@@ -411,7 +415,9 @@ pub async fn maintain_organize(
             room: room.clone(),
             ..Default::default()
         };
-        match crate::util::blocking_section(|| store.update_document_meta(doc_id, &update)) {
+        match crate::util::blocking_section(|| {
+            store.documents().update_document_meta(doc_id, &update)
+        }) {
             Ok(Some(_)) => {
                 applied_ok += 1;
                 applied.push(RefileApplyResult {
@@ -452,11 +458,15 @@ pub async fn maintain_organize(
     {
         if dry_run {
             let n = crate::util::blocking_section(|| {
-                store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())
+                store
+                    .documents()
+                    .count_documents_by_layer(crate::models::Layer::Wiki.as_str())
             })?;
             rebuild_index_entries = Some(n);
         } else if applied_ok > 0 || suggestions.is_empty() {
-            let n = crate::util::blocking_section(|| store.rebuild_wiki_index_from_docs())?;
+            let n = crate::util::blocking_section(|| {
+                store.wiki_index().rebuild_wiki_index_from_docs()
+            })?;
             rebuild_index_entries = Some(n);
         }
     }
@@ -576,10 +586,13 @@ fn suggest_heuristic(
     // incomplete migration disables this heuristic explicitly; deterministic
     // path/title rules remain available and cannot mislabel mixed vectors as a
     // trustworthy kNN result.
-    let embedding_heuristics_enabled = store.embedding_manifest_matches_config(config)?;
+    let embedding_heuristics_enabled = store
+        .embedding_manifest()
+        .embedding_manifest_matches_config(config)?;
     let (first_emb, labeled_emb) = if embedding_heuristics_enabled {
         let first_emb = first_chunk_embeddings(store, unscoped)?;
         let labeled_emb = store
+            .chunks()
             .representative_document_embeddings(EMBED_LABEL_MAX_DOCS, true, true, true)?
             .into_iter()
             .filter_map(|sample| {
@@ -787,7 +800,7 @@ fn first_chunk_embeddings(
         .iter()
         .map(|document| document.id.as_str())
         .collect();
-    store.first_chunk_embeddings(&ids)
+    store.chunks().first_chunk_embeddings(&ids)
 }
 
 fn path_segments(path: &str) -> Vec<String> {
@@ -1104,9 +1117,9 @@ mod tests {
             .all(|a| a.action == MaintenanceAction::Refile));
         assert_eq!(report.applied_ok, report.actions.len());
         // dry_run: wing still empty
-        let doc = store.get_document("loose").unwrap().unwrap();
+        let doc = store.documents().get_document("loose").unwrap().unwrap();
         assert!(doc.wing.is_none());
-        let ops = store.list_ops_log(5).unwrap();
+        let ops = store.ops_log().list_ops_log(5).unwrap();
         assert!(ops.iter().any(|o| o.op == "maintain_organize_dry_run"));
     }
 
@@ -1145,9 +1158,9 @@ mod tests {
         let report = maintain_organize(&store, &cfg, None, &opts).await.unwrap();
         assert!(!report.dry_run);
         assert!(report.applied_ok >= 1);
-        let doc = store.get_document("b").unwrap().unwrap();
+        let doc = store.documents().get_document("b").unwrap().unwrap();
         assert_eq!(doc.wing.as_deref(), Some("research"));
-        let ops = store.list_ops_log(5).unwrap();
+        let ops = store.ops_log().list_ops_log(5).unwrap();
         assert!(ops.iter().any(|o| o.op == "maintain_organize"));
     }
 
@@ -1174,6 +1187,7 @@ mod tests {
             "text://raw/b",
         );
         store
+            .embedding_manifest()
             .set_embedding_manifest(&crate::db::store::embedding_migration_manifest(&cfg))
             .unwrap();
 
@@ -1188,7 +1202,13 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("embedding_heuristics_enabled=false"));
-        assert!(store.get_document("loose").unwrap().unwrap().wing.is_none());
+        assert!(store
+            .documents()
+            .get_document("loose")
+            .unwrap()
+            .unwrap()
+            .wing
+            .is_none());
     }
 
     #[tokio::test]

@@ -61,7 +61,7 @@ async fn async_main() -> anyhow::Result<()> {
     if config.checkpoint_on_start {
         rag_mcp::ops::set_startup_phase("checkpoint");
         let phase = Instant::now();
-        store.checkpoint().context(
+        store.maintenance().checkpoint().context(
             "startup DuckDB CHECKPOINT failed; run db_repair offline if this is an ART/index error",
         )?;
         rag_mcp::ops::set_startup_timing("checkpoint", phase.elapsed(), config.startup_warn_ms);
@@ -71,6 +71,7 @@ async fn async_main() -> anyhow::Result<()> {
     rag_mcp::ops::set_startup_phase("fts");
     let phase = Instant::now();
     let fts_state = store
+        .maintenance()
         .ensure_fts(&config.fts_stemmer)
         .context("failed to ensure FTS index")?;
     rag_mcp::ops::set_startup_timing("fts", phase.elapsed(), config.startup_warn_ms);
@@ -78,7 +79,10 @@ async fn async_main() -> anyhow::Result<()> {
     // Corpus embedding fingerprint (does not overwrite an existing row).
     rag_mcp::ops::set_startup_phase("embedding_manifest");
     let phase = Instant::now();
-    let manifest = match store.ensure_embedding_manifest(&config) {
+    let manifest = match store
+        .embedding_manifest()
+        .ensure_embedding_manifest(&config)
+    {
         Ok(manifest) => Some(manifest),
         Err(rag_mcp::AppError::Embeddings(error)) => {
             // Keep the gateway available for fail-closed diagnosis and a full
@@ -94,16 +98,18 @@ async fn async_main() -> anyhow::Result<()> {
     // Otherwise a SIGTERM/restart can leave FTS catalog DDL in WAL that DuckDB
     // cannot replay on the next open because extension objects depend on it.
     store
+        .maintenance()
         .checkpoint()
         .context("post-initialization DuckDB CHECKPOINT failed")?;
 
     let schema_version = store
+        .maintenance()
         .schema_version()
         .context("schema_version")?
         .unwrap_or(0);
-    let fts_ready = store.fts_ready().context("fts_ready")?;
+    let fts_ready = store.maintenance().fts_ready().context("fts_ready")?;
     let (document_count, chunk_count, node_count, edge_count) =
-        store.stats().context("store stats")?;
+        store.maintenance().stats().context("store stats")?;
     let embedding_identity_ready = manifest
         .as_ref()
         .is_some_and(|manifest| embedding_manifest_matches_config(manifest, &config));
@@ -136,7 +142,7 @@ async fn async_main() -> anyhow::Result<()> {
     tracing::info!(startup = %serde_json::to_string(&rag_mcp::ops::runtime_snapshot()).unwrap_or_default(), "startup summary");
     let result = run_serve_modes(store.clone(), embedder, config).await;
     rag_mcp::ops::set_startup_phase("shutdown_checkpoint");
-    let checkpointed = match store.checkpoint() {
+    let checkpointed = match store.maintenance().checkpoint() {
         Ok(()) => true,
         Err(error) => {
             tracing::error!(error = %error, "shutdown checkpoint failed");

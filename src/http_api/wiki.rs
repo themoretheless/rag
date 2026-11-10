@@ -118,7 +118,7 @@ async fn wiki_list_with_headers(st: HttpState, q: WikiListQuery, headers: Header
     };
     let store = st.store.clone();
     let page = super::run_blocking("wiki catalog", move || {
-        store.list_wiki_page_metas_filtered(&filter)
+        store.documents().list_wiki_page_metas_filtered(&filter)
     })
     .await;
     match page {
@@ -262,12 +262,15 @@ async fn wiki_backlinks(
             .map(str::trim)
             .filter(|wing| !wing.is_empty());
         // One backlinks read serves both the rows and their contexts.
-        let view = match st.store.wiki_backlink_view(id) {
+        let view = match st.store.documents().wiki_backlink_view(id) {
             Ok(view) => view,
             Err(error) => return api_err(error),
         };
         let rows = match wing {
-            Some(wing) => st.store.wiki_backlinks_for_document_in_wing(id, wing),
+            Some(wing) => st
+                .store
+                .documents()
+                .wiki_backlinks_for_document_in_wing(id, wing),
             None => Ok(view
                 .as_ref()
                 .map(|(node_id, view)| crate::db::store::wiki_backlink_rows(node_id, view))
@@ -359,8 +362,13 @@ mod tests {
             metadata_json: json!({"source_versions": [{"document_id":"gone", "uri":"raw://gone", "content_hash":"a".repeat(64)}]}).to_string(),
             ..Document::default()
         };
-        state.store.upsert_document(&doc).unwrap();
-        let before = state.store.get_document(&doc.id).unwrap().unwrap();
+        state.store.documents().upsert_document(&doc).unwrap();
+        let before = state
+            .store
+            .documents()
+            .get_document(&doc.id)
+            .unwrap()
+            .unwrap();
         let response = wiki_review(State(state.clone())).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), 65536)
@@ -369,7 +377,12 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["items"][0]["link_kind"], "source_missing");
         assert_eq!(value["items"][0]["wiki_id"], doc.id);
-        let after = state.store.get_document(&doc.id).unwrap().unwrap();
+        let after = state
+            .store
+            .documents()
+            .get_document(&doc.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(before.revision, after.revision);
         assert_eq!(before.metadata_json, after.metadata_json);
         assert_eq!(before.content, after.content);
@@ -406,11 +419,18 @@ mod tests {
         )
         .await
         .unwrap();
-        let original_manifest =
-            serde_json::to_value(state.store.get_embedding_manifest().unwrap()).unwrap();
+        let original_manifest = serde_json::to_value(
+            state
+                .store
+                .embedding_manifest()
+                .get_embedding_manifest()
+                .unwrap(),
+        )
+        .unwrap();
         let original_chunks = serde_json::to_value(
             state
                 .store
+                .chunks()
                 .list_chunks_for_document(&created.document_id)
                 .unwrap(),
         )
@@ -452,24 +472,34 @@ mod tests {
         }
         assert!(state
             .store
+            .documents()
             .find_by_uri("wiki://new-page")
             .unwrap()
             .is_none());
         let original = state
             .store
+            .documents()
             .get_document(&created.document_id)
             .unwrap()
             .unwrap();
         assert_eq!(original.content, "original body");
         assert_eq!(original.revision, created.revision);
         assert_eq!(
-            serde_json::to_value(state.store.get_embedding_manifest().unwrap()).unwrap(),
+            serde_json::to_value(
+                state
+                    .store
+                    .embedding_manifest()
+                    .get_embedding_manifest()
+                    .unwrap()
+            )
+            .unwrap(),
             original_manifest
         );
         assert_eq!(
             serde_json::to_value(
                 state
                     .store
+                    .chunks()
                     .list_chunks_for_document(&created.document_id)
                     .unwrap()
             )
@@ -499,6 +529,7 @@ mod tests {
         .expect("create page");
         let mut document = state
             .store
+            .documents()
             .get_document(&created.document_id)
             .unwrap()
             .expect("created document");
@@ -513,6 +544,7 @@ mod tests {
         let revision = document.revision;
         document.revision = state
             .store
+            .documents()
             .upsert_document_cas(&document, Some(revision))
             .expect("seed project fields");
 
@@ -540,6 +572,7 @@ mod tests {
 
         let updated = state
             .store
+            .documents()
             .get_document(&created.document_id)
             .unwrap()
             .expect("updated document");
@@ -556,6 +589,7 @@ mod tests {
         assert_eq!(updated.metadata_json, document.metadata_json);
         let index = state
             .store
+            .wiki_index()
             .get_wiki_index_by_slug("project-page")
             .unwrap()
             .expect("updated index");
@@ -590,6 +624,7 @@ mod tests {
 
         let document = state
             .store
+            .documents()
             .find_by_uri("wiki://alpha-overview")
             .unwrap()
             .expect("created page");
@@ -615,15 +650,30 @@ mod tests {
             app.clone().oneshot(request()).await.unwrap().status(),
             StatusCode::OK
         );
-        let mut doc = state.store.find_by_uri("wiki://occupied").unwrap().unwrap();
+        let mut doc = state
+            .store
+            .documents()
+            .find_by_uri("wiki://occupied")
+            .unwrap()
+            .unwrap();
         doc.status = "archived".into();
-        state.store.upsert_document(&doc).unwrap();
-        let before = state.store.get_document(&doc.id).unwrap().unwrap();
+        state.store.documents().upsert_document(&doc).unwrap();
+        let before = state
+            .store
+            .documents()
+            .get_document(&doc.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             app.oneshot(request()).await.unwrap().status(),
             StatusCode::CONFLICT
         );
-        let after = state.store.get_document(&doc.id).unwrap().unwrap();
+        let after = state
+            .store
+            .documents()
+            .get_document(&doc.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(after.content, before.content);
         assert_eq!(after.revision, before.revision);
         assert_eq!(after.status, "archived");
@@ -639,6 +689,7 @@ mod tests {
             ("source-beta", "beta"),
         ] {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: id.into(),
                     uri: format!("wiki://{id}"),
@@ -651,6 +702,7 @@ mod tests {
                 })
                 .unwrap();
             store
+                .graph()
                 .upsert_graph_node(&GraphNode {
                     id: format!("node-{id}"),
                     kind: "document".into(),
@@ -664,6 +716,7 @@ mod tests {
         }
         for source in ["source-alpha", "source-beta"] {
             store
+                .graph()
                 .link_nodes(&format!("node-{source}"), "node-target", "wikilink", 1.0)
                 .unwrap();
         }

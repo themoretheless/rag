@@ -9,7 +9,9 @@ pub(super) fn apply_rebuild_index(
     dry_run: bool,
 ) -> Result<StepResult> {
     if dry_run {
-        let n = store.count_documents_by_layer(crate::models::Layer::Wiki.as_str())?;
+        let n = store
+            .documents()
+            .count_documents_by_layer(crate::models::Layer::Wiki.as_str())?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,
@@ -51,7 +53,9 @@ pub(super) fn apply_rebuild_graph(
         .min(config.maint_max_docs.max(1));
 
     if dry_run {
-        let candidate_count = store.count_graph_rebuild_candidates(dirty_only)?;
+        let candidate_count = store
+            .documents()
+            .count_graph_rebuild_candidates(dirty_only)?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,
@@ -139,10 +143,13 @@ pub(super) async fn apply_reembed_one(
     let id = require_target(target, name)?;
     let (doc, chunks) = crate::util::blocking_section(|| {
         let doc = store
+            .documents()
             .get_document(id)?
             .ok_or_else(|| AppError::not_found(format!("document not found: {id}")))?;
-        store.require_embedding_manifest_match(config)?;
-        let chunks = store.list_chunks_for_document(&doc.id)?;
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(config)?;
+        let chunks = store.chunks().list_chunks_for_document(&doc.id)?;
         Ok::<_, AppError>((doc, chunks))
     })?;
     if dry_run {
@@ -163,7 +170,13 @@ pub(super) async fn apply_reembed_one(
         let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
         let embeddings = crate::embeddings::embed_exact(embedder.as_ref(), &texts).await?;
         crate::util::blocking_section(|| {
-            store.update_chunk_embeddings_atomic(&doc.id, doc.revision, &chunks, &embeddings, None)
+            store.chunks().update_chunk_embeddings_atomic(
+                &doc.id,
+                doc.revision,
+                &chunks,
+                &embeddings,
+                None,
+            )
         })?;
     }
     Ok(StepResult {
@@ -196,7 +209,7 @@ pub(super) async fn apply_reembed_all(
         .min(config.reembed_batch.max(1));
 
     if dry_run {
-        let n = crate::util::blocking_section(|| store.count_documents())?;
+        let n = crate::util::blocking_section(|| store.documents().count_documents())?;
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,

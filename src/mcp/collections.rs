@@ -38,7 +38,10 @@ impl RagServer {
                 updated_at: now.to_rfc3339(),
             };
             let entries = Self::collection_entries(params.entries);
-            let detail = self.store.create_collection(&collection, &entries)?;
+            let detail = self
+                .store
+                .collections()
+                .create_collection(&collection, &entries)?;
             self.store.ops_log().record(
                 &OpsLogEntry::new(
                     "collection_create",
@@ -61,7 +64,9 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<CollectionListParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| Self::json_result(&self.store.list_collections()?))
+        crate::util::blocking_section(|| {
+            Self::json_result(&self.store.collections().list_collections()?)
+        })
     }
 
     #[tool(
@@ -77,6 +82,7 @@ impl RagServer {
         crate::util::blocking_section(|| {
             let detail = self
                 .store
+                .collections()
                 .get_collection(params.collection_id.trim())?
                 .ok_or_else(|| {
                     McpError::from(AppError::not_found(format!(
@@ -108,7 +114,7 @@ impl RagServer {
                     Some(trimmed)
                 }
             });
-            let detail = self.store.update_collection(
+            let detail = self.store.collections().update_collection(
                 params.collection_id.trim(),
                 params.name.as_deref(),
                 description,

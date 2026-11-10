@@ -224,7 +224,11 @@ impl<'a> IngestService<'a> {
         let uri = command.uri.unwrap_or(default_uri);
         let base_metadata = match command.metadata_json {
             Some(metadata) => Some(metadata),
-            None => self.store.find_by_uri(&uri)?.map(|doc| doc.metadata_json),
+            None => self
+                .store
+                .documents()
+                .find_by_uri(&uri)?
+                .map(|doc| doc.metadata_json),
         };
         let metadata_json = merge_metadata(base_metadata, extracted.metadata).map_err(|error| {
             AppError::invalid(format!("metadata_json is not valid JSON: {error}"))
@@ -289,7 +293,11 @@ impl<'a> IngestService<'a> {
         let uri = command.uri.unwrap_or_else(|| final_url.clone());
         let base_metadata = match command.metadata_json {
             Some(metadata) => Some(metadata),
-            None => self.store.find_by_uri(&uri)?.map(|doc| doc.metadata_json),
+            None => self
+                .store
+                .documents()
+                .find_by_uri(&uri)?
+                .map(|doc| doc.metadata_json),
         };
         let fetched_at = Utc::now();
         let mut additions = serde_json::Map::new();
@@ -551,7 +559,9 @@ impl<'a> IngestService<'a> {
         let known = if existing.is_empty() {
             std::collections::HashMap::new()
         } else {
-            crate::util::blocking_section(|| self.store.chunk_vectors_by_content(&existing))?
+            crate::util::blocking_section(|| {
+                self.store.chunks().chunk_vectors_by_content(&existing)
+            })?
         };
         let chunk_groups = if known.is_empty() {
             self.indexer.embed_prepared_batch(chunk_plans).await?
@@ -586,7 +596,7 @@ impl<'a> IngestService<'a> {
         let chunk_count = chunks.len();
         let document_id = document.id.clone();
         let persisted = if let Some(manifest) = manifest.as_ref() {
-            self.store.write_source_document_atomic(
+            self.store.documents().write_source_document_atomic(
                 &document,
                 expected_revision,
                 &chunks,
@@ -600,7 +610,7 @@ impl<'a> IngestService<'a> {
                 },
             )?
         } else {
-            self.store.write_document_atomic(
+            self.store.documents().write_document_atomic(
                 &document,
                 expected_revision,
                 DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
@@ -630,7 +640,7 @@ impl<'a> IngestService<'a> {
         let new_hash = content_hash(&command.text);
         let now = Utc::now();
 
-        let existing = self.store.find_by_uri(&command.uri)?;
+        let existing = self.store.documents().find_by_uri(&command.uri)?;
         let (document_id, created_at, operation, expected_revision) = if let Some(existing) =
             existing.as_ref()
         {
@@ -641,9 +651,14 @@ impl<'a> IngestService<'a> {
                     .unwrap_or_else(|| content_hash(&existing.content));
                 if existing_hash == new_hash {
                     let etag = existing.etag();
-                    let chunk_count = self.store.count_chunks_for_document(&existing.id)? as usize;
+                    let chunk_count = self
+                        .store
+                        .chunks()
+                        .count_chunks_for_document(&existing.id)?
+                        as usize;
                     let node_id = self
                         .store
+                        .graph()
                         .find_node_by_document_id(&existing.id)?
                         .map(|node| node.id)
                         .unwrap_or_default();
@@ -727,10 +742,13 @@ impl<'a> IngestService<'a> {
         let (document, expected_chunks) = crate::util::blocking_section(|| {
             let document = self
                 .store
+                .documents()
                 .get_document(document_id)?
                 .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-            self.store.require_embedding_manifest_match(self.config)?;
-            let chunks = self.store.list_chunks_for_document(&document.id)?;
+            self.store
+                .embedding_manifest()
+                .require_embedding_manifest_match(self.config)?;
+            let chunks = self.store.chunks().list_chunks_for_document(&document.id)?;
             Ok::<_, AppError>((document, chunks))
         })?;
         let mut chunks = expected_chunks.clone();
@@ -744,7 +762,7 @@ impl<'a> IngestService<'a> {
             .collect::<Vec<_>>();
         let manifest = embedding_manifest_from_config(self.config);
         crate::util::blocking_section(|| {
-            self.store.update_chunk_embeddings_atomic(
+            self.store.chunks().update_chunk_embeddings_atomic(
                 &document.id,
                 document.revision,
                 &expected_chunks,
@@ -772,6 +790,7 @@ impl<'a> IngestService<'a> {
         }
         let mut applied = crate::util::blocking_section(|| {
             self.store
+                .documents()
                 .prepare_document_meta_update(document_id, &command.update)
         })?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
@@ -791,7 +810,7 @@ impl<'a> IngestService<'a> {
                 .await?;
             let chunk_count = chunks.len();
             let write = crate::util::blocking_section(|| {
-                self.store.write_document_atomic(
+                self.store.documents().write_document_atomic(
                     &applied.document,
                     Some(expected_revision),
                     DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
@@ -805,8 +824,11 @@ impl<'a> IngestService<'a> {
                 DocumentDerivedWrite::Preserve
             };
             let (write, chunk_count) = crate::util::blocking_section(|| {
-                let chunk_count = self.store.count_chunks_for_document(&applied.document.id)?;
-                let write = self.store.write_document_atomic(
+                let chunk_count = self
+                    .store
+                    .chunks()
+                    .count_chunks_for_document(&applied.document.id)?;
+                let write = self.store.documents().write_document_atomic(
                     &applied.document,
                     Some(expected_revision),
                     derived,
@@ -863,8 +885,12 @@ impl<'a> IngestService<'a> {
 
     fn ensure_vector_compatibility(&self) -> Result<(), AppError> {
         crate::util::blocking_section(|| {
-            self.store.ensure_embedding_manifest(self.config)?;
-            self.store.require_embedding_manifest_match(self.config)
+            self.store
+                .embedding_manifest()
+                .ensure_embedding_manifest(self.config)?;
+            self.store
+                .embedding_manifest()
+                .require_embedding_manifest_match(self.config)
         })
     }
 }
@@ -1056,8 +1082,13 @@ mod tests {
             .await
             .expect("first ingest");
         let first_vectors: Vec<Vec<f32>> = {
-            let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+            let document = store
+                .documents()
+                .find_by_uri("wiki://atomic-page")
+                .unwrap()
+                .unwrap();
             store
+                .chunks()
                 .list_chunks_for_document(&document.id)
                 .unwrap()
                 .into_iter()
@@ -1073,8 +1104,13 @@ mod tests {
             .expect("identical re-ingest");
         assert_eq!(same.op, "updated");
         assert!(recording.texts.lock().unwrap().is_empty());
-        let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+        let document = store
+            .documents()
+            .find_by_uri("wiki://atomic-page")
+            .unwrap()
+            .unwrap();
         let reused: Vec<Vec<f32>> = store
+            .chunks()
             .list_chunks_for_document(&document.id)
             .unwrap()
             .into_iter()
@@ -1090,8 +1126,13 @@ mod tests {
             .expect("edited re-ingest");
         let embedded = recording.texts.lock().unwrap().clone();
         assert!(!embedded.is_empty());
-        let document = store.find_by_uri("wiki://atomic-page").unwrap().unwrap();
+        let document = store
+            .documents()
+            .find_by_uri("wiki://atomic-page")
+            .unwrap()
+            .unwrap();
         let chunk_texts: Vec<String> = store
+            .chunks()
             .list_chunks_for_document(&document.id)
             .unwrap()
             .into_iter()
@@ -1124,6 +1165,7 @@ mod tests {
 
         let canonical = source.canonicalize().expect("canonical source");
         let document = store
+            .documents()
             .get_document(&result.document_id)
             .expect("load document")
             .expect("document");
@@ -1135,12 +1177,14 @@ mod tests {
         assert_eq!(document.revision, 1);
         assert_eq!(
             store
+                .chunks()
                 .list_chunks_for_document(&document.id)
                 .expect("chunks")
                 .len(),
             result.chunk_count
         );
         assert!(store
+            .graph()
             .find_node_by_document_id(&document.id)
             .expect("graph lookup")
             .is_some());
@@ -1148,7 +1192,7 @@ mod tests {
         retained.metadata_json = r#"{"custom":"keep"}"#.into();
         retained.status = "archived".into();
         retained.pinned = true;
-        store.upsert_document(&retained).unwrap();
+        store.documents().upsert_document(&retained).unwrap();
         std::fs::write(&source, "# Source\n\nChanged body.").unwrap();
         IngestService::new(&store, &embedder, &config)
             .ingest_file(IngestFileCommand {
@@ -1157,7 +1201,11 @@ mod tests {
             })
             .await
             .unwrap();
-        let updated = store.get_document(&document.id).unwrap().unwrap();
+        let updated = store
+            .documents()
+            .get_document(&document.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&updated.metadata_json).unwrap()["custom"],
             "keep"
@@ -1199,13 +1247,14 @@ mod tests {
             .expect_err("manifest write must fail");
 
         assert!(error.to_string().contains("source_manifest"));
-        assert!(store.list_documents().unwrap().is_empty());
+        assert!(store.documents().list_documents().unwrap().is_empty());
         assert!(store
+            .graph()
             .get_graph_view(crate::models::GraphFilter::default())
             .unwrap()
             .nodes
             .is_empty());
-        assert!(store.list_graph_edges().unwrap().is_empty());
+        assert!(store.graph().list_graph_edges().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1216,20 +1265,28 @@ mod tests {
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(8));
         let service = IngestService::new(&store, &embedder, &config);
         let inserted = service.ingest(command("Original source")).await.unwrap();
-        let mut doc = store.get_document(&inserted.document_id).unwrap().unwrap();
+        let mut doc = store
+            .documents()
+            .get_document(&inserted.document_id)
+            .unwrap()
+            .unwrap();
         doc.status = "archived".into();
         doc.pinned = true;
         doc.boost = 4.0;
         doc.wing = Some("project".into());
         doc.room = Some("sources".into());
         doc.metadata_json = "{\"custom\":true}".into();
-        store.upsert_document(&doc).unwrap();
+        store.documents().upsert_document(&doc).unwrap();
         let mut update = command("Changed source");
         update.metadata_json = None;
         update.wing = None;
         update.room = None;
         service.ingest(update).await.unwrap();
-        let updated = store.get_document(&inserted.document_id).unwrap().unwrap();
+        let updated = store
+            .documents()
+            .get_document(&inserted.document_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(updated.status, "archived");
         assert!(updated.pinned);
         assert_eq!(updated.boost, 4.0);
@@ -1252,17 +1309,21 @@ mod tests {
             .expect("initial ingest");
 
         let original_document = store
+            .documents()
             .get_document(&inserted.document_id)
             .unwrap()
             .expect("document");
         let original_chunks = store
+            .chunks()
             .list_chunks_for_document(&inserted.document_id)
             .unwrap();
         let original_node = store
+            .graph()
             .find_node_by_document_id(&inserted.document_id)
             .unwrap()
             .expect("node");
         let original_edges: Vec<_> = store
+            .graph()
             .list_graph_edges()
             .unwrap()
             .into_iter()
@@ -1285,6 +1346,7 @@ mod tests {
         assert!(error.to_string().contains("injected embedding failure"));
 
         let persisted_document = store
+            .documents()
             .get_document(&inserted.document_id)
             .unwrap()
             .expect("document after failure");
@@ -1292,6 +1354,7 @@ mod tests {
         assert_eq!(persisted_document.title, original_document.title);
         assert_eq!(persisted_document.content, original_document.content);
         let persisted_chunks = store
+            .chunks()
             .list_chunks_for_document(&inserted.document_id)
             .unwrap();
         assert_eq!(persisted_chunks.len(), original_chunks.len());
@@ -1306,12 +1369,14 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         let persisted_node = store
+            .graph()
             .find_node_by_document_id(&inserted.document_id)
             .unwrap()
             .expect("node after failure");
         assert_eq!(persisted_node.id, original_node.id);
         assert_eq!(persisted_node.label, original_node.label);
         let persisted_edges: Vec<_> = store
+            .graph()
             .list_graph_edges()
             .unwrap()
             .into_iter()
@@ -1319,7 +1384,11 @@ mod tests {
             .collect();
         assert_eq!(persisted_edges.len(), original_edges.len());
         assert_eq!(persisted_edges[0].id, original_edges[0].id);
-        assert!(store.find_nodes_by_label("New target").unwrap().is_empty());
+        assert!(store
+            .graph()
+            .find_nodes_by_label("New target")
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -1355,7 +1424,7 @@ mod tests {
                 .count(),
             1
         );
-        let documents = store.list_documents().unwrap();
+        let documents = store.documents().list_documents().unwrap();
         assert_eq!(documents.len(), 1);
         assert_eq!(documents[0].uri, "wiki://atomic-page");
     }
@@ -1398,7 +1467,7 @@ mod tests {
                 .count(),
             1
         );
-        let document = store.list_documents().unwrap().pop().unwrap();
+        let document = store.documents().list_documents().unwrap().pop().unwrap();
         assert_eq!(document.revision, 2);
         assert!(matches!(
             document.content.as_str(),
@@ -1426,7 +1495,7 @@ mod tests {
             .await
             .expect_err("disabled without RAG_INGEST_URL_ALLOW");
         assert!(error.to_string().contains("ingest_url is disabled"));
-        assert!(store.list_documents().unwrap().is_empty());
+        assert!(store.documents().list_documents().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1465,7 +1534,7 @@ mod tests {
             .await
             .expect_err("redirect target not allowlisted");
         assert!(error.to_string().contains("not in RAG_INGEST_URL_ALLOW"));
-        assert!(store.list_documents().unwrap().is_empty());
+        assert!(store.documents().list_documents().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1502,6 +1571,7 @@ mod tests {
         assert!(result.ingest.chunk_count > 0);
 
         let document = store
+            .documents()
             .get_document(&result.ingest.document_id)
             .unwrap()
             .expect("document");
@@ -1521,7 +1591,7 @@ mod tests {
         assert!(metadata["fetched_at"].as_str().is_some());
 
         // Content is searchable through the lexical path.
-        store.ensure_fts(&config.fts_stemmer).unwrap();
+        store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
         let hits = crate::db::search::search(
             &store,
             &crate::db::search::SearchQuery {
@@ -1540,6 +1610,7 @@ mod tests {
 
         // ops_log recorded the fetch.
         assert!(store
+            .ops_log()
             .list_ops_log(10)
             .unwrap()
             .iter()
@@ -1557,6 +1628,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again.ingest.document_id, document.id);
-        assert_eq!(store.list_documents().unwrap().len(), 1);
+        assert_eq!(store.documents().list_documents().unwrap().len(), 1);
     }
 }

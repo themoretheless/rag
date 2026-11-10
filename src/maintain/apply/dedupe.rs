@@ -22,6 +22,7 @@ pub(super) fn apply_merge_exact_dup(
         })?;
 
     let keep = store
+        .documents()
         .get_document(&keep_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {keep_id}")))?;
     let expected_hash = crate::util::content_hash(&keep.content);
@@ -55,8 +56,11 @@ pub(super) fn apply_merge_exact_dup(
         .collect();
     // If document_ids included keep, drop it; if only keep remains empty, expand via hash.
     let requested_sources = if source_ids.is_empty() {
-        let (candidate_count, candidates) =
-            store.exact_duplicate_source_ids(&expected_hash, &keep_id, remaining_docs)?;
+        let (candidate_count, candidates) = store.documents().exact_duplicate_source_ids(
+            &expected_hash,
+            &keep_id,
+            remaining_docs,
+        )?;
         source_ids = candidates;
         candidate_count
     } else {
@@ -92,6 +96,7 @@ pub(super) fn apply_merge_exact_dup(
         // mutating transaction.
         for source_id in &source_ids {
             let source = store
+                .documents()
                 .get_document(source_id)?
                 .ok_or_else(|| AppError::not_found(format!("document not found: {source_id}")))?;
             if crate::util::content_hash(&source.content) != expected_hash {
@@ -122,7 +127,7 @@ pub(super) fn apply_merge_exact_dup(
         });
     }
 
-    let merge = store.merge_exact_duplicates_atomic(
+    let merge = store.documents().merge_exact_duplicates_atomic(
         &keep_id,
         &source_ids,
         declared_hash.as_deref(),
@@ -209,7 +214,9 @@ pub(super) fn apply_drop_tombstones(
     let deleted = if delete_ids.is_empty() {
         0
     } else {
-        let (deleted, _, _) = store.apply_document_dispositions_atomic(&delete_ids, &[])?;
+        let (deleted, _, _) = store
+            .documents()
+            .apply_document_dispositions_atomic(&delete_ids, &[])?;
         usize::try_from(deleted).unwrap_or(usize::MAX)
     };
 
@@ -238,7 +245,7 @@ pub(super) fn apply_vacuum(
     dry_run: bool,
 ) -> Result<StepResult> {
     if dry_run {
-        let bytes = store.db_file_size_bytes();
+        let bytes = store.maintenance().db_file_size_bytes();
         return Ok(StepResult {
             outcome: ok_outcome(
                 index,
@@ -251,7 +258,7 @@ pub(super) fn apply_vacuum(
             docs_delta: 0,
         });
     }
-    let report = store.vacuum_store()?;
+    let report = store.maintenance().vacuum_store()?;
     Ok(StepResult {
         outcome: ok_outcome(
             index,
