@@ -529,13 +529,123 @@ pub async fn reembed_all(
             documents: Vec::new(),
         });
     }
+    let target_count = pending_before.min(max_docs);
+    let BatchTally {
+        documents,
+        document_results_truncated,
+        documents_processed,
+        documents_succeeded,
+        documents_failed,
+        chunks_reembedded,
+        mut errors,
+    } = reembed_batches(
+        store,
+        embedder,
+        config,
+        target_fingerprint.as_deref(),
+        target_count,
+    )
+    .await?;
+
+    let inventory_after = crate::util::blocking_section(|| reembed_chunk_inventory(store))?;
+    check_reembed_inventory(&inventory_before, &inventory_after, &mut errors);
+    let pending_after = match target_fingerprint.as_ref() {
+        Some(fingerprint) => store
+            .reembed_progress()
+            .count_reembed_pending(fingerprint)?,
+        None => 0,
+    };
+    if target_fingerprint.is_none()
+        && skipped_cap == 0
+        && chunks_reembedded != inventory_before.attached
+    {
+        // Refresh mode processes every document in one pass; coverage must be exact.
+        errors.push(format!(
+            "{REEMBED_ALL_INCOMPLETE_CODE}: attached chunk coverage mismatch (expected={}, reembedded={})",
+            inventory_before.attached, chunks_reembedded
+        ));
+    }
+
+    let complete_success =
+        skipped_cap == 0 && documents_failed == 0 && pending_after == 0 && errors.is_empty();
+    let manifest = if complete_success {
+        let written = store
+            .embedding_manifest()
+            .write_embedding_manifest_from_config(config)?;
+        if let Some(fingerprint) = target_fingerprint.as_ref() {
+            // Migration is complete; drop the resume state for this target.
+            let _ = store.reembed_progress().clear_reembed_progress(fingerprint);
+        }
+        Some(written)
+    } else {
+        // The first successful vector mutation publishes an incompatible
+        // marker atomically with those vectors. A partial migration therefore
+        // remains fail-closed for both the old and target runtime configs.
+        store.embedding_manifest().get_embedding_manifest()?
+    };
+
+    if let Some(fingerprint) = target_fingerprint.as_deref() {
+        record_reembed_progress(
+            store,
+            fingerprint,
+            ReembedProgressCounts {
+                processed: documents_processed,
+                succeeded: documents_succeeded,
+                failed: documents_failed,
+                chunks_reembedded,
+                pending: pending_after,
+                total: documents_considered,
+                complete: complete_success,
+            },
+        )?;
+    }
+
+    Ok(ReembedAllReport {
+        documents_considered,
+        documents_processed,
+        documents_succeeded,
+        documents_failed,
+        skipped_cap,
+        chunks_considered: inventory_before.total,
+        attached_chunks_considered: inventory_before.attached,
+        orphan_chunks: inventory_after.orphan,
+        chunks_reembedded,
+        dry_run: false,
+        resumable: target_fingerprint.is_some(),
+        pending_documents: pending_after,
+        document_results_truncated,
+        manifest,
+        errors,
+        documents,
+    })
+}
+
+/// Per-batch results of [`reembed_batches`].
+struct BatchTally {
+    documents: Vec<ReembedDocResult>,
+    document_results_truncated: usize,
+    documents_processed: usize,
+    documents_succeeded: usize,
+    documents_failed: usize,
+    chunks_reembedded: usize,
+    errors: Vec<String>,
+}
+
+/// Re-embed up to `target_count` documents page by page (pending migration
+/// documents when `target_fingerprint` is set, else every document).
+async fn reembed_batches(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    target_fingerprint: Option<&str>,
+    target_count: usize,
+) -> Result<BatchTally> {
     // Fail-closed marker published with the first vector mutation; its value is
     // deterministic, so re-publishing it on later batches is idempotent.
     let migration_marker = target_fingerprint
         .as_ref()
         .map(|_| embedding_migration_manifest(config));
     let mut migration_started = false;
-    let target_count = pending_before.min(max_docs);
 
     let mut documents = Vec::with_capacity(target_count.min(REPORT_DOCUMENT_CAP));
     let mut document_results_truncated = 0usize;
@@ -548,7 +658,7 @@ pub async fn reembed_all(
 
     while documents_processed < target_count {
         let page_limit = (target_count - documents_processed).min(MAINTENANCE_PAGE_SIZE);
-        let page = match target_fingerprint.as_ref() {
+        let page = match target_fingerprint {
             Some(fingerprint) => store.reembed_progress().list_reembed_pending_document_ids(
                 fingerprint,
                 after_id.as_deref(),
@@ -601,7 +711,7 @@ pub async fn reembed_all(
                 };
                 let result = match outcome {
                     Ok(chunk_count) => {
-                        if let Some(fingerprint) = target_fingerprint.as_ref() {
+                        if let Some(fingerprint) = target_fingerprint {
                             store.reembed_progress().mark_reembed_done(
                                 fingerprint,
                                 &document_id,
@@ -643,7 +753,24 @@ pub async fn reembed_all(
         })?;
     }
 
-    let inventory_after = crate::util::blocking_section(|| reembed_chunk_inventory(store))?;
+    Ok(BatchTally {
+        documents,
+        document_results_truncated,
+        documents_processed,
+        documents_succeeded,
+        documents_failed,
+        chunks_reembedded,
+        errors,
+    })
+}
+
+/// Orphans or a changed chunk inventory make the pass incomplete.
+fn check_reembed_inventory(
+    before: &ReembedChunkInventory,
+    after: &ReembedChunkInventory,
+    errors: &mut Vec<String>,
+) {
+    let (inventory_before, inventory_after) = (before, after);
     if inventory_after.orphan > 0 {
         errors.push(format!(
             "{REEMBED_ALL_INCOMPLETE_CODE}: {} orphan chunk(s) were observed after document re-embedding",
@@ -661,80 +788,52 @@ pub async fn reembed_all(
             inventory_after.attached,
         ));
     }
-    let pending_after = match target_fingerprint.as_ref() {
-        Some(fingerprint) => store
-            .reembed_progress()
-            .count_reembed_pending(fingerprint)?,
-        None => 0,
-    };
-    if target_fingerprint.is_none()
-        && skipped_cap == 0
-        && chunks_reembedded != inventory_before.attached
-    {
-        // Refresh mode processes every document in one pass; coverage must be exact.
-        errors.push(format!(
-            "{REEMBED_ALL_INCOMPLETE_CODE}: attached chunk coverage mismatch (expected={}, reembedded={})",
-            inventory_before.attached, chunks_reembedded
-        ));
-    }
+}
 
-    let complete_success =
-        skipped_cap == 0 && documents_failed == 0 && pending_after == 0 && errors.is_empty();
-    let manifest = if complete_success {
-        let written = store
-            .embedding_manifest()
-            .write_embedding_manifest_from_config(config)?;
-        if let Some(fingerprint) = target_fingerprint.as_ref() {
-            // Migration is complete; drop the resume state for this target.
-            let _ = store.reembed_progress().clear_reembed_progress(fingerprint);
-        }
-        Some(written)
-    } else {
-        // The first successful vector mutation publishes an incompatible
-        // marker atomically with those vectors. A partial migration therefore
-        // remains fail-closed for both the old and target runtime configs.
-        store.embedding_manifest().get_embedding_manifest()?
-    };
+/// Counters for the `reembed_progress` ops_log row.
+struct ReembedProgressCounts {
+    processed: usize,
+    succeeded: usize,
+    failed: usize,
+    chunks_reembedded: usize,
+    pending: usize,
+    total: usize,
+    complete: bool,
+}
 
-    if let Some(fingerprint) = target_fingerprint.as_ref() {
-        let documents_done = store.reembed_progress().count_reembed_done(fingerprint)?;
-        store.ops_log().record(&OpsLogEntry::new("reembed_progress", "REEMBED", format!(
-                "reembed migration batch: {} done / {} pending (target complete: {complete_success})",
-                documents_done, pending_after
-            ))
-.entity(None, "corpus")
-.payload(serde_json::json!({
+/// One `reembed_progress` ops_log row per migration batch.
+fn record_reembed_progress(
+    store: &Store,
+    fingerprint: &str,
+    counts: ReembedProgressCounts,
+) -> Result<()> {
+    let documents_done = store.reembed_progress().count_reembed_done(fingerprint)?;
+    store.ops_log().record(
+        &OpsLogEntry::new(
+            "reembed_progress",
+            "REEMBED",
+            format!(
+                "reembed migration batch: {} done / {} pending (target complete: {})",
+                documents_done, counts.pending, counts.complete
+            ),
+        )
+        .entity(None, "corpus")
+        .payload(
+            serde_json::json!({
                 "target_fingerprint": fingerprint,
-                "batch_processed": documents_processed,
-                "batch_succeeded": documents_succeeded,
-                "batch_failed": documents_failed,
-                "batch_chunks_reembedded": chunks_reembedded,
+                "batch_processed": counts.processed,
+                "batch_succeeded": counts.succeeded,
+                "batch_failed": counts.failed,
+                "batch_chunks_reembedded": counts.chunks_reembedded,
                 "documents_done": documents_done,
-                "documents_pending": pending_after,
-                "documents_total": documents_considered,
-                "complete": complete_success,
+                "documents_pending": counts.pending,
+                "documents_total": counts.total,
+                "complete": counts.complete,
             })
-            .to_string()));
-    }
-
-    Ok(ReembedAllReport {
-        documents_considered,
-        documents_processed,
-        documents_succeeded,
-        documents_failed,
-        skipped_cap,
-        chunks_considered: inventory_before.total,
-        attached_chunks_considered: inventory_before.attached,
-        orphan_chunks: inventory_after.orphan,
-        chunks_reembedded,
-        dry_run: false,
-        resumable: target_fingerprint.is_some(),
-        pending_documents: pending_after,
-        document_results_truncated,
-        manifest,
-        errors,
-        documents,
-    })
+            .to_string(),
+        ),
+    );
+    Ok(())
 }
 
 /// Chunks per provider call when re-embedding across documents.
