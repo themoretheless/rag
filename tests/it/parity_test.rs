@@ -1027,3 +1027,137 @@ async fn lint_wiki_and_reembed_status_agree() {
     http["status"]["configured"]["updated_at"] = Value::Null;
     assert_eq!(mcp, http["status"]);
 }
+
+// ---------------------------------------------------------------------------
+// Review follow-ups: wiki title / Cas rules, project neighbours
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blank_title_on_an_existing_page_is_the_slug_on_mcp_write_and_kept_on_put() {
+    let harness = Harness::new();
+    for slug in ["blank-mcp", "blank-http"] {
+        harness
+            .mcp(
+                "write_wiki_page",
+                json!({ "slug": slug, "title": "Original", "content": "v1" }),
+            )
+            .await
+            .ok();
+    }
+    let title = |slug: &str| {
+        harness
+            .context
+            .store
+            .documents()
+            .find_by_uri(&format!("wiki://{slug}"))
+            .unwrap()
+            .expect("page")
+            .title
+    };
+
+    // MCP write_wiki_page (Upsert) keeps its historical rule: blank title →
+    // slug, on update as on create.
+    harness
+        .mcp(
+            "write_wiki_page",
+            json!({ "slug": "blank-mcp", "title": "  ", "content": "v2" }),
+        )
+        .await
+        .ok();
+    assert_eq!(title("blank-mcp"), "blank-mcp");
+
+    // HTTP PUT (Upsert) and MCP update_wiki_page (Cas) keep the current title.
+    let (status, _) = harness
+        .http(
+            "PUT",
+            "/v1/wiki",
+            Some(json!({ "slug": "blank-http", "title": "", "content": "v2" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(title("blank-http"), "Original");
+    harness
+        .mcp(
+            "update_wiki_page",
+            json!({ "slug": "blank-http", "title": "", "content": "v3" }),
+        )
+        .await
+        .ok();
+    assert_eq!(title("blank-http"), "Original");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_wiki_page_rejects_create_only_and_mismatched_id() {
+    let harness = Harness::new();
+    let first = harness
+        .mcp(
+            "write_wiki_page",
+            json!({ "slug": "cas-one", "title": "One", "content": "v1" }),
+        )
+        .await
+        .ok();
+    harness
+        .mcp(
+            "write_wiki_page",
+            json!({ "slug": "cas-two", "title": "Two", "content": "v1" }),
+        )
+        .await
+        .ok();
+
+    // create_only is a write_wiki_page flag; the Cas tool refuses it.
+    let mcp = harness
+        .mcp(
+            "update_wiki_page",
+            json!({ "slug": "cas-one", "title": "One", "content": "v2", "create_only": true }),
+        )
+        .await
+        .err();
+    assert_eq!(mcp["code"], json!(JSONRPC_INVALID_PARAMS));
+    assert_eq!(mcp["data"]["code"], json!("INVALID_REQUEST"));
+
+    // Cas with an id that names another page than the slug is CONFLICT and
+    // changes neither page (the Upsert rule).
+    let use_case = rag_mcp::app::WikiUseCase::new(
+        harness.context.store.clone(),
+        harness.context.embedder.clone(),
+        harness.context.config.clone(),
+    );
+    let error = use_case
+        .write(rag_mcp::app::WikiWriteCommand {
+            mode: rag_mcp::app::WikiWriteMode::Cas,
+            slug: Some("cas-two".into()),
+            id: Some(first["document_id"].as_str().expect("id").into()),
+            title: "Clobbered".into(),
+            content: "clobbered".into(),
+            ..Default::default()
+        })
+        .await
+        .expect_err("mismatched id and slug");
+    assert!(
+        matches!(error, rag_mcp::error::AppError::Conflict(_)),
+        "{error:?}"
+    );
+    for slug in ["cas-one", "cas-two"] {
+        let stored = harness
+            .context
+            .store
+            .documents()
+            .find_by_uri(&format!("wiki://{slug}"))
+            .unwrap()
+            .expect("page");
+        assert_eq!(stored.content, "v1");
+    }
+
+    // Matching id and slug still update.
+    use_case
+        .write(rag_mcp::app::WikiWriteCommand {
+            mode: rag_mcp::app::WikiWriteMode::Cas,
+            slug: Some("cas-one".into()),
+            id: Some(first["document_id"].as_str().expect("id").into()),
+            title: "One".into(),
+            content: "v2".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("matching id and slug");
+}

@@ -45,6 +45,9 @@ pub struct WikiPageRequest {
     pub summary: Option<String>,
     pub agent: Option<String>,
     pub if_match_revision: Option<i64>,
+    /// On update, a blank `title` becomes the page slug (MCP `write_wiki_page`)
+    /// instead of keeping the current title (HTTP `PUT`, MCP `update_wiki_page`).
+    pub blank_title_is_slug: bool,
 }
 
 fn non_blank_owned(value: Option<&str>) -> Option<String> {
@@ -73,6 +76,17 @@ pub async fn write_page(
             .or_else(|| (!slug.is_empty()).then(|| slug.clone()))
             .ok_or_else(|| AppError::invalid("slug, uri or id required"))?;
         let existing = get_wiki_page(store, &key)?;
+        // Same id/slug consistency rule as Upsert: an id naming another page
+        // than the given slug is a CONFLICT, never a silent pick of the id.
+        if requested_id.is_some() && !slug.is_empty() {
+            let by_slug = get_wiki_page(store, &slug)?;
+            if by_slug.id != existing.id {
+                return Err(AppError::conflict(format!(
+                    "wiki document id '{}' belongs to '{}', not requested page '{slug}'",
+                    existing.id, existing.uri
+                )));
+            }
+        }
         return update_existing(store, embedder, config, &existing, request).await;
     }
     if slug.is_empty() {
@@ -128,7 +142,8 @@ pub async fn write_page(
     }
 }
 
-/// CAS-update an existing page; blank title/kind keep the current values.
+/// CAS-update an existing page; blank title/kind keep the current values
+/// (a blank title becomes the slug when `blank_title_is_slug`).
 async fn update_existing(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
@@ -136,13 +151,20 @@ async fn update_existing(
     existing: &Document,
     request: WikiPageRequest,
 ) -> Result<WikiWriteResult> {
+    let slug_title;
+    let title = if request.blank_title_is_slug && request.title.trim().is_empty() {
+        slug_title = wiki_slug_from_uri(&existing.uri).unwrap_or_else(|| existing.title.clone());
+        slug_title.as_str()
+    } else {
+        request.title.as_str()
+    };
     update_wiki_page_cas(
         store,
         embedder,
         config,
         WikiPageUpdate {
             id_or_slug: &existing.id,
-            title: Some(&request.title),
+            title: Some(title),
             content: &request.content,
             kind: request.kind.as_deref(),
             category: request.category.as_deref(),

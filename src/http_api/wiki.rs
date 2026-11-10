@@ -227,6 +227,8 @@ async fn wiki_write(st: HttpState, body: WikiPutBody, create_only: bool) -> Resp
         agent: body.agent,
         if_match_revision: body.if_match_revision,
         if_match_etag: body.if_match_etag,
+        // PUT on an existing page keeps the current title when it is blank.
+        blank_title_is_slug: false,
     };
     match st.wiki_use_case().write(command).await {
         Ok(res) => api_ok(super::retrieval::with_ok(res)),

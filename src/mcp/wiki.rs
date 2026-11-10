@@ -690,6 +690,12 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<WriteWikiPageParams>,
     ) -> Result<CallToolResult, McpError> {
+        if params.create_only == Some(true) {
+            return Err(AppError::invalid(
+                "update_wiki_page does not accept create_only; use write_wiki_page with create_only=true",
+            )
+            .into());
+        }
         self.write_wiki(crate::app::WikiWriteMode::Cas, params)
             .await
     }
@@ -986,6 +992,9 @@ impl RagServer {
                 agent: params.agent,
                 if_match_revision: params.if_match_revision,
                 if_match_etag: params.if_match_etag,
+                // MCP write_wiki_page keeps its historical rule: a blank title
+                // on an existing page becomes the slug.
+                blank_title_is_slug: mode == crate::app::WikiWriteMode::Upsert,
                 ..Default::default()
             })
             .await?;

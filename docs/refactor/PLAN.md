@@ -197,6 +197,14 @@ form with its variant prefix.
    `write_page`); `update_wiki_page_cas` is now crate-internal.
    `write_wiki_page`/`write_wiki_page_command` stay as internal writers for
    maintenance, compile and review jobs (ops-log options), not transports.
+   A blank `title` on an existing page: MCP `write_wiki_page` (Upsert) sets
+   it to the slug, as before Stage 4 (`WikiPageRequest::blank_title_is_slug`);
+   HTTP `PUT` and MCP `update_wiki_page` keep the current title, as before.
+   `Cas` mode (MCP `update_wiki_page`) now applies the Upsert id/slug rule:
+   an `id` that names another page than `slug` is `CONFLICT` and changes
+   nothing (it used to take the id and ignore the slug). `update_wiki_page`
+   rejects `create_only=true` with `INVALID_REQUEST` (it was silently
+   ignored); `create_only` belongs to `write_wiki_page`.
 6. **Eval / feedback replays.** `POST /v1/feedback/*` replays and online eval
    call the search use case in process instead of the `/v1/search` handler, so
    these internal searches no longer appear as `http search` rows in the call

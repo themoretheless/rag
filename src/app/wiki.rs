@@ -35,6 +35,8 @@ pub struct WikiWriteCommand {
     pub agent: Option<String>,
     pub if_match_revision: Option<i64>,
     pub if_match_etag: Option<String>,
+    /// See [`WikiPageRequest::blank_title_is_slug`].
+    pub blank_title_is_slug: bool,
 }
 
 /// Wiki use cases over one store, embedder and configuration.
@@ -80,6 +82,7 @@ impl WikiUseCase {
                 summary: command.summary,
                 agent: command.agent,
                 if_match_revision,
+                blank_title_is_slug: command.blank_title_is_slug,
             },
         )
         .await
