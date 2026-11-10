@@ -22,10 +22,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgAddParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("kg_add", move |store| {
             let valid_from = parse_optional_timestamp(params.valid_from.as_deref())?;
             let valid_to = parse_optional_timestamp(params.valid_to.as_deref())?;
-            let fact = self.store.kg().kg_add(crate::db::kg::KgFactInput {
+            let fact = store.kg().kg_add(crate::db::kg::KgFactInput {
                 subject: &params.subject,
                 predicate: &params.predicate,
                 object: &params.object,
@@ -37,6 +37,7 @@ impl RagServer {
             })?;
             Self::json_result(&fact)
         })
+        .await
     }
 
     #[tool(
@@ -69,9 +70,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgInvalidateParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("kg_invalidate", move |store| {
             let ended = parse_optional_timestamp(params.ended.as_deref())?;
-            let facts = self.store.kg().kg_invalidate(
+            let facts = store.kg().kg_invalidate(
                 &params.subject,
                 &params.predicate,
                 &params.object,
@@ -79,6 +80,7 @@ impl RagServer {
             )?;
             Self::json_result(&facts)
         })
+        .await
     }
 
     #[tool(
@@ -90,10 +92,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<KgSupersedeParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("kg_supersede", move |store| {
             let at = parse_optional_timestamp(params.at.as_deref())?;
-            let fact = self
-                .store
+            let fact = store
                 .kg()
                 .kg_supersede(crate::db::kg::KgSupersedeInput {
                     subject: &params.subject,
@@ -106,6 +107,7 @@ impl RagServer {
                 })?;
             Self::json_result(&fact)
         })
+        .await
     }
 
     #[tool(

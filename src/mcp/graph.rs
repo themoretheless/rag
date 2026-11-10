@@ -194,7 +194,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<GetBacklinksParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("get_backlinks", move |store| {
             if [&params.node_id, &params.document_id, &params.label]
                 .iter()
                 .all(|key| key.as_deref().is_none_or(|value| value.trim().is_empty()))
@@ -203,8 +203,7 @@ impl RagServer {
                     "get_backlinks requires node_id, document_id, or label",
                 )));
             }
-            let target = self
-                .store
+            let target = store
                 .graph()
                 .resolve_node(
                     params.node_id.as_deref(),
@@ -216,9 +215,10 @@ impl RagServer {
                         "graph node not found (provide node_id, document_id, or label)",
                     ))
                 })?;
-            let view = self.store.graph().backlinks(&target.id)?;
+            let view = store.graph().backlinks(&target.id)?;
             Self::json_result(&view)
         })
+        .await
     }
 
     #[tool(
@@ -233,15 +233,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<LinkNodesParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("link_nodes", move |store| {
             let rel = params.rel_type.as_deref().unwrap_or("related");
             let weight = params.weight.unwrap_or(1.0);
             let edge =
-                self.store
+                store
                     .graph()
                     .link_nodes(&params.source_id, &params.target_id, rel, weight)?;
             Self::json_result(&edge)
         })
+        .await
     }
 
     #[tool(
@@ -252,7 +253,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CreateTunnelParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("create_tunnel", move |store| {
             let weight = params.weight.unwrap_or(1.0);
             let context = params
                 .context
@@ -260,7 +261,7 @@ impl RagServer {
                 .or(params.label.as_deref())
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let edge = self.store.graph().create_tunnel(
+            let edge = store.graph().create_tunnel(
                 &params.source_id,
                 &params.target_id,
                 weight,
@@ -268,6 +269,7 @@ impl RagServer {
             )?;
             Self::json_result(&edge)
         })
+        .await
     }
 
     #[tool(
@@ -278,13 +280,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let edges = self.store.graph().list_tunnels(params.node_id.as_deref())?;
+        self.blocking_tool("list_tunnels", move |store| {
+            let edges = store.graph().list_tunnels(params.node_id.as_deref())?;
             Self::json_result(&ListTunnelsResult {
                 count: edges.len() as u64,
                 tunnels: edges,
             })
         })
+        .await
     }
 
     #[tool(
@@ -295,8 +298,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<DeleteTunnelParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let deleted = self.store.graph().delete_tunnel(&params.tunnel_id)?;
+        self.blocking_tool("delete_tunnel", move |store| {
+            let deleted = store.graph().delete_tunnel(&params.tunnel_id)?;
             if !deleted {
                 return Err(McpError::from(AppError::not_found(format!(
                     "tunnel not found: {}",
@@ -308,6 +311,7 @@ impl RagServer {
                 tunnel_id: params.tunnel_id,
             })
         })
+        .await
     }
 
     #[tool(
@@ -318,15 +322,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FollowTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("follow_tunnels", move |store| {
             let depth = params.depth.unwrap_or(2);
             let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
-            let view = self
-                .store
+            let view = store
                 .graph()
                 .follow_tunnels(&params.node_id, depth, max_nodes)?;
             Self::json_result(&view)
         })
+        .await
     }
 
     #[tool(
@@ -337,8 +341,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FindTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let edges = self.store.graph().find_tunnels(
+        self.blocking_tool("find_tunnels", move |store| {
+            let edges = store.graph().find_tunnels(
                 params.node_id.as_deref(),
                 params.other_node_id.as_deref(),
                 params.wing.as_deref(),
@@ -349,6 +353,7 @@ impl RagServer {
                 tunnels: edges,
             })
         })
+        .await
     }
 
     #[tool(
@@ -372,7 +377,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FindNodeParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("find_node", move |store| {
             if params
                 .node_id
                 .as_ref()
@@ -413,14 +418,14 @@ impl RagServer {
 
             if only_label {
                 let label = params.label.as_deref().unwrap_or("").trim();
-                let nodes = self.store.graph().find_nodes_by_label(label)?;
+                let nodes = store.graph().find_nodes_by_label(label)?;
                 return Self::json_result(&FindNodeResult {
                     node: nodes.first().cloned(),
                     matches: nodes,
                 });
             }
 
-            let node = self.store.graph().resolve_node(
+            let node = store.graph().resolve_node(
                 params.node_id.as_deref(),
                 params.document_id.as_deref(),
                 params.label.as_deref(),
@@ -431,6 +436,7 @@ impl RagServer {
             };
             Self::json_result(&FindNodeResult { node, matches })
         })
+        .await
     }
 
     #[tool(
@@ -482,20 +488,24 @@ impl RagServer {
             if !seen_documents.insert(hit.document_id.as_str()) {
                 continue;
             }
-            let Some(node) = crate::util::blocking_section(|| {
-                self.store
-                    .graph()
-                    .find_node_by_document_id(&hit.document_id)
-            })?
+            let document_id = hit.document_id.clone();
+            let Some(node) = self
+                .blocking("find document node", move |store| {
+                    store.graph().find_node_by_document_id(&document_id)
+                })
+                .await?
             else {
                 continue;
             };
             if !seen_doc_nodes.insert(node.id.clone()) {
                 continue;
             }
-            let local = crate::util::blocking_section(|| {
-                self.store.graph().neighbors(&node.id, depth, max_nodes)
-            })?;
+            let node_id = node.id.clone();
+            let local = self
+                .blocking("graph neighbors", move |store| {
+                    store.graph().neighbors(&node_id, depth, max_nodes)
+                })
+                .await?;
             for n in local.nodes {
                 merged_nodes.entry(n.id.clone()).or_insert(n);
             }

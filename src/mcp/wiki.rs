@@ -61,11 +61,10 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<GetSchemaParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("get_schema", move |store| {
             let no_default = params.no_default.unwrap_or(false);
             if no_default {
-                let doc = self
-                    .store
+                let doc = store
                     .documents()
                     .get_schema_document()?
                     .ok_or_else(|| {
@@ -87,9 +86,10 @@ impl RagServer {
                 };
                 return Self::json_result(&body);
             }
-            let body = crate::wiki::get_schema(&self.store)?;
+            let body = crate::wiki::get_schema(store)?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -100,15 +100,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<UpdateSchemaParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("update_schema", move |store| {
             let body = crate::wiki::update_schema(
-                &self.store,
+                store,
                 &params.content,
                 params.title.as_deref(),
                 params.agent.as_deref(),
             )?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -146,11 +147,12 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<DiaryReadParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("diary_read", move |store| {
             let last_n = params.last_n.unwrap_or(DEFAULT_DIARY_LAST_N) as usize;
-            let entries = diary::diary_read(&self.store, &params.agent_name, last_n)?;
+            let entries = diary::diary_read(store, &params.agent_name, last_n)?;
             Self::json_result(&entries)
         })
+        .await
     }
 
     #[tool(
@@ -162,12 +164,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<WakeUpParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let status = DiagnosticsService::new(&self.store, &self.config).status()?;
+        let config = self.config.clone();
+        self.blocking_tool("wake_up", move |store| {
+            let status = DiagnosticsService::new(store, &config).status()?;
             let diary_limit = clamp_limit(params.diary_limit, 5, MAX_WAKE_UP_LIMIT);
             let pinned_limit = clamp_limit(params.pinned_limit, 20, MAX_WAKE_UP_LIMIT);
             let body = diary::wake_up(
-                &self.store,
+                store,
                 status,
                 params.agent_name.as_deref(),
                 diary_limit,
@@ -175,6 +178,7 @@ impl RagServer {
             )?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -207,7 +211,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<AppendLogParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("append_log", move |store| {
             let payload_json = match params.payload_json {
                 Some(s) if !s.trim().is_empty() => {
                     if let Err(e) = serde_json::from_str::<serde_json::Value>(&s) {
@@ -230,9 +234,10 @@ impl RagServer {
                 agent_name: params.agent_name,
                 ..OpsLogEntry::default()
             };
-            let written = self.store.ops_log().append(&entry)?;
+            let written = store.ops_log().append(&entry)?;
             Self::json_result(&written)
         })
+        .await
     }
 
     #[tool(
@@ -243,14 +248,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ReadLogParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("read_log", move |store| {
             let id = params
                 .id
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let has_key = id.is_some() || params.seq.is_some();
-            let rows = self.store.ops_log().read_ops_log(
+            let rows = store.ops_log().read_ops_log(
                 id,
                 params.seq,
                 params.limit.map(|n| n as usize),
@@ -266,6 +271,7 @@ impl RagServer {
             }
             Self::json_result(&rows)
         })
+        .await
     }
 
     #[tool(
@@ -276,11 +282,12 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListRecentOpsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("list_recent_ops", move |store| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops = self.store.ops_log().list_recent_ops(limit)?;
+            let ops = store.ops_log().list_recent_ops(limit)?;
             Self::json_result(&ops)
         })
+        .await
     }
 
     #[tool(
@@ -293,11 +300,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<MemoriesFiledAwayParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("memories_filed_away", move |store| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops_log_available = self.store.ops_log().ops_log_exists()?;
+            let ops_log_available = store.ops_log().ops_log_exists()?;
             let ops = if ops_log_available {
-                self.store.ops_log().memories_filed_away(limit)?
+                store.ops_log().memories_filed_away(limit)?
             } else {
                 Vec::new()
             };
@@ -328,6 +335,7 @@ impl RagServer {
                 "ops": ops,
             }))
         })
+        .await
     }
 
     #[tool(
@@ -339,7 +347,7 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<ReconnectParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("reconnect", move |store| {
             // DuckDB is opened once per process under a mutex; there is no Chroma-style
             // HNSW client cache to drop. Success is always reported for MemPalace parity.
             Self::json_result(&serde_json::json!({
@@ -347,9 +355,10 @@ impl RagServer {
                 "success": true,
                 "backend": "duckdb",
                 "message": "DuckDB has no client cache; reconnect is a no-op",
-                "db_path": self.store.path().display().to_string(),
+                "db_path": store.path().display().to_string(),
             }))
         })
+        .await
     }
 
     #[tool(
@@ -360,15 +369,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<QueryWithIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        let config = self.config.clone();
+        self.blocking_tool("query_with_index", move |store| {
             let top_k = params
                 .top_k
                 .map(|k| k as usize)
-                .unwrap_or(self.config.default_top_k);
+                .unwrap_or(config.default_top_k);
             let include_content = params.include_content.unwrap_or(false);
 
-            let matches = self
-                .store
+            let matches = store
                 .wiki_index()
                 .query_wiki_index(params.query.trim(), top_k)?;
 
@@ -382,7 +391,7 @@ impl RagServer {
                     if !seen.insert(pid.to_string()) {
                         continue;
                     }
-                    if let Some(doc) = self.store.documents().get_document(pid)? {
+                    if let Some(doc) = store.documents().get_document(pid)? {
                         pages.push(IndexQueryPage {
                             document_id: doc.id,
                             uri: doc.uri,
@@ -403,6 +412,7 @@ impl RagServer {
             };
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -556,7 +566,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ReadIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        let entries = crate::util::blocking_section(|| self.store.wiki_index().list_wiki_index())?;
+        let entries = self
+            .blocking("read_index", |store| store.wiki_index().list_wiki_index())
+            .await?;
         let format = params
             .format
             .as_deref()
@@ -589,8 +601,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<UpdateIndexEntryParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let entry = self.store.wiki_index().update_wiki_index_entry_fields(
+        self.blocking_tool("update_index_entry", move |store| {
+            let entry = store.wiki_index().update_wiki_index_entry_fields(
                 &params.slug,
                 params.title,
                 params.summary,
@@ -599,7 +611,7 @@ impl RagServer {
                 params.page_id,
             )?;
 
-            let _ = self.store.ops_log().append(
+            let _ = store.ops_log().append(
                 &OpsLogEntry::new(
                     "index_update",
                     "INDEX",
@@ -618,6 +630,7 @@ impl RagServer {
 
             Self::json_result(&entry)
         })
+        .await
     }
 
     #[tool(
@@ -634,8 +647,9 @@ impl RagServer {
             })
             .await?;
 
-        let _ = crate::util::blocking_section(|| {
-            self.store.ops_log().append(
+        let _ = self
+            .blocking("rebuild_index log", move |store| {
+                store.ops_log().append(
                 &OpsLogEntry::new(
                     "index_rebuild",
                     "INDEX",
@@ -644,7 +658,8 @@ impl RagServer {
                 .entity(None, "wiki_index")
                 .payload(serde_json::json!({ "count": count }).to_string()),
             )
-        })?;
+            })
+            .await?;
 
         Self::json_result(&RebuildIndexResult { count })
     }
@@ -824,9 +839,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListMemoryLifecycleCandidatesParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("list_memory_lifecycle_candidates", move |store| {
             let rows = memory_lifecycle::list_candidates(
-                &self.store,
+                store,
                 params.status.as_deref(),
                 params.layer.as_deref(),
                 params.kind.as_deref(),
@@ -834,6 +849,7 @@ impl RagServer {
             )?;
             Self::json_result(&rows)
         })
+        .await
     }
 
     #[tool(
@@ -846,15 +862,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ConsolidateMemoryItemsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("consolidate_memory_items", move |store| {
             let result = memory_lifecycle::consolidate_selected(
-                &self.store,
+                store,
                 &params.document_ids,
                 &params.output_document_id,
                 params.agent.as_deref(),
             )?;
             Self::json_result(&result)
         })
+        .await
     }
 
     #[tool(
@@ -866,14 +883,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ArchiveMemoryItemsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("archive_memory_items", move |store| {
             let result = memory_lifecycle::archive_selected(
-                &self.store,
+                store,
                 &params.document_ids,
                 params.agent.as_deref(),
             )?;
             Self::json_result(&result)
         })
+        .await
     }
 
     #[tool(

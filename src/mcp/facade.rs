@@ -254,6 +254,24 @@ impl RagServer {
         crate::util::run_blocking(operation, move || work(&store)).await
     }
 
+    /// Run a whole tool body that only needs the store on the blocking pool.
+    ///
+    /// The body gets a shared store handle and builds the tool result there,
+    /// so DuckDB and filesystem work never runs on an async worker.
+    pub(super) async fn blocking_tool<F>(
+        &self,
+        operation: &'static str,
+        work: F,
+    ) -> Result<CallToolResult, McpError>
+    where
+        F: FnOnce(&Store) -> Result<CallToolResult, McpError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        crate::util::run_blocking(operation, move || Ok(work(&store)))
+            .await
+            .map_err(McpError::from)?
+    }
+
     /// The wired chat client as the domain LLM seam (None when unavailable).
     pub(super) fn completer(&self) -> Option<&dyn crate::llm::ChatCompleter> {
         self.llm

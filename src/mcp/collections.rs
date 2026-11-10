@@ -27,7 +27,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionCreateParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("collection_create", move |store| {
             let now = Utc::now();
             let collection = Collection {
                 id: Uuid::new_v4().to_string(),
@@ -38,11 +38,10 @@ impl RagServer {
                 updated_at: now.to_rfc3339(),
             };
             let entries = Self::collection_entries(params.entries);
-            let detail = self
-                .store
+            let detail = store
                 .collections()
                 .create_collection(&collection, &entries)?;
-            self.store.ops_log().record(
+            store.ops_log().record(
                 &OpsLogEntry::new(
                     "collection_create",
                     "COLLECTION",
@@ -54,6 +53,7 @@ impl RagServer {
             );
             Self::json_result(&detail)
         })
+        .await
     }
 
     #[tool(
@@ -64,9 +64,10 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<CollectionListParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            Self::json_result(&self.store.collections().list_collections()?)
+        self.blocking_tool("collection_list", move |store| {
+            Self::json_result(&store.collections().list_collections()?)
         })
+        .await
     }
 
     #[tool(
@@ -79,9 +80,8 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionGetParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let detail = self
-                .store
+        self.blocking_tool("collection_get", move |store| {
+            let detail = store
                 .collections()
                 .get_collection(params.collection_id.trim())?
                 .ok_or_else(|| {
@@ -92,6 +92,7 @@ impl RagServer {
                 })?;
             Self::json_result(&detail)
         })
+        .await
     }
 
     #[tool(
@@ -104,7 +105,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CollectionUpdateParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("collection_update", move |store| {
             let entries = params.entries.map(Self::collection_entries);
             let description = params.description.as_deref().map(|value| {
                 let trimmed = value.trim();
@@ -114,14 +115,14 @@ impl RagServer {
                     Some(trimmed)
                 }
             });
-            let detail = self.store.collections().update_collection(
+            let detail = store.collections().update_collection(
                 params.collection_id.trim(),
                 params.name.as_deref(),
                 description,
                 params.metadata_json.as_deref(),
                 entries.as_deref(),
             )?;
-            self.store.ops_log().record(
+            store.ops_log().record(
                 &OpsLogEntry::new(
                     "collection_update",
                     "COLLECTION",
@@ -132,5 +133,6 @@ impl RagServer {
             );
             Self::json_result(&detail)
         })
+        .await
     }
 }

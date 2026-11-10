@@ -117,8 +117,8 @@ impl RagServer {
         description = "Return the corpus embedding identity (provider, model, dims, endpoint fingerprint). Empty object fields when none recorded yet."
     )]
     pub(super) async fn get_embedding_manifest(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let manifest = self.store.embedding_manifest().get_embedding_manifest()?;
+        self.blocking_tool("get_embedding_manifest", move |store| {
+            let manifest = store.embedding_manifest().get_embedding_manifest()?;
             match manifest {
                 Some(m) => Self::json_result(&m),
                 None => Self::json_result(&serde_json::json!({
@@ -130,6 +130,7 @@ impl RagServer {
                 })),
             }
         })
+        .await
     }
 
     #[tool(
@@ -181,9 +182,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ExpandChunksParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("expand_chunks", move |store| {
             let chunks = retrieval::expand_chunks(
-                &self.store,
+                store,
                 &params.document_id,
                 params.chunk_index,
                 params.radius.unwrap_or(1),
@@ -193,6 +194,7 @@ impl RagServer {
             .collect::<Vec<_>>();
             Self::json_result(&chunks)
         })
+        .await
     }
 
     #[tool(
@@ -204,20 +206,22 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FindSimilarParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        let config = self.config.clone();
+        self.blocking_tool("find_similar", move |store| {
             let hits = retrieval::find_similar(
-                &self.store,
-                &self.config,
+                store,
+                &config,
                 SimilarDocumentsQuery {
                     document_id: params.document_id,
-                    top_k: params.top_k.unwrap_or(self.config.default_top_k as u32) as usize,
+                    top_k: params.top_k.unwrap_or(config.default_top_k as u32) as usize,
                     wing: params.wing,
                     room: params.room,
-                    fts_stemmer: self.config.fts_stemmer.clone(),
+                    fts_stemmer: config.fts_stemmer.clone(),
                 },
             )?;
             Self::json_result(&hits)
         })
+        .await
     }
 
     #[tool(

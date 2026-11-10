@@ -49,13 +49,14 @@ impl RagServer {
             .unwrap_or(configured_cap)
             .max(1)
             .min(configured_cap);
-        let mut report = crate::util::blocking_section(|| {
-            self.store.maintenance().cleanup_source_duplicates(
-                dry_run,
-                params.confirm.unwrap_or(false),
-                max_candidates,
-            )
-        })?;
+        let confirm = params.confirm.unwrap_or(false);
+        let mut report = self
+            .blocking("cleanup_source_duplicates", move |store| {
+                store
+                    .maintenance()
+                    .cleanup_source_duplicates(dry_run, confirm, max_candidates)
+            })
+            .await?;
         if report.applied {
             // Keep the exclusive source-mutation lane until the derived lexical
             // index covers the committed deletions. Otherwise the first user
@@ -110,8 +111,9 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<AnalyzeCorpusParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let mut opts = maintain::AnalyzeOptions::from_config(&self.config);
+        let config = self.config.clone();
+        self.blocking_tool("analyze_corpus", move |store| {
+            let mut opts = maintain::AnalyzeOptions::from_config(&config);
             if let Some(d) = params.stub_age_days {
                 opts.stub_age_days = d;
             }
@@ -127,9 +129,10 @@ impl RagServer {
             if let Some(v) = params.log_ops {
                 opts.log_ops = v;
             }
-            let report = maintain::analyze_corpus(&self.store, &self.config, &opts)?;
+            let report = maintain::analyze_corpus(store, &config, &opts)?;
             Self::json_result(&report)
         })
+        .await
     }
 
     #[tool(
@@ -156,9 +159,11 @@ impl RagServer {
             if let Some(v) = params.include_near_dups {
                 opts.include_near_dups = v;
             }
-            crate::util::blocking_section(|| {
-                maintain::analyze_corpus(&self.store, &self.config, &opts)
-            })?
+            let config = self.config.clone();
+            self.blocking("plan_maintenance analysis", move |store| {
+                maintain::analyze_corpus(store, &config, &opts)
+            })
+            .await?
         };
 
         let mut plan_opts = maintain::PlanOptions::from_config(&self.config);
@@ -176,7 +181,9 @@ impl RagServer {
         let plan = maintain::plan_maintenance(&report, &self.config, llm, &plan_opts).await?;
 
         if plan_opts.log_ops {
-            crate::util::blocking_section(|| maintain::log_plan(&self.store, &plan))?;
+            let logged = plan.clone();
+            self.blocking("log plan", move |store| maintain::log_plan(store, &logged))
+                .await?;
         }
 
         Self::json_result(&plan)
@@ -410,10 +417,11 @@ impl RagServer {
         to ops_log. Does not delete rows."
     )]
     pub(super) async fn vacuum_store(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let report: VacuumStoreReport = self.store.maintenance().vacuum_store()?;
+        self.blocking_tool("vacuum_store", move |store| {
+            let report: VacuumStoreReport = store.maintenance().vacuum_store()?;
             Self::json_result(&report)
         })
+        .await
     }
 }
 

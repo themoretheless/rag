@@ -208,15 +208,16 @@ impl RagServer {
         }
         let dry_run = params.dry_run.unwrap_or(false);
         if dry_run {
-            let matched = crate::util::blocking_section(|| {
-                self.store
-                    .documents()
-                    .list_documents_filtered(&DocumentFilter {
-                        source_file: Some(source_file.to_string()),
-                        include_archived: Some(true),
-                        ..Default::default()
-                    })
-            })?;
+            let filter = DocumentFilter {
+                source_file: Some(source_file.to_string()),
+                include_archived: Some(true),
+                ..Default::default()
+            };
+            let matched = self
+                .blocking("delete_by_source preview", move |store| {
+                    store.documents().list_documents_filtered(&filter)
+                })
+                .await?;
             let document_ids: Vec<String> = matched.iter().map(|d| d.id.clone()).collect();
             return Self::json_result(&serde_json::json!({
                 "success": true,
@@ -233,9 +234,12 @@ impl RagServer {
                 .corpus_lane()
                 .try_corpus_mutation_guard("source deletion")?,
         );
-        let document_ids = crate::util::blocking_section(|| {
-            self.store.documents().delete_by_source_ids(source_file)
-        })?;
+        let owned_source = source_file.to_string();
+        let document_ids = self
+            .blocking("delete_by_source", move |store| {
+                store.documents().delete_by_source_ids(&owned_source)
+            })
+            .await?;
         let deleted = document_ids.len() as u64;
         let match_count = deleted;
         let mut finalization_errors = Vec::new();
@@ -508,18 +512,19 @@ impl RagServer {
         description = "Return store counts (documents, chunks, graph nodes/edges) and db path."
     )]
     pub(super) async fn stats(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("stats", move |store| {
             let (document_count, chunk_count, node_count, edge_count) =
-                self.store.maintenance().stats()?;
+                store.maintenance().stats()?;
             let body = Stats {
                 document_count,
                 chunk_count,
                 node_count,
                 edge_count,
-                db_path: self.store.path().display().to_string(),
+                db_path: store.path().display().to_string(),
             };
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -529,10 +534,12 @@ impl RagServer {
         snapshot footprint (count, bytes, retention, free disk) when configured."
     )]
     pub(super) async fn status(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let body = DiagnosticsService::new(&self.store, &self.config).status()?;
+        let config = self.config.clone();
+        self.blocking_tool("status", move |store| {
+            let body = DiagnosticsService::new(store, &config).status()?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -540,10 +547,12 @@ impl RagServer {
         description = "Minimal integrity: schema_version vs expected, FTS ready, embed dims vs manifest, ingest_roots, ready_for_search."
     )]
     pub(super) async fn doctor(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let body = DiagnosticsService::new(&self.store, &self.config).doctor()?;
+        let config = self.config.clone();
+        self.blocking_tool("doctor", move |store| {
+            let body = DiagnosticsService::new(store, &config).doctor()?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
