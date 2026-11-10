@@ -46,7 +46,7 @@ pub fn list_candidates(
     kind: Option<&str>,
     limit: usize,
 ) -> Result<Vec<LifecycleCandidate>> {
-    let docs = store.list_documents_filtered(&DocumentFilter {
+    let docs = store.documents().list_documents_filtered(&DocumentFilter {
         status: Some(status.unwrap_or(STATUS_ACTIVE).to_string()),
         layer: layer.map(str::to_string),
         kind: kind.map(str::to_string),
@@ -81,6 +81,7 @@ pub fn consolidate_selected(
         return Err(AppError::invalid("output_document_id must be non-empty"));
     }
     let output = store
+        .documents()
         .get_document(output_id)?
         .ok_or_else(|| AppError::not_found(format!("output document not found: {output_id}")))?;
     let (sources, missing_ids) = resolve_unique(store, document_ids, Some(output_id))?;
@@ -94,7 +95,7 @@ pub fn consolidate_selected(
     merge_string_array(lifecycle, "source_uris", &source_uris);
     lifecycle.insert("operation".into(), Value::String("consolidate".into()));
     if output_meta != original_output_meta {
-        store.update_document_meta(
+        store.documents().update_document_meta(
             output_id,
             &DocumentMetaUpdate {
                 metadata_json: Some(Value::Object(output_meta).to_string()),
@@ -123,7 +124,7 @@ pub fn consolidate_selected(
             "consolidated_at".into(),
             Value::String(Utc::now().to_rfc3339()),
         );
-        store.update_document_meta(
+        store.documents().update_document_meta(
             &source.id,
             &DocumentMetaUpdate {
                 status: Some(STATUS_CONSOLIDATED.into()),
@@ -160,7 +161,7 @@ pub fn archive_selected(
             skipped_ids.push(document.id);
             continue;
         }
-        store.update_document_meta(
+        store.documents().update_document_meta(
             &document.id,
             &DocumentMetaUpdate {
                 status: Some(STATUS_ARCHIVED.into()),
@@ -194,7 +195,7 @@ fn resolve_unique(
         if id.is_empty() || !seen.insert(id.to_string()) || exclude == Some(id) {
             continue;
         }
-        match store.get_document(id)? {
+        match store.documents().get_document(id)? {
             Some(doc) => documents.push(doc),
             None => missing.push(id.to_string()),
         }

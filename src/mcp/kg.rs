@@ -25,7 +25,7 @@ impl RagServer {
         crate::util::blocking_section(|| {
             let valid_from = parse_optional_timestamp(params.valid_from.as_deref())?;
             let valid_to = parse_optional_timestamp(params.valid_to.as_deref())?;
-            let fact = self.store.kg_add(crate::db::kg::KgFactInput {
+            let fact = self.store.kg().kg_add(crate::db::kg::KgFactInput {
                 subject: &params.subject,
                 predicate: &params.predicate,
                 object: &params.object,
@@ -50,7 +50,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let at_time = parse_optional_timestamp(params.at_time.as_deref())?;
-            let facts = self.store.kg_query(
+            let facts = self.store.kg().kg_query(
                 params.subject.as_deref(),
                 params.predicate.as_deref(),
                 params.object.as_deref(),
@@ -70,7 +70,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let ended = parse_optional_timestamp(params.ended.as_deref())?;
-            let facts = self.store.kg_invalidate(
+            let facts = self.store.kg().kg_invalidate(
                 &params.subject,
                 &params.predicate,
                 &params.object,
@@ -91,15 +91,18 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let at = parse_optional_timestamp(params.at.as_deref())?;
-            let fact = self.store.kg_supersede(crate::db::kg::KgSupersedeInput {
-                subject: &params.subject,
-                predicate: &params.predicate,
-                old_object: &params.old_object,
-                new_object: &params.new_object,
-                at,
-                source_document_id: params.source_document_id.as_deref(),
-                confidence: params.confidence,
-            })?;
+            let fact = self
+                .store
+                .kg()
+                .kg_supersede(crate::db::kg::KgSupersedeInput {
+                    subject: &params.subject,
+                    predicate: &params.predicate,
+                    old_object: &params.old_object,
+                    new_object: &params.new_object,
+                    at,
+                    source_document_id: params.source_document_id.as_deref(),
+                    confidence: params.confidence,
+                })?;
             Self::json_result(&fact)
         })
     }
@@ -113,7 +116,7 @@ impl RagServer {
         Parameters(params): Parameters<KgTimelineParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let facts = self.store.kg_timeline(&params.subject)?;
+            let facts = self.store.kg().kg_timeline(&params.subject)?;
             Self::json_result(&facts)
         })
     }
@@ -124,7 +127,7 @@ impl RagServer {
     )]
     pub(super) async fn kg_stats(&self) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let body = self.store.kg_stats()?;
+            let body = self.store.kg().kg_stats()?;
             Self::json_result(&body)
         })
     }

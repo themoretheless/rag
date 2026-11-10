@@ -477,6 +477,7 @@ pub fn run_auto_backup_if_due(
     // A CHECKPOINT snapshot is about the live file, which still carries its free
     // pages, so this estimate is deliberately larger than the copy it produces.
     let needed_bytes = store
+        .maintenance()
         .db_file_size_bytes()
         .unwrap_or_default()
         .saturating_add(min_free_bytes);
@@ -504,7 +505,9 @@ pub fn run_auto_backup_if_due(
         ));
         suffix += 1;
     }
-    store.backup_database(&destination, false, false)?;
+    store
+        .recovery()
+        .backup_database(&destination, false, false)?;
 
     existing = list_backups(dir)?;
     for (path, _) in existing.into_iter().skip(keep.max(1)) {

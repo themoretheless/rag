@@ -36,7 +36,11 @@ impl RagServer {
         let mut mutation_guard = if dry_run {
             None
         } else {
-            Some(self.store.try_corpus_mutation_guard("duplicate cleanup")?)
+            Some(
+                self.store
+                    .corpus_lane()
+                    .try_corpus_mutation_guard("duplicate cleanup")?,
+            )
         };
         let configured_cap = self.config.maint_max_docs.max(1);
         let max_candidates = params
@@ -46,7 +50,7 @@ impl RagServer {
             .max(1)
             .min(configured_cap);
         let mut report = crate::util::blocking_section(|| {
-            self.store.cleanup_source_duplicates(
+            self.store.maintenance().cleanup_source_duplicates(
                 dry_run,
                 params.confirm.unwrap_or(false),
                 max_candidates,
@@ -229,12 +233,18 @@ impl RagServer {
             )
             .await
         } else {
-            let mutation_guard = self.store.try_corpus_mutation_guard("maintenance plan")?;
+            let mutation_guard = self
+                .store
+                .corpus_lane()
+                .try_corpus_mutation_guard("maintenance plan")?;
             let server = self.clone();
             run_detached("apply_maintenance_plan", async move {
                 // This owned task intentionally survives a dropped MCP request:
                 // mutations and their terminal FTS refresh keep one lane lease.
-                let scoped_store = server.store.with_corpus_mutation_guard(mutation_guard)?;
+                let scoped_store = server
+                    .store
+                    .corpus_lane()
+                    .with_corpus_mutation_guard(mutation_guard)?;
                 let llm = server.completer();
                 maintain::apply_maintenance_plan(
                     &scoped_store,
@@ -327,12 +337,16 @@ impl RagServer {
         } else {
             let mutation_guard = self
                 .store
+                .corpus_lane()
                 .try_corpus_mutation_guard("maintenance refresh")?;
             let server = self.clone();
             run_detached("maintain_refresh", async move {
                 // See apply_maintenance_plan: cancellation detaches this owned
                 // workflow instead of releasing its corpus lease mid-refresh.
-                let scoped_store = server.store.with_corpus_mutation_guard(mutation_guard)?;
+                let scoped_store = server
+                    .store
+                    .corpus_lane()
+                    .with_corpus_mutation_guard(mutation_guard)?;
                 maintain::maintain_refresh(&scoped_store, &server.embedder, &server.config, flags)
                     .await
             })
@@ -373,6 +387,7 @@ impl RagServer {
         } else {
             Some(
                 self.store
+                    .corpus_lane()
                     .try_corpus_mutation_guard("maintenance compression")?,
             )
         };
@@ -396,7 +411,7 @@ impl RagServer {
     )]
     pub(super) async fn vacuum_store(&self) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let report: VacuumStoreReport = self.store.vacuum_store()?;
+            let report: VacuumStoreReport = self.store.maintenance().vacuum_store()?;
             Self::json_result(&report)
         })
     }

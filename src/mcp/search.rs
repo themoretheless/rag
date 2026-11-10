@@ -120,7 +120,7 @@ impl RagServer {
     )]
     pub(super) async fn get_embedding_manifest(&self) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let manifest = self.store.get_embedding_manifest()?;
+            let manifest = self.store.embedding_manifest().get_embedding_manifest()?;
             match manifest {
                 Some(m) => Self::json_result(&m),
                 None => Self::json_result(&serde_json::json!({

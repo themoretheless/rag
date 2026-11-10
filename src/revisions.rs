@@ -76,8 +76,9 @@ impl<'a> RevisionService<'a> {
             ));
         }
 
-        let current = crate::util::blocking_section(|| self.store.get_document(document_id))?
-            .ok_or_else(|| AppError::not_found(format!("document '{document_id}'")))?;
+        let current =
+            crate::util::blocking_section(|| self.store.documents().get_document(document_id))?
+                .ok_or_else(|| AppError::not_found(format!("document '{document_id}'")))?;
         if is_source_controlled(&current) {
             return Err(AppError::forbidden(format!(
                 "document '{document_id}' is source-controlled and cannot be restored; restore the source file and synchronize it instead"
@@ -91,6 +92,7 @@ impl<'a> RevisionService<'a> {
         }
         let mut restored = crate::util::blocking_section(|| {
             self.store
+                .documents()
                 .get_document_revision(document_id, command.revision)
         })?
         .ok_or_else(|| {
@@ -111,6 +113,7 @@ impl<'a> RevisionService<'a> {
 
         let _embedding_guard = self
             .store
+            .corpus_lane()
             .try_embedding_write_guard(self.config, "revision restore")?;
         // Restoring usually brings back text the document had: reuse vectors.
         let chunk_embedder = crate::util::blocking_section(|| {
@@ -151,7 +154,7 @@ impl<'a> RevisionService<'a> {
                     .strip_prefix("wiki://")
                     .filter(|slug| !slug.is_empty())
                     .ok_or_else(|| AppError::config("wiki revision has no canonical wiki URI"))?;
-                let existing_index = self.store.get_wiki_index_by_slug(slug)?;
+                let existing_index = self.store.wiki_index().get_wiki_index_by_slug(slug)?;
                 let metadata = restored.metadata()?;
                 let index = WikiIndexEntry {
                     id: existing_index
@@ -201,7 +204,7 @@ impl<'a> RevisionService<'a> {
                     .0
                     .ok_or_else(|| AppError::db("wiki restore returned no committed document"))?
             } else {
-                let write = self.store.write_document_atomic(
+                let write = self.store.documents().write_document_atomic(
                     &restored,
                     Some(command.if_match_revision),
                     DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
@@ -237,6 +240,7 @@ impl<'a> RevisionService<'a> {
         }
         let current = self
             .store
+            .documents()
             .get_document(document_id)?
             .ok_or_else(|| AppError::not_found(format!("document '{document_id}'")))?;
         let from = self.snapshot(document_id, from_revision, &current)?;
@@ -272,6 +276,7 @@ impl<'a> RevisionService<'a> {
         }
         let current = self
             .store
+            .documents()
             .get_document(document_id)?
             .ok_or_else(|| AppError::not_found(format!("document '{document_id}'")))?;
         self.snapshot(document_id, revision, &current)
@@ -287,6 +292,7 @@ impl<'a> RevisionService<'a> {
             return Ok(current.clone());
         }
         self.store
+            .documents()
             .get_document_revision(document_id, revision)?
             .ok_or_else(|| {
                 AppError::not_found(format!("revision {revision} for document '{document_id}'"))
@@ -398,7 +404,10 @@ mod tests {
             ..Config::for_tests()
         };
         let store = Store::open(&config.db_path).unwrap();
-        store.ensure_embedding_manifest(&config).unwrap();
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(&config)
+            .unwrap();
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
         let indexer = DocumentIndexer::new(embedder.as_ref(), &config);
         let mut document = Document {
@@ -411,6 +420,7 @@ mod tests {
         };
         let chunks = indexer.build_chunks(&document).await.unwrap();
         let first = store
+            .documents()
             .write_document_atomic(
                 &document,
                 None,
@@ -423,6 +433,7 @@ mod tests {
         document.updated_at = Utc::now();
         let chunks = indexer.build_chunks(&document).await.unwrap();
         let second = store
+            .documents()
             .write_document_atomic(
                 &document,
                 Some(1),
@@ -455,12 +466,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(restored.revision, 3);
-        let replicated = store.pull_sync_changes("observer", 0, 10).unwrap();
+        let replicated = store.sync().pull_sync_changes("observer", 0, 10).unwrap();
         assert_eq!(replicated.len(), 3);
         let payload = crate::db::sync::validate_wiki_change(&replicated[2].change).unwrap();
         assert_eq!(payload.content, "first body [[Original]]");
         assert_eq!(
             store
+                .wiki_index()
                 .get_wiki_index_by_slug("revision-test")
                 .unwrap()
                 .unwrap()
@@ -469,10 +481,16 @@ mod tests {
             Some("first body [[Original]]")
         );
         assert_eq!(
-            store.get_document("doc-1").unwrap().unwrap().content,
+            store
+                .documents()
+                .get_document("doc-1")
+                .unwrap()
+                .unwrap()
+                .content,
             "first body [[Original]]"
         );
         assert!(store
+            .ops_log()
             .list_recent_ops(10)
             .unwrap()
             .iter()
@@ -486,7 +504,15 @@ mod tests {
             })
             .await;
         assert!(matches!(stale, Err(AppError::Conflict(_))));
-        assert_eq!(store.get_document("doc-1").unwrap().unwrap().revision, 3);
+        assert_eq!(
+            store
+                .documents()
+                .get_document("doc-1")
+                .unwrap()
+                .unwrap()
+                .revision,
+            3
+        );
 
         store
             .lock()
@@ -504,15 +530,39 @@ mod tests {
             restored_without_audit.is_err(),
             "wiki restore requires its audit/journal transaction to commit"
         );
-        assert_eq!(store.get_document("doc-1").unwrap().unwrap().revision, 3);
         assert_eq!(
-            store.get_document("doc-1").unwrap().unwrap().content,
+            store
+                .documents()
+                .get_document("doc-1")
+                .unwrap()
+                .unwrap()
+                .revision,
+            3
+        );
+        assert_eq!(
+            store
+                .documents()
+                .get_document("doc-1")
+                .unwrap()
+                .unwrap()
+                .content,
             "first body [[Original]]"
         );
-        assert_eq!(store.pull_sync_changes("observer", 0, 10).unwrap().len(), 3);
+        assert_eq!(
+            store
+                .sync()
+                .pull_sync_changes("observer", 0, 10)
+                .unwrap()
+                .len(),
+            3
+        );
 
-        assert!(store.delete_document("doc-1").unwrap());
-        assert!(store.list_document_revisions("doc-1").unwrap().is_empty());
+        assert!(store.documents().delete_document("doc-1").unwrap());
+        assert!(store
+            .documents()
+            .list_document_revisions("doc-1")
+            .unwrap()
+            .is_empty());
         assert!(matches!(
             RevisionService::new(&store, &embedder, &config).snapshot_at("doc-1", 1),
             Err(AppError::NotFound(_))
@@ -541,6 +591,7 @@ mod tests {
         };
         let chunks = indexer.build_chunks(&document).await.unwrap();
         store
+            .documents()
             .write_document_atomic(
                 &document,
                 None,
@@ -550,6 +601,7 @@ mod tests {
         document.content = "second".into();
         let chunks = indexer.build_chunks(&document).await.unwrap();
         store
+            .documents()
             .write_document_atomic(
                 &document,
                 Some(1),
@@ -557,18 +609,25 @@ mod tests {
             )
             .unwrap();
 
-        let before_head = store.get_document(&document.id).unwrap().unwrap();
+        let before_head = store
+            .documents()
+            .get_document(&document.id)
+            .unwrap()
+            .unwrap();
         let before_chunks = store
+            .chunks()
             .list_chunks_for_document(&document.id)
             .unwrap()
             .into_iter()
             .map(|chunk| (chunk.id, chunk.content, chunk.embedding))
             .collect::<Vec<_>>();
         let before_node = store
+            .graph()
             .find_node_by_document_id(&document.id)
             .unwrap()
             .unwrap();
         let before_edges = store
+            .graph()
             .list_graph_edges()
             .unwrap()
             .into_iter()
@@ -576,12 +635,13 @@ mod tests {
             .map(|edge| (edge.id, edge.source_id, edge.target_id, edge.rel_type))
             .collect::<Vec<_>>();
         let before_history = store
+            .documents()
             .list_document_revisions(&document.id)
             .unwrap()
             .into_iter()
             .map(|revision| (revision.revision, revision.content))
             .collect::<Vec<_>>();
-        let before_ops = store.list_recent_ops(100).unwrap().len();
+        let before_ops = store.ops_log().list_recent_ops(100).unwrap().len();
 
         let error = RevisionService::new(&store, &embedder, &config)
             .restore(RestoreRevisionCommand {
@@ -592,11 +652,16 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::Forbidden(_)));
-        let after_head = store.get_document(&document.id).unwrap().unwrap();
+        let after_head = store
+            .documents()
+            .get_document(&document.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(after_head.content, "second");
         assert_eq!(after_head.revision, before_head.revision);
         assert_eq!(
             store
+                .chunks()
                 .list_chunks_for_document(&document.id)
                 .unwrap()
                 .into_iter()
@@ -605,6 +670,7 @@ mod tests {
             before_chunks
         );
         let after_node = store
+            .graph()
             .find_node_by_document_id(&document.id)
             .unwrap()
             .unwrap();
@@ -612,6 +678,7 @@ mod tests {
         assert_eq!(after_node.label, before_node.label);
         assert_eq!(
             store
+                .graph()
                 .list_graph_edges()
                 .unwrap()
                 .into_iter()
@@ -622,6 +689,7 @@ mod tests {
         );
         assert_eq!(
             store
+                .documents()
                 .list_document_revisions(&document.id)
                 .unwrap()
                 .into_iter()
@@ -629,7 +697,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             before_history
         );
-        assert_eq!(store.list_recent_ops(100).unwrap().len(), before_ops);
+        assert_eq!(
+            store.ops_log().list_recent_ops(100).unwrap().len(),
+            before_ops
+        );
     }
 
     #[tokio::test]
@@ -657,6 +728,7 @@ mod tests {
         };
         let chunks = indexer.build_chunks(&historical_raw).await.unwrap();
         store
+            .documents()
             .write_document_atomic(
                 &historical_raw,
                 None,
@@ -670,13 +742,18 @@ mod tests {
         historical_raw.updated_at = Utc::now();
         let chunks = indexer.build_chunks(&historical_raw).await.unwrap();
         store
+            .documents()
             .write_document_atomic(
                 &historical_raw,
                 Some(1),
                 DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
             )
             .unwrap();
-        let before = store.get_document(&historical_raw.id).unwrap().unwrap();
+        let before = store
+            .documents()
+            .get_document(&historical_raw.id)
+            .unwrap()
+            .unwrap();
         let error = RevisionService::new(&store, &embedder, &config)
             .restore(RestoreRevisionCommand {
                 document_id: historical_raw.id.clone(),
@@ -686,12 +763,17 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, AppError::Forbidden(_)));
-        let after = store.get_document(&historical_raw.id).unwrap().unwrap();
+        let after = store
+            .documents()
+            .get_document(&historical_raw.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(after.content, before.content);
         assert_eq!(after.layer, before.layer);
         assert_eq!(after.revision, before.revision);
         assert_eq!(
             store
+                .documents()
                 .list_document_revisions(&historical_raw.id)
                 .unwrap()
                 .len(),
@@ -712,6 +794,7 @@ mod tests {
         };
         let chunks = indexer.build_chunks(&current_source).await.unwrap();
         store
+            .documents()
             .write_document_atomic(
                 &current_source,
                 None,
@@ -722,6 +805,7 @@ mod tests {
         current_source.updated_at = Utc::now();
         let chunks = indexer.build_chunks(&current_source).await.unwrap();
         store
+            .documents()
             .write_document_atomic(
                 &current_source,
                 Some(1),
@@ -739,6 +823,7 @@ mod tests {
         assert!(matches!(error, AppError::Forbidden(_)));
         assert_eq!(
             store
+                .documents()
                 .get_document(&current_source.id)
                 .unwrap()
                 .unwrap()

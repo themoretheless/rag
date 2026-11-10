@@ -64,11 +64,15 @@ impl RagServer {
         crate::util::blocking_section(|| {
             let no_default = params.no_default.unwrap_or(false);
             if no_default {
-                let doc = self.store.get_schema_document()?.ok_or_else(|| {
-                    McpError::from(AppError::not_found(
-                        "schema document not found at schema://agents",
-                    ))
-                })?;
+                let doc = self
+                    .store
+                    .documents()
+                    .get_schema_document()?
+                    .ok_or_else(|| {
+                        McpError::from(AppError::not_found(
+                            "schema document not found at schema://agents",
+                        ))
+                    })?;
                 let body = crate::wiki::SchemaDocumentView {
                     document_id: doc.id,
                     uri: doc.uri,
@@ -246,9 +250,11 @@ impl RagServer {
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let has_key = id.is_some() || params.seq.is_some();
-            let rows = self
-                .store
-                .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))?;
+            let rows = self.store.ops_log().read_ops_log(
+                id,
+                params.seq,
+                params.limit.map(|n| n as usize),
+            )?;
             if has_key {
                 let entry = rows.into_iter().next().ok_or_else(|| {
                     McpError::from(AppError::not_found(format!(
@@ -272,7 +278,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops = self.store.list_recent_ops(limit)?;
+            let ops = self.store.ops_log().list_recent_ops(limit)?;
             Self::json_result(&ops)
         })
     }
@@ -289,9 +295,9 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops_log_available = self.store.ops_log_exists()?;
+            let ops_log_available = self.store.ops_log().ops_log_exists()?;
             let ops = if ops_log_available {
-                self.store.memories_filed_away(limit)?
+                self.store.ops_log().memories_filed_away(limit)?
             } else {
                 Vec::new()
             };
@@ -361,7 +367,10 @@ impl RagServer {
                 .unwrap_or(self.config.default_top_k);
             let include_content = params.include_content.unwrap_or(false);
 
-            let matches = self.store.query_wiki_index(params.query.trim(), top_k)?;
+            let matches = self
+                .store
+                .wiki_index()
+                .query_wiki_index(params.query.trim(), top_k)?;
 
             let mut pages = Vec::new();
             if include_content {
@@ -373,7 +382,7 @@ impl RagServer {
                     if !seen.insert(pid.to_string()) {
                         continue;
                     }
-                    if let Some(doc) = self.store.get_document(pid)? {
+                    if let Some(doc) = self.store.documents().get_document(pid)? {
                         pages.push(IndexQueryPage {
                             document_id: doc.id,
                             uri: doc.uri,
@@ -547,7 +556,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ReadIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        let entries = crate::util::blocking_section(|| self.store.list_wiki_index())?;
+        let entries = crate::util::blocking_section(|| self.store.wiki_index().list_wiki_index())?;
         let format = params
             .format
             .as_deref()
@@ -556,8 +565,10 @@ impl RagServer {
             .to_ascii_lowercase();
         let markdown = if format == "markdown" || format == "md" {
             Some(
-                self.blocking("read_index", |store| store.render_wiki_index_markdown())
-                    .await?,
+                self.blocking("read_index", |store| {
+                    store.wiki_index().render_wiki_index_markdown()
+                })
+                .await?,
             )
         } else {
             None
@@ -579,7 +590,7 @@ impl RagServer {
         Parameters(params): Parameters<UpdateIndexEntryParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let entry = self.store.update_wiki_index_entry_fields(
+            let entry = self.store.wiki_index().update_wiki_index_entry_fields(
                 &params.slug,
                 params.title,
                 params.summary,
@@ -619,7 +630,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let count = self
             .blocking("rebuild_index", |store| {
-                store.rebuild_wiki_index_from_docs()
+                store.wiki_index().rebuild_wiki_index_from_docs()
             })
             .await?;
 
@@ -723,13 +734,14 @@ impl RagServer {
         let key = params.id_or_slug.trim().to_owned();
         let store = self.store.clone();
         let doc = run_blocking("get_wiki_page", move || {
-            if let Some(document) = store.get_document(&key)? {
+            if let Some(document) = store.documents().get_document(&key)? {
                 return Ok(document);
             }
-            if let Some(document) = store.find_by_uri(&key)? {
+            if let Some(document) = store.documents().find_by_uri(&key)? {
                 return Ok(document);
             }
             store
+                .documents()
                 .find_by_uri(&format!("wiki://{key}"))?
                 .ok_or_else(|| AppError::not_found(format!("wiki page not found: {key}")))
         })
@@ -763,7 +775,7 @@ impl RagServer {
         };
         let store = self.store.clone();
         let (rows, _) = run_blocking("list_wiki_pages", move || {
-            store.list_wiki_page_metas_filtered(&filter)
+            store.documents().list_wiki_page_metas_filtered(&filter)
         })
         .await?;
         Self::json_result(&rows)

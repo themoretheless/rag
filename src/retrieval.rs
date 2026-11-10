@@ -179,8 +179,12 @@ pub async fn multi_query_search(
     let corpus_guard = acquire_corpus_search_guard(store, mode)?;
     let embeddings = if mode.needs_embedding() {
         crate::util::blocking_section(|| {
-            store.ensure_embedding_manifest(config)?;
-            store.require_embedding_manifest_match(config)
+            store
+                .embedding_manifest()
+                .ensure_embedding_manifest(config)?;
+            store
+                .embedding_manifest()
+                .require_embedding_manifest_match(config)
         })?;
         let vectors = crate::embeddings::embed_exact(embedder, &command.queries).await?;
         vectors.into_iter().map(Some).collect()
@@ -374,6 +378,7 @@ pub fn get_document(
 ) -> Result<DocumentWithChunks, AppError> {
     let document_id = document_id.trim();
     let document = store
+        .documents()
         .get_document(document_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
     document_with_chunks(store, document, include_chunks, chunk_limit)
@@ -420,7 +425,7 @@ pub fn multi_get(
     let mut remaining_chunk_bytes = MAX_INCLUDED_CHUNK_CONTENT_BYTES;
     for requested_id in document_ids {
         let document_id = requested_id.trim();
-        let Some(document) = store.get_document(document_id)? else {
+        let Some(document) = store.documents().get_document(document_id)? else {
             missing.push(requested_id);
             continue;
         };
@@ -570,12 +575,15 @@ pub fn find_similar(
     query: SimilarDocumentsQuery,
 ) -> Result<Vec<SearchHit>, AppError> {
     let corpus_guard = acquire_corpus_search_guard(store, SearchMode::Vec)?;
-    store.require_embedding_manifest_match(config)?;
+    store
+        .embedding_manifest()
+        .require_embedding_manifest_match(config)?;
     let document_id = query.document_id.trim();
     let document = store
+        .documents()
         .get_document(document_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-    let chunks = store.list_chunks_for_document(document_id)?;
+    let chunks = store.chunks().list_chunks_for_document(document_id)?;
     let dims = chunks
         .first()
         .map(|chunk| chunk.embedding.len())
@@ -649,8 +657,12 @@ pub async fn execute_search_with_llm(
     // retrieval.
     let corpus_guard = acquire_corpus_search_guard(store, mode)?;
     if mode.needs_embedding() {
-        store.ensure_embedding_manifest(config)?;
-        store.require_embedding_manifest_match(config)?;
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(config)?;
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(config)?;
     }
     let remaining = budget
         .checked_sub(started.elapsed())
@@ -1072,7 +1084,11 @@ mod tests {
     async fn active_source_sync_rejects_hybrid_before_embedding_provider_call() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = Store::open(&dir.path().join("pre-embed-busy.duckdb")).expect("open");
-        let sync_guard = store.corpus_mutation_lane().write_owned().await;
+        let sync_guard = store
+            .corpus_lane()
+            .corpus_mutation_lane()
+            .write_owned()
+            .await;
         let embedder = CountingEmbedder {
             calls: AtomicUsize::new(0),
         };
@@ -1159,7 +1175,10 @@ mod tests {
         // Cold DuckDB identity queries must not spend a 20ms wall-clock budget
         // before the provider is reached on a loaded runner. Paused async time
         // expires the provider deterministically without waiting five real seconds.
-        store.ensure_embedding_manifest(&config).unwrap();
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(&config)
+            .unwrap();
         let provider = NeverReturns {
             entered: AtomicUsize::new(0),
             dropped: AtomicUsize::new(0),
@@ -1179,6 +1198,10 @@ mod tests {
             .contains("timeout budget exceeded during embedding"));
         assert_eq!(provider.entered.load(Ordering::SeqCst), 1);
         assert_eq!(provider.dropped.load(Ordering::SeqCst), 1);
-        assert!(store.corpus_mutation_lane().try_write_owned().is_ok());
+        assert!(store
+            .corpus_lane()
+            .corpus_mutation_lane()
+            .try_write_owned()
+            .is_ok());
     }
 }

@@ -180,7 +180,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let body = self
             .blocking("check_duplicate", move |store| {
-                store.check_duplicate(
+                store.documents().check_duplicate(
                     params.content.as_deref(),
                     params.content_hash.as_deref(),
                     params.uri.as_deref(),
@@ -207,11 +207,13 @@ impl RagServer {
         let dry_run = params.dry_run.unwrap_or(false);
         if dry_run {
             let matched = crate::util::blocking_section(|| {
-                self.store.list_documents_filtered(&DocumentFilter {
-                    source_file: Some(source_file.to_string()),
-                    include_archived: Some(true),
-                    ..Default::default()
-                })
+                self.store
+                    .documents()
+                    .list_documents_filtered(&DocumentFilter {
+                        source_file: Some(source_file.to_string()),
+                        include_archived: Some(true),
+                        ..Default::default()
+                    })
             })?;
             let document_ids: Vec<String> = matched.iter().map(|d| d.id.clone()).collect();
             return Self::json_result(&serde_json::json!({
@@ -224,9 +226,14 @@ impl RagServer {
             }));
         }
 
-        let mut mutation_guard = Some(self.store.try_corpus_mutation_guard("source deletion")?);
-        let document_ids =
-            crate::util::blocking_section(|| self.store.delete_by_source_ids(source_file))?;
+        let mut mutation_guard = Some(
+            self.store
+                .corpus_lane()
+                .try_corpus_mutation_guard("source deletion")?,
+        );
+        let document_ids = crate::util::blocking_section(|| {
+            self.store.documents().delete_by_source_ids(source_file)
+        })?;
         let deleted = document_ids.len() as u64;
         let match_count = deleted;
         let mut finalization_errors = Vec::new();
@@ -277,8 +284,10 @@ impl RagServer {
             ..DocumentCatalogFilter::default()
         };
         let store = self.store.clone();
-        let docs =
-            run_blocking("list_sources", move || store.list_document_catalog(&filter)).await?;
+        let docs = run_blocking("list_sources", move || {
+            store.documents().list_document_catalog(&filter)
+        })
+        .await?;
         let summaries: Vec<SourceSummary> = docs
             .items
             .into_iter()
@@ -333,10 +342,12 @@ impl RagServer {
         let body = run_blocking("get_source", move || {
             let doc = if let Some(id) = document_id.as_deref() {
                 store
+                    .documents()
                     .get_document(id)?
                     .ok_or_else(|| AppError::not_found(format!("source not found: {id}")))?
             } else if let Some(uri) = uri.as_deref() {
                 store
+                    .documents()
                     .find_by_uri(uri)?
                     .ok_or_else(|| AppError::not_found(format!("source not found: uri={uri}")))?
             } else {
@@ -385,7 +396,7 @@ impl RagServer {
         };
         let store = self.store.clone();
         let page = run_blocking("list_documents", move || {
-            store.list_document_catalog(&filter)
+            store.documents().list_document_catalog(&filter)
         })
         .await?;
         Self::json_result(&page.items)
@@ -424,7 +435,7 @@ impl RagServer {
         let document_id = params.document_id.clone();
         let deleted = self
             .blocking("delete_document", move |store| {
-                store.delete_document(&document_id)
+                store.documents().delete_document(&document_id)
             })
             .await?;
         if !deleted {
@@ -463,7 +474,7 @@ impl RagServer {
         Parameters(_params): Parameters<ListWingsParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let wings = self.store.list_wings()?;
+            let wings = self.store.documents().list_wings()?;
             Self::json_result(&wings)
         })
     }
@@ -482,7 +493,7 @@ impl RagServer {
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let rooms = self.store.list_rooms(wing)?;
+            let rooms = self.store.documents().list_rooms(wing)?;
             Self::json_result(&rooms)
         })
     }
@@ -496,7 +507,7 @@ impl RagServer {
         Parameters(_params): Parameters<GetTaxonomyParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let tax = self.store.get_taxonomy()?;
+            let tax = self.store.documents().get_taxonomy()?;
             Self::json_result(&tax)
         })
     }
@@ -507,7 +518,8 @@ impl RagServer {
     )]
     pub(super) async fn stats(&self) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let (document_count, chunk_count, node_count, edge_count) = self.store.stats()?;
+            let (document_count, chunk_count, node_count, edge_count) =
+                self.store.maintenance().stats()?;
             let body = Stats {
                 document_count,
                 chunk_count,

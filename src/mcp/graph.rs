@@ -53,7 +53,9 @@ impl RagServer {
             kinds,
         };
         let view = self
-            .blocking("get_graph", move |store| store.get_graph_view(filter))
+            .blocking("get_graph", move |store| {
+                store.graph().get_graph_view(filter)
+            })
             .await?;
         Self::json_result(&view)
     }
@@ -85,7 +87,9 @@ impl RagServer {
         let store = self.store.clone();
         let config = self.config.clone();
         let report = run_blocking("export_graph_snapshot", move || {
-            let view = store.export_graph_for_ui(Some(max_nodes), include_tags)?;
+            let view = store
+                .graph()
+                .export_graph_for_ui(Some(max_nodes), include_tags)?;
             let default_path = store
                 .path()
                 .parent()
@@ -174,7 +178,7 @@ impl RagServer {
                 Some(requested) if !requested.is_empty() => requested.to_vec(),
                 _ => pkb_rel_types(params.include_tags.unwrap_or(false)),
             };
-            let view = self.store.neighbors_filtered(
+            let view = self.store.graph().neighbors_filtered(
                 &params.node_id,
                 depth,
                 max_nodes,
@@ -203,6 +207,7 @@ impl RagServer {
             }
             let target = self
                 .store
+                .graph()
                 .resolve_node(
                     params.node_id.as_deref(),
                     params.document_id.as_deref(),
@@ -213,7 +218,7 @@ impl RagServer {
                         "graph node not found (provide node_id, document_id, or label)",
                     ))
                 })?;
-            let view = self.store.backlinks(&target.id)?;
+            let view = self.store.graph().backlinks(&target.id)?;
             Self::json_result(&view)
         })
     }
@@ -233,9 +238,10 @@ impl RagServer {
         crate::util::blocking_section(|| {
             let rel = params.rel_type.as_deref().unwrap_or("related");
             let weight = params.weight.unwrap_or(1.0);
-            let edge = self
-                .store
-                .link_nodes(&params.source_id, &params.target_id, rel, weight)?;
+            let edge =
+                self.store
+                    .graph()
+                    .link_nodes(&params.source_id, &params.target_id, rel, weight)?;
             Self::json_result(&edge)
         })
     }
@@ -256,9 +262,12 @@ impl RagServer {
                 .or(params.label.as_deref())
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let edge =
-                self.store
-                    .create_tunnel(&params.source_id, &params.target_id, weight, context)?;
+            let edge = self.store.graph().create_tunnel(
+                &params.source_id,
+                &params.target_id,
+                weight,
+                context,
+            )?;
             Self::json_result(&edge)
         })
     }
@@ -272,7 +281,7 @@ impl RagServer {
         Parameters(params): Parameters<ListTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let edges = self.store.list_tunnels(params.node_id.as_deref())?;
+            let edges = self.store.graph().list_tunnels(params.node_id.as_deref())?;
             Self::json_result(&ListTunnelsResult {
                 count: edges.len() as u64,
                 tunnels: edges,
@@ -289,7 +298,7 @@ impl RagServer {
         Parameters(params): Parameters<DeleteTunnelParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let deleted = self.store.delete_tunnel(&params.tunnel_id)?;
+            let deleted = self.store.graph().delete_tunnel(&params.tunnel_id)?;
             if !deleted {
                 return Err(McpError::from(AppError::not_found(format!(
                     "tunnel not found: {}",
@@ -316,6 +325,7 @@ impl RagServer {
             let max_nodes = params.max_nodes.unwrap_or(DEFAULT_TRAVERSAL_MAX_NODES);
             let view = self
                 .store
+                .graph()
                 .follow_tunnels(&params.node_id, depth, max_nodes)?;
             Self::json_result(&view)
         })
@@ -330,7 +340,7 @@ impl RagServer {
         Parameters(params): Parameters<FindTunnelsParams>,
     ) -> Result<CallToolResult, McpError> {
         crate::util::blocking_section(|| {
-            let edges = self.store.find_tunnels(
+            let edges = self.store.graph().find_tunnels(
                 params.node_id.as_deref(),
                 params.other_node_id.as_deref(),
                 params.wing.as_deref(),
@@ -351,7 +361,7 @@ impl RagServer {
     )]
     pub(super) async fn graph_stats(&self) -> Result<CallToolResult, McpError> {
         let body = self
-            .blocking("graph_stats", |store| store.graph_stats())
+            .blocking("graph_stats", |store| store.graph().graph_stats())
             .await?;
         Self::json_result(&body)
     }
@@ -405,14 +415,14 @@ impl RagServer {
 
             if only_label {
                 let label = params.label.as_deref().unwrap_or("").trim();
-                let nodes = self.store.find_nodes_by_label(label)?;
+                let nodes = self.store.graph().find_nodes_by_label(label)?;
                 return Self::json_result(&FindNodeResult {
                     node: nodes.first().cloned(),
                     matches: nodes,
                 });
             }
 
-            let node = self.store.resolve_node(
+            let node = self.store.graph().resolve_node(
                 params.node_id.as_deref(),
                 params.document_id.as_deref(),
                 params.label.as_deref(),
@@ -475,7 +485,9 @@ impl RagServer {
                 continue;
             }
             let Some(node) = crate::util::blocking_section(|| {
-                self.store.find_node_by_document_id(&hit.document_id)
+                self.store
+                    .graph()
+                    .find_node_by_document_id(&hit.document_id)
             })?
             else {
                 continue;
@@ -483,8 +495,9 @@ impl RagServer {
             if !seen_doc_nodes.insert(node.id.clone()) {
                 continue;
             }
-            let local =
-                crate::util::blocking_section(|| self.store.neighbors(&node.id, depth, max_nodes))?;
+            let local = crate::util::blocking_section(|| {
+                self.store.graph().neighbors(&node.id, depth, max_nodes)
+            })?;
             for n in local.nodes {
                 merged_nodes.entry(n.id.clone()).or_insert(n);
             }

@@ -139,8 +139,9 @@ fn permission_denied_source_is_reported_without_deleting_indexed_state() {
         kind: "document".into(),
         ..Default::default()
     };
-    store.upsert_document(&document).unwrap();
+    store.documents().upsert_document(&document).unwrap();
     store
+        .source_manifest()
         .upsert_source_manifest(SourceManifestWrite {
             canonical_path: source,
             canonical_root: "/vault",
@@ -151,6 +152,7 @@ fn permission_denied_source_is_reported_without_deleting_indexed_state() {
         })
         .unwrap();
     let preloaded = store
+        .source_manifest()
         .load_source_manifest_root(Path::new("/vault"))
         .unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
@@ -177,8 +179,13 @@ fn permission_denied_source_is_reported_without_deleting_indexed_state() {
     assert!(report.deleted.is_empty());
     assert_eq!(report.errors.len(), 1);
     assert!(report.errors[0].error.contains("preserving indexed state"));
-    assert!(store.get_document(&document.id).unwrap().is_some());
     assert!(store
+        .documents()
+        .get_document(&document.id)
+        .unwrap()
+        .is_some());
+    assert!(store
+        .source_manifest()
         .load_source_manifest_root(Path::new("/vault"))
         .unwrap()
         .contains_key(source));
@@ -258,7 +265,7 @@ async fn store_clones_serialize_source_sync_runs() {
     .expect("second sync entered after first released the lane");
     let outcome = second.await.unwrap().unwrap();
     assert!(matches!(outcome, SourceSyncOutcome::Completed(_)));
-    assert_eq!(store.list_documents().unwrap().len(), 1);
+    assert_eq!(store.documents().list_documents().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -313,10 +320,14 @@ async fn small_documents_share_one_embedding_call_and_keep_path_mapping() {
     );
     for (index, path) in canonical_paths.iter().enumerate() {
         let document = store
+            .documents()
             .find_by_uri(&format!("file://{}", path.display()))
             .unwrap()
             .unwrap();
-        let chunks = store.list_chunks_for_document(&document.id).unwrap();
+        let chunks = store
+            .chunks()
+            .list_chunks_for_document(&document.id)
+            .unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].embedding[0], (index + 1) as f32);
     }
@@ -355,7 +366,7 @@ async fn sixty_five_small_documents_split_at_the_batch_cap() {
 
     assert!(report.errors.is_empty());
     assert_eq!(report.added.len(), 65);
-    assert_eq!(store.list_documents().unwrap().len(), 65);
+    assert_eq!(store.documents().list_documents().unwrap().len(), 65);
     assert_eq!(
         calls
             .lock()
@@ -499,12 +510,13 @@ async fn embedding_failure_writes_none_of_a_multi_document_batch() {
         .all(|error| error.error.contains("injected batch embedding failure")));
     assert!(report.added.is_empty());
     assert_eq!(report.counters.embedded, 0);
-    assert!(store.list_documents().unwrap().is_empty());
+    assert!(store.documents().list_documents().unwrap().is_empty());
     assert!(store
+        .source_manifest()
         .load_source_manifest_root(root.path())
         .unwrap()
         .is_empty());
-    assert!(store.list_graph_edges().unwrap().is_empty());
+    assert!(store.graph().list_graph_edges().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -564,7 +576,7 @@ async fn cancellation_during_embedding_writes_none_of_the_current_batch() {
     assert_eq!(report.counters.extracted, 3);
     assert!(report.added.is_empty());
     assert!(report.updated.is_empty());
-    assert!(store.list_documents().unwrap().is_empty());
+    assert!(store.documents().list_documents().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -583,7 +595,7 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
         ..Config::for_tests()
     };
     let store = Store::open(&config.db_path).unwrap();
-    store.ensure_fts(&config.fts_stemmer).unwrap();
+    store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     let generation_before = {
         let conn = store.lock().unwrap();
         crate::db::fts::fts_generation_state(&conn).unwrap()
@@ -624,8 +636,8 @@ async fn cancellation_between_commits_persists_exactly_the_sorted_prefix() {
         .to_string();
     assert_eq!(report.added, vec![canonical_first]);
     assert_eq!(report.counters.embedded, 1);
-    assert_eq!(store.list_documents().unwrap().len(), 1);
-    assert_eq!(store.list_documents().unwrap()[0].title, "a.md");
+    assert_eq!(store.documents().list_documents().unwrap().len(), 1);
+    assert_eq!(store.documents().list_documents().unwrap()[0].title, "a.md");
     assert_eq!(calls.lock().unwrap().len(), 1);
     let generation_after_cancel = {
         let conn = store.lock().unwrap();
@@ -724,6 +736,7 @@ async fn source_commit_keeps_the_revision_captured_before_embedding() {
 
     let canonical = source.canonicalize().unwrap();
     let existing = store
+        .documents()
         .find_by_uri(&format!("file://{}", canonical.display()))
         .unwrap()
         .unwrap();
@@ -749,7 +762,11 @@ async fn source_commit_keeps_the_revision_captured_before_embedding() {
         .expect("source sync completed")
         .unwrap()
         .unwrap();
-    let persisted = store.get_document(&existing.id).unwrap().unwrap();
+    let persisted = store
+        .documents()
+        .get_document(&existing.id)
+        .unwrap()
+        .unwrap();
     assert_eq!(persisted.content, "external winner");
     assert_eq!(persisted.revision, 2);
     assert!(report.added.is_empty());
@@ -806,10 +823,13 @@ async fn sync_preflight_updates_one_changed_file_and_cleans_deleted_manifest() {
     assert_eq!(second.counters.embedded, 0);
     assert_eq!(embed_batches.load(Ordering::Relaxed), batches_after_first);
 
-    let document = store.list_documents().unwrap().pop().unwrap();
+    let document = store.documents().list_documents().unwrap().pop().unwrap();
     assert_eq!(document.wing.as_deref(), Some("alpha"));
     assert_eq!(document.room.as_deref(), Some("root"));
-    let roots = store.list_source_roots(Some("alpha")).unwrap();
+    let roots = store
+        .source_manifest()
+        .list_source_roots(Some("alpha"))
+        .unwrap();
     assert_eq!(roots.len(), 1);
     assert_eq!(
         roots[0].canonical_root,
@@ -818,10 +838,17 @@ async fn sync_preflight_updates_one_changed_file_and_cleans_deleted_manifest() {
     assert_eq!(roots[0].file_count, 1);
     assert!(roots[0].last_seen.is_some());
     assert!(roots[0].last_synced.is_some());
-    assert!(store.list_source_roots(Some("other")).unwrap().is_empty());
+    assert!(store
+        .source_manifest()
+        .list_source_roots(Some("other"))
+        .unwrap()
+        .is_empty());
 
     let batches_before_repair = embed_batches.load(Ordering::Relaxed);
-    store.delete_chunks_for_document(&document.id).unwrap();
+    store
+        .chunks()
+        .delete_chunks_for_document(&document.id)
+        .unwrap();
     let repaired = service.sync(command.clone()).await.unwrap();
     assert!(repaired.errors.is_empty(), "repaired={repaired:?}");
     assert_eq!(repaired.updated, vec![canonical_source.clone()]);
@@ -856,12 +883,17 @@ async fn sync_preflight_updates_one_changed_file_and_cleans_deleted_manifest() {
     assert_eq!(deleted.counters.preflight, 0);
     assert_eq!(deleted.counters.extracted, 0);
     assert_eq!(deleted.counters.embedded, 0);
-    assert!(store.list_documents().unwrap().is_empty());
+    assert!(store.documents().list_documents().unwrap().is_empty());
     assert!(store
+        .source_manifest()
         .load_source_manifest_root(&canonical_project)
         .unwrap()
         .is_empty());
-    assert!(store.list_source_roots(None).unwrap().is_empty());
+    assert!(store
+        .source_manifest()
+        .list_source_roots(None)
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -879,7 +911,7 @@ async fn completed_sync_prepares_fts_before_the_first_user_search() {
     let store = Store::open(&config.db_path).unwrap();
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let service = SourceSyncService::new(&store, &embedder, &config);
-    store.ensure_fts(&config.fts_stemmer).unwrap();
+    store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     let generation_state = || {
         let conn = store.lock().unwrap();
         crate::db::fts::fts_generation_state(&conn).unwrap()
@@ -1000,7 +1032,7 @@ async fn terminal_fts_failure_preserves_committed_sync_report_and_dirty_fallback
         ..Config::for_tests()
     };
     let store = Store::open(&config.db_path).unwrap();
-    store.ensure_fts(&config.fts_stemmer).unwrap();
+    store.maintenance().ensure_fts(&config.fts_stemmer).unwrap();
     config.fts_stemmer = crate::db::fts::test_fault::panic("source-sync");
     let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(16));
     let progress = Arc::new(Mutex::new(Vec::new()));
@@ -1036,8 +1068,9 @@ async fn terminal_fts_failure_preserves_committed_sync_report_and_dirty_fallback
     assert!(finalization.fallback_dirty_marked);
     assert!(finalization.dirty_marker_error.is_none());
     assert!(finalization.ops_log_error.is_none());
-    assert_eq!(store.list_documents().unwrap().len(), 1);
+    assert_eq!(store.documents().list_documents().unwrap().len(), 1);
     assert!(store
+        .source_manifest()
         .load_source_manifest_root(&canonical_root)
         .unwrap()
         .contains_key(&canonical_source));
@@ -1047,6 +1080,7 @@ async fn terminal_fts_failure_preserves_committed_sync_report_and_dirty_fallback
     };
     assert!(generation.dirty, "next lexical read must retry FTS");
     assert!(store
+        .ops_log()
         .list_recent_ops(10)
         .unwrap()
         .iter()
@@ -1185,7 +1219,7 @@ async fn remove_deleted_prunes_existing_sources_newly_excluded_by_scan_policy() 
         .sync(SourceSyncCommand::new(root.path().to_path_buf()))
         .await
         .unwrap();
-    assert_eq!(store.list_documents().unwrap().len(), 3);
+    assert_eq!(store.documents().list_documents().unwrap().len(), 3);
 
     // A regular sentinel turns an already-indexed directory into an
     // explicit virtual-environment exclusion without deleting its files.
@@ -1210,10 +1244,13 @@ async fn remove_deleted_prunes_existing_sources_newly_excluded_by_scan_policy() 
     assert!(cached.exists());
     assert!(virtualized.exists());
 
-    let documents = store.list_documents().unwrap();
+    let documents = store.documents().list_documents().unwrap();
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].source_file.as_deref(), Some(retained.as_str()));
-    let manifest = store.load_source_manifest_root(&canonical_root).unwrap();
+    let manifest = store
+        .source_manifest()
+        .load_source_manifest_root(&canonical_root)
+        .unwrap();
     assert_eq!(manifest.len(), 1);
     assert!(manifest.contains_key(&retained));
 }
@@ -1261,7 +1298,7 @@ async fn controlled_sync_reports_progress_and_cancels_before_the_next_write() {
         panic!("expected a cancelled source sync");
     };
     assert!(report.added.is_empty());
-    assert!(store.list_documents().unwrap().is_empty());
+    assert!(store.documents().list_documents().unwrap().is_empty());
     let phases = phases.lock().unwrap();
     assert!(phases.contains(&SourceSyncPhase::Scanning));
     assert!(phases.contains(&SourceSyncPhase::Syncing));
@@ -1297,7 +1334,7 @@ async fn warm_sync_reapplies_an_explicit_scope_change() {
     assert_eq!(changed.updated.len(), 1);
     assert_eq!(changed.counters.extracted, 1);
     assert_eq!(changed.counters.embedded, 1);
-    let document = store.list_documents().unwrap().pop().unwrap();
+    let document = store.documents().list_documents().unwrap().pop().unwrap();
     assert_eq!(document.wing.as_deref(), Some("beta"));
     assert_eq!(document.room.as_deref(), Some("root"));
 }
@@ -1326,7 +1363,7 @@ async fn empty_source_is_a_stable_non_searchable_manifest_entry() {
 
     let first = service.sync(command.clone()).await.unwrap();
     assert_eq!(first.added.len(), 1);
-    assert_eq!(store.integrity_counts().unwrap().0, 0);
+    assert_eq!(store.maintenance().integrity_counts().unwrap().0, 0);
     let second = service.sync(command).await.unwrap();
     assert_eq!(second.skipped.len(), 1);
     assert_eq!(second.counters.extracted, 0);
@@ -1375,7 +1412,10 @@ async fn manifest_moves_between_parent_and_child_roots_without_losing_cleanup() 
     assert_eq!(moved.counters.extracted, 1);
     assert_eq!(moved.counters.embedded, 0);
     let canonical_project = project.canonicalize().unwrap();
-    let manifest = store.load_source_manifest_root(&canonical_project).unwrap();
+    let manifest = store
+        .source_manifest()
+        .load_source_manifest_root(&canonical_project)
+        .unwrap();
     assert_eq!(manifest.len(), 1);
     assert_eq!(
         manifest.values().next().unwrap().canonical_root,
@@ -1396,7 +1436,10 @@ async fn manifest_moves_between_parent_and_child_roots_without_losing_cleanup() 
     assert_eq!(moved_to_parent.skipped.len(), 1);
     assert_eq!(moved_to_parent.counters.extracted, 1);
     assert_eq!(moved_to_parent.counters.embedded, 0);
-    let manifest = store.load_source_manifest_root(&canonical_parent).unwrap();
+    let manifest = store
+        .source_manifest()
+        .load_source_manifest_root(&canonical_parent)
+        .unwrap();
     assert_eq!(manifest.len(), 1);
     assert_eq!(
         manifest.values().next().unwrap().canonical_root,
@@ -1429,7 +1472,7 @@ async fn manifest_moves_between_parent_and_child_roots_without_losing_cleanup() 
         .await
         .unwrap();
     assert_eq!(removed.deleted.len(), 1);
-    assert!(store.list_documents().unwrap().is_empty());
+    assert!(store.documents().list_documents().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1455,7 +1498,13 @@ async fn oversized_sources_are_reported_and_never_silently_stale() {
         max_file_bytes: Some(100),
     };
     service.sync(command.clone()).await.unwrap();
-    let original = store.list_documents().unwrap().pop().unwrap().content;
+    let original = store
+        .documents()
+        .list_documents()
+        .unwrap()
+        .pop()
+        .unwrap()
+        .content;
 
     std::fs::write(&source, "now much larger than the configured cap").unwrap();
     command.max_file_bytes = Some(3);
@@ -1466,7 +1515,13 @@ async fn oversized_sources_are_reported_and_never_silently_stale() {
     assert!(report.updated.is_empty());
     assert!(report.deleted.is_empty());
     assert_eq!(
-        store.list_documents().unwrap().pop().unwrap().content,
+        store
+            .documents()
+            .list_documents()
+            .unwrap()
+            .pop()
+            .unwrap()
+            .content,
         original
     );
 }
@@ -1582,7 +1637,7 @@ async fn sync_sources_nonblocking_completes_and_second_run_skips_unchanged() {
     assert!(report.errors.is_empty(), "{report:?}");
     assert_eq!(report.added.len(), 2);
     assert!(progress.load(Ordering::Relaxed) > 0);
-    assert_eq!(store.list_documents().unwrap().len(), 2);
+    assert_eq!(store.documents().list_documents().unwrap().len(), 2);
 
     let again = sync_sources_nonblocking(
         store.clone(),
@@ -1618,7 +1673,7 @@ async fn sync_sources_nonblocking_honours_pre_cancelled_control() {
     .await
     .unwrap();
     assert!(matches!(outcome, SourceSyncOutcome::Cancelled(_)));
-    assert!(store.list_documents().unwrap().is_empty());
+    assert!(store.documents().list_documents().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1691,7 +1746,7 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
     let command = SourceSyncCommand::new(root.path().to_path_buf());
     let report = service.sync(command.clone()).await.unwrap();
     assert!(report.errors.is_empty(), "{report:?}");
-    let doc = store.list_documents().unwrap().remove(0);
+    let doc = store.documents().list_documents().unwrap().remove(0);
     assert!(doc.content.contains("Visible text."));
     assert!(!doc.content.contains("color:red"));
     assert!(!doc.metadata_json.contains("code_source_text"));
@@ -1703,7 +1758,7 @@ async fn html_original_survives_style_only_sync_and_repairs_missing_or_corrupt_b
     std::fs::write(&file, &second).unwrap();
     let report = service.sync(command.clone()).await.unwrap();
     assert!(report.errors.is_empty(), "{report:?}");
-    let updated = store.get_document(&doc.id).unwrap().unwrap();
+    let updated = store.documents().get_document(&doc.id).unwrap().unwrap();
     assert_eq!(updated.content, doc.content);
     assert!(updated.revision > doc.revision);
     assert_eq!(
@@ -1775,7 +1830,7 @@ async fn source_sync_code_index_failure_retains_committed_sources_and_structured
         .await
         .unwrap();
     assert_eq!(report.added.len(), 1);
-    assert_eq!(store.list_documents().unwrap().len(), 1);
+    assert_eq!(store.documents().list_documents().unwrap().len(), 1);
     let error = report.code_index_error.as_ref().unwrap();
     assert_eq!(error.code, "CODE_INDEX_FINALIZATION_FAILED");
     assert!(error.durable_mutation_committed && error.retryable);

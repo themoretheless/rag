@@ -43,7 +43,7 @@ impl RagServer {
         let dry_run = params.dry_run.unwrap_or(false);
         let overwrite = params.overwrite.unwrap_or(false);
         let report = run_blocking("backup", move || {
-            store.backup_database(&path, dry_run, overwrite)
+            store.recovery().backup_database(&path, dry_run, overwrite)
         })
         .await?;
         Self::json_result(&report)
@@ -74,8 +74,8 @@ impl RagServer {
                     path.display()
                 )));
             }
-            store.portable_recovery_preflight()?;
-            let bundle = store.recovery_bundle()?;
+            store.recovery().portable_recovery_preflight()?;
+            let bundle = store.recovery().recovery_bundle()?;
             let documents = bundle.documents.len() as u64;
             let chunks = bundle.documents.iter().map(|d| d.chunks.len() as u64).sum();
             let encoded = encode_recovery_bundle(&bundle, format)?;
@@ -117,7 +117,7 @@ impl RagServer {
         let dry_run = params.dry_run.unwrap_or(true);
         let overwrite = params.overwrite.unwrap_or(false);
         let report = run_blocking("export_vault", move || {
-            store.export_vault(&path, dry_run, overwrite)
+            store.recovery().export_vault(&path, dry_run, overwrite)
         })
         .await?;
         Self::json_result(&report)
@@ -154,7 +154,11 @@ impl RagServer {
         let mut mutation_guard = if dry_run {
             None
         } else {
-            Some(self.store.try_corpus_mutation_guard("bundle import")?)
+            Some(
+                self.store
+                    .corpus_lane()
+                    .try_corpus_mutation_guard("bundle import")?,
+            )
         };
         let prepared = prepare_recovery_bundle_for_import(
             bundle,
@@ -174,7 +178,13 @@ impl RagServer {
         let import_path = path.clone();
         let mut report = if let Some(guard) = mutation_guard.take() {
             let (guard, result) = retain_mutation_guard_while_blocking(guard, move || {
-                store.import_recovery_bundle(&bundle, policy, dry_run, &import_path, format)
+                store.recovery().import_recovery_bundle(
+                    &bundle,
+                    policy,
+                    dry_run,
+                    &import_path,
+                    format,
+                )
             })
             .await
             .map_err(|error| {
@@ -184,7 +194,13 @@ impl RagServer {
             result?
         } else {
             run_blocking("import_bundle", move || {
-                store.import_recovery_bundle(&bundle, policy, dry_run, &import_path, format)
+                store.recovery().import_recovery_bundle(
+                    &bundle,
+                    policy,
+                    dry_run,
+                    &import_path,
+                    format,
+                )
             })
             .await?
         };

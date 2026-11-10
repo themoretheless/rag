@@ -222,7 +222,7 @@ impl SourceManifestRefresh {
     }
 
     fn commit(&self, store: &Store) -> Result<(), AppError> {
-        store.upsert_source_manifest(self.write())
+        store.source_manifest().upsert_source_manifest(self.write())
     }
 }
 
@@ -266,7 +266,7 @@ impl<'a> SourceSyncService<'a> {
         control: SourceSyncControl,
     ) -> Result<SourceSyncOutcome, AppError> {
         let mut report = SourceSyncReport::default();
-        let sync_lane = self.store.corpus_mutation_lane();
+        let sync_lane = self.store.corpus_lane().corpus_mutation_lane();
         let sync_guard = tokio::select! {
             guard = sync_lane.write_owned() => guard,
             () = control.cancelled() => {
@@ -311,7 +311,10 @@ impl<'a> SourceSyncService<'a> {
         let files =
             collect_source_files_while(&root, &discovery_policy, || !control.is_cancelled())?;
         let total_files = files.len();
-        let preloaded = self.store.load_source_manifest_root(&root)?;
+        let preloaded = self
+            .store
+            .source_manifest()
+            .load_source_manifest_root(&root)?;
         let run = SourceSyncRunContext {
             root: &root,
             command: &command,
@@ -484,7 +487,9 @@ impl<'a> SourceSyncService<'a> {
             cancelled!(total_files);
         }
         let seen_paths = seen.iter().cloned().collect::<Vec<_>>();
-        self.store.mark_source_manifest_seen(&root, &seen_paths)?;
+        self.store
+            .source_manifest()
+            .mark_source_manifest_seen(&root, &seen_paths)?;
         control.publish(progress_from_report(
             SourceSyncPhase::RefreshingFts,
             total_files,
@@ -697,7 +702,11 @@ impl<'a> SourceSyncService<'a> {
             .iter()
             .filter_map(|(_, refresh)| refresh.as_ref().map(SourceManifestRefresh::write))
             .collect();
-        let batched = self.store.upsert_source_manifests(&writes).is_ok();
+        let batched = self
+            .store
+            .source_manifest()
+            .upsert_source_manifests(&writes)
+            .is_ok();
         for (source_file, refresh) in skipped.drain(..) {
             let result = match refresh {
                 Some(refresh) if !batched => refresh.commit(self.store),
@@ -839,7 +848,7 @@ impl<'a> SourceSyncService<'a> {
             };
             if should_remove {
                 let (deleted_documents, deleted_manifest) =
-                    match self.store.delete_source_state(source) {
+                    match self.store.documents().delete_source_state(source) {
                         Ok(deleted) => deleted,
                         Err(error) => {
                             report.errors.push(SourceSyncError {
@@ -870,7 +879,7 @@ fn finalize_source_sync_fts(store: &Store, stemmer: &str) -> Result<(), AppError
     #[cfg(test)]
     crate::db::fts::test_fault::check("source-sync", stemmer)?;
 
-    store.ensure_fts(stemmer).map(|_| ())
+    store.maintenance().ensure_fts(stemmer).map(|_| ())
 }
 
 fn source_sync_fts_finalization_failure(
@@ -878,7 +887,7 @@ fn source_sync_fts_finalization_failure(
     durable_mutation_committed: bool,
     error: &AppError,
 ) -> SourceSyncFinalizationError {
-    let recorded = store.record_fts_finalization_failure(
+    let recorded = store.corpus_lane().record_fts_finalization_failure(
         "source_sync",
         durable_mutation_committed,
         &error.to_string(),
