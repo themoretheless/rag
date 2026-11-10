@@ -581,70 +581,80 @@ pub fn action_from_parts(
 // Heuristic + LLM planners
 // ---------------------------------------------------------------------------
 
-/// Build a deterministic plan from an [`AnalysisReport`] (no LLM).
-///
-/// Priority: FTS / embed mismatch → exact dups → stale wiki → archives → vacuum.
-/// Near duplicates and unresolved stubs are reported by `analyze_corpus` but
-/// not planned: no apply step exists for them (`maintain_compress` handles near
-/// duplicates with confirmation).
-pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> MaintenancePlan {
-    let max_actions = max_actions.max(1);
-    let mut actions: Vec<MaintenancePlanItem> = Vec::new();
+/// One heuristic rule: issues in the report → proposed steps.
+type HeuristicRule = fn(&AnalysisReport) -> Vec<MaintenancePlanItem>;
 
-    if report.embed_mismatch.is_some() {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::ReembedAll,
-                reason: Some("embedding manifest disagrees with config".into()),
-                target_id: None,
-                params: empty_object(),
-            },
-        );
+fn step(
+    action: MaintenanceAction,
+    reason: String,
+    target_id: Option<String>,
+    params: serde_json::Value,
+) -> MaintenancePlanItem {
+    MaintenancePlanItem {
+        action,
+        reason: Some(reason),
+        target_id,
+        params,
     }
+}
 
-    if !report.fts_ready && report.counts.chunks > 0 {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::ReindexFts,
-                reason: Some("FTS index not ready while chunks exist".into()),
-                target_id: None,
-                params: empty_object(),
-            },
-        );
+fn rule_embed_mismatch(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .embed_mismatch
+        .iter()
+        .map(|_| {
+            step(
+                MaintenanceAction::ReembedAll,
+                "embedding manifest disagrees with config".into(),
+                None,
+                empty_object(),
+            )
+        })
+        .collect()
+}
+
+fn rule_fts_not_ready(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    if report.fts_ready || report.counts.chunks == 0 {
+        return Vec::new();
     }
+    vec![step(
+        MaintenanceAction::ReindexFts,
+        "FTS index not ready while chunks exist".into(),
+        None,
+        empty_object(),
+    )]
+}
 
-    for g in &report.exact_duplicates {
-        if actions.len() >= max_actions {
-            break;
-        }
-        let keep = g.document_ids.first().cloned();
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::MergeExactDup,
-            reason: Some(format!("{} documents share content_hash", g.count)),
-            target_id: keep,
-            params: serde_json::json!({
-                "document_ids": g.document_ids,
-                "content_hash": g.content_hash,
-                "titles": g.titles,
-            }),
-        });
-    }
+fn rule_exact_duplicates(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .exact_duplicates
+        .iter()
+        .map(|g| {
+            step(
+                MaintenanceAction::MergeExactDup,
+                format!("{} documents share content_hash", g.count),
+                g.document_ids.first().cloned(),
+                serde_json::json!({
+                    "document_ids": g.document_ids,
+                    "content_hash": g.content_hash,
+                    "titles": g.titles,
+                }),
+            )
+        })
+        .collect()
+}
 
-    for w in &report.stale_wiki {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: if w.link_kind == "source_missing" {
+fn rule_stale_wiki(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .stale_wiki
+        .iter()
+        .map(|w| {
+            let action = if w.link_kind == "source_missing" {
                 MaintenanceAction::Noop
             } else {
                 MaintenanceAction::RefreshStaleWiki
-            },
-            reason: Some(match w.link_kind.as_str() {
+            };
+            let reason = match w.link_kind.as_str() {
                 "source_missing" => format!(
                     "source '{}' for wiki '{}' is unavailable; restore or relink before refresh",
                     w.raw_title, w.wiki_title
@@ -654,57 +664,84 @@ pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> Maintenanc
                     w.raw_title, w.wiki_title
                 ),
                 _ => format!("wiki '{}' older than raw '{}'", w.wiki_title, w.raw_title),
-            }),
-            target_id: Some(w.wiki_document_id.clone()),
-            params: serde_json::json!({
-                "raw_document_id": w.raw_document_id,
-            }),
-        });
-    }
+            };
+            step(
+                action,
+                reason,
+                Some(w.wiki_document_id.clone()),
+                serde_json::json!({ "raw_document_id": w.raw_document_id }),
+            )
+        })
+        .collect()
+}
 
-    for a in &report.archive_candidates {
-        if actions.len() >= max_actions {
-            break;
-        }
-        actions.push(MaintenancePlanItem {
-            action: MaintenanceAction::Archive,
-            reason: Some(a.reason.clone()),
-            target_id: Some(a.document_id.clone()),
-            params: serde_json::json!({
-                "title": a.title,
-                "boost": a.boost,
-            }),
-        });
-    }
+fn rule_archive_candidates(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    report
+        .archive_candidates
+        .iter()
+        .map(|a| {
+            step(
+                MaintenanceAction::Archive,
+                a.reason.clone(),
+                Some(a.document_id.clone()),
+                serde_json::json!({ "title": a.title, "boost": a.boost }),
+            )
+        })
+        .collect()
+}
 
-    if !report.stale_wiki.is_empty() || !report.orphan_wiki_pages.is_empty() {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::RebuildIndex,
-                reason: Some("wiki catalog may be stale after refresh/orphans".into()),
-                target_id: None,
-                params: empty_object(),
-            },
-        );
+fn rule_stale_catalog(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    if report.stale_wiki.is_empty() && report.orphan_wiki_pages.is_empty() {
+        return Vec::new();
     }
+    vec![step(
+        MaintenanceAction::RebuildIndex,
+        "wiki catalog may be stale after refresh/orphans".into(),
+        None,
+        empty_object(),
+    )]
+}
 
-    if !report.orphan_nodes.is_empty() {
-        push_capped(
-            &mut actions,
-            max_actions,
-            MaintenancePlanItem {
-                action: MaintenanceAction::RebuildGraph,
-                reason: Some(format!(
-                    "{} orphan graph nodes (degree 0)",
-                    report.orphan_nodes.len()
-                )),
-                target_id: None,
-                params: serde_json::json!({ "dirty_only": false }),
-            },
-        );
+fn rule_orphan_nodes(report: &AnalysisReport) -> Vec<MaintenancePlanItem> {
+    if report.orphan_nodes.is_empty() {
+        return Vec::new();
     }
+    vec![step(
+        MaintenanceAction::RebuildGraph,
+        format!(
+            "{} orphan graph nodes (degree 0)",
+            report.orphan_nodes.len()
+        ),
+        None,
+        serde_json::json!({ "dirty_only": false }),
+    )]
+}
+
+/// Heuristic rules in priority order; the plan takes steps from each rule in
+/// turn until `max_actions` is reached.
+const HEURISTIC_RULES: &[HeuristicRule] = &[
+    rule_embed_mismatch,
+    rule_fts_not_ready,
+    rule_exact_duplicates,
+    rule_stale_wiki,
+    rule_archive_candidates,
+    rule_stale_catalog,
+    rule_orphan_nodes,
+];
+
+/// Build a deterministic plan from an [`AnalysisReport`] (no LLM).
+///
+/// Priority: FTS / embed mismatch → exact dups → stale wiki → archives → vacuum.
+/// Near duplicates and unresolved stubs are reported by `analyze_corpus` but
+/// not planned: no apply step exists for them (`maintain_compress` handles near
+/// duplicates with confirmation).
+pub fn heuristic_plan(report: &AnalysisReport, max_actions: usize) -> MaintenancePlan {
+    let max_actions = max_actions.max(1);
+    let mut actions: Vec<MaintenancePlanItem> = HEURISTIC_RULES
+        .iter()
+        .flat_map(|rule| rule(report))
+        .take(max_actions)
+        .collect();
 
     let mut notes = format!(
         "heuristic plan from {} issues ({} actions)",
