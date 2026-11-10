@@ -571,17 +571,13 @@ impl ServerHandler for RagServer {
         };
         let tcc = ToolCallContext::new(self, request, context);
         let result = self.tool_router.call(tcc).await;
-        let operation_ok = match &result {
-            Ok(value) => tool_result_succeeded(value),
-            Err(_) => false,
-        };
+        let summary = result
+            .as_ref()
+            .ok()
+            .map(|value| summarize_tool_result(value, analysis_call.is_some()));
+        let operation_ok = summary.as_ref().is_some_and(|summary| summary.ok);
         if let Some(seq) = analysis_call {
-            let evidence = result
-                .as_ref()
-                .ok()
-                .and_then(|r| r.content.iter().find_map(|c| c.as_text()))
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
-                .and_then(|v| crate::analysis_tasks::evidence_count(&v));
+            let evidence = summary.as_ref().and_then(|summary| summary.evidence);
             if let Err(error) = crate::analysis_tasks::AnalysisTasks::new(&self.store)
                 .analysis_call_finish(seq, operation_ok, evidence)
             {
@@ -595,10 +591,10 @@ impl ServerHandler for RagServer {
             started.elapsed().as_secs_f64() * 1000.0,
         );
         match &result {
-            Ok(value) => call.finish(
+            Ok(_) => call.finish(
                 operation_ok,
                 (!operation_ok).then(|| "tool reported failure".to_string()),
-                result_hint(value),
+                summary.and_then(|summary| summary.hint),
             ),
             // Error strings may echo paths or other user input. The transport-level
             // outcome is sufficient for the bounded operational call log.
@@ -633,17 +629,61 @@ fn mcp_audit_action(
     name.to_string()
 }
 
+/// What `call_tool` derives from a tool result for telemetry: success, the
+/// bounded count hint and (for analysis tools) the evidence count.
+struct ToolResultSummary {
+    ok: bool,
+    hint: Option<String>,
+    evidence: Option<i64>,
+}
+
+fn summarize_tool_result(result: &CallToolResult, analysis: bool) -> ToolResultSummary {
+    // The first text content is parsed once and shared by the success check,
+    // the count hint and the evidence count (it was parsed up to three times).
+    let parsed = result
+        .content
+        .first()
+        .and_then(|content| content.as_text())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text.text).ok());
+    // Evidence reads the first *text* content, which differs from the first
+    // content only when a non-text item comes first.
+    let evidence = if !analysis {
+        None
+    } else if result.content.first().is_some_and(|c| c.as_text().is_some()) {
+        parsed.as_ref().and_then(crate::analysis_tasks::evidence_count)
+    } else {
+        result
+            .content
+            .iter()
+            .find_map(|c| c.as_text())
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+            .and_then(|v| crate::analysis_tasks::evidence_count(&v))
+    };
+    ToolResultSummary {
+        ok: report_succeeded(result, parsed.as_ref()),
+        hint: parsed.as_ref().and_then(hint_from_value),
+        evidence,
+    }
+}
+
 /// Aggregate tool reports remain JSON-RPC successes so callers can inspect
 /// committed counters, but their explicit failure fields must still drive
 /// operational telemetry and activity status.
 fn tool_result_succeeded(result: &CallToolResult) -> bool {
+    let parsed = result
+        .content
+        .first()
+        .and_then(|content| content.as_text())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text.text).ok());
+    report_succeeded(result, parsed.as_ref())
+}
+
+/// [`tool_result_succeeded`] over the already parsed first text content.
+fn report_succeeded(result: &CallToolResult, parsed: Option<&serde_json::Value>) -> bool {
     if result.is_error.unwrap_or(false) {
         return false;
     }
-    let Some(text) = result.content.first().and_then(|content| content.as_text()) else {
-        return true;
-    };
-    let Ok(serde_json::Value::Object(report)) = serde_json::from_str(&text.text) else {
+    let Some(serde_json::Value::Object(report)) = parsed else {
         return true;
     };
     if report.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
@@ -693,9 +733,14 @@ fn tool_result_succeeded(result: &CallToolResult) -> bool {
 }
 
 /// Short human hint for the call log, derived from the first JSON content item.
+#[cfg(test)]
 fn result_hint(result: &CallToolResult) -> Option<String> {
     let text = result.content.first()?.as_text()?.text.as_str();
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    hint_from_value(&serde_json::from_str(text).ok()?)
+}
+
+/// Bounded count hint from a parsed tool result.
+fn hint_from_value(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Array(items) => Some(format!("{} items", items.len())),
         serde_json::Value::Object(map) => ["count", "chunk_count", "hits", "total"]
@@ -855,10 +900,89 @@ impl RagServer {
 #[cfg(test)]
 mod audit_tests {
     use super::{
-        mcp_audit_action, record_rejected_tool_call, result_hint, tool_result_succeeded,
-        unknown_tool_audit_action,
+        mcp_audit_action, record_rejected_tool_call, result_hint, summarize_tool_result,
+        tool_result_succeeded, unknown_tool_audit_action,
     };
     use rmcp::model::{CallToolResult, Content};
+
+    #[test]
+    fn one_parse_summary_matches_the_separate_checks() {
+        let results = [
+            CallToolResult::success(vec![Content::json(
+                serde_json::json!({"hits": [1, 2, 3], "count": 3}),
+            )
+            .unwrap()]),
+            CallToolResult::success(vec![Content::json(
+                serde_json::json!({"success": false, "errors": ["x"]}),
+            )
+            .unwrap()]),
+            CallToolResult::success(vec![Content::json(serde_json::json!([1, 2])).unwrap()]),
+            CallToolResult::success(vec![Content::text("not json")]),
+            CallToolResult::error(vec![Content::text("boom")]),
+        ];
+        for result in &results {
+            let summary = summarize_tool_result(result, true);
+            assert_eq!(summary.ok, tool_result_succeeded(result));
+            assert_eq!(summary.hint, result_hint(result));
+            let evidence = result
+                .content
+                .iter()
+                .find_map(|c| c.as_text())
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+                .and_then(|v| crate::analysis_tasks::evidence_count(&v));
+            assert_eq!(summary.evidence, evidence);
+            assert_eq!(summarize_tool_result(result, false).evidence, None);
+        }
+    }
+
+    /// Telemetry post-processing cost of one `tools/call` search result
+    /// (10 hits of ~800 characters), with and without the analysis evidence
+    /// count. See docs/refactor/BASELINE.md, Stage 5 item 4.
+    ///
+    /// Run: `cargo test --release --lib -- --ignored timing_tool_result_summary --nocapture`
+    #[test]
+    #[ignore = "timing baseline; run explicitly"]
+    fn timing_tool_result_summary() {
+        let hits: Vec<serde_json::Value> = (0..10)
+            .map(|index| {
+                serde_json::json!({
+                    "chunk_id": format!("doc-{index}-c0"),
+                    "document_id": format!("doc-{index}"),
+                    "document_title": format!("Document {index}"),
+                    "document_uri": format!("file:///notes/{index}.md"),
+                    "chunk_index": 0,
+                    "content": "lorem ipsum dolor sit amet ".repeat(30),
+                    "score": 0.5,
+                    "score_vec": 0.4,
+                    "score_lex": 3.2,
+                    "explanation": {"reasons": ["uri_match_boost"], "total_ms": 12.5},
+                })
+            })
+            .collect();
+        let result = CallToolResult::success(vec![Content::json(serde_json::json!({
+            "hits": hits,
+            "count": 10,
+            "query": "lorem",
+        }))
+        .unwrap()]);
+        const CALLS: u32 = 20_000;
+        for analysis in [false, true] {
+            let mut samples = Vec::new();
+            for _ in 0..5 {
+                let started = std::time::Instant::now();
+                for _ in 0..CALLS {
+                    let summary = summarize_tool_result(std::hint::black_box(&result), analysis);
+                    std::hint::black_box((summary.ok, summary.hint, summary.evidence));
+                }
+                samples.push(started.elapsed().as_nanos() as f64 / f64::from(CALLS));
+            }
+            samples.sort_by(f64::total_cmp);
+            println!(
+                "TIMING tool_result_summary analysis={analysis} ns_per_call_median={:.0}",
+                samples[2]
+            );
+        }
+    }
 
     #[test]
     fn audit_action_keeps_lineage_and_omits_content() {

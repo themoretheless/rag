@@ -316,3 +316,27 @@ Kept. The plain hybrid path is within noise at p50 (−0.3 %) and 5 % lower at
 p95: its cost is the BM25 scan and the vector scope listing, which these
 changes do not touch. Neighbour context drops by 15 % (ten point queries per
 search become one). Eval gates unchanged (below).
+
+### Item 4: facade parses each tool result once
+
+`call_tool` derived three things from every tool result, each by parsing the
+first text content from JSON again: success for telemetry/activity
+(`tool_result_succeeded`), the bounded count hint (`result_hint`) and, for
+analysis tools, the evidence count. They now share one parse
+(`summarize_tool_result`); a unit test checks the summary against the three
+separate checks on success, failure, array, non-JSON and error results.
+
+Method: ignored test `mcp::facade::audit_tests::timing_tool_result_summary`,
+release profile, a search-shaped result (10 hits × ~800 characters of
+content, ~10 KB of JSON), 20 000 calls per sample, median of 5 samples per
+run; before and after binaries alternated, 3 runs each, load 2.4–3.3.
+
+| per `tools/call` (search result) | before | after |
+|---|---:|---:|
+| telemetry post-processing, ordinary tool (2 parses → 1) | 34.7 µs | **17.9 µs** |
+| telemetry post-processing, analysis tool (3 parses → 1) | 52.0 µs | **17.8 µs** |
+
+Kept. Against a ~90 ms hybrid search the saving is small (0.02–0.04 % of the
+call), but it grows with result size and applies to every tool call. An
+end-to-end `tools/call` latency was not measured: the transport, JSON-RPC
+framing and the search itself dominate and vary far more than 35 µs.
