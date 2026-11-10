@@ -55,7 +55,7 @@ fn forced_rebuild_flag_bypasses_the_incremental_patch_once() {
         "INSERT INTO documents (id, uri, title, content, metadata_json, created_at, \
                updated_at, layer, kind, status) \
              VALUES ('d', 'uri://d', 't', 'b', '{}', now(), now(), 'raw', 'document', 'active'); \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding, \
                char_start, char_end, created_at, metadata_json, embedding_digest) \
              SELECT 'c' || lpad(i::VARCHAR, 3, '0'), 'd', i, 'alpha beta ' || i, '[0.1]', \
                0, 1, now(), '{}', i FROM range(20) t(i);",
@@ -65,7 +65,7 @@ fn forced_rebuild_flag_bypasses_the_incremental_patch_once() {
     // Same id, different text: invisible to an id diff.
     conn.execute_batch(
         "DELETE FROM chunks WHERE id = 'c005'; \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding, \
                char_start, char_end, created_at, metadata_json, embedding_digest) \
              VALUES ('c005', 'd', 5, 'zebra quokka', '[0.1]', 0, 1, now(), '{}', 5);",
     )
@@ -101,7 +101,7 @@ fn incremental_bm25_update_matches_a_full_rebuild() {
                updated_at, layer, kind, status) \
              SELECT 'd' || i, 'uri://' || i, 't', 'b', '{}', now(), now(), 'raw', \
                'document', 'active' FROM range(8) t(i); \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding, \
                char_start, char_end, created_at, metadata_json, embedding_digest) \
              SELECT 'c' || lpad(i::VARCHAR, 3, '0'), 'd' || (i % 8), i, \
                'The runner ' || i || ' was running over ' || (i % 7) || ' hills; café-Résumé \
@@ -124,7 +124,7 @@ fn incremental_bm25_update_matches_a_full_rebuild() {
     // stopword-only text and brand-new terms).
     conn.execute_batch(
             "DELETE FROM chunks WHERE id IN ('c003', 'c017', 'c044'); \
-             INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding, \
                char_start, char_end, created_at, metadata_json, embedding_digest) VALUES \
              ('n1', 'd1', 100, 'Zebras galloping across savannas, runners running', '[0.1]', 0, 1, now(), '{}', 1), \
              ('n2', 'd2', 101, '', '[0.1]', 0, 1, now(), '{}', 2), \
@@ -512,7 +512,7 @@ fn fts_overwrite_wal_replays_after_abrupt_process_exit_without_losing_commits() 
         {
             let conn = store.lock().unwrap();
             let mut stmt = conn
-                .prepare("SELECT embedding_json FROM chunks ORDER BY id")
+                .prepare("SELECT CAST(embedding AS VARCHAR) FROM chunks ORDER BY id")
                 .unwrap();
             let values = stmt
                 .query_map([], |r| r.get::<_, String>(0))

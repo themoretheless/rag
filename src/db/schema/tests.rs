@@ -325,7 +325,7 @@ fn chunk_parent_backfill_mirrors_metadata_and_stays_lazy() {
     migrate(&conn).expect("migrate");
     conn.execute_batch(
         r#"
-            INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json,
+            INSERT INTO chunks (id, document_id, chunk_index, content, embedding,
                                 char_start, char_end, created_at, metadata_json)
             VALUES
               ('parent', 'd', 0, 'p', '[]', 0, 1, CURRENT_TIMESTAMP, '{}'),

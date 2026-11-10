@@ -1415,7 +1415,7 @@ fn refreshed_vector_snapshot_matches_a_full_rebuild() {
         fts::mark_fts_dirty(&conn).unwrap();
         // Chunk writers maintain the digest alongside the JSON.
         conn.execute(
-            "UPDATE chunks SET embedding_json = '[0.0,2.0]', embedding_digest = ? \
+            "UPDATE chunks SET embedding = [0.0,2.0]::FLOAT[], embedding_digest = ? \
              WHERE id = 'doc4-1'",
             [crate::db::store::embedding_digest("[0.0,2.0]")],
         )
@@ -2091,6 +2091,12 @@ fn timing_vector_snapshot_cold_vs_warm() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(&dir.path().join("timing-snapshot.duckdb")).expect("open");
     seed_timing_corpus(&store);
+    let db_path = dir.path().join("timing-snapshot.duckdb");
+    {
+        let conn = store.lock().unwrap();
+        conn.execute_batch("CHECKPOINT").unwrap();
+    }
+    let db_bytes = std::fs::metadata(&db_path).unwrap().len();
     let query = timing_embedding(u64::MAX / 3);
 
     let started = Instant::now();
@@ -2108,7 +2114,7 @@ fn timing_vector_snapshot_cold_vs_warm() {
         .collect();
     warm.sort_by(f64::total_cmp);
     println!(
-        "TIMING vector_snapshot docs={} chunks={} dims={TIMING_DIMS} cold_ms={cold_ms:.1} warm_p50_ms={:.2} warm_p95_ms={:.2}",
+        "TIMING vector_snapshot docs={} chunks={} dims={TIMING_DIMS} db_bytes={db_bytes} cold_ms={cold_ms:.1} warm_p50_ms={:.2} warm_p95_ms={:.2}",
         timing_docs(),
         timing_docs() * TIMING_CHUNKS_PER_DOC,
         timing_percentile(&warm, 0.50),

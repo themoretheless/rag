@@ -1056,10 +1056,10 @@ impl VectorSnapshot {
 }
 
 /// A stored embedding read under the connection lock: either reused from the
-/// previous snapshot or still to be parsed and normalized.
+/// previous snapshot or still to be normalized.
 enum RawVector {
     Reuse(Arc<[f32]>),
-    Parse(String),
+    Parse(Vec<f32>),
 }
 
 /// One chunk row read under the lock, before parsing and interning.
@@ -1106,7 +1106,7 @@ impl RawSnapshot {
             for row in rows {
                 let vector = match row.vector {
                     RawVector::Reuse(vector) => vector,
-                    RawVector::Parse(json) => parse_normalized(&json)?,
+                    RawVector::Parse(raw) => normalize_stored(&raw),
                 };
                 fresh.push(VectorSnapshotChunk {
                     id: row.id.into(),
@@ -1158,10 +1158,10 @@ impl RawSnapshot {
     }
 }
 
-fn parse_normalized(json: &str) -> Result<Arc<[f32]>> {
-    let raw: Vec<f32> = serde_json::from_str(json)?;
-    let embedding = normalized_vector(&raw).unwrap_or_else(|| vec![0.0; raw.len()]);
-    Ok(embedding.into())
+fn normalize_stored(raw: &[f32]) -> Arc<[f32]> {
+    normalized_vector(raw)
+        .unwrap_or_else(|| vec![0.0; raw.len()])
+        .into()
 }
 
 /// Documents a vector search may return. Titles and uris are read only for
@@ -1498,8 +1498,8 @@ fn read_full(
     let (join_sql, where_sql, bind) = snapshot_scope_sql(filters);
     let sql = format!(
         r#"
-        SELECT c.id, c.document_id, c.chunk_index, c.embedding_json,
-               COALESCE(c.embedding_digest, CAST(hash(c.embedding_json) >> 1 AS BIGINT))
+        SELECT c.id, c.document_id, c.chunk_index, c.embedding,
+               COALESCE(c.embedding_digest, CAST(hash(c.embedding) >> 1 AS BIGINT))
         FROM chunks c
         {join_sql}
         {where_sql}
@@ -1512,7 +1512,7 @@ fn read_full(
             id: row.get(0)?,
             document_id: row.get(1)?,
             chunk_index: row.get(2)?,
-            vector: RawVector::Parse(row.get(3)?),
+            vector: RawVector::Parse(crate::db::rows::embedding(row, 3)?),
             embedding_hash: row.get(4)?,
         })
     })?;
@@ -1550,7 +1550,7 @@ fn read_refresh(
     let mut stmt = conn.prepare(&format!(
         r#"
         SELECT c.id, c.document_id, c.chunk_index,
-               COALESCE(c.embedding_digest, CAST(hash(c.embedding_json) >> 1 AS BIGINT))
+               COALESCE(c.embedding_digest, CAST(hash(c.embedding) >> 1 AS BIGINT))
         FROM chunks c
         {join_sql}
         {where_sql}
@@ -1588,7 +1588,7 @@ fn read_refresh(
     let mut rows = Vec::with_capacity(listed.len());
     for (id, document_id, chunk_index, embedding_hash) in listed {
         let vector = match stored.remove(&id) {
-            Some(json) => RawVector::Parse(json),
+            Some(raw) => RawVector::Parse(raw),
             // Unchanged: share the previous snapshot's vector, no copy.
             None => match reusable.get(id.as_str()) {
                 Some(old) if old.embedding_hash == embedding_hash => {
@@ -1617,17 +1617,17 @@ fn read_refresh(
 fn read_embeddings<S: AsRef<str>>(
     conn: &duckdb::Connection,
     ids: &[S],
-) -> Result<HashMap<String, String>> {
+) -> Result<HashMap<String, Vec<f32>>> {
     const READ_BATCH: usize = 512;
-    let mut stored: HashMap<String, String> = HashMap::with_capacity(ids.len());
+    let mut stored: HashMap<String, Vec<f32>> = HashMap::with_capacity(ids.len());
     for batch in ids.chunks(READ_BATCH) {
         let placeholders = crate::db::sql::in_placeholders(batch.len());
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, embedding_json FROM chunks WHERE id IN ({placeholders})"
+            "SELECT id, embedding FROM chunks WHERE id IN ({placeholders})"
         ))?;
         let binds: Vec<&str> = batch.iter().map(AsRef::as_ref).collect();
         crate::db::rows::for_each_row(&mut stmt, params_from_iter(binds.iter()), |row| {
-            stored.insert(row.get(0)?, row.get(1)?);
+            stored.insert(row.get(0)?, crate::db::rows::embedding(row, 1)?);
             Ok(())
         })?;
     }
@@ -1662,7 +1662,7 @@ fn read_changed_documents(
         let placeholders = crate::db::sql::in_placeholders(batch.len());
         let mut stmt = conn.prepare(&format!(
             "SELECT id, document_id, chunk_index, \
-                    COALESCE(embedding_digest, CAST(hash(embedding_json) >> 1 AS BIGINT)) \
+                    COALESCE(embedding_digest, CAST(hash(embedding) >> 1 AS BIGINT)) \
              FROM chunks WHERE document_id IN ({placeholders})"
         ))?;
         crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
@@ -1673,7 +1673,7 @@ fn read_changed_documents(
                 .filter(|old| old.embedding_hash == embedding_hash)
             {
                 Some(old) => RawVector::Reuse(old.vector.clone()),
-                None => RawVector::Parse(String::new()),
+                None => RawVector::Parse(Vec::new()),
             };
             listed.push(RawChunk {
                 id,
@@ -1695,7 +1695,7 @@ fn read_changed_documents(
     for mut row in listed {
         if matches!(row.vector, RawVector::Parse(_)) {
             match stored.remove(&row.id) {
-                Some(json) => row.vector = RawVector::Parse(json),
+                Some(raw) => row.vector = RawVector::Parse(raw),
                 // Deleted between the listing and the read: skip it.
                 None => continue,
             }

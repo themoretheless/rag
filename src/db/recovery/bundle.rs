@@ -653,13 +653,10 @@ pub(super) fn portable_store_preflight_locked(
                 strlen(id) + strlen(document_id) + strlen(content) +
                 strlen(COALESCE(metadata_json, '{}'))
             ), 0) AS BIGINT),
-            CAST(COALESCE(SUM(strlen(embedding_json)), 0) AS BIGINT),
-            CAST(COALESCE(SUM(
-                CASE
-                    WHEN trim(embedding_json) = '[]' THEN 0
-                    ELSE 1 + strlen(embedding_json) - strlen(replace(embedding_json, ',', ''))
-                END
-            ), 0) AS BIGINT)
+            -- Brackets plus one separator per value; the digits are covered
+            -- by the per-value worst case below.
+            CAST(COALESCE(SUM(2 + len(embedding)), 0) AS BIGINT),
+            CAST(COALESCE(SUM(len(embedding)), 0) AS BIGINT)
         FROM chunks
         "#,
         [],

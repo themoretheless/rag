@@ -142,19 +142,15 @@ pub(super) fn verify_embedding_contract(
         _ => return Ok(false),
     };
     let conn = store.lock()?;
-    let mut statement = conn.prepare("SELECT embedding_json FROM chunks ORDER BY id")?;
-    let mut rows = statement.query([])?;
-    let mut consistent = true;
-    crate::db::rows::try_visit_rows(&mut rows, |row| {
-        let raw: String = row.get(0)?;
-        consistent = serde_json::from_str::<Vec<f32>>(&raw)
-            .is_ok_and(|embedding| embedding.len() == expected_dims);
-        Ok(if consistent {
-            std::ops::ControlFlow::Continue(())
-        } else {
-            std::ops::ControlFlow::Break(())
-        })
-    })?;
+    // Every stored vector must have the manifest's dimensions and no NULL
+    // element (a NULL would not decode as `f32`).
+    let inconsistent: i64 = conn.query_row(
+        "SELECT count(*) FROM chunks \
+         WHERE embedding IS NULL OR len(embedding) <> ? OR list_count(embedding) <> len(embedding)",
+        [expected_dims as i64],
+        |row| row.get(0),
+    )?;
+    let consistent = inconsistent == 0;
     Ok(consistent)
 }
 

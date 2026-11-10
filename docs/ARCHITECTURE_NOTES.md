@@ -43,7 +43,7 @@ Hybrid BM25+vector does **not** replace compile; it makes raw fallback and large
 6. **Scope before flat scan.** `wing`, `room`, `source_file`, `layer`, tag filters on search and graph export.
 7. **Compounding memory.** Good answers are filed (`file_answer`); ops are append-only (`ops_log`); re-ingest is content-hash / uri idempotent.
 8. **MCP surface stays substrate-honest.** Do not rename existing tools into a 36-tool “palace” dialect. Add tools; do not rebrand `search` as drawers-only jargon by default.
-9. **Portable embeddings path.** Exact cosine in Rust over `embedding_json`
+9. **Portable embeddings path.** Exact cosine in Rust over `chunks.embedding` (`FLOAT[]`)
    remains default until the measured VSS/HNSW gate fails. FTS/BM25 is shipped
    substrate behavior.
 10. **Agent owns synthesis; server owns storage, search, graph hygiene, policy.**
@@ -70,7 +70,7 @@ Hybrid BM25+vector does **not** replace compile; it makes raw fallback and large
 | Layer | Karpathy analogue | MemPalace analogue | rag-mcp tables / tools |
 |-------|-------------------|--------------------|------------------------|
 | **L0 Verbatim** | Raw sources (immutable by write policy) | Drawers + full text | `documents` with `layer=raw`; `ingest_raw`, `get_source` |
-| **L1 Retrieval** | Raw fallback and compiled-page retrieval | Hybrid BM25+vector, scoped search | `chunks.embedding_json` + FTS; `search(mode=lex\|vec\|hybrid)` |
+| **L1 Retrieval** | Raw fallback and compiled-page retrieval | Hybrid BM25+vector, scoped search | `chunks.embedding` (`FLOAT[]`) + FTS; `search(mode=lex\|vec\|hybrid)` |
 | **L2 Graph** | Wikilinks in markdown / Obsidian view | Halls/tags; tunnels | `graph_nodes`, `graph_edges`; extract/resolve; `get_neighbors`, `get_backlinks` |
 | **L3 Compile** | Wiki + schema + index.md + log.md | Closets/summaries; wake-up and diary compatibility | `documents` with `layer=wiki`, `wiki_index`, `wiki_schema`, `ops_log` |
 | **L4 Agent** | Human+LLM workflows | wake_up, diaries, checkpoint | MCP tools; client protocols and hooks |
@@ -96,7 +96,7 @@ Hybrid BM25+vector does **not** replace compile; it makes raw fallback and large
 ### 4.1 Keep (SPEC v1 substrate)
 
 - `documents` — full text, uri, title, metadata, timestamps  
-- `chunks` — content, `embedding_json`, char offsets, document_id  
+- `chunks` — content, `embedding` (`FLOAT[]`), char offsets, document_id  
 - `graph_nodes` — kinds: `document | tag | stub | entity`  
 - `graph_edges` — types include `wikilink | tagged | related | mentions | tunnel`
 
@@ -331,7 +331,7 @@ flowchart TB
       Raw["documents layer=raw\ncontent_hash · wing · room · immutable policy"]
     end
     subgraph L1["L1 Retrieval"]
-      Chunks["chunks + embedding_json"]
+      Chunks["chunks + embedding FLOAT[]"]
       FTS["FTS / BM25"]
       RRF["RRF fusion"]
     end

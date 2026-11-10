@@ -299,7 +299,7 @@ pub(crate) fn mark_fts_needs_rebuild(conn: &Connection) -> Result<u64> {
     mark_fts_dirty(conn)
 }
 
-/// Advance the chunk generation after changing only `embedding_json` values.
+/// Advance the chunk generation after changing only stored embeddings.
 ///
 /// Vector snapshots key off the chunk generation, so it must advance even
 /// though the indexed text rows are unchanged. When the lexical index was

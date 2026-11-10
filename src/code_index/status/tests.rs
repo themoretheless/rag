@@ -101,7 +101,7 @@ fn measured_vectors_and_tokens_are_scoped_bounded_and_do_not_repair() {
         .lock()
         .unwrap()
         .execute(
-            "UPDATE chunks SET embedding_json='broken JSON' WHERE id='c-invalid'",
+            "UPDATE chunks SET embedding=[NULL]::FLOAT[] WHERE id='c-invalid'",
             [],
         )
         .unwrap();
@@ -249,7 +249,7 @@ fn oversized_sample_cells_are_reported_as_unmeasured() {
         .lock()
         .unwrap()
         .execute(
-            "UPDATE chunks SET embedding_json=repeat(' ', ?)",
+            "UPDATE chunks SET embedding=list_transform(range(?), x -> 0.5::FLOAT)",
             [VECTOR_BYTES as i64 + 1],
         )
         .unwrap();

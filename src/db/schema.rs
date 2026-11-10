@@ -5,7 +5,7 @@ use duckdb::Connection;
 use crate::error::{AppError, Result};
 
 /// Current schema version written to `schema_version` after a successful migrate.
-pub const SCHEMA_VERSION: i32 = 25;
+pub const SCHEMA_VERSION: i32 = 26;
 
 /// Durable node registry and replication journal. Payloads are intentionally
 /// opaque here: transport persists them before higher layers apply/rebuild.
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS chunks (
   document_id VARCHAR NOT NULL,
   chunk_index INTEGER NOT NULL,
   content TEXT NOT NULL,
-  embedding_json VARCHAR NOT NULL,
+  embedding FLOAT[] NOT NULL,
   char_start INTEGER NOT NULL,
   char_end INTEGER NOT NULL,
   created_at TIMESTAMP NOT NULL
@@ -430,14 +430,78 @@ pub(crate) fn registered_schema_extensions() -> Vec<SchemaExtension> {
 /// 5. Creates the schema-v9 filesystem source manifest.
 /// 6. Records [`SCHEMA_VERSION`].
 pub fn migrate(conn: &Connection) -> Result<()> {
-    migrate_with(conn, &registered_schema_extensions())
+    migrate_with(conn, &registered_schema_extensions()).map(|_| ())
+}
+
+/// What [`migrate_with`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MigrateOutcome {
+    /// The core schema DDL ran (the stored version differed).
+    pub core_ddl: bool,
+    /// Schema extensions whose DDL ran (new, or changed since recorded).
+    pub extension_ddl: usize,
 }
 
 /// [`migrate`] with an explicit list of schema extensions (applied first).
-pub(crate) fn migrate_with(conn: &Connection, extensions: &[SchemaExtension]) -> Result<()> {
+///
+/// The core DDL runs only when the stored schema version differs from
+/// [`SCHEMA_VERSION`]; an extension's DDL runs only when its digest is not
+/// recorded in `meta` yet. A store at the current version opens with reads
+/// only.
+pub(crate) fn migrate_with(
+    conn: &Connection,
+    extensions: &[SchemaExtension],
+) -> Result<MigrateOutcome> {
+    let current = stored_schema_version(conn);
+    let mut outcome = MigrateOutcome {
+        core_ddl: false,
+        extension_ddl: 0,
+    };
+    let mut pending_extensions = Vec::new();
     for extension in extensions {
-        conn.execute_batch(extension.ddl)?;
+        let digest = blake3::hash(extension.ddl.as_bytes()).to_hex().to_string();
+        let recorded = match current {
+            Some(_) => read_meta(conn, &extension_meta_key(extension.name))?,
+            None => None,
+        };
+        if recorded.as_deref() != Some(digest.as_str()) {
+            conn.execute_batch(extension.ddl)?;
+            outcome.extension_ddl += 1;
+            pending_extensions.push((extension.name, digest));
+        }
     }
+    if current != Some(SCHEMA_VERSION) {
+        migrate_core(conn)?;
+        outcome.core_ddl = true;
+    }
+    for (name, digest) in pending_extensions {
+        upsert_meta(conn, &extension_meta_key(name), &digest)?;
+    }
+    Ok(outcome)
+}
+
+fn extension_meta_key(name: &str) -> String {
+    format!("schema_extension:{name}")
+}
+
+/// The stored schema version, or `None` when there is no ledger yet.
+fn stored_schema_version(conn: &Connection) -> Option<i32> {
+    current_schema_version(conn).ok().flatten()
+}
+
+fn read_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
+    match conn.query_row("SELECT value FROM meta WHERE key = ?", [key], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(value) => Ok(Some(value)),
+        Err(duckdb::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The full, idempotent core schema DDL plus backfills; records
+/// [`SCHEMA_VERSION`] last, so an interrupted run repeats on the next open.
+fn migrate_core(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS code_index_documents (
         document_id VARCHAR PRIMARY KEY, payload VARCHAR NOT NULL
@@ -525,14 +589,30 @@ pub(crate) fn migrate_with(conn: &Connection, extensions: &[SchemaExtension]) ->
         "CREATE INDEX IF NOT EXISTS idx_chunks_parent_chunk_id ON chunks(parent_chunk_id)",
     )?;
     backfill_chunk_parent_ids(conn)?;
-    // 64-bit digest of `embedding_json`, maintained by every chunk writer, so a
-    // vector-snapshot refresh can tell changed vectors apart without reading
-    // the JSON. Rows written before the column existed are backfilled once.
+    // 64-bit digest of the stored embedding, maintained by every chunk writer,
+    // so a vector-snapshot refresh can tell changed vectors apart without
+    // reading the vector. Rows written before the column existed are
+    // backfilled once.
     add_column_best_effort(conn, "chunks", "embedding_digest", "BIGINT")?;
-    conn.execute_batch(
-        "UPDATE chunks SET embedding_digest = CAST(hash(embedding_json) >> 1 AS BIGINT) \
-         WHERE embedding_digest IS NULL",
-    )?;
+    let legacy_embedding = column_exists(conn, "chunks", "embedding_json")?;
+    let digest_source = if legacy_embedding {
+        "embedding_json"
+    } else {
+        "embedding"
+    };
+    conn.execute_batch(&format!(
+        "UPDATE chunks SET embedding_digest = CAST(hash({digest_source}) >> 1 AS BIGINT) \
+         WHERE embedding_digest IS NULL"
+    ))?;
+    // Schema v26: embeddings are a native FLOAT[] column instead of JSON text.
+    // Databases from before v26 gain the column (nullable: DuckDB cannot add
+    // NOT NULL to an indexed table), are backfilled in batches and lose the
+    // JSON column.
+    if legacy_embedding {
+        add_column_best_effort(conn, "chunks", "embedding", "FLOAT[]")?;
+        backfill_chunk_embeddings(conn, EMBEDDING_BACKFILL_BATCH, None)?;
+        drop_legacy_embedding_column(conn)?;
+    }
 
     // NULL identifies pre-v11 edges whose author was never persisted. New writes
     // explicitly distinguish extracted edges from durable user-authored links.
@@ -800,6 +880,107 @@ pub fn backfill_chunk_parent_ids(conn: &Connection) -> Result<u64> {
     Ok(updated)
 }
 
+/// Rows per transaction when [`backfill_chunk_embeddings`] converts JSON
+/// embeddings.
+pub(crate) const EMBEDDING_BACKFILL_BATCH: usize = 5_000;
+
+/// Whether `table` has `column`.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM duckdb_columns() \
+         WHERE table_name = ? AND column_name = ? AND schema_name = current_schema()",
+        [table, column],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Fill `chunks.embedding` from `embedding_json` for rows that have none, one
+/// transaction per `batch` rows, stopping after `max_batches` when given (a
+/// test seam for an interrupted run). Each committed batch stays done, so a
+/// run cut short resumes where it stopped. Returns the rows converted.
+pub(crate) fn backfill_chunk_embeddings(
+    conn: &Connection,
+    batch: usize,
+    max_batches: Option<usize>,
+) -> Result<u64> {
+    let mut converted = 0u64;
+    let mut batches = 0usize;
+    loop {
+        if max_batches.is_some_and(|max| batches >= max) {
+            break;
+        }
+        conn.execute_batch("BEGIN TRANSACTION")?;
+        let updated = conn.execute(
+            "UPDATE chunks SET embedding = CAST(embedding_json AS FLOAT[]) \
+             WHERE id IN (SELECT id FROM chunks WHERE embedding IS NULL ORDER BY id LIMIT ?)",
+            [batch as i64],
+        );
+        let updated = match updated {
+            Ok(updated) => {
+                conn.execute_batch("COMMIT")?;
+                updated
+            }
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(AppError::db(format!(
+                    "migrate chunks.embedding backfill: {error}"
+                )));
+            }
+        };
+        batches += 1;
+        converted += updated as u64;
+        if updated < batch {
+            break;
+        }
+    }
+    Ok(converted)
+}
+
+/// Drop `chunks.embedding_json` once every row has a native embedding.
+///
+/// DuckDB refuses to drop a column while an index covers a later column, and
+/// the drop does not see indexes dropped earlier in the same transaction, so
+/// the chunk indexes are dropped, the column dropped and the indexes
+/// re-created as separate statements. A crash in between leaves the column
+/// or missing indexes; both are repaired by the next open, which repeats the
+/// core migration because the version is recorded last.
+fn drop_legacy_embedding_column(conn: &Connection) -> Result<()> {
+    let missing: i64 = conn.query_row(
+        "SELECT count(*) FROM chunks WHERE embedding IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    if missing > 0 {
+        return Err(AppError::db(format!(
+            "migrate chunks.embedding: {missing} rows still lack a converted embedding"
+        )));
+    }
+    let mut stmt = conn.prepare(
+        "SELECT index_name, sql FROM duckdb_indexes() \
+         WHERE table_name = 'chunks' AND schema_name = current_schema() AND sql IS NOT NULL",
+    )?;
+    let indexes = crate::db::rows::query_vec(&mut stmt, [], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    drop(stmt);
+    for (name, _) in &indexes {
+        conn.execute_batch(&format!("DROP INDEX IF EXISTS \"{}\"", name.replace('"', "\"\"")))?;
+    }
+    conn.execute_batch("ALTER TABLE chunks DROP COLUMN embedding_json")?;
+    for (_, sql) in &indexes {
+        let sql = sql.trim().trim_end_matches(';');
+        let sql = match sql.strip_prefix("CREATE INDEX ") {
+            Some(rest) if !rest.starts_with("IF NOT EXISTS") => {
+                format!("CREATE INDEX IF NOT EXISTS {rest}")
+            }
+            _ => sql.to_owned(),
+        };
+        conn.execute_batch(&sql)?;
+    }
+    Ok(())
+}
+
 /// Best-effort `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 ///
 /// Ignores "already exists" / duplicate-column failures so older DuckDB builds
@@ -875,7 +1056,7 @@ fn record_schema_version(conn: &Connection) -> Result<()> {
         "#,
         duckdb::params![
             SCHEMA_VERSION,
-            "Bounded index-usage gate and labelled threshold calibration reports; schema v23"
+            "Native FLOAT[] chunk embeddings replace embedding_json; schema v26"
         ],
     )?;
 
@@ -902,5 +1083,7 @@ pub fn current_schema_version(conn: &Connection) -> Result<Option<i32>> {
     Ok(v)
 }
 
+#[cfg(test)]
+mod embedding_migration_tests;
 #[cfg(test)]
 mod tests;

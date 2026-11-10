@@ -74,7 +74,7 @@ impl Chunks<'_> {
         let placeholders = crate::db::sql::in_placeholders(document_ids.len());
         let conn = self.store.lock()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT content, embedding_json FROM chunks WHERE document_id IN ({placeholders})"
+            "SELECT content, embedding FROM chunks WHERE document_id IN ({placeholders})"
         ))?;
         crate::db::rows::for_each_row(
             &mut stmt,
@@ -82,8 +82,7 @@ impl Chunks<'_> {
             |row| {
                 let content: String = row.get(0)?;
                 if let std::collections::hash_map::Entry::Vacant(slot) = out.entry(content) {
-                    let raw: String = row.get(1)?;
-                    slot.insert(serde_json::from_str::<Vec<f32>>(&raw)?);
+                    slot.insert(crate::db::rows::embedding(row, 1)?);
                 }
                 Ok(())
             },
@@ -169,7 +168,7 @@ impl Chunks<'_> {
                 WHERE c.document_id IN (SELECT id FROM candidates)
                 GROUP BY c.document_id
             )
-            SELECT d.id, d.title, d.wing, d.room, c.embedding_json
+            SELECT d.id, d.title, d.wing, d.room, c.embedding
             FROM candidates d
             JOIN firsts f ON f.document_id = d.id
             JOIN chunks c ON c.id = f.chunk_id
@@ -183,10 +182,9 @@ impl Chunks<'_> {
         let mut samples = Vec::new();
         crate::db::rows::visit_rows(&mut rows, |row| {
             let document_id: String = row.get(0)?;
-            let raw: String = row.get(4)?;
-            let embedding = serde_json::from_str(&raw).map_err(|error| {
+            let embedding = crate::db::rows::embedding(row, 4).map_err(|error| {
                 AppError::db(format!(
-                    "invalid representative embedding JSON for document {document_id}: {error}"
+                    "invalid representative embedding for document {document_id}: {error}"
                 ))
             })?;
             samples.push(DocumentEmbeddingSample {
@@ -221,7 +219,7 @@ impl Chunks<'_> {
                 WHERE document_id IN ({placeholders})
                 GROUP BY document_id
             )
-            SELECT f.document_id, c.embedding_json
+            SELECT f.document_id, c.embedding
             FROM firsts f
             JOIN chunks c ON c.id = f.chunk_id
             "#
@@ -231,10 +229,9 @@ impl Chunks<'_> {
             duckdb::params_from_iter(document_ids.iter()),
             |row| {
                 let document_id: String = row.get(0)?;
-                let raw: String = row.get(1)?;
-                let embedding = serde_json::from_str(&raw).map_err(|error| {
+                let embedding = crate::db::rows::embedding(row, 1).map_err(|error| {
                     AppError::db(format!(
-                        "invalid representative embedding JSON for document {document_id}: {error}"
+                        "invalid representative embedding for document {document_id}: {error}"
                     ))
                 })?;
                 out.insert(document_id, embedding);
@@ -250,7 +247,7 @@ impl Chunks<'_> {
         let conn = self.store.lock()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
+            SELECT id, document_id, chunk_index, content, embedding, char_start, char_end, metadata_json
             FROM chunks
             ORDER BY document_id ASC, chunk_index ASC
             "#,
@@ -410,7 +407,7 @@ impl Chunks<'_> {
             if !expected_chunks.is_empty() {
                 crate::db::fts::mark_embeddings_changed_for(tx, Some(&[document_id]))?;
                 let mut stmt = tx.prepare(
-                    "UPDATE chunks SET embedding_json = ?, embedding_digest = ? WHERE id = ?",
+                    "UPDATE chunks SET embedding = CAST(? AS FLOAT[]), embedding_digest = ? WHERE id = ?",
                 )?;
                 for (index, (chunk, embedding_json)) in
                     expected_chunks.iter().zip(&embedding_json).enumerate()
@@ -430,7 +427,7 @@ impl Chunks<'_> {
         })
     }
 
-    /// Insert chunk rows. Embeddings are stored as JSON float arrays in `embedding_json`.
+    /// Insert chunk rows. Embeddings are stored in the `FLOAT[]` column `embedding`.
     pub fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()> {
         if chunks.is_empty() {
             return Ok(());

@@ -217,3 +217,62 @@ longer keeps `metadata_json` / `char_start` / `char_end` per chunk.
 Kept. Cold build cost is the JSON parse of every vector, which item 2
 removes; warm search is dominated by the scope listing and hydration, not by
 the dot products.
+
+### Item 2: schema v26, `chunks.embedding FLOAT[]` replaces `embedding_json`
+
+Design:
+
+- `SCHEMA_VERSION` 25 → 26. `migrate_with` reads the stored version first and
+  runs the core DDL only when it differs; schema extensions run only when the
+  blake3 digest of their DDL is not yet recorded in `meta`
+  (`schema_extension:<name>`). A store already at v26 opens with reads only
+  (`MigrateOutcome { core_ddl: false, extension_ddl: 0 }`).
+- Fresh databases create `embedding FLOAT[] NOT NULL`. An older database gains
+  a nullable `embedding FLOAT[]` (DuckDB cannot add `NOT NULL` to an indexed
+  table), is backfilled with `CAST(embedding_json AS FLOAT[])` in batches of
+  5 000 rows, one transaction per batch, and then loses `embedding_json`.
+  DuckDB refuses `DROP COLUMN` while an index covers a later column and does
+  not see an index dropped earlier in the same transaction, so the chunk
+  indexes are dropped, the column dropped and the indexes re-created (from
+  `duckdb_indexes().sql`) as separate statements. The version is recorded
+  last: an open interrupted anywhere in this sequence repeats it, the
+  backfill continues with the rows still `NULL`, and missing indexes are
+  re-created by the idempotent DDL.
+- Writers still serialise each vector to JSON (the input of
+  `embedding_digest`, unchanged) and bind it as `CAST(? AS FLOAT[])`; the cast
+  is exact for every finite `f32` (checked bit for bit, including subnormals,
+  `-0.0`, `f32::MAX` and values printed with an exponent). Readers decode the
+  list through the Arrow `Float32Array` of the row (one buffer copy), with a
+  `Value::List` fallback.
+- Other readers moved to the array: `rows::chunk`, chunk vectors by content,
+  representative/first-chunk embeddings, the recovery export, the backup
+  consistency check (now one `count(*)` over `len(embedding)`), the portable
+  preflight estimate (`2 + len(embedding)` bytes per vector plus the existing
+  per-value worst case), and the code-index status sampler
+  (`CAST(embedding AS VARCHAR)`).
+
+Tests (`src/db/schema/embedding_migration_tests.rs`): a database built from the
+pre-v26 DDL (JSON embeddings written by `serde_json` as the old writers did,
+plus the `parent_chunk_id` index that blocks a plain column drop) is opened
+through `Store::open`; it reports v26, has no `embedding_json`, keeps both
+chunk indexes, its vectors equal a natively ingested store's bit for bit, vec,
+lex and hybrid searches return the same chunk ids with bit-identical scores,
+and the exported recovery bundle equals the fixture. A second open runs no DDL.
+An interrupted backfill (column added, one 4-row batch committed, no version
+recorded) resumes on the next open with the same results and bundle.
+
+| metric | before (v25, JSON) | after (v26, FLOAT[]) |
+|---|---:|---:|
+| vector snapshot build (cold vector search, 40 000 chunks) | 150.6 ms | **67.2 ms** (3 quiet runs; 88.1 ms median over 6 runs including load 3.5) |
+| vector search right after a one-document write, p50 | 17.1 ms | 16.8 ms |
+| warm vector search p50 | 10.5 ms | 10.0 ms |
+| database file after `CHECKPOINT` (40 000 chunks, 32 dims) | 39.07 MB (38.81–39.07) | 39.07 MB (38.02–39.33): no measurable change |
+| document upsert, insert / update (2 000 docs) | 93 / 61 docs/s | 86 / 56 docs/s (−7 %, the text → `FLOAT[]` cast) |
+
+Kept (the migration was approved; snapshot builds are 2.2× faster and every
+embedding read skips JSON). The file size does not move at 32 dims: DuckDB
+compresses the JSON strings and allocates in blocks, and chunk text dominates;
+larger dimensions should show a difference. The write path pays for the cast;
+duckdb-rs 1.x rejects `Value::List` parameters; binding a borrowed Arrow
+`ListArray` (`ValueRef::List`) might remove the cast and is left as a
+follow-up.

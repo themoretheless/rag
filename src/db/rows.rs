@@ -133,14 +133,46 @@ pub(crate) fn document(row: &duckdb::Row<'_>) -> Result<Document> {
     })
 }
 
+/// Read a `FLOAT[]` embedding column (`chunks.embedding`).
+pub(crate) fn embedding(row: &duckdb::Row<'_>, index: usize) -> Result<Vec<f32>> {
+    use duckdb::arrow::array::{Array, Float32Array};
+    use duckdb::types::{ListType, Value, ValueRef};
+    // Fast path: copy the Arrow float buffer of this row's list directly
+    // instead of materialising one `Value` per element.
+    if let ValueRef::List(ListType::Regular(lists), row_index) = row.get_ref(index)? {
+        if !lists.is_null(row_index) {
+            let values = lists.value(row_index);
+            if let Some(floats) = values.as_any().downcast_ref::<Float32Array>() {
+                if floats.null_count() == 0 {
+                    return Ok(floats.values().to_vec());
+                }
+            }
+        }
+    }
+    match row.get::<_, Value>(index)? {
+        Value::List(items) | Value::Array(items) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::Float(value) => Ok(value),
+                Value::Double(value) => Ok(value as f32),
+                other => Err(AppError::db(format!(
+                    "embedding element is not a float: {other:?}"
+                ))),
+            })
+            .collect(),
+        other => Err(AppError::db(format!(
+            "embedding column is not a float list: {other:?}"
+        ))),
+    }
+}
+
 pub(crate) fn chunk(row: &duckdb::Row<'_>) -> Result<Chunk> {
-    let embedding_json: String = row.get(4)?;
     Ok(Chunk {
         id: row.get(0)?,
         document_id: row.get(1)?,
         chunk_index: row.get(2)?,
         content: row.get(3)?,
-        embedding: serde_json::from_str(&embedding_json)?,
+        embedding: embedding(row, 4)?,
         char_start: row.get(5)?,
         char_end: row.get(6)?,
         metadata_json: row

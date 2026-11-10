@@ -347,16 +347,15 @@ impl Recovery<'_> {
             std::collections::HashMap::with_capacity(documents.len());
         {
             let mut chunks_stmt = conn.prepare(
-                "SELECT id, document_id, chunk_index, content, embedding_json, char_start, \
+                "SELECT id, document_id, chunk_index, content, embedding, char_start, \
                 char_end, COALESCE(metadata_json, '{}') FROM chunks ORDER BY document_id, \
                 chunk_index",
             )?;
             let mut rows = chunks_stmt.query([])?;
             crate::db::rows::visit_rows(&mut rows, |row| {
-                let raw: String = row.get(4)?;
-                let embedding = serde_json::from_str(&raw).map_err(|error| {
+                let embedding = crate::db::rows::embedding(row, 4).map_err(|error| {
                     AppError::db(format!(
-                        "invalid embedding JSON for chunk {} in recovery export: {error}",
+                        "invalid embedding for chunk {} in recovery export: {error}",
                         row.get::<_, String>(0).unwrap_or_else(|_| "unknown".into())
                     ))
                 })?;

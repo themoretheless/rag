@@ -243,7 +243,7 @@ mod tests {
         {
             let conn = store.lock().unwrap();
             conn.execute("DROP TABLE code_index_runs", []).unwrap();
-            conn.execute("UPDATE schema_version SET version=24 WHERE version=25", [])
+            conn.execute("UPDATE schema_version SET version=24 WHERE version>24", [])
                 .unwrap();
             conn.execute("UPDATE meta SET value='24' WHERE key='schema_version'", [])
                 .unwrap();
@@ -269,7 +269,10 @@ mod tests {
                 &crate::Config::for_tests(),
             )
             .unwrap();
-        assert_eq!(observed["versions"]["store_schema"], 25);
+        assert_eq!(
+            observed["versions"]["store_schema"],
+            crate::db::schema::SCHEMA_VERSION
+        );
         assert_eq!(observed["coverage"]["indexable_documents"], 1);
         assert_eq!(observed["stage_timings"]["scope"], "corpus_global");
         assert_eq!(

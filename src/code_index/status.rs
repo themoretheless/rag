@@ -84,7 +84,7 @@ fn chunks(conn: &duckdb::Connection, q: &StatusQuery, dimensions: usize) -> Resu
         params![q.project, q.project], |r| r.get(0))?, ..Default::default() };
     let sample_limit = q.sample_limit.unwrap_or(128).clamp(1, 512);
     let threshold = q.max_chunk_tokens.unwrap_or(4096).clamp(1, 100000);
-    let mut stmt = conn.prepare("SELECT substring(c.id,1,128), length(c.id)>128, length(c.content), strlen(c.embedding_json), CASE WHEN length(c.content)<=? THEN c.content ELSE NULL END, CASE WHEN strlen(c.embedding_json)<=? THEN c.embedding_json ELSE NULL END FROM chunks c JOIN documents d ON c.document_id=d.id WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=CAST(? AS VARCHAR)) ORDER BY c.id LIMIT ?")?;
+    let mut stmt = conn.prepare("SELECT substring(c.id,1,128), length(c.id)>128, length(c.content), strlen(CAST(c.embedding AS VARCHAR)), CASE WHEN length(c.content)<=? THEN c.content ELSE NULL END, CASE WHEN strlen(CAST(c.embedding AS VARCHAR))<=? THEN CAST(c.embedding AS VARCHAR) ELSE NULL END FROM chunks c JOIN documents d ON c.document_id=d.id WHERE COALESCE(d.status,'active') NOT IN ('archived','tombstone','consolidated') AND (CAST(? AS VARCHAR) IS NULL OR d.wing=CAST(? AS VARCHAR)) ORDER BY c.id LIMIT ?")?;
     let mut rows = stmt.query(params![
         TEXT_CHARS as i64,
         VECTOR_BYTES as i64,

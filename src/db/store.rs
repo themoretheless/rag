@@ -984,7 +984,9 @@ pub(super) fn insert_document_row_locked(
 }
 
 /// JSON-encode chunk embeddings for [`insert_chunks_locked`], before any lock
-/// is taken so a serialization failure cannot leave a partial write.
+/// is taken so a serialization failure cannot leave a partial write. The text
+/// is bound as `CAST(? AS FLOAT[])` (exact for every finite `f32`) and is
+/// the input of [`embedding_digest`].
 pub(crate) fn embedding_json(chunks: &[Chunk]) -> Result<Vec<String>> {
     chunks
         .iter()
@@ -1047,9 +1049,9 @@ pub(crate) fn insert_chunks_locked(
         .collect();
     rows::insert_rows(
         conn,
-        "INSERT INTO chunks (id, document_id, chunk_index, content, embedding_json, \
+        "INSERT INTO chunks (id, document_id, chunk_index, content, embedding, \
          char_start, char_end, created_at, metadata_json, embedding_digest, parent_chunk_id) VALUES",
-        "(?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, NULLIF(json_extract_string(TRY_CAST(? AS JSON), '$.parent_chunk_id'), ''))",
+        "(?, ?, ?, ?, CAST(? AS FLOAT[]), ?, ?, CAST(? AS TIMESTAMP), ?, ?, NULLIF(json_extract_string(TRY_CAST(? AS JSON), '$.parent_chunk_id'), ''))",
         &rows,
         |(chunk, embedding_json, digest), values| {
             values.extend([
@@ -1070,7 +1072,7 @@ pub(crate) fn insert_chunks_locked(
 }
 
 /// 64-bit digest stored in `chunks.embedding_digest` (first 8 bytes of the
-/// blake3 hash of the stored JSON). Any digest change marks a changed vector.
+/// blake3 hash of the embedding's JSON encoding). Any digest change marks a changed vector.
 pub(crate) fn embedding_digest(embedding_json: &str) -> i64 {
     let hash = blake3::hash(embedding_json.as_bytes());
     let mut bytes = [0u8; 8];
@@ -1081,7 +1083,7 @@ pub(crate) fn embedding_digest(embedding_json: &str) -> i64 {
 fn list_chunks_for_document_locked(conn: &Connection, document_id: &str) -> Result<Vec<Chunk>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT id, document_id, chunk_index, content, embedding_json, char_start, char_end, metadata_json
+        SELECT id, document_id, chunk_index, content, embedding, char_start, char_end, metadata_json
         FROM chunks
         WHERE document_id = ?
         ORDER BY chunk_index ASC, id ASC
