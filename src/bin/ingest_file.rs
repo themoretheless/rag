@@ -31,42 +31,36 @@ struct Args {
     db: PathBuf,
 }
 
+/// Offline-only direct DuckDB writer. Stop the rag-mcp gateway first; for a
+/// live database use the MCP/HTTP ingest_file operation. Reads text,
+/// Markdown, HTML, PDF, or source code. The path must be under
+/// RAG_INGEST_ROOTS. Env: RAG_INGEST_ROOTS, RAG_EMBEDDING_*.
+#[derive(clap::Parser)]
+#[command(name = "ingest_file")]
+struct Cli {
+    /// File to ingest.
+    #[arg(long)]
+    path: Option<PathBuf>,
+    #[arg(long)]
+    wing: Option<String>,
+    #[arg(long)]
+    room: Option<String>,
+    /// Database file (never inherited from RAG_DB_PATH).
+    #[arg(long)]
+    db: Option<PathBuf>,
+    /// Acknowledge direct DuckDB access (gateway stopped).
+    #[arg(long)]
+    offline: bool,
+}
+
 fn parse_args() -> Result<Args> {
-    let mut path = None;
-    let mut wing = None;
-    let mut room = None;
-    let mut db = None;
-    let mut offline = false;
-    let mut it = std::env::args().skip(1);
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--path" => {
-                path = Some(PathBuf::from(it.next().context("--path needs value")?));
-            }
-            "--wing" => {
-                wing = Some(it.next().context("--wing needs value")?);
-            }
-            "--room" => {
-                room = Some(it.next().context("--room needs value")?);
-            }
-            "--db" => {
-                db = Some(PathBuf::from(it.next().context("--db needs path")?));
-            }
-            "--offline" => offline = true,
-            "-h" | "--help" => {
-                eprintln!(
-                    "Usage: ingest_file --offline --db PATH --path FILE [--wing WING] [--room ROOM]\n\
-                     Offline-only direct DuckDB writer. Stop the rag-mcp gateway first.\n\
-                     For a live database, use the MCP/HTTP ingest_file operation.\n\
-                     Reads text, Markdown, HTML, PDF, or source code.\n\
-                     Path must be under RAG_INGEST_ROOTS (same as MCP ingest_file).\n\
-                     Env: RAG_INGEST_ROOTS, RAG_EMBEDDING_*"
-                );
-                std::process::exit(0);
-            }
-            other => bail!("unknown arg: {other} (try --help)"),
-        }
-    }
+    let Cli {
+        path,
+        wing,
+        room,
+        db,
+        offline,
+    } = <Cli as clap::Parser>::parse();
     let path = path.context("required: --path FILE")?;
     let db = db.context(
         "required: --db PATH; this offline tool never inherits RAG_DB_PATH or a default database",

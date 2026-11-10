@@ -9,6 +9,7 @@ resolver = "2"
 # pins its own versions (same requirements as here). chrono stays per crate:
 # the core crate deliberately builds it without default features.
 [workspace.dependencies]
+clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -44,6 +45,7 @@ path = "src/bin/rag_gate.rs"
 
 [dependencies]
 tempfile = "3"
+clap = { workspace = true }
 rag-mcp-core = { path = "crates/rag-mcp-core", version = "0.1.0" }
 rag-mcp-markup = { path = "crates/rag-mcp-markup", version = "0.1.0" }
 anyhow = "1"

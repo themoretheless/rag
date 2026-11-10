@@ -3,10 +3,19 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use duckdb::{params, Connection};
 
+/// One-off data migration: promote `wing = 'Dodo'` rooms to projects.
+///
+/// Raw SQL on a stopped database, not `bootstrap::open_offline`: it needs no
+/// embedder and touches only `documents` placement columns.
+#[derive(clap::Parser)]
+#[command(name = "promote_dodo_projects")]
+struct Args {
+    /// Database file to migrate.
+    db_path: String,
+}
+
 fn main() -> Result<()> {
-    let db_path = std::env::args()
-        .nth(1)
-        .context("usage: promote_dodo_projects <database.duckdb>")?;
+    let Args { db_path } = <Args as clap::Parser>::parse();
     let mut connection = Connection::open(&db_path).context("open database")?;
     let tx = connection.transaction().context("begin transaction")?;
     let rows = {

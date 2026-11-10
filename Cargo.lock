@@ -4252,6 +4252,7 @@ dependencies = [
  "axum",
  "blake3",
  "chrono",
+ "clap",
  "cssparser",
  "dom_query",
  "duckdb",
