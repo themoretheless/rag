@@ -181,7 +181,7 @@ async fn run_serve_modes(
             .context("RAG_HTTP_BIND is empty")?;
 
         let mcp_svc = if mcp_http_enabled {
-            Some(http_api::mcp_http_service_for(
+            Some(rag_mcp::mcp::mcp_http_router(
                 context.clone(),
                 shutdown.clone(),
             ))

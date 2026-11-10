@@ -528,7 +528,7 @@ mod tests {
         };
         let store = Store::open(&config.db_path).unwrap();
         let embedder = crate::embeddings::build_provider(&config).unwrap();
-        let mcp = super::super::mcp_http_service(
+        let mcp = crate::mcp::mcp_http_service(
             store.clone(),
             embedder.clone(),
             config.clone(),

@@ -285,7 +285,7 @@ async fn mounted_mcp_rejects_streamed_oversized_bodies() {
     };
     let store = Store::open(&config.db_path).unwrap();
     let embedder = build_provider(&config).unwrap();
-    let mcp = mcp_http_service(
+    let mcp = crate::mcp::mcp_http_service(
         store.clone(),
         embedder.clone(),
         config.clone(),
@@ -333,7 +333,7 @@ async fn mounted_mcp_enforces_dns_rebinding_host_allowlist() {
     let service = |store: Store| {
         Router::new().nest_service(
             "/mcp",
-            mcp_http_service(
+            crate::mcp::mcp_http_service(
                 store,
                 embedder.clone(),
                 config.clone(),

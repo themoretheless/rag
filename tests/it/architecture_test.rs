@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 /// Layer rank of a top-level module; unlisted modules are `app`.
 fn layer(module: &str) -> u8 {
     match module {
-        "models" | "error" | "config" | "util" | "chunking" | "graph" | "search_pack" => 0,
+        "models" | "error" | "config" | "util" | "chunking" | "graph" | "search_pack"
+        | "tool_spec" => 0,
         "db" => 1,
         "code_index" | "external_db" | "gate" | "calibration" | "analysis_tasks" => 2,
         "mcp" | "http_api" => 4,
@@ -32,9 +33,6 @@ fn layer(module: &str) -> u8 {
 
 /// Edges that break the rule today and are scheduled for a later stage.
 const ALLOWED: &[(&str, &str)] = &[
-    // Stage 4: the HTTP router mounts `/mcp` from `RagServer` and reports the
-    // MCP tool counts; the tool registry moves to the app layer, the bin mounts it.
-    ("http_api", "mcp"),
     // Stage 4: code-index drift and git-impact capture decode files with
     // `file_ingest::decode_text`; the text decoder moves to domain (`util`).
     ("code_index", "file_ingest"),

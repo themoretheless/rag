@@ -140,7 +140,7 @@ impl Harness {
 
     async fn mcp(&self, tool: &str, arguments: Value) -> McpReply {
         let service =
-            http_api::mcp_http_service_for(self.context.clone(), CancellationToken::new());
+            rag_mcp::mcp::mcp_http_service_for(self.context.clone(), CancellationToken::new());
         let body = json!({
             "jsonrpc": "2.0",
             "id": 1,

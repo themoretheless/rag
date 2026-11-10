@@ -51,28 +51,19 @@ mod traces;
 mod wiki;
 use crate::db::payload_kv;
 
-use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use rmcp::transport::streamable_http_server::{
-    session::local::LocalSessionManager,
-    tower::{StreamableHttpServerConfig, StreamableHttpService},
-};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
-use crate::mcp::RagServer;
 use crate::models::GraphView;
 use crate::util::run_blocking;
 
 pub use bind::parse_bind;
-
-/// Keep-alive ping interval on streamable-HTTP MCP SSE responses.
-const MCP_SSE_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Validate security before opening the store or starting background writers.
 pub fn validate_security(
@@ -180,59 +171,6 @@ impl HttpState {
     }
 }
 
-/// Build streamable-HTTP MCP service that shares `store` / embedder / config.
-///
-/// Each MCP request gets a fresh [`RagServer`] clone of the same DuckDB `Store`.
-///
-/// The gateway intentionally runs without server-side MCP sessions. All durable
-/// state belongs to DuckDB and every tool call is self-contained, so retaining
-/// an in-memory session only makes reconnects fragile: after a client closes a
-/// session, a delayed SSE `GET /mcp` must receive 404 by the MCP specification.
-/// Stateless Streamable HTTP avoids that stale-session loop while keeping SSE
-/// request/response framing for clients that do not support JSON responses.
-pub fn mcp_http_service(
-    store: Store,
-    embedder: Arc<dyn EmbeddingProvider>,
-    config: Config,
-    cancellation_token: CancellationToken,
-) -> StreamableHttpService<RagServer, LocalSessionManager> {
-    mcp_http_service_for(
-        crate::context::AppContext::new(store, embedder, config),
-        cancellation_token,
-    )
-}
-
-/// Streamable-HTTP MCP over the shared [`crate::context::AppContext`].
-pub fn mcp_http_service_for(
-    context: crate::context::AppContext,
-    cancellation_token: CancellationToken,
-) -> StreamableHttpService<RagServer, LocalSessionManager> {
-    let allowed_hosts = configured_http_allowed_hosts(
-        &context.config,
-        context.config.http_allowed_hosts.as_deref(),
-    );
-    // Build once: the context already holds the checked manifest and the chat
-    // client; each stateless request gets a cheap clone of this server.
-    let prototype = RagServer::from_context(context).with_transport("http-mcp");
-    mcp_service_from(prototype, allowed_hosts, cancellation_token)
-}
-
-fn mcp_service_from(
-    prototype: RagServer,
-    allowed_hosts: Vec<String>,
-    cancellation_token: CancellationToken,
-) -> StreamableHttpService<RagServer, LocalSessionManager> {
-    StreamableHttpService::new(
-        move || Ok(prototype.clone()),
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default()
-            .with_stateful_mode(false)
-            .with_sse_keep_alive(Some(MCP_SSE_KEEP_ALIVE))
-            .with_cancellation_token(cancellation_token)
-            .with_allowed_hosts(allowed_hosts),
-    )
-}
-
 /// Lenient boolean query flag: `0`, `false`, `no` and `off` (any case)
 /// disable it; any other value, including a bare `?flag`, enables it.
 fn query_flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
@@ -243,44 +181,12 @@ fn query_flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool,
     ))
 }
 
-/// Exact Host authorities accepted by rmcp's DNS-rebinding guard.
-///
-/// Loopback is always available. A concrete bind address is safe to add
-/// automatically; wildcard binds (`0.0.0.0` / `[::]`) require explicit remote
-/// names or addresses in `RAG_HTTP_ALLOWED_HOSTS` (comma-separated).
-fn configured_http_allowed_hosts(config: &Config, explicit: Option<&str>) -> Vec<String> {
-    let mut hosts = BTreeSet::from([
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-        "::1".to_string(),
-    ]);
-    if let Some(bind) = config
-        .http_bind
-        .as_deref()
-        .and_then(|raw| raw.parse::<SocketAddr>().ok())
-        .filter(|bind| !bind.ip().is_unspecified())
-    {
-        hosts.insert(bind.ip().to_string());
-    }
-    if let Some(explicit) = explicit {
-        hosts.extend(
-            explicit
-                .split(',')
-                .map(str::trim)
-                .filter(|host| {
-                    !host.is_empty()
-                        && host.len() <= 255
-                        && !host.contains('/')
-                        && !host.chars().any(char::is_control)
-                        && !host.chars().any(char::is_whitespace)
-                })
-                .map(str::to_owned),
-        );
-    }
-    hosts.into_iter().collect()
-}
+pub use crate::config::configured_http_allowed_hosts;
 
 /// Start HTTP server (graph API + MCP `/mcp`); runs until process exit.
+///
+/// `mcp` is a router that already mounts `/mcp` (built by the composition
+/// root from `mcp::mcp_http_router`), so this module never depends on `mcp`.
 ///
 /// Uses the process [`crate::context::AppContext`] (config, embedder, chat client).
 /// Route tables come from the private `health`, `graph`, and `wiki` route
@@ -288,7 +194,7 @@ fn configured_http_allowed_hosts(config: &Config, explicit: Option<&str>) -> Vec
 pub async fn serve(
     bind: SocketAddr,
     context: crate::context::AppContext,
-    mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
+    mcp: Option<Router>,
 ) -> Result<(), std::io::Error> {
     serve_with_shutdown(bind, context, mcp, CancellationToken::new()).await
 }
@@ -298,7 +204,7 @@ pub async fn serve(
 pub async fn serve_with_shutdown(
     bind: SocketAddr,
     context: crate::context::AppContext,
-    mcp: Option<StreamableHttpService<RagServer, LocalSessionManager>>,
+    mcp: Option<Router>,
     shutdown: CancellationToken,
 ) -> Result<(), std::io::Error> {
     let auth = auth::HttpAuth::from_config(&context.config)
@@ -326,8 +232,8 @@ pub async fn serve_with_shutdown(
     sync::spawn_worker(state.clone());
     let api = api_router(state);
 
-    let app = if let Some(mcp_svc) = mcp {
-        Router::new().merge(api).nest_service("/mcp", mcp_svc)
+    let app = if let Some(mcp_router) = mcp {
+        Router::new().merge(api).merge(mcp_router)
     } else {
         api
     };

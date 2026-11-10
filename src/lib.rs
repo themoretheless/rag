@@ -59,6 +59,7 @@ pub mod telemetry;
 /// Test fixtures; compiled only for tests or with the `testkit` feature.
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
+pub mod tool_spec;
 pub mod util;
 pub mod watch;
 pub mod web_ingest;

@@ -8,8 +8,10 @@ use std::str::FromStr;
 use crate::error::AppError;
 use crate::models::SearchMode;
 
+mod http_hosts;
 pub mod limits;
 pub mod providers;
+pub use http_hosts::configured_http_allowed_hosts;
 
 /// `RAG_AUTO_SYNC_INTERVAL_SECS` default (hourly).
 const DEFAULT_AUTO_SYNC_INTERVAL_SECS: u64 = 3600;

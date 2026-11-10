@@ -45,6 +45,33 @@ fn every_registered_tool_has_an_explicit_access_policy() {
 }
 
 #[test]
+fn every_registered_tool_has_a_spec_and_every_spec_is_registered() {
+    let registered: std::collections::BTreeSet<String> = RagServer::all_tools_router()
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.to_string())
+        .collect();
+    let specs: std::collections::BTreeSet<String> = crate::tool_spec::TOOL_SPECS
+        .iter()
+        .map(|spec| spec.name.to_string())
+        .collect();
+    assert_eq!(
+        registered.difference(&specs).collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "registered tools without a ToolSpec"
+    );
+    assert_eq!(
+        specs.difference(&registered).collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "ToolSpec rows without a registered tool"
+    );
+    assert_eq!(
+        RagServer::registered_tool_count(),
+        crate::tool_spec::TOOL_SPECS.len()
+    );
+}
+
+#[test]
 fn every_registered_tool_has_an_explicit_telemetry_group() {
     for tool in RagServer::all_tools_router().list_all() {
         assert!(

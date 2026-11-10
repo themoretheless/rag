@@ -384,36 +384,7 @@ impl<'a> AnalysisTasks<'a> {
 }
 /// Fixed exact whitelist. A caller-provided tool prefix is not proof the index was used.
 pub(crate) fn index_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "search"
-            | "search_multi"
-            | "duplicates"
-            | "symbol"
-            | "references"
-            | "callers"
-            | "callees"
-            | "code"
-            | "repo_map"
-            | "impact"
-            | "trace_path"
-            | "affected_tests"
-            | "inheritance"
-            | "entrypoints"
-            | "routes"
-            | "dead_code"
-            | "slice"
-            | "schema"
-            | "table_usage"
-            | "write_check"
-            | "class_usage"
-            | "policy_trace"
-            | "freshness"
-            | "index_status"
-            | "catalog"
-            | "diff"
-            | "live_read"
-    )
+    crate::tool_spec::tool_spec(name).is_some_and(|spec| spec.index_evidence)
 }
 /// Count only known output containers. This measures returned records, not truthful/useful facts.
 pub(crate) fn evidence_count(value: &Value) -> Option<i64> {

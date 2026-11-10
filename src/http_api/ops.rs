@@ -15,9 +15,8 @@ use super::{
     HttpState,
 };
 use crate::diagnostics::DiagnosticsService;
-use crate::mcp::surface::spine_tool_names;
-use crate::mcp::RagServer;
 use crate::telemetry;
+use crate::tool_spec::{spine_tool_names, TOOL_SPECS};
 use crate::util::resolve_allowlisted_output_file;
 
 /// Recent calls returned when `limit` is absent.
@@ -282,7 +281,7 @@ const fn default_true() -> bool {
 async fn capabilities(State(st): State<HttpState>) -> impl IntoResponse {
     api_ok(json!({
         "api_version":"v1", "mcp_http":st.mcp_http, "tool_surface":st.config.tool_surface.as_str(),
-        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { RagServer::registered_tool_count() },
+        "tool_count": if st.config.tool_surface.as_str() == "spine" { spine_tool_names().len() } else { TOOL_SPECS.len() },
         "features":CAPABILITY_FEATURES,
         "deprecated_tools":[],
         "auth":st.auth
