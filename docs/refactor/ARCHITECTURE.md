@@ -46,12 +46,26 @@ Consequences that follow from the rule:
 - Environment variables are read in one place (`Config::from_env`).
 - An architecture test (`tests/it/architecture_test.rs`, Stage 2) parses
   `crate::` edges between top-level modules and fails on an edge that breaks
-  the rule. Its allow-list holds the edges still pending: `http_api → mcp`
-  (Stage 4) and `code_index → file_ingest` (`decode_text`, Stage 4). The
+  the rule. Its allow-list holds the edge still pending: `code_index → file_ingest` (`decode_text`, Stage 4). The
   `db → analysis_tasks|gate|calibration|external_db` edges went in Stage 3:
   those modules export a `db::schema::SchemaExtension` that composition
   registers (`storage::register_schema_extensions`) and their repositories
   ensure (`Store::ensure_schema_extensions`).
+
+## Application layer (Stage 4)
+
+- `src/app/`: `SearchUseCase` (search, `pack_context`, `multi_get`),
+  `GraphUseCase` (neighbors), `WikiUseCase` (one write entrypoint with
+  `WikiWriteMode::{Create, Upsert, Cas}`). MCP tools and HTTP handlers decode
+  their parameters into these typed commands and wrap the result in their own
+  envelope.
+- `src/tool_spec.rs` (domain): one `ToolSpec` row per MCP tool (role,
+  telemetry group, spine flag, index-evidence flag) read by `access`,
+  `telemetry`, `mcp::surface` and `analysis_tasks`.
+- `src/background.rs`: `BackgroundTasks`, built in `main`, owns every loop and
+  their shared `CancellationToken`.
+- `storage::open_store`: the one store constructor for bins and test helpers;
+  it installs the write hook and schema extensions.
 
 ## Composition root
 
@@ -105,7 +119,7 @@ Cycles:
   implemented in `bootstrap` (composition). The three process globals it sets
   remain globals (see INVENTORY.md, config row).
 - ~~`models`/`error → duckdb`~~: resolved in Stage 2; the impls live in `src/db/sql_types.rs`.
-- `http_api → mcp`: `src/http_api/mod.rs:68`, `src/http_api/ops.rs:18-19`.
+- ~~`http_api → mcp`~~: removed in Stage 4 (MCP service in `mcp::http`, mounted by `main`; tool counts from `tool_spec`).
   Known remaining edge after Stage 2: `mod.rs` builds the `/mcp` streamable
   service from `RagServer`, and `ops.rs` reports `RagServer::registered_tool_count`
   and `mcp::surface::spine_tool_names`. Both name the MCP tool registry itself,

@@ -20,11 +20,11 @@ not in a `#[cfg(test)]` item, not `#[test]`, not in a test file), plus the two
 
 | metric | before (facf533) | after Stage 1 | after Stage 2 | after Stage 3 | after Stage 4 | final |
 |---|---:|---:|---:|---:|---:|---:|
-| Rust LOC, root crate `src/` | 149 172 | | | 153 170 | | |
-| Rust LOC, `crates/` | 21 620 | | | 21 620 | | |
-| Rust LOC, `tests/` | 5 162 | | | 6 345 | | |
-| production functions | 3 083 | | | 3 103 | | |
-| production functions > 80 lines | 255 (218 `src/`, 37 `crates/`) | | | 256 (219 `src/`, 37 `crates/`) | | |
+| Rust LOC, root crate `src/` | 149 172 | | | 153 170 | 153 727 | |
+| Rust LOC, `crates/` | 21 620 | | | 21 620 | 21 620 | |
+| Rust LOC, `tests/` | 5 162 | | | 6 345 | 6 404 | |
+| production functions | 3 083 | | | 3 103 | 3 146 | |
+| production functions > 80 lines | 255 (218 `src/`, 37 `crates/`) | | | 256 (219 `src/`, 37 `crates/`) | 251 (214 `src/`, 37 `crates/`) | |
 | `impl Store` blocks (`grep -rnE '^\s*impl(<[^>]*>)? Store\b' src`) | 46 (27 in `src/db`, 19 outside) | | | 3 (all in `src/db`) | | |
 | `Store` methods (production) | 258 (218 in `src/db`, 40 outside) | | | 37 (8 core, 14 accessors, 15 kept for rag-mcp-ui), 0 outside | | |
 | `self.lock()` sites in `src/db` (`grep -rn 'self\.lock()'`) | 140 | | | 1 (repositories use `self.store.lock()`: 168) | | |

@@ -17,7 +17,7 @@ local cleanup, P3 = leave.
 | cycle ~~`db → external_db`~~ (Stage 3: intel DDL registered at composition), `code_index ↔ external_db` | `src/db/schema.rs:401`; `src/external_db/write_check.rs:540` ↔ `src/code_index/sql.rs:1405` | |
 | `config →` llm / rerank / maintain / db | `src/config.rs:110,138,327,435-437,908` | `apply_process_limits` writes 3 process globals |
 | `models` / `error → duckdb` | `src/models.rs:594-601`, `src/error.rs:65` | |
-| `http_api → mcp` | `src/http_api/mod.rs:68`, `src/http_api/ops.rs:18-19` | |
+| `http_api → mcp` | `src/http_api/mod.rs:68`, `src/http_api/ops.rs:18-19` | done (Stage 4) |
 | sync DuckDB on the async worker | `src/mcp/analysis.rs` | 50 tools, 13 `run_blocking` call lines; ~37 tools call the store inline |
 | blocking helpers | `util::blocking_section` (200 uses), `util::run_blocking` (86), `spawn_blocking` (10), `block_in_place` (3), `RagServer::blocking`, `retain_mutation_guard_while_blocking`, `*_nonblocking` wrappers | 7 shapes |
 | ~~`OpsLogEntry` built by hand~~ (Stage 3: `OpsLogEntry::new` builder + `OpsLog::record`/`append`) | `grep 'OpsLogEntry {'` | 31 struct literals in 22 non-test files (wiki 8, mcp 6, maintain 4, …) |
@@ -34,7 +34,7 @@ local cleanup, P3 = leave.
 |---|---:|---:|---|---|---|---|
 | src/code_index | 49823 | 107 | `walk` 425 (ruby.rs:274); `walk` 402 (csharp.rs:300); `code_read` 382 (code_read.rs:85); `parse_unit` 339 (sql.rs:671); `docker` 339 (infrastructure/docker.rs:190) | ~~13 `impl Store` blocks with raw SQL via `self.lock()`~~; ~~called from inside the store write path (`db/store.rs:1174`)~~ (Stage 2: `DocumentWriteHook`); cycle with `external_db` (sql.rs:1405); per-language `walk` monoliths; ~~13 `impl Store` blocks~~ (Stage 2: `CodeIndex` repository over `Store::with_conn`) | P0 (boundary), P2 (walkers) | Stage 2: boundary done |
 | src/db | 29239 | 27 | `migrate` 234 (schema.rs:397); `import_recovery_bundle` 198 (recovery/import.rs:251); `upsert_document_cas_locked` 171 (store.rs:1169) | ~~god object `Store` (218 methods here)~~ (Stage 3: repositories `Documents`, `Chunks`, `GraphRepo`, `KgRepo`, `OpsLog`, `EmbeddingManifestRepo`, `WikiIndexRepo`, `SyncRepo`, `CorpusLane`, `Collections`, `ReembedProgress`, `Maintenance`, `SourceManifestRepo`, `Recovery`); ~~`lock` is `pub(crate)`~~ (Stage 2: private to `db` outside tests); ~~calls up into `external_db`~~ (Stage 3: `SchemaExtension` registration); process-global vector snapshot cache (search.rs:982) built under the Store mutex; embeddings stored as JSON text; ~~"mark changed + delete chunks" repeated~~ (Stage 3: `replace_chunks_locked`); ~~recovery import has its own document INSERT~~ (Stage 3: `insert_document_row_locked`, normalization bug fixed); env reads (store.rs `apply_performance_pragmas`); `Documents` is still the largest repository (60 methods) | P0 | Stage 3: done (Stage 5: schema/vector cache) |
-| src/http_api | 9962 | 5 | `sync_once` 100 (sync.rs:317); `non_admin_http_role` 98 (auth.rs:175); `run_one` 91 (feedback.rs:328) | handlers rebuild commands that MCP tools also build (drift list in PLAN.md); depends on `mcp` (mod.rs:68, ops.rs:18; kept for Stage 4, no neutral home before the app-layer tool registry); `Config` cloned per request (retrieval.rs pack/revision handlers); `feedback`/`eval_ops` call the search handler and re-parse its bytes; `mod.rs` is 1445 lines | P1 | todo |
+| src/http_api | 9962 | 5 | `sync_once` 100 (sync.rs:317); `non_admin_http_role` 98 (auth.rs:175); `run_one` 91 (feedback.rs:328) | handlers rebuild commands that MCP tools also build (drift list in PLAN.md); depends on `mcp` (mod.rs:68, ops.rs:18; kept for Stage 4, no neutral home before the app-layer tool registry); `Config` cloned per request (retrieval.rs pack/revision handlers); `feedback`/`eval_ops` call the search handler and re-parse its bytes; `mod.rs` is 1445 lines | P1 | partly done (Stage 4: use cases, no `mcp` edge, `Arc<Config>`, eval/feedback call the use case; `mod.rs` size open) |
 | src/maintain | 9340 | 14 | `maintain_compress` 448 (compress.rs:187); `maintain_organize` 346 (organize.rs:175); `reembed_all` 256 (refresh.rs:475) | action list ×4 (plan.rs:40,82,112,194); 26-arm dispatch (apply.rs:322); `serde_json::Value` params; monolithic phases; 5 `test_config` copies | P1 | todo |
 | src/mcp | 9146 | 6 | `call_tool` 118 (facade.rs:420); `prepare_recovery_bundle_for_import` 109 (recovery.rs:247); `search_wiki` 96 (wiki.rs:406) | ~37 tools in analysis.rs run sync DuckDB inline; tool names in several hand lists (`access.rs:40` 150-line match, `telemetry.rs:253`, `surface.rs:13`, `analysis_tasks.rs`); tool methods are `pub(super)`, so nothing outside can call a use case without the transport; `Config` owned by value in `RagServer` | P1 | todo |
 | src/wiki | 5394 | 9 | `lint_wiki` 302 (lint.rs:6); `write_wiki_page_synced_command` 298 (write.rs:147); `consolidate` 203 (consolidate.rs:36) | several write entrypoints (`write_wiki_page`, `write_wiki_page_command`, `update_wiki_page_cas`, `put_wiki_page`, …) with different defaults; 8 hand-built ops-log entries; tests.rs 2388 lines | P1 | todo |
@@ -79,3 +79,22 @@ with a reason in `deny.toml`.
 |---|---|---|
 | rmcp 1.4 → 3.x migration (RUSTSEC-2026-0462) | Two-major migration of the MCP SDK; the manifest pins `=1.4.0` because macro and runtime must match. The advisory is in the Streamable HTTP *client* transports, which are not enabled (`server`, `transport-io`, `transport-streamable-http-server` only), so the affected code is not compiled. | Before enabling any rmcp client feature, or when 1.x stops receiving fixes. |
 | DuckDB 2.0 crates (`duckdb`/`libduckdb-sys` 1.20000.x) | Storage-engine major upgrade. Needed to drop `zip 6.0.0`, which stays as a build-dependency of `libduckdb-sys 1.10505.0` (RUSTSEC-2026-0367/0368/0369/0429, all in `ZipArchive::extract`); the build script only unpacks DuckDB's own bundled archive. `duckdb = "1"` in `Cargo.toml` accepts 1.20000.x, so an unqualified `cargo update` performs this upgrade silently: pin or review before updating. | With the Stage 5 schema migration at the earliest; needs a recovery/compat test on an existing database. |
+
+## Stage 4 status
+
+Done: app use cases (search, pack_context, multi_get, neighbors, wiki write);
+one wiki write entrypoint; `ToolSpec` table plus a two-way registry test;
+`http_api → mcp` removed; every `mcp/analysis.rs` tool on `run_blocking`, one
+body for the six `db_*` tools; `Arc<Config>`, one shared tool router, legacy
+constructors gone; eval/feedback call the search use case; `BackgroundTasks`;
+maintain whitelist declared once, five unimplemented actions deleted, rule
+table for `heuristic_plan`; clap in four bins; `storage::open_store`.
+
+Open (carried to the backlog): `IngestUseCase` / `AdminUseCase`; typed
+serde-tagged maintenance params and `trait MaintenanceStep`; splitting the
+large `maintain` functions; one prompts module / one LLM trait; `bin/eval.rs`
+still calls `db::search` directly (it measures embedding and search time per
+leg, which the production use case folds together); clap for `recovery`,
+`ingest_project` and `eval`; 201 remaining `blocking_section` call sites
+outside `mcp/analysis.rs`.
+
