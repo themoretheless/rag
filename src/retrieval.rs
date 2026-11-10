@@ -853,8 +853,11 @@ async fn run_query_transforms(
     };
 
     if rewrite_requested {
-        let llm: Option<&dyn crate::llm::ChatCompleter> =
-            llm_override.or_else(|| rewrite_client.as_ref().map(|c| c as &dyn crate::llm::ChatCompleter));
+        let llm: Option<&dyn crate::llm::ChatCompleter> = llm_override.or_else(|| {
+            rewrite_client
+                .as_ref()
+                .map(|c| c as &dyn crate::llm::ChatCompleter)
+        });
         match llm {
             Some(llm) => {
                 let started = std::time::Instant::now();
@@ -877,8 +880,11 @@ async fn run_query_transforms(
         }
     }
     if hyde_requested {
-        let llm: Option<&dyn crate::llm::ChatCompleter> =
-            llm_override.or_else(|| hyde_client.as_ref().map(|c| c as &dyn crate::llm::ChatCompleter));
+        let llm: Option<&dyn crate::llm::ChatCompleter> = llm_override.or_else(|| {
+            hyde_client
+                .as_ref()
+                .map(|c| c as &dyn crate::llm::ChatCompleter)
+        });
         match llm {
             Some(llm) => {
                 let started = std::time::Instant::now();

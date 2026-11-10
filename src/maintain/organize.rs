@@ -15,8 +15,8 @@ use crate::embeddings::cosine_similarity;
 use crate::error::{AppError, Result};
 use crate::llm::json::{parse_model_object, ERROR_EXCERPT_CHARS};
 use crate::llm::ChatMessage;
-use crate::maintain::prompts::ORGANIZE_SYSTEM;
 use crate::maintain::plan::{validate_action, MaintenanceAction, MaintenancePlanItem};
+use crate::maintain::prompts::ORGANIZE_SYSTEM;
 use crate::models::{Document, DocumentMetaUpdate, Taxonomy};
 use crate::util::excerpt_chars as truncate_chars;
 
@@ -211,9 +211,16 @@ pub async fn maintain_organize(
     let skipped_cap = unscoped_total.saturating_sub(considered.len());
     let unscoped_considered = considered.len();
 
-    let (suggestions, embedding_heuristics_enabled) =
-        collect_suggestions(store, config, llm, opts, min_confidence, &taxonomy, &considered)
-            .await?;
+    let (suggestions, embedding_heuristics_enabled) = collect_suggestions(
+        store,
+        config,
+        llm,
+        opts,
+        min_confidence,
+        &taxonomy,
+        &considered,
+    )
+    .await?;
 
     let actions = refile_actions(&suggestions, min_confidence, opts.rebuild_index)?;
 

@@ -346,8 +346,8 @@ impl<'a> CompressRun<'a> {
                 if doc.id == keep.id {
                     continue;
                 }
-                let merge = |action: &str, disposition: &str, reason: Option<String>| {
-                    CompressMergeAction {
+                let merge =
+                    |action: &str, disposition: &str, reason: Option<String>| CompressMergeAction {
                         action: action.into(),
                         keep_id: keep.id.clone(),
                         remove_id: doc.id.clone(),
@@ -358,8 +358,7 @@ impl<'a> CompressRun<'a> {
                         remove_layer: Some(doc.layer.to_string()),
                         disposition: disposition.into(),
                         reason,
-                    }
-                };
+                    };
                 if self.removed_budget == 0 {
                     self.skipped_cap += 1;
                     self.push_merge(merge(
@@ -473,8 +472,8 @@ impl<'a> CompressRun<'a> {
 
             let keep = pick_canonical(&[doc_a.clone(), doc_b.clone()]);
             let remove = if keep.id == doc_a.id { &doc_b } else { &doc_a };
-            let merge = |action: &str, disposition: &str, reason: Option<String>| {
-                CompressMergeAction {
+            let merge =
+                |action: &str, disposition: &str, reason: Option<String>| CompressMergeAction {
                     action: action.into(),
                     keep_id: keep.id.clone(),
                     remove_id: remove.id.clone(),
@@ -485,8 +484,7 @@ impl<'a> CompressRun<'a> {
                     remove_layer: Some(remove.layer.to_string()),
                     disposition: disposition.into(),
                     reason,
-                }
-            };
+                };
 
             if !apply_near {
                 self.push_merge(merge(
@@ -542,8 +540,7 @@ impl<'a> CompressRun<'a> {
     /// later target/storage failure therefore cannot leave an invisible
     /// partial prefix of deleted documents.
     fn commit_dispositions(&mut self) -> Result<()> {
-        if self.dry_run || (self.planned_deletes.is_empty() && self.planned_tombstones.is_empty())
-        {
+        if self.dry_run || (self.planned_deletes.is_empty() && self.planned_tombstones.is_empty()) {
             return Ok(());
         }
         let (deleted, tombstoned, deleted_chunks) = self
