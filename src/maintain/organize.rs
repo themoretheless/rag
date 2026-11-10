@@ -210,23 +210,122 @@ pub async fn maintain_organize(
     let skipped_cap = unscoped_total.saturating_sub(considered.len());
     let unscoped_considered = considered.len();
 
+    let (suggestions, embedding_heuristics_enabled) =
+        collect_suggestions(store, config, llm, opts, min_confidence, &taxonomy, &considered)
+            .await?;
+
+    let actions = refile_actions(&suggestions, min_confidence, opts.rebuild_index)?;
+
+    let (applied, applied_ok, applied_failed) = apply_refiles(store, &actions, dry_run);
+    let mut rebuild_index_entries = None;
+
+    if opts.rebuild_index
+        && actions
+            .iter()
+            .any(|a| a.action == MaintenanceAction::RebuildIndex)
+    {
+        if dry_run {
+            let n = crate::util::blocking_section(|| {
+                store
+                    .documents()
+                    .count_documents_by_layer(crate::models::Layer::Wiki.as_str())
+            })?;
+            rebuild_index_entries = Some(n);
+        } else if applied_ok > 0 || suggestions.is_empty() {
+            let n = crate::util::blocking_section(|| {
+                store.wiki_index().rebuild_wiki_index_from_docs()
+            })?;
+            rebuild_index_entries = Some(n);
+        }
+    }
+
+    let notes = build_notes(
+        opts.mode,
+        unscoped_total,
+        &suggestions,
+        min_confidence,
+        dry_run,
+        llm.is_some() && config.llm_enabled,
+        embedding_heuristics_enabled,
+    );
+
+    let mut report = OrganizeReport {
+        dry_run,
+        mode: opts.mode.as_str().into(),
+        embedding_heuristics_enabled,
+        unscoped_total,
+        unscoped_considered,
+        skipped_cap,
+        suggestions,
+        actions,
+        applied,
+        applied_ok,
+        applied_failed,
+        rebuild_index_entries,
+        notes: Some(notes),
+        ops_log_id: None,
+        ops_log_seq: None,
+    };
+
+    let message = if dry_run {
+        format!(
+            "dry_run maintain_organize: {} suggestions, {} actions, {} unscoped",
+            report.suggestions.len(),
+            report.actions.len(),
+            unscoped_total
+        )
+    } else {
+        format!(
+            "maintain_organize: applied_ok={} failed={} suggestions={}",
+            applied_ok,
+            applied_failed,
+            report.suggestions.len()
+        )
+    };
+    let written = super::audit::record_run(
+        store,
+        "maintain_organize",
+        dry_run,
+        "maintenance",
+        message,
+        opts.agent.clone(),
+        &report,
+    )?;
+    report.ops_log_id = Some(written.id);
+    report.ops_log_seq = Some(written.seq);
+
+    Ok(report)
+}
+
+/// Suggestion phase: heuristic, LLM or auto (heuristic plus LLM fill-in),
+/// sorted by confidence desc, title asc. Also returns whether embedding
+/// heuristics ran.
+async fn collect_suggestions(
+    store: &Store,
+    config: &Config,
+    llm: Option<&dyn crate::llm::ChatCompleter>,
+    opts: &OrganizeOptions,
+    min_confidence: f64,
+    taxonomy: &Taxonomy,
+    considered: &[Document],
+) -> Result<(Vec<RefileSuggestion>, bool)> {
     let mut embedding_heuristics_enabled = false;
     let mut suggestions = match opts.mode {
         OrganizeMode::Heuristic => {
             let (suggestions, enabled) = crate::util::blocking_section(|| {
-                suggest_heuristic(store, config, &taxonomy, &considered)
+                suggest_heuristic(store, config, taxonomy, considered)
             })?;
             embedding_heuristics_enabled = enabled;
             suggestions
         }
         OrganizeMode::Llm => {
             if let Some(client) = llm.filter(|_| config.llm_enabled) {
-                match suggest_llm(client, &taxonomy, &considered).await {
+                match suggest_llm(client, taxonomy, considered).await {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(error = %e, "organize LLM failed; falling back to heuristic");
                         let (mut s, enabled) = crate::util::blocking_section(|| {
-                            suggest_heuristic(store, config, &taxonomy, &considered)
+                            suggest_heuristic(store, config, taxonomy, considered)
                         })?;
                         embedding_heuristics_enabled = enabled;
                         for item in &mut s {
@@ -237,7 +336,7 @@ pub async fn maintain_organize(
                 }
             } else {
                 let (mut s, enabled) = crate::util::blocking_section(|| {
-                    suggest_heuristic(store, config, &taxonomy, &considered)
+                    suggest_heuristic(store, config, taxonomy, considered)
                 })?;
                 embedding_heuristics_enabled = enabled;
                 for item in &mut s {
@@ -253,7 +352,7 @@ pub async fn maintain_organize(
         }
         OrganizeMode::Auto => {
             let (mut s, enabled) = crate::util::blocking_section(|| {
-                suggest_heuristic(store, config, &taxonomy, &considered)
+                suggest_heuristic(store, config, taxonomy, considered)
             })?;
             embedding_heuristics_enabled = enabled;
             let need_llm: Vec<Document> = considered
@@ -266,7 +365,7 @@ pub async fn maintain_organize(
                 .collect();
             if !need_llm.is_empty() {
                 if let Some(client) = llm.filter(|_| config.llm_enabled) {
-                    match suggest_llm(client, &taxonomy, &need_llm).await {
+                    match suggest_llm(client, taxonomy, &need_llm).await {
                         Ok(llm_sugs) => {
                             let covered: HashSet<String> =
                                 s.iter().map(|x| x.document_id.clone()).collect();
@@ -303,9 +402,18 @@ pub async fn maintain_organize(
             .then_with(|| a.title.cmp(&b.title))
     });
 
-    // Build whitelist actions from suggestions above confidence floor.
+    Ok((suggestions, embedding_heuristics_enabled))
+}
+
+/// Whitelist `refile` actions for suggestions above the confidence floor,
+/// plus an optional trailing `rebuild_index`.
+fn refile_actions(
+    suggestions: &[RefileSuggestion],
+    min_confidence: f64,
+    rebuild_index: bool,
+) -> Result<Vec<MaintenancePlanItem>> {
     let mut actions = Vec::new();
-    for s in &suggestions {
+    for s in suggestions {
         if s.confidence < min_confidence {
             continue;
         }
@@ -327,7 +435,7 @@ pub async fn maintain_organize(
         };
         actions.push(validate_action(action)?);
     }
-    if opts.rebuild_index {
+    if rebuild_index {
         actions.push(validate_action(MaintenancePlanItem {
             action: MaintenanceAction::RebuildIndex,
             reason: Some("post-organize catalog refresh".into()),
@@ -336,12 +444,21 @@ pub async fn maintain_organize(
         })?);
     }
 
+    Ok(actions)
+}
+
+/// Apply (or preview) the refile actions; `rebuild_index` is handled later.
+/// Returns the per-document results and the ok / failed counts.
+fn apply_refiles(
+    store: &Store,
+    actions: &[MaintenancePlanItem],
+    dry_run: bool,
+) -> (Vec<RefileApplyResult>, usize, usize) {
     let mut applied = Vec::new();
     let mut applied_ok = 0usize;
     let mut applied_failed = 0usize;
-    let mut rebuild_index_entries = None;
 
-    for action in &actions {
+    for action in actions {
         if action.action == MaintenanceAction::RebuildIndex {
             continue; // handled after refiles
         }
@@ -451,82 +568,7 @@ pub async fn maintain_organize(
         }
     }
 
-    if opts.rebuild_index
-        && actions
-            .iter()
-            .any(|a| a.action == MaintenanceAction::RebuildIndex)
-    {
-        if dry_run {
-            let n = crate::util::blocking_section(|| {
-                store
-                    .documents()
-                    .count_documents_by_layer(crate::models::Layer::Wiki.as_str())
-            })?;
-            rebuild_index_entries = Some(n);
-        } else if applied_ok > 0 || suggestions.is_empty() {
-            let n = crate::util::blocking_section(|| {
-                store.wiki_index().rebuild_wiki_index_from_docs()
-            })?;
-            rebuild_index_entries = Some(n);
-        }
-    }
-
-    let notes = build_notes(
-        opts.mode,
-        unscoped_total,
-        &suggestions,
-        min_confidence,
-        dry_run,
-        llm.is_some() && config.llm_enabled,
-        embedding_heuristics_enabled,
-    );
-
-    let mut report = OrganizeReport {
-        dry_run,
-        mode: opts.mode.as_str().into(),
-        embedding_heuristics_enabled,
-        unscoped_total,
-        unscoped_considered,
-        skipped_cap,
-        suggestions,
-        actions,
-        applied,
-        applied_ok,
-        applied_failed,
-        rebuild_index_entries,
-        notes: Some(notes),
-        ops_log_id: None,
-        ops_log_seq: None,
-    };
-
-    let message = if dry_run {
-        format!(
-            "dry_run maintain_organize: {} suggestions, {} actions, {} unscoped",
-            report.suggestions.len(),
-            report.actions.len(),
-            unscoped_total
-        )
-    } else {
-        format!(
-            "maintain_organize: applied_ok={} failed={} suggestions={}",
-            applied_ok,
-            applied_failed,
-            report.suggestions.len()
-        )
-    };
-    let written = super::audit::record_run(
-        store,
-        "maintain_organize",
-        dry_run,
-        "maintenance",
-        message,
-        opts.agent.clone(),
-        &report,
-    )?;
-    report.ops_log_id = Some(written.id);
-    report.ops_log_seq = Some(written.seq);
-
-    Ok(report)
+    (applied, applied_ok, applied_failed)
 }
 
 fn build_notes(
@@ -937,6 +979,11 @@ async fn suggest_llm(
         .collect();
     let sample_json = serde_json::to_string_pretty(&samples).unwrap_or_else(|_| "[]".into());
 
+    let user = format!(
+        "## Taxonomy\n\n{tax}\n\n## Unscoped documents (missing wing)\n\n{docs}\n",
+        tax = truncate_chars(&tax_json, 8000),
+        docs = truncate_chars(&sample_json, 16_000),
+    );
     let system = r#"You organize a personal knowledge base into wings (top shelves) and rooms (sub-areas).
 Given taxonomy and unscoped documents (missing wing), propose refile targets.
 
@@ -959,11 +1006,6 @@ Rules:
 }
 confidence is 0..1.
 "#;
-    let user = format!(
-        "## Taxonomy\n\n{tax}\n\n## Unscoped documents (missing wing)\n\n{docs}\n",
-        tax = truncate_chars(&tax_json, 8000),
-        docs = truncate_chars(&sample_json, 16_000),
-    );
     let messages = [
         ChatMessage {
             role: "system".into(),
