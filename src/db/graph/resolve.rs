@@ -13,11 +13,11 @@ use crate::db::graph::{
 };
 use crate::db::Store;
 use crate::error::Result;
+use crate::models::{Document, GraphEdge, GraphNode, Layer, NodeKind};
+use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 use rag_mcp_markup::extract::{
     extract_links_with, ExtractOptions, ExtractedLink, DEFAULT_MAX_LINKS_PER_DOC,
 };
-use crate::models::{Document, GraphEdge, GraphNode, Layer, NodeKind};
-use crate::util::{slugify, wiki_slug_from_uri, SlugPolicy};
 
 /// Rebuild the object-graph slice for `doc`.
 ///

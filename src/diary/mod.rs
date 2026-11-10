@@ -13,10 +13,10 @@ use uuid::Uuid;
 
 use crate::chunking::{from_config, Chunker};
 use crate::config::Config;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::db::graph::resolve::rebuild_document_graph;
 use crate::models::{
     Chunk, DiaryEntry, Document, DrawerListItem, OpsLogEntry, WakeUpSchemaSnippet,
 };

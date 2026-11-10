@@ -11,11 +11,11 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::config::Config;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::db::store::{embedding_manifest_matches_config, embedding_migration_manifest};
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::db::graph::resolve::rebuild_document_graph;
 use crate::models::EmbeddingManifest;
 
 /// Allowed `maintain_refresh` action names (safety whitelist).

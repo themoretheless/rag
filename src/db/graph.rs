@@ -8,11 +8,11 @@ use uuid::Uuid;
 
 use super::store::Store;
 use crate::error::{AppError, Result};
-use rag_mcp_markup::REL_TUNNEL;
 use crate::models::{
     EdgeCutRow, EdgeOrigin, GraphEdge, GraphFilter, GraphNode, GraphStats, GraphView, NodeKind,
     RelType,
 };
+use rag_mcp_markup::REL_TUNNEL;
 
 /// Node cap for a filtered graph export when the filter sets none.
 const DEFAULT_EXPORT_MAX_NODES: u32 = 500;
