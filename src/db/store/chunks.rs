@@ -60,6 +60,49 @@ impl Chunks<'_> {
         })
     }
 
+    /// Chunk bodies for several `(document_id, low, high)` windows in one
+    /// query, grouped by document, each list ordered by `chunk_index`, id and
+    /// free of duplicates where windows overlap.
+    pub(crate) fn list_chunk_bodies_in_windows(
+        &self,
+        windows: &[(&str, i32, i32)],
+    ) -> Result<std::collections::HashMap<String, Vec<ChunkBody>>> {
+        let mut out: std::collections::HashMap<String, Vec<ChunkBody>> =
+            std::collections::HashMap::new();
+        if windows.is_empty() {
+            return Ok(out);
+        }
+        let values = vec!["(CAST(? AS VARCHAR), CAST(? AS INTEGER), CAST(? AS INTEGER))"; windows.len()]
+            .join(", ");
+        let binds: Vec<String> = windows
+            .iter()
+            .flat_map(|(document_id, low, high)| {
+                [(*document_id).to_owned(), low.to_string(), high.to_string()]
+            })
+            .collect();
+        let conn = self.store.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            r#"
+            WITH w(document_id, low, high) AS (VALUES {values})
+            SELECT DISTINCT c.id, c.document_id, c.chunk_index, c.content, c.metadata_json
+            FROM chunks c
+            JOIN w ON c.document_id = w.document_id AND c.chunk_index BETWEEN w.low AND w.high
+            ORDER BY c.document_id ASC, c.chunk_index ASC, c.id ASC
+            "#
+        ))?;
+        crate::db::rows::for_each_row(&mut stmt, duckdb::params_from_iter(binds.iter()), |row| {
+            let document_id: String = row.get(1)?;
+            out.entry(document_id).or_default().push(ChunkBody {
+                id: row.get(0)?,
+                chunk_index: row.get(2)?,
+                content: row.get(3)?,
+                metadata_json: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            });
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
     /// Stored vector for each distinct chunk text of `document_ids`, keyed by
     /// the text: a re-ingest reuses them for chunks whose text is unchanged
     /// (the embedding input is the chunk text alone under one manifest).

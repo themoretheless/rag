@@ -263,6 +263,9 @@ pub(crate) fn search_with_corpus_guard(
     // Exhaustive dispatch only: new SearchMode variants must add a run_* arm here
     // (and update SearchMode::as_str / parse / needs_*). Do not use `_`.
     let mut timings = StageTimings::default();
+    // Document ranking fields read while hydrating vector hits, reused by
+    // `finalize_hits` instead of reading the same documents again.
+    let mut ranking = RankingCache::new();
     let mut refill_rounds = 0;
     let mut reached_refill_cap = false;
     let hits = loop {
@@ -271,7 +274,7 @@ pub(crate) fn search_with_corpus_guard(
         let mut round_timings = StageTimings::default();
         let hits = match query.mode {
             SearchMode::Vec => {
-                let mut hits = run_vec(store, query, pool, &filters)?;
+                let mut hits = run_vec(store, query, pool, &filters, &mut ranking)?;
                 round_timings.vec_ms = Some(elapsed_ms(round_started));
                 stamp_ranks(&mut hits, false);
                 hits
@@ -283,7 +286,7 @@ pub(crate) fn search_with_corpus_guard(
                 hits
             }
             SearchMode::Hybrid => {
-                match run_hybrid(store, query, pool, &filters, &mut round_timings)? {
+                match run_hybrid(store, query, pool, &filters, &mut round_timings, &mut ranking)? {
                     HybridOutcome::Fused(h) => h,
                     HybridOutcome::VecOnly(h) => h,
                 }
@@ -313,7 +316,7 @@ pub(crate) fn search_with_corpus_guard(
     enforce_timeout(started, query.timeout_ms, "retrieval")?;
     let retrieval_ms = elapsed_ms(started);
     let post_started = Instant::now();
-    let mut hits = finalize_hits(store, hits, query)?;
+    let mut hits = finalize_hits(store, hits, query, ranking)?;
     enforce_timeout(started, query.timeout_ms, "post-processing")?;
     let postprocess_ms = elapsed_ms(post_started);
     let total_ms = elapsed_ms(started);
@@ -379,13 +382,14 @@ fn run_vec(
     query: &SearchQuery,
     pool: usize,
     filters: &LexFilters,
+    ranking: &mut RankingCache,
 ) -> Result<Vec<SearchHit>> {
     // Vec-only path stays usable when hybrid/lex infrastructure is incomplete.
     let emb = query
         .query_embedding
         .as_deref()
         .ok_or_else(|| AppError::embeddings("vec search requires query_embedding"))?;
-    search_vec(store, emb, pool, filters)
+    search_vec_ranked(store, emb, pool, filters, ranking)
 }
 
 /// Lexical / FTS path (requires `query_text`).
@@ -399,23 +403,15 @@ fn run_lex(
         .query_text
         .as_deref()
         .ok_or_else(|| AppError::fts("lex search requires query_text"))?;
-    // Prefer fts module (DuckDB BM25 or TF fallback) with scope filters.
-    match fts::search_bm25_with_stemmer(
-        store,
-        text,
-        pool,
-        filters,
-        Some(query.fts_stemmer.as_str()),
-    ) {
-        Ok(h) => {
-            debug!(count = h.len(), "lex search via db::fts");
-            Ok(h)
-        }
-        Err(e) => {
-            warn!(error = %e, "fts::search_bm25 failed; using in-module lex fallback");
-            search_lex(store, text, pool, filters, &query.fts_stemmer)
-        }
+    if pool == 0 || text.trim().is_empty() {
+        return Ok(Vec::new());
     }
+    // db::fts owns the fallback (DuckDB BM25, else term frequency); a failure
+    // here is final: retrying the same call cannot succeed.
+    let hits =
+        fts::search_bm25_with_stemmer(store, text, pool, filters, Some(query.fts_stemmer.as_str()))?;
+    debug!(count = hits.len(), "lex search via db::fts");
+    Ok(hits)
 }
 
 /// Hybrid path result: full RRF fusion, or vec-only when lex is unavailable.
@@ -432,6 +428,7 @@ fn run_hybrid(
     pool: usize,
     filters: &LexFilters,
     timings: &mut StageTimings,
+    ranking: &mut RankingCache,
 ) -> Result<HybridOutcome> {
     let emb = query
         .query_embedding
@@ -446,38 +443,29 @@ fn run_hybrid(
     // ranking can drop every in-project candidate when another project has
     // enough stronger matches; `search_vec` also owns the generation-aware
     // normalized snapshot cache.
-    let mut vec_hits = search_vec(store, emb, pool, filters)?;
+    let mut vec_hits = search_vec_ranked(store, emb, pool, filters, ranking)?;
     stamp_ranks(&mut vec_hits, false);
     timings.vec_ms = Some(elapsed_ms(vec_started));
     let lex_started = Instant::now();
-    let mut lex_hits = match fts::search_bm25_with_stemmer(
-        store,
-        text,
-        pool,
-        filters,
-        Some(query.fts_stemmer.as_str()),
-    ) {
-        Ok(h) => h,
-        Err(e) => {
-            warn!(error = %e, "fts::search_bm25 failed in hybrid; lex fallback");
-            match search_lex(store, text, pool, filters, &query.fts_stemmer) {
-                Ok(h) => h,
-                Err(e2) => {
-                    // Hybrid incomplete: keep vec results so search still returns hits.
-                    warn!(
-                        error = %e2,
-                        "hybrid lex fallback failed; returning vec-only results"
-                    );
-                    return Ok(HybridOutcome::VecOnly(vec_hits));
-                }
-            }
+    let lex_result = if text.trim().is_empty() {
+        Ok(Vec::new())
+    } else {
+        fts::search_bm25_with_stemmer(store, text, pool, filters, Some(query.fts_stemmer.as_str()))
+    };
+    let mut lex_hits = match lex_result {
+        Ok(hits) => hits,
+        Err(error) => {
+            // db::fts already fell back internally; hybrid keeps the vector
+            // results so search still returns hits.
+            warn!(%error, "hybrid lexical leg failed; returning vec-only results");
+            return Ok(HybridOutcome::VecOnly(vec_hits));
         }
     };
     stamp_ranks(&mut lex_hits, true);
     timings.lex_ms = Some(elapsed_ms(lex_started));
-    Ok(HybridOutcome::Fused(fuse_rrf(
-        &vec_hits,
-        &lex_hits,
+    Ok(HybridOutcome::Fused(fuse_rrf_owned(
+        vec_hits,
+        lex_hits,
         query.rrf_k,
     )))
 }
@@ -487,6 +475,7 @@ fn finalize_hits(
     store: &Store,
     mut hits: Vec<SearchHit>,
     query: &SearchQuery,
+    mut ranking: RankingCache,
 ) -> Result<Vec<SearchHit>> {
     if let Some(min) = query.min_score {
         hits = apply_min_score(hits, min);
@@ -500,20 +489,19 @@ fn finalize_hits(
         .as_deref()
         .map(str::trim)
         .filter(|q| !q.is_empty());
-    // One lightweight batch read serves both recency and field boosts; this
-    // used to be two full `get_document` loads per hit.
-    let ranking = if recency.is_some() || boost_query.is_some() {
-        ranking_fields(store, &hits)?
-    } else {
-        HashMap::new()
-    };
+    // Documents hydrated with the vector hits are already known; one batch
+    // read covers the rest (lexical-only hits) for recency and field boosts.
+    if recency.is_some() || boost_query.is_some() {
+        fill_ranking_fields(store, &hits, &mut ranking)?;
+    }
 
     if let Some(half_life_days) = recency {
         let now = query.now.unwrap_or_else(chrono::Utc::now);
         for hit in &mut hits {
             if let Some(document) = ranking.get(&hit.document_id) {
+                let updated_at = document.updated_at()?;
                 let age_days = now
-                    .signed_duration_since(document.updated_at)
+                    .signed_duration_since(updated_at)
                     .num_seconds()
                     .max(0) as f64
                     / 86_400.0;
@@ -613,43 +601,75 @@ struct RankingFields {
     uri: String,
     pinned: bool,
     boost: f64,
-    updated_at: chrono::DateTime<chrono::Utc>,
+    /// `CAST(updated_at AS VARCHAR)`, parsed only when recency applies.
+    updated_raw: String,
 }
 
-/// Ranking fields for every distinct document among `hits`, in one query.
-fn ranking_fields(store: &Store, hits: &[SearchHit]) -> Result<HashMap<String, RankingFields>> {
-    let ids: Vec<&str> = hits
-        .iter()
-        .map(|hit| hit.document_id.as_str())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let placeholders = crate::db::sql::in_placeholders(ids.len());
-    let conn = store.lock()?;
-    let mut stmt = conn.prepare(&format!(
-        "SELECT id, title, uri, COALESCE(pinned, false), COALESCE(boost, 1.0), \
-         CAST(updated_at AS VARCHAR) FROM documents WHERE id IN ({placeholders})"
-    ))?;
-    let rows = crate::db::rows::query_vec(&mut stmt, params_from_iter(ids.iter()), |row| {
-        let updated_raw: String = row.get(5)?;
-        let updated_at = crate::util::parse_db_timestamp(&updated_raw).ok_or_else(|| {
-            AppError::db(format!("invalid timestamp value: {}", updated_raw.trim()))
-        })?;
+impl RankingFields {
+    /// Read from `(id, title, uri, pinned, boost, updated_at)` as selected by
+    /// [`RANKING_COLUMNS`].
+    fn from_row(row: &duckdb::Row<'_>) -> Result<(String, Self)> {
         Ok((
-            row.get::<_, String>(0)?,
-            RankingFields {
+            row.get(0)?,
+            Self {
                 title: row.get(1)?,
                 uri: row.get(2)?,
                 pinned: row.get(3)?,
                 boost: row.get(4)?,
-                updated_at,
+                updated_raw: row.get(5)?,
             },
         ))
+    }
+
+    fn updated_at(&self) -> Result<chrono::DateTime<chrono::Utc>> {
+        crate::util::parse_db_timestamp(&self.updated_raw).ok_or_else(|| {
+            AppError::db(format!(
+                "invalid timestamp value: {}",
+                self.updated_raw.trim()
+            ))
+        })
+    }
+}
+
+/// Ranking fields per document id, filled during one search.
+type RankingCache = HashMap<String, RankingFields>;
+
+/// Projection read by [`RankingFields::from_row`].
+const RANKING_COLUMNS: &str = "id, title, uri, COALESCE(pinned, false), COALESCE(boost, 1.0), \
+     CAST(updated_at AS VARCHAR)";
+
+/// Add the ranking fields of every distinct document among `hits` that
+/// `ranking` does not hold yet, in one query.
+fn fill_ranking_fields(store: &Store, hits: &[SearchHit], ranking: &mut RankingCache) -> Result<()> {
+    let ids: Vec<&str> = hits
+        .iter()
+        .map(|hit| hit.document_id.as_str())
+        .filter(|id| !ranking.contains_key(*id))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = crate::db::sql::in_placeholders(ids.len());
+    let conn = store.lock()?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RANKING_COLUMNS} FROM documents WHERE id IN ({placeholders})"
+    ))?;
+    crate::db::rows::for_each_row(&mut stmt, params_from_iter(ids.iter()), |row| {
+        let (id, fields) = RankingFields::from_row(row)?;
+        ranking.insert(id, fields);
+        Ok(())
     })?;
-    Ok(rows.into_iter().collect())
+    Ok(())
+}
+
+/// Ranking fields for every distinct document among `hits`, in one query.
+#[cfg(test)]
+fn ranking_fields(store: &Store, hits: &[SearchHit]) -> Result<RankingCache> {
+    let mut ranking = RankingCache::new();
+    fill_ranking_fields(store, hits, &mut ranking)?;
+    Ok(ranking)
 }
 
 fn apply_field_boosts(
@@ -706,12 +726,9 @@ fn apply_field_boosts(
 /// Fuse any number of independently ranked query result lists with RRF.
 pub fn fuse_rrf_many(lists: &[Vec<SearchHit>], rrf_k: f32, top_k: usize) -> Vec<SearchHit> {
     let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
-    let mut fused = HashMap::new();
-    for list in lists {
-        accumulate_rrf_list(&mut fused, list, k);
-    }
-    let mut out: Vec<_> = fused
-        .into_values()
+    let borrowed: Vec<&[SearchHit]> = lists.iter().map(Vec::as_slice).collect();
+    let mut out: Vec<_> = rrf_fuse_borrowed(&borrowed, k)
+        .into_iter()
         .map(|(rrf, mut hit)| {
             hit.score = rrf;
             hit.score_rrf = Some(rrf);
@@ -764,6 +781,28 @@ pub fn attach_context(
     let radius = neighbor_chunks.max(1) as i32;
     let mut chunks_by_document: HashMap<String, Vec<Sectioned>> = HashMap::new();
     let mut window: Vec<Sectioned>;
+    // Neighbour windows of every hit in one read, grouped by document.
+    let neighbor_bodies: HashMap<String, Vec<Sectioned>> =
+        if matches!(expansion, ContextExpansion::Neighbors) {
+            let windows: Vec<(&str, i32, i32)> = hits
+                .iter()
+                .map(|hit| {
+                    (
+                        hit.document_id.as_str(),
+                        hit.chunk_index.saturating_sub(radius),
+                        hit.chunk_index.saturating_add(radius),
+                    )
+                })
+                .collect();
+            store
+                .chunks()
+                .list_chunk_bodies_in_windows(&windows)?
+                .into_iter()
+                .map(|(document_id, bodies)| (document_id, sectioned(bodies)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
     for hit in hits {
         let chunks: &Vec<Sectioned> = match expansion {
             ContextExpansion::ParentSection | ContextExpansion::Parent => {
@@ -778,11 +817,20 @@ pub fn attach_context(
                 &chunks_by_document[&hit.document_id]
             }
             ContextExpansion::Neighbors => {
-                window = sectioned(store.chunks().list_chunk_bodies_in_range(
-                    &hit.document_id,
+                let (low, high) = (
                     hit.chunk_index.saturating_sub(radius),
                     hit.chunk_index.saturating_add(radius),
-                )?);
+                );
+                window = neighbor_bodies
+                    .get(&hit.document_id)
+                    .map(|bodies| {
+                        bodies
+                            .iter()
+                            .filter(|(c, _, _)| (low..=high).contains(&c.chunk_index))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 &window
             }
         };
@@ -1225,11 +1273,24 @@ impl VectorDocumentScope {
     }
 }
 
+#[cfg(test)]
 fn search_vec(
     store: &Store,
     query_embedding: &[f32],
     top_k: usize,
     filters: &LexFilters,
+) -> Result<Vec<SearchHit>> {
+    search_vec_ranked(store, query_embedding, top_k, filters, &mut RankingCache::new())
+}
+
+/// [`search_vec`] that also records the ranking fields of the documents it
+/// hydrates into `ranking`.
+fn search_vec_ranked(
+    store: &Store,
+    query_embedding: &[f32],
+    top_k: usize,
+    filters: &LexFilters,
+    ranking: &mut RankingCache,
 ) -> Result<Vec<SearchHit>> {
     if top_k == 0 || query_embedding.is_empty() {
         return Ok(Vec::new());
@@ -1241,7 +1302,7 @@ fn search_vec(
 
     let (snapshot, mut documents) = vector_search_inputs(store, filters)?;
     let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
-    let (hits, missing_document) = hydrate_vector_hits(store, &snapshot, ranked)?;
+    let (hits, missing_document) = hydrate_vector_hits(store, &snapshot, ranked, ranking)?;
     if !missing_document || documents.only_ids().is_some() {
         return Ok(hits);
     }
@@ -1251,7 +1312,7 @@ fn search_vec(
     // remain.
     documents.exclude_orphan_documents(store)?;
     let ranked = rank_vector_candidates(&snapshot, &documents, &normalized_query, top_k);
-    Ok(hydrate_vector_hits(store, &snapshot, ranked)?.0)
+    Ok(hydrate_vector_hits(store, &snapshot, ranked, ranking)?.0)
 }
 
 fn rank_vector_candidates(
@@ -1766,6 +1827,7 @@ fn hydrate_vector_hits(
     store: &Store,
     snapshot: &VectorSnapshot,
     ranked: Vec<RankedVectorCandidate>,
+    ranking: &mut RankingCache,
 ) -> Result<(Vec<SearchHit>, bool)> {
     // Candidate pools reach thousands during refill: read rows in a few
     // `IN (...)` batches instead of one point query per candidate. Content,
@@ -1784,12 +1846,11 @@ fn hydrate_vector_hits(
     let document_ids: Vec<&str> = ranked
         .iter()
         .map(|candidate| snapshot.document_id(&snapshot.chunks[candidate.ordinal]))
+        .filter(|id| !ranking.contains_key(*id))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     let mut rows: HashMap<String, HitRow> = HashMap::with_capacity(ids.len());
-    let mut documents: HashMap<String, (String, String)> =
-        HashMap::with_capacity(document_ids.len());
     {
         let conn = store.lock()?;
         for batch in ids.chunks(CONTENT_BATCH) {
@@ -1813,11 +1874,14 @@ fn hydrate_vector_hits(
         }
         for batch in document_ids.chunks(CONTENT_BATCH) {
             let placeholders = crate::db::sql::in_placeholders(batch.len());
+            // Ranking fields ride along so `finalize_hits` need not read
+            // these documents again.
             let mut stmt = conn.prepare(&format!(
-                "SELECT id, title, uri FROM documents WHERE id IN ({placeholders})"
+                "SELECT {RANKING_COLUMNS} FROM documents WHERE id IN ({placeholders})"
             ))?;
             crate::db::rows::for_each_row(&mut stmt, params_from_iter(batch.iter()), |row| {
-                documents.insert(row.get(0)?, (row.get(1)?, row.get(2)?));
+                let (id, fields) = RankingFields::from_row(row)?;
+                ranking.insert(id, fields);
                 Ok(())
             })?;
         }
@@ -1827,7 +1891,7 @@ fn hydrate_vector_hits(
     for candidate in ranked {
         let chunk = &snapshot.chunks[candidate.ordinal];
         let document_id = snapshot.document_id(chunk);
-        let Some((title, uri)) = documents.get(document_id) else {
+        let Some(document) = ranking.get(document_id) else {
             missing_document = true;
             continue;
         };
@@ -1844,8 +1908,8 @@ fn hydrate_vector_hits(
         hits.push(SearchHit {
             chunk_id: chunk.id.to_string(),
             document_id: document_id.to_owned(),
-            document_title: title.clone(),
-            document_uri: uri.clone(),
+            document_title: document.title.clone(),
+            document_uri: document.uri.clone(),
             chunk_index: chunk.chunk_index,
             content: row.content,
             score: candidate.score,
@@ -1868,29 +1932,6 @@ fn hydrate_vector_hits(
 }
 
 // ---------------------------------------------------------------------------
-// Lexical search (delegates to db::fts: DuckDB BM25 or TF fallback)
-// ---------------------------------------------------------------------------
-
-fn search_lex(
-    store: &Store,
-    query_text: &str,
-    top_k: usize,
-    filters: &LexFilters,
-    fts_stemmer: &str,
-) -> Result<Vec<SearchHit>> {
-    if top_k == 0 || query_text.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let hits = fts::search_bm25_with_stemmer(store, query_text, top_k, filters, Some(fts_stemmer))?;
-    debug!(
-        count = hits.len(),
-        "lex search via db::fts (BM25 or TF fallback)"
-    );
-    Ok(hits)
-}
-
-// ---------------------------------------------------------------------------
 // RRF fusion
 // ---------------------------------------------------------------------------
 
@@ -1901,22 +1942,26 @@ fn search_lex(
 /// preserved from the source lists when present.
 pub fn fuse_rrf(vec_hits: &[SearchHit], lex_hits: &[SearchHit], rrf_k: f32) -> Vec<SearchHit> {
     let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
+    finish_two_list_rrf(rrf_fuse_borrowed(&[vec_hits, lex_hits], k))
+}
 
-    // chunk_id -> accumulated RRF + best partial hit
-    let mut fused: HashMap<String, (f32, SearchHit)> = HashMap::new();
+/// [`fuse_rrf`] taking the lists by value: hits are moved into the result,
+/// never cloned.
+fn fuse_rrf_owned(vec_hits: Vec<SearchHit>, lex_hits: Vec<SearchHit>, rrf_k: f32) -> Vec<SearchHit> {
+    let k = if rrf_k > 0.0 { rrf_k } else { DEFAULT_RRF_K };
+    finish_two_list_rrf(rrf_fuse_lists(vec![vec_hits, lex_hits], k))
+}
 
-    accumulate_rrf_list(&mut fused, vec_hits, k);
-    accumulate_rrf_list(&mut fused, lex_hits, k);
-
+/// Write the fused score and order by it (ties by chunk id).
+fn finish_two_list_rrf(fused: Vec<(f32, SearchHit)>) -> Vec<SearchHit> {
     let mut out: Vec<SearchHit> = fused
-        .into_values()
+        .into_iter()
         .map(|(rrf, mut hit)| {
             hit.score_rrf = Some(rrf);
             hit.score = rrf;
             hit
         })
         .collect();
-
     out.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -1926,23 +1971,83 @@ pub fn fuse_rrf(vec_hits: &[SearchHit], lex_hits: &[SearchHit], rrf_k: f32) -> V
     out
 }
 
-fn accumulate_rrf_list(fused: &mut HashMap<String, (f32, SearchHit)>, hits: &[SearchHit], k: f32) {
-    for (rank0, hit) in hits.iter().enumerate() {
-        let rank = (rank0 + 1) as f32;
-        let contrib = 1.0 / (k + rank);
-        fused
-            .entry(hit.chunk_id.clone())
-            .and_modify(|(rrf, existing)| {
-                *rrf += contrib;
-                merge_score_fields(existing, hit);
-            })
-            .or_insert_with(|| {
-                let mut base = hit.clone();
-                // Clear rrf until final write; primary will be set after full fusion.
-                base.score_rrf = None;
-                (contrib, base)
-            });
+/// One distinct chunk id of an RRF fusion: its accumulated score, the
+/// (list, rank) of its first occurrence (the base hit) and of later ones.
+struct RrfSlot {
+    rrf: f32,
+    base: (usize, usize),
+    others: Vec<(usize, usize)>,
+}
+
+/// RRF accumulation over list/position indices:
+/// `score_rrf(d) = Σ 1 / (k + rank_i(d))`. Each distinct chunk id keeps the
+/// hit of its first occurrence (list order, then rank) as the base, merged
+/// with the score fields of its later occurrences. Hits are only borrowed.
+fn rrf_slots(lists: &[&[SearchHit]], k: f32) -> Vec<RrfSlot> {
+    let mut slots: Vec<RrfSlot> = Vec::new();
+    let mut by_id: HashMap<&str, usize> = HashMap::with_capacity(lists.iter().map(|hits| hits.len()).sum());
+    for (list_index, hits) in lists.iter().enumerate() {
+        for (rank0, hit) in hits.iter().enumerate() {
+            let contrib = 1.0 / (k + (rank0 + 1) as f32);
+            match by_id.get(hit.chunk_id.as_str()) {
+                Some(&slot) => {
+                    slots[slot].rrf += contrib;
+                    slots[slot].others.push((list_index, rank0));
+                }
+                None => {
+                    by_id.insert(hit.chunk_id.as_str(), slots.len());
+                    slots.push(RrfSlot {
+                        rrf: contrib,
+                        base: (list_index, rank0),
+                        others: Vec::new(),
+                    });
+                }
+            }
+        }
     }
+    slots
+}
+
+/// Fused base hits of `slots`, cloning only one hit per distinct chunk.
+fn rrf_fuse_borrowed(lists: &[&[SearchHit]], k: f32) -> Vec<(f32, SearchHit)> {
+    rrf_slots(lists, k)
+        .into_iter()
+        .map(|slot| {
+            let mut base = lists[slot.base.0][slot.base.1].clone();
+            // Cleared until the caller writes the fused value.
+            base.score_rrf = None;
+            for (list, rank) in slot.others {
+                merge_score_fields(&mut base, &lists[list][rank]);
+            }
+            (slot.rrf, base)
+        })
+        .collect()
+}
+
+/// Fused base hits of `slots`, moving the hits out of `lists`.
+fn rrf_fuse_lists(lists: Vec<Vec<SearchHit>>, k: f32) -> Vec<(f32, SearchHit)> {
+    let slots = {
+        let borrowed: Vec<&[SearchHit]> = lists.iter().map(Vec::as_slice).collect();
+        rrf_slots(&borrowed, k)
+    };
+    let mut lists: Vec<Vec<Option<SearchHit>>> = lists
+        .into_iter()
+        .map(|hits| hits.into_iter().map(Some).collect())
+        .collect();
+    let mut fused = Vec::with_capacity(slots.len());
+    for slot in slots {
+        let Some(mut base) = lists[slot.base.0][slot.base.1].take() else {
+            continue;
+        };
+        base.score_rrf = None;
+        for (list, rank) in slot.others {
+            if let Some(other) = lists[list][rank].as_ref() {
+                merge_score_fields(&mut base, other);
+            }
+        }
+        fused.push((slot.rrf, base));
+    }
+    fused
 }
 
 fn merge_score_fields(dst: &mut SearchHit, src: &SearchHit) {

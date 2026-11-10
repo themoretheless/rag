@@ -269,12 +269,12 @@ fn search_lex_and_hybrid_with_store() {
     store.chunks().insert_chunks(&chunks).unwrap();
 
     // Production lexical path (DuckDB BM25, or the TF fallback without FTS).
-    let lex = search_lex(
+    let lex = fts::search_bm25_with_stemmer(
         &store,
         "cats xylophone",
         10,
         &LexFilters::default(),
-        "porter",
+        Some("porter"),
     )
     .unwrap();
     assert!(!lex.is_empty());
@@ -1939,6 +1939,61 @@ fn expand_parent_without_parent_keeps_own_body() {
     assert_eq!(context[0].chunk_id, "solo");
 }
 
+#[test]
+fn neighbor_context_windows_are_read_once_and_overlap_correctly() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("neighbors.duckdb")).unwrap();
+    for doc in ["a", "b"] {
+        store
+            .documents()
+            .upsert_document(&Document {
+                id: doc.into(),
+                uri: format!("uri://{doc}"),
+                title: doc.into(),
+                content: doc.into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let chunks: Vec<Chunk> = (0..5)
+            .map(|index| Chunk {
+                id: format!("{doc}{index}"),
+                document_id: doc.into(),
+                chunk_index: index,
+                content: format!("{doc} body {index}"),
+                embedding: vec![1.0, 0.0],
+                char_start: 0,
+                char_end: 1,
+                metadata_json: "{}".into(),
+            })
+            .collect();
+        store
+            .chunks()
+            .replace_chunks_for_document(doc, &chunks)
+            .unwrap();
+    }
+    let hit = |doc: &str, index: i32| SearchHit {
+        chunk_id: format!("{doc}{index}"),
+        document_id: doc.into(),
+        chunk_index: index,
+        ..Default::default()
+    };
+    // Overlapping windows in "a", an edge window in "b".
+    let mut hits = vec![hit("a", 1), hit("a", 2), hit("b", 4)];
+    attach_context(&store, &mut hits, Some(ContextExpansion::Neighbors), 1).unwrap();
+    let context = |hit: &SearchHit| {
+        hit.context
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|chunk| chunk.chunk_id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(context(&hits[0]), ["a0", "a1", "a2"]);
+    assert_eq!(context(&hits[1]), ["a1", "a2", "a3"]);
+    assert_eq!(context(&hits[2]), ["b3", "b4"]);
+    assert_eq!(hits[1].content, "a body 1\na body 2\na body 3");
+}
+
 fn build_vector_snapshot(
     conn: &duckdb::Connection,
     generation: u64,
@@ -2272,6 +2327,50 @@ fn timing_vector_refresh_after_write() {
     latencies.sort_by(f64::total_cmp);
     println!(
         "TIMING vector_refresh docs={} p50_ms={:.2} p95_ms={:.2}",
+        timing_docs(),
+        timing_percentile(&latencies, 0.50),
+        timing_percentile(&latencies, 0.95),
+    );
+}
+
+/// Hybrid search with neighbour context (`context_expansion = Neighbors`,
+/// radius 1) over distinct queries: the context read per returned hit.
+///
+/// Run: `cargo test --lib -- --ignored timing_hybrid_search_neighbors --nocapture`
+#[test]
+#[ignore = "timing baseline; run explicitly, see the section comment"]
+fn timing_hybrid_search_neighbors() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("timing-neighbors.duckdb")).expect("open");
+    seed_timing_corpus(&store);
+    let fts_ready = store.maintenance().ensure_fts("porter").is_ok();
+    let run = |seed: u64| {
+        let hits = search(
+            &store,
+            &SearchQuery {
+                mode: SearchMode::Hybrid,
+                top_k: 10,
+                query_text: Some(timing_text(seed, 3)),
+                query_embedding: Some(timing_embedding(seed)),
+                context_expansion: Some(ContextExpansion::Neighbors),
+                neighbor_chunks: 1,
+                ..SearchQuery::default()
+            },
+        )
+        .unwrap();
+        assert!(!hits.is_empty());
+    };
+    run(1_000_000);
+    let mut latencies: Vec<f64> = (0..TIMING_QUERIES as u64)
+        .map(|query| {
+            let started = Instant::now();
+            run(3_000_000 + query);
+            elapsed_ms(started)
+        })
+        .collect();
+    latencies.sort_by(f64::total_cmp);
+    println!(
+        "TIMING hybrid_neighbors docs={} queries={TIMING_QUERIES} fts_ready={fts_ready} p50_ms={:.2} p95_ms={:.2}",
         timing_docs(),
         timing_percentile(&latencies, 0.50),
         timing_percentile(&latencies, 0.95),

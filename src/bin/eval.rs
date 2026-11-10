@@ -942,17 +942,21 @@ async fn eval_query_with_settings(
         let variants = mock_rewrite_variants(&query.query);
         let mut lists = Vec::with_capacity(1 + variants.len());
         lists.push(search(store, &search_query)?);
+        // All variant vectors in one embedder request, as production does.
+        let mut vectors = if mode.needs_embedding() && !variants.is_empty() {
+            embedder.embed(&variants).await?
+        } else {
+            Vec::new()
+        }
+        .into_iter();
         for variant in variants {
             let mut leg = search_query.clone();
-            leg.query_text = Some(variant.clone());
+            leg.query_text = Some(variant);
             leg.embed_ms = None;
             if mode.needs_embedding() {
-                leg.query_embedding = Some(
-                    embedder
-                        .embed(std::slice::from_ref(&variant))
-                        .await?
-                        .remove(0),
-                );
+                leg.query_embedding = Some(vectors.next().ok_or_else(|| {
+                    rag_mcp::error::AppError::embeddings("embedder returned no vector")
+                })?);
             }
             lists.push(search(store, &leg)?);
         }

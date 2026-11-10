@@ -276,3 +276,43 @@ larger dimensions should show a difference. The write path pays for the cast;
 duckdb-rs 1.x rejects `Value::List` parameters; binding a borrowed Arrow
 `ListArray` (`ValueRef::List`) might remove the cast and is left as a
 follow-up.
+
+### Item 3: search path (lex fallback, RRF, neighbours, variants, ranking fields)
+
+Changes:
+
+- The lexical leg calls `db::fts::search_bm25_with_stemmer` once. The removed
+  "in-module fallback" (`search_lex`) re-ran that same call after it had just
+  failed; `db::fts` already owns the real fallback (BM25, else term
+  frequency). Lex mode now returns the first error; hybrid returns the
+  vector hits, as it did when both calls failed.
+- RRF accumulates `(list, rank)` indices per chunk id and moves (hybrid) or
+  clones once (`fuse_rrf`, `fuse_rrf_many`) the winning hit, instead of
+  cloning every hit into the map and merging clones.
+- `Neighbors` context: one query for every hit's `index ± radius` window
+  (`VALUES` list joined on document and range, deduplicated), instead of one
+  query per hit.
+- Query variants (rewrite legs, HyDE passage) are embedded in one embedder
+  request in `retrieval.rs` and in the eval binary, instead of one request
+  per leg. Not covered by the timing harness (mock embedder, no network); it
+  saves `variants + hyde − 1` embedder round trips per transformed search.
+- Ranking fields (title, uri, pinned, boost, updated_at) are read with the
+  vector hits' documents during hydration and kept for `finalize_hits`, which
+  reads only the documents it has not seen (lexical-only hits); `updated_at`
+  is parsed only when recency applies.
+
+Method: `timing_hybrid_search_p50_p95` (unchanged) and the new
+`timing_hybrid_search_neighbors` (same queries with `context_expansion =
+Neighbors`, radius 1), 10 000 documents. Before and after binaries were run
+alternately (before, after, before, …), 3 runs each, load 1.4–2.0 (3.7 on the
+first "before" run).
+
+| metric | before | after |
+|---|---:|---:|
+| hybrid search p50 / p95 | 89.7 / 105.4 ms | 89.4 / 100.1 ms |
+| hybrid search with neighbour context p50 / p95 | 111.3 / 124.4 ms | **94.7 / 109.8 ms** |
+
+Kept. The plain hybrid path is within noise at p50 (−0.3 %) and 5 % lower at
+p95: its cost is the BM25 scan and the vector scope listing, which these
+changes do not touch. Neighbour context drops by 15 % (ten point queries per
+search become one). Eval gates unchanged (below).

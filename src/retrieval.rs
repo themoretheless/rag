@@ -695,16 +695,34 @@ pub async fn execute_search_with_llm(
     lists.push(crate::util::blocking_section(|| {
         search_with_corpus_guard(store, &query, &corpus_guard)
     })?);
+    // Every leg vector (rewrite variants when the mode embeds, then the HyDE
+    // passage) in one embedder request instead of one round trip per leg.
+    let mut leg_inputs: Vec<String> = Vec::new();
+    if mode.needs_embedding() {
+        leg_inputs.extend(transforms.variants.iter().cloned());
+    }
+    leg_inputs.extend(transforms.hyde_passage.iter().cloned());
+    let mut leg_vectors = if leg_inputs.is_empty() {
+        Vec::new()
+    } else {
+        let vectors = embedder.embed(&leg_inputs).await?;
+        if vectors.len() != leg_inputs.len() {
+            return Err(AppError::embeddings(format!(
+                "embedder returned {} vectors for {} inputs",
+                vectors.len(),
+                leg_inputs.len()
+            )));
+        }
+        vectors
+    }
+    .into_iter();
     for variant in &transforms.variants {
         let mut leg = query.clone();
         leg.query_text = Some(variant.clone());
         leg.embed_ms = None;
         if mode.needs_embedding() {
             leg.query_embedding = Some(
-                embedder
-                    .embed(std::slice::from_ref(variant))
-                    .await?
-                    .into_iter()
+                leg_vectors
                     .next()
                     .ok_or_else(|| AppError::embeddings("embedder returned no vector"))?,
             );
@@ -713,13 +731,10 @@ pub async fn execute_search_with_llm(
             search_with_corpus_guard(store, &leg, &corpus_guard)
         })?);
     }
-    if let Some(passage) = &transforms.hyde_passage {
+    if transforms.hyde_passage.is_some() {
         let mut leg = query.clone();
         leg.query_embedding = Some(
-            embedder
-                .embed(std::slice::from_ref(passage))
-                .await?
-                .into_iter()
+            leg_vectors
                 .next()
                 .ok_or_else(|| AppError::embeddings("embedder returned no vector"))?,
         );
