@@ -998,7 +998,10 @@ impl std::fmt::Debug for VectorCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VectorCache")
             .field("global", &self.global.as_ref().map(|s| s.generation))
-            .field("scoped", &self.scoped.as_ref().map(|s| s.snapshot.generation))
+            .field(
+                "scoped",
+                &self.scoped.as_ref().map(|s| s.snapshot.generation),
+            )
             .finish()
     }
 }
@@ -1352,10 +1355,13 @@ fn vector_search_inputs(
             let cache = lock_cache(store)?;
             (
                 cache.global.clone(),
-                cache
-                    .scoped
-                    .as_ref()
-                    .map(|entry| (entry.scope.clone(), entry.documents.clone(), entry.snapshot.clone())),
+                cache.scoped.as_ref().map(|entry| {
+                    (
+                        entry.scope.clone(),
+                        entry.documents.clone(),
+                        entry.snapshot.clone(),
+                    )
+                }),
             )
         };
         // A database-wide snapshot already built for this generation serves
@@ -1371,13 +1377,15 @@ fn vector_search_inputs(
                 // only while every document now in scope was in scope when it
                 // was built; a document moved into the scope forces a rebuild.
                 let scope = filters.scope_where_clause("d.id");
-                let reusable = scoped.as_ref().filter(|(entry_scope, entry_docs, snapshot)| {
-                    *entry_scope == scope
-                        && snapshot.generation == generation
-                        && documents
-                            .only_ids()
-                            .is_some_and(|ids| ids.iter().all(|id| entry_docs.contains(id)))
-                });
+                let reusable = scoped
+                    .as_ref()
+                    .filter(|(entry_scope, entry_docs, snapshot)| {
+                        *entry_scope == scope
+                            && snapshot.generation == generation
+                            && documents
+                                .only_ids()
+                                .is_some_and(|ids| ids.iter().all(|id| entry_docs.contains(id)))
+                    });
                 match reusable {
                     Some((_, _, snapshot)) => SnapshotPlan::Cached(snapshot.clone()),
                     None => {
@@ -1386,9 +1394,7 @@ fn vector_search_inputs(
                         // snapshot, else from another scope; parse only new or
                         // changed chunks.
                         let previous = match (scoped, global) {
-                            (Some((entry_scope, _, same)), _) if entry_scope == scope => {
-                                Some(same)
-                            }
+                            (Some((entry_scope, _, same)), _) if entry_scope == scope => Some(same),
                             (_, Some(global)) => Some(global),
                             (Some((_, _, other)), None) => Some(other),
                             (None, None) => None,

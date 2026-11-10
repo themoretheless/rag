@@ -554,9 +554,7 @@ fn search_vec_respects_wing_room_source_and_archived() {
     assert!(ids.contains(&"other"));
     assert!(!ids.contains(&"arch"));
     assert_eq!(
-        global_snapshot(&store).unwrap()
-            .chunks
-            .len(),
+        global_snapshot(&store).unwrap().chunks.len(),
         3,
         "the implicit active-status filter alone must retain the global cache path"
     );
@@ -603,9 +601,7 @@ fn search_vec_respects_wing_room_source_and_archived() {
         vec!["active"]
     );
     assert_eq!(
-        global_snapshot(&store).unwrap()
-            .chunks
-            .len(),
+        global_snapshot(&store).unwrap().chunks.len(),
         3,
         "a scoped read must not replace the global snapshot"
     );
@@ -837,8 +833,7 @@ fn vector_snapshot_refreshes_after_chunk_generation_changes() {
     let second = search_chunks(&store, &[0.0, 1.0], 1, None).unwrap();
     assert_eq!(second[0].chunk_id, "after");
     assert_eq!(second[0].content, "after content");
-    let cached_generation = global_snapshot(&store).unwrap()
-        .generation;
+    let cached_generation = global_snapshot(&store).unwrap().generation;
     assert_eq!(cached_generation, second_generation);
 }
 
@@ -878,8 +873,7 @@ fn vector_snapshot_refreshes_after_embedding_only_update() {
 
     let before = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
     assert_eq!(before[0].document_id, "z-rival");
-    let cached_before = global_snapshot(&store).unwrap()
-        .generation;
+    let cached_before = global_snapshot(&store).unwrap().generation;
 
     let document = store.documents().get_document("a-target").unwrap().unwrap();
     let chunks = store
@@ -899,8 +893,7 @@ fn vector_snapshot_refreshes_after_embedding_only_update() {
 
     let after = search_chunks(&store, &[0.0, 1.0], 2, None).unwrap();
     assert_eq!(after[0].document_id, "a-target");
-    let cached_after = global_snapshot(&store).unwrap()
-        .generation;
+    let cached_after = global_snapshot(&store).unwrap().generation;
     assert!(cached_after > cached_before);
 }
 
@@ -1791,7 +1784,10 @@ fn change_log_refresh_matches_a_full_rebuild_and_falls_back_when_unscoped() {
         let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
         let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
         assert_eq!(view(&refreshed), view(&rebuilt));
-        assert!(refreshed.chunks.iter().all(|c| refreshed.document_id(c) != "d"));
+        assert!(refreshed
+            .chunks
+            .iter()
+            .all(|c| refreshed.document_id(c) != "d"));
     }
 }
 
@@ -1943,7 +1939,10 @@ fn expand_parent_without_parent_keeps_own_body() {
     assert_eq!(context[0].chunk_id, "solo");
 }
 
-fn build_vector_snapshot(conn: &duckdb::Connection, generation: u64) -> Result<Arc<VectorSnapshot>> {
+fn build_vector_snapshot(
+    conn: &duckdb::Connection,
+    generation: u64,
+) -> Result<Arc<VectorSnapshot>> {
     Ok(Arc::new(read_full(conn, generation, None)?.finish()?))
 }
 
@@ -1961,7 +1960,9 @@ fn refresh_vector_snapshot(
     generation: u64,
     filters: Option<&LexFilters>,
 ) -> Result<Arc<VectorSnapshot>> {
-    Ok(Arc::new(read_refresh(conn, previous, generation, filters)?.finish()?))
+    Ok(Arc::new(
+        read_refresh(conn, previous, generation, filters)?.finish()?,
+    ))
 }
 
 impl VectorDocumentScope {
