@@ -152,8 +152,7 @@ impl SearchUseCase {
         &self,
         command: retrieval::SearchCommand,
     ) -> Result<Vec<SearchHit>, AppError> {
-        retrieval::execute_search(&self.store, self.embedder.as_ref(), &self.config, command)
-            .await
+        retrieval::execute_search(&self.store, self.embedder.as_ref(), &self.config, command).await
     }
 
     /// Source versions for a trace span (one hash lookup for all hits).
@@ -198,11 +197,10 @@ impl SearchUseCase {
             Some(builder) => {
                 let store = self.store.clone();
                 let hits = outcome.expanded_hits;
-                let versions =
-                    run_blocking("pack_context trace", move || {
-                        Ok(source_versions_for_hits(&store, &hits))
-                    })
-                    .await?;
+                let versions = run_blocking("pack_context trace", move || {
+                    Ok(source_versions_for_hits(&store, &hits))
+                })
+                .await?;
                 let span = builder
                     .attr("total_tokens", packed.total_tokens as u64)
                     .attr("omitted_count", packed.omitted_count as u64)
@@ -245,7 +243,11 @@ impl SearchUseCase {
         })
         .await?;
         Ok(MultiGetResponse {
-            items: result.documents.into_iter().map(MultiGetItem::from).collect(),
+            items: result
+                .documents
+                .into_iter()
+                .map(MultiGetItem::from)
+                .collect(),
             missing: result.missing,
         })
     }

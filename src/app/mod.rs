@@ -9,7 +9,6 @@
 pub mod graph;
 pub mod search;
 
-
 pub use graph::{GraphUseCase, NeighborsCommand};
 pub use search::{
     MultiGetCommand, MultiGetItem, MultiGetResponse, PackContextRequest, PackContextResponse,
