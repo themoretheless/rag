@@ -154,6 +154,9 @@ async fn async_main() -> anyhow::Result<()> {
 }
 
 /// HTTP-only, dual (HTTP + stdio), or stdio-only selection and hang-on-stdio-fail.
+///
+/// Every exit path, errors included, goes through `background.shutdown` here
+/// before the caller runs the final checkpoint.
 async fn run_serve_modes(
     store: Store,
     embedder: Arc<dyn EmbeddingProvider>,
@@ -162,14 +165,25 @@ async fn run_serve_modes(
     // Every background loop registers on one BackgroundTasks and stops on
     // its shared token; shutdown waits for them before the checkpoint.
     let background = rag_mcp::background::BackgroundTasks::new();
-    rag_mcp::ops::spawn_auto_backup(&background, store.clone(), &config);
+    let result = serve_modes(&background, store, embedder, config).await;
+    background.shutdown(BACKGROUND_SHUTDOWN).await;
+    result
+}
+
+async fn serve_modes(
+    background: &rag_mcp::background::BackgroundTasks,
+    store: Store,
+    embedder: Arc<dyn EmbeddingProvider>,
+    config: Config,
+) -> anyhow::Result<()> {
+    rag_mcp::ops::spawn_auto_backup(background, store.clone(), &config);
     // One context for every transport: config parsed once, one embedder, one
     // chat client, one manifest check.
-    rag_mcp::diagnostics::spawn_fts_maintenance(&background, store.clone(), &config);
+    rag_mcp::diagnostics::spawn_fts_maintenance(background, store.clone(), &config);
     let context = rag_mcp::context::AppContext::new(store, embedder, config);
     let config = context.config.clone();
-    RagServer::from_context(context.clone()).spawn_auto_sync(&background);
-    RagServer::from_context(context.clone()).spawn_file_watcher(&background);
+    RagServer::from_context(context.clone()).spawn_auto_sync(background);
+    RagServer::from_context(context.clone()).spawn_file_watcher(background);
     let http_only = config.http_only;
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
     let mcp_http_enabled = config.mcp_http;
@@ -214,7 +228,6 @@ async fn run_serve_modes(
                     }
                 }
             }
-            background.shutdown(BACKGROUND_SHUTDOWN).await;
             return Ok(());
         }
 
@@ -279,7 +292,6 @@ async fn run_serve_modes(
             }
         }
     }
-    background.shutdown(BACKGROUND_SHUTDOWN).await;
     outcome
 }
 
