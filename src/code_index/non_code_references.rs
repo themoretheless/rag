@@ -300,7 +300,7 @@ fn key_references(snapshot: &CodeSnapshot, q: &ReferenceQuery, limit: usize) -> 
 impl Store {
     pub fn code_references(&self, q: &ReferenceQuery) -> Result<serde_json::Value> {
         q.validate()?;
-        let snapshot = self.code_snapshot_in_project(q.project.as_deref())?;
+        let snapshot = CodeIndex::new(self).code_snapshot_in_project(q.project.as_deref())?;
         let limit = q.selection.limit.unwrap_or(50).clamp(1, 500);
         if q.table.is_some() {
             table_references(&snapshot, q, limit)

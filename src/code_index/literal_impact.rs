@@ -281,7 +281,7 @@ mod tests {
             .unwrap();
     }
     fn run(store: &Store, q: &CodeQuery) -> serde_json::Value {
-        store
+        crate::code_index::CodeIndex::new(store)
             .code_snapshot_in_project(q.impact_project.as_deref())
             .unwrap()
             .query("impact", q)

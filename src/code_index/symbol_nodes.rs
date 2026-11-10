@@ -233,7 +233,7 @@ impl Store {
         if q.name.is_some() && q.selection.symbol.is_some() {
             return Err(AppError::config("choose symbol or name, not both"));
         }
-        let snapshot = self.code_snapshot_in_project(q.project.as_deref())?;
+        let snapshot = CodeIndex::new(self).code_snapshot_in_project(q.project.as_deref())?;
         let selected = selected_kind(q);
         let mode = q.match_mode.unwrap_or_default();
         let limit = q.selection.limit.unwrap_or(50).clamp(1, 500);

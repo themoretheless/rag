@@ -372,7 +372,9 @@ mod tests {
             serde_json::from_value(json!({"symbols":[symbol],"project":"fixture"})).unwrap()
         }
         fn run(&self, q: &AffectedTestsQuery) -> Value {
-            self.store.code_affected_tests(q).unwrap()
+            crate::code_index::CodeIndex::new(&self.store)
+                .code_affected_tests(q)
+                .unwrap()
         }
     }
     use std::path::PathBuf;
@@ -541,7 +543,9 @@ mod tests {
         let manifest="[package]\nname='affected-fixture'\nversion='0.1.0'\n[features]\nfast=[]\n[package.metadata.rag.graph]\nversion=1\ntarget_kind='lib'\nfeatures=['fast']\ndefault_features=false\n";
         Fixture::put(&f.store, "Cargo.toml", manifest, 2, "fixture");
         f.store.index_code().unwrap();
-        let normal = f.store.code_snapshot_in_project(Some("fixture")).unwrap();
+        let normal = crate::code_index::CodeIndex::new(&f.store)
+            .code_snapshot_in_project(Some("fixture"))
+            .unwrap();
         let api = normal.symbols.iter().find(|s| s.name == "api").unwrap();
         let old_id = api.id.clone();
         let result = f.run(&f.q(&old_id));

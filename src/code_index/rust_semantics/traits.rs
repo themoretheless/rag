@@ -297,8 +297,10 @@ impl<'a> Engine<'a> {
                 // A blanket impl<T> has an implicit Sized bound. Unsized or
                 // unmodeled pointees must not satisfy it by shape alone.
                 if matches!(p.as_ref(), Ty::Named(name, args) if args.is_empty() && implementation.parameters.contains(name))
-                    && (matches!(a.as_ref(), ValueType::Unknown | ValueType::Traits(_) | ValueType::Array(_))
-                        || matches!(a.as_ref(), ValueType::Primitive(name) if name == "str"))
+                    && (matches!(
+                        a.as_ref(),
+                        ValueType::Unknown | ValueType::Traits(_) | ValueType::Array(_)
+                    ) || matches!(a.as_ref(), ValueType::Primitive(name) if name == "str"))
                 {
                     return false;
                 }
@@ -501,7 +503,9 @@ impl<'a> Engine<'a> {
                     let trait_document =
                         self.symbol(&id).and_then(|s| self.docs.get(&s.document_id));
                     if matches!(actual, ValueType::Pointer(..) | ValueType::Primitive(..))
-                        && trait_document.is_none_or(|declaration| !rust_cargo::share_target(self.docs, d, declaration))
+                        && trait_document.is_none_or(|declaration| {
+                            !rust_cargo::share_target(self.docs, d, declaration)
+                        })
                     {
                         continue;
                     }

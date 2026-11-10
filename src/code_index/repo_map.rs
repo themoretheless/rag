@@ -500,14 +500,14 @@ mod tests {
             project: Some("a".into()),
             ..Default::default()
         };
-        let map = store
+        let map = crate::code_index::CodeIndex::new(&store)
             .code_snapshot_in_project(q.project.as_deref())
             .unwrap()
             .repo_map(&q);
         assert_eq!(map["total_symbols"], 1);
         assert!(map["map"].as_str().unwrap().contains("local"));
         let injection = "a' OR 1=1 --";
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot_in_project(Some(injection))
             .unwrap()
             .symbols

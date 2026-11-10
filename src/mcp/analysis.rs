@@ -502,7 +502,8 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let result = crate::util::run_blocking("trace_path", move || {
-            let snapshot = store.code_snapshot_in_project(params.project.as_deref())?;
+            let snapshot = crate::code_index::CodeIndex::new(&store)
+                .code_snapshot_in_project(params.project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.trace_path(&params))
         })
         .await?;
@@ -577,9 +578,10 @@ impl RagServer {
         Parameters(params): Parameters<crate::code_index::AffectedTestsQuery>,
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
-        let result =
-            crate::util::run_blocking("affected_tests", move || store.code_affected_tests(&params))
-                .await?;
+        let result = crate::util::run_blocking("affected_tests", move || {
+            crate::code_index::CodeIndex::new(&store).code_affected_tests(&params)
+        })
+        .await?;
         Self::json_result(&result)
     }
     #[tool(
@@ -613,7 +615,8 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let result = crate::util::run_blocking("repo_map", move || {
-            let snapshot = store.code_snapshot_in_project(params.project.as_deref())?;
+            let snapshot = crate::code_index::CodeIndex::new(&store)
+                .code_snapshot_in_project(params.project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.repo_map(&params))
         })
         .await?;
@@ -629,7 +632,8 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let result = crate::util::run_blocking("impact", move || {
-            let snapshot = store.code_snapshot_in_project(params.impact_project.as_deref())?;
+            let snapshot = crate::code_index::CodeIndex::new(&store)
+                .code_snapshot_in_project(params.impact_project.as_deref())?;
             Ok::<_, crate::error::AppError>(snapshot.query("impact", &params))
         })
         .await?;
@@ -645,7 +649,7 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let store = self.store.clone();
         let report = crate::util::run_blocking("index_code", move || {
-            store.index_code_with_options(&options)
+            crate::code_index::CodeIndex::new(&store).index_code_with_options(&options)
         })
         .await?;
         Self::json_result(&report)

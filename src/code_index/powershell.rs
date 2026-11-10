@@ -1129,13 +1129,13 @@ mod tests {
         };
         let before = store.code_snapshot().unwrap().query("callers", &q);
         assert_eq!(before["items"].as_array().unwrap().len(), 1, "{before}");
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_body(&q)
             .unwrap()
             .to_string()
             .contains("PRIVATE_BODY"));
         assert!(!before.to_string().contains("PRIVATE_BODY"));
-        let forced = store
+        let forced = crate::code_index::CodeIndex::new(&store)
             .index_code_with_options(&resolution_cache::IndexOptions {
                 force_full_resolution: true,
             })

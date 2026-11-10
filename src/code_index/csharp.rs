@@ -1433,13 +1433,13 @@ mod tests {
         };
         let before = store.code_snapshot().unwrap().query("callers", &q);
         assert_eq!(before["items"].as_array().unwrap().len(), 1, "{before}");
-        assert!(store
+        assert!(crate::code_index::CodeIndex::new(&store)
             .code_body(&q)
             .unwrap()
             .to_string()
             .contains("SELECT * FROM users"));
         assert!(!before.to_string().contains("SELECT * FROM users"));
-        let full = store
+        let full = crate::code_index::CodeIndex::new(&store)
             .index_code_with_options(&resolution_cache::IndexOptions {
                 force_full_resolution: true,
             })

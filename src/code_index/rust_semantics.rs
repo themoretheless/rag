@@ -151,8 +151,16 @@ fn ty(node: Node, source: &str, depth: usize) -> Ty {
     }
     match node.kind() {
         "primitive_type" => Ty::Primitive(text(node, source).into()),
-        "pointer_type" => node.child_by_field_name("type")
-            .map(|n| Ty::Pointer(children(node).iter().any(|c| c.kind() == "mutable_specifier"), Box::new(ty(n, source, depth + 1))))
+        "pointer_type" => node
+            .child_by_field_name("type")
+            .map(|n| {
+                Ty::Pointer(
+                    children(node)
+                        .iter()
+                        .any(|c| c.kind() == "mutable_specifier"),
+                    Box::new(ty(n, source, depth + 1)),
+                )
+            })
             .unwrap_or(Ty::Unknown),
         "type_identifier" | "scoped_type_identifier" | "identifier" => {
             if let Some(path) = node
@@ -409,13 +417,20 @@ pub(super) fn collect(root: Node, source: &str, doc: &mut IndexedDocument) {
                             s.kind == "struct_item" && s.start_byte == parent.start_byte()
                         }) {
                             let mut cursor = node.walk();
-                            for (index, field) in node.children_by_field_name("type", &mut cursor).enumerate() {
+                            for (index, field) in
+                                node.children_by_field_name("type", &mut cursor).enumerate()
+                            {
                                 let name = format!("{}::{index}", owner.qualified_name);
                                 let field_type = ty(field, source, 0);
                                 facts.fields.insert(name.clone(), field_type.clone());
-                                facts.field_positions.insert(name.clone(), field.start_byte());
+                                facts
+                                    .field_positions
+                                    .insert(name.clone(), field.start_byte());
                                 facts.field_declarations.push(FieldDeclaration {
-                                    owner: owner.id.clone(), name, ty: field_type, at: field.start_byte(),
+                                    owner: owner.id.clone(),
+                                    name,
+                                    ty: field_type,
+                                    at: field.start_byte(),
                                 });
                             }
                         }
@@ -610,7 +625,10 @@ impl<'a> Engine<'a> {
         }
         match t {
             Ty::Primitive(name) => ValueType::Primitive(name.clone()),
-            Ty::Pointer(mutable, t) => ValueType::Pointer(*mutable, Box::new(self.types(doc, at, owner, t, substitutions, depth + 1))),
+            Ty::Pointer(mutable, t) => ValueType::Pointer(
+                *mutable,
+                Box::new(self.types(doc, at, owner, t, substitutions, depth + 1)),
+            ),
             Ty::Reference(t) => ValueType::Reference(Box::new(self.types(
                 doc,
                 at,
@@ -887,24 +905,82 @@ impl<'a> Engine<'a> {
             ValueType::Pointer(..) => {
                 // Inherent sysroot methods take precedence over extension traits.
                 // Their bodies are outside this captured source graph.
-                if matches!(name,
-                    "add" | "addr" | "align_offset" | "as_array" | "as_mut" | "as_mut_array"
-                    | "as_mut_ptr" | "as_mut_slice" | "as_mut_unchecked" | "as_ptr" | "as_ref"
-                    | "as_ref_unchecked" | "as_slice" | "as_uninit_mut" | "as_uninit_ref"
-                    | "as_uninit_slice" | "as_uninit_slice_mut" | "byte_add" | "byte_offset"
-                    | "byte_offset_from" | "byte_offset_from_unsigned" | "byte_sub" | "cast"
-                    | "cast_array" | "cast_const" | "cast_init" | "cast_mut" | "cast_slice"
-                    | "cast_uninit" | "copy_from" | "copy_from_nonoverlapping" | "copy_to"
-                    | "copy_to_nonoverlapping" | "drop_in_place" | "expose_provenance"
-                    | "get_unchecked" | "get_unchecked_mut" | "guaranteed_eq" | "guaranteed_ne"
-                    | "is_aligned" | "is_aligned_to" | "is_empty" | "is_null" | "len" | "map_addr"
-                    | "mask" | "offset" | "offset_from" | "offset_from_unsigned" | "read"
-                    | "read_unaligned" | "read_volatile" | "replace" | "split_at_mut"
-                    | "split_at_mut_unchecked" | "sub" | "swap" | "to_raw_parts" | "try_cast_aligned"
-                    | "with_addr" | "with_metadata_of" | "wrapping_add" | "wrapping_byte_add"
-                    | "wrapping_byte_offset" | "wrapping_byte_sub" | "wrapping_offset"
-                    | "wrapping_sub" | "write" | "write_bytes" | "write_unaligned" | "write_volatile"
-                ) { return vec![]; }
+                if matches!(
+                    name,
+                    "add"
+                        | "addr"
+                        | "align_offset"
+                        | "as_array"
+                        | "as_mut"
+                        | "as_mut_array"
+                        | "as_mut_ptr"
+                        | "as_mut_slice"
+                        | "as_mut_unchecked"
+                        | "as_ptr"
+                        | "as_ref"
+                        | "as_ref_unchecked"
+                        | "as_slice"
+                        | "as_uninit_mut"
+                        | "as_uninit_ref"
+                        | "as_uninit_slice"
+                        | "as_uninit_slice_mut"
+                        | "byte_add"
+                        | "byte_offset"
+                        | "byte_offset_from"
+                        | "byte_offset_from_unsigned"
+                        | "byte_sub"
+                        | "cast"
+                        | "cast_array"
+                        | "cast_const"
+                        | "cast_init"
+                        | "cast_mut"
+                        | "cast_slice"
+                        | "cast_uninit"
+                        | "copy_from"
+                        | "copy_from_nonoverlapping"
+                        | "copy_to"
+                        | "copy_to_nonoverlapping"
+                        | "drop_in_place"
+                        | "expose_provenance"
+                        | "get_unchecked"
+                        | "get_unchecked_mut"
+                        | "guaranteed_eq"
+                        | "guaranteed_ne"
+                        | "is_aligned"
+                        | "is_aligned_to"
+                        | "is_empty"
+                        | "is_null"
+                        | "len"
+                        | "map_addr"
+                        | "mask"
+                        | "offset"
+                        | "offset_from"
+                        | "offset_from_unsigned"
+                        | "read"
+                        | "read_unaligned"
+                        | "read_volatile"
+                        | "replace"
+                        | "split_at_mut"
+                        | "split_at_mut_unchecked"
+                        | "sub"
+                        | "swap"
+                        | "to_raw_parts"
+                        | "try_cast_aligned"
+                        | "with_addr"
+                        | "with_metadata_of"
+                        | "wrapping_add"
+                        | "wrapping_byte_add"
+                        | "wrapping_byte_offset"
+                        | "wrapping_byte_sub"
+                        | "wrapping_offset"
+                        | "wrapping_sub"
+                        | "write"
+                        | "write_bytes"
+                        | "write_unaligned"
+                        | "write_volatile"
+                ) {
+                    return vec![];
+                }
                 self.trait_methods(value, name, context, None, true, depth + 1)
             }
             ValueType::Reference(t) => self.methods(t, name, context, depth + 1),
@@ -1384,44 +1460,67 @@ mod tests {
     #[test]
     fn rust_raw_pointer_trait_receivers_keep_mutability_and_pointee_identity() {
         let source="struct User; struct Other; trait Pointer {fn mark(self);} impl<T> Pointer for *const T {fn mark(self){}} impl<T> Pointer for *mut T {fn mark(self){}} impl User {fn mark(&self){}} fn run(c:*const u8,m:*mut u8,u:*const User,o:*mut Other,r:&User){c.mark();m.mark();u.mark();o.mark();r.mark();(m as *const u8).mark();}";
-        let g=graph(&[("/p/lib.rs",source)]);
-        for (expression,owner) in [("c.mark","*const T"),("m.mark","*mut T"),("u.mark","*const T"),("o.mark","*mut T"),("(m as *const u8).mark","*const T")] {
-            let e=g.calls.iter().find(|c|c.reference.expression==expression).unwrap();
-            assert_eq!(e.candidates.len(),1,"{expression}: {e:?}");
-            let target=g.symbols.iter().find(|s|s.id==e.candidates[0]).unwrap();
-            assert!(target.qualified_name.contains(owner),"{expression}: {target:?}");
+        let g = graph(&[("/p/lib.rs", source)]);
+        for (expression, owner) in [
+            ("c.mark", "*const T"),
+            ("m.mark", "*mut T"),
+            ("u.mark", "*const T"),
+            ("o.mark", "*mut T"),
+            ("(m as *const u8).mark", "*const T"),
+        ] {
+            let e = g
+                .calls
+                .iter()
+                .find(|c| c.reference.expression == expression)
+                .unwrap();
+            assert_eq!(e.candidates.len(), 1, "{expression}: {e:?}");
+            let target = g.symbols.iter().find(|s| s.id == e.candidates[0]).unwrap();
+            assert!(
+                target.qualified_name.contains(owner),
+                "{expression}: {target:?}"
+            );
         }
-        assert_eq!(targets(&g,"r.mark"),["User::mark"]);
+        assert_eq!(targets(&g, "r.mark"), ["User::mark"]);
     }
     #[test]
     fn rust_raw_pointer_blanket_impl_does_not_assume_unsized_pointee_is_sized() {
         let g=graph(&[("/p/lib.rs","trait Mark {fn mark(self);} impl<T> Mark for *const T {fn mark(self){}} fn run(s:*const str,a:*const [u8],p:*const u8){s.mark();a.mark();p.mark();}")]);
-        assert!(targets(&g,"s.mark").is_empty());
-        assert!(targets(&g,"a.mark").is_empty());
-        assert_eq!(targets(&g,"p.mark").len(),1);
+        assert!(targets(&g, "s.mark").is_empty());
+        assert!(targets(&g, "a.mark").is_empty());
+        assert_eq!(targets(&g, "p.mark").len(), 1);
     }
     #[test]
     fn rust_raw_pointer_sysroot_methods_do_not_bind_extension_trait_names() {
         let g=graph(&[("/p/lib.rs","trait Shadow {fn is_null(self)->bool;} impl Shadow for *const u8 {fn is_null(self)->bool{false}} fn run(p:*const u8){p.is_null();}")]);
-        assert!(targets(&g,"p.is_null").is_empty());
+        assert!(targets(&g, "p.is_null").is_empty());
     }
     #[test]
     fn rust_raw_pointers_do_not_autoderef_or_cross_const_mut_or_primitive_types() {
         let g=graph(&[("/p/lib.rs","struct User; impl User {fn save(&self){}} trait Exact {fn exact(self);} impl Exact for *const u8 {fn exact(self){}} fn run(c:*const u8,m:*mut u8,w:*const u16,u:*const User){c.exact();m.exact();w.exact();u.save();}")]);
-        assert_eq!(targets(&g,"c.exact").len(),1);
-        for e in ["m.exact","w.exact","u.save"] {assert!(targets(&g,e).is_empty(),"{e}");}
+        assert_eq!(targets(&g, "c.exact").len(), 1);
+        for e in ["m.exact", "w.exact", "u.save"] {
+            assert!(targets(&g, e).is_empty(), "{e}");
+        }
     }
     #[test]
     fn rust_tuple_struct_fields_preserve_positions_and_generic_owners() {
         let g=graph(&[("/p/src/lib.rs", &format!("{TYPES} struct Pair<T>(pub T, Other); struct Outer(Pair<User>); impl Outer {{fn run(&self){{self.0.0.save();self.0.1.save();self.0.2.save();}}}} fn run(p:Pair<User>){{p.0.save();p.1.save();p.2.save();}}"))]);
-        for e in ["p.0.save", "self.0.0.save"] {assert_eq!(targets(&g,e),["User::save"],"{e}");}
-        for e in ["p.1.save", "self.0.1.save"] {assert_eq!(targets(&g,e),["Other::save"],"{e}");}
-        for e in ["p.2.save", "self.0.2.save"] {assert!(targets(&g,e).is_empty(),"{e}");}
+        for e in ["p.0.save", "self.0.0.save"] {
+            assert_eq!(targets(&g, e), ["User::save"], "{e}");
+        }
+        for e in ["p.1.save", "self.0.1.save"] {
+            assert_eq!(targets(&g, e), ["Other::save"], "{e}");
+        }
+        for e in ["p.2.save", "self.0.2.save"] {
+            assert!(targets(&g, e).is_empty(), "{e}");
+        }
     }
     #[test]
     fn rust_conditional_tuple_slots_and_enum_variants_do_not_guess_layouts() {
         let g=graph(&[("/p/src/lib.rs",&format!("{TYPES} struct Pair(#[cfg(any())] Other, User); enum Variant {{Pair(User,Other)}} fn run(p:Pair,e:Variant){{p.0.save();p.1.save();e.0.save();}}"))]);
-        for e in ["p.0.save","p.1.save","e.0.save"] {assert!(targets(&g,e).is_empty(),"{e}");}
+        for e in ["p.0.save", "p.1.save", "e.0.save"] {
+            assert!(targets(&g, e).is_empty(), "{e}");
+        }
     }
     #[test]
     fn rust_fields_arrays_and_pointers_keep_receiver_ownership() {

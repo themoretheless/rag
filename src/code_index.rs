@@ -661,7 +661,16 @@ fn walk(node: Node, source: &str, doc: &str, out: &mut IndexedDocument, context:
         );
     }
 }
-impl Store {
+/// Code-index repository: index builds, snapshots and queries over the store connection.
+pub struct CodeIndex<'a> {
+    store: &'a Store,
+}
+
+impl<'a> CodeIndex<'a> {
+    pub fn new(store: &'a Store) -> Self {
+        Self { store }
+    }
+
     /// Explicit rebuild of derived syntax data. Never opens or reads source paths.
     /// Source text and cached payloads are read under one database lock.
     pub fn index_code(&self) -> Result<IndexReport> {
@@ -669,143 +678,147 @@ impl Store {
     }
     pub fn index_code_with_options(&self, options: &IndexOptions) -> Result<IndexReport> {
         let started = std::time::Instant::now();
-        let mut conn = self.lock()?;
-        let lock_wait_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let body_started = std::time::Instant::now();
-        let tx = conn.transaction()?;
-        let phase = std::time::Instant::now();
-        let docs = {
-            let mut stmt = tx.prepare("SELECT id, COALESCE(source_file, uri), content, COALESCE(revision,1), wing, metadata_json, source_file IS NOT NULL FROM documents WHERE COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') ORDER BY id")?;
-            let rows = stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, bool>(6)?,
-                ))
-            })?;
-            let raw = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-            raw.into_iter()
-                .map(|(id, path, content, rev, project, metadata, source_file)| {
-                    let text = source::read(&tx, &content, &metadata)?.into_owned();
-                    Ok((id, path, text, rev, project, source_file))
-                })
-                .collect::<Result<Vec<_>>>()?
-        };
-        let source_load_decode_ms = phase.elapsed().as_secs_f64() * 1000.0;
-        let phase = std::time::Instant::now();
-        let mut report = IndexReport::default();
-        // Replace the complete corpus snapshot atomically; rollback preserves the old one on errors.
-        let mut existing: HashMap<String, String> = {
-            let mut stmt = tx.prepare("SELECT document_id,payload FROM code_index_documents")?;
-            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.collect::<std::result::Result<_, _>>()?
-        };
-        let mut payloads = Vec::new();
-        let mut changed = Vec::new();
-        for (id, path, source, revision, project, _) in &docs {
-            if !indexable(path) {
-                report.unsupported += 1;
-                continue;
-            }
-            let cached = existing.remove(id);
-            let parsed = cached
-                .as_deref()
-                .and_then(|s| serde_json::from_str::<IndexedDocument>(s).ok())
-                .filter(|d| {
-                    d.version == INDEX_FORMAT_VERSION
-                        && translation_keys::current(d)
-                        && php_docblocks::current(d)
-                        && d.hash == content_hash(source)
-                        && d.revision == *revision
-                        && d.path == *path
-                        && d.project == *project
-                });
-            let reused = parsed.is_some();
-            let mut parsed = match parsed {
-                Some(p) => {
-                    report.unchanged += 1;
-                    p
-                }
-                None => {
-                    report.indexed += 1;
-                    parse(id, path, source, *revision)?
-                }
+        self.store.with_conn(|conn| {
+            let lock_wait_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let body_started = std::time::Instant::now();
+            let tx = conn.transaction()?;
+            let phase = std::time::Instant::now();
+            let docs = {
+                let mut stmt = tx.prepare("SELECT id, COALESCE(source_file, uri), content, COALESCE(revision,1), wing, metadata_json, source_file IS NOT NULL FROM documents WHERE COALESCE(status,'active') NOT IN ('archived','tombstone','consolidated') ORDER BY id")?;
+                let rows = stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, String>(5)?,
+                        r.get::<_, bool>(6)?,
+                    ))
+                })?;
+                let raw = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+                raw.into_iter()
+                    .map(|(id, path, content, rev, project, metadata, source_file)| {
+                        let text = source::read(&tx, &content, &metadata)?.into_owned();
+                        Ok((id, path, text, rev, project, source_file))
+                    })
+                    .collect::<Result<Vec<_>>>()?
             };
-            parsed.project = project.clone();
-            if parsed.parse_errors {
-                report.parse_errors.push(id.clone());
-            }
-            let payload = if reused {
-                cached.unwrap()
-            } else {
-                serde_json::to_string(&parsed)?
+            let source_load_decode_ms = phase.elapsed().as_secs_f64() * 1000.0;
+            let phase = std::time::Instant::now();
+            let mut report = IndexReport::default();
+            // Replace the complete corpus snapshot atomically; rollback preserves the old one on errors.
+            let mut existing: HashMap<String, String> = {
+                let mut stmt = tx.prepare("SELECT document_id,payload FROM code_index_documents")?;
+                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<std::result::Result<_, _>>()?
             };
-            if !reused {
-                changed.push(payloads.len());
+            let mut payloads = Vec::new();
+            let mut changed = Vec::new();
+            for (id, path, source, revision, project, _) in &docs {
+                if !indexable(path) {
+                    report.unsupported += 1;
+                    continue;
+                }
+                let cached = existing.remove(id);
+                let parsed = cached
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<IndexedDocument>(s).ok())
+                    .filter(|d| {
+                        d.version == INDEX_FORMAT_VERSION
+                            && translation_keys::current(d)
+                            && php_docblocks::current(d)
+                            && d.hash == content_hash(source)
+                            && d.revision == *revision
+                            && d.path == *path
+                            && d.project == *project
+                    });
+                let reused = parsed.is_some();
+                let mut parsed = match parsed {
+                    Some(p) => {
+                        report.unchanged += 1;
+                        p
+                    }
+                    None => {
+                        report.indexed += 1;
+                        parse(id, path, source, *revision)?
+                    }
+                };
+                parsed.project = project.clone();
+                if parsed.parse_errors {
+                    report.parse_errors.push(id.clone());
+                }
+                let payload = if reused {
+                    cached.unwrap()
+                } else {
+                    serde_json::to_string(&parsed)?
+                };
+                if !reused {
+                    changed.push(payloads.len());
+                }
+                payloads.push((id.clone(), payload));
             }
-            payloads.push((id.clone(), payload));
-        }
-        let cache_parse_serialize_ms = phase.elapsed().as_secs_f64() * 1000.0;
-        let phase = std::time::Instant::now();
-        for id in existing.keys() {
-            tx.execute("DELETE FROM code_index_documents WHERE document_id=?", [id])?;
-        }
-        for i in changed {
-            let (id, payload) = &payloads[i];
-            tx.execute(
-                "INSERT INTO code_index_documents VALUES (?,?) ON CONFLICT(document_id) DO UPDATE SET payload=excluded.payload",
-                params![id, payload],
-            )?;
-        }
-        let cache_replace_ms = phase.elapsed().as_secs_f64() * 1000.0;
-        let phase = std::time::Instant::now();
-        let (revision, created, resolution) =
-            history::publish(&tx, &docs, &payloads, options.force_full_resolution)?;
-        report.resolution = Some(resolution);
-        let revision_publish_ms = phase.elapsed().as_secs_f64() * 1000.0;
-        report.index_revision = Some(revision);
-        report.revision_created = created;
-        let measured = rag_mcp_core::IndexStageTimings {
-            contract_version: 1,
-            run_id: uuid::Uuid::new_v4().to_string(),
-            lock_wait_ms,
-            source_load_decode_ms,
-            cache_parse_serialize_ms,
-            cache_replace_ms,
-            revision_publish_ms,
-            transaction_body_ms: body_started.elapsed().as_secs_f64() * 1000.0,
-            before_metrics_write_ms: started.elapsed().as_secs_f64() * 1000.0,
-            documents_loaded: docs.len(),
-            cache_hits: report.unchanged,
-            cache_misses: report.indexed,
-            unsupported_documents: report.unsupported,
-            parse_error_documents: report.parse_errors.len(),
-            commit_included: false,
-            metrics_write_included: false,
-            embedding_fts_included: false,
-        };
-        let metrics_started = std::time::Instant::now();
-        timings::record(&tx, revision, created, &measured)?;
-        let metrics_write_ms = metrics_started.elapsed().as_secs_f64() * 1000.0;
-        report.stage_timings = Some(measured);
-        let commit_started = std::time::Instant::now();
-        tx.commit()?;
-        report.completion = Some(rag_mcp_core::IndexCompletionTimings {
-            contract_version: 1,
-            native_total_ms: started.elapsed().as_secs_f64() * 1000.0,
-            commit_ms: commit_started.elapsed().as_secs_f64() * 1000.0,
-            metrics_write_ms,
-            commit_included: true,
-            process_lifetime_peak_rss_bytes: resolution_cache::peak_rss_bytes(),
-        });
-        Ok(report)
+            let cache_parse_serialize_ms = phase.elapsed().as_secs_f64() * 1000.0;
+            let phase = std::time::Instant::now();
+            for id in existing.keys() {
+                tx.execute("DELETE FROM code_index_documents WHERE document_id=?", [id])?;
+            }
+            for i in changed {
+                let (id, payload) = &payloads[i];
+                tx.execute(
+                    "INSERT INTO code_index_documents VALUES (?,?) ON CONFLICT(document_id) DO UPDATE SET payload=excluded.payload",
+                    params![id, payload],
+                )?;
+            }
+            let cache_replace_ms = phase.elapsed().as_secs_f64() * 1000.0;
+            let phase = std::time::Instant::now();
+            let (revision, created, resolution) =
+                history::publish(&tx, &docs, &payloads, options.force_full_resolution)?;
+            report.resolution = Some(resolution);
+            let revision_publish_ms = phase.elapsed().as_secs_f64() * 1000.0;
+            report.index_revision = Some(revision);
+            report.revision_created = created;
+            let measured = rag_mcp_core::IndexStageTimings {
+                contract_version: 1,
+                run_id: uuid::Uuid::new_v4().to_string(),
+                lock_wait_ms,
+                source_load_decode_ms,
+                cache_parse_serialize_ms,
+                cache_replace_ms,
+                revision_publish_ms,
+                transaction_body_ms: body_started.elapsed().as_secs_f64() * 1000.0,
+                before_metrics_write_ms: started.elapsed().as_secs_f64() * 1000.0,
+                documents_loaded: docs.len(),
+                cache_hits: report.unchanged,
+                cache_misses: report.indexed,
+                unsupported_documents: report.unsupported,
+                parse_error_documents: report.parse_errors.len(),
+                commit_included: false,
+                metrics_write_included: false,
+                embedding_fts_included: false,
+            };
+            let metrics_started = std::time::Instant::now();
+            timings::record(&tx, revision, created, &measured)?;
+            let metrics_write_ms = metrics_started.elapsed().as_secs_f64() * 1000.0;
+            report.stage_timings = Some(measured);
+            let commit_started = std::time::Instant::now();
+            tx.commit()?;
+            report.completion = Some(rag_mcp_core::IndexCompletionTimings {
+                contract_version: 1,
+                native_total_ms: started.elapsed().as_secs_f64() * 1000.0,
+                commit_ms: commit_started.elapsed().as_secs_f64() * 1000.0,
+                metrics_write_ms,
+                commit_included: true,
+                process_lifetime_peak_rss_bytes: resolution_cache::peak_rss_bytes(),
+            });
+            Ok(report)
+        })
     }
     pub fn code_body(&self, q: &CodeQuery) -> Result<serde_json::Value> {
-        self.code_read(&CodeReadQuery { selection: q.clone(), ..Default::default() })
+        self.store.code_read(&CodeReadQuery {
+            selection: q.clone(),
+            ..Default::default()
+        })
     }
 
     /// Stale facts are omitted; their document IDs are explicitly reported.
@@ -815,19 +828,32 @@ impl Store {
 
     /// Restrict corpus reads before decoding source blobs or cached facts.
     pub(crate) fn code_snapshot_in_project(&self, project: Option<&str>) -> Result<CodeSnapshot> {
-        let mut conn = self.lock()?;
-        let transaction = conn.transaction()?;
-        let snapshot = snapshot_locked(&transaction, project)?;
-        transaction.commit()?;
-        Ok(snapshot)
+        self.store.with_conn(|conn| {
+            let transaction = conn.transaction()?;
+            let snapshot = snapshot_locked(&transaction, project)?;
+            transaction.commit()?;
+            Ok(snapshot)
+        })
     }
     pub fn code_affected_tests(&self, query: &AffectedTestsQuery) -> Result<serde_json::Value> {
-        let mut connection = self.lock()?;
-        let transaction = connection.transaction()?;
-        let snapshot = snapshot_locked_view(&transaction, query.project.as_deref(), true)?;
-        let result = affected_tests::query(&snapshot, query)?;
-        transaction.commit()?;
-        Ok(result)
+        self.store.with_conn(|connection| {
+            let transaction = connection.transaction()?;
+            let snapshot = snapshot_locked_view(&transaction, query.project.as_deref(), true)?;
+            let result = affected_tests::query(&snapshot, query)?;
+            transaction.commit()?;
+            Ok(result)
+        })
+    }
+}
+// Transitional delegators for the two most-called entry points, so their call
+// sites can move to `CodeIndex` in reviewable batches. Removed in Stage 2 once
+// no caller uses them.
+impl Store {
+    pub fn index_code(&self) -> Result<IndexReport> {
+        CodeIndex::new(self).index_code()
+    }
+    pub fn code_snapshot(&self) -> Result<CodeSnapshot> {
+        CodeIndex::new(self).code_snapshot()
     }
 }
 fn snapshot_locked(conn: &duckdb::Connection, project: Option<&str>) -> Result<CodeSnapshot> {
@@ -1332,14 +1358,23 @@ mod tests {
             path: Some("a.rs".into()),
             ..Default::default()
         };
-        let body = store.code_body(&q).unwrap();
+        let body = crate::code_index::CodeIndex::new(&store)
+            .code_body(&q)
+            .unwrap();
         assert_eq!(body["code"], "fn c() { a(); }");
         let mut q = CodeQuery {
             symbol: Some("c".into()),
             ..Default::default()
         };
-        assert_eq!(store.code_body(&q).unwrap()["ambiguous"], true);
-        assert!(store.code_body(&CodeQuery::default()).is_err());
+        assert_eq!(
+            crate::code_index::CodeIndex::new(&store)
+                .code_body(&q)
+                .unwrap()["ambiguous"],
+            true
+        );
+        assert!(crate::code_index::CodeIndex::new(&store)
+            .code_body(&CodeQuery::default())
+            .is_err());
         q.path = Some("a.rs".into());
         let impact = snapshot.query("impact", &q);
         assert_eq!(impact["items"].as_array().unwrap().len(), 2);

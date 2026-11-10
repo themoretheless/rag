@@ -539,7 +539,7 @@ mod tests {
             incremental.resolution.as_ref().unwrap().documents_resolved,
             1
         );
-        let full = store
+        let full = crate::code_index::CodeIndex::new(&store)
             .index_code_with_options(&IndexOptions {
                 force_full_resolution: true,
             })

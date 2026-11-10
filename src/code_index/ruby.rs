@@ -1411,10 +1411,12 @@ mod integration_tests {
             },
         );
         assert_eq!(impact["items"][0]["path"], "/p/client.rb");
-        let body = store.code_body(&q).unwrap();
+        let body = crate::code_index::CodeIndex::new(&store)
+            .code_body(&q)
+            .unwrap();
         assert!(body.to_string().contains("PRIVATE_BODY"));
         assert!(!callers.to_string().contains("PRIVATE_BODY"));
-        let full = store
+        let full = crate::code_index::CodeIndex::new(&store)
             .index_code_with_options(&resolution_cache::IndexOptions {
                 force_full_resolution: true,
             })
