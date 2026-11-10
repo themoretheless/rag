@@ -27,7 +27,13 @@ fn stderr(output: &Output) -> String {
 fn assert_help(binary: &str, cwd: &Path) {
     let output = run(binary, cwd, &["--help"]);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stderr(&output).contains("Usage"), "{}", stderr(&output));
+    // clap prints help on stdout.
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        stderr(&output)
+    );
+    assert!(text.contains("Usage"), "{text}");
 }
 
 fn assert_fails_with(binary: &str, cwd: &Path, args: &[&str], needle: &str) {
@@ -62,15 +68,21 @@ fn db_repair_cli_validates_arguments() {
     let root = tempfile::tempdir().unwrap();
     let binary = env!("CARGO_BIN_EXE_db_repair");
     assert_help(binary, root.path());
-    assert_fails_with(binary, root.path(), &[], "required: --db");
+    // clap's wording since Stage 4 (bins parse arguments with clap).
+    assert_fails_with(binary, root.path(), &[], "--db <DB>");
+    assert_fails_with(binary, root.path(), &["--db", "x.duckdb"], "--out <OUT>");
     assert_fails_with(
         binary,
         root.path(),
-        &["--db", "x.duckdb"],
-        "required: --out",
+        &["--bogus"],
+        "unexpected argument '--bogus'",
     );
-    assert_fails_with(binary, root.path(), &["--bogus"], "unknown arg: --bogus");
-    assert_fails_with(binary, root.path(), &["--db"], "--db needs path");
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--db"],
+        "a value is required for '--db <DB>'",
+    );
 }
 
 #[test]
@@ -148,7 +160,12 @@ fn ingest_file_cli_validates_arguments() {
         ],
         "--path is not a file",
     );
-    assert_fails_with(binary, root.path(), &["--nope"], "unknown arg: --nope");
+    assert_fails_with(
+        binary,
+        root.path(),
+        &["--nope"],
+        "unexpected argument '--nope'",
+    );
     assert!(!db.exists(), "argument errors must not create the database");
 }
 
@@ -321,7 +338,7 @@ fn promote_dodo_projects_cli_requires_a_database_argument() {
         env!("CARGO_BIN_EXE_promote_dodo_projects"),
         root.path(),
         &[],
-        "usage: promote_dodo_projects",
+        "Usage: promote_dodo_projects <DB_PATH>",
     );
 }
 

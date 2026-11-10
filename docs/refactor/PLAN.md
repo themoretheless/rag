@@ -212,3 +212,8 @@ form with its variant prefix.
    (both still appear in `analyze_corpus`). The prompt lists the remaining 21
    names. `maintain_compress` keeps its own `merge_near_dup` report rows (a
    compress result label, not a plan action).
+8. **Binary argument errors.** `ingest_file`, `db_repair`, `rag_gate` and
+   `promote_dodo_projects` parse arguments with clap: `--help` prints on
+   stdout, and unknown or missing arguments use clap's wording (for example
+   `unexpected argument '--bogus' found`) with exit code 2. Flags and their
+   meaning are unchanged; `rag_gate --mode` still defaults to `RAG_GATE_MODE`.
