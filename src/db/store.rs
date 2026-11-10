@@ -69,6 +69,8 @@ pub struct Store {
     // Present only on an explicitly scoped clone used by a bulk workflow.
     // Clones keep the lease alive if nested work outlives its transport request.
     corpus_mutation_guard: Option<Arc<CorpusMutationGuard>>,
+    // Vector search snapshots of this database (shared by clones).
+    vector_cache: Arc<Mutex<super::search::VectorCache>>,
 }
 
 pub(crate) type CorpusMutationGuard = tokio::sync::OwnedRwLockWriteGuard<()>;
@@ -230,6 +232,7 @@ impl Store {
             read_only: false,
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
             corpus_mutation_guard: None,
+            vector_cache: Arc::default(),
         })
     }
 
@@ -293,7 +296,13 @@ impl Store {
             read_only: true,
             corpus_mutation_lane: Arc::new(tokio::sync::RwLock::new(())),
             corpus_mutation_guard: None,
+            vector_cache: Arc::default(),
         })
+    }
+
+    /// Vector search snapshots of this database.
+    pub(crate) fn vector_cache(&self) -> &Mutex<super::search::VectorCache> {
+        &self.vector_cache
     }
 
     /// Filesystem path of the opened database.

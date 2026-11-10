@@ -171,3 +171,49 @@ should measure on a larger corpus before and after its change (raise
 Not measured yet (planned in PLAN.md Stage 0, deferred): MCP `tools/call`
 overhead (needs the transport seam added with the Stage 1 parity tests) and
 the web bundle size (owned by the Stage 7 agent).
+
+## Stage 5: optimization (before/after per item)
+
+Method for every runtime row below: the ignored timing tests in
+`src/db/search/tests.rs`, release profile (`cargo test --release --lib --
+--ignored --exact db::search::tests::<name> --nocapture`), with
+`CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` so a
+test build takes minutes instead of a full fat link (same settings before and
+after), `RAG_TIMING_DOCS=10000` (10 000 documents × 4 chunks = 40 000 chunks,
+32 dims). Each test was run 3 times; the table shows the median of the three
+runs' p50/p95. "Before" was measured on the same machine, back to back with
+"after", from a worktree of the previous commit carrying only the harness
+changes. 4 vCPU, load average 1.2–2.0 from other jobs during the runs (4.1 on
+one "before" refresh run).
+
+New timing tests added for this stage: `timing_concurrent_search_and_write`
+(vector searches in a loop while another thread writes 50 documents) and
+`timing_vector_refresh_after_write` (one document written, then one vector
+search, 50 times). `RAG_TIMING_DOCS` overrides the corpus size.
+
+### Item 1: vector snapshot owned by `Store`, built outside the mutex
+
+Change: the process-global `VECTOR_SNAPSHOTS` / scoped caches keyed by path
+became a `VectorCache` field of `Store` (shared by clones). The connection
+mutex is held only to read rows (generation, scope ids, the chunk listing and
+changed embeddings); JSON parsing, normalization, document-id interning and
+the merge with the previous snapshot run after it is released. Document ids
+are interned to `u32` (the table is shared with the previous snapshot while no
+new document appears, and the scope check is a per-document mask instead of a
+string hash per chunk), chunk ids are `Arc<str>`, and a change-log refresh
+merges two sorted runs instead of re-sorting the corpus. Spans and section
+metadata are read with the content for returned hits only, so the snapshot no
+longer keeps `metadata_json` / `char_start` / `char_end` per chunk.
+
+| metric (10 000 docs, 40 000 chunks) | before | after |
+|---|---:|---:|
+| vector search, cold (first query builds the snapshot) | 128.8 ms | 128.4 ms |
+| vector search, warm p50 / p95 | 10.4 / 14.7 ms | 10.7 / 12.0 ms |
+| vector search right after a one-document write, p50 / p95 | 25.5 / 31.0 ms | **17.1 / 20.7 ms** |
+| concurrent: search p50 / p95 while writing | 53.7 / 76.7 ms | **37.0 / 54.6 ms** |
+| concurrent: write p50 / p95 while searching | 19.2 / 41.0 ms | **17.5 / 24.3 ms** |
+| hybrid search p50 / p95 (control; "after" on the first draft of this item, re-measured as item 3's "before") | 95.9 / 105.9 ms | 97.5 / 119.3 ms |
+
+Kept. Cold build cost is the JSON parse of every vector, which item 2
+removes; warm search is dominated by the scope listing and hydration, not by
+the dot products.
