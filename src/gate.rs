@@ -713,6 +713,7 @@ mod tests {
             let db = tempfile::tempdir().unwrap();
             let store = Store::open(&db.path().join("gate.duckdb")).unwrap();
             store
+                .documents()
                 .upsert_document(&Document {
                     id: "file".into(),
                     uri: format!("file://{}", path.display()),
@@ -886,9 +887,9 @@ mod tests {
         let r = f.call(Mode::Deny);
         assert_eq!(r["verdict"], "deny");
         assert_eq!(r["rule"], "stale_index");
-        let mut doc = f.store.get_document("file").unwrap().unwrap();
+        let mut doc = f.store.documents().get_document("file").unwrap().unwrap();
         doc.content = "fn next() {}\n".into();
-        f.store.upsert_document(&doc).unwrap();
+        f.store.documents().upsert_document(&doc).unwrap();
         crate::code_index::CodeIndex::new(&f.store)
             .index_code()
             .unwrap();
@@ -982,6 +983,7 @@ mod tests {
             let path = f.root.join(format!("{i:03}.txt"));
             std::fs::write(&path, "small").unwrap();
             f.store
+                .documents()
                 .upsert_document(&Document {
                     id: format!("extra-{i}"),
                     uri: format!("file://{}", path.display()),

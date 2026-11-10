@@ -217,7 +217,7 @@ async fn version() -> impl IntoResponse {
     )
 }
 async fn projects(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.list_projects() {
+    crate::util::blocking_section(|| match st.store.documents().list_projects() {
         Ok(items) => api_ok(json!({"ok":true, "items":items})),
         Err(error) => api_err(error),
     })
@@ -231,14 +231,14 @@ async fn project_home(
     State(st): State<HttpState>,
     Query(query): Query<ProjectHomeQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.project_home(&query.project) {
+    crate::util::blocking_section(|| match st.store.documents().project_home(&query.project) {
         Ok(value) => api_ok(json!({"ok": true, "project": value})),
         Err(error) => api_err(error),
     })
 }
 
 async fn checkpoint(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.vacuum_store() {
+    crate::util::blocking_section(|| match st.store.maintenance().vacuum_store() {
         Ok(report) => api_ok(json!({"ok": true, "report": report})),
         Err(error) => api_err(error),
     })
@@ -265,7 +265,9 @@ async fn backup(State(st): State<HttpState>, Json(body): Json<BackupBody>) -> im
     }
     let store = st.store.clone();
     let backup = super::run_blocking("backup", move || {
-        store.backup_database(&path, body.dry_run, body.overwrite)
+        store
+            .recovery()
+            .backup_database(&path, body.dry_run, body.overwrite)
     })
     .await;
     match backup {
@@ -374,10 +376,12 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         entry.last_tool = Some(activity.last_tool);
         entry.p95_ms = activity.p95_ms;
     }
-    let ops = match crate::util::blocking_section(|| st.store.list_recent_ops(AGENT_SCAN_ROWS)) {
-        Ok(value) => value,
-        Err(error) => return api_err(error),
-    };
+    let ops =
+        match crate::util::blocking_section(|| st.store.ops_log().list_recent_ops(AGENT_SCAN_ROWS))
+        {
+            Ok(value) => value,
+            Err(error) => return api_err(error),
+        };
     for op in ops {
         let Some(name) = op.agent_name.as_deref().filter(|n| !n.trim().is_empty()) else {
             continue;
@@ -390,12 +394,14 @@ async fn agents(State(st): State<HttpState>) -> impl IntoResponse {
         }
     }
     // Counts and timestamps only: read diary rows without their bodies.
-    let diary =
-        match crate::util::blocking_section(|| st.store.list_diary_activity(None, AGENT_SCAN_ROWS))
-        {
-            Ok(value) => value,
-            Err(error) => return api_err(error),
-        };
+    let diary = match crate::util::blocking_section(|| {
+        st.store
+            .documents()
+            .list_diary_activity(None, AGENT_SCAN_ROWS)
+    }) {
+        Ok(value) => value,
+        Err(error) => return api_err(error),
+    };
     for entry in diary {
         let agent = row(&mut rows, &entry.agent_name);
         agent.diary_count += 1;

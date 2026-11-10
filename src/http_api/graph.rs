@@ -47,8 +47,10 @@ async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl
     });
     let store = st.store.clone();
     let result = super::run_blocking("graph", move || match project.as_deref() {
-        Some(project) => store.export_project_graph_for_ui(project, Some(max), tags),
-        None => store.export_graph_for_ui(Some(max), tags),
+        Some(project) => store
+            .graph()
+            .export_project_graph_for_ui(project, Some(max), tags),
+        None => store.graph().export_graph_for_ui(Some(max), tags),
     })
     .await;
     match result {
@@ -95,7 +97,7 @@ async fn neighbors(
         let query_project = project.clone();
         let query_seed = seed.clone();
         let result = super::run_blocking("project neighbors", move || {
-            store.export_project_neighbors_for_ui(
+            store.graph().export_project_neighbors_for_ui(
                 &query_project,
                 &query_seed,
                 depth,
@@ -115,7 +117,9 @@ async fn neighbors(
 
     let query_seed = seed.clone();
     let result = super::run_blocking("neighbors", move || {
-        store.export_pkb_neighbors_for_ui(&query_seed, depth, max_nodes, include_tags)
+        store
+            .graph()
+            .export_pkb_neighbors_for_ui(&query_seed, depth, max_nodes, include_tags)
     })
     .await;
     match result {
@@ -142,6 +146,7 @@ async fn find_node(State(st): State<HttpState>, Query(q): Query<FindQuery>) -> i
     let result = super::run_blocking("find graph node", move || {
         let id = resolve_seed(&store, &key)?;
         store
+            .graph()
             .find_node_by_id(&id)?
             .ok_or_else(|| AppError::not_found(format!("node {id}")))
     })
@@ -211,11 +216,13 @@ async fn document(
 fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::Document, AppError> {
     if let Some(id) = q.id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return store
+            .documents()
             .get_document(id)?
             .ok_or_else(|| AppError::not_found(format!("document id '{id}'")));
     }
     if let Some(uri) = q.uri.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return store
+            .documents()
             .find_by_uri(uri)?
             .ok_or_else(|| AppError::not_found(format!("document uri '{uri}'")));
     }
@@ -226,10 +233,10 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
             .ok_or_else(|| AppError::invalid("provide id, uri, or q"))?;
 
     // Direct document id or uri before graph seed.
-    if let Some(doc) = store.get_document(key)? {
+    if let Some(doc) = store.documents().get_document(key)? {
         return Ok(doc);
     }
-    if let Some(doc) = store.find_by_uri(key)? {
+    if let Some(doc) = store.documents().find_by_uri(key)? {
         return Ok(doc);
     }
     if key.starts_with("wiki://") || key.starts_with("file://") || key.starts_with("text://") {
@@ -237,15 +244,17 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
     }
 
     let node = store
+        .graph()
         .resolve_seed(key)?
         .ok_or_else(|| seed_not_found(key))?;
     if let Some(doc_id) = node.document_id.as_deref() {
         return store
+            .documents()
             .get_document(doc_id)?
             .ok_or_else(|| AppError::not_found(format!("document id '{doc_id}'")));
     }
     if let Some(uri) = node.uri.as_deref() {
-        if let Some(doc) = store.find_by_uri(uri)? {
+        if let Some(doc) = store.documents().find_by_uri(uri)? {
             return Ok(doc);
         }
     }
@@ -257,6 +266,7 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
 
 fn resolve_seed(store: &Store, seed: &str) -> Result<String, AppError> {
     store
+        .graph()
         .resolve_seed(seed)?
         .map(|node| node.id)
         .ok_or_else(|| seed_not_found(seed))

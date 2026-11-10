@@ -57,7 +57,7 @@ async fn source_file(
     let store = state.store.clone();
     let document_id = query.document_id;
     let document = match super::run_blocking("source document", move || {
-        store.get_document(&document_id)
+        store.documents().get_document(&document_id)
     })
     .await
     {
@@ -170,7 +170,9 @@ async fn revisions(
     let store = state.store.clone();
     let document_id = query.document_id;
     let page = super::run_blocking("revision catalog", move || {
-        store.list_document_revision_summaries(&document_id, limit, offset)
+        store
+            .documents()
+            .list_document_revision_summaries(&document_id, limit, offset)
     })
     .await;
     match page {
@@ -486,7 +488,8 @@ async fn pack_context_http(
 fn source_versions_for_hits(store: &crate::db::Store, hits: &[SearchHit]) -> Vec<SourceVersion> {
     let ids: Vec<&str> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
     // One query for every hit's stored hash (was one full document load per hit).
-    let hashes = crate::util::blocking_section(|| store.content_hashes(&ids)).unwrap_or_default();
+    let hashes = crate::util::blocking_section(|| store.documents().content_hashes(&ids))
+        .unwrap_or_default();
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for hit in hits {
@@ -671,7 +674,7 @@ async fn documents(
     };
     let store = state.store.clone();
     let page = super::run_blocking("document catalog", move || {
-        store.list_document_catalog(&filter)
+        store.documents().list_document_catalog(&filter)
     })
     .await;
     match page {

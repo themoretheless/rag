@@ -584,13 +584,17 @@ mod tests {
             let body = String::from_utf8_lossy(&bytes);
             assert_eq!(body.contains("FORBIDDEN"), denied, "{body}");
             if denied {
-                assert_eq!(store.stats().unwrap().0, 0);
+                assert_eq!(store.maintenance().stats().unwrap().0, 0);
             }
             if method == "tools/list" {
                 assert!(!body.contains("write_wiki_page"));
                 assert!(body.contains("search"));
             }
         }
-        assert!(store.find_by_uri("wiki://auth-page").unwrap().is_some());
+        assert!(store
+            .documents()
+            .find_by_uri("wiki://auth-page")
+            .unwrap()
+            .is_some());
     }
 }

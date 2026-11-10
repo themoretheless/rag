@@ -119,6 +119,7 @@ struct Update {
 fn update_properties(store: &Store, body: Update) -> Result<Value> {
     body.properties.validate()?;
     let mut doc = store
+        .documents()
         .get_document(&body.id)?
         .ok_or_else(|| AppError::not_found("wiki page not found"))?;
     if !crate::models::Layer::Wiki.is(&doc.layer) {
@@ -140,8 +141,11 @@ fn update_properties(store: &Store, body: Update) -> Result<Value> {
     );
     doc.metadata_json = serde_json::to_string(&metadata)?;
     // Keep the article's content timestamp: metadata edits must not clear legacy staleness.
-    let result =
-        store.write_document_atomic(&doc, Some(body.revision), DocumentDerivedWrite::Preserve)?;
+    let result = store.documents().write_document_atomic(
+        &doc,
+        Some(body.revision),
+        DocumentDerivedWrite::Preserve,
+    )?;
     Ok(json!({"id":doc.id,"revision":result.revision,"properties":body.properties}))
 }
 async fn update(State(st): State<HttpState>, Json(body): Json<Update>) -> Response {
@@ -243,8 +247,8 @@ mod tests {
             metadata_json: json!({"custom":"keep","source_versions":[]}).to_string(),
             ..Default::default()
         };
-        store.upsert_document(&doc).unwrap();
-        let doc = store.get_document(&doc.id).unwrap().unwrap();
+        store.documents().upsert_document(&doc).unwrap();
+        let doc = store.documents().get_document(&doc.id).unwrap().unwrap();
         (store, doc)
     }
     #[test]
@@ -265,7 +269,7 @@ mod tests {
             },
         )
         .unwrap();
-        let after = store.get_document(&doc.id).unwrap().unwrap();
+        let after = store.documents().get_document(&doc.id).unwrap().unwrap();
         assert_eq!(after.content, doc.content);
         assert_eq!(after.updated_at, doc.updated_at);
         let meta: Value = serde_json::from_str(&after.metadata_json).unwrap();

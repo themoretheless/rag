@@ -1092,11 +1092,20 @@ mod tests {
             kind: "wiki".into(),
             ..Default::default()
         };
-        store.upsert_document_cas(&document, None).unwrap();
+        store
+            .documents()
+            .upsert_document_cas(&document, None)
+            .unwrap();
         document.content = "second body".into();
-        store.upsert_document_cas(&document, Some(1)).unwrap();
+        store
+            .documents()
+            .upsert_document_cas(&document, Some(1))
+            .unwrap();
         document.content = "third body".into();
-        store.upsert_document_cas(&document, Some(2)).unwrap();
+        store
+            .documents()
+            .upsert_document_cas(&document, Some(2))
+            .unwrap();
         let embedder = build_provider(&config).unwrap();
         let allowed_hosts = configured_http_allowed_hosts(&config, None);
         let app = gateway_layers(

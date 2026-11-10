@@ -23,7 +23,8 @@ pub(crate) fn reusing_document_vectors(
     embedder: &std::sync::Arc<dyn EmbeddingProvider>,
     document_id: &str,
 ) -> crate::error::Result<std::sync::Arc<dyn EmbeddingProvider>> {
-    let known = crate::util::blocking_section(|| store.chunk_vectors_by_content(&[document_id]))?;
+    let known =
+        crate::util::blocking_section(|| store.chunks().chunk_vectors_by_content(&[document_id]))?;
     Ok(if known.is_empty() {
         embedder.clone()
     } else {

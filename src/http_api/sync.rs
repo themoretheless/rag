@@ -50,7 +50,7 @@ async fn status(State(st): State<HttpState>) -> impl IntoResponse {
             Ok(value) => value,
             Err(error) => return api_err(error),
         };
-        match st.store.sync_status(&role, &node_id, primary_url) {
+        match st.store.sync().sync_status(&role, &node_id, primary_url) {
             Ok(value) => api_ok(json!({"ok": true, "sync": value})),
             Err(error) => api_err(error),
         }
@@ -75,6 +75,7 @@ async fn register(
     crate::util::blocking_section(|| {
         match st
             .store
+            .sync()
             .register_sync_node(&body.node_id, &body.hostname, &body.role)
         {
             Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id})),
@@ -102,7 +103,9 @@ async fn push(State(st): State<HttpState>, Json(body): Json<PushBody>) -> impl I
     // Validate the whole batch before the first mutation. Each accepted event then
     // commits page+journal together; a retry safely resumes any committed prefix.
     if let Err(error) = crate::util::blocking_section(|| {
-        st.store.preflight_sync_batch(&body.node_id, &body.changes)
+        st.store
+            .sync()
+            .preflight_sync_batch(&body.node_id, &body.changes)
     }) {
         return api_err(error);
     }
@@ -176,7 +179,7 @@ async fn apply_change_with(
     let payload = validate_wiki_change(change)?;
     for attempt in 0..3 {
         if let Some(sequence) =
-            crate::util::blocking_section(|| st.store.previously_applied_sync(&mode))?
+            crate::util::blocking_section(|| st.store.sync().previously_applied_sync(&mode))?
         {
             return Ok(sequence);
         }
@@ -242,9 +245,11 @@ pub(super) fn spawn_worker(st: HttpState) {
         .sync_node_name
         .clone()
         .unwrap_or_else(|| node_id.clone());
-    if let Err(error) =
-        crate::util::blocking_section(|| st.store.register_sync_node(&node_id, &hostname, &role))
-    {
+    if let Err(error) = crate::util::blocking_section(|| {
+        st.store
+            .sync()
+            .register_sync_node(&node_id, &hostname, &role)
+    }) {
         tracing::error!(%error, %node_id, "cannot initialize database sync node");
     }
     let Some(primary_url) = configured_primary else {
@@ -276,7 +281,9 @@ pub(super) fn spawn_worker(st: HttpState) {
     tokio::spawn(async move {
         let base = primary_url.trim_end_matches('/').to_string();
         let _ = crate::util::blocking_section(|| {
-            st.store.register_sync_node(&node_id, &hostname, "replica")
+            st.store
+                .sync()
+                .register_sync_node(&node_id, &hostname, "replica")
         });
         loop {
             if let Err(error) = sync_once(&st, &client, &base, &node_id, &hostname).await {
@@ -332,7 +339,7 @@ async fn sync_once(
 
     let pending = bounded_sync_batch(
         node_id,
-        &crate::util::blocking_section(|| st.store.pending_sync_outbox(100))?,
+        &crate::util::blocking_section(|| st.store.sync().pending_sync_outbox(100))?,
     )?;
     if !pending.is_empty() {
         let reply = client
@@ -354,10 +361,10 @@ async fn sync_once(
             .zip(reply.primary_sequences)
             .map(|(change, primary)| (change.origin_seq, primary))
             .collect::<Vec<_>>();
-        crate::util::blocking_section(|| st.store.mark_sync_outbox_sent(&assignments))?;
+        crate::util::blocking_section(|| st.store.sync().mark_sync_outbox_sent(&assignments))?;
     }
 
-    let cursor = crate::util::blocking_section(|| st.store.sync_pull_cursor(node_id))?;
+    let cursor = crate::util::blocking_section(|| st.store.sync().sync_pull_cursor(node_id))?;
     let reply = client
         .get(format!("{base}/v1/sync/pull"))
         .query(&[
@@ -431,6 +438,7 @@ async fn pull(State(st): State<HttpState>, Query(query): Query<PullQuery>) -> im
     crate::util::blocking_section(|| {
         match st
             .store
+            .sync()
             .pull_sync_changes(&query.node_id, query.after, query.limit)
         {
             Ok(items) => {
@@ -455,7 +463,11 @@ struct AckBody {
 
 async fn ack(State(st): State<HttpState>, Json(body): Json<AckBody>) -> impl IntoResponse {
     crate::util::blocking_section(|| {
-        match st.store.acknowledge_sync_cursor(&body.node_id, body.cursor) {
+        match st
+            .store
+            .sync()
+            .acknowledge_sync_cursor(&body.node_id, body.cursor)
+        {
             Ok(()) => api_ok(json!({"ok": true, "node_id": body.node_id, "cursor": body.cursor})),
             Err(error) => api_err(error),
         }
@@ -519,6 +531,7 @@ mod tests {
 
     fn body(st: &HttpState) -> String {
         st.store
+            .documents()
             .find_by_uri("wiki://shared")
             .unwrap()
             .unwrap()
@@ -526,6 +539,7 @@ mod tests {
     }
     fn revision(st: &HttpState) -> i64 {
         st.store
+            .documents()
             .find_by_uri("wiki://shared")
             .unwrap()
             .unwrap()
@@ -534,6 +548,7 @@ mod tests {
     fn cursor(st: &HttpState, node: &str) -> i64 {
         let listed = st
             .store
+            .sync()
             .sync_status("replica", node, None)
             .unwrap()
             .nodes
@@ -541,7 +556,7 @@ mod tests {
             .find(|item| item.node_id == node)
             .map(|item| item.pull_cursor)
             .unwrap_or(0);
-        assert_eq!(st.store.sync_pull_cursor(node).unwrap(), listed);
+        assert_eq!(st.store.sync().sync_pull_cursor(node).unwrap(), listed);
         listed
     }
 
@@ -599,10 +614,11 @@ mod tests {
             if expected == StatusCode::BAD_REQUEST {
                 assert!(primary
                     .store
+                    .documents()
                     .find_by_uri("wiki://shared")
                     .unwrap()
                     .is_none());
-                assert!(!primary.store.has_sync_change("replica", 1).unwrap());
+                assert!(!primary.store.sync().has_sync_change("replica", 1).unwrap());
             }
         }
         assert_eq!(body(&primary), "first");
@@ -636,10 +652,11 @@ mod tests {
         assert!(result.is_err());
         assert!(replica
             .store
+            .documents()
             .find_by_uri("wiki://shared")
             .unwrap()
             .is_none());
-        assert!(!replica.store.has_sync_change("primary", 1).unwrap());
+        assert!(!replica.store.sync().has_sync_change("primary", 1).unwrap());
         assert_eq!(cursor(&replica, "replica"), 0);
         apply_change(
             &replica,
@@ -662,7 +679,12 @@ mod tests {
         .unwrap();
         assert_eq!(revision(&replica), committed);
         assert_eq!(cursor(&replica, "replica"), 1);
-        assert!(replica.store.pending_sync_outbox(10).unwrap().is_empty());
+        assert!(replica
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty());
 
         let local = state(root.path(), "local");
         let mut failing = command("local");
@@ -680,8 +702,18 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        assert!(local.store.pending_sync_outbox(10).unwrap().is_empty());
-        assert!(local.store.find_by_uri("wiki://shared").unwrap().is_none());
+        assert!(local
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty());
+        assert!(local
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .is_none());
         // Public agent strings cannot opt out of journalling.
         wiki::write_wiki_page_command(
             &local.store,
@@ -694,6 +726,7 @@ mod tests {
         assert_eq!(
             local
                 .store
+                .sync()
                 .sync_status("primary", "local", None)
                 .unwrap()
                 .latest_primary_seq,
@@ -754,7 +787,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body(&replica), "offline 105"); // The first 100 older own events cannot erase five unsent edits.
-        assert_eq!(replica.store.pending_sync_outbox(100).unwrap().len(), 5);
+        assert_eq!(
+            replica.store.sync().pending_sync_outbox(100).unwrap().len(),
+            5
+        );
         assert_eq!(cursor(&replica, "replica"), 100);
         sync_once(&replica, &client, &base, "replica", "replica.local")
             .await
@@ -762,7 +798,12 @@ mod tests {
         assert_eq!(body(&replica), "offline 105");
         assert_eq!(body(&primary), body(&replica));
         assert_eq!(cursor(&replica, "replica"), 105);
-        assert!(replica.store.pending_sync_outbox(100).unwrap().is_empty());
+        assert!(replica
+            .store
+            .sync()
+            .pending_sync_outbox(100)
+            .unwrap()
+            .is_empty());
         server.abort();
         let _ = server.await;
     }
@@ -773,7 +814,12 @@ mod tests {
         let primary = state(root.path(), "primary");
         let replica = state(root.path(), "replica");
         local_write(&replica, "replica", true, "submitted").await;
-        let submitted = replica.store.pending_sync_outbox(10).unwrap().remove(0);
+        let submitted = replica
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .remove(0);
         let sequence = apply_change(
             &primary,
             WikiSyncWrite::Push {
@@ -801,10 +847,12 @@ mod tests {
         assert_eq!(revision(&primary), primary_revision);
         replica
             .store
+            .sync()
             .mark_sync_outbox_sent(&[(submitted.origin_seq, sequence)])
             .unwrap();
         let first = primary
             .store
+            .sync()
             .pull_sync_changes("replica", 0, 10)
             .unwrap()
             .remove(0);
@@ -878,7 +926,11 @@ mod tests {
         let mut assignments = vec![a.unwrap(), b.unwrap()];
         assignments.sort_unstable();
         assert_eq!(assignments, vec![1, 2]);
-        let canonical = primary.store.pull_sync_changes("observer", 0, 10).unwrap();
+        let canonical = primary
+            .store
+            .sync()
+            .pull_sync_changes("observer", 0, 10)
+            .unwrap();
         assert_eq!(
             body(&primary),
             validate_wiki_change(&canonical.last().unwrap().change)
@@ -923,7 +975,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let outgoing = first.store.pending_sync_outbox(1).unwrap().remove(0);
+        let outgoing = first.store.sync().pending_sync_outbox(1).unwrap().remove(0);
         let payload = validate_wiki_change(&outgoing).unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&payload.metadata_json.unwrap()).unwrap(),
@@ -940,6 +992,7 @@ mod tests {
         .unwrap();
         let incoming = primary
             .store
+            .sync()
             .pull_sync_changes("second", 0, 1)
             .unwrap()
             .remove(0);
@@ -953,7 +1006,12 @@ mod tests {
         .await
         .unwrap();
         for state in [&primary, &second] {
-            let doc = state.store.find_by_uri("wiki://shared").unwrap().unwrap();
+            let doc = state
+                .store
+                .documents()
+                .find_by_uri("wiki://shared")
+                .unwrap()
+                .unwrap();
             let received: serde_json::Value = serde_json::from_str(&doc.metadata_json).unwrap();
             assert_eq!(received, metadata);
         }
@@ -1000,10 +1058,16 @@ mod tests {
             .contains("sync event exceeds"));
         assert!(replica
             .store
+            .documents()
             .find_by_uri("wiki://shared")
             .unwrap()
             .is_none());
-        assert!(replica.store.pending_sync_outbox(10).unwrap().is_empty());
+        assert!(replica
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -1028,7 +1092,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let pending = replica.store.pending_sync_outbox(10).unwrap();
+        let pending = replica.store.sync().pending_sync_outbox(10).unwrap();
         let padding = crate::db::sync::MAX_SYNC_EVENT_BYTES
             - serde_json::to_vec(pending.last().unwrap()).unwrap().len();
         page.options.extra_metadata = Some(json!({"padding":"x".repeat(padding)}));
@@ -1042,13 +1106,18 @@ mod tests {
         )
         .await
         .unwrap();
-        let pending = replica.store.pending_sync_outbox(10).unwrap();
+        let pending = replica.store.sync().pending_sync_outbox(10).unwrap();
         assert_eq!(pending.last().unwrap().origin_seq, 9);
         assert_eq!(
             serde_json::to_vec(pending.last().unwrap()).unwrap().len(),
             crate::db::sync::MAX_SYNC_EVENT_BYTES
         );
-        let before = replica.store.find_by_uri("wiki://shared").unwrap().unwrap();
+        let before = replica
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .unwrap();
         let error = wiki::write_wiki_page_synced_command(
             &replica.store,
             &replica.embedder,
@@ -1060,16 +1129,30 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.to_string().contains("sync event exceeds"));
-        let after = replica.store.find_by_uri("wiki://shared").unwrap().unwrap();
+        let after = replica
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .unwrap();
         assert_eq!(after.revision, before.revision);
         assert_eq!(after.content, before.content);
         assert_eq!(after.metadata_json, before.metadata_json);
-        assert_eq!(replica.store.pending_sync_outbox(10).unwrap(), pending);
+        assert_eq!(
+            replica.store.sync().pending_sync_outbox(10).unwrap(),
+            pending
+        );
     }
 
     fn replica_metadata_edit(st: &HttpState, metadata: serde_json::Value) {
-        let document = st.store.find_by_uri("wiki://shared").unwrap().unwrap();
+        let document = st
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .unwrap();
         st.store
+            .documents()
             .update_document_meta_for_sync_test(
                 &document.id,
                 &crate::models::DocumentMetaUpdate {
@@ -1088,6 +1171,7 @@ mod tests {
     fn metadata(st: &HttpState) -> serde_json::Value {
         serde_json::from_str(
             &st.store
+                .documents()
                 .find_by_uri("wiki://shared")
                 .unwrap()
                 .unwrap()
@@ -1118,7 +1202,7 @@ mod tests {
         .await
         .unwrap();
         replica_metadata_edit(&replica, json!({"version":"M2"}));
-        let outgoing = replica.store.pending_sync_outbox(10).unwrap();
+        let outgoing = replica.store.sync().pending_sync_outbox(10).unwrap();
         assert_eq!(outgoing.len(), 2);
         let (base, server) = primary_server(primary.clone()).await;
         let client = reqwest::Client::new();
@@ -1138,10 +1222,16 @@ mod tests {
         replica_metadata_edit(&replica, json!({"version":"M3"}));
         replica
             .store
+            .sync()
             .mark_sync_outbox_sent(&[(1, 1), (2, 2)])
             .unwrap();
         replica_metadata_edit(&replica, json!({"version":"M4"}));
-        for event in primary.store.pull_sync_changes("replica", 0, 10).unwrap() {
+        for event in primary
+            .store
+            .sync()
+            .pull_sync_changes("replica", 0, 10)
+            .unwrap()
+        {
             apply_change(
                 &replica,
                 WikiSyncWrite::Pull {
@@ -1181,12 +1271,18 @@ mod tests {
         assert_eq!(
             primary
                 .store
+                .sync()
                 .pull_sync_changes("observer", 0, 10)
                 .unwrap()
                 .len(),
             5
         );
-        assert!(replica.store.pending_sync_outbox(10).unwrap().is_empty());
+        assert!(replica
+            .store
+            .sync()
+            .pending_sync_outbox(10)
+            .unwrap()
+            .is_empty());
         server.abort();
         let _ = server.await;
     }
@@ -1196,44 +1292,62 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let replica = state(root.path(), "replica");
         local_write(&replica, "replica", true, "body").await;
-        let before = replica.store.find_by_uri("wiki://shared").unwrap().unwrap();
+        let before = replica
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .unwrap();
         let catalog = replica
             .store
+            .wiki_index()
             .get_wiki_index_by_slug("shared")
             .unwrap()
             .unwrap();
-        let pending = replica.store.pending_sync_outbox(10).unwrap();
+        let pending = replica.store.sync().pending_sync_outbox(10).unwrap();
         replica
             .store
             .lock()
             .unwrap()
             .execute_batch("DROP TABLE sync_nodes")
             .unwrap();
-        let result = replica.store.update_document_meta_for_sync_test(
-            &before.id,
-            &crate::models::DocumentMetaUpdate {
-                title: Some("should roll back".into()),
-                metadata_json: Some(json!({"version":"M2", "category":"changed"}).to_string()),
-                ..Default::default()
-            },
-            &SyncIdentity {
-                node_id: "replica".into(),
-                primary_url: Some("http://primary".into()),
-            },
-        );
+        let result = replica
+            .store
+            .documents()
+            .update_document_meta_for_sync_test(
+                &before.id,
+                &crate::models::DocumentMetaUpdate {
+                    title: Some("should roll back".into()),
+                    metadata_json: Some(json!({"version":"M2", "category":"changed"}).to_string()),
+                    ..Default::default()
+                },
+                &SyncIdentity {
+                    node_id: "replica".into(),
+                    primary_url: Some("http://primary".into()),
+                },
+            );
         assert!(result.is_err());
-        let after = replica.store.get_document(&before.id).unwrap().unwrap();
+        let after = replica
+            .store
+            .documents()
+            .get_document(&before.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(after.revision, before.revision);
         assert_eq!(after.title, before.title);
         assert_eq!(after.metadata_json, before.metadata_json);
         let after_catalog = replica
             .store
+            .wiki_index()
             .get_wiki_index_by_slug("shared")
             .unwrap()
             .unwrap();
         assert_eq!(after_catalog.title, catalog.title);
         assert_eq!(after_catalog.category, catalog.category);
-        assert_eq!(replica.store.pending_sync_outbox(10).unwrap(), pending);
+        assert_eq!(
+            replica.store.sync().pending_sync_outbox(10).unwrap(),
+            pending
+        );
     }
 
     #[tokio::test]
@@ -1241,7 +1355,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let primary = state(root.path(), "primary");
         local_write(&primary, "primary", false, "body").await;
-        let mut doc = primary.store.find_by_uri("wiki://shared").unwrap().unwrap();
+        let mut doc = primary
+            .store
+            .documents()
+            .find_by_uri("wiki://shared")
+            .unwrap()
+            .unwrap();
         doc.title = "Changed title".into();
         doc.wing = Some("project".into());
         doc.room = Some("architecture".into());
@@ -1249,13 +1368,18 @@ mod tests {
         doc.metadata_json = json!({"version":"M2", "category":"design"}).to_string();
         primary
             .store
+            .documents()
             .write_document_atomic(
                 &doc,
                 Some(doc.revision),
                 crate::db::store::DocumentDerivedWrite::Preserve,
             )
             .unwrap();
-        let events = primary.store.pull_sync_changes("observer", 0, 10).unwrap();
+        let events = primary
+            .store
+            .sync()
+            .pull_sync_changes("observer", 0, 10)
+            .unwrap();
         assert_eq!(events.len(), 2);
         let payload = validate_wiki_change(&events[1].change).unwrap();
         assert_eq!(payload.title, doc.title);
@@ -1276,16 +1400,23 @@ mod tests {
         };
         primary
             .store
+            .documents()
             .update_document_meta(&doc.id, &update)
             .unwrap()
             .unwrap();
-        let mut local = primary.store.get_document(&doc.id).unwrap().unwrap();
+        let mut local = primary
+            .store
+            .documents()
+            .get_document(&doc.id)
+            .unwrap()
+            .unwrap();
         local.status = "active".into();
         local.pinned = false;
         local.boost = 3.0;
         local.source_file = None;
         primary
             .store
+            .documents()
             .write_document_atomic(
                 &local,
                 Some(local.revision),
@@ -1302,10 +1433,12 @@ mod tests {
         };
         primary
             .store
+            .documents()
             .write_document_atomic(&raw, None, crate::db::store::DocumentDerivedWrite::Preserve)
             .unwrap();
         primary
             .store
+            .documents()
             .update_document_meta(
                 &raw.id,
                 &crate::models::DocumentMetaUpdate {
@@ -1316,7 +1449,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            primary.store.pull_sync_changes("observer", 0, 10).unwrap(),
+            primary
+                .store
+                .sync()
+                .pull_sync_changes("observer", 0, 10)
+                .unwrap(),
             events
         );
     }

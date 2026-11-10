@@ -303,7 +303,7 @@ mod tests {
         let error = report.code_index_error.unwrap();
         assert_eq!(error.code, "CODE_INDEX_FINALIZATION_FAILED");
         assert!(error.durable_mutation_committed && error.retryable);
-        assert_eq!(state.store.list_documents().unwrap().len(), 1);
+        assert_eq!(state.store.documents().list_documents().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -311,7 +311,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("README.md"), "durable job mutation").unwrap();
         let mut state = state(root.path());
-        state.store.ensure_fts(&state.config.fts_stemmer).unwrap();
+        state
+            .store
+            .maintenance()
+            .ensure_fts(&state.config.fts_stemmer)
+            .unwrap();
         state.config.fts_stemmer = crate::db::fts::test_fault::fail("source-sync");
         let job = state
             .jobs
@@ -357,7 +361,7 @@ mod tests {
         assert!(finalization.retryable);
         assert!(finalization.fallback_dirty_marked);
         assert!(finalization.dirty_marker_error.is_none());
-        assert_eq!(state.store.list_documents().unwrap().len(), 1);
+        assert_eq!(state.store.documents().list_documents().unwrap().len(), 1);
         let generation = {
             let conn = state.store.lock().unwrap();
             crate::db::fts::fts_generation_state(&conn).unwrap()
@@ -395,7 +399,7 @@ mod tests {
         tokio::task::yield_now().await;
 
         assert_immediately_cancelled(&state.jobs.get(&job.id).unwrap());
-        assert!(state.store.list_documents().unwrap().is_empty());
+        assert!(state.store.documents().list_documents().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -524,7 +528,7 @@ mod tests {
         drop(writer_guard);
         tokio::task::yield_now().await;
         assert_immediately_cancelled(&state.jobs.get(&id).unwrap());
-        assert!(state.store.list_documents().unwrap().is_empty());
+        assert!(state.store.documents().list_documents().unwrap().is_empty());
     }
 
     #[test]

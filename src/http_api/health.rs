@@ -31,7 +31,8 @@ async fn live() -> impl IntoResponse {
 async fn ready(State(st): State<HttpState>) -> impl IntoResponse {
     crate::util::blocking_section(|| {
         let runtime = crate::ops::runtime_snapshot();
-        let store_ok = st.store.stats().is_ok() && st.store.fts_ready().unwrap_or(false);
+        let store_ok = st.store.maintenance().stats().is_ok()
+            && st.store.maintenance().fts_ready().unwrap_or(false);
         let ok = runtime.ready && store_ok;
         let status = if ok {
             StatusCode::OK
@@ -58,11 +59,17 @@ async fn health(
     State(st): State<HttpState>,
     Query(query): Query<HealthQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.stats() {
+    crate::util::blocking_section(|| match st.store.maintenance().stats() {
         Ok((docs, chunks, nodes, edges)) => {
-            let schema_version = st.store.schema_version().ok().flatten().unwrap_or(0);
-            let fts_ready = st.store.fts_ready().unwrap_or(false);
-            let wal_bytes = st.store.wal_file_size_bytes();
+            let schema_version = st
+                .store
+                .maintenance()
+                .schema_version()
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let fts_ready = st.store.maintenance().fts_ready().unwrap_or(false);
+            let wal_bytes = st.store.maintenance().wal_file_size_bytes();
             let wal_warn_bytes = st.config.wal_warn_bytes;
             let runtime = crate::ops::runtime_snapshot();
             let mut body = json!({
@@ -84,8 +91,11 @@ async fn health(
                 "mcp_path": if st.mcp_http { Some("/mcp") } else { None::<&str> },
             });
             if !query.summary {
-                let (missing_chunks, orphan_chunks, orphan_nodes, orphan_edges, unscoped) =
-                    st.store.integrity_counts().unwrap_or((0, 0, 0, 0, 0));
+                let (missing_chunks, orphan_chunks, orphan_nodes, orphan_edges, unscoped) = st
+                    .store
+                    .maintenance()
+                    .integrity_counts()
+                    .unwrap_or((0, 0, 0, 0, 0));
                 let integrity = json!({
                     "documents_without_chunks": missing_chunks,
                     "orphan_chunks": orphan_chunks,

@@ -97,6 +97,7 @@ fn capture(store: &Store, body: Capture) -> Result<Feedback> {
     let mut expected = Vec::new();
     for key in body.expected {
         let doc = store
+            .documents()
             .find_by_id_or_uri(&key, &key)?
             .ok_or_else(|| AppError::not_found(format!("expected source not found: {key}")))?;
         if !expected.iter().any(|e: &Expected| e.document_id == doc.id) {
@@ -151,7 +152,9 @@ struct Run {
 }
 fn stale(store: &Store, item: &Feedback) -> Result<bool> {
     for e in &item.expected {
-        let doc = store.find_by_id_or_uri(&e.document_id, &e.uri)?;
+        let doc = store
+            .documents()
+            .find_by_id_or_uri(&e.document_id, &e.uri)?;
         if doc.map(|d| content_hash(&d.content)) != Some(e.hash.clone()) {
             return Ok(true);
         }
@@ -408,7 +411,7 @@ async fn run_one(
         "empty_result_for_no_answer": item.no_answer.then_some(hits.is_empty()),
         "result_count": hits.len(),
         "timings": search_result["timings"],
-        "embedding_manifest": crate::util::blocking_section(|| st.store.get_embedding_manifest())?,
+        "embedding_manifest": crate::util::blocking_section(|| st.store.embedding_manifest().get_embedding_manifest())?,
         "scope": "current corpus; only supplied positive labels; empty retrieval is not answer \
         correctness; citation_judge is deterministic expected-doc coverage; answer_judge is \
         heuristic unless use_llm and RAG_LLM_ENABLED"
@@ -484,9 +487,9 @@ mod tests {
         let report = run_one(st.clone(), id.clone(), None, false).await.unwrap();
         assert_eq!(report["recall"], 1.0);
         assert_eq!(report["mrr"], 1.0);
-        let mut source = st.store.get_document(&doc).unwrap().unwrap();
+        let mut source = st.store.documents().get_document(&doc).unwrap().unwrap();
         source.content = "changed".into();
-        st.store.upsert_document(&source).unwrap();
+        st.store.documents().upsert_document(&source).unwrap();
         assert_eq!(
             run_one(st, id, None, false).await.unwrap()["status"],
             "source_changed"

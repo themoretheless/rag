@@ -89,7 +89,11 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
             .clamp(1, crate::db::store::MAX_OPS_LOG_PAGE);
         let id = non_blank(q.id);
         let has_key = id.is_some() || q.seq.is_some();
-        match st.store.read_ops_log(id.as_deref(), q.seq, Some(limit)) {
+        match st
+            .store
+            .ops_log()
+            .read_ops_log(id.as_deref(), q.seq, Some(limit))
+        {
             Ok(rows) if has_key && rows.is_empty() => {
                 api_err(AppError::not_found("ops_log entry not found"))
             }
@@ -113,7 +117,7 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
                         })
                     })
                     .collect();
-                let next_seq = st.store.next_ops_seq().ok();
+                let next_seq = st.store.ops_log().next_ops_seq().ok();
                 api_ok(
                     json!({"ok": true, "count": items.len(), "next_seq": next_seq, "items": items}),
                 )
@@ -124,14 +128,14 @@ async fn ops_log(State(st): State<HttpState>, Query(q): Query<OpsLogQuery>) -> i
 }
 
 async fn taxonomy(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.get_taxonomy() {
+    crate::util::blocking_section(|| match st.store.documents().get_taxonomy() {
         Ok(value) => api_ok(json!({"ok": true, "taxonomy": value})),
         Err(error) => api_err(error),
     })
 }
 
 async fn wings(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.list_wings() {
+    crate::util::blocking_section(|| match st.store.documents().list_wings() {
         Ok(items) => api_ok(json!({"ok": true, "items": items})),
         Err(error) => api_err(error),
     })
@@ -144,9 +148,15 @@ struct RoomsQuery {
 }
 
 async fn rooms(State(st): State<HttpState>, Query(q): Query<RoomsQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.list_rooms(non_blank(q.wing).as_deref()) {
-        Ok(items) => api_ok(json!({"ok": true, "items": items})),
-        Err(error) => api_err(error),
+    crate::util::blocking_section(|| {
+        match st
+            .store
+            .documents()
+            .list_rooms(non_blank(q.wing).as_deref())
+        {
+            Ok(items) => api_ok(json!({"ok": true, "items": items})),
+            Err(error) => api_err(error),
+        }
     })
 }
 
@@ -178,7 +188,7 @@ async fn embedding_manifest(State(st): State<HttpState>) -> impl IntoResponse {
 /// `match` uses the canonical corpus-identity predicate (provider, model, dims,
 /// base endpoint and fingerprint), the same one that gates vector retrieval.
 fn embedding_manifest_report(store: &Store, config: &Config) -> Result<Value, AppError> {
-    let manifest = store.get_embedding_manifest()?;
+    let manifest = store.embedding_manifest().get_embedding_manifest()?;
     let matches = manifest
         .as_ref()
         .is_some_and(|m| embedding_manifest_matches_config(m, config));
@@ -211,6 +221,7 @@ async fn diary(State(st): State<HttpState>, Query(q): Query<DiaryQuery>) -> impl
     crate::util::blocking_section(|| {
         match st
             .store
+            .documents()
             .list_diary_entries(non_blank(q.agent).as_deref(), limit)
         {
             Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
@@ -243,7 +254,7 @@ async fn kg_query(
             Ok(value) => value,
             Err(error) => return api_err(error),
         };
-        match st.store.kg_query_page(
+        match st.store.kg().kg_query_page(
             non_blank(q.subject).as_deref(),
             non_blank(q.predicate).as_deref(),
             non_blank(q.object).as_deref(),
@@ -265,14 +276,14 @@ async fn kg_timeline(
     State(st): State<HttpState>,
     Query(q): Query<KgTimelineQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.kg_timeline(q.subject.trim()) {
+    crate::util::blocking_section(|| match st.store.kg().kg_timeline(q.subject.trim()) {
         Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
         Err(error) => api_err(error),
     })
 }
 
 async fn kg_stats(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.kg_stats() {
+    crate::util::blocking_section(|| match st.store.kg().kg_stats() {
         Ok(value) => api_ok(json!({"ok": true, "stats": value})),
         Err(error) => api_err(error),
     })
@@ -285,12 +296,16 @@ struct TunnelsQuery {
 }
 
 async fn tunnels(State(st): State<HttpState>, Query(q): Query<TunnelsQuery>) -> impl IntoResponse {
-    crate::util::blocking_section(
-        || match st.store.list_tunnels(non_blank(q.node_id).as_deref()) {
+    crate::util::blocking_section(|| {
+        match st
+            .store
+            .graph()
+            .list_tunnels(non_blank(q.node_id).as_deref())
+        {
             Ok(items) => api_ok(json!({"ok": true, "count": items.len(), "items": items})),
             Err(error) => api_err(error),
-        },
-    )
+        }
+    })
 }
 
 async fn lint_wiki(State(st): State<HttpState>) -> impl IntoResponse {
@@ -418,6 +433,7 @@ mod tests {
             ("wiki_write", "WIKI", Some("bob")),
         ] {
             store
+                .ops_log()
                 .append_ops_log(
                     &crate::models::OpsLogEntry::new(op, prefix, op)
                         .agent(agent.map(str::to_string)),
@@ -463,7 +479,10 @@ mod tests {
             ..Config::for_tests()
         };
         let store = Store::open(&config.db_path).unwrap();
-        store.ensure_embedding_manifest(&config).unwrap();
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(&config)
+            .unwrap();
         let same = embedding_manifest_report(&store, &config).unwrap();
         assert_eq!(same["match"], true);
 
