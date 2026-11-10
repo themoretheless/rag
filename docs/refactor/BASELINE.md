@@ -29,7 +29,7 @@ not in a `#[cfg(test)]` item, not `#[test]`, not in a test file), plus the two
 | `Store` methods (production) | 258 (218 in `src/db`, 40 outside) | | | | | |
 | `self.lock()` sites in `src/db` (`grep -rn 'self\.lock()'`) | 140 | | | | | |
 | `self.lock()` sites outside `src/db` | 33 | | | | | |
-| integration test binaries linking DuckDB | 4 (`it`, `file_ingest_test`, `query_transform_test`, `rerank_test`) | | | | | |
+| integration test binaries linking DuckDB | 4 (`it`, `file_ingest_test`, `query_transform_test`, `rerank_test`) | 1 (`it`) | | | | |
 
 PLAN.md quotes "261 methods, ~59 outside db" and "103+ functions over 80
 lines" from the earlier read-only inventories. The numbers above are what the
@@ -84,13 +84,32 @@ table with the largest functions; [INVENTORY.md](INVENTORY.md) carries it.
 | clean `cargo build --workspace --all-targets --locked` (rustc 1.97.0) | 14 m 52 s (893 s) | | |
 | clean `cargo clippy --workspace --all-targets --locked` (rustc 1.99.1) | 20 m 33 s (1233 s) | | |
 | build of all test binaries after a clippy-only tree, `cargo test --workspace --no-run` (rustc 1.99.1) | 7 m 02 s (422 s) | | |
-| full `cargo test --workspace --locked --no-fail-fast`, binaries already built | 7 m 56 s (476 s); the lib unit tests alone 422 s | | |
+| full `cargo test --workspace --locked --no-fail-fast`, binaries already built | 7 m 56 s (476 s); the lib unit tests alone 422 s | 89 s (dep opt-level 1, 1535 tests) | |
 | tests run | 1 523 (lib 1 273, `it` 45, the 3 standalone integration binaries 13, bins 14, core 4, markup 26, ui 148); 1 ignored before Stage 0, 4 with the timing tests | | |
 | `target/debug/rag-mcp` (debug profile, no debug info) | 313 MB | | |
 | `target/debug/rag-mcp-ui` | 211 MB | | |
 | `target/debug/eval` | 151 MB | | |
 | `target/debug/ingest_project` | 137 MB | | |
 | `target/` after one clean build | 6.3 GB | | |
+
+### Stage 1: `opt-level = 1` for dependencies (dev and test)
+
+Same machine and rustc 1.99.1; full gate run from a clean `target/` after the
+change (`[profile.dev.package."*"] opt-level = 1`, test inherits dev).
+Before = the last gate before the change, at a warm `target/`.
+
+| metric | dep opt-level 0 (before) | dep opt-level 1 (kept) |
+|---|---:|---:|
+| `cargo test --workspace` run, binaries built (1535 tests) | 324 s (lib 278 s) | **89 s** |
+| clean `cargo clippy --workspace --all-targets` | 1233 s (from clean, Stage 0) | 692 s (from clean) |
+| `cargo test --workspace --no-run` after clippy | 212 s | 353 s |
+
+The test run is 3.6× faster: the lib suite is dominated by DuckDB, tokio and
+tree-sitter work in dependencies. Building test binaries after clippy costs
+~2.5 min more because optimised dependency codegen cannot reuse clippy's
+metadata-only build; one clean build plus one test run is still faster
+(1045 s vs ~1770 s), and incremental runs pay only the test-time gain.
+The change is kept. Test count with the parity tests: 1535.
 
 The toolchain changed during Stage 0: the clean build was timed on rustc
 1.97.0; local stable was then updated to 1.99.1 to match CI (the clippy
