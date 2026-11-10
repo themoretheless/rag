@@ -418,7 +418,7 @@ fn non_empty_id(id: &str) -> bool {
 /// Validate one plan item; normalizes empty params; enforces per-op constraints.
 pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanItem> {
     if !item.params.is_object() && !item.params.is_null() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "maintenance action params must be a JSON object",
         ));
     }
@@ -428,7 +428,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
 
     if let Some(ref tid) = item.target_id {
         if !non_empty_id(tid) {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "maintenance action target_id must not be empty when set",
             ));
         }
@@ -438,7 +438,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
         match item.target_id.as_deref() {
             Some(id) if non_empty_id(id) => {}
             _ => {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' requires non-empty target_id",
                     item.action
                 )));
@@ -453,12 +453,12 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
             match boost {
                 Some(v) if v.is_number() => {}
                 Some(_) => {
-                    return Err(AppError::config(
+                    return Err(AppError::invalid(
                         "maintenance action 'set_boost' params.boost must be a number",
                     ));
                 }
                 None => {
-                    return Err(AppError::config(
+                    return Err(AppError::invalid(
                         "maintenance action 'set_boost' requires params.boost",
                     ));
                 }
@@ -467,7 +467,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
         MaintenanceAction::MergeExactDup | MaintenanceAction::MergeNearDup => {
             // Apply may resolve peers by content_hash / embedding from target_id alone.
             let Some(obj) = item.params.as_object() else {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' params must be a JSON object",
                     item.action
                 )));
@@ -487,7 +487,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                     .unwrap_or(false);
             let has_target = item.target_id.as_deref().map(non_empty_id).unwrap_or(false);
             if !(has_group || has_target || has_pair) {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' needs target_id and/or params.document_ids (or drop/source ids)",
                     item.action
                 )));
@@ -495,7 +495,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
         }
         MaintenanceAction::ConsolidatePropose | MaintenanceAction::Consolidate => {
             let Some(obj) = item.params.as_object() else {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' params must be a JSON object",
                     item.action
                 )));
@@ -511,7 +511,7 @@ pub fn validate_action(mut item: MaintenancePlanItem) -> Result<MaintenancePlanI
                 .unwrap_or(false);
             let has_target = item.target_id.as_deref().map(non_empty_id).unwrap_or(false);
             if !has_sources && !has_target {
-                return Err(AppError::config(format!(
+                return Err(AppError::invalid(format!(
                     "maintenance action '{}' requires params.source_ids/document_ids or target_id",
                     item.action
                 )));

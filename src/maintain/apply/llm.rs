@@ -22,7 +22,7 @@ pub(super) async fn apply_compile_source(
         .or_else(|| param_str(params, "source_id_or_uri"))
         .or_else(|| param_str(params, "source_id"))
         .ok_or_else(|| {
-            AppError::config("compile_source requires target_id or params.source_id_or_uri")
+            AppError::invalid("compile_source requires target_id or params.source_id_or_uri")
         })?;
 
     if dry_run {
@@ -233,10 +233,10 @@ pub(super) async fn apply_file_answer(
     let dry_run = context.dry_run;
     let agent = context.agent;
     let title = param_str(params, "title")
-        .ok_or_else(|| AppError::config("file_answer requires params.title"))?;
+        .ok_or_else(|| AppError::invalid("file_answer requires params.title"))?;
     let body = param_str(params, "body")
         .or_else(|| param_str(params, "content"))
-        .ok_or_else(|| AppError::config("file_answer requires params.body or params.content"))?;
+        .ok_or_else(|| AppError::invalid("file_answer requires params.body or params.content"))?;
     let slug = param_str(params, "slug");
 
     let citations: Option<Vec<FileAnswerCitation>> = params

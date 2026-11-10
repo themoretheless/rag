@@ -68,10 +68,10 @@ impl<'a> RevisionService<'a> {
     pub async fn restore(&self, command: RestoreRevisionCommand) -> Result<RestoreRevisionResult> {
         let document_id = command.document_id.trim();
         if document_id.is_empty() {
-            return Err(AppError::config("document_id must be non-empty"));
+            return Err(AppError::invalid("document_id must be non-empty"));
         }
         if command.revision < 1 || command.if_match_revision < 1 {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "revision and if_match_revision must be >= 1",
             ));
         }
@@ -230,7 +230,7 @@ impl<'a> RevisionService<'a> {
     ) -> Result<RevisionDiffResult> {
         let document_id = document_id.trim();
         if document_id.is_empty() || from_revision < 1 || to_revision.is_some_and(|rev| rev < 1) {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "document_id must be non-empty and revisions must be >= 1",
             ));
         }
@@ -265,7 +265,7 @@ impl<'a> RevisionService<'a> {
     pub fn snapshot_at(&self, document_id: &str, revision: i64) -> Result<crate::models::Document> {
         let document_id = document_id.trim();
         if document_id.is_empty() || revision < 1 {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "document_id must be non-empty and revision must be >= 1",
             ));
         }

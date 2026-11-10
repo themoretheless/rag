@@ -79,13 +79,13 @@ impl CompressOptions {
     /// Validate level range.
     pub fn validate(&self) -> Result<()> {
         if self.level > COMPRESS_LEVEL_MAX {
-            return Err(AppError::config(format!(
+            return Err(AppError::invalid(format!(
                 "maintain_compress level {} out of range 0..={}",
                 self.level, COMPRESS_LEVEL_MAX
             )));
         }
         if self.max_docs == 0 {
-            return Err(AppError::config("maintain_compress max_docs must be >= 1"));
+            return Err(AppError::invalid("maintain_compress max_docs must be >= 1"));
         }
         Ok(())
     }

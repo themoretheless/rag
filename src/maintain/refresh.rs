@@ -841,7 +841,7 @@ pub async fn maintain_refresh(
     mut flags: MaintainRefreshFlags,
 ) -> Result<MaintainRefreshReport> {
     if !flags.has_work() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "maintain_refresh: no actions selected; set reindex_fts, rebuild_graph, \
              rebuild_wiki_index, and/or reembed_all",
         ));

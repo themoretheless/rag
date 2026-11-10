@@ -508,7 +508,7 @@ impl<'a> ExternalDb<'a> {
         )
         .await
         .map_err(|_| {
-            AppError::config("external database capture timed out; previous snapshot retained")
+            AppError::timeout("external database capture timed out; previous snapshot retained")
         })??;
         let body = serde_json::to_string(&snapshot).map_err(|_| remote_error())?;
         if body.len() > 8 * 1024 * 1024 {

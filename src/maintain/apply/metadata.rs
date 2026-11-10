@@ -156,9 +156,9 @@ pub(super) fn apply_set_boost(
 ) -> Result<StepResult> {
     let id = require_target(target, name)?;
     let boost = param_f64(params, "boost")
-        .ok_or_else(|| AppError::config("set_boost requires params.boost (finite number > 0)"))?;
+        .ok_or_else(|| AppError::invalid("set_boost requires params.boost (finite number > 0)"))?;
     if !boost.is_finite() || boost <= 0.0 {
-        return Err(AppError::config(format!(
+        return Err(AppError::invalid(format!(
             "boost must be finite and > 0 (got {boost})"
         )));
     }
@@ -262,7 +262,7 @@ pub(super) fn apply_set_tags(
         }
     }
     if tags.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "set_tags requires params.tags (array of strings) or params.tag",
         ));
     }

@@ -171,7 +171,7 @@ pub(crate) async fn write_wiki_page_synced_command(
     } = command;
     let slug = slugify(&slug);
     if slug.is_empty() {
-        return Err(AppError::config("wiki slug must not be empty"));
+        return Err(AppError::invalid("wiki slug must not be empty"));
     }
     let uri = format!("wiki://{slug}");
     let now = Utc::now();
@@ -205,7 +205,7 @@ pub(crate) async fn write_wiki_page_synced_command(
     let (document_id, created_at) = if let Some(existing) = existing.as_ref() {
         // Multi-LLM CAS: when RAG_WIKI_REQUIRE_IF_MATCH=true, updates must pass if_match.
         if config.wiki_require_if_match && if_match.is_none() && !incoming {
-            return Err(AppError::config(format!(
+            return Err(AppError::invalid(format!(
                 "if_match_revision (or if_match_etag) is required to update wiki page '{uri}' \
                  when RAG_WIKI_REQUIRE_IF_MATCH=true; call get_wiki_page and pass revision"
             )));
@@ -245,9 +245,9 @@ pub(crate) async fn write_wiki_page_synced_command(
         category.is_some() || summary.is_some() || opts.extra_metadata.is_some();
     if let Some(metadata) = &opts.metadata_json_override {
         let value: serde_json::Value = serde_json::from_str(metadata)
-            .map_err(|error| AppError::config(format!("invalid wiki metadata JSON: {error}")))?;
+            .map_err(|error| AppError::invalid(format!("invalid wiki metadata JSON: {error}")))?;
         if !value.is_object() {
-            return Err(AppError::config("wiki metadata must be a JSON object"));
+            return Err(AppError::invalid("wiki metadata must be a JSON object"));
         }
     }
     let metadata_json =
@@ -569,7 +569,7 @@ pub fn get_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document>
 fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
     let s = id_or_uri_or_slug.trim();
     if s.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "get_wiki_page: id_or_slug must not be empty",
         ));
     }

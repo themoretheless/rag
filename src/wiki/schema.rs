@@ -60,7 +60,9 @@ pub fn update_schema(
     agent: Option<&str>,
 ) -> Result<SchemaDocumentView> {
     if content.trim().is_empty() {
-        return Err(AppError::config("update_schema: content must not be empty"));
+        return Err(AppError::invalid(
+            "update_schema: content must not be empty",
+        ));
     }
 
     let now = Utc::now();

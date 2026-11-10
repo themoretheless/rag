@@ -18,6 +18,7 @@ impl From<AppError> for McpError {
             AppError::NotFound(msg) => McpError::resource_not_found(msg, data),
             AppError::Config(msg)
             | AppError::Invalid(msg)
+            | AppError::Timeout(msg)
             | AppError::Chunking(msg)
             | AppError::Embeddings(msg)
             | AppError::Conflict(msg)
@@ -45,6 +46,12 @@ mod tests {
     fn config_maps_to_invalid_params_and_busy_carries_retry_data() {
         let invalid = McpError::from(AppError::config("bad"));
         assert_eq!(invalid.code, ErrorCode::INVALID_PARAMS);
+        let timeout = McpError::from(AppError::timeout("budget"));
+        assert_eq!(timeout.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            timeout.data.expect("timeout data")["code"],
+            "INVALID_REQUEST"
+        );
         let missing = McpError::from(AppError::not_found("gone"));
         assert_eq!(missing.code, ErrorCode::RESOURCE_NOT_FOUND);
         let busy = McpError::from(AppError::busy("lane"));

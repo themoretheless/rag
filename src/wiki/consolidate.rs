@@ -47,7 +47,7 @@ pub async fn consolidate(
         agent,
     } = request;
     if document_ids.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "consolidate requires at least one document id or uri",
         ));
     }
@@ -74,7 +74,7 @@ pub async fn consolidate(
         }
     }
     if resolved.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "consolidate: no valid document ids/uris after filtering empties",
         ));
     }

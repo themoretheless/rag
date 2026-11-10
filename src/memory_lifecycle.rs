@@ -78,7 +78,7 @@ pub fn consolidate_selected(
 ) -> Result<LifecycleMutationResult> {
     let output_id = output_document_id.trim();
     if output_id.is_empty() {
-        return Err(AppError::config("output_document_id must be non-empty"));
+        return Err(AppError::invalid("output_document_id must be non-empty"));
     }
     let output = store
         .get_document(output_id)?

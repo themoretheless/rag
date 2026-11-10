@@ -48,7 +48,7 @@ impl OrganizeMode {
             "heuristic" | "heuristics" | "rules" => Ok(Self::Heuristic),
             "llm" | "chat" => Ok(Self::Llm),
             "auto" | "hybrid" => Ok(Self::Auto),
-            other => Err(AppError::config(format!(
+            other => Err(AppError::invalid(format!(
                 "invalid organize mode '{other}': expected heuristic|llm|auto"
             ))),
         }

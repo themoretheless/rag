@@ -11,7 +11,9 @@ use crate::error::AppError;
 pub(super) fn status_for(err: &AppError) -> StatusCode {
     match err {
         AppError::NotFound(_) => StatusCode::NOT_FOUND,
-        AppError::Config(_) | AppError::Invalid(_) => StatusCode::BAD_REQUEST,
+        AppError::Config(_) | AppError::Invalid(_) | AppError::Timeout(_) => {
+            StatusCode::BAD_REQUEST
+        }
         AppError::Conflict(_) => StatusCode::CONFLICT,
         AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         AppError::Busy(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -76,6 +78,17 @@ pub(super) async fn search_response_error(response: axum::response::Response) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_errors_share_the_bad_request_status() {
+        for err in [
+            AppError::config("x"),
+            AppError::invalid("x"),
+            AppError::timeout("x"),
+        ] {
+            assert_eq!(status_for(&err), StatusCode::BAD_REQUEST);
+        }
+    }
 
     #[test]
     fn insert_etag_sets_valid_value() {

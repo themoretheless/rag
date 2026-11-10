@@ -227,7 +227,7 @@ impl<'a> IngestService<'a> {
             None => self.store.find_by_uri(&uri)?.map(|doc| doc.metadata_json),
         };
         let metadata_json = merge_metadata(base_metadata, extracted.metadata).map_err(|error| {
-            AppError::config(format!("metadata_json is not valid JSON: {error}"))
+            AppError::invalid(format!("metadata_json is not valid JSON: {error}"))
         })?;
         let default_title = path
             .file_name()
@@ -313,7 +313,7 @@ impl<'a> IngestService<'a> {
             );
         }
         let metadata_json = merge_metadata(base_metadata, additions).map_err(|error| {
-            AppError::config(format!("metadata_json is not valid JSON: {error}"))
+            AppError::invalid(format!("metadata_json is not valid JSON: {error}"))
         })?;
         let title = command.title.or_else(|| Some(final_checked.host.clone()));
         let bytes = text.len();
@@ -722,7 +722,7 @@ impl<'a> IngestService<'a> {
     ) -> Result<ReembedDocumentResult, AppError> {
         let document_id = document_id.trim();
         if document_id.is_empty() {
-            return Err(AppError::config("document_id must be non-empty"));
+            return Err(AppError::invalid("document_id must be non-empty"));
         }
         let (document, expected_chunks) = crate::util::blocking_section(|| {
             let document = self
@@ -768,7 +768,7 @@ impl<'a> IngestService<'a> {
     ) -> Result<UpdateDocumentResult, AppError> {
         let document_id = command.document_id.trim();
         if document_id.is_empty() {
-            return Err(AppError::config("document_id must be non-empty"));
+            return Err(AppError::invalid("document_id must be non-empty"));
         }
         let mut applied = crate::util::blocking_section(|| {
             self.store
@@ -888,7 +888,7 @@ impl TryFrom<IngestCommand> for NormalizedIngest {
     fn try_from(command: IngestCommand) -> Result<Self, Self::Error> {
         let metadata_json = non_blank(command.metadata_json).unwrap_or_else(|| "{}".into());
         serde_json::from_str::<serde_json::Value>(&metadata_json).map_err(|error| {
-            AppError::config(format!("metadata_json is not valid JSON: {error}"))
+            AppError::invalid(format!("metadata_json is not valid JSON: {error}"))
         })?;
         let uri = non_blank(command.uri).unwrap_or_else(|| format!("text://{}", Uuid::new_v4()));
         let title = non_blank(command.title).unwrap_or_else(|| {

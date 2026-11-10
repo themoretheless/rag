@@ -655,11 +655,11 @@ pub async fn execute_search_with_llm(
     let remaining = budget
         .checked_sub(started.elapsed())
         .filter(|v| !v.is_zero())
-        .ok_or_else(|| AppError::config("search timeout budget exceeded before embedding"))?;
+        .ok_or_else(|| AppError::timeout("search timeout budget exceeded before embedding"))?;
     let mut query =
         tokio::time::timeout(remaining, prepare_search_with_mode(embedder, command, mode))
             .await
-            .map_err(|_| AppError::config("search timeout budget exceeded during embedding"))??;
+            .map_err(|_| AppError::timeout("search timeout budget exceeded during embedding"))??;
     // Rerank stage (opt-in): expand the returned candidate pool to
     // `rerank_top_n`, rerank after retrieval/finalization, then cut back to the
     // caller's `top_k`. Provider errors fall back to the un-reranked ranking.
@@ -671,7 +671,7 @@ pub async fn execute_search_with_llm(
     let remaining = budget
         .checked_sub(started.elapsed())
         .filter(|v| !v.is_zero())
-        .ok_or_else(|| AppError::config("search timeout budget exceeded before retrieval"))?;
+        .ok_or_else(|| AppError::timeout("search timeout budget exceeded before retrieval"))?;
     query.timeout_ms = Some(remaining.as_millis().max(1).min(u64::MAX as u128) as u64);
     let query_text = query.query_text.clone();
     let max_context_tokens = query.max_context_tokens;
@@ -733,7 +733,7 @@ pub async fn execute_search_with_llm(
         .await;
     }
     if started.elapsed() > budget {
-        return Err(AppError::config(
+        return Err(AppError::timeout(
             "search timeout budget exceeded after retrieval",
         ));
     }

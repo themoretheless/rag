@@ -18,7 +18,7 @@ pub(super) fn apply_merge_exact_dup(
         .map(|s| s.to_string())
         .or_else(|| param_str(params, "keep_id"))
         .ok_or_else(|| {
-            AppError::config("merge_exact_dup requires target_id or params.keep_id (canonical)")
+            AppError::invalid("merge_exact_dup requires target_id or params.keep_id (canonical)")
         })?;
 
     let keep = store

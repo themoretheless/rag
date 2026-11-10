@@ -498,7 +498,7 @@ fn require_target<'a>(target: Option<&'a str>, action: &str) -> Result<&'a str> 
     target
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::config(format!("{action} requires target_id")))
+        .ok_or_else(|| AppError::invalid(format!("{action} requires target_id")))
 }
 
 fn is_doc_scoped(action: MaintenanceAction) -> bool {
@@ -586,7 +586,7 @@ fn param_usize(params: &serde_json::Value, key: &str) -> Result<Option<usize>> {
     match param_f64(params, key) {
         None => Ok(None),
         Some(n) if n.is_finite() && n >= 0.0 => Ok(Some(n.min(usize::MAX as f64) as usize)),
-        Some(n) => Err(AppError::config(format!(
+        Some(n) => Err(AppError::invalid(format!(
             "maintenance param '{key}' must be a non-negative finite number, got {n}"
         ))),
     }

@@ -246,13 +246,13 @@ pub fn resolve_if_match(
 ) -> Result<Option<i64>, AppError> {
     if let Some(r) = revision {
         if r < 0 {
-            return Err(AppError::config("if_match_revision must be >= 0"));
+            return Err(AppError::invalid("if_match_revision must be >= 0"));
         }
         return Ok(Some(r));
     }
     if let Some(raw) = etag.map(str::trim).filter(|s| !s.is_empty()) {
         let parsed = parse_document_etag(raw).ok_or_else(|| {
-            AppError::config(format!(
+            AppError::invalid(format!(
                 "invalid if_match_etag '{raw}': expected W/\"n\", \"n\", or n"
             ))
         })?;
@@ -377,10 +377,10 @@ impl ProjectId {
         let value = value.into();
         let trimmed = value.trim();
         if trimmed.is_empty() || trimmed.len() > 128 {
-            return Err(AppError::config("project_id must contain 1..=128 bytes"));
+            return Err(AppError::invalid("project_id must contain 1..=128 bytes"));
         }
         if trimmed.chars().any(char::is_control) {
-            return Err(AppError::config(
+            return Err(AppError::invalid(
                 "project_id must not contain control characters",
             ));
         }
@@ -634,7 +634,7 @@ finding_codes! {
 /// (`GRAPH_DESIGN.md` §1.1). The enum itself lives in `rag_mcp_core`.
 pub fn parse_node_kind(raw: &str) -> crate::error::Result<NodeKind> {
     NodeKind::parse(raw).ok_or_else(|| {
-        crate::error::AppError::config(format!(
+        crate::error::AppError::invalid(format!(
             "invalid node kind '{raw}': expected one of {}",
             NodeKind::WIRE.join(", ")
         ))
@@ -727,7 +727,7 @@ impl RelType {
         if Self::is_wire(raw) || WIKI_SEMANTIC_REL_TYPES.contains(&raw) {
             return Ok(());
         }
-        Err(crate::error::AppError::config(format!(
+        Err(crate::error::AppError::invalid(format!(
             "invalid rel_type '{raw}': expected one of {}, or a wiki semantic relation ({})",
             Self::WIRE.join(", "),
             WIKI_SEMANTIC_REL_TYPES.join(", "),
@@ -745,7 +745,7 @@ impl RelType {
             "depends_on" => Ok(Self::DependsOn),
             "derived_from" => Ok(Self::DerivedFrom),
             "supersedes" => Ok(Self::Supersedes),
-            other => Err(crate::error::AppError::config(format!(
+            other => Err(crate::error::AppError::invalid(format!(
                 "invalid rel_type '{other}': expected one of {}",
                 Self::WIRE.join(", ")
             ))),
@@ -786,7 +786,7 @@ impl EdgeOrigin {
             Self::EXTRACT => Ok(Self::Extract),
             Self::EXPLICIT => Ok(Self::Explicit),
             Self::SYSTEM => Ok(Self::System),
-            other => Err(crate::error::AppError::config(format!(
+            other => Err(crate::error::AppError::invalid(format!(
                 "invalid edge origin '{other}': expected one of {}",
                 Self::WIRE.join(", ")
             ))),

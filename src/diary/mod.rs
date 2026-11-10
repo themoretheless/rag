@@ -88,7 +88,7 @@ pub struct CheckpointResult {
 pub fn normalize_agent_name(raw: &str) -> Result<String> {
     let s = raw.trim().to_ascii_lowercase();
     if s.is_empty() {
-        return Err(AppError::config("agent_name must be non-empty"));
+        return Err(AppError::invalid("agent_name must be non-empty"));
     }
     let mut out = String::with_capacity(s.len());
     let mut prev_sep = false;
@@ -104,12 +104,12 @@ pub fn normalize_agent_name(raw: &str) -> Result<String> {
     }
     let out = out.trim_matches('_').to_string();
     if out.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "agent_name must contain at least one alphanumeric character",
         ));
     }
     if out.len() > 128 {
-        return Err(AppError::config("agent_name exceeds 128 characters"));
+        return Err(AppError::invalid("agent_name exceeds 128 characters"));
     }
     Ok(out)
 }
@@ -143,7 +143,7 @@ pub async fn diary_write(
     let agent = normalize_agent_name(&command.agent_name)?;
     let body = command.content.trim();
     if body.is_empty() {
-        return Err(AppError::config("diary content must be non-empty"));
+        return Err(AppError::invalid("diary content must be non-empty"));
     }
 
     let topic = command
@@ -305,7 +305,7 @@ pub async fn checkpoint(
 ) -> Result<CheckpointResult> {
     let summary = summary.trim();
     if summary.is_empty() {
-        return Err(AppError::config("checkpoint summary must be non-empty"));
+        return Err(AppError::invalid("checkpoint summary must be non-empty"));
     }
 
     let agent_opt = match agent_name {

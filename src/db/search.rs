@@ -367,7 +367,7 @@ fn validate_query(query: &SearchQuery) -> Result<()> {
 
 fn enforce_timeout(started: Instant, timeout_ms: Option<u64>, stage: &str) -> Result<()> {
     if timeout_ms.is_some_and(|ms| started.elapsed() > Duration::from_millis(ms.max(1))) {
-        return Err(AppError::config(format!(
+        return Err(AppError::timeout(format!(
             "search timeout budget exceeded after {stage}"
         )));
     }

@@ -14,6 +14,10 @@ pub enum AppError {
     #[error("invalid request: {0}")]
     Invalid(String),
 
+    /// A request ran out of its time budget. Same wire code as `Config`.
+    #[error("timeout: {0}")]
+    Timeout(String),
+
     /// DuckDB / storage failures.
     #[error("database error: {0}")]
     Db(String),
@@ -78,7 +82,7 @@ impl AppError {
     /// transports pick it up without touching their mappers.
     pub fn code(&self) -> &'static str {
         match self {
-            AppError::Config(_) | AppError::Invalid(_) => "INVALID_REQUEST",
+            AppError::Config(_) | AppError::Invalid(_) | AppError::Timeout(_) => "INVALID_REQUEST",
             AppError::Db(_) => "DATABASE_ERROR",
             AppError::Embeddings(_) => "EMBEDDINGS_ERROR",
             AppError::Llm(_) => "LLM_ERROR",
@@ -106,6 +110,11 @@ impl AppError {
     /// Convenience constructor for caller-input validation errors.
     pub fn invalid(msg: impl Into<String>) -> Self {
         AppError::Invalid(msg.into())
+    }
+
+    /// Convenience constructor for an exhausted request time budget.
+    pub fn timeout(msg: impl Into<String>) -> Self {
+        AppError::Timeout(msg.into())
     }
 
     /// Convenience constructor for config errors.
@@ -164,6 +173,10 @@ mod tests {
         assert!(AppError::busy("lane").is_retryable());
         assert_eq!(AppError::config("x").code(), "INVALID_REQUEST");
         assert!(!AppError::config("x").is_retryable());
+        for same_wire in [AppError::invalid("x"), AppError::timeout("x")] {
+            assert_eq!(same_wire.code(), "INVALID_REQUEST");
+            assert!(!same_wire.is_retryable());
+        }
         assert_eq!(
             AppError::Other(anyhow::anyhow!("boom")).code(),
             "INTERNAL_ERROR"
