@@ -1255,6 +1255,7 @@ mod tests {
         let path = dir.path().join("index.duckdb");
         let store = Store::open(&path).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "a",
                 "a.rs",
@@ -1262,6 +1263,7 @@ mod tests {
             ))
             .unwrap();
         store
+            .documents()
             .upsert_document(&doc("b", "b.rs", "fn beta() {}"))
             .unwrap();
         assert_eq!(
@@ -1311,15 +1313,15 @@ mod tests {
             3
         );
         // A source mutation cannot silently return old indexed facts.
-        let mut a = store.get_document("a").unwrap().unwrap();
+        let mut a = store.documents().get_document("a").unwrap().unwrap();
         a.content = "fn replacement() {}".into();
-        store.upsert_document(&a).unwrap();
+        store.documents().upsert_document(&a).unwrap();
         let snap = crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap();
         assert_eq!(snap.stale_documents, vec!["a"]);
         assert!(snap.calls.is_empty());
-        store.delete_document("b").unwrap();
+        store.documents().delete_document("b").unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1331,9 +1333,9 @@ mod tests {
                 .name,
             "replacement"
         );
-        let mut a = store.get_document("a").unwrap().unwrap();
+        let mut a = store.documents().get_document("a").unwrap().unwrap();
         a.status = "archived".into();
-        store.upsert_document(&a).unwrap();
+        store.documents().upsert_document(&a).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
@@ -1371,6 +1373,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "a",
                 "a.rs",
@@ -1378,6 +1381,7 @@ mod tests {
             ))
             .unwrap();
         store
+            .documents()
             .upsert_document(&doc("other", "other.rs", "fn c() {}"))
             .unwrap();
         crate::code_index::CodeIndex::new(&store)
@@ -1438,9 +1442,9 @@ mod tests {
             ("/p/main.py", "from a import go as run, Worker\ndef main(worker: Worker):\n    run()\n    worker.work()\n", "/p/a.py", "def go():\n    pass\nclass Worker:\n    def work(self):\n        pass\n"),
         ] {
             let dir=tempfile::tempdir().unwrap();let store=Store::open(&dir.path().join("code.duckdb")).unwrap();
-            store.upsert_document(&doc("main",main_path,main)).unwrap();
-            store.upsert_document(&doc("lib",lib_path,library)).unwrap();
-            store.upsert_document(&doc("decoy","/other/decoy.rs","fn go() {} struct Worker; impl Worker { fn work() {} }")).unwrap();
+            store.documents().upsert_document(&doc("main",main_path,main)).unwrap();
+            store.documents().upsert_document(&doc("lib",lib_path,library)).unwrap();
+            store.documents().upsert_document(&doc("decoy","/other/decoy.rs","fn go() {} struct Worker; impl Worker { fn work() {} }")).unwrap();
             crate::code_index::CodeIndex::new(&store).index_code().unwrap();let snapshot=crate::code_index::CodeIndex::new(&store).code_snapshot().unwrap();
             let calls:Vec<_>=snapshot.calls.iter().filter(|c|c.reference.document_id=="main").collect();
             assert_eq!(calls.len(),2,"{main_path}: {snapshot:?}");
@@ -1456,6 +1460,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "main",
                 "/p/main.ts",
@@ -1463,6 +1468,7 @@ mod tests {
             ))
             .unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "lib",
                 "/p/a.ts",
@@ -1489,7 +1495,7 @@ mod tests {
             ("/p/src/sub/main.rs", "use crate::a as api; use crate::a::Worker; type Alias = Worker; fn main(w: Alias) { api::go(); w.work(); }", "/p/src/a.rs", "pub fn go() {} pub struct Worker; impl Worker { pub fn work(&self) {} }"),
         ] {
             let dir=tempfile::tempdir().unwrap(); let store=Store::open(&dir.path().join("code.duckdb")).unwrap();
-            store.upsert_document(&doc("main",main_path,main)).unwrap();store.upsert_document(&doc("lib",lib_path,library)).unwrap();
+            store.documents().upsert_document(&doc("main",main_path,main)).unwrap();store.documents().upsert_document(&doc("lib",lib_path,library)).unwrap();
             crate::code_index::CodeIndex::new(&store).index_code().unwrap(); let snap=crate::code_index::CodeIndex::new(&store).code_snapshot().unwrap();
             assert!(snap.parse_errors.is_empty(),"{main_path}: {snap:?}");
             for c in &snap.calls {assert_eq!(c.resolution,"resolved_static","{main_path}: {c:?}");assert_eq!(c.candidates.len(),1);}
@@ -1501,13 +1507,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "root",
                 "/p/src/lib.rs",
                 "pub mod inline { pub fn run() {} } pub fn root() {}",
             ))
             .unwrap();
-        store.upsert_document(&doc("caller","/p/src/child.rs","use crate::inline::run as alias; use super::root; fn caller() { alias(); root(); }" )).unwrap();
+        store.documents().upsert_document(&doc("caller","/p/src/child.rs","use crate::inline::run as alias; use super::root; fn caller() { alias(); root(); }" )).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1524,8 +1531,9 @@ mod tests {
     fn code_index_external_imports_and_bare_methods_do_not_gain_false_edges() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
-        store.upsert_document(&doc("main","/p/main.ts","import { go } from 'external'; import {hidden} from './a'; class Local { run() { work(); go(); hidden(); this.inner.work(); } work() {} } function shadowed() { hidden(); const hidden=()=>{}; } function nested(w: Local) { w.inner.work(); }" )).unwrap();
+        store.documents().upsert_document(&doc("main","/p/main.ts","import { go } from 'external'; import {hidden} from './a'; class Local { run() { work(); go(); hidden(); this.inner.work(); } work() {} } function shadowed() { hidden(); const hidden=()=>{}; } function nested(w: Local) { w.inner.work(); }" )).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "lib",
                 "/p/a.ts",
@@ -1555,8 +1563,8 @@ mod tests {
         main.wing = Some("one".into());
         let mut lib = doc("lib", "/p/a.py", "def go():\n    pass\n");
         lib.wing = Some("two".into());
-        store.upsert_document(&main).unwrap();
-        store.upsert_document(&lib).unwrap();
+        store.documents().upsert_document(&main).unwrap();
+        store.documents().upsert_document(&lib).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1598,9 +1606,9 @@ mod tests {
                 .indexed,
             1
         );
-        let mut lib = store.get_document("lib").unwrap().unwrap();
+        let mut lib = store.documents().get_document("lib").unwrap().unwrap();
         lib.wing = Some("one".into());
-        store.upsert_document(&lib).unwrap();
+        store.documents().upsert_document(&lib).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

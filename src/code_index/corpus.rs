@@ -783,6 +783,7 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, content: &str, project: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("file://{path}"),
@@ -818,6 +819,7 @@ mod tests {
             std::fs::write(&path, raw).unwrap();
             let extracted = crate::file_ingest::extract_file(&path).unwrap();
             store
+                .documents()
                 .upsert_document(&Document {
                     id: id.into(),
                     uri: format!("file://{}", path.display()),
@@ -849,9 +851,9 @@ mod tests {
             report["source_byte_identity"]["capture_status_counts"]["legacy_or_missing_capture"],
             1
         );
-        let mut doc = store.get_document("b").unwrap().unwrap();
+        let mut doc = store.documents().get_document("b").unwrap().unwrap();
         doc.content = "changed".into();
-        store.upsert_document(&doc).unwrap();
+        store.documents().upsert_document(&doc).unwrap();
         let changed = crate::code_index::CodeIndex::new(&store)
             .duplicates(&q)
             .unwrap();
@@ -1158,9 +1160,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("encoding.duckdb")).unwrap();
         put(&store, "doc", "/p/code.py", "needle", "p");
-        let mut doc = store.get_document("doc").unwrap().unwrap();
+        let mut doc = store.documents().get_document("doc").unwrap().unwrap();
         doc.metadata_json = serde_json::json!({"source_decoding_version":1,"source_encoding":"windows-1251","source_encoding_basis":"heuristic_cyrillic_share","source_text_hash":content_hash("needle"),"source_bytes_hash":"raw"}).to_string();
-        store.upsert_document(&doc).unwrap();
+        store.documents().upsert_document(&doc).unwrap();
         let query = search(&["needle"]);
         let found = crate::code_index::CodeIndex::new(&store)
             .search_multi(&query)
@@ -1170,7 +1172,7 @@ mod tests {
             "windows-1251"
         );
         doc.content = "needle changed".into();
-        store.upsert_document(&doc).unwrap();
+        store.documents().upsert_document(&doc).unwrap();
         let found = crate::code_index::CodeIndex::new(&store)
             .search_multi(&query)
             .unwrap();

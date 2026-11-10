@@ -359,6 +359,7 @@ mod tests {
         }
         fn put(store: &Store, id: &str, source: &str, revision: i64, project: &str) {
             store
+                .documents()
                 .upsert_document(&crate::models::Document {
                     id: id.into(),
                     uri: format!("file:///{project}/{id}"),

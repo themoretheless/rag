@@ -374,7 +374,7 @@ mod tests {
             d.metadata_json = serde_json::json!({"code_source_text":body}).to_string();
             d.content = "Readable page".into();
         }
-        store.upsert_document(&d).unwrap();
+        store.documents().upsert_document(&d).unwrap();
     }
     fn query(project: &str) -> CodeQuery {
         CodeQuery {

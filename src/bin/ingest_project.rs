@@ -233,9 +233,13 @@ async fn run(args: Args) -> Result<()> {
     }
 
     store
+        .maintenance()
         .ensure_fts(&config.fts_stemmer)
         .context("refresh lexical index")?;
-    store.checkpoint().context("checkpoint DuckDB")?;
+    store
+        .maintenance()
+        .checkpoint()
+        .context("checkpoint DuckDB")?;
 
     eprintln!(
         "done: ok={ok} skipped={skipped} failed={failed} wing={} room={}",

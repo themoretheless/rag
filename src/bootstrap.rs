@@ -58,6 +58,7 @@ pub fn open_offline(db_path: PathBuf) -> Result<OfflineRuntime> {
     config.apply_process_limits();
     let store = crate::storage::open_configured(&config).context("open DuckDB")?;
     store
+        .embedding_manifest()
         .ensure_embedding_manifest(&config)
         .context("validate embedding manifest")?;
     let embedder = build_provider(&config).context("embedding provider")?;

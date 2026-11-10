@@ -38,10 +38,10 @@ fn backup(args: &[String], drill: bool) -> Result<()> {
     let out = required_path(args, "--out")?;
     let overwrite = flag(args, "--overwrite");
     let store = Store::open(&db).with_context(|| format!("open source {}", db.display()))?;
-    let source = store.stats()?;
-    let source_schema = store.schema_version()?.unwrap_or(0);
-    let source_manifest = store.get_embedding_manifest()?;
-    let report = store.backup_database(&out, false, overwrite)?;
+    let source = store.maintenance().stats()?;
+    let source_schema = store.maintenance().schema_version()?.unwrap_or(0);
+    let source_manifest = store.embedding_manifest().get_embedding_manifest()?;
+    let report = store.recovery().backup_database(&out, false, overwrite)?;
     let verification = report
         .verification
         .as_ref()
@@ -123,7 +123,9 @@ fn export_vault(args: &[String]) -> Result<()> {
     let out = required_path(args, "--out")?;
     let store = Store::open(&db)?;
     let dry_run = !flag(args, "--apply");
-    let report = store.export_vault(&out, dry_run, flag(args, "--overwrite"))?;
+    let report = store
+        .recovery()
+        .export_vault(&out, dry_run, flag(args, "--overwrite"))?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
@@ -138,8 +140,8 @@ fn export_bundle(args: &[String]) -> Result<()> {
     if out.exists() && !overwrite {
         bail!("output exists: {}", out.display());
     }
-    store.portable_recovery_preflight()?;
-    let bundle = store.recovery_bundle()?;
+    store.recovery().portable_recovery_preflight()?;
+    let bundle = store.recovery().recovery_bundle()?;
     let format = bundle_format(args, &out)?;
     let encoded = encode_recovery_bundle(&bundle, format)?;
     if !dry_run {
@@ -162,7 +164,9 @@ fn import_bundle(args: &[String]) -> Result<()> {
     let store = Store::open(&db)?;
     let policy = ConflictPolicy::parse(value(args, "--conflict-policy"))?;
     let dry_run = !flag(args, "--apply");
-    let report = store.import_recovery_bundle(&bundle, policy, dry_run, &input, format)?;
+    let report = store
+        .recovery()
+        .import_recovery_bundle(&bundle, policy, dry_run, &input, format)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if !report.success {
         bail!("recovery bundle import did not commit; inspect the structured report above");

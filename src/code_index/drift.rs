@@ -110,6 +110,7 @@ impl LiveSource {
 fn actual(store: &Store, file: &File, mode: &str, roots: &[PathBuf]) -> Result<Option<LiveSource>> {
     if mode == "stored" {
         let doc = store
+            .documents()
             .get_document(&file.id)?
             .filter(|d| !matches!(d.status.as_str(), "archived" | "tombstone" | "consolidated"));
         return doc
@@ -525,6 +526,7 @@ mod tests {
     }
     fn seed(store: &Store, path: &str, content: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: format!("file://{path}"),
@@ -648,7 +650,12 @@ mod tests {
         assert_eq!(read["truncated"], true);
         assert_eq!(read["drift_event_id"], id);
         assert_eq!(
-            store.get_document("a").unwrap().unwrap().content,
+            store
+                .documents()
+                .get_document("a")
+                .unwrap()
+                .unwrap()
+                .content,
             "first\nold\nlast\n"
         );
         assert!(crate::code_index::CodeIndex::new(&store)
@@ -772,13 +779,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = Store::open(&root.path().join("drift.duckdb")).unwrap();
         seed(&store, "/p/a.rs", "fn a() {}");
-        let mut doc = store.get_document("a").unwrap().unwrap();
+        let mut doc = store.documents().get_document("a").unwrap().unwrap();
         doc.content = "fn changed() {}".into();
-        store.upsert_document(&doc).unwrap();
+        store.documents().upsert_document(&doc).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
-        store.delete_document("a").unwrap();
+        store.documents().delete_document("a").unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -817,6 +824,7 @@ mod path_safety_tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         let store = Store::open(&db.path().join("source.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&crate::models::Document {
                 id: "a".into(),
                 uri: "memory://a".into(),

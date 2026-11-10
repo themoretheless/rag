@@ -428,7 +428,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(older["items"][0]["id"], r["id"]);
-        assert!(store.list_documents().unwrap().is_empty());
+        assert!(store.documents().list_documents().unwrap().is_empty());
     }
     #[test]
     fn invalid_scores_duplicate_ids_and_cross_split_leakage_are_rejected() {

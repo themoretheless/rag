@@ -475,6 +475,7 @@ mod tests {
     }
     fn put(store: &Store, id: &str, project: Option<&str>, path: &str, content: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -814,6 +815,7 @@ mod tests {
         let (_root, store) = setup();
         let source = "<p class='actual'>Visible</p>";
         store
+            .documents()
             .upsert_document(&Document {
                 id: "html".into(),
                 uri: "doc://html".into(),
@@ -856,6 +858,7 @@ mod tests {
             ("null", serde_json::json!({"code_source_hash":null})),
         ] {
             store
+                .documents()
                 .upsert_document(&Document {
                     id: id.into(),
                     uri: format!("doc://{id}"),

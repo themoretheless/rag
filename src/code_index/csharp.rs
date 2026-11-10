@@ -1424,8 +1424,8 @@ mod tests {
             "/p/client.cs",
             "using Lib; class Child : Base { void Run(){Work();} }",
         );
-        store.upsert_document(&base).unwrap();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&base).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .index_code()
@@ -1456,7 +1456,7 @@ mod tests {
         assert!(!full.revision_created);
         assert_eq!(full.resolution.unwrap().equivalent_to_existing, Some(true));
         client.content = "class Child { void Run(){} }".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
@@ -1486,7 +1486,7 @@ mod tests {
             "{diff}"
         );
         client.content = "class Later {}".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

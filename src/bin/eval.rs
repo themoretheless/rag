@@ -639,7 +639,7 @@ async fn evaluate(
         .with_context(|| format!("ingest {relative}"))?;
     }
     let synthetic = if let Some(requested_chunks) = args.synthetic_chunks {
-        let chunks_before = store.stats()?.1;
+        let chunks_before = store.maintenance().stats()?.1;
         let documents = generate_synthetic_documents(
             requested_chunks,
             config.chunk_size,
@@ -663,7 +663,7 @@ async fn evaluate(
             .await
             .context("ingest deterministic synthetic corpus")?;
         }
-        let chunks_after = store.stats()?.1;
+        let chunks_after = store.maintenance().stats()?.1;
         let generated_chunks = chunks_after
             .checked_sub(chunks_before)
             .context("synthetic ingest reduced the chunk count")?;
@@ -681,7 +681,7 @@ async fn evaluate(
         None
     };
     let ingest_ms = ms(started);
-    let (documents, chunks, _, _) = store.stats()?;
+    let (documents, chunks, _, _) = store.maintenance().stats()?;
     let samples_per_mode = dataset
         .queries
         .len()

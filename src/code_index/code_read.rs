@@ -481,6 +481,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("code.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "file:///p/a.py".into(),
@@ -562,17 +563,18 @@ mod tests {
         let body = "# αβγ\ndef target():\n    return 1\n";
         let (_dir, s) = store(body);
         for (id, a, b) in [("one", 0, 17), ("two", 5, 24)] {
-            s.insert_chunks(&[Chunk {
-                id: id.into(),
-                document_id: "a".into(),
-                chunk_index: 0,
-                content: body.chars().skip(a).take(b - a).collect(),
-                embedding: vec![],
-                char_start: a as i32,
-                char_end: b as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+            s.chunks()
+                .insert_chunks(&[Chunk {
+                    id: id.into(),
+                    document_id: "a".into(),
+                    chunk_index: 0,
+                    content: body.chars().skip(a).take(b - a).collect(),
+                    embedding: vec![],
+                    char_start: a as i32,
+                    char_end: b as i32,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
         }
         let q = CodeReadQuery {
             entry_ids: Some(vec!["one".into(), "two".into(), "missing".into()]),
@@ -593,15 +595,16 @@ mod tests {
     #[test]
     fn code_read_path_project_ambiguity_and_stale_exclusion() {
         let (_dir, s) = store("def a(): pass\n");
-        s.upsert_document(&Document {
-            id: "b".into(),
-            uri: "file:///p/b.py".into(),
-            source_file: Some("/p/a.py".into()),
-            content: "def b(): pass\n".into(),
-            wing: Some("beta".into()),
-            ..Default::default()
-        })
-        .unwrap();
+        s.documents()
+            .upsert_document(&Document {
+                id: "b".into(),
+                uri: "file:///p/b.py".into(),
+                source_file: Some("/p/a.py".into()),
+                content: "def b(): pass\n".into(),
+                wing: Some("beta".into()),
+                ..Default::default()
+            })
+            .unwrap();
         crate::code_index::CodeIndex::new(&s).index_code().unwrap();
         let ambiguous = crate::code_index::CodeIndex::new(&s)
             .code_read(&path())
@@ -619,15 +622,16 @@ mod tests {
             crate::code_index::CodeIndex::new(&s).code_read(&q).unwrap()["found"],
             true
         );
-        s.upsert_document(&Document {
-            id: "a".into(),
-            uri: "file:///p/a.py".into(),
-            source_file: Some("/p/a.py".into()),
-            content: "def changed(): pass".into(),
-            wing: Some("alpha".into()),
-            ..Default::default()
-        })
-        .unwrap();
+        s.documents()
+            .upsert_document(&Document {
+                id: "a".into(),
+                uri: "file:///p/a.py".into(),
+                source_file: Some("/p/a.py".into()),
+                content: "def changed(): pass".into(),
+                wing: Some("alpha".into()),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&s).code_read(&q).unwrap()["found"],
             false
@@ -694,17 +698,18 @@ mod tests {
             .map(|i| i["segments"].as_array().unwrap().len())
             .sum::<usize>();
         assert_eq!(segments, 1000);
-        s.insert_chunks(&[Chunk {
-            id: "invalid".into(),
-            document_id: "a".into(),
-            chunk_index: 0,
-            content: "wrong".into(),
-            embedding: vec![],
-            char_start: 0,
-            char_end: 5,
-            metadata_json: "{}".into(),
-        }])
-        .unwrap();
+        s.chunks()
+            .insert_chunks(&[Chunk {
+                id: "invalid".into(),
+                document_id: "a".into(),
+                chunk_index: 0,
+                content: "wrong".into(),
+                embedding: vec![],
+                char_start: 0,
+                char_end: 5,
+                metadata_json: "{}".into(),
+            }])
+            .unwrap();
         let q = CodeReadQuery {
             entry_ids: Some(vec!["invalid".into()]),
             ..Default::default()
@@ -758,17 +763,18 @@ mod tests {
         let body = "# αβγ\ndef target():\n    return 1\n";
         let (_dir, s) = store(body);
         for (id, a, b) in [("one", 0, 17), ("two", 5, 24)] {
-            s.insert_chunks(&[Chunk {
-                id: id.into(),
-                document_id: "a".into(),
-                chunk_index: 0,
-                content: body.chars().skip(a).take(b - a).collect(),
-                embedding: vec![],
-                char_start: a as i32,
-                char_end: b as i32,
-                metadata_json: "{}".into(),
-            }])
-            .unwrap();
+            s.chunks()
+                .insert_chunks(&[Chunk {
+                    id: id.into(),
+                    document_id: "a".into(),
+                    chunk_index: 0,
+                    content: body.chars().skip(a).take(b - a).collect(),
+                    embedding: vec![],
+                    char_start: a as i32,
+                    char_end: b as i32,
+                    metadata_json: "{}".into(),
+                }])
+                .unwrap();
         }
         let mut q = CodeReadQuery {
             entry_ids: Some(vec!["one".into(), "two".into()]),
@@ -859,15 +865,16 @@ mod tests {
         q.cursor = Some(parts.join(":"));
         assert!(crate::code_index::CodeIndex::new(&s).code_read(&q).is_err());
         q.cursor = Some(original);
-        s.upsert_document(&Document {
-            id: "a".into(),
-            uri: "file:///p/a.py".into(),
-            source_file: Some("/p/a.py".into()),
-            content: "def target(): return 'new'\n".into(),
-            wing: Some("alpha".into()),
-            ..Default::default()
-        })
-        .unwrap();
+        s.documents()
+            .upsert_document(&Document {
+                id: "a".into(),
+                uri: "file:///p/a.py".into(),
+                source_file: Some("/p/a.py".into()),
+                content: "def target(): return 'new'\n".into(),
+                wing: Some("alpha".into()),
+                ..Default::default()
+            })
+            .unwrap();
         assert!(matches!(
             crate::code_index::CodeIndex::new(&s).code_read(&q),
             Err(AppError::Conflict(_))

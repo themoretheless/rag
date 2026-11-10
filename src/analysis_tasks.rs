@@ -586,7 +586,7 @@ mod tests {
             .unwrap();
         assert_eq!(page["items"][0]["note_id"], first["note_id"]);
         assert_eq!(page["truncated"], false);
-        assert!(s.list_documents().unwrap().is_empty());
+        assert!(s.documents().list_documents().unwrap().is_empty());
         crate::code_index::CodeIndex::new(&s).index_code().unwrap();
         assert!(crate::code_index::CodeIndex::new(&s)
             .code_snapshot()
