@@ -115,6 +115,7 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
 
 #[tokio::main]
 async fn main() {
+    rag_mcp::storage::install_store_hooks();
     let mut mode = std::env::var("RAG_GATE_MODE").unwrap_or("warn".into());
     let mut full_json = false;
     let mut args = std::env::args().skip(1);

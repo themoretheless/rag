@@ -80,8 +80,10 @@ are. `rag-mcp-ui --features direct-db` will depend on the store crate only.
 
 Cycles:
 
-- `db → code_index`: `src/db/store.rs:1174` calls `code_index::source::persist`
-  inside `upsert_document_cas_locked`; `code_index` uses `Store` throughout.
+- ~~`db → code_index`~~: resolved in Stage 2. `upsert_document_cas_locked` runs
+  the registered `db::DocumentWriteHook`s; `code_index::source` registers its
+  source-blob hook from `storage::install_store_hooks` (composition) and from
+  the producers of `code_source_text` metadata.
 - `db ↔ graph`: `src/graph/mod.rs:8` re-exports `db::graph::resolve`, while
   `src/db/graph/resolve.rs:16`, `src/db/graph.rs:11` and `src/db/store.rs:374`
   import `crate::graph`.

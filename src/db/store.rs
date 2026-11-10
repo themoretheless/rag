@@ -1171,7 +1171,7 @@ fn upsert_document_cas_locked(
     doc: &Document,
     if_match_revision: Option<i64>,
 ) -> Result<i64> {
-    let normalized = crate::code_index::source::persist(conn, doc)?;
+    let normalized = super::write_hook::run_document_write_hooks(conn, doc)?;
     let doc = normalized.as_ref();
     let hash = match doc.content_hash.as_deref() {
         Some(h) if !h.is_empty() => h.to_string(),

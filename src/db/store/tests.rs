@@ -2735,3 +2735,76 @@ fn diary_wing_for_agent_trims_the_agent_name() {
     assert_eq!(Store::diary_wing_for_agent("  bob \n"), "agents/bob");
     assert_eq!(Store::diary_wing_for_agent(""), "agents/");
 }
+
+/// Test-only hook: acts only on documents tagged `write_hook_probe`, so the
+/// process-wide registration does not touch other tests' writes.
+struct ProbeWriteHook;
+
+static PROBE_HOOK_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+impl crate::db::DocumentWriteHook for ProbeWriteHook {
+    fn name(&self) -> &'static str {
+        "test.write_hook_probe"
+    }
+
+    fn before_document_write<'a>(
+        &self,
+        conn: &Connection,
+        doc: &'a Document,
+    ) -> Result<std::borrow::Cow<'a, Document>> {
+        if !doc.metadata_json.contains("write_hook_probe") {
+            return Ok(std::borrow::Cow::Borrowed(doc));
+        }
+        PROBE_HOOK_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        conn.execute(
+            "INSERT INTO code_index_source_blobs VALUES (?, 'probe')",
+            params![format!("probe-{}", doc.id)],
+        )?;
+        let mut out = doc.clone();
+        out.title = "hooked".into();
+        Ok(std::borrow::Cow::Owned(out))
+    }
+}
+
+fn probe_blob_count(store: &Store, id: &str) -> i64 {
+    let conn = store.lock().unwrap();
+    conn.query_row(
+        "SELECT COUNT(*) FROM code_index_source_blobs WHERE content_hash = ?",
+        params![format!("probe-{id}")],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn document_write_hook_runs_once_inside_the_upsert_transaction() {
+    crate::db::register_document_write_hook(std::sync::Arc::new(ProbeWriteHook));
+    let store = open_temp();
+    let mut doc = sample_doc("hook-doc", "doc://hook-doc");
+    doc.metadata_json = r#"{"write_hook_probe":true}"#.into();
+
+    // A failing CAS check rolls back what the hook wrote through the transaction.
+    let before = PROBE_HOOK_CALLS.load(std::sync::atomic::Ordering::SeqCst);
+    let err = store.upsert_document_cas(&doc, Some(99));
+    assert!(err.is_err(), "CAS against a missing row must fail");
+    assert_eq!(
+        PROBE_HOOK_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        before + 1,
+        "hook runs before the CAS check"
+    );
+    assert_eq!(probe_blob_count(&store, "hook-doc"), 0);
+    assert!(store.get_document("hook-doc").unwrap().is_none());
+
+    // A successful write runs the hook exactly once and stores its output.
+    let rev = store.upsert_document_cas(&doc, None).unwrap();
+    assert_eq!(rev, 1);
+    assert_eq!(
+        PROBE_HOOK_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        before + 2
+    );
+    assert_eq!(probe_blob_count(&store, "hook-doc"), 1);
+    assert_eq!(
+        store.get_document("hook-doc").unwrap().unwrap().title,
+        "hooked"
+    );
+}

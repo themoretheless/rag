@@ -355,6 +355,7 @@ mod tests {
     use super::*;
     use crate::models::Document;
     fn setup() -> (tempfile::TempDir, Store) {
+        crate::code_index::source::install_document_write_hook();
         let root = tempfile::tempdir().unwrap();
         let store = Store::open(&root.path().join("files.duckdb")).unwrap();
         (root, store)

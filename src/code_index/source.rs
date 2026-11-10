@@ -4,6 +4,31 @@ use crate::models::Document;
 use duckdb::Connection;
 use std::borrow::Cow;
 
+/// Store hook that moves `code_source_text` into `code_index_source_blobs`.
+struct SourceBlobHook;
+
+impl crate::db::DocumentWriteHook for SourceBlobHook {
+    fn name(&self) -> &'static str {
+        "code_index.source_blob"
+    }
+
+    fn before_document_write<'a>(
+        &self,
+        conn: &Connection,
+        doc: &'a Document,
+    ) -> Result<Cow<'a, Document>> {
+        persist(conn, doc)
+    }
+}
+
+/// Register the source-blob hook with the store (idempotent).
+pub fn install_document_write_hook() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        crate::db::register_document_write_hook(std::sync::Arc::new(SourceBlobHook));
+    });
+}
+
 pub(crate) fn persist<'a>(conn: &Connection, doc: &'a Document) -> Result<Cow<'a, Document>> {
     if !doc.metadata_json.contains("code_source_text") {
         return Ok(Cow::Borrowed(doc));

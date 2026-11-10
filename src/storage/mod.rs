@@ -114,6 +114,7 @@ pub fn configured_backend(config: &Config) -> Result<BackendKind, AppError> {
 /// Open the configured adapter. Unsupported adapters fail at startup rather
 /// than silently pointing another backend name at DuckDB.
 pub fn open_configured(config: &Config) -> Result<Store, AppError> {
+    install_store_hooks();
     let backend = configured_backend(config)?;
     match backend {
         BackendKind::DuckDb => Store::open(&config.db_path),
@@ -124,11 +125,17 @@ pub fn open_configured(config: &Config) -> Result<Store, AppError> {
     }
 }
 
+/// Composition: register the store write hooks owned by higher layers.
+pub fn install_store_hooks() {
+    crate::code_index::source::install_document_write_hook();
+}
+
 /// Open the configured backend through the backend-neutral document contract.
 ///
 /// The Markdown adapter is deliberately opt-in and requires an explicit
 /// `RAG_VAULT_PATH`; `RAG_DB_PATH` is never reinterpreted as a vault root.
 pub fn open_configured_storage(config: &Config) -> Result<Box<dyn Storage>, AppError> {
+    install_store_hooks();
     match configured_backend(config)? {
         BackendKind::DuckDb => Ok(Box::new(Store::open(&config.db_path)?)),
         BackendKind::Markdown => {

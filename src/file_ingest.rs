@@ -157,6 +157,8 @@ pub fn extract_file(path: &Path) -> Result<ExtractedFile, FileIngestError> {
     );
     let mut metadata = decoding;
     if let Some(original) = original_html {
+        // The store hook moves this text into the source-blob table on write.
+        crate::code_index::source::install_document_write_hook();
         metadata.insert(
             "code_source_hash".into(),
             serde_json::json!(crate::util::content_hash(&original)),

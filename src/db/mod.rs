@@ -33,6 +33,7 @@ mod source_manifest;
 pub mod store;
 pub mod sync;
 pub mod vault;
+pub mod write_hook;
 
 pub use catalog::{
     DocumentCatalogFilter, DocumentCatalogPage, ProjectHome, DEFAULT_CATALOG_PAGE_SIZE,
@@ -50,3 +51,4 @@ pub use source_dedupe::{
 };
 pub use source_manifest::{SourceManifestEntry, SourceManifestWrite, SourceRootSummary};
 pub use store::Store;
+pub use write_hook::{register_document_write_hook, DocumentWriteHook};

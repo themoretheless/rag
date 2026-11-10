@@ -12,6 +12,7 @@ use rag_mcp::util::refuse_live_database_target;
 use rag_mcp::Store;
 
 fn main() -> Result<()> {
+    rag_mcp::storage::install_store_hooks();
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "help".into());
     let rest: Vec<String> = args.collect();
