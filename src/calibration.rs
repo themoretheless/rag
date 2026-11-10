@@ -249,69 +249,81 @@ fn fit(kind: &str, min: f64, samples: &Samples) -> Value {
     };
     json!({"status":status,"kind":kind,"dataset_name":samples.dataset_name,"dataset_fingerprint":fingerprint,"score_domain":"caller_supplied_0_to_1_confidence","acceptance_rule":"score_greater_than_or_equal_to_threshold","selection_objective":"maximize_training_F1_subject_to_precision_floor_then_larger_threshold","min_precision":min,"selected_threshold":threshold,"training_size":samples.training.len(),"validation_size":samples.validation.len(),"class_counts":{"training_positive":pos,"training_negative":samples.training.len()-pos,"validation_positive":validation_pos,"validation_negative":samples.validation.len()-validation_pos},"measured_sample_size":samples.training.len()+samples.validation.len(),"training_metrics":train,"validation_metrics":validation,"validation_point_target_met":target_met,"validation_precision_lower_bound_meets_target":lower_met,"params":samples.params,"applied":false,"production_qualified":false,"not_checked":["label_accuracy","representativeness","score_semantics","hidden_cross_split_duplicates","future_distribution_shift"],"notice":"A held-out report is not a deployment decision. No runtime thresholds were changed."})
 }
-impl Store {
+/// Calibration reports repository over the store connection.
+pub struct Calibrations<'a> {
+    store: &'a Store,
+}
+
+impl<'a> Calibrations<'a> {
+    pub fn new(store: &'a Store) -> Self {
+        Self { store }
+    }
+
     pub fn calibrate_confidence(&self, q: &CalibrationQuery) -> Result<Value> {
         let (kind, min, samples) = validate(q)?;
         let mut report = fit(&kind, min, &samples);
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_calibrations",
-            [],
-            |r| r.get(0),
-        )?;
-        let rev: Option<i64> =
-            tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let at = chrono::Utc::now().timestamp_millis();
-        let o = report.as_object_mut().unwrap();
-        o.insert("id".into(), json!(id));
-        o.insert("seq".into(), json!(seq));
-        o.insert("created_ms".into(), json!(at));
-        o.insert("index_rev".into(), json!(rev));
-        tx.execute(
-            "INSERT INTO analysis_calibrations VALUES (?,?,?,?,?,?,?)",
-            params![
-                seq,
-                id,
-                at,
-                kind,
-                (samples.training.len() + samples.validation.len()) as i64,
-                rev,
-                serde_json::to_string(&report)?
-            ],
-        )?;
-        tx.commit()?;
-        Ok(report)
+        self.store.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            let seq: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(seq),0)+1 FROM analysis_calibrations",
+                [],
+                |r| r.get(0),
+            )?;
+            let rev: Option<i64> =
+                tx.query_row("SELECT MAX(id) FROM code_index_revisions", [], |r| r.get(0))?;
+            let id = uuid::Uuid::new_v4().to_string();
+            let at = chrono::Utc::now().timestamp_millis();
+            let o = report.as_object_mut().unwrap();
+            o.insert("id".into(), json!(id));
+            o.insert("seq".into(), json!(seq));
+            o.insert("created_ms".into(), json!(at));
+            o.insert("index_rev".into(), json!(rev));
+            tx.execute(
+                "INSERT INTO analysis_calibrations VALUES (?,?,?,?,?,?,?)",
+                params![
+                    seq,
+                    id,
+                    at,
+                    kind,
+                    (samples.training.len() + samples.validation.len()) as i64,
+                    rev,
+                    serde_json::to_string(&report)?
+                ],
+            )?;
+            tx.commit()?;
+            Ok(report)
+        })
     }
+
     pub fn calibration_reports(&self, q: &ReportsQuery) -> Result<Value> {
         let limit = q.limit.unwrap_or(20).clamp(1, 200);
-        let conn = self.lock()?;
-        let mut stmt=conn.prepare("SELECT report_json FROM analysis_calibrations WHERE (? IS NULL OR kind=?) AND (? IS NULL OR seq<?) ORDER BY seq DESC LIMIT ?")?;
-        let rows = stmt.query_map(
-            params![q.kind, q.kind, q.before_seq, q.before_seq, limit as i64 + 1],
-            |r| r.get::<_, String>(0),
-        )?;
-        let mut items = vec![];
-        let mut bytes = 0usize;
-        let mut more = false;
-        for row in rows {
-            let row = row?;
-            if items.len() >= limit || bytes + row.len() > 256 * 1024 {
-                more = true;
-                break;
+        self.store.with_conn(|conn| {
+            let mut stmt=conn.prepare("SELECT report_json FROM analysis_calibrations WHERE (? IS NULL OR kind=?) AND (? IS NULL OR seq<?) ORDER BY seq DESC LIMIT ?")?;
+            let rows = stmt.query_map(
+                params![q.kind, q.kind, q.before_seq, q.before_seq, limit as i64 + 1],
+                |r| r.get::<_, String>(0),
+            )?;
+            let mut items = vec![];
+            let mut bytes = 0usize;
+            let mut more = false;
+            for row in rows {
+                let row = row?;
+                if items.len() >= limit || bytes + row.len() > 256 * 1024 {
+                    more = true;
+                    break;
+                }
+                bytes += row.len();
+                items.push(serde_json::from_str::<Value>(&row)?);
             }
-            bytes += row.len();
-            items.push(serde_json::from_str::<Value>(&row)?);
-        }
-        let next = if more {
-            items.last().and_then(|v| v["seq"].as_i64())
-        } else {
-            None
-        };
-        Ok(
-            json!({"items":items,"next_before_seq":next,"truncated":more,"applied":false,"ordering":"seq_desc","source":"calibration_report","report_bytes":bytes,"response_report_budget_bytes":256*1024}),
-        )
+            let next = if more {
+                items.last().and_then(|v| v["seq"].as_i64())
+            } else {
+                None
+            };
+            Ok(
+                json!({"items":items,"next_before_seq":next,"truncated":more,"applied":false,"ordering":"seq_desc","source":"calibration_report","report_bytes":bytes,"response_report_budget_bytes":256*1024}),
+            )
+        })
     }
 }
 #[cfg(test)]
@@ -385,7 +397,9 @@ mod tests {
             }),
             ..Default::default()
         };
-        let r = store.calibrate_confidence(&q).unwrap();
+        let r = crate::calibration::Calibrations::new(&store)
+            .calibrate_confidence(&q)
+            .unwrap();
         assert_eq!(r["measured_sample_size"], 0);
         assert_eq!(r["status"], "recorded_unvalidated");
         let legacy: CalibrationQuery =
@@ -395,8 +409,10 @@ mod tests {
         assert_eq!(legacy["params"]["threshold"], 0.6);
         assert_eq!(legacy["measured_sample_size"], 0);
 
-        store.calibrate_confidence(&q).unwrap();
-        let page = store
+        crate::calibration::Calibrations::new(&store)
+            .calibrate_confidence(&q)
+            .unwrap();
+        let page = crate::calibration::Calibrations::new(&store)
             .calibration_reports(&ReportsQuery {
                 limit: Some(1),
                 ..Default::default()
@@ -405,7 +421,7 @@ mod tests {
         let cursor = page["next_before_seq"].as_i64().unwrap();
         drop(store);
         let store = Store::open(&path).unwrap();
-        let older = store
+        let older = crate::calibration::Calibrations::new(&store)
             .calibration_reports(&ReportsQuery {
                 before_seq: Some(cursor),
                 ..Default::default()

@@ -147,8 +147,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::calibration::CalibrationQuery>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::calibration::Calibrations::new(&self.store)
                 .calibrate_confidence(&params)
                 .map_err(Self::map_err)?,
         )
@@ -162,8 +161,7 @@ impl RagServer {
         Parameters(params): Parameters<crate::calibration::ReportsQuery>,
     ) -> Result<CallToolResult, McpError> {
         Self::json_result(
-            &self
-                .store
+            &crate::calibration::Calibrations::new(&self.store)
                 .calibration_reports(&params)
                 .map_err(Self::map_err)?,
         )

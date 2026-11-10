@@ -1626,7 +1626,9 @@ mod tests {
                 &[],
             )
             .unwrap();
-        store.calibrate_confidence(&Default::default()).unwrap();
+        crate::calibration::Calibrations::new(&store)
+            .calibrate_confidence(&Default::default())
+            .unwrap();
         FTS_CRASH_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
         let backend;
         let (tables, functions) = {
@@ -1733,7 +1735,9 @@ mod tests {
                 1
             );
             assert_eq!(
-                store.calibration_reports(&Default::default()).unwrap()["items"]
+                crate::calibration::Calibrations::new(&store)
+                    .calibration_reports(&Default::default())
+                    .unwrap()["items"]
                     .as_array()
                     .unwrap()
                     .len(),

@@ -301,9 +301,21 @@ impl Store {
         self.lock_connection()
     }
 
+    /// Run `work` with the connection under the Store lock.
+    ///
+    /// The connection handle for repository types outside `db` (code
+    /// intelligence, analysis tasks, gate, calibration, external DB checks).
+    pub(crate) fn with_conn<T>(
+        &self,
+        work: impl FnOnce(&mut Connection) -> Result<T>,
+    ) -> Result<T> {
+        let mut conn = self.lock_connection()?;
+        work(&mut conn)
+    }
+
     /// Run `work` in one transaction under the Store lock. Commits on `Ok`;
     /// an `Err` (or panic) drops the transaction, which rolls it back.
-    pub(in crate::db) fn with_tx<T>(
+    pub(crate) fn with_tx<T>(
         &self,
         work: impl FnOnce(&duckdb::Transaction<'_>) -> Result<T>,
     ) -> Result<T> {
