@@ -345,10 +345,11 @@ mod tests {
             ..Default::default()
         };
         store
+            .documents()
             .upsert_document(&doc("api", "/p/api.py", "VALUE = 1\n"))
             .unwrap();
         let mut client = doc("client", "/p/client.py", "from api import absent\n");
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -385,7 +386,7 @@ mod tests {
             "{dead}"
         );
         client.content = "x = 1\n".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
@@ -422,7 +423,7 @@ mod tests {
             "{diff}"
         );
         client.content = "from api import absent\n".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

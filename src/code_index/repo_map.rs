@@ -282,6 +282,7 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, text: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("file://{path}"),
@@ -376,6 +377,7 @@ mod tests {
     }
     fn scoped_put(store: &Store, id: &str, project: &str, path: &str, text: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),

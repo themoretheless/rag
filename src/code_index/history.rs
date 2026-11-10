@@ -928,7 +928,7 @@ mod tests {
             "/p/models.py",
             "class Base:\n    def work(self): pass\nclass Child(Base):\n    def work(self): pass\n",
         );
-        store.upsert_document(&d).unwrap();
+        store.documents().upsert_document(&d).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -940,7 +940,7 @@ mod tests {
             1
         );
         d.content = "class Base:\n    def work(self): pass\nclass Child(Base): pass\n".into();
-        store.upsert_document(&d).unwrap();
+        store.documents().upsert_document(&d).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -992,7 +992,7 @@ mod tests {
         );
         code.wing = Some("p".into());
         for d in [&view, &code] {
-            store.upsert_document(d).unwrap();
+            store.documents().upsert_document(d).unwrap();
         }
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -1001,7 +1001,7 @@ mod tests {
         view.content = format!("\n\n{}", view.content);
         code.content = format!("\n{}", code.content);
         for d in [&view, &code] {
-            store.upsert_document(d).unwrap();
+            store.documents().upsert_document(d).unwrap();
         }
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -1025,7 +1025,7 @@ mod tests {
             "{diff}"
         );
         view.content = "%{key}".into();
-        store.upsert_document(&view).unwrap();
+        store.documents().upsert_document(&view).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1118,7 +1118,7 @@ mod tests {
         );
         foreign.wing = Some("q".into());
         for d in [&migration, &code, &foreign] {
-            store.upsert_document(d).unwrap();
+            store.documents().upsert_document(d).unwrap();
         }
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -1127,8 +1127,8 @@ mod tests {
         assert!(frozen["sql"]["tables"].is_array());
         migration.content = "CREATE TABLE users(name TEXT NOT NULL, age INT NOT NULL);".into();
         code.content="class Base: pass\nclass Other: pass\nclass Child(Other): pass\ndef work(): pass\nregistered = None\ndef plain(): pass\n".into();
-        store.upsert_document(&migration).unwrap();
-        store.upsert_document(&code).unwrap();
+        store.documents().upsert_document(&migration).unwrap();
+        store.documents().upsert_document(&code).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1158,8 +1158,8 @@ mod tests {
         assert_eq!(frozen_graph(&store.lock().unwrap(), 1).unwrap(), frozen);
         code.content = format!("# moved\n{}", code.content);
         migration.content = format!("-- moved\n{}", migration.content);
-        store.upsert_document(&migration).unwrap();
-        store.upsert_document(&code).unwrap();
+        store.documents().upsert_document(&migration).unwrap();
+        store.documents().upsert_document(&code).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1183,14 +1183,14 @@ mod tests {
             "/p/migrations/001.sql",
             "CREATE TABLE calc(a INT DEFAULT 1, b INT GENERATED ALWAYS AS (a + 1) STORED);",
         );
-        store.upsert_document(&migration).unwrap();
+        store.documents().upsert_document(&migration).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
         let before = frozen_graph(&store.lock().unwrap(), 1).unwrap();
         migration.content =
             "CREATE TABLE calc(a INT DEFAULT 2, b INT GENERATED ALWAYS AS (a + 2) STORED);".into();
-        store.upsert_document(&migration).unwrap();
+        store.documents().upsert_document(&migration).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1225,13 +1225,13 @@ mod tests {
             "/p/migrations/001.sql",
             "CREATE TABLE x(a INT CONSTRAINT positive CHECK(a>0), CONSTRAINT uq UNIQUE(a));",
         );
-        store.upsert_document(&d).unwrap();
+        store.documents().upsert_document(&d).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
         let before = frozen_graph(&store.lock().unwrap(), 1).unwrap();
         d.content="CREATE TABLE x(a INT CONSTRAINT positive CHECK(a>1), CONSTRAINT uq UNIQUE(a), CONSTRAINT ceiling CHECK(a<100));".into();
-        store.upsert_document(&d).unwrap();
+        store.documents().upsert_document(&d).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -1277,6 +1277,7 @@ mod tests {
         let path = dir.path().join("history.duckdb");
         let store = Store::open(&path).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "a",
                 "/p/a.rs",
@@ -1284,6 +1285,7 @@ mod tests {
             ))
             .unwrap();
         store
+            .documents()
             .upsert_document(&doc("text", "/p/readme.md", "unchanged text"))
             .unwrap();
         let first = crate::code_index::CodeIndex::new(&store)
@@ -1321,9 +1323,9 @@ mod tests {
             .unwrap();
         assert_eq!(warm.index_revision, Some(1));
         assert!(!warm.revision_created);
-        let mut a = store.get_document("a").unwrap().unwrap();
+        let mut a = store.documents().get_document("a").unwrap().unwrap();
         a.content="// moved definitions\nfn main() { bar(); let secret_value=1; } fn foo() {} fn bar() {}".into();
-        store.upsert_document(&a).unwrap();
+        store.documents().upsert_document(&a).unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .index_code()
@@ -1407,6 +1409,7 @@ mod tests {
             Some(1)
         );
         store
+            .documents()
             .upsert_document(&doc("a", "/p/a.rs", "fn a() {}"))
             .unwrap();
         assert_eq!(
@@ -1416,7 +1419,7 @@ mod tests {
                 .index_revision,
             Some(2)
         );
-        store.delete_document("a").unwrap();
+        store.documents().delete_document("a").unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .index_code()
@@ -1454,6 +1457,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&doc("a", "/p/a.rs", "fn old() {}"))
             .unwrap();
         crate::code_index::CodeIndex::new(&store)
@@ -1469,9 +1473,9 @@ mod tests {
             )
             .unwrap();
         store.lock().unwrap().execute_batch("ALTER TABLE code_index_source_blobs RENAME TO original_blobs; CREATE TABLE code_index_source_blobs(content_hash VARCHAR PRIMARY KEY,content VARCHAR NOT NULL CHECK(content NOT LIKE '%new%')); INSERT INTO code_index_source_blobs SELECT * FROM original_blobs; DROP TABLE original_blobs;").unwrap();
-        let mut a = store.get_document("a").unwrap().unwrap();
+        let mut a = store.documents().get_document("a").unwrap().unwrap();
         a.content = "fn new() {}".into();
-        store.upsert_document(&a).unwrap();
+        store.documents().upsert_document(&a).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .index_code()
             .is_err());
@@ -1504,6 +1508,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = Store::open(&root.path().join("clients.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "client",
                 "/p/client.js",
@@ -1514,6 +1519,7 @@ mod tests {
             .index_code()
             .unwrap();
         store
+            .documents()
             .upsert_document(&doc(
                 "client",
                 "/p/client.js",
@@ -1577,6 +1583,7 @@ mod integrity_tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("history.duckdb")).unwrap();
         store
+            .documents()
             .upsert_document(&crate::models::Document {
                 id: "a".into(),
                 uri: "file:///p/a.rs".into(),

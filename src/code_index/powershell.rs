@@ -1120,8 +1120,8 @@ mod tests {
             "/p/client.ps1",
             "using module './base.psm1'\nclass Child : Base {[int] Run(){return $this.Work()}}",
         );
-        store.upsert_document(&base).unwrap();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&base).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .index_code()
@@ -1155,7 +1155,7 @@ mod tests {
             Some(true)
         );
         client.content = "class Child {[int] Run(){return 1}}".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
@@ -1190,7 +1190,7 @@ mod tests {
             .iter()
             .any(|e| e["import_kind"] == "powershell_using_module_candidate"));
         client.content = "class Later {}".into();
-        store.upsert_document(&client).unwrap();
+        store.documents().upsert_document(&client).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

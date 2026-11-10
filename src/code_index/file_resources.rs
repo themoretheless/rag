@@ -487,11 +487,13 @@ mod tests {
             ..Default::default()
         };
         let mut page = doc("page", "/p/index.html", "<link href='main.css'>");
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         store
+            .documents()
             .upsert_document(&doc("main", "/p/main.css", "@import 'base.css';"))
             .unwrap();
         store
+            .documents()
             .upsert_document(&doc("base", "/p/base.css", ".base{color:red}"))
             .unwrap();
         crate::code_index::CodeIndex::new(&store)
@@ -521,7 +523,7 @@ mod tests {
             "{dead}"
         );
         page.content = "<p>removed</p>".into();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .code_snapshot()
@@ -554,7 +556,7 @@ mod tests {
             "{diff}"
         );
         page.content = "<link href='base.css'>".into();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

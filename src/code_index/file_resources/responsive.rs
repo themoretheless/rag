@@ -591,7 +591,7 @@ mod integration_tests {
             doc("b", "/p/b.svg", "<svg/>"),
             doc("mime", "/p/image/svg+xml", "not an image"),
         ] {
-            store.upsert_document(&d).unwrap();
+            store.documents().upsert_document(&d).unwrap();
         }
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -634,7 +634,7 @@ mod integration_tests {
             );
         }
         page.content = "<img srcset='a.svg 1x, b.svg 3x'>".into();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -665,7 +665,7 @@ mod integration_tests {
             "{diff}"
         );
         page.content = "\n\n<img srcset='a.svg 1x, b.svg 3x'>".into();
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

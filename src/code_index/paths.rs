@@ -339,7 +339,7 @@ mod tests {
             ("b", "two", "/two/src/lib.rs", "pub fn foreign(){}"),
             ("c", "one", "/one/classes.py", "class Parent:\n    def method(self): pass\nclass Child(Parent):\n    def method(self): pass\n"),
         ] {
-            store.upsert_document(&crate::models::Document {id:id.into(),uri:format!("file://{path}"),source_file:Some(path.into()),wing:Some(project.into()),content:source.into(),revision:1,..Default::default()}).unwrap();
+            store.documents().upsert_document(&crate::models::Document {id:id.into(),uri:format!("file://{path}"),source_file:Some(path.into()),wing:Some(project.into()),content:source.into(),revision:1,..Default::default()}).unwrap();
         }
         crate::code_index::CodeIndex::new(&store)
             .index_code()

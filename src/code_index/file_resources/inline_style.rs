@@ -389,7 +389,7 @@ mod tests {
             doc("a", "/p/a.svg", "<svg/>"),
             doc("b", "/p/b.svg", "<svg/>"),
         ] {
-            store.upsert_document(&d).unwrap();
+            store.documents().upsert_document(&d).unwrap();
         }
         crate::code_index::CodeIndex::new(&store)
             .index_code()
@@ -419,7 +419,7 @@ mod tests {
             "{dead}"
         );
         page.content = page.content.replace("2x", "3x");
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
@@ -449,7 +449,7 @@ mod tests {
             "{diff}"
         );
         page.content = format!("\n\n{}", page.content.replace("&quot;", "&#34;"));
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(moved["relations_added_total"], 0);
         assert_eq!(moved["relations_removed_total"], 0);
         page.content = page.content.replace("background:", "list-style-image:");
-        store.upsert_document(&page).unwrap();
+        store.documents().upsert_document(&page).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

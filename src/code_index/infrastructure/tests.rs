@@ -42,6 +42,7 @@ impl Fixture {
     }
     fn put(&self, project: &str, path: &str, source: &str, revision: i64) {
         self.store
+            .documents()
             .upsert_document(&crate::models::Document {
                 id: format!("{project}:{path}"),
                 source_file: Some(format!("/{project}/{path}")),

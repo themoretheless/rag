@@ -270,6 +270,7 @@ mod tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, project: &str, body: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -572,6 +573,7 @@ mod extra_tests {
     use crate::models::Document;
     fn put(store: &Store, id: &str, path: &str, body: &str) {
         store
+            .documents()
             .upsert_document(&Document {
                 id: id.into(),
                 uri: format!("doc://{id}"),
@@ -662,6 +664,7 @@ mod selector_tests {
         let store = Store::open(&dir.path().join("long-url.duckdb")).unwrap();
         let url = format!("/{}", "x".repeat(3000));
         store
+            .documents()
             .upsert_document(&Document {
                 id: "a".into(),
                 uri: "doc://a".into(),

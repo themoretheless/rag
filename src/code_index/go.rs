@@ -961,7 +961,7 @@ mod tests {
             wing: Some("p".into()),
             ..Default::default()
         };
-        for d in [doc("root","/p/go.mod","module example.org/app"),doc("main","/p/main.go","package main\nimport nested \"example.org/app/nested\"\nfunc main(){nested.Work()}"),doc("api","/p/nested/a.go","package nested\nfunc Work(){}")]{store.upsert_document(&d).unwrap();}
+        for d in [doc("root","/p/go.mod","module example.org/app"),doc("main","/p/main.go","package main\nimport nested \"example.org/app/nested\"\nfunc main(){nested.Work()}"),doc("api","/p/nested/a.go","package nested\nfunc Work(){}")]{store.documents().upsert_document(&d).unwrap();}
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();
@@ -975,6 +975,7 @@ mod tests {
             vec!["Work"]
         );
         store
+            .documents()
             .upsert_document(&doc(
                 "boundary",
                 "/p/nested/go.mod",
@@ -997,6 +998,7 @@ mod tests {
         )
         .is_empty());
         store
+            .documents()
             .upsert_document(&doc(
                 "boundary",
                 "/p/nested/go.mod",

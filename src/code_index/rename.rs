@@ -723,6 +723,7 @@ mod tests {
             let path = self.root.join(id);
             std::fs::write(&path, source).unwrap();
             self.store
+                .documents()
                 .upsert_document(&crate::models::Document {
                     id: id.into(),
                     uri: format!("file://{}", path.display()),

@@ -1188,8 +1188,8 @@ mod tests {
             "/p/child.pm",
             "package Child;use parent 'Base';sub run {Child->work();}",
         );
-        store.upsert_document(&base).unwrap();
-        store.upsert_document(&child).unwrap();
+        store.documents().upsert_document(&base).unwrap();
+        store.documents().upsert_document(&child).unwrap();
         assert_eq!(
             crate::code_index::CodeIndex::new(&store)
                 .index_code()
@@ -1222,7 +1222,7 @@ mod tests {
             Some(true)
         );
         child.content = "package Child;sub run {1}".into();
-        store.upsert_document(&child).unwrap();
+        store.documents().upsert_document(&child).unwrap();
         assert!(crate::code_index::CodeIndex::new(&store)
             .code_snapshot()
             .unwrap()
@@ -1257,7 +1257,7 @@ mod tests {
             .iter()
             .any(|e| e["import_kind"] == "perl_parent_package_candidate"));
         child.content = "package Later;".into();
-        store.upsert_document(&child).unwrap();
+        store.documents().upsert_document(&child).unwrap();
         crate::code_index::CodeIndex::new(&store)
             .index_code()
             .unwrap();

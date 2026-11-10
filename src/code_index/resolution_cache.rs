@@ -496,6 +496,7 @@ mod tests {
         let mut source = sources();
         for (id, (path, text)) in &source {
             store
+                .documents()
                 .upsert_document(&crate::models::Document {
                     id: id.clone(),
                     uri: format!("file://{path}"),
@@ -528,6 +529,7 @@ mod tests {
         source.get_mut("core").unwrap().1 = source["core"].1.replace("{1}", "{2}");
         let (path, text) = &source["core"];
         store
+            .documents()
             .upsert_document(&crate::models::Document {
                 id: "core".into(),
                 uri: format!("file://{path}"),
