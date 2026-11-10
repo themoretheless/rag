@@ -28,6 +28,7 @@ pub mod review;
 mod rows;
 pub mod schema;
 pub mod search;
+mod sql_types;
 mod source_dedupe;
 mod source_manifest;
 pub mod store;

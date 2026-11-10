@@ -96,7 +96,7 @@ Cycles:
   `:327` (`maintain::DEFAULT_MAX_DOCS`), `:435-437` (`apply_process_limits`
   writes globals in `db::graph::resolve`, `telemetry`, `db::sync`), `:908`
   (`db::search::MAX_TOP_K`).
-- `models`/`error → duckdb`: `src/models.rs:594-601`, `src/error.rs:65`.
+- ~~`models`/`error → duckdb`~~: resolved in Stage 2; the impls live in `src/db/sql_types.rs`.
 - `http_api → mcp`: `src/http_api/mod.rs:68`, `src/http_api/ops.rs:18-19`.
 
 Leaks across layers:

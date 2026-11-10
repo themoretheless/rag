@@ -43,7 +43,7 @@ local cleanup, P3 = leave.
 | src/bin | 2680 | 7 | `parse_args_from` 192 (eval.rs:180); `evaluate` 141 (eval.rs:604); `run` 130 (ingest_project.rs:119) | hand-written argument parsing; `eval` re-implements search wiring | P2 | todo |
 | src/eval | 1899 | 0 | `compare_query_metrics` 76 (compare.rs:50) | logic split between here, `bin/eval.rs` and `http_api/eval_ops.rs` | P2 | todo |
 | src/ingest | 1568 | 3 | `ingest_url` 111 (ingest.rs:258); `update_document` 99 (:770); `prepare_ingest` 95 (:627) | hand-built ops-log entries; own `test_config` | P2 | todo |
-| src/models | 1442 | 0 | `from_document` 39 (models.rs:1019) | `duckdb` trait impls in a domain file (:594); `layer`/`status` are strings | P0 (small) | todo |
+| src/models | 1442 | 0 | `from_document` 39 (models.rs:1019) | ~~`duckdb` trait impls in a domain file~~ (moved to `db/sql_types.rs`); `layer`/`status` are strings | P0 (small) | Stage 2: duckdb impls done |
 | src/config | 1215 | 2 | `from_env` 303 (config.rs:461); `validate` 187 (:765) | ~79 fields; depends on llm/rerank/maintain/db; sets process globals (:435) | P0 | todo |
 | src/retrieval | 1184 | 3 | `execute_search_with_llm` 128 (retrieval.rs:619); `run_query_transforms` 111 (:782) | closest thing to a use-case module today; transports still wrap it differently | P1 | todo |
 | src/storage | 1021 | 2 | `refresh_batch` 84 (markdown/watcher.rs:85); `upsert_document` 82 (markdown/mod.rs:310) | `Storage` trait + Markdown backend not used by production paths | P1 (delete) | todo |

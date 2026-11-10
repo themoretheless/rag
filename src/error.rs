@@ -62,12 +62,6 @@ pub enum AppError {
 /// Library-wide result type using [`AppError`].
 pub type Result<T> = std::result::Result<T, AppError>;
 
-impl From<duckdb::Error> for AppError {
-    fn from(err: duckdb::Error) -> Self {
-        AppError::Db(err.to_string())
-    }
-}
-
 // No blanket `From<reqwest::Error>`: chat, embeddings and replication share
 // reqwest, so each call site names its own variant (`Llm`, `Embeddings`, …).
 
