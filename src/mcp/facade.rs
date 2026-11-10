@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rmcp::handler::server::tool::{ToolCallContext, ToolRouter};
-use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerInfo,
@@ -143,6 +142,11 @@ impl RagServer {
                 crate::ops::mark_autosync_running();
                 let mut cycle_error = None;
                 for path in &roots {
+                    // Stop between roots on shutdown; the control below also
+                    // lets a sync in progress stop at its next file boundary.
+                    if loop_tasks.is_cancelled() {
+                        break;
+                    }
                     let params = SyncSourcesParams {
                         path: path.clone(),
                         remove_deleted: Some(false),
@@ -150,7 +154,8 @@ impl RagServer {
                         room: None,
                         max_file_bytes: None,
                     };
-                    match self.sync_sources(Parameters(params)).await {
+                    let control = SourceSyncControl::new(loop_tasks.token(), |_| {});
+                    match self.sync_sources_with_control(params, control).await {
                         Ok(result) if tool_result_succeeded(&result) => {
                             tracing::info!(path, "automatic source sync completed")
                         }
@@ -164,6 +169,9 @@ impl RagServer {
                             tracing::error!(path, error = %error, "automatic source sync failed")
                         }
                     }
+                }
+                if loop_tasks.is_cancelled() {
+                    break;
                 }
                 if let Some(error) = cycle_error {
                     crate::ops::mark_autosync_error(&error, interval_duration);
@@ -785,7 +793,7 @@ impl RagServer {
                     embedder.clone(),
                     config.clone(),
                     SourceSyncCommand::new(root.to_path_buf()),
-                    SourceSyncControl::default(),
+                    SourceSyncControl::new(token.clone(), |_| {}),
                 ));
                 match outcome {
                     Ok(outcome) => {

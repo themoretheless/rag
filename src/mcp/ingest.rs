@@ -86,6 +86,17 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<SyncSourcesParams>,
     ) -> Result<CallToolResult, McpError> {
+        self.sync_sources_with_control(params, SourceSyncControl::default())
+            .await
+    }
+
+    /// `sync_sources` body with an explicit control, so background callers
+    /// (auto-sync) can stop the walk when their cancellation token fires.
+    pub(super) async fn sync_sources_with_control(
+        &self,
+        params: SyncSourcesParams,
+        control: SourceSyncControl,
+    ) -> Result<CallToolResult, McpError> {
         let outcome = sync_sources_nonblocking(
             self.store.clone(),
             self.embedder.clone(),
@@ -97,7 +108,7 @@ impl RagServer {
                 room: params.room,
                 max_file_bytes: params.max_file_bytes,
             },
-            SourceSyncControl::default(),
+            control,
         )
         .await?;
         let report = match outcome {

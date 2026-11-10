@@ -73,7 +73,11 @@ impl BackgroundTasks {
     }
 
     /// Cancel every loop and wait up to `timeout` for all of them to return.
-    pub async fn shutdown(&self, timeout: Duration) {
+    ///
+    /// Returns the names of the loops still running at the deadline (also
+    /// logged), so the caller knows what may still touch the store when it
+    /// runs the final checkpoint.
+    pub async fn shutdown(&self, timeout: Duration) -> Vec<&'static str> {
         self.token.cancel();
         let handles = std::mem::take(
             &mut *self
@@ -82,21 +86,30 @@ impl BackgroundTasks {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         );
         let deadline = tokio::time::Instant::now() + timeout;
+        let mut still_running = Vec::new();
         for handle in handles {
             match handle {
                 Handle::Task(name, task) => {
                     if tokio::time::timeout_at(deadline, task).await.is_err() {
-                        tracing::warn!(task = name, "background task did not stop in time");
+                        still_running.push(name);
                     }
                 }
                 Handle::Thread(name, thread) => {
                     let joined = tokio::task::spawn_blocking(move || thread.join());
                     if tokio::time::timeout_at(deadline, joined).await.is_err() {
-                        tracing::warn!(task = name, "background thread did not stop in time");
+                        still_running.push(name);
                     }
                 }
             }
         }
+        if !still_running.is_empty() {
+            tracing::warn!(
+                tasks = ?still_running,
+                timeout_ms = timeout.as_millis() as u64,
+                "background tasks still running after the shutdown timeout"
+            );
+        }
+        still_running
     }
 }
 
@@ -123,5 +136,19 @@ mod tests {
         tasks.shutdown(Duration::from_secs(5)).await;
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(tasks.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn shutdown_reports_tasks_that_ignore_the_token() {
+        let tasks = BackgroundTasks::new();
+        tasks.spawn("stubborn", async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        });
+        let looping = tasks.clone();
+        tasks.spawn("polite", async move {
+            while looping.pause(Duration::from_secs(3600)).await {}
+        });
+        let still_running = tasks.shutdown(Duration::from_millis(50)).await;
+        assert_eq!(still_running, vec!["stubborn"]);
     }
 }
