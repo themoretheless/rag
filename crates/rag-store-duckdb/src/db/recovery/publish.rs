@@ -87,7 +87,7 @@ pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
         let (_, orphan_chunks, orphan_document_nodes, orphan_edges, _) =
             store.maintenance().integrity_counts()?;
         let embedding_manifest = store.embedding_manifest().get_embedding_manifest()?;
-        let embedding_contract_ok =
+        let (embedding_contract_ok, quarantined_chunks) =
             verify_embedding_contract(&store, chunks, embedding_manifest.as_ref())?;
         drop(store);
         let ok = orphan_chunks == 0
@@ -108,6 +108,7 @@ pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
             orphan_document_nodes,
             orphan_edges,
             embedding_contract_ok,
+            quarantined_chunks,
             embedding_manifest,
         })
     })();
@@ -123,35 +124,51 @@ pub fn verify_backup(path: &Path) -> Result<BackupVerification> {
     verification
 }
 
+/// Returns whether the embedding contract holds and how many chunks were
+/// skipped because the v26 migration quarantined their legacy vector
+/// (`chunk_embedding_quarantine`). A quarantined chunk keeps a NULL embedding
+/// until it is re-embedded; that NULL is expected and not a violation.
 pub(super) fn verify_embedding_contract(
     store: &Store,
     chunk_count: u64,
     manifest: Option<&EmbeddingManifest>,
-) -> Result<bool> {
+) -> Result<(bool, u64)> {
+    let quarantined = {
+        let conn = store.lock()?;
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM chunks c WHERE c.embedding IS NULL AND EXISTS \
+             (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = c.id)",
+            [],
+            |row| row.get(0),
+        )?;
+        u64::try_from(count).unwrap_or(0)
+    };
     let Some(manifest) = manifest else {
-        return Ok(chunk_count == 0);
+        return Ok((chunk_count == quarantined, quarantined));
     };
     if validate_embedding_manifest(manifest, "backup").is_err() {
-        return Ok(false);
+        return Ok((false, quarantined));
     }
     if chunk_count == 0 {
-        return Ok(true);
+        return Ok((true, quarantined));
     }
     let expected_dims = match usize::try_from(manifest.dims) {
         Ok(dims) if dims > 0 => dims,
-        _ => return Ok(false),
+        _ => return Ok((false, quarantined)),
     };
     let conn = store.lock()?;
     // Every stored vector must have the manifest's dimensions and no NULL
-    // element (a NULL would not decode as `f32`).
+    // element (a NULL would not decode as `f32`). A NULL vector is allowed
+    // only for a chunk recorded in the quarantine table.
     let inconsistent: i64 = conn.query_row(
-        "SELECT count(*) FROM chunks \
-         WHERE embedding IS NULL OR len(embedding) <> ? OR list_count(embedding) <> len(embedding)",
+        "SELECT count(*) FROM chunks c \
+         WHERE (c.embedding IS NULL AND NOT EXISTS \
+                (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = c.id)) \
+            OR len(c.embedding) <> ? OR list_count(c.embedding) <> len(c.embedding)",
         [expected_dims as i64],
         |row| row.get(0),
     )?;
-    let consistent = inconsistent == 0;
-    Ok(consistent)
+    Ok((inconsistent == 0, quarantined))
 }
 
 /// `.duckdb` snapshots in `dir`, newest first; the newest and any named

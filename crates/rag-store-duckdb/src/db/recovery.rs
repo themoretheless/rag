@@ -139,6 +139,10 @@ pub struct BackupVerification {
     /// Every stored vector is covered by one canonical, complete manifest and
     /// has the manifest's declared dimensionality.
     pub embedding_contract_ok: bool,
+    /// Chunks skipped by the contract check because the v26 migration
+    /// quarantined their legacy vector (NULL until re-embedded).
+    #[serde(default)]
+    pub quarantined_chunks: u64,
     pub embedding_manifest: Option<crate::models::EmbeddingManifest>,
 }
 

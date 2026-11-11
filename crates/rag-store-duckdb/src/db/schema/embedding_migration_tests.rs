@@ -574,6 +574,59 @@ fn unconvertible_embeddings_are_quarantined_and_the_store_still_opens() {
     assert_eq!(kept as usize, BAD_EMBEDDINGS.len());
 }
 
+/// Backup verification accepts the NULL vectors of quarantined chunks,
+/// reports how many there are, and still fails on any other NULL vector.
+#[test]
+fn backup_verification_skips_quarantined_chunks_and_counts_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bad.duckdb");
+    write_legacy(&path);
+    let bad_ids = write_bad_rows(&path);
+    let migrated = Store::open(&path).unwrap();
+    migrated
+        .embedding_manifest()
+        .set_embedding_manifest(&crate::models::EmbeddingManifest {
+            id: "default".into(),
+            provider: "mock".into(),
+            model: "mock".into(),
+            dims: 8,
+            base_url: Some("mock://local".into()),
+            content_fingerprint: Some(crate::db::store::embedding_identity_fingerprint(
+                "mock",
+                "mock",
+                8,
+                "mock://local",
+            )),
+            updated_at: fixed_time(),
+        })
+        .unwrap();
+    drop(migrated);
+
+    let verification = crate::db::recovery::verify_backup(&path).unwrap();
+    assert!(verification.embedding_contract_ok);
+    assert!(verification.ok);
+    assert_eq!(verification.quarantined_chunks, bad_ids.len() as u64);
+
+    // A NULL vector that is not in the quarantine table is a violation.
+    let store = Store::open(&path).unwrap();
+    {
+        let conn = store.lock().unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE chunks SET embedding = NULL WHERE id = \
+                 (SELECT min(id) FROM chunks WHERE embedding IS NOT NULL)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+    }
+    drop(store);
+    let verification = crate::db::recovery::verify_backup(&path).unwrap();
+    assert!(!verification.embedding_contract_ok);
+    assert!(!verification.ok);
+    assert_eq!(verification.quarantined_chunks, bad_ids.len() as u64);
+}
+
 #[test]
 fn crash_between_column_drop_and_index_recreate_heals_on_next_open() {
     let dir = tempfile::tempdir().unwrap();
