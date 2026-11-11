@@ -555,3 +555,55 @@ fn unconvertible_embeddings_are_quarantined_and_the_store_still_opens() {
         .unwrap();
     assert_eq!(kept as usize, BAD_EMBEDDINGS.len());
 }
+
+#[test]
+fn crash_between_column_drop_and_index_recreate_heals_on_next_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("crash.duckdb");
+    write_legacy(&path);
+    {
+        let conn = duckdb::Connection::open(&path).unwrap();
+        // An index migrate_core does not create itself; only the persisted
+        // DDL can bring it back.
+        conn.execute_batch("CREATE INDEX idx_chunks_content_hash ON chunks(content_hash)")
+            .unwrap();
+        conn.execute_batch("ALTER TABLE chunks ADD COLUMN embedding FLOAT[]")
+            .unwrap();
+        backfill_chunk_embeddings(&conn, EMBEDDING_BACKFILL_BATCH, None).unwrap();
+        assert!(drop_legacy_embedding_column_until(&conn, true).is_err());
+        assert!(!has_column(&conn, "embedding_json"));
+        let left: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM duckdb_indexes() WHERE table_name = 'chunks'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "the crash window has no chunk indexes");
+    }
+    let healed = Store::open(&path).unwrap();
+    let conn = healed.lock().unwrap();
+    assert_eq!(current_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
+    for index in [
+        "idx_chunks_document_id",
+        "idx_chunks_parent_chunk_id",
+        "idx_chunks_content_hash",
+    ] {
+        let present: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM duckdb_indexes() WHERE index_name = ?",
+                [index],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(present, 1, "{index} is re-created");
+    }
+    let pending: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM meta WHERE key = 'pending_chunk_index_ddl'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(pending, 0, "the record is cleared once replayed");
+}

@@ -506,6 +506,7 @@ fn stored_schema_version(conn: &Connection) -> Result<Option<i32>> {
 /// finds work (rows written by an older build after the upgrade, a repair
 /// that was interrupted, data imported out of band).
 fn run_open_repairs(conn: &Connection) -> Result<()> {
+    replay_pending_chunk_indexes(conn)?;
     backfill_chunk_parent_ids(conn)?;
     backfill_embedding_digests(conn)?;
     backfill_graph_node_label_keys(conn)?;
@@ -788,6 +789,7 @@ fn migrate_core(conn: &Connection) -> Result<()> {
     backfill_graph_edge_origins(conn)?;
     conn.execute_batch(CREATE_CHUNK_EMBEDDING_QUARANTINE)?;
     record_embedding_quarantine(conn, &quarantined)?;
+    replay_pending_chunk_indexes(conn)?;
 
     record_schema_version(conn)?;
     Ok(())
@@ -1151,15 +1153,28 @@ fn record_embedding_quarantine(conn: &Connection, quarantined: &[(String, String
     Ok(())
 }
 
+/// `meta` key holding the chunk index DDL captured before the legacy column
+/// drop, until every index is re-created.
+const META_PENDING_CHUNK_INDEXES: &str = "pending_chunk_index_ddl";
+
 /// Drop `chunks.embedding_json` once every row has a native embedding.
 ///
 /// DuckDB refuses to drop a column while an index covers a later column, and
 /// the drop does not see indexes dropped earlier in the same transaction, so
 /// the chunk indexes are dropped, the column dropped and the indexes
-/// re-created as separate statements. A crash in between leaves the column
-/// or missing indexes; both are repaired by the next open, which repeats the
-/// core migration because the version is recorded last.
+/// re-created as separate statements. Their DDL is persisted in `meta` first
+/// and cleared after the re-create, so a crash in between is healed by
+/// [`replay_pending_chunk_indexes`] on the next open.
 fn drop_legacy_embedding_column(conn: &Connection) -> Result<()> {
+    drop_legacy_embedding_column_until(conn, false)
+}
+
+/// [`drop_legacy_embedding_column`]; `crash_after_drop` stops right after
+/// the column drop (a test seam for the crash window).
+pub(crate) fn drop_legacy_embedding_column_until(
+    conn: &Connection,
+    crash_after_drop: bool,
+) -> Result<()> {
     let missing: i64 = conn.query_row(
         "SELECT count(*) FROM chunks c WHERE c.embedding IS NULL AND NOT EXISTS \
          (SELECT 1 FROM chunk_embedding_quarantine q WHERE q.chunk_id = c.id)",
@@ -1179,6 +1194,13 @@ fn drop_legacy_embedding_column(conn: &Connection) -> Result<()> {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     drop(stmt);
+    let ddl: Vec<String> = indexes.iter().map(|(_, sql)| create_index_if_not_exists(sql)).collect();
+    conn.execute_batch(CREATE_META)?;
+    upsert_meta(
+        conn,
+        META_PENDING_CHUNK_INDEXES,
+        &serde_json::to_string(&ddl).map_err(|error| AppError::db(error.to_string()))?,
+    )?;
     for (name, _) in &indexes {
         conn.execute_batch(&format!(
             "DROP INDEX IF EXISTS \"{}\"",
@@ -1186,17 +1208,52 @@ fn drop_legacy_embedding_column(conn: &Connection) -> Result<()> {
         ))?;
     }
     conn.execute_batch("ALTER TABLE chunks DROP COLUMN embedding_json")?;
-    for (_, sql) in &indexes {
-        let sql = sql.trim().trim_end_matches(';');
-        let sql = match sql.strip_prefix("CREATE INDEX ") {
-            Some(rest) if !rest.starts_with("IF NOT EXISTS") => {
-                format!("CREATE INDEX IF NOT EXISTS {rest}")
-            }
-            _ => sql.to_owned(),
-        };
-        conn.execute_batch(&sql)?;
+    if crash_after_drop {
+        return Err(AppError::db("simulated crash after the embedding_json drop"));
     }
+    replay_pending_chunk_indexes(conn)?;
     Ok(())
+}
+
+/// `CREATE INDEX ...` as `CREATE INDEX IF NOT EXISTS ...`, without a
+/// trailing semicolon.
+fn create_index_if_not_exists(sql: &str) -> String {
+    let sql = sql.trim().trim_end_matches(';');
+    match sql.strip_prefix("CREATE INDEX ") {
+        Some(rest) if !rest.starts_with("IF NOT EXISTS") => {
+            format!("CREATE INDEX IF NOT EXISTS {rest}")
+        }
+        _ => sql.to_owned(),
+    }
+}
+
+/// Re-create chunk indexes whose DDL [`drop_legacy_embedding_column_until`]
+/// persisted, then clear the record. One `meta` lookup when nothing is
+/// pending.
+fn replay_pending_chunk_indexes(conn: &Connection) -> Result<usize> {
+    let meta: i64 = conn.query_row(
+        "SELECT count(*) FROM duckdb_tables() \
+         WHERE table_name = 'meta' AND schema_name = current_schema()",
+        [],
+        |row| row.get(0),
+    )?;
+    if meta == 0 {
+        return Ok(0);
+    }
+    let Some(pending) = read_meta(conn, META_PENDING_CHUNK_INDEXES)? else {
+        return Ok(0);
+    };
+    let ddl: Vec<String> = serde_json::from_str(&pending).map_err(|error| {
+        AppError::db(format!("meta {META_PENDING_CHUNK_INDEXES} is not a JSON list: {error}"))
+    })?;
+    for sql in &ddl {
+        conn.execute_batch(&create_index_if_not_exists(sql))?;
+    }
+    conn.execute(
+        "DELETE FROM meta WHERE key = ?",
+        [META_PENDING_CHUNK_INDEXES],
+    )?;
+    Ok(ddl.len())
 }
 
 /// Best-effort `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
