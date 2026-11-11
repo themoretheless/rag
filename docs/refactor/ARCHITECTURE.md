@@ -95,7 +95,7 @@ root registers:
 
 | concern | location |
 |---|---|
-| store handle, open, lock, transactions | `crates/rag-store-duckdb/src/db/store.rs` (`Store::open`, `with_conn`, `with_tx`; `Store::lock` is private to `db` outside `cfg(any(test, feature = "testkit"))`) |
+| store handle, open, lock, transactions | `crates/rag-store-duckdb/src/db/store.rs` (`Store::open`, `with_conn`, `with_tx`; `Store::lock` is `pub(in crate::db)` outside `cfg(any(test, feature = "testkit"))`) |
 | repositories | `store.documents()`, `chunks()`, `graph()`, `kg()`, `ops_log()`, `embedding_manifest()`, `wiki_index()`, `sync()`, `corpus_lane()`, `collections()`, `reembed_progress()`, `maintenance()`, `source_manifest()`, `recovery()`; implementations under `crates/rag-store-duckdb/src/db/store/` and `db/*.rs` |
 | methods kept for the UI's direct-db reader | `crates/rag-store-duckdb/src/db/store/ui_compat.rs` (forwarders) |
 | schema, migrations, open-time repairs | `crates/rag-store-duckdb/src/db/schema.rs` (`SCHEMA_VERSION` 26) |
