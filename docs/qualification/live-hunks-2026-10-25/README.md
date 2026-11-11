@@ -1,6 +1,6 @@
 # Live-read edit-range qualification — 2026-10-25
 
-[Contract](../../LIVE_READ_DIFF.md). The previous local implementation exposed
+[Contract](../../code-intelligence/LIVE_READ_DIFF.md). The previous local implementation exposed
 one prefix/suffix changed range. The pinned RAGRAF op_live_read at
 075caf86dc2f6274b9c48487e521915bcdfeaf2c exposes a requested text window and
 changed_since_index checksums; its inspected source does not emit separate edit

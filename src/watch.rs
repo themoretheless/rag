@@ -35,19 +35,18 @@ pub struct WatchConfig {
     pub min_sync_interval: Duration,
 }
 
-/// Read [`WatchConfig`] from `RAG_WATCH_ROOTS` / `RAG_WATCH_DEBOUNCE_MS` /
-/// `RAG_WATCH_MIN_SYNC_INTERVAL_SECS`. `Ok(None)` means watching is disabled.
-pub fn config_from_env() -> Result<Option<WatchConfig>, AppError> {
+/// Build [`WatchConfig`] from the `RAG_WATCH_ROOTS` / `RAG_WATCH_DEBOUNCE_MS` /
+/// `RAG_WATCH_MIN_SYNC_INTERVAL_SECS` values held in `Config`. `Ok(None)` means
+/// watching is disabled.
+pub fn config_from(config: &crate::config::Config) -> Result<Option<WatchConfig>, AppError> {
     config_from_values(
-        std::env::var("RAG_WATCH_ROOTS").ok().as_deref(),
-        std::env::var("RAG_WATCH_DEBOUNCE_MS").ok().as_deref(),
-        std::env::var("RAG_WATCH_MIN_SYNC_INTERVAL_SECS")
-            .ok()
-            .as_deref(),
+        config.watch_roots.as_deref(),
+        config.watch_debounce_ms.as_deref(),
+        config.watch_min_sync_interval_secs.as_deref(),
     )
 }
 
-/// Pure parser behind [`config_from_env`] (unit-testable, no env mutation).
+/// Pure parser behind [`config_from`] (unit-testable, no env mutation).
 ///
 /// Roots are canonicalized and must exist as directories. Nested duplicates
 /// are dropped: a watched parent already covers its children.

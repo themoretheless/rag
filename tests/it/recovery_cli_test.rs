@@ -104,7 +104,10 @@ fn recovery_cli_export_bundle_is_no_clobber_and_refuses_the_database_target() {
         .unwrap();
     assert!(!live_target.status.success());
     assert!(String::from_utf8_lossy(&live_target.stderr).contains("must not be the live DuckDB"));
-    assert_eq!(Store::open(&db).unwrap().stats().unwrap(), (0, 0, 0, 0));
+    assert_eq!(
+        Store::open(&db).unwrap().maintenance().stats().unwrap(),
+        (0, 0, 0, 0)
+    );
 }
 
 #[test]
@@ -155,7 +158,10 @@ fn recovery_cli_import_returns_nonzero_when_report_success_is_false() {
     assert_eq!(report["success"], false);
     assert_eq!(report["durable_mutation_committed"], false);
     assert!(String::from_utf8_lossy(&output.stderr).contains("did not commit"));
-    assert_eq!(Store::open(&db).unwrap().stats().unwrap(), (0, 0, 0, 0));
+    assert_eq!(
+        Store::open(&db).unwrap().maintenance().stats().unwrap(),
+        (0, 0, 0, 0)
+    );
 }
 
 #[test]

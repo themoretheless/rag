@@ -1,6 +1,6 @@
 # Perl index qualification — 2026-10-26
 
-See the [contract](../../PERL_CODE_ANALYSIS.md). The pinned RAGRAF Perl profile
+See the [contract](../../code-intelligence/PERL_CODE_ANALYSIS.md). The pinned RAGRAF Perl profile
 and its scalar/array/hash declaration/use extension were inspected. The actual
 maintained grammar `ts-parser-perl 2.0.0` was used; the incompatible older cached
 crate was not introduced. Reference execution, full interpreter semantics and

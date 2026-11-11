@@ -88,7 +88,7 @@ pub async fn write_wiki_page(
 /// Borrowed fields for [`update_wiki_page_cas`]. `None` title/kind keep the
 /// page's current values.
 #[derive(Debug, Clone, Copy)]
-pub struct WikiPageUpdate<'a> {
+pub(crate) struct WikiPageUpdate<'a> {
     /// Document id, `wiki://slug`, or bare slug of an existing wiki page.
     pub id_or_slug: &'a str,
     pub title: Option<&'a str>,
@@ -97,6 +97,9 @@ pub struct WikiPageUpdate<'a> {
     pub category: Option<&'a str>,
     pub summary: Option<&'a str>,
     pub agent: Option<&'a str>,
+    /// Project placement; `None` keeps the current value.
+    pub wing: Option<&'a str>,
+    pub room: Option<&'a str>,
     /// Optimistic concurrency: must match the current revision when set.
     pub if_match_revision: Option<i64>,
 }
@@ -156,7 +159,9 @@ pub(crate) async fn write_wiki_page_synced_command(
     // Every transport and nested wiki workflow shares this boundary. Keep the
     // lease through embedding and commit so reembed_all cannot change identity
     // after a successful preflight but before these vectors are persisted.
-    let _embedding_guard = store.try_embedding_write_guard(config, "wiki write")?;
+    let _embedding_guard = store
+        .corpus_lane()
+        .try_embedding_write_guard(config, "wiki write")?;
     let WikiWriteCommand {
         slug,
         title,
@@ -171,7 +176,7 @@ pub(crate) async fn write_wiki_page_synced_command(
     } = command;
     let slug = slugify(&slug);
     if slug.is_empty() {
-        return Err(AppError::config("wiki slug must not be empty"));
+        return Err(AppError::invalid("wiki slug must not be empty"));
     }
     let uri = format!("wiki://{slug}");
     let now = Utc::now();
@@ -189,9 +194,9 @@ pub(crate) async fn write_wiki_page_synced_command(
     let (existing, existing_index) = {
         let (store, uri, slug) = (store.clone(), uri.clone(), slug.clone());
         crate::util::run_blocking("wiki write read", move || {
-            let existing = store.find_by_uri(&uri)?;
+            let existing = store.documents().find_by_uri(&uri)?;
             let existing_index = if existing.is_some() {
-                store.get_wiki_index_by_slug(&slug)?
+                store.wiki_index().get_wiki_index_by_slug(&slug)?
             } else {
                 None
             };
@@ -205,7 +210,7 @@ pub(crate) async fn write_wiki_page_synced_command(
     let (document_id, created_at) = if let Some(existing) = existing.as_ref() {
         // Multi-LLM CAS: when RAG_WIKI_REQUIRE_IF_MATCH=true, updates must pass if_match.
         if config.wiki_require_if_match && if_match.is_none() && !incoming {
-            return Err(AppError::config(format!(
+            return Err(AppError::invalid(format!(
                 "if_match_revision (or if_match_etag) is required to update wiki page '{uri}' \
                  when RAG_WIKI_REQUIRE_IF_MATCH=true; call get_wiki_page and pass revision"
             )));
@@ -245,9 +250,9 @@ pub(crate) async fn write_wiki_page_synced_command(
         category.is_some() || summary.is_some() || opts.extra_metadata.is_some();
     if let Some(metadata) = &opts.metadata_json_override {
         let value: serde_json::Value = serde_json::from_str(metadata)
-            .map_err(|error| AppError::config(format!("invalid wiki metadata JSON: {error}")))?;
+            .map_err(|error| AppError::invalid(format!("invalid wiki metadata JSON: {error}")))?;
         if !value.is_object() {
-            return Err(AppError::config("wiki metadata must be a JSON object"));
+            return Err(AppError::invalid("wiki metadata must be a JSON object"));
         }
     }
     let metadata_json =
@@ -376,18 +381,11 @@ pub(crate) async fn write_wiki_page_synced_command(
         }
     }
 
-    let audit_entry = OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: now,
-        op,
-        prefix: Some(prefix),
-        message,
-        entity_id: Some(document_id.clone()),
-        entity_kind: Some(LAYER_WIKI.into()),
-        payload_json: payload.to_string(),
-        agent_name: agent.clone(),
-    };
+    let audit_entry = OpsLogEntry::new(op, &prefix, message)
+        .at(now)
+        .entity(Some(document_id.clone()), LAYER_WIKI)
+        .payload(payload.to_string())
+        .agent(agent.clone());
     // The commit writes chunks and rebuilds the page's graph slice. Local
     // writes (every agent and HTTP write) commit on the blocking pool; the
     // replication paths borrow their sync event, so they hand their worker to
@@ -396,28 +394,32 @@ pub(crate) async fn write_wiki_page_synced_command(
         crate::db::sync::WikiSyncWrite::Local(identity) => {
             let store = store.clone();
             crate::util::run_blocking("wiki write commit", move || {
-                store.write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                store
+                    .documents()
+                    .write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
+                        doc: &doc,
+                        if_match_revision: if_match,
+                        chunks: &chunks,
+                        index_entry: &index_entry,
+                        audit_entry: &audit_entry,
+                        sync: &crate::db::sync::WikiSyncWrite::Local(identity),
+                        create_only,
+                    })
+            })
+            .await?
+        }
+        replicated => crate::util::blocking_section(|| {
+            store
+                .documents()
+                .write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
                     doc: &doc,
                     if_match_revision: if_match,
                     chunks: &chunks,
                     index_entry: &index_entry,
                     audit_entry: &audit_entry,
-                    sync: &crate::db::sync::WikiSyncWrite::Local(identity),
+                    sync: &replicated,
                     create_only,
                 })
-            })
-            .await?
-        }
-        replicated => crate::util::blocking_section(|| {
-            store.write_wiki_document_atomic(crate::db::store::WikiDocumentWrite {
-                doc: &doc,
-                if_match_revision: if_match,
-                chunks: &chunks,
-                index_entry: &index_entry,
-                audit_entry: &audit_entry,
-                sync: &replicated,
-                create_only,
-            })
         })?,
     };
     let Some(write) = write else {
@@ -510,7 +512,7 @@ pub(super) fn metadata_string_field<'a>(
 /// Requires an existing `layer=wiki` document. Re-chunks, re-embeds, and
 /// re-runs wikilink/tag graph extract. Rejects raw-layer documents. Honors
 /// optional `if_match_revision` (multi-LLM CAS).
-pub async fn update_wiki_page_cas(
+pub(crate) async fn update_wiki_page_cas(
     store: &Store,
     embedder: &Arc<dyn EmbeddingProvider>,
     config: &Config,
@@ -524,6 +526,8 @@ pub async fn update_wiki_page_cas(
         category,
         summary,
         agent,
+        wing,
+        room,
         if_match_revision,
     } = update;
     let existing = get_wiki_page(store, id_or_slug)?;
@@ -547,8 +551,8 @@ pub async fn update_wiki_page_cas(
             slug,
             title: title.to_string(),
             content: content.to_string(),
-            wing: None,
-            room: None,
+            wing: wing.map(str::to_string),
+            room: room.map(str::to_string),
             kind: kind.to_string(),
             category: category.map(str::to_string),
             summary: summary.map(str::to_string),
@@ -576,14 +580,14 @@ pub fn get_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document>
 fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
     let s = id_or_uri_or_slug.trim();
     if s.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "get_wiki_page: id_or_slug must not be empty",
         ));
     }
 
-    let doc = if let Some(d) = store.get_document(s)? {
+    let doc = if let Some(d) = store.documents().get_document(s)? {
         d
-    } else if let Some(d) = store.find_by_uri(s)? {
+    } else if let Some(d) = store.documents().find_by_uri(s)? {
         d
     } else {
         let slug = if let Some(rest) = s.strip_prefix("wiki://") {
@@ -597,11 +601,11 @@ fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
             )));
         }
         let uri = format!("wiki://{slug}");
-        if let Some(d) = store.find_by_uri(&uri)? {
+        if let Some(d) = store.documents().find_by_uri(&uri)? {
             d
-        } else if let Some(entry) = store.get_wiki_index_by_slug(&slug)? {
+        } else if let Some(entry) = store.wiki_index().get_wiki_index_by_slug(&slug)? {
             if let Some(pid) = entry.page_id.as_deref() {
-                store.get_document(pid)?.ok_or_else(|| {
+                store.documents().get_document(pid)?.ok_or_else(|| {
                     AppError::not_found(format!(
                         "wiki page not found for index slug '{slug}' (stale page_id)"
                     ))
@@ -635,7 +639,7 @@ fn find_wiki_page(store: &Store, id_or_uri_or_slug: &str) -> Result<Document> {
 
 /// List all documents with `layer=wiki`, ordered by `created_at` ascending.
 pub fn list_wiki_pages(store: &Store) -> Result<Vec<Document>> {
-    store.list_documents_by_layer(LAYER_WIKI)
+    store.documents().list_documents_by_layer(LAYER_WIKI)
 }
 
 /// Extract kebab slug from a wiki document uri (`wiki://slug`) or title.
@@ -678,8 +682,12 @@ pub async fn ingest_raw(
         source_file,
     } = raw;
     crate::util::blocking_section(|| {
-        store.ensure_embedding_manifest(config)?;
-        store.require_embedding_manifest_match(config)
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(config)?;
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(config)
     })?;
     let now = Utc::now();
     let uri = uri
@@ -695,7 +703,10 @@ pub async fn ingest_raw(
 
     let existing = {
         let (store, uri) = (store.clone(), uri.clone());
-        crate::util::run_blocking("ingest_raw read", move || store.find_by_uri(&uri)).await?
+        crate::util::run_blocking("ingest_raw read", move || {
+            store.documents().find_by_uri(&uri)
+        })
+        .await?
     };
     let (document_id, created_at) = if let Some(existing) = existing {
         (existing.id, existing.created_at)
@@ -725,30 +736,21 @@ pub async fn ingest_raw(
         .build_plain_chunks(&doc)
         .await?;
     let chunk_count = chunks.len();
-    let audit_entry = OpsLogEntry {
-        id: Uuid::new_v4().to_string(),
-        seq: 0,
-        ts: now,
-        op: "ingest_raw".into(),
-        prefix: Some("INGEST".into()),
-        message: format!("ingested raw {uri}"),
-        entity_id: Some(document_id.clone()),
-        entity_kind: Some(LAYER_RAW.into()),
-        payload_json: "{}".into(),
-        agent_name: None,
-    };
+    let audit_entry = OpsLogEntry::new("ingest_raw", "INGEST", format!("ingested raw {uri}"))
+        .at(now)
+        .entity(Some(document_id.clone()), LAYER_RAW);
     let content_digest = content_hash(&doc.content);
     // Commit (chunks + graph slice) and audit on the blocking pool.
     let write = {
         let store = store.clone();
         crate::util::run_blocking("ingest_raw commit", move || {
             // Re-ingest replace path: intentionally does not call assert_content_mutable.
-            let write = store.write_document_atomic(
+            let write = store.documents().write_document_atomic(
                 &doc,
                 None,
                 DocumentDerivedWrite::ReplaceChunksAndGraph(&chunks),
             )?;
-            store.append_ops_log(&audit_entry)?;
+            store.ops_log().append(&audit_entry)?;
             Ok(write)
         })
         .await?

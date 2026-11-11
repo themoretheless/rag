@@ -21,7 +21,7 @@
 //! the rmcp schema surface are unchanged.
 
 mod collections;
-mod error;
+pub mod error;
 pub(crate) mod facade;
 mod graph;
 mod ingest;
@@ -36,6 +36,8 @@ mod views;
 mod wiki;
 
 pub use server::RagServer;
+mod http;
+pub use http::{mcp_http_router, mcp_http_service_for};
 pub use surface::{tool_allowed, ToolSurface, INDEX_FIRST_PLAYBOOK, SPINE_TOOLS_BLURB};
 
 mod analysis;

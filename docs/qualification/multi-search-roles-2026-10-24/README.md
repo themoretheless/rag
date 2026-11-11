@@ -12,4 +12,4 @@ Verification includes:
 - Actual stdio MCP regression in `runtime.json`: callback usage, deterministic responses, stale binding omission and refresh, plus existing query-window/family/scope checks.
 - Binary and source hashes and final library results in `verification.json`.
 
-The script uses an owned temporary database and mock embeddings; production state is untouched. Role ranking covers retained per-query windows only. Full runtime use, markup relations, source encoding and representative performance qualification remain incomplete. See `docs/MULTI_SEARCH.md` and the transfer matrix; this stage does not complete the full goal.
+The script uses an owned temporary database and mock embeddings; production state is untouched. Role ranking covers retained per-query windows only. Full runtime use, markup relations, source encoding and representative performance qualification remain incomplete. See `docs/code-intelligence/MULTI_SEARCH.md` and the transfer matrix; this stage does not complete the full goal.

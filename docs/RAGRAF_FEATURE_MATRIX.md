@@ -61,8 +61,8 @@ New wrappers must not silently overwrite similarly named existing wiki tools.
 
 Current implementation evidence is in `src/code_index/`, corresponding module
 unit tests, source-sync tests and the MCP access/router tests. Documentation:
-[RAGRAF_PARITY.md](RAGRAF_PARITY.md), [SQL_CODE_ANALYSIS.md](SQL_CODE_ANALYSIS.md),
-[CODE_HISTORY.md](CODE_HISTORY.md), [EXTERNAL_DATABASES.md](EXTERNAL_DATABASES.md), [CSS_POLICY_ANALYSIS.md](CSS_POLICY_ANALYSIS.md), [ANALYSIS_TASKS.md](ANALYSIS_TASKS.md), [GATE_CALIBRATION.md](GATE_CALIBRATION.md). Test totals alone do not close rows above. The CSS/policy subset has a reproducible
+[RAGRAF_PARITY.md](RAGRAF_PARITY.md), [SQL_CODE_ANALYSIS.md](code-intelligence/SQL_CODE_ANALYSIS.md),
+[CODE_HISTORY.md](code-intelligence/CODE_HISTORY.md), [EXTERNAL_DATABASES.md](code-intelligence/EXTERNAL_DATABASES.md), [CSS_POLICY_ANALYSIS.md](code-intelligence/CSS_POLICY_ANALYSIS.md), [ANALYSIS_TASKS.md](code-intelligence/ANALYSIS_TASKS.md), [GATE_CALIBRATION.md](code-intelligence/GATE_CALIBRATION.md). Test totals alone do not close rows above. The CSS/policy subset has a reproducible
 [local qualification report](qualification/css-policy-2026-10-24/README.md), including
 real stdio MCP evidence; broader comparison and integration gates remain open.
 
@@ -138,12 +138,12 @@ remain unresolved. See [shell qualification](qualification/shell-index-2026-10-2
 
 Repository-map subset: [qualification](qualification/repo-map-2026-10-24/README.md),
 project/path-isolated graph identities, strict first-entry budgets, deterministic
-round selection and real MCP stale/unindexed isolation. See [contract](REPO_MAP.md).
+round selection and real MCP stale/unindexed isolation. See [contract](code-intelligence/REPO_MAP.md).
 Representative corpus ranking/scale and whole-goal acceptance remain open.
 
 Index-status subset: [qualification](qualification/index-status-2026-10-25/README.md),
 versioned capabilities and measured quality in one read transaction, with explicit
-empty/unavailable/unmeasured states and bounded samples. [Contract](INDEX_STATUS.md).
+empty/unavailable/unmeasured states and bounded samples. [Contract](code-intelligence/INDEX_STATUS.md).
 Full build/commit/failure/per-project timing, semantic quality and broader acceptance remain open.
 
 Python HTTP-method extension: [qualification](qualification/python-routes-2026-10-25/README.md),
@@ -169,77 +169,77 @@ handler identity, stale/sync refresh and project-isolated unbound-registration
 diffs. Format 24 refreshes extraction. Namespaces/aliases/framework identity,
 group composition and full PHP binding/representative quality remain open.
 
-Route-query contract: [documentation](ROUTE_QUERIES.md),
+Route-query contract: [documentation](code-intelligence/ROUTE_QUERIES.md),
 [qualification](qualification/route-queries-2026-10-25/README.md), exact scoped
 selection, literal filters and optimistic read-transaction pages. Retained snapshot
 cursors, representative scale and full route/framework acceptance remain open.
 
-Catalog extension: [contract](CODE_CATALOG.md),
+Catalog extension: [contract](code-intelligence/CODE_CATALOG.md),
 [qualification](qualification/catalog-2026-10-25/README.md), retained-revision
 file pages and guarded current project summaries. Captured matches explicitly
 do not establish filesystem/config/source integrity; full registry acceptance
 remains open.
 
-Native indexing measurements: [contract](INDEX_TIMINGS.md),
+Native indexing measurements: [contract](code-intelligence/INDEX_TIMINGS.md),
 [qualification](qualification/index-timings-2026-10-25/README.md), schema-25
 successful-run ledger, cold-publication/no-op identities, rollback and migration
 evidence. Commit/failure/per-project/end-to-end and representative performance
 acceptance remain open.
 
-Lua extension: [contract](LUA_CODE_ANALYSIS.md),
+Lua extension: [contract](code-intelligence/LUA_CODE_ANALYSIS.md),
 [qualification](qualification/lua-index-2026-10-25/README.md), native grammar
 0.5.0, lexical function candidates, explicit dynamic exclusions, source-body
 provenance and stale/sync qualification. Syntax format 25 refreshes older caches;
 compiler/dialect/runtime/import/table and representative quality gates remain open.
 
-Bulk SQL usage: [contract](SQL_BULK_USAGE.md),
+Bulk SQL usage: [contract](code-intelligence/SQL_BULK_USAGE.md),
 [qualification](qualification/sql-bulk-usage-2026-10-25/README.md), MERGE action
 classification, explicit TRUNCATE writes and COPY direction/query reads with
 source provenance and stale/sync evidence. Syntax format 26; bulk write_check,
 secondary targets, data/permissions and full dialect/quality acceptance remain open.
 
-Documentation facts: [contract](CODE_DOCUMENTATION.md),
+Documentation facts: [contract](code-intelligence/CODE_DOCUMENTATION.md),
 [qualification](qualification/code-documentation-2026-10-25/README.md), supported
 source-syntax attachment, bounded excerpts/segments, Unicode provenance and scoped
 coverage with unknown forms excluded. Format 27; compiler/rendered/full-language
 documentation and representative quality acceptance remain open.
 
-SQL secondary writes: [contract](SQL_OUTPUT_USAGE.md), [qualification](qualification/sql-output-2026-10-25/README.md). Full SQL and RAGRAF parity remain open.
+SQL secondary writes: [contract](code-intelligence/SQL_OUTPUT_USAGE.md), [qualification](qualification/sql-output-2026-10-25/README.md). Full SQL and RAGRAF parity remain open.
 
-Live-read edit ranges: [contract](LIVE_READ_DIFF.md), [qualification](qualification/live-hunks-2026-10-25/README.md).
+Live-read edit ranges: [contract](code-intelligence/LIVE_READ_DIFF.md), [qualification](qualification/live-hunks-2026-10-25/README.md).
 
-Inherited method candidates: [contract](METHOD_RELATIONS.md), [qualification](qualification/method-relations-2026-10-25/README.md).
+Inherited method candidates: [contract](code-intelligence/METHOD_RELATIONS.md), [qualification](qualification/method-relations-2026-10-25/README.md).
 
-Impact relation traversal: [contract](IMPACT_RELATIONS.md), [qualification](qualification/impact-relations-2026-10-25/README.md).
+Impact relation traversal: [contract](code-intelligence/IMPACT_RELATIONS.md), [qualification](qualification/impact-relations-2026-10-25/README.md).
 
-Impact affected files: [contract](IMPACT_RELATIONS.md#affected-file-summary), [qualification](qualification/impact-files-2026-10-25/README.md).
+Impact affected files: [contract](code-intelligence/IMPACT_RELATIONS.md#affected-file-summary), [qualification](qualification/impact-files-2026-10-25/README.md).
 
-SQL table impact: [contract](IMPACT_RELATIONS.md#sql-table-targets), [qualification](qualification/table-impact-2026-10-25/README.md).
+SQL table impact: [contract](code-intelligence/IMPACT_RELATIONS.md#sql-table-targets), [qualification](qualification/table-impact-2026-10-25/README.md).
 
-File impact: [contract](IMPACT_RELATIONS.md#file-targets), [qualification](qualification/file-impact-2026-10-25/README.md).
+File impact: [contract](code-intelligence/IMPACT_RELATIONS.md#file-targets), [qualification](qualification/file-impact-2026-10-25/README.md).
 
-Committed run history: [contract](CODE_CATALOG.md#committed-index-run-history), [qualification](qualification/run-history-2026-10-25/README.md).
+Committed run history: [contract](code-intelligence/CODE_CATALOG.md#committed-index-run-history), [qualification](qualification/run-history-2026-10-25/README.md).
 
-Dead-code possible reachability: [contract](DEAD_CODE_REACHABILITY.md), [qualification](qualification/dead-reachability-2026-10-25/README.md).
+Dead-code possible reachability: [contract](code-intelligence/DEAD_CODE_REACHABILITY.md), [qualification](qualification/dead-reachability-2026-10-25/README.md).
 
-File dead-code candidates: [contract](DEAD_FILES.md), [qualification](qualification/dead-files-2026-10-25/README.md).
+File dead-code candidates: [contract](code-intelligence/DEAD_FILES.md), [qualification](qualification/dead-files-2026-10-25/README.md).
 
-Duplicate member comparison: [contract](DUPLICATE_PRIMARY_COMPARISON.md), [qualification](qualification/duplicate-comparison-2026-10-26/README.md).
+Duplicate member comparison: [contract](code-intelligence/DUPLICATE_PRIMARY_COMPARISON.md), [qualification](qualification/duplicate-comparison-2026-10-26/README.md).
 
-Independent duplicate families: [contract](DUPLICATE_FAMILY_GROUPING.md), [qualification](qualification/duplicate-families-2026-10-26/README.md).
+Independent duplicate families: [contract](code-intelligence/DUPLICATE_FAMILY_GROUPING.md), [qualification](qualification/duplicate-families-2026-10-26/README.md).
 
-Captured source-byte copies: [contract](SOURCE_BYTE_DUPLICATES.md), [qualification](qualification/source-byte-copies-2026-10-26/README.md).
+Captured source-byte copies: [contract](code-intelligence/SOURCE_BYTE_DUPLICATES.md), [qualification](qualification/source-byte-copies-2026-10-26/README.md).
 
-Non-code references: [contract](NON_CODE_REFERENCES.md), [qualification](qualification/non-code-references-2026-10-26/README.md).
+Non-code references: [contract](code-intelligence/NON_CODE_REFERENCES.md), [qualification](qualification/non-code-references-2026-10-26/README.md).
 
-Translation-key references: [contract](TRANSLATION_KEY_REFERENCES.md), [qualification](qualification/translation-keys-2026-10-26/README.md).
+Translation-key references: [contract](code-intelligence/TRANSLATION_KEY_REFERENCES.md), [qualification](qualification/translation-keys-2026-10-26/README.md).
 
-Shared symbol nodes: [contract](SHARED_SYMBOL_NODES.md), [qualification](qualification/symbol-nodes-2026-10-26/README.md).
+Shared symbol nodes: [contract](code-intelligence/SHARED_SYMBOL_NODES.md), [qualification](qualification/symbol-nodes-2026-10-26/README.md).
 
-Literal target impact: [contract](LITERAL_TARGET_IMPACT.md), [qualification](qualification/literal-impact-2026-10-26/README.md).
+Literal target impact: [contract](code-intelligence/LITERAL_TARGET_IMPACT.md), [qualification](qualification/literal-impact-2026-10-26/README.md).
 
-Client endpoint candidates: [contract](CLIENT_ENDPOINT_REFERENCES.md), [qualification](qualification/client-endpoints-2026-10-26/README.md).
+Client endpoint candidates: [contract](code-intelligence/CLIENT_ENDPOINT_REFERENCES.md), [qualification](qualification/client-endpoints-2026-10-26/README.md).
 
-Stored source reads: [contract](CODE_READS.md), [qualification](qualification/code-reads-2026-10-26/README.md).
+Stored source reads: [contract](code-intelligence/CODE_READS.md), [qualification](qualification/code-reads-2026-10-26/README.md).
 
-Source-read continuation: [contract](CODE_SOURCE_PAGINATION.md), [qualification](qualification/code-cursors-2026-10-26/README.md).
+Source-read continuation: [contract](code-intelligence/CODE_SOURCE_PAGINATION.md), [qualification](qualification/code-cursors-2026-10-26/README.md).

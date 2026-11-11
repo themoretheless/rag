@@ -13,10 +13,10 @@ use uuid::Uuid;
 
 use crate::chunking::{from_config, Chunker};
 use crate::config::Config;
+use crate::db::graph::resolve::rebuild_document_graph;
 use crate::db::Store;
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{AppError, Result};
-use crate::graph::rebuild_document_graph;
 use crate::models::{
     Chunk, DiaryEntry, Document, DrawerListItem, OpsLogEntry, WakeUpSchemaSnippet,
 };
@@ -88,7 +88,7 @@ pub struct CheckpointResult {
 pub fn normalize_agent_name(raw: &str) -> Result<String> {
     let s = raw.trim().to_ascii_lowercase();
     if s.is_empty() {
-        return Err(AppError::config("agent_name must be non-empty"));
+        return Err(AppError::invalid("agent_name must be non-empty"));
     }
     let mut out = String::with_capacity(s.len());
     let mut prev_sep = false;
@@ -104,12 +104,12 @@ pub fn normalize_agent_name(raw: &str) -> Result<String> {
     }
     let out = out.trim_matches('_').to_string();
     if out.is_empty() {
-        return Err(AppError::config(
+        return Err(AppError::invalid(
             "agent_name must contain at least one alphanumeric character",
         ));
     }
     if out.len() > 128 {
-        return Err(AppError::config("agent_name exceeds 128 characters"));
+        return Err(AppError::invalid("agent_name exceeds 128 characters"));
     }
     Ok(out)
 }
@@ -143,7 +143,7 @@ pub async fn diary_write(
     let agent = normalize_agent_name(&command.agent_name)?;
     let body = command.content.trim();
     if body.is_empty() {
-        return Err(AppError::config("diary content must be non-empty"));
+        return Err(AppError::invalid("diary content must be non-empty"));
     }
 
     let topic = command
@@ -198,7 +198,7 @@ pub async fn diary_write(
         ..Default::default()
     };
 
-    crate::util::blocking_section(|| store.upsert_document(&doc))?;
+    crate::util::blocking_section(|| store.documents().upsert_document(&doc))?;
 
     let chunk_count = embed_and_store_chunks(store, embedder, config, &doc).await?;
     let (node_id, edge_count) =
@@ -207,24 +207,25 @@ pub async fn diary_write(
     let mut ops_log_id = None;
     if command.log_ops {
         let written = crate::util::blocking_section(|| {
-            store.append_ops_log(&OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: now,
-                op: "diary_write".into(),
-                prefix: Some("DIARY".into()),
-                message: format!("diary entry for agent '{agent}' topic={topic}"),
-                entity_id: Some(document_id.clone()),
-                entity_kind: Some(KIND_DIARY.into()),
-                payload_json: serde_json::json!({
-                    "agent_name": agent,
-                    "topic": topic,
-                    "uri": uri,
-                    "wing": wing,
-                })
-                .to_string(),
-                agent_name: Some(agent.clone()),
-            })
+            store.ops_log().append(
+                &OpsLogEntry::new(
+                    "diary_write",
+                    "DIARY",
+                    format!("diary entry for agent '{agent}' topic={topic}"),
+                )
+                .at(now)
+                .entity(Some(document_id.clone()), KIND_DIARY)
+                .payload(
+                    serde_json::json!({
+                        "agent_name": agent,
+                        "topic": topic,
+                        "uri": uri,
+                        "wing": wing,
+                    })
+                    .to_string(),
+                )
+                .agent(Some(agent.clone())),
+            )
         })?;
         ops_log_id = Some(written.id);
     }
@@ -253,7 +254,7 @@ pub async fn diary_write(
 pub fn diary_read(store: &Store, agent_name: &str, last_n: usize) -> Result<Vec<DiaryEntry>> {
     let agent = normalize_agent_name(agent_name)?;
     let limit = last_n.clamp(1, MAX_DIARY_ENTRIES);
-    store.list_diary_entries(Some(&agent), limit)
+    store.documents().list_diary_entries(Some(&agent), limit)
 }
 
 /// Session bootstrap: status + recent diary + pinned docs + optional schema snippet.
@@ -273,11 +274,14 @@ pub fn wake_up(
     let diary_limit = diary_limit.clamp(1, MAX_DIARY_ENTRIES);
     let pinned_limit = pinned_limit.clamp(1, MAX_PINNED_DOCS);
 
-    let diary = store.list_diary_entries(agent_scope.as_deref(), diary_limit)?;
-    let pinned_docs = store.list_pinned_documents(pinned_limit)?;
+    let diary = store
+        .documents()
+        .list_diary_entries(agent_scope.as_deref(), diary_limit)?;
+    let pinned_docs = store.documents().list_pinned_documents(pinned_limit)?;
     let pinned: Vec<DrawerListItem> = pinned_docs.iter().map(DrawerListItem::from).collect();
 
     let schema = store
+        .documents()
         .get_schema_document()?
         .map(|d| WakeUpSchemaSnippet::from_document(&d));
 
@@ -304,7 +308,7 @@ pub async fn checkpoint(
 ) -> Result<CheckpointResult> {
     let summary = summary.trim();
     if summary.is_empty() {
-        return Err(AppError::config("checkpoint summary must be non-empty"));
+        return Err(AppError::invalid("checkpoint summary must be non-empty"));
     }
 
     let agent_opt = match agent_name {
@@ -354,17 +358,12 @@ pub async fn checkpoint(
     }
 
     let ops_log = crate::util::blocking_section(|| {
-        store.append_ops_log(&OpsLogEntry {
-            id: String::new(),
-            seq: 0,
-            ts: Utc::now(),
-            op: "checkpoint".into(),
-            prefix: Some("CKPT".into()),
-            message: summary.to_string(),
+        store.ops_log().append(&OpsLogEntry {
             entity_id: diary_result.as_ref().map(|d| d.entry.id.clone()),
             entity_kind: diary_result.as_ref().map(|_| KIND_DIARY.to_string()),
-            payload_json: payload.to_string(),
-            agent_name: agent_for_log.clone(),
+            ..OpsLogEntry::new("checkpoint", "CKPT", summary.to_string())
+                .payload(payload.to_string())
+                .agent(agent_for_log.clone())
         })
     })?;
 
@@ -405,7 +404,7 @@ async fn embed_and_store_chunks(
         });
     }
     let n = chunks.len();
-    crate::util::blocking_section(|| store.insert_chunks(&chunks))?;
+    crate::util::blocking_section(|| store.chunks().insert_chunks(&chunks))?;
     Ok(n)
 }
 
@@ -421,18 +420,7 @@ mod tests {
 
     use super::*;
     use crate::embeddings::MockEmbedder;
-
-    use std::path::PathBuf;
-
-    fn test_config(db_path: PathBuf, dims: usize) -> Config {
-        Config {
-            db_path,
-            embedding_model: "mock".to_string(),
-            embedding_dims: dims,
-            llm_enabled: false,
-            ..Config::for_tests()
-        }
-    }
+    use crate::testkit::test_config;
 
     #[test]
     fn normalize_agent_name_rules() {
@@ -450,7 +438,7 @@ mod tests {
     async fn diary_write_read_roundtrip() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("diary.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 32usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -516,7 +504,7 @@ mod tests {
             .iter()
             .any(|e| e.content == "noticed the FTS index was empty"));
 
-        let ops = store.list_ops_log(10).unwrap();
+        let ops = store.ops_log().list_ops_log(10).unwrap();
         assert!(ops.iter().any(|o| o.op == "diary_write"));
     }
 
@@ -524,7 +512,7 @@ mod tests {
     async fn checkpoint_ops_log_and_optional_diary() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ckpt.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 32usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -562,7 +550,7 @@ mod tests {
         let read = diary_read(&store, "worker", 5).unwrap();
         assert_eq!(read.len(), 1);
 
-        let ops = store.list_ops_log(20).unwrap();
+        let ops = store.ops_log().list_ops_log(20).unwrap();
         let ckpts: Vec<_> = ops.iter().filter(|o| o.op == "checkpoint").collect();
         assert_eq!(ckpts.len(), 2);
         assert!(ops.iter().any(|o| o.op == "diary_write"));
@@ -572,7 +560,7 @@ mod tests {
     async fn checkpoint_rejects_empty_summary() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("empty.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 8usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -586,7 +574,7 @@ mod tests {
     async fn wake_up_status_diary_pinned_optional_schema() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("wake.duckdb");
-        let store = Store::open(&path).expect("open");
+        let store = crate::testkit::open_test_store(&path).expect("open");
         let dims = 32usize;
         let config = test_config(path, dims);
         let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedder::new(dims));
@@ -609,6 +597,7 @@ mod tests {
 
         let now = Utc::now();
         store
+            .documents()
             .upsert_document(&Document {
                 id: "pin-1".into(),
                 uri: "wiki://pinned".into(),

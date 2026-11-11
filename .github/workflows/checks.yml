@@ -61,10 +61,15 @@ jobs:
           if-no-files-found: ignore
 
   rust-linux:
-    # Lean Linux coverage: clippy only (tests run on macOS). Builds the egui
-    # client with default features, so the X11/Wayland system libraries are needed.
+    # Linux coverage: clippy and the workspace tests (macOS runs them too, plus
+    # the eval gates). Builds the egui client with default features, so the
+    # X11/Wayland system libraries are needed.
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      RAG_EMBEDDING_PROVIDER: mock
+      RAG_EMBEDDING_DIMS: '32'
+      RAG_LLM_ENABLED: 'false'
     steps:
       - uses: actions/checkout@v4
       - name: Install egui/winit system libraries
@@ -80,6 +85,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Clippy without warnings (workspace, default features)
         run: cargo +stable clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test server, transports, CLI and native client
+        run: cargo +stable test --workspace --locked
 
   msrv:
     # Declared rust-version (Cargo.toml) must keep compiling; check only, no tests.

@@ -1,7 +1,7 @@
 # Captured infrastructure graph qualification
 
-This advances requirement 10 of the [complete plan](../../CODE_INTELLIGENCE_PLAN.md).
-The [contract](../../INFRASTRUCTURE_GRAPH.md) lists provider, freshness,
+This advances requirement 10 of the [complete plan](../../code-intelligence/CODE_INTELLIGENCE_PLAN.md).
+The [contract](../../code-intelligence/INFRASTRUCTURE_GRAPH.md) lists provider, freshness,
 provenance and execution limits. This is fixture qualification of captured
 declarations, not observed deployment or representative infrastructure accuracy.
 

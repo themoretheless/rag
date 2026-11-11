@@ -179,8 +179,12 @@ pub async fn multi_query_search(
     let corpus_guard = acquire_corpus_search_guard(store, mode)?;
     let embeddings = if mode.needs_embedding() {
         crate::util::blocking_section(|| {
-            store.ensure_embedding_manifest(config)?;
-            store.require_embedding_manifest_match(config)
+            store
+                .embedding_manifest()
+                .ensure_embedding_manifest(config)?;
+            store
+                .embedding_manifest()
+                .require_embedding_manifest_match(config)
         })?;
         let vectors = crate::embeddings::embed_exact(embedder, &command.queries).await?;
         vectors.into_iter().map(Some).collect()
@@ -374,6 +378,7 @@ pub fn get_document(
 ) -> Result<DocumentWithChunks, AppError> {
     let document_id = document_id.trim();
     let document = store
+        .documents()
         .get_document(document_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
     document_with_chunks(store, document, include_chunks, chunk_limit)
@@ -420,7 +425,7 @@ pub fn multi_get(
     let mut remaining_chunk_bytes = MAX_INCLUDED_CHUNK_CONTENT_BYTES;
     for requested_id in document_ids {
         let document_id = requested_id.trim();
-        let Some(document) = store.get_document(document_id)? else {
+        let Some(document) = store.documents().get_document(document_id)? else {
             missing.push(requested_id);
             continue;
         };
@@ -570,12 +575,15 @@ pub fn find_similar(
     query: SimilarDocumentsQuery,
 ) -> Result<Vec<SearchHit>, AppError> {
     let corpus_guard = acquire_corpus_search_guard(store, SearchMode::Vec)?;
-    store.require_embedding_manifest_match(config)?;
+    store
+        .embedding_manifest()
+        .require_embedding_manifest_match(config)?;
     let document_id = query.document_id.trim();
     let document = store
+        .documents()
         .get_document(document_id)?
         .ok_or_else(|| AppError::not_found(format!("document not found: {document_id}")))?;
-    let chunks = store.list_chunks_for_document(document_id)?;
+    let chunks = store.chunks().list_chunks_for_document(document_id)?;
     let dims = chunks
         .first()
         .map(|chunk| chunk.embedding.len())
@@ -621,7 +629,7 @@ pub async fn execute_search_with_llm(
     embedder: &dyn EmbeddingProvider,
     config: &Config,
     command: SearchCommand,
-    transform_llm: Option<&dyn crate::query_transform::TransformLlm>,
+    transform_llm: Option<&dyn crate::llm::ChatCompleter>,
 ) -> Result<Vec<SearchHit>, AppError> {
     let started = std::time::Instant::now();
     let budget = std::time::Duration::from_millis(command.timeout_ms.unwrap_or(5_000).max(1));
@@ -649,17 +657,21 @@ pub async fn execute_search_with_llm(
     // retrieval.
     let corpus_guard = acquire_corpus_search_guard(store, mode)?;
     if mode.needs_embedding() {
-        store.ensure_embedding_manifest(config)?;
-        store.require_embedding_manifest_match(config)?;
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(config)?;
+        store
+            .embedding_manifest()
+            .require_embedding_manifest_match(config)?;
     }
     let remaining = budget
         .checked_sub(started.elapsed())
         .filter(|v| !v.is_zero())
-        .ok_or_else(|| AppError::config("search timeout budget exceeded before embedding"))?;
+        .ok_or_else(|| AppError::timeout("search timeout budget exceeded before embedding"))?;
     let mut query =
         tokio::time::timeout(remaining, prepare_search_with_mode(embedder, command, mode))
             .await
-            .map_err(|_| AppError::config("search timeout budget exceeded during embedding"))??;
+            .map_err(|_| AppError::timeout("search timeout budget exceeded during embedding"))??;
     // Rerank stage (opt-in): expand the returned candidate pool to
     // `rerank_top_n`, rerank after retrieval/finalization, then cut back to the
     // caller's `top_k`. Provider errors fall back to the un-reranked ranking.
@@ -671,7 +683,7 @@ pub async fn execute_search_with_llm(
     let remaining = budget
         .checked_sub(started.elapsed())
         .filter(|v| !v.is_zero())
-        .ok_or_else(|| AppError::config("search timeout budget exceeded before retrieval"))?;
+        .ok_or_else(|| AppError::timeout("search timeout budget exceeded before retrieval"))?;
     query.timeout_ms = Some(remaining.as_millis().max(1).min(u64::MAX as u128) as u64);
     let query_text = query.query_text.clone();
     let max_context_tokens = query.max_context_tokens;
@@ -683,16 +695,34 @@ pub async fn execute_search_with_llm(
     lists.push(crate::util::blocking_section(|| {
         search_with_corpus_guard(store, &query, &corpus_guard)
     })?);
+    // Every leg vector (rewrite variants when the mode embeds, then the HyDE
+    // passage) in one embedder request instead of one round trip per leg.
+    let mut leg_inputs: Vec<String> = Vec::new();
+    if mode.needs_embedding() {
+        leg_inputs.extend(transforms.variants.iter().cloned());
+    }
+    leg_inputs.extend(transforms.hyde_passage.iter().cloned());
+    let mut leg_vectors = if leg_inputs.is_empty() {
+        Vec::new()
+    } else {
+        let vectors = embedder.embed(&leg_inputs).await?;
+        if vectors.len() != leg_inputs.len() {
+            return Err(AppError::embeddings(format!(
+                "embedder returned {} vectors for {} inputs",
+                vectors.len(),
+                leg_inputs.len()
+            )));
+        }
+        vectors
+    }
+    .into_iter();
     for variant in &transforms.variants {
         let mut leg = query.clone();
         leg.query_text = Some(variant.clone());
         leg.embed_ms = None;
         if mode.needs_embedding() {
             leg.query_embedding = Some(
-                embedder
-                    .embed(std::slice::from_ref(variant))
-                    .await?
-                    .into_iter()
+                leg_vectors
                     .next()
                     .ok_or_else(|| AppError::embeddings("embedder returned no vector"))?,
             );
@@ -701,13 +731,10 @@ pub async fn execute_search_with_llm(
             search_with_corpus_guard(store, &leg, &corpus_guard)
         })?);
     }
-    if let Some(passage) = &transforms.hyde_passage {
+    if transforms.hyde_passage.is_some() {
         let mut leg = query.clone();
         leg.query_embedding = Some(
-            embedder
-                .embed(std::slice::from_ref(passage))
-                .await?
-                .into_iter()
+            leg_vectors
                 .next()
                 .ok_or_else(|| AppError::embeddings("embedder returned no vector"))?,
         );
@@ -733,7 +760,7 @@ pub async fn execute_search_with_llm(
         .await;
     }
     if started.elapsed() > budget {
-        return Err(AppError::config(
+        return Err(AppError::timeout(
             "search timeout budget exceeded after retrieval",
         ));
     }
@@ -781,7 +808,7 @@ impl TransformOutcome {
 
 async fn run_query_transforms(
     config: &Config,
-    llm_override: Option<&dyn crate::query_transform::TransformLlm>,
+    llm_override: Option<&dyn crate::llm::ChatCompleter>,
     query: &str,
     rewrite_requested: bool,
     hyde_requested: bool,
@@ -841,8 +868,11 @@ async fn run_query_transforms(
     };
 
     if rewrite_requested {
-        let llm: Option<&dyn qt::TransformLlm> =
-            llm_override.or_else(|| rewrite_client.as_ref().map(|c| c as &dyn qt::TransformLlm));
+        let llm: Option<&dyn crate::llm::ChatCompleter> = llm_override.or_else(|| {
+            rewrite_client
+                .as_ref()
+                .map(|c| c as &dyn crate::llm::ChatCompleter)
+        });
         match llm {
             Some(llm) => {
                 let started = std::time::Instant::now();
@@ -865,8 +895,11 @@ async fn run_query_transforms(
         }
     }
     if hyde_requested {
-        let llm: Option<&dyn qt::TransformLlm> =
-            llm_override.or_else(|| hyde_client.as_ref().map(|c| c as &dyn qt::TransformLlm));
+        let llm: Option<&dyn crate::llm::ChatCompleter> = llm_override.or_else(|| {
+            hyde_client
+                .as_ref()
+                .map(|c| c as &dyn crate::llm::ChatCompleter)
+        });
         match llm {
             Some(llm) => {
                 let started = std::time::Instant::now();
@@ -1071,8 +1104,13 @@ mod tests {
     #[tokio::test]
     async fn active_source_sync_rejects_hybrid_before_embedding_provider_call() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = Store::open(&dir.path().join("pre-embed-busy.duckdb")).expect("open");
-        let sync_guard = store.corpus_mutation_lane().write_owned().await;
+        let store = crate::testkit::open_test_store(&dir.path().join("pre-embed-busy.duckdb"))
+            .expect("open");
+        let sync_guard = store
+            .corpus_lane()
+            .corpus_mutation_lane()
+            .write_owned()
+            .await;
         let embedder = CountingEmbedder {
             calls: AtomicUsize::new(0),
         };
@@ -1094,7 +1132,8 @@ mod tests {
     #[tokio::test]
     async fn multi_query_search_embeds_all_rewrites_in_one_provider_call() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = Store::open(&dir.path().join("multi-query.duckdb")).expect("open");
+        let store =
+            crate::testkit::open_test_store(&dir.path().join("multi-query.duckdb")).expect("open");
         let embedder = CountingEmbedder {
             calls: AtomicUsize::new(0),
         };
@@ -1151,7 +1190,7 @@ mod tests {
             }
         }
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("deadline.duckdb")).unwrap();
+        let store = crate::testkit::open_test_store(&dir.path().join("deadline.duckdb")).unwrap();
         let config = Config {
             embedding_dims: 8,
             ..Config::for_tests()
@@ -1159,7 +1198,10 @@ mod tests {
         // Cold DuckDB identity queries must not spend a 20ms wall-clock budget
         // before the provider is reached on a loaded runner. Paused async time
         // expires the provider deterministically without waiting five real seconds.
-        store.ensure_embedding_manifest(&config).unwrap();
+        store
+            .embedding_manifest()
+            .ensure_embedding_manifest(&config)
+            .unwrap();
         let provider = NeverReturns {
             entered: AtomicUsize::new(0),
             dropped: AtomicUsize::new(0),
@@ -1179,6 +1221,10 @@ mod tests {
             .contains("timeout budget exceeded during embedding"));
         assert_eq!(provider.entered.load(Ordering::SeqCst), 1);
         assert_eq!(provider.dropped.load(Ordering::SeqCst), 1);
-        assert!(store.corpus_mutation_lane().try_write_owned().is_ok());
+        assert!(store
+            .corpus_lane()
+            .corpus_mutation_lane()
+            .try_write_owned()
+            .is_ok());
     }
 }

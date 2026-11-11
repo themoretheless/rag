@@ -8,6 +8,7 @@ use axum::Router;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::app::NeighborsCommand;
 use crate::db::Store;
 use crate::error::AppError;
 
@@ -16,8 +17,6 @@ use super::HttpState;
 
 /// Node cap for a whole-graph export when `max_nodes` is absent.
 const DEFAULT_GRAPH_MAX_NODES: u32 = 500;
-/// Node cap for a seeded neighbourhood when `max_nodes` is absent.
-const DEFAULT_NEIGHBORHOOD_MAX_NODES: u32 = 100;
 
 /// Graph + document UI routes (no `/health`, no wiki).
 pub(super) fn routes() -> Router<HttpState> {
@@ -47,8 +46,10 @@ async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl
     });
     let store = st.store.clone();
     let result = super::run_blocking("graph", move || match project.as_deref() {
-        Some(project) => store.export_project_graph_for_ui(project, Some(max), tags),
-        None => store.export_graph_for_ui(Some(max), tags),
+        Some(project) => store
+            .graph()
+            .export_project_graph_for_ui(project, Some(max), tags),
+        None => store.graph().export_graph_for_ui(Some(max), tags),
     })
     .await;
     match result {
@@ -57,8 +58,11 @@ async fn graph(State(st): State<HttpState>, Query(q): Query<GraphQuery>) -> impl
     }
 }
 
+/// `GET /v1/neighbors`: `seed` or its alias `node_id`, same rules as MCP
+/// `get_neighbors` (see [`crate::app::GraphUseCase::neighbors`]).
 #[derive(Debug, Deserialize)]
 struct NeighborsQuery {
+    #[serde(default, alias = "node_id")]
     seed: String,
     #[serde(default)]
     depth: Option<u32>,
@@ -68,60 +72,30 @@ struct NeighborsQuery {
     project: Option<String>,
     #[serde(default)]
     include_tags: Option<bool>,
+    /// Comma-separated relation set (MCP passes a list).
+    #[serde(default)]
+    rel_types: Option<String>,
 }
 
 async fn neighbors(
     State(st): State<HttpState>,
     Query(q): Query<NeighborsQuery>,
 ) -> impl IntoResponse {
-    let seed = q.seed.trim();
-    if seed.is_empty() {
-        return api_err(AppError::invalid("seed query param required"));
-    }
-    let depth = q.depth.unwrap_or(1).clamp(1, 3);
-    let max_nodes = q
-        .max_nodes
-        .unwrap_or(DEFAULT_NEIGHBORHOOD_MAX_NODES)
-        .clamp(1, crate::models::UI_GRAPH_EXPORT_MAX_NODES);
-
-    let seed = seed.to_owned();
-    let include_tags = q.include_tags.unwrap_or(false);
-    let project = q.project.and_then(|project| {
-        let project = project.trim();
-        (!project.is_empty()).then(|| project.to_owned())
-    });
-    let store = st.store.clone();
-    if let Some(project) = project {
-        let query_project = project.clone();
-        let query_seed = seed.clone();
-        let result = super::run_blocking("project neighbors", move || {
-            store.export_project_neighbors_for_ui(
-                &query_project,
-                &query_seed,
-                depth,
-                max_nodes,
-                include_tags,
-            )
-        })
-        .await;
-        return match result {
-            Ok(view) if view.nodes.is_empty() => api_err(AppError::not_found(format!(
-                "no graph node for seed '{seed}' in project '{project}'"
-            ))),
-            Ok(view) => api_ok(view),
-            Err(e) => api_err(e),
-        };
-    }
-
-    let query_seed = seed.clone();
-    let result = super::run_blocking("neighbors", move || {
-        store.export_pkb_neighbors_for_ui(&query_seed, depth, max_nodes, include_tags)
-    })
-    .await;
-    match result {
-        Ok(view) if view.nodes.is_empty() => api_err(AppError::not_found(format!(
-            "no graph node for seed '{seed}'"
-        ))),
+    let command = NeighborsCommand {
+        seed: q.seed,
+        depth: q.depth,
+        max_nodes: q.max_nodes,
+        rel_types: q.rel_types.map(|rels| {
+            rels.split(',')
+                .map(str::trim)
+                .filter(|rel| !rel.is_empty())
+                .map(str::to_owned)
+                .collect()
+        }),
+        include_tags: q.include_tags,
+        project: q.project,
+    };
+    match st.graph_use_case().neighbors(command).await {
         Ok(view) => api_ok(view),
         Err(e) => api_err(e),
     }
@@ -142,6 +116,7 @@ async fn find_node(State(st): State<HttpState>, Query(q): Query<FindQuery>) -> i
     let result = super::run_blocking("find graph node", move || {
         let id = resolve_seed(&store, &key)?;
         store
+            .graph()
             .find_node_by_id(&id)?
             .ok_or_else(|| AppError::not_found(format!("node {id}")))
     })
@@ -211,11 +186,13 @@ async fn document(
 fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::Document, AppError> {
     if let Some(id) = q.id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return store
+            .documents()
             .get_document(id)?
             .ok_or_else(|| AppError::not_found(format!("document id '{id}'")));
     }
     if let Some(uri) = q.uri.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return store
+            .documents()
             .find_by_uri(uri)?
             .ok_or_else(|| AppError::not_found(format!("document uri '{uri}'")));
     }
@@ -226,10 +203,10 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
             .ok_or_else(|| AppError::invalid("provide id, uri, or q"))?;
 
     // Direct document id or uri before graph seed.
-    if let Some(doc) = store.get_document(key)? {
+    if let Some(doc) = store.documents().get_document(key)? {
         return Ok(doc);
     }
-    if let Some(doc) = store.find_by_uri(key)? {
+    if let Some(doc) = store.documents().find_by_uri(key)? {
         return Ok(doc);
     }
     if key.starts_with("wiki://") || key.starts_with("file://") || key.starts_with("text://") {
@@ -237,15 +214,17 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
     }
 
     let node = store
+        .graph()
         .resolve_seed(key)?
         .ok_or_else(|| seed_not_found(key))?;
     if let Some(doc_id) = node.document_id.as_deref() {
         return store
+            .documents()
             .get_document(doc_id)?
             .ok_or_else(|| AppError::not_found(format!("document id '{doc_id}'")));
     }
     if let Some(uri) = node.uri.as_deref() {
-        if let Some(doc) = store.find_by_uri(uri)? {
+        if let Some(doc) = store.documents().find_by_uri(uri)? {
             return Ok(doc);
         }
     }
@@ -257,6 +236,7 @@ fn resolve_document(store: &Store, q: &DocumentQuery) -> Result<crate::models::D
 
 fn resolve_seed(store: &Store, seed: &str) -> Result<String, AppError> {
     store
+        .graph()
         .resolve_seed(seed)?
         .map(|node| node.id)
         .ok_or_else(|| seed_not_found(seed))
@@ -280,12 +260,14 @@ mod tests {
             embedding_dims: 8,
             ..crate::config::Config::for_tests()
         };
-        let store = Arc::new(Store::open(&config.db_path).unwrap());
-        HttpState::new(
-            store,
+        let store = Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
+        HttpState::from_context(
+            crate::context::AppContext::with_store(
+                store,
+                Arc::new(crate::embeddings::MockEmbedder::new(8)),
+                config,
+            ),
             false,
-            config,
-            Arc::new(crate::embeddings::MockEmbedder::new(8)),
         )
     }
 

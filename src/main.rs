@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Context;
+use rag_mcp::bootstrap::ApplyProcessLimits;
 use rag_mcp::config::Config;
 use rag_mcp::db::schema::SCHEMA_VERSION;
 use rag_mcp::db::store::embedding_manifest_matches_config;
@@ -10,7 +11,6 @@ use rag_mcp::embeddings::{build_provider, EmbeddingProvider};
 use rag_mcp::http_api;
 use rag_mcp::mcp::RagServer;
 use rmcp::{transport::stdio, ServiceExt};
-use tokio_util::sync::CancellationToken;
 
 fn main() -> anyhow::Result<()> {
     rag_mcp::bootstrap::init_tracing("info");
@@ -61,7 +61,7 @@ async fn async_main() -> anyhow::Result<()> {
     if config.checkpoint_on_start {
         rag_mcp::ops::set_startup_phase("checkpoint");
         let phase = Instant::now();
-        store.checkpoint().context(
+        store.maintenance().checkpoint().context(
             "startup DuckDB CHECKPOINT failed; run db_repair offline if this is an ART/index error",
         )?;
         rag_mcp::ops::set_startup_timing("checkpoint", phase.elapsed(), config.startup_warn_ms);
@@ -71,6 +71,7 @@ async fn async_main() -> anyhow::Result<()> {
     rag_mcp::ops::set_startup_phase("fts");
     let phase = Instant::now();
     let fts_state = store
+        .maintenance()
         .ensure_fts(&config.fts_stemmer)
         .context("failed to ensure FTS index")?;
     rag_mcp::ops::set_startup_timing("fts", phase.elapsed(), config.startup_warn_ms);
@@ -78,7 +79,10 @@ async fn async_main() -> anyhow::Result<()> {
     // Corpus embedding fingerprint (does not overwrite an existing row).
     rag_mcp::ops::set_startup_phase("embedding_manifest");
     let phase = Instant::now();
-    let manifest = match store.ensure_embedding_manifest(&config) {
+    let manifest = match store
+        .embedding_manifest()
+        .ensure_embedding_manifest(&config)
+    {
         Ok(manifest) => Some(manifest),
         Err(rag_mcp::AppError::Embeddings(error)) => {
             // Keep the gateway available for fail-closed diagnosis and a full
@@ -94,16 +98,18 @@ async fn async_main() -> anyhow::Result<()> {
     // Otherwise a SIGTERM/restart can leave FTS catalog DDL in WAL that DuckDB
     // cannot replay on the next open because extension objects depend on it.
     store
+        .maintenance()
         .checkpoint()
         .context("post-initialization DuckDB CHECKPOINT failed")?;
 
     let schema_version = store
+        .maintenance()
         .schema_version()
         .context("schema_version")?
         .unwrap_or(0);
-    let fts_ready = store.fts_ready().context("fts_ready")?;
+    let fts_ready = store.maintenance().fts_ready().context("fts_ready")?;
     let (document_count, chunk_count, node_count, edge_count) =
-        store.stats().context("store stats")?;
+        store.maintenance().stats().context("store stats")?;
     let embedding_identity_ready = manifest
         .as_ref()
         .is_some_and(|manifest| embedding_manifest_matches_config(manifest, &config));
@@ -136,7 +142,7 @@ async fn async_main() -> anyhow::Result<()> {
     tracing::info!(startup = %serde_json::to_string(&rag_mcp::ops::runtime_snapshot()).unwrap_or_default(), "startup summary");
     let result = run_serve_modes(store.clone(), embedder, config).await;
     rag_mcp::ops::set_startup_phase("shutdown_checkpoint");
-    let checkpointed = match store.checkpoint() {
+    let checkpointed = match store.maintenance().checkpoint() {
         Ok(()) => true,
         Err(error) => {
             tracing::error!(error = %error, "shutdown checkpoint failed");
@@ -149,25 +155,42 @@ async fn async_main() -> anyhow::Result<()> {
 }
 
 /// HTTP-only, dual (HTTP + stdio), or stdio-only selection and hang-on-stdio-fail.
+///
+/// Every exit path, errors included, goes through `background.shutdown` here
+/// before the caller runs the final checkpoint.
 async fn run_serve_modes(
     store: Store,
     embedder: Arc<dyn EmbeddingProvider>,
     config: Config,
 ) -> anyhow::Result<()> {
-    rag_mcp::ops::spawn_auto_backup(store.clone(), &config);
+    // Every background loop registers on one BackgroundTasks and stops on
+    // its shared token; shutdown waits for them before the checkpoint.
+    let background = rag_mcp::background::BackgroundTasks::new();
+    let result = serve_modes(&background, store, embedder, config).await;
+    background.shutdown(BACKGROUND_SHUTDOWN).await;
+    result
+}
+
+async fn serve_modes(
+    background: &rag_mcp::background::BackgroundTasks,
+    store: Store,
+    embedder: Arc<dyn EmbeddingProvider>,
+    config: Config,
+) -> anyhow::Result<()> {
+    rag_mcp::ops::spawn_auto_backup(background, store.clone(), &config);
     // One context for every transport: config parsed once, one embedder, one
     // chat client, one manifest check.
-    rag_mcp::diagnostics::spawn_fts_maintenance(store.clone(), config.clone());
+    rag_mcp::diagnostics::spawn_fts_maintenance(background, store.clone(), &config);
     let context = rag_mcp::context::AppContext::new(store, embedder, config);
     let config = context.config.clone();
-    RagServer::from_context(context.clone()).spawn_auto_sync();
-    RagServer::from_context(context.clone()).spawn_file_watcher();
+    RagServer::from_context(context.clone()).spawn_auto_sync(background);
+    RagServer::from_context(context.clone()).spawn_file_watcher(background);
     let http_only = config.http_only;
     // When HTTP is bound, mount streamable MCP at /mcp (set RAG_MCP_HTTP=false to disable).
     let mcp_http_enabled = config.mcp_http;
 
     let http_bind = config.http_bind.clone();
-    let shutdown = CancellationToken::new();
+    let shutdown = background.token();
     let mut http_task = None;
     if let Some(ref bind_str) = http_bind {
         let addr = http_api::parse_bind(bind_str)
@@ -175,7 +198,7 @@ async fn run_serve_modes(
             .context("RAG_HTTP_BIND is empty")?;
 
         let mcp_svc = if mcp_http_enabled {
-            Some(http_api::mcp_http_service_for(
+            Some(rag_mcp::mcp::mcp_http_router(
                 context.clone(),
                 shutdown.clone(),
             ))
@@ -192,7 +215,7 @@ async fn run_serve_modes(
                 addr
             );
             let running =
-                http_api::serve_with_shutdown(addr, http_context, mcp_svc, shutdown.clone());
+                http_api::serve_with_shutdown(addr, http_context, mcp_svc, background.clone());
             tokio::pin!(running);
             tokio::select! {
                 result=&mut running=>{ result.context("HTTP API server error")?; }
@@ -209,10 +232,10 @@ async fn run_serve_modes(
             return Ok(());
         }
 
-        let http_shutdown = shutdown.clone();
+        let http_background = background.clone();
         http_task = Some(tokio::spawn(async move {
             let result =
-                http_api::serve_with_shutdown(addr, http_context, mcp_svc, http_shutdown).await;
+                http_api::serve_with_shutdown(addr, http_context, mcp_svc, http_background).await;
             if let Err(error) = &result {
                 tracing::error!(error=%error,"HTTP API exited");
             }
@@ -272,6 +295,9 @@ async fn run_serve_modes(
     }
     outcome
 }
+
+/// Bound on waiting for background loops after the shutdown signal.
+const BACKGROUND_SHUTDOWN: std::time::Duration = std::time::Duration::from_secs(10);
 
 async fn shutdown_signal() -> std::io::Result<()> {
     #[cfg(unix)]

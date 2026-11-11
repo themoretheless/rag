@@ -1,6 +1,6 @@
 # File candidates and literal refutation — 2026-10-25
 
-[Contract](../../DEAD_FILES.md). RAGRAF dead_code_report/literal_refs at pinned
+[Contract](../../code-intelligence/DEAD_FILES.md). RAGRAF dead_code_report/literal_refs at pinned
 075caf86dc2f6274b9c48487e521915bcdfeaf2c combines graph observations with literal
 path checks and reports unexamined candidates. This transfers that file-level
 surface into a separate local files view. It uses existing bound/structural facts,

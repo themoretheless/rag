@@ -1,11 +1,10 @@
 //! Wiki compilation, index, diary, and durable operations-log tools.
 
-use chrono::Utc;
+use crate::mcp::error::mcp_error;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
 use serde::Serialize;
-use uuid::Uuid;
 
 use crate::db::store::MAX_OPS_LOG_PAGE;
 
@@ -63,20 +62,24 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<GetSchemaParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("get_schema", move |store| {
             let no_default = params.no_default.unwrap_or(false);
             if no_default {
-                let doc = self.store.get_schema_document()?.ok_or_else(|| {
-                    McpError::from(AppError::not_found(
-                        "schema document not found at schema://agents",
-                    ))
-                })?;
+                let doc = store
+                    .documents()
+                    .get_schema_document()
+                    .map_err(mcp_error)?
+                    .ok_or_else(|| {
+                        mcp_error(AppError::not_found(
+                            "schema document not found at schema://agents",
+                        ))
+                    })?;
                 let body = crate::wiki::SchemaDocumentView {
                     document_id: doc.id,
                     uri: doc.uri,
                     title: doc.title,
                     content: doc.content,
-                    layer: doc.layer,
+                    layer: doc.layer.to_string(),
                     kind: doc.kind.to_string(),
                     content_hash: doc.content_hash,
                     created_at: doc.created_at.to_rfc3339(),
@@ -85,9 +88,10 @@ impl RagServer {
                 };
                 return Self::json_result(&body);
             }
-            let body = crate::wiki::get_schema(&self.store)?;
+            let body = crate::wiki::get_schema(store).map_err(mcp_error)?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -98,15 +102,17 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<UpdateSchemaParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("update_schema", move |store| {
             let body = crate::wiki::update_schema(
-                &self.store,
+                store,
                 &params.content,
                 params.title.as_deref(),
                 params.agent.as_deref(),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -131,7 +137,8 @@ impl RagServer {
                 log_ops: true,
             },
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -144,11 +151,13 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<DiaryReadParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("diary_read", move |store| {
             let last_n = params.last_n.unwrap_or(DEFAULT_DIARY_LAST_N) as usize;
-            let entries = diary::diary_read(&self.store, &params.agent_name, last_n)?;
+            let entries =
+                diary::diary_read(store, &params.agent_name, last_n).map_err(mcp_error)?;
             Self::json_result(&entries)
         })
+        .await
     }
 
     #[tool(
@@ -160,19 +169,24 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<WakeUpParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let status = DiagnosticsService::new(&self.store, &self.config).status()?;
+        let config = self.config.clone();
+        self.blocking_tool("wake_up", move |store| {
+            let status = DiagnosticsService::new(store, &config)
+                .status()
+                .map_err(mcp_error)?;
             let diary_limit = clamp_limit(params.diary_limit, 5, MAX_WAKE_UP_LIMIT);
             let pinned_limit = clamp_limit(params.pinned_limit, 20, MAX_WAKE_UP_LIMIT);
             let body = diary::wake_up(
-                &self.store,
+                store,
                 status,
                 params.agent_name.as_deref(),
                 diary_limit,
                 pinned_limit,
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -193,7 +207,8 @@ impl RagServer {
             params.diary.as_deref(),
             params.agent_name.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -205,11 +220,11 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<AppendLogParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("append_log", move |store| {
             let payload_json = match params.payload_json {
                 Some(s) if !s.trim().is_empty() => {
                     if let Err(e) = serde_json::from_str::<serde_json::Value>(&s) {
-                        return Err(McpError::from(AppError::invalid(format!(
+                        return Err(mcp_error(AppError::invalid(format!(
                             "payload_json is not valid JSON: {e}"
                         ))));
                     }
@@ -217,10 +232,8 @@ impl RagServer {
                 }
                 _ => "{}".to_string(),
             };
+            // The caller's entry verbatim: an optional prefix and entity kind.
             let entry = OpsLogEntry {
-                id: String::new(),
-                seq: 0,
-                ts: Utc::now(),
                 op: params.op,
                 prefix: params.prefix,
                 message: params.message.unwrap_or_default(),
@@ -228,10 +241,12 @@ impl RagServer {
                 entity_kind: params.entity_kind,
                 payload_json,
                 agent_name: params.agent_name,
+                ..OpsLogEntry::default()
             };
-            let written = self.store.append_ops_log(&entry)?;
+            let written = store.ops_log().append(&entry).map_err(mcp_error)?;
             Self::json_result(&written)
         })
+        .await
     }
 
     #[tool(
@@ -242,19 +257,20 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ReadLogParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("read_log", move |store| {
             let id = params
                 .id
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let has_key = id.is_some() || params.seq.is_some();
-            let rows = self
-                .store
-                .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))?;
+            let rows = store
+                .ops_log()
+                .read_ops_log(id, params.seq, params.limit.map(|n| n as usize))
+                .map_err(mcp_error)?;
             if has_key {
                 let entry = rows.into_iter().next().ok_or_else(|| {
-                    McpError::from(AppError::not_found(format!(
+                    mcp_error(AppError::not_found(format!(
                         "ops_log entry not found (id={:?}, seq={:?})",
                         params.id, params.seq
                     )))
@@ -263,6 +279,7 @@ impl RagServer {
             }
             Self::json_result(&rows)
         })
+        .await
     }
 
     #[tool(
@@ -273,11 +290,12 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListRecentOpsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("list_recent_ops", move |store| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops = self.store.list_recent_ops(limit)?;
+            let ops = store.ops_log().list_recent_ops(limit).map_err(mcp_error)?;
             Self::json_result(&ops)
         })
+        .await
     }
 
     #[tool(
@@ -290,11 +308,14 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<MemoriesFiledAwayParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("memories_filed_away", move |store| {
             let limit = clamp_limit(params.limit, 20, MAX_OPS_LOG_PAGE);
-            let ops_log_available = self.store.ops_log_exists()?;
+            let ops_log_available = store.ops_log().ops_log_exists().map_err(mcp_error)?;
             let ops = if ops_log_available {
-                self.store.memories_filed_away(limit)?
+                store
+                    .ops_log()
+                    .memories_filed_away(limit)
+                    .map_err(mcp_error)?
             } else {
                 Vec::new()
             };
@@ -325,6 +346,7 @@ impl RagServer {
                 "ops": ops,
             }))
         })
+        .await
     }
 
     #[tool(
@@ -336,7 +358,7 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<ReconnectParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("reconnect", move |store| {
             // DuckDB is opened once per process under a mutex; there is no Chroma-style
             // HNSW client cache to drop. Success is always reported for MemPalace parity.
             Self::json_result(&serde_json::json!({
@@ -344,9 +366,10 @@ impl RagServer {
                 "success": true,
                 "backend": "duckdb",
                 "message": "DuckDB has no client cache; reconnect is a no-op",
-                "db_path": self.store.path().display().to_string(),
+                "db_path": store.path().display().to_string(),
             }))
         })
+        .await
     }
 
     #[tool(
@@ -357,14 +380,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<QueryWithIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        let config = self.config.clone();
+        self.blocking_tool("query_with_index", move |store| {
             let top_k = params
                 .top_k
                 .map(|k| k as usize)
-                .unwrap_or(self.config.default_top_k);
+                .unwrap_or(config.default_top_k);
             let include_content = params.include_content.unwrap_or(false);
 
-            let matches = self.store.query_wiki_index(params.query.trim(), top_k)?;
+            let matches = store
+                .wiki_index()
+                .query_wiki_index(params.query.trim(), top_k)
+                .map_err(mcp_error)?;
 
             let mut pages = Vec::new();
             if include_content {
@@ -376,12 +403,12 @@ impl RagServer {
                     if !seen.insert(pid.to_string()) {
                         continue;
                     }
-                    if let Some(doc) = self.store.get_document(pid)? {
+                    if let Some(doc) = store.documents().get_document(pid).map_err(mcp_error)? {
                         pages.push(IndexQueryPage {
                             document_id: doc.id,
                             uri: doc.uri,
                             title: doc.title,
-                            layer: doc.layer,
+                            layer: doc.layer.to_string(),
                             kind: doc.kind.to_string(),
                             content: doc.content,
                         });
@@ -397,6 +424,7 @@ impl RagServer {
             };
             Self::json_result(&body)
         })
+        .await
     }
 
     #[tool(
@@ -428,7 +456,7 @@ impl RagServer {
         let corpus_guard = acquire_corpus_search_guard(&self.store, mode).map_err(Self::map_err)?;
 
         if matches!(mode, SearchMode::Vec | SearchMode::Hybrid) {
-            self.require_vec_compatible()?;
+            self.require_vec_compatible().map_err(mcp_error)?;
         }
 
         let diversity = match params
@@ -437,7 +465,7 @@ impl RagServer {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            Some(raw) => Some(DiversityMode::parse(raw)?),
+            Some(raw) => Some(DiversityMode::parse(raw).map_err(mcp_error)?),
             None => None,
         };
 
@@ -455,7 +483,8 @@ impl RagServer {
             let query_vecs = self
                 .embedder
                 .embed(std::slice::from_ref(&params.query))
-                .await?;
+                .await
+                .map_err(mcp_error)?;
             let emb = query_vecs.into_iter().next().ok_or_else(|| {
                 McpError::internal_error("embedder returned no vector for query", None)
             })?;
@@ -483,7 +512,8 @@ impl RagServer {
 
         let hits = crate::util::blocking_section(|| {
             search_with_corpus_guard(&self.store, &opts, &corpus_guard)
-        })?;
+        })
+        .map_err(mcp_error)?;
         let hits = match reranker {
             Some(reranker) => {
                 retrieval::rerank_hits_or_fallback(
@@ -509,7 +539,7 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<FileAnswerParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
+        self.require_vec_compatible().map_err(mcp_error)?;
 
         let citations = params.citations.map(|cs| {
             cs.into_iter()
@@ -536,7 +566,8 @@ impl RagServer {
                 agent: params.agent.as_deref(),
             },
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
 
         Self::json_result(&result)
     }
@@ -550,21 +581,27 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ReadIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        let entries = crate::util::blocking_section(|| self.store.list_wiki_index())?;
         let format = params
             .format
             .as_deref()
             .unwrap_or("json")
             .trim()
             .to_ascii_lowercase();
-        let markdown = if format == "markdown" || format == "md" {
-            Some(
-                self.blocking("read_index", |store| store.render_wiki_index_markdown())
-                    .await?,
-            )
-        } else {
-            None
-        };
+        let want_markdown = format == "markdown" || format == "md";
+        // Catalog and markdown come from one blocking task so both describe
+        // the same catalog state.
+        let (entries, markdown) = self
+            .blocking("read_index", move |store| {
+                let entries = store.wiki_index().list_wiki_index()?;
+                let markdown = if want_markdown {
+                    Some(store.wiki_index().render_wiki_index_markdown()?)
+                } else {
+                    None
+                };
+                Ok((entries, markdown))
+            })
+            .await
+            .map_err(mcp_error)?;
         let count = entries.len();
         Self::json_result(&ReadIndexResult {
             entries,
@@ -581,36 +618,42 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<UpdateIndexEntryParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let entry = self.store.update_wiki_index_entry_fields(
-                &params.slug,
-                params.title,
-                params.summary,
-                params.kind,
-                params.category,
-                params.page_id,
-            )?;
+        self.blocking_tool("update_index_entry", move |store| {
+            let entry = store
+                .wiki_index()
+                .update_wiki_index_entry_fields(
+                    &params.slug,
+                    params.title,
+                    params.summary,
+                    params.kind,
+                    params.category,
+                    params.page_id,
+                )
+                .map_err(mcp_error)?;
 
-            let _ = self.store.append_ops_log(&OpsLogEntry {
-                id: Uuid::new_v4().to_string(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "index_update".into(),
-                prefix: Some("INDEX".into()),
-                message: format!("updated index entry {}", entry.slug),
-                entity_id: Some(entry.id.clone()),
-                entity_kind: Some("wiki_index".into()),
-                payload_json: serde_json::json!({
-                    "slug": entry.slug,
-                    "title": entry.title,
-                    "kind": entry.kind,
-                })
-                .to_string(),
-                agent_name: None,
-            })?;
+            let _ = store
+                .ops_log()
+                .append(
+                    &OpsLogEntry::new(
+                        "index_update",
+                        "INDEX",
+                        format!("updated index entry {}", entry.slug),
+                    )
+                    .entity(Some(entry.id.clone()), "wiki_index")
+                    .payload(
+                        serde_json::json!({
+                            "slug": entry.slug,
+                            "title": entry.title,
+                            "kind": entry.kind,
+                        })
+                        .to_string(),
+                    ),
+                )
+                .map_err(mcp_error)?;
 
             Self::json_result(&entry)
         })
+        .await
     }
 
     #[tool(
@@ -621,102 +664,66 @@ impl RagServer {
         &self,
         Parameters(_params): Parameters<RebuildIndexParams>,
     ) -> Result<CallToolResult, McpError> {
+        // Rebuild and its ops-log row share one blocking task: a cancelled
+        // request cannot commit the rebuild and skip the log entry.
         let count = self
             .blocking("rebuild_index", |store| {
-                store.rebuild_wiki_index_from_docs()
+                let count = store.wiki_index().rebuild_wiki_index_from_docs()?;
+                store.ops_log().append(
+                    &OpsLogEntry::new(
+                        "index_rebuild",
+                        "INDEX",
+                        format!("rebuilt wiki_index ({count} entries)"),
+                    )
+                    .entity(None, "wiki_index")
+                    .payload(serde_json::json!({ "count": count }).to_string()),
+                )?;
+                Ok(count)
             })
-            .await?;
-
-        let _ = crate::util::blocking_section(|| {
-            self.store.append_ops_log(&OpsLogEntry {
-                id: Uuid::new_v4().to_string(),
-                seq: 0,
-                ts: Utc::now(),
-                op: "index_rebuild".into(),
-                prefix: Some("INDEX".into()),
-                message: format!("rebuilt wiki_index ({count} entries)"),
-                entity_id: None,
-                entity_kind: Some("wiki_index".into()),
-                payload_json: serde_json::json!({ "count": count }).to_string(),
-                agent_name: None,
-            })
-        })?;
+            .await
+            .map_err(mcp_error)?;
 
         Self::json_result(&RebuildIndexResult { count })
     }
 
     #[tool(
         name = "write_wiki_page",
-        description = "Create/overwrite a compiled wiki page (layer=wiki, uri wiki://slug); re-embeds and rebuilds graph + index entry."
+        description = "Create or update a compiled wiki page (layer=wiki, uri wiki://slug); \
+        re-embeds and rebuilds graph + index entry. On an existing page omitted \
+        kind/category/summary/placement are kept; create_only=true refuses an existing page \
+        (CONFLICT). if_match_revision/etag enforce CAS."
     )]
     pub(super) async fn write_wiki_page(
         &self,
         Parameters(params): Parameters<WriteWikiPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
-        let if_match = crate::models::resolve_if_match(
-            params.if_match_revision,
-            params.if_match_etag.as_deref(),
-        )?;
-        let res = wiki::write_wiki_page_command(
-            &self.store,
-            &self.embedder,
-            &self.config,
-            wiki::WikiWriteCommand {
-                slug: params.slug,
-                title: params.title,
-                content: params.content,
-                wing: params.wing,
-                room: params.room,
-                kind: params
-                    .kind
-                    .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
-                category: params.category,
-                summary: params.summary,
-                agent: params.agent,
-                options: wiki::WriteWikiOpts {
-                    if_match_revision: if_match,
-                    ..Default::default()
-                },
-            },
-        )
-        .await?;
-        Self::json_result(&res)
+        let mode = if params.create_only.unwrap_or(false) {
+            crate::app::WikiWriteMode::Create
+        } else {
+            crate::app::WikiWriteMode::Upsert
+        };
+        self.write_wiki(mode, params).await
     }
 
     #[tool(
         name = "update_wiki_page",
-        description = "Update an existing wiki page by slug. Omitted kind/category/summary \
-        preserve their current values, as do project placement, status, pin/boost state, source \
-        ownership and unrelated metadata. Pass if_match_revision/etag from get_wiki_page to \
-        avoid clobbering concurrent writes; use write_wiki_page to create a page."
+        description = "Update an existing wiki page by slug, wiki://uri or document id. Omitted \
+        kind/category/summary preserve their current values, as do project placement, status, \
+        pin/boost state, source ownership and unrelated metadata. Pass if_match_revision/etag \
+        from get_wiki_page to avoid clobbering concurrent writes; use write_wiki_page to create \
+        a page."
     )]
     pub(super) async fn update_wiki_page(
         &self,
         Parameters(params): Parameters<WriteWikiPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
-        let if_match = crate::models::resolve_if_match(
-            params.if_match_revision,
-            params.if_match_etag.as_deref(),
-        )?;
-        let res = wiki::update_wiki_page_cas(
-            &self.store,
-            &self.embedder,
-            &self.config,
-            wiki::WikiPageUpdate {
-                id_or_slug: &params.slug,
-                title: Some(&params.title),
-                content: &params.content,
-                kind: params.kind.as_deref(),
-                category: params.category.as_deref(),
-                summary: params.summary.as_deref(),
-                agent: params.agent.as_deref(),
-                if_match_revision: if_match,
-            },
-        )
-        .await?;
-        Self::json_result(&res)
+        if params.create_only == Some(true) {
+            return Err(mcp_error(AppError::invalid(
+                "update_wiki_page does not accept create_only; use write_wiki_page with create_only=true",
+            )));
+        }
+        self.write_wiki(crate::app::WikiWriteMode::Cas, params)
+            .await
     }
 
     #[tool(
@@ -730,17 +737,19 @@ impl RagServer {
         let key = params.id_or_slug.trim().to_owned();
         let store = self.store.clone();
         let doc = run_blocking("get_wiki_page", move || {
-            if let Some(document) = store.get_document(&key)? {
+            if let Some(document) = store.documents().get_document(&key)? {
                 return Ok(document);
             }
-            if let Some(document) = store.find_by_uri(&key)? {
+            if let Some(document) = store.documents().find_by_uri(&key)? {
                 return Ok(document);
             }
             store
+                .documents()
                 .find_by_uri(&format!("wiki://{key}"))?
                 .ok_or_else(|| AppError::not_found(format!("wiki page not found: {key}")))
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&document_with_etag(&doc))
     }
 
@@ -770,9 +779,10 @@ impl RagServer {
         };
         let store = self.store.clone();
         let (rows, _) = run_blocking("list_wiki_pages", move || {
-            store.list_wiki_page_metas_filtered(&filter)
+            store.documents().list_wiki_page_metas_filtered(&filter)
         })
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&rows)
     }
 
@@ -784,15 +794,15 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<CompileSourceParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.require_vec_compatible()?;
+        self.require_vec_compatible().map_err(mcp_error)?;
         if !self.config.llm_enabled {
-            return Err(McpError::from(AppError::config(
+            return Err(mcp_error(AppError::config(
                 "LLM disabled (RAG_LLM_ENABLED=false)",
             )));
         }
         // The configured client: provider dialect, timeout and max_tokens all
         // come from `Config`, exactly as for every other LLM tool.
-        let llm = self.require_llm()?;
+        let llm = self.require_llm().map_err(mcp_error)?;
         let res = wiki::compile_source(
             &self.store,
             &self.embedder,
@@ -802,7 +812,8 @@ impl RagServer {
             params.dry_run.unwrap_or(false),
             params.agent.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -819,9 +830,9 @@ impl RagServer {
     ) -> Result<CallToolResult, McpError> {
         let apply = params.apply.unwrap_or(false);
         if apply {
-            self.require_vec_compatible()?;
+            self.require_vec_compatible().map_err(mcp_error)?;
         }
-        let llm = self.require_llm()?;
+        let llm = self.require_llm().map_err(mcp_error)?;
         let opts = wiki::ConsolidateOpts {
             slug: params.slug,
             title: params.title,
@@ -844,7 +855,8 @@ impl RagServer {
                 agent: params.agent.as_deref(),
             },
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 
@@ -858,16 +870,18 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ListMemoryLifecycleCandidatesParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("list_memory_lifecycle_candidates", move |store| {
             let rows = memory_lifecycle::list_candidates(
-                &self.store,
+                store,
                 params.status.as_deref(),
                 params.layer.as_deref(),
                 params.kind.as_deref(),
                 clamp_limit(params.limit, 100, MAX_LIFECYCLE_CANDIDATES),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&rows)
         })
+        .await
     }
 
     #[tool(
@@ -880,15 +894,17 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ConsolidateMemoryItemsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("consolidate_memory_items", move |store| {
             let result = memory_lifecycle::consolidate_selected(
-                &self.store,
+                store,
                 &params.document_ids,
                 &params.output_document_id,
                 params.agent.as_deref(),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&result)
         })
+        .await
     }
 
     #[tool(
@@ -900,14 +916,16 @@ impl RagServer {
         &self,
         Parameters(params): Parameters<ArchiveMemoryItemsParams>,
     ) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
+        self.blocking_tool("archive_memory_items", move |store| {
             let result = memory_lifecycle::archive_selected(
-                &self.store,
+                store,
                 &params.document_ids,
                 params.agent.as_deref(),
-            )?;
+            )
+            .map_err(mcp_error)?;
             Self::json_result(&result)
         })
+        .await
     }
 
     #[tool(
@@ -917,10 +935,8 @@ impl RagServer {
         raw, and aggregate health counts."
     )]
     pub(super) async fn lint_wiki(&self) -> Result<CallToolResult, McpError> {
-        crate::util::blocking_section(|| {
-            let report = wiki::lint_wiki(&self.store)?;
-            Self::json_result(&report)
-        })
+        let report = self.admin_use_case().lint_wiki().await.map_err(mcp_error)?;
+        Self::json_result(&report)
     }
 
     #[tool(
@@ -941,7 +957,7 @@ impl RagServer {
         ));
 
         if !dry_run {
-            self.require_vec_compatible()?;
+            self.require_vec_compatible().map_err(mcp_error)?;
         }
 
         let llm_ref = if !dry_run && self.config.llm_enabled {
@@ -959,7 +975,8 @@ impl RagServer {
             max_docs,
             params.agent.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(mcp_error)?;
         Self::json_result(&res)
     }
 }
@@ -984,6 +1001,40 @@ struct ReadIndexResult {
 #[derive(Debug, Serialize)]
 struct RebuildIndexResult {
     count: usize,
+}
+
+impl RagServer {
+    /// Shared adapter for the wiki write tools: one use case, one mode each.
+    async fn write_wiki(
+        &self,
+        mode: crate::app::WikiWriteMode,
+        params: WriteWikiPageParams,
+    ) -> Result<CallToolResult, McpError> {
+        self.require_vec_compatible().map_err(mcp_error)?;
+        let res = self
+            .wiki_use_case()
+            .write(crate::app::WikiWriteCommand {
+                mode,
+                slug: Some(params.slug),
+                title: params.title,
+                content: params.content,
+                wing: params.wing,
+                room: params.room,
+                kind: params.kind,
+                category: params.category,
+                summary: params.summary,
+                agent: params.agent,
+                if_match_revision: params.if_match_revision,
+                if_match_etag: params.if_match_etag,
+                // MCP write_wiki_page keeps its historical rule: a blank title
+                // on an existing page becomes the slug.
+                blank_title_is_slug: mode == crate::app::WikiWriteMode::Upsert,
+                ..Default::default()
+            })
+            .await
+            .map_err(mcp_error)?;
+        Self::json_result(&res)
+    }
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 # Captured Cargo workspace qualification — 2026-10-25
 
 Scope: the initial Cargo boundary implementation in
-[RUST_CARGO_GRAPH.md](../../RUST_CARGO_GRAPH.md), not completion of the full
-[code intelligence plan](../../CODE_INTELLIGENCE_PLAN.md).
+[RUST_CARGO_GRAPH.md](../../code-intelligence/RUST_CARGO_GRAPH.md), not completion of the full
+[code intelligence plan](../../code-intelligence/CODE_INTELLIGENCE_PLAN.md).
 
 ## Reproduction
 

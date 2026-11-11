@@ -1,7 +1,7 @@
 //! Opt-in PreToolUse adapter. Installation/activation is deliberately external.
 use rag_mcp::{
     gate::{self, Decision, Mode},
-    Config, Store,
+    Config,
 };
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -102,8 +102,8 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
             json!({"verdict":d.verdict,"rule":d.rule,"hook":d.hook(),"command_executed":false,"hook_backend":"direct_database"}),
         );
     }
-    let store = Store::open(&config.db_path)?;
-    let mut report = store.analysis_gate(
+    let store = rag_mcp::storage::open_store(&config.db_path)?;
+    let mut report = rag_mcp::gate::Gate::new(&store).analysis_gate(
         p.session_id.as_deref().unwrap(),
         &p,
         mode,
@@ -113,23 +113,27 @@ async fn run(mode: Mode) -> anyhow::Result<Value> {
     Ok(report)
 }
 
+/// Index-usage gate hook (reads one JSON tool-call payload on stdin).
+///
+/// Opens the store with `storage::open_store`, not
+/// `bootstrap::open_offline`: the gate needs no embedder or manifest check and
+/// must answer within a hook's time budget.
+#[derive(clap::Parser)]
+#[command(name = "rag_gate")]
+struct Cli {
+    /// warn | ask | deny | off (default from RAG_GATE_MODE, else warn).
+    #[arg(long, env = "RAG_GATE_MODE", default_value = "warn")]
+    mode: String,
+    /// Print the full JSON report instead of the hook output.
+    #[arg(long)]
+    json: bool,
+}
+
 #[tokio::main]
 async fn main() {
-    let mut mode = std::env::var("RAG_GATE_MODE").unwrap_or("warn".into());
-    let mut full_json = false;
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "--json" {
-            full_json = true;
-        } else if arg == "--mode" {
-            mode = args.next().unwrap_or_default();
-        } else if let Some(m) = arg.strip_prefix("--mode=") {
-            mode = m.into();
-        } else {
-            eprintln!("usage: rag_gate [--mode warn|ask|deny|off] [--json]");
-            std::process::exit(2);
-        }
-    }
+    let cli = <Cli as clap::Parser>::parse();
+    let full_json = cli.json;
+    let mode = cli.mode;
     let mode = match Mode::parse(&mode) {
         Ok(m) => m,
         Err(_) => {

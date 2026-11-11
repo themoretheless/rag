@@ -3,7 +3,7 @@
 RAGRAF's pinned 075caf86dc2f6274b9c48487e521915bcdfeaf2c _impact_table returns
 direct readers/writers and indirect incoming code links. The local extension
 connects its existing static SQL usage evidence to bounded symbol dependency
-traversal. See [contract](../../IMPACT_RELATIONS.md#sql-table-targets).
+traversal. See [contract](../../code-intelligence/IMPACT_RELATIONS.md#sql-table-targets).
 
 Three new regressions cover read/write owners plus raw ownerless SQL, independent
 evidence/result limits with untruncated seed roots, project/schema ambiguity,

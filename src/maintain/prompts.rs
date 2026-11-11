@@ -1,4 +1,5 @@
-//! System prompts for local-LLM maintenance (organize / plan / compress / improve).
+//! System prompts for local-LLM maintenance (plan and organize); every
+//! maintenance prompt text lives here.
 //!
 //! Used by MCP tools that call [`crate::llm::ChatClient`]. Keep prompts
 //! deterministic and list only whitelist action names (see [`super::plan::ALLOWED_ACTIONS`]).
@@ -26,9 +27,8 @@ Rules:
    refile, pin, unpin, set_boost, set_tags, archive, unarchive,
    rebuild_index, rebuild_graph, reindex_fts,
    reembed, reembed_all,
-   compile_source, consolidate_propose, consolidate, refresh_stale_wiki, file_answer,
-   resolve_stub, lint_and_fix_links, build_outline,
-   merge_exact_dup, merge_near_dup, drop_tombstones, vacuum, checkpoint,
+   compile_source, consolidate, refresh_stale_wiki, file_answer,
+   merge_exact_dup, drop_tombstones, vacuum, checkpoint,
    noop
 4. Never invent SQL, shell, file paths outside the store, or raw-layer deletes.
 5. Prefer low-risk first: reindex_fts / rebuild_index / rebuild_graph / refresh_stale_wiki,
@@ -45,4 +45,29 @@ Rules:
 pub const PLAN_MAINTENANCE_USER_PREFIX: &str = r#"Produce a maintenance plan for this AnalysisReport.
 Respect the whitelist and priority rules from the system prompt.
 AnalysisReport JSON:
+"#;
+
+/// System prompt for `maintain_organize` in LLM / auto mode: taxonomy and
+/// unscoped documents in → refile suggestions JSON out.
+pub const ORGANIZE_SYSTEM: &str = r#"You organize a personal knowledge base into wings (top shelves) and rooms (sub-areas).
+Given taxonomy and unscoped documents (missing wing), propose refile targets.
+
+Rules:
+- Prefer existing wing/room names from the taxonomy when they fit.
+- You may propose a new wing only when nothing fits; use short kebab-case or single words.
+- Never invent document_ids; only use ids from the input list.
+- Return ONLY valid JSON (no markdown fences):
+{
+  "suggestions": [
+    {
+      "document_id": "...",
+      "wing": "...",
+      "room": "optional",
+      "reason": "short",
+      "confidence": 0.0
+    }
+  ],
+  "notes": "optional"
+}
+confidence is 0..1.
 "#;

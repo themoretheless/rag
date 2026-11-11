@@ -20,7 +20,7 @@ async fn resources(State(st): State<HttpState>) -> impl IntoResponse {
     let db_bytes = std::fs::metadata(st.store.path())
         .map(|m| m.len())
         .unwrap_or(0);
-    let wal_bytes = st.store.wal_file_size_bytes();
+    let wal_bytes = st.store.maintenance().wal_file_size_bytes();
     api_ok(json!({
         "ok": true,
         "process": process,

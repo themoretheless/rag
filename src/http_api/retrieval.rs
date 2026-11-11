@@ -13,9 +13,10 @@ use super::{
     error::{api_err, api_ok},
     HttpState,
 };
+use crate::app::{MultiGetCommand, PackContextRequest, TraceOptions};
 use crate::db::{DocumentCatalogFilter, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE_SIZE};
 use crate::error::AppError;
-use crate::eval::{source_versions_json, RetrievalTrace, SourceVersion, SpanBuilder};
+use crate::eval::{source_versions_json, RetrievalTrace, SpanBuilder};
 use crate::models::SearchHit;
 use crate::retrieval::{self, SimilarDocumentsQuery};
 use crate::revisions::{RestoreRevisionCommand, RevisionService};
@@ -57,7 +58,7 @@ async fn source_file(
     let store = state.store.clone();
     let document_id = query.document_id;
     let document = match super::run_blocking("source document", move || {
-        store.get_document(&document_id)
+        store.documents().get_document(&document_id)
     })
     .await
     {
@@ -170,7 +171,9 @@ async fn revisions(
     let store = state.store.clone();
     let document_id = query.document_id;
     let page = super::run_blocking("revision catalog", move || {
-        store.list_document_revision_summaries(&document_id, limit, offset)
+        store
+            .documents()
+            .list_document_revision_summaries(&document_id, limit, offset)
     })
     .await;
     match page {
@@ -316,6 +319,48 @@ pub(super) struct SearchBody {
     persist_trace: bool,
 }
 
+impl SearchBody {
+    /// The transport-neutral search request for this body.
+    pub(super) fn to_request(&self) -> retrieval::SearchRequest {
+        retrieval::SearchRequest {
+            query: self.query.clone(),
+            mode: self.mode.clone(),
+            top_k: self.top_k,
+            document_id: self.document_id.clone(),
+            wing: self.wing.clone(),
+            room: self.room.clone(),
+            layer: self.layer.clone(),
+            source_file: self.source_file.clone(),
+            include_archived: self.include_archived,
+            min_score: self.min_score,
+            diversity: self.diversity.clone(),
+            group_by: self.group_by.clone(),
+            recency_half_life_days: self.recency_half_life_days,
+            max_context_tokens: self.max_context_tokens,
+            max_chunks_per_document: self.max_chunks_per_document,
+            context_expansion: self.context_expansion.clone(),
+            neighbor_chunks: self.neighbor_chunks,
+            timeout_ms: self.timeout_ms,
+            rrf_k: self.rrf_k,
+            rerank: self.rerank,
+            rewrite: self.rewrite,
+            hyde: self.hyde,
+        }
+    }
+}
+
+/// Resolved mode and ranked hits for an in-process caller (eval, feedback):
+/// the search use case directly, no handler → bytes → JSON round trip.
+pub(super) async fn run_search(
+    state: &HttpState,
+    body: &SearchBody,
+) -> Result<(String, Vec<SearchHit>), AppError> {
+    let command = body.to_request().into_command(&state.config);
+    let mode = retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode)?;
+    let hits = state.search_use_case().search_command(command).await?;
+    Ok((mode.as_str().to_string(), hits))
+}
+
 pub(super) async fn search_http(
     State(state): State<HttpState>,
     Json(body): Json<SearchBody>,
@@ -324,31 +369,7 @@ pub(super) async fn search_http(
     let include_trace = body.include_trace;
     let persist_trace = body.persist_trace;
     let call = telemetry::begin("http", "http", "search", Some(&audit_args));
-    let command = retrieval::SearchRequest {
-        query: body.query,
-        mode: body.mode,
-        top_k: body.top_k,
-        document_id: body.document_id,
-        wing: body.wing,
-        room: body.room,
-        layer: body.layer,
-        source_file: body.source_file,
-        include_archived: body.include_archived,
-        min_score: body.min_score,
-        diversity: body.diversity,
-        group_by: body.group_by,
-        recency_half_life_days: body.recency_half_life_days,
-        max_context_tokens: body.max_context_tokens,
-        max_chunks_per_document: body.max_chunks_per_document,
-        context_expansion: body.context_expansion,
-        neighbor_chunks: body.neighbor_chunks,
-        timeout_ms: body.timeout_ms,
-        rrf_k: body.rrf_k,
-        rerank: body.rerank,
-        rewrite: body.rewrite,
-        hyde: body.hyde,
-    }
-    .into_command(&state.config);
+    let command = body.to_request().into_command(&state.config);
     let resolved_mode =
         match retrieval::resolve_search_mode(command.mode.as_deref(), command.default_mode) {
             Ok(mode) => mode,
@@ -359,14 +380,8 @@ pub(super) async fn search_http(
         };
     let mode = resolved_mode.as_str();
     let search_span = include_trace.then(|| SpanBuilder::start("search").attr("mode", mode));
-    match retrieval::execute_search(
-        &state.store,
-        state.embedder.as_ref(),
-        &state.config,
-        command,
-    )
-    .await
-    {
+    let search = state.search_use_case();
+    match search.search_command(command).await {
         Ok(hits) => {
             call.finish(true, None, Some(format!("{} hits", hits.len())));
             let timings = hits.first().and_then(|hit| hit.explanation.clone());
@@ -378,7 +393,7 @@ pub(super) async fn search_http(
                 "items": hits,
             });
             if let Some(builder) = search_span {
-                let versions = source_versions_for_hits(&state.store, &hits);
+                let versions = search.source_versions(&hits);
                 let span = builder
                     .attr("hit_count", hits.len() as u64)
                     .attr("source_versions", source_versions_json(&versions))
@@ -386,7 +401,7 @@ pub(super) async fn search_http(
                 let mut trace = RetrievalTrace::new("search");
                 trace.push(span);
                 if persist_trace {
-                    let _ = persist_retrieval_trace(&state.store, &trace);
+                    search.persist_trace(&trace);
                 }
                 if let Some(obj) = response.as_object_mut() {
                     obj.insert("trace".into(), json!(trace));
@@ -431,89 +446,30 @@ async fn pack_context_http(
     State(state): State<HttpState>,
     Json(body): Json<PackContextBody>,
 ) -> impl IntoResponse {
-    let include_trace = body.include_trace || body.prior_trace.is_some();
-    let persist_trace = body.persist_trace;
-    let prior_trace = body.prior_trace;
-    let command = retrieval::PackContextCommand {
+    let request = PackContextRequest {
         hits: body.hits.into_iter().map(SearchHit::from).collect(),
         max_tokens: body.max_tokens,
         context_expansion: body.context_expansion,
         neighbor_chunks: body.neighbor_chunks,
+        trace: TraceOptions {
+            include: body.include_trace,
+            persist: body.persist_trace,
+            prior: body.prior_trace,
+        },
     };
-    let store = state.store.clone();
-    let config = state.config.clone();
-    let pack_span = include_trace.then(|| SpanBuilder::start("pack_context"));
-    let outcome = match super::run_blocking("pack-context expansion", move || {
-        retrieval::pack_context(&store, &config, command)
-    })
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(error) => return api_err(error),
-    };
-    let hits = outcome.expanded_hits;
-    let packed = outcome.packed;
-    let mut response = json!({
-        "ok": true,
-        "total_tokens": packed.total_tokens,
-        "max_tokens": packed.max_tokens,
-        "omitted_count": packed.omitted_count,
-        "context_text": packed.context_text,
-        "hits": packed.hits,
-    });
-    if let Some(builder) = pack_span {
-        let versions = source_versions_for_hits(&state.store, &hits);
-        let span = builder
-            .attr("total_tokens", packed.total_tokens as u64)
-            .attr("omitted_count", packed.omitted_count as u64)
-            .attr("source_versions", source_versions_json(&versions))
-            .finish();
-        let mut trace = prior_trace.unwrap_or_else(|| RetrievalTrace::new("search_pack"));
-        if trace.path.as_deref() == Some("search") {
-            trace.path = Some("search_pack".into());
-        }
-        trace.push(span);
-        if persist_trace {
-            let _ = persist_retrieval_trace(&state.store, &trace);
-        }
-        if let Some(obj) = response.as_object_mut() {
-            obj.insert("trace".into(), json!(trace));
-        }
+    match state.search_use_case().pack_context(request).await {
+        Ok(packed) => api_ok(with_ok(packed)),
+        Err(error) => api_err(error),
     }
-    api_ok(response)
 }
 
-fn source_versions_for_hits(store: &crate::db::Store, hits: &[SearchHit]) -> Vec<SourceVersion> {
-    let ids: Vec<&str> = hits.iter().map(|hit| hit.document_id.as_str()).collect();
-    // One query for every hit's stored hash (was one full document load per hit).
-    let hashes = crate::util::blocking_section(|| store.content_hashes(&ids)).unwrap_or_default();
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
-    for hit in hits {
-        if !seen.insert(hit.document_id.clone()) {
-            continue;
-        }
-        let content_hash = hashes.get(&hit.document_id).cloned().flatten();
-        out.push(SourceVersion {
-            document_id: hit.document_id.clone(),
-            uri: Some(hit.document_uri.clone()),
-            content_hash,
-        });
+/// HTTP success envelope: the use-case result with `ok: true` added.
+pub(super) fn with_ok(value: impl serde::Serialize) -> serde_json::Value {
+    let mut value = serde_json::to_value(value).unwrap_or_else(|_| json!({}));
+    if let Some(object) = value.as_object_mut() {
+        object.insert("ok".into(), json!(true));
     }
-    out
-}
-
-fn persist_retrieval_trace(
-    store: &crate::db::Store,
-    trace: &RetrievalTrace,
-) -> Result<(), AppError> {
-    super::payload_kv::upsert_payload(
-        store,
-        super::payload_kv::PayloadTable::EvalTraces,
-        &trace.id,
-        trace,
-    )?;
-    Ok(())
+    value
 }
 
 #[derive(Deserialize)]
@@ -529,22 +485,13 @@ async fn multi_get(
     State(state): State<HttpState>,
     Json(body): Json<MultiGetBody>,
 ) -> impl IntoResponse {
-    let store = state.store.clone();
-    let result = super::run_blocking("multi-get", move || {
-        retrieval::multi_get(
-            &store,
-            body.document_ids,
-            body.include_chunks,
-            body.chunk_limit,
-        )
-    })
-    .await;
-    match result {
-        Ok(result) => api_ok(json!({
-            "ok": true,
-            "items": result.documents,
-            "missing": result.missing,
-        })),
+    let command = MultiGetCommand {
+        document_ids: body.document_ids,
+        include_chunks: body.include_chunks,
+        chunk_limit: body.chunk_limit,
+    };
+    match state.search_use_case().multi_get(command).await {
+        Ok(result) => api_ok(with_ok(result)),
         Err(error) => api_err(error),
     }
 }
@@ -671,7 +618,7 @@ async fn documents(
     };
     let store = state.store.clone();
     let page = super::run_blocking("document catalog", move || {
-        store.list_document_catalog(&filter)
+        store.documents().list_document_catalog(&filter)
     })
     .await;
     match page {
@@ -714,12 +661,14 @@ mod tests {
             embedding_dims: 2,
             ..crate::config::Config::for_tests()
         };
-        let store = std::sync::Arc::new(crate::Store::open(&config.db_path).unwrap());
-        let state = HttpState::new(
-            store,
+        let store = std::sync::Arc::new(crate::testkit::open_test_store(&config.db_path).unwrap());
+        let state = HttpState::from_context(
+            crate::context::AppContext::with_store(
+                store,
+                std::sync::Arc::new(crate::embeddings::MockEmbedder::new(2)),
+                config,
+            ),
             false,
-            config,
-            std::sync::Arc::new(crate::embeddings::MockEmbedder::new(2)),
         );
         for budget in [0, 1, 32] {
             let input: PackContextBody = serde_json::from_value(json!({

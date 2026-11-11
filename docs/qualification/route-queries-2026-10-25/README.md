@@ -2,7 +2,7 @@
 
 The earlier route operation only selected a source path/symbol and limited the
 result; the reference `op_routes` also selects route-address substrings and counts
-trust categories. The new [query contract](../../ROUTE_QUERIES.md) keeps source
+trust categories. The new [query contract](../../code-intelligence/ROUTE_QUERIES.md) keeps source
 path and route-address selectors distinct, adds exact project/URL/kind/method/
 category filters, and applies them before page limits. It does not treat unknown
 ANY candidates or missing client methods as evidence of an explicit method.

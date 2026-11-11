@@ -15,7 +15,9 @@ pub fn apply_settings_profile(
     }
     if let Some(top_k) = profile.top_k {
         if top_k == 0 {
-            return Err(AppError::config("settings top_k must be greater than zero"));
+            return Err(AppError::invalid(
+                "settings top_k must be greater than zero",
+            ));
         }
         query.top_k = top_k;
     }

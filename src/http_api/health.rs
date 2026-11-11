@@ -29,9 +29,10 @@ async fn live() -> impl IntoResponse {
 }
 
 async fn ready(State(st): State<HttpState>) -> impl IntoResponse {
-    crate::util::blocking_section(|| {
+    st.blocking_response("ready", move |store| {
         let runtime = crate::ops::runtime_snapshot();
-        let store_ok = st.store.stats().is_ok() && st.store.fts_ready().unwrap_or(false);
+        let store_ok =
+            store.maintenance().stats().is_ok() && store.maintenance().fts_ready().unwrap_or(false);
         let ok = runtime.ready && store_ok;
         let status = if ok {
             StatusCode::OK
@@ -42,7 +43,9 @@ async fn ready(State(st): State<HttpState>) -> impl IntoResponse {
             status,
             axum::Json(json!({"ok": ok, "phase": runtime.startup_phase, "store_ok": store_ok})),
         )
+            .into_response()
     })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -58,18 +61,24 @@ async fn health(
     State(st): State<HttpState>,
     Query(query): Query<HealthQuery>,
 ) -> impl IntoResponse {
-    crate::util::blocking_section(|| match st.store.stats() {
+    let wal_warn_bytes = st.config.wal_warn_bytes;
+    let mcp_http = st.mcp_http;
+    st.blocking_response("health", move |store| match store.maintenance().stats() {
         Ok((docs, chunks, nodes, edges)) => {
-            let schema_version = st.store.schema_version().ok().flatten().unwrap_or(0);
-            let fts_ready = st.store.fts_ready().unwrap_or(false);
-            let wal_bytes = st.store.wal_file_size_bytes();
-            let wal_warn_bytes = st.config.wal_warn_bytes;
+            let schema_version = store
+                .maintenance()
+                .schema_version()
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let fts_ready = store.maintenance().fts_ready().unwrap_or(false);
+            let wal_bytes = store.maintenance().wal_file_size_bytes();
             let runtime = crate::ops::runtime_snapshot();
             let mut body = json!({
                 "ok": true,
                 "backend": "duckdb",
                 "storage_capabilities": crate::storage::duckdb_capability_names(),
-                "db_path": st.store.path().display().to_string(),
+                "db_path": store.path().display().to_string(),
                 "schema_version": schema_version,
                 "fts_ready": fts_ready,
                 "documents": docs,
@@ -80,12 +89,14 @@ async fn health(
                 "wal_warn_bytes": wal_warn_bytes,
                 "wal_too_large": wal_bytes >= wal_warn_bytes,
                 "runtime": runtime,
-                "mcp_http": st.mcp_http,
-                "mcp_path": if st.mcp_http { Some("/mcp") } else { None::<&str> },
+                "mcp_http": mcp_http,
+                "mcp_path": if mcp_http { Some("/mcp") } else { None::<&str> },
             });
             if !query.summary {
-                let (missing_chunks, orphan_chunks, orphan_nodes, orphan_edges, unscoped) =
-                    st.store.integrity_counts().unwrap_or((0, 0, 0, 0, 0));
+                let (missing_chunks, orphan_chunks, orphan_nodes, orphan_edges, unscoped) = store
+                    .maintenance()
+                    .integrity_counts()
+                    .unwrap_or((0, 0, 0, 0, 0));
                 let integrity = json!({
                     "documents_without_chunks": missing_chunks,
                     "orphan_chunks": orphan_chunks,
@@ -105,4 +116,5 @@ async fn health(
         }
         Err(e) => api_err(e),
     })
+    .await
 }

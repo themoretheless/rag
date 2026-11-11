@@ -14,6 +14,28 @@ use crate::config::Config;
 use crate::db::Store;
 use crate::embeddings::{build_provider, EmbeddingProvider};
 
+// Process-wide knobs live in the subsystems that read them (link ceiling in
+// `db::graph::resolve`, call-log size in `telemetry`, sync identity in
+// `db::sync`). Pushing them is composition work, so it sits here rather than in
+// the value-only `config` module. `Config` lives in the store crate, so the
+// method is an extension trait (import it to call `config.apply_process_limits()`).
+pub trait ApplyProcessLimits {
+    /// Push process-global settings (graph link ceiling, call-log size, sync identity) into the
+    /// subsystems that hold them. Call once at start-up, before first use.
+    fn apply_process_limits(&self);
+}
+
+impl ApplyProcessLimits for Config {
+    fn apply_process_limits(&self) {
+        crate::db::graph::resolve::configure_max_links(self.max_links_per_doc);
+        crate::telemetry::configure_capacity(self.call_log_capacity);
+        crate::db::sync::configure_identity(
+            self.sync_node_id.clone(),
+            self.sync_primary_url.clone(),
+        );
+    }
+}
+
 /// Install the stderr `tracing` subscriber; `RUST_LOG` overrides `default_filter`.
 pub fn init_tracing(default_filter: &str) {
     let filter =
@@ -41,6 +63,7 @@ pub fn open_offline(db_path: PathBuf) -> Result<OfflineRuntime> {
     config.apply_process_limits();
     let store = crate::storage::open_configured(&config).context("open DuckDB")?;
     store
+        .embedding_manifest()
         .ensure_embedding_manifest(&config)
         .context("validate embedding manifest")?;
     let embedder = build_provider(&config).context("embedding provider")?;

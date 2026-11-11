@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // The runner closes its MCP process before this opens the disposable DB.
     let store = Store::open(&root.join("test.duckdb"))?;
-    let snapshot = store.code_snapshot()?;
+    let snapshot = rag_mcp::code_index::CodeIndex::new(&store).code_snapshot()?;
     if !snapshot.stale_documents.is_empty() || !snapshot.unindexed_documents.is_empty() {
         return Err("native and MCP captures do not share a fresh extraction format".into());
     }

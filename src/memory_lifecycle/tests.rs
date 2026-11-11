@@ -6,7 +6,7 @@ fn ids(values: &[&str]) -> Vec<String> {
 }
 
 fn lifecycle_meta(store: &Store, id: &str) -> Value {
-    let doc = store.get_document(id).unwrap().unwrap();
+    let doc = store.documents().get_document(id).unwrap().unwrap();
     doc.metadata().unwrap()["memory_lifecycle"].clone()
 }
 
@@ -67,7 +67,7 @@ fn archive_selected_reports_changed_skipped_and_missing_and_is_idempotent() {
     assert_eq!(first.missing_ids, ids(&["ghost"]));
     assert_eq!(first.output_document_id, None);
     assert_eq!(
-        store.get_document("a").unwrap().unwrap().status,
+        store.documents().get_document("a").unwrap().unwrap().status,
         STATUS_ARCHIVED
     );
 
@@ -76,6 +76,7 @@ fn archive_selected_reports_changed_skipped_and_missing_and_is_idempotent() {
     assert_eq!(second.skipped_ids, ids(&["a"]));
 
     let logged = store
+        .ops_log()
         .list_ops_log(50)
         .unwrap()
         .into_iter()
@@ -115,11 +116,16 @@ fn consolidate_selected_links_sources_to_output_and_skips_repeats() {
     assert_eq!(output["source_uris"], json!(["text://s1", "text://s2"]));
     assert_eq!(output["operation"], "consolidate");
     assert_eq!(
-        store.get_document("out").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("out")
+            .unwrap()
+            .unwrap()
+            .status,
         STATUS_ACTIVE
     );
 
-    let s1 = store.get_document("s1").unwrap().unwrap();
+    let s1 = store.documents().get_document("s1").unwrap().unwrap();
     assert_eq!(s1.status, STATUS_CONSOLIDATED);
     assert_eq!(lifecycle_meta(&store, "s1")["consolidated_into"], "out");
 
@@ -140,7 +146,12 @@ fn consolidate_selected_rejects_blank_or_unknown_output() {
     assert!(consolidate_selected(&store, &ids(&["s1"]), "  ", None).is_err());
     assert!(consolidate_selected(&store, &ids(&["s1"]), "missing", None).is_err());
     assert_eq!(
-        store.get_document("s1").unwrap().unwrap().status,
+        store
+            .documents()
+            .get_document("s1")
+            .unwrap()
+            .unwrap()
+            .status,
         STATUS_ACTIVE
     );
 }

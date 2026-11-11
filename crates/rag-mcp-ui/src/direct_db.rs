@@ -1,14 +1,15 @@
 //! Direct read-only DuckDB access for `--db` mode (feature `direct-db`).
 //!
-//! Every function here opens the database through `rag_mcp::Store`. Without
+//! Every function here opens the database through `rag_store_duckdb::Store`. Without
 //! the feature, `direct_db_disabled.rs` provides the same signatures and the
 //! UI builds without the server crate (no DuckDB, axum or rmcp).
 
 #![allow(clippy::wildcard_imports)]
 
 use crate::load::*;
-use rag_mcp::db::store::WikiPageMetaFilter;
-use rag_mcp::{GraphFilter, GraphView, Store, UI_GRAPH_EXPORT_MAX_NODES};
+use rag_store_duckdb::db::store::WikiPageMetaFilter;
+use rag_store_duckdb::models::{GraphFilter, GraphView, UI_GRAPH_EXPORT_MAX_NODES};
+use rag_store_duckdb::Store;
 use std::path::Path;
 
 /// List wiki pages from a strictly read-only DuckDB open (metadata only).
@@ -73,7 +74,7 @@ pub fn fetch_document_db(
         id: doc.id,
         uri: doc.uri,
         title: doc.title,
-        layer: doc.layer,
+        layer: doc.layer.to_string(),
         kind: doc.kind.to_string(),
         content: doc.content,
         content_hash: doc.content_hash,
@@ -329,7 +330,7 @@ pub fn fetch_backlinks_db(
     document_id: &str,
     project: Option<&str>,
 ) -> Result<Vec<BacklinkItem>, String> {
-    let store = rag_mcp::Store::open_read_only(path)
+    let store = rag_store_duckdb::Store::open_read_only(path)
         .map_err(|error| format!("open {} read-only for backlinks: {error}", path.display()))?;
     let rows = match project.map(str::trim).filter(|project| !project.is_empty()) {
         Some(project) => store.wiki_backlinks_for_document_in_wing(document_id, project),

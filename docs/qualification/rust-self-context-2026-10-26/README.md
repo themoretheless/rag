@@ -4,7 +4,7 @@ Format 60 captures impl-owner AST types in Function facts and uses original
 inline-module context for declaration lookups. It fixes nominal receiver lookup
 for lifetime-parameterized impls and inline impls/field types. Explicit method/impl
 substitutions still take precedence. Symbol display names and source anchors are
-unchanged. Contract: [RUST_RECEIVER_TYPES.md](../../RUST_RECEIVER_TYPES.md).
+unchanged. Contract: [RUST_RECEIVER_TYPES.md](../../code-intelligence/RUST_RECEIVER_TYPES.md).
 
 ## Fixed repository controls
 

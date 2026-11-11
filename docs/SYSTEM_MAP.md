@@ -8,8 +8,9 @@
 
 **Laws:** [`PRODUCT_PRINCIPLES.md`](PRODUCT_PRINCIPLES.md)
 
-This is the current ownership map. It describes code that exists; target work
-belongs in [`ROADMAP.md`](ROADMAP.md).
+This is the runtime map: layers, topology, workflows and storage truth. Code
+ownership is in [`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md); target
+work belongs in [`ROADMAP.md`](ROADMAP.md).
 
 ## 1. Logical layers
 
@@ -96,64 +97,12 @@ continue during the long copy. Publication is serialized per destination: the
 checksum and metadata sidecars are staged and synced first, and the verified
 database path is published last as the generation commit marker.
 
-## 3. Code ownership
+## 3–4. Code ownership and structural seams
 
-| Path | Owns |
-|------|------|
-| `ingest.rs` | transport-independent prepare/embed-many/atomic-commit ingest orchestration and immutable policy |
-| `document_indexer.rs` | pure chunk policy, section metadata, cross-document embedding and `Chunk` construction; no storage writes |
-| `source_scan.rs`, `source_sync.rs` | source discovery, manifest-aware bounded batching, ordered progress and cancellation |
-| `retrieval.rs`, `search_pack.rs` | validated search use cases, multi-get/expand/similar and token packing |
-| `revisions.rs` | revision diff and CAS-protected restore use cases |
-| `diagnostics.rs`, `ops.rs` | shared HTTP/MCP health/status/doctor policy and report DTOs, aggregate layer health and scheduled operational state |
-| `graph/` | re-exports `rag-mcp-markup` extraction; resolution persists through `db::graph::resolve` |
-| `wiki/` | wiki/schema/index/compile behavior over the ingest and atomic-write seams; `wiki::put_wiki_page` is the slug/uri/id upsert policy used by HTTP |
-| `maintain/`, `memory_lifecycle.rs`, `diary/` | explicit maintenance and memory workflows |
-| `db/store.rs`, `db/store/*.rs` | DuckDB façade and transaction boundary (`Store::with_tx`); methods grouped by documents, chunks, health, revisions, schema/diary, corpus lane, manifest, ops log and wiki index. `Store::lock` is private to `db` outside tests |
-| `db/{payload_kv,analytics,knowledge,chunk_text,review}.rs`, `db/graph/resolve.rs` | repositories for the former direct-lock callers: JSON payload tables (`with_session` for read-modify-write), corpus analytics, knowledge catalog, chunk text pages, review accept, graph resolution |
-| `db/embedding_identity.rs` | `EmbeddingIdentity` trait so the store checks the manifest without importing `config` |
-| `context.rs` | `AppContext` (store, embedder, config, chat client) built once at start-up and shared by HTTP and MCP |
-| `jobs.rs` | background job registry, lifecycle and persistence; `http_api/jobs.rs` only routes |
-| `db/{rows,fts,search,graph,kg,catalog,source_manifest,recovery,vault}.rs` | persistence repositories, scoped/global retrieval snapshots, aggregate health, atomic single-artifact recovery publication and coordinated backup-group publication |
-| `storage/` | small backend-neutral document contract; DuckDB and Markdown implementations |
-| `access.rs`, `http_api/auth.rs` | explicit MCP roles, shared HTTP/MCP Bearer authentication, HTTP operation permissions and remote startup guard |
-| `mcp/facade.rs` | shared `RagServer` state, application-service adapters, per-request role checks, filtered tool discovery and audited dispatch |
-| `mcp/{ingest,search,graph,wiki,kg,maintain,recovery,collections}.rs`, `mcp/server.rs`, `mcp/views.rs` | domain-owned MCP tool implementations (one `#[tool_router]` each) added together in `server.rs`; shared document/chunk response views |
-| `mcp/error.rs`, `http_api/error.rs`, `AppError::code` | one wire error vocabulary; JSON-RPC and HTTP envelopes only classify |
-| `util/{blocking,text,time}.rs` | shared blocking/detached task helpers, optional-string normalization and timestamp parsing used by both transports |
-| `config.rs` | environment parsing and validation, including `ToolSurface` and the `RAG_HTTP_BIND` gate; imports no transport |
-| `activity.rs`, `telemetry.rs` | process-local activity feed and call log written by both transports; `http_api` only serves them |
-| `bootstrap.rs` | shared start-up for `main` and the offline tools (tracing, configured store, manifest check, embedder) |
-| `llm/json.rs`, `maintain/audit.rs` | one parser for JSON in model output; one terminal `MAINT` audit row per maintenance run |
-| `http_api/{health,ops,jobs,retrieval,graph,wiki,activity}.rs` | thin HTTP route clusters (`activity.rs` only serves `/v1/activity`) |
-| `crates/rag-mcp-markup` | pure `[[wikilink]]`/`#tag` parsing and label normalization; the server graph and the native UI renderer share it |
-| `crates/rag-mcp-core` | wire types shared by the server and clients: graph view, search hits, project home, background jobs, activity events, `Layer`/`NodeKind` (serde + chrono only) |
-| `web-svelte/src/api/types.ts` | web client wire types; the graph and search shapes are checked against Rust by `tests/it/web_types_contract_test.rs` |
-| `crates/rag-mcp-ui/src/{product,search,operations,revisions}.rs` | native gateway DTOs and application adapters |
-| `crates/rag-mcp-ui/src/direct_db.rs` | read-only `--db` mode behind the default `direct-db` feature; the only UI code that links the server crate |
-| `crates/rag-mcp-ui/src/ui/` | workspace rendering |
-| `crates/rag-mcp-ui/src/app/` | `GraphApp` state (`mod.rs`), worker events, per-frame layout, graph, wiki and revision behaviour |
-| `crates/rag-mcp-ui/src/worker.rs` | worker thread; `LoadSource` methods pick the HTTP or direct-db path once per operation |
-
-## 4. Structural seams
-
-| Seam | Contract | Enforced behavior |
-|------|----------|-------------------|
-| `DocumentIndexer` → `Store::write_document_atomic` | prepare before persistence, then commit document/chunks/derived graph together | embedding or graph failure preserves the previous state; URI CAS permits exactly one owner under racing initial ingest |
-| `SourceSyncService` → ingest/manifest/FTS repositories | stat preflight avoids extraction/hash/embed for healthy unchanged files; changed files batch provider work before ordered commits; terminal completion refreshes stale FTS before releasing the lane | provider failure writes none of a pending batch; cancellation leaves no batch or an exact committed prefix; root rebinding and transactional deletion preserve ownership; the first search after a completed bulk sync does not pay the rebuild |
-| Retrieval service → corpus-mutation lane + `db::search`/`db::fts` | transports pass validated commands; retrieval admits lexical work before embedding; persistence owns candidate loading and ranking substrate | an active exclusive corpus mutation yields generic retryable `STORE_BUSY`; project/document/source scopes materialize in SQL before exact vector top-k and bypass the global cache; unscoped cache invalidates by chunk generation |
-| Project graph HTTP → `db::graph` | scope project documents and direct companions in SQL before traversal | deterministic BFS is capped at 300 nodes/depth 3 and excludes documents from another project |
-| MCP/HTTP → application services | ports map wire values and response envelopes only | ingest, retrieval, diagnostics and revisions do not depend on a transport; both status ports use the same aggregate diagnostics service |
-| Gateway → jobs/operations | one process owns writes and maintenance | bounded job retention, hard admission cap, `completed_with_errors`, terminal-safe cancellation and safe checkpoint/backup paths; HTTP busy includes 503 + `Retry-After`, MCP busy includes structured retry data; maintenance `max_docs` and duplicate-cleanup `max_candidates` cannot exceed `RAG_MAINT_MAX_DOCS` |
-| HTTP boundary → product API and mounted MCP | shared Bearer authentication, explicit operation roles, Host/body admission and Activity sanitization | configured credentials apply on loopback too; non-loopback without valid credentials fails before Store startup; Read/Write/Admin are checked before handlers, with MCP role passed through request extensions and checked at tool dispatch; unknown tools are denied; request bodies over 1 MiB are rejected even without `Content-Length`; that limit does not describe response size; Authorization is removed before handlers; credentials, raw IP/UA, request/result bodies, source paths, titles and concrete job resource IDs are not retained in Activity |
-| Gateway clients → authentication boundary | credentials travel in Authorization, independently of corpus selection | native reads `RAG_HTTP_TOKEN`; web stores a token per API base in tab session storage; replicas use the primary's Admin credential via `RAG_PRIMARY_TOKEN`; exclusive stdio remains a trusted local transport; roles do not isolate projects or individual users |
-| Recovery adapters → `db::recovery` | MCP and offline CLI share staged artifact publication and transactional v2 import policy; gateway backup uses an MVCC snapshot connection outside the shared Store mutex | the verified backup database is the final commit marker for its serialized database/checksum/metadata generation; v2 carries a canonical embedding manifest and validates vector dimensions/target identity; JSON/JSONL materialization is capped at 64 MiB, 10,000 documents and 50,000 chunks; default no-clobber survives destination races; explicit overwrite replaces each published artifact atomically; an id/URI cross-collision rolls back the whole bundle; vector-bearing v1 is accepted only by gateway opt-in re-embedding, while the offline CLI refuses it |
-| Native client → gateway | product workspaces consume lean APIs through one sanitized transport boundary; `/v1/projects` is authoritative independently from graph topology | graph failure is isolated to Connections; catalog failure retains the last authoritative list and has a targeted retry; Search responses retain submitted-request provenance; Library cursors reuse applied filters only; backlinks are project-scoped and failures stay visible; no second live DuckDB reader/writer is required; direct `--db` Wiki is read-only; project changes cannot drop in-flight wiki, restore or Operations mutations; verified backup gets a 30-minute timeout |
-| `Storage` | backend identity, capabilities and document lifecycle | unsupported backends/capabilities fail explicitly; no silent DuckDB alias |
-
-Compatibility boundaries are intentional: `mcp/server.rs` is the rmcp router
-composition root while domain modules own their tools, `Store` remains the
-public DuckDB façade, and `wing` remains the v1 wire/storage alias for project.
+Moved to [`refactor/ARCHITECTURE.md`](refactor/ARCHITECTURE.md), the single
+source of truth for crates, layers, module ownership, the composition root,
+background tasks and the schema. This map keeps runtime topology, workflows
+and storage truth.
 
 ## 5. Main workflows
 
@@ -213,17 +162,15 @@ authoritative list on failure; only Connections depends on graph availability.
 
 ## 6. Storage truth
 
-DuckDB is the full application backend. `Storage` has landed as a deliberately
-small document-lifecycle contract rather than a fake all-backend façade.
+DuckDB is the only application backend (schema v26, native `FLOAT[]`
+embeddings). The `Storage` trait and the library-only Markdown document adapter
+were deleted as unused in the refactor (see
+[`STORAGE_ADAPTERS.md`](STORAGE_ADAPTERS.md)).
 
 | Backend | Current capability |
 |---------|--------------------|
 | DuckDB | documents, chunks, FTS, vectors, graph, wiki, revisions, transactions, recovery |
-| Markdown | opt-in document CRUD, frontmatter source of truth, deterministic sidecar rebuild and watcher |
-| SQLite/Postgres/Memory | recognized identifiers only; startup refuses them |
-
-Search, graph, wiki and maintenance still depend on the DuckDB surface. A full
-Markdown application backend requires the conformance gate in the roadmap.
+| Markdown/SQLite/Postgres/Memory | recognized identifiers only; startup refuses them |
 
 ## 7. Current product surface
 
@@ -245,14 +192,14 @@ Markdown application backend requires the conformance gate in the roadmap.
 | Concentration | Current risk | Gate |
 |---------------|--------------|------|
 | `Store`, `wiki` and native `app` remain large compatibility/orchestration roots | Mechanical splitting could duplicate policy or break wire behavior | New workflows must enter through existing application seams; extract only with behavior tests |
-| Markdown implements only the document slice | Capability names can be mistaken for full parity | Shared search/graph/recovery conformance before it is marketed as a full backend |
 | Exact vector search is O(n) | Future corpora may exceed latency/RSS targets | ANN only after the roadmap's repeated 300 ms or resource gate fails |
 | Native layout has unit tests but no deterministic screenshot suite | Visual regressions can pass compilation | Add screenshot baselines only under the roadmap's visual-regression entry condition |
 
 ## 9. Documentation authority
 
 1. Product identity: `ARCHITECTURE_VISION.md` and `PRODUCT_PRINCIPLES.md`.
-2. Current shipped behavior: code, `README.md`, then this map.
+2. Current shipped behavior: code, `README.md`, then this map; code structure:
+   `refactor/ARCHITECTURE.md`.
 3. Sequencing and measurable gates: `ROADMAP.md`.
 4. Deep contracts: `ARCHITECTURE_NOTES.md`, graph/storage/topic docs.
 5. Research history: `FEATURES.md`, `REPOS_SURVEYED.md`,

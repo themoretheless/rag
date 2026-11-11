@@ -3,7 +3,7 @@
 Implemented captured Cargo-local re-export candidates, including named/grouped
 aliases, multi-hop forwarding, module globs, cyclic globs, module/type aliases,
 cfg filtering and conservative visibility checks. The complete original ten-item
-goal remains active. Contract and unsupported cases: [RUST_REEXPORTS.md](../../RUST_REEXPORTS.md).
+goal remains active. Contract and unsupported cases: [RUST_REEXPORTS.md](../../code-intelligence/RUST_REEXPORTS.md).
 
 ## Fixed public repository comparison
 

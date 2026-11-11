@@ -1,7 +1,7 @@
 # Reviewed Rust rename qualification
 
-This advances requirement 9 of the [complete plan](../../CODE_INTELLIGENCE_PLAN.md).
-The [contract](../../SEMANTIC_RENAME.md) documents supported captured Rust forms,
+This advances requirement 9 of the [complete plan](../../code-intelligence/CODE_INTELLIGENCE_PLAN.md).
+The [contract](../../code-intelligence/SEMANTIC_RENAME.md) documents supported captured Rust forms,
 blocking cases, review tokens, filesystem durability and recovery limitations.
 It is not whole-compiler rename completeness or whole-plan completion.
 

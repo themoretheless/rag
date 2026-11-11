@@ -53,5 +53,5 @@ replication, every REST/CLI call path, retention/compaction, performance at scal
 gate effectiveness and calibration remain unqualified/open. Session IDs route
 labels; they are not credentials. Notes are unverified agent assertions, and
 returned-record counts are not correctness or savings measurements. See
-[ANALYSIS_TASKS.md](../../ANALYSIS_TASKS.md) and the open
+[ANALYSIS_TASKS.md](../../code-intelligence/ANALYSIS_TASKS.md) and the open
 [RAGRAF_FEATURE_MATRIX.md](../../RAGRAF_FEATURE_MATRIX.md).

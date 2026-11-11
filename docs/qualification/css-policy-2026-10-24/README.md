@@ -40,6 +40,6 @@ qualified/restarted. Permission results are syntactic source evidence, not runti
 role decisions. CSS results are static mentions matched by project/name, not a
 browser cascade or safe deletion proof. PHP namespace bindings, framework routing,
 embedded markup and full receiver/inheritance analysis remain partial/unqualified.
-See [CSS_POLICY_ANALYSIS.md](../../CSS_POLICY_ANALYSIS.md) for the exact contract
+See [CSS_POLICY_ANALYSIS.md](../../code-intelligence/CSS_POLICY_ANALYSIS.md) for the exact contract
 and [RAGRAF_FEATURE_MATRIX.md](../../RAGRAF_FEATURE_MATRIX.md) for open acceptance
 requirements.

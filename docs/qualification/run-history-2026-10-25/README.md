@@ -1,6 +1,6 @@
 # Committed native run history — 2026-10-25
 
-[Contract](../../CODE_CATALOG.md#committed-index-run-history). This extends the
+[Contract](../../code-intelligence/CODE_CATALOG.md#committed-index-run-history). This extends the
 catalog/diagnostic acceptance work with queryable native run history. RAGRAF's
 pinned 075caf86dc2f6274b9c48487e521915bcdfeaf2c catalog describes indexed projects,
 revisions and checksums; this is a local auditability improvement, not a claim

@@ -4,7 +4,7 @@ use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::ingest::{IngestService, IngestUrlCommand};
+use crate::ingest::IngestUrlCommand;
 
 use super::{
     error::{api_err, api_ok},
@@ -34,19 +34,16 @@ async fn ingest_url(
     State(st): State<HttpState>,
     Json(body): Json<IngestUrlBody>,
 ) -> impl IntoResponse {
-    let fetcher = crate::web_ingest::ReqwestFetcher::new(st.config.ingest_url_timeout_secs);
-    match IngestService::new(&st.store, &st.embedder, &st.config)
-        .ingest_url(
-            &fetcher,
-            IngestUrlCommand {
-                url: body.url,
-                title: body.title,
-                uri: body.uri,
-                metadata_json: body.metadata_json,
-                wing: body.wing,
-                room: body.room,
-            },
-        )
+    match st
+        .ingest_use_case()
+        .ingest_url(IngestUrlCommand {
+            url: body.url,
+            title: body.title,
+            uri: body.uri,
+            metadata_json: body.metadata_json,
+            wing: body.wing,
+            room: body.room,
+        })
         .await
     {
         Ok(result) => api_ok(json!({"ok": true, "result": result})),

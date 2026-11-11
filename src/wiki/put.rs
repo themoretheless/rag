@@ -1,14 +1,37 @@
-//! Upsert by slug, `wiki://` uri or document id (HTTP `PUT`/`POST /v1/wiki`).
+//! The one wiki page write entrypoint for transports (MCP `write_wiki_page` /
+//! `update_wiki_page`, HTTP `POST` / `PUT /v1/wiki`).
 //!
-//! MCP exposes create and update as separate tools; this is the one place that
-//! resolves a combined request to the existing page (if any) and picks the path.
+//! [`write_page`] resolves the target page (slug, `wiki://` uri or document id)
+//! and applies one [`WikiWriteMode`]:
+//!
+//! | mode | page absent | page present |
+//! |---|---|---|
+//! | `Create` | create | `CONFLICT` (if_match / id refused) |
+//! | `Upsert` | create | update (omitted kind/category/summary/placement kept) |
+//! | `Cas` | `NOT_FOUND` | update |
+//!
+//! In every mode a stale `if_match_revision` is `CONFLICT` and leaves the page
+//! unchanged: that is the one meaning of a CAS conflict on both transports.
 
 use super::*;
 use crate::util::wiki_slug_from_uri;
 
-/// Transport-neutral upsert request.
+/// How a write treats an existing page.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WikiWriteMode {
+    /// Create only; an occupied canonical URI is a conflict.
+    Create,
+    /// Create or update.
+    #[default]
+    Upsert,
+    /// Update an existing page only.
+    Cas,
+}
+
+/// Transport-neutral wiki write request.
 #[derive(Debug, Clone, Default)]
-pub struct WikiPutCommand {
+pub struct WikiPageRequest {
+    pub mode: WikiWriteMode,
     pub slug: Option<String>,
     pub uri: Option<String>,
     pub id: Option<String>,
@@ -22,41 +45,61 @@ pub struct WikiPutCommand {
     pub summary: Option<String>,
     pub agent: Option<String>,
     pub if_match_revision: Option<i64>,
-    /// Refuse to touch an existing page (`POST`).
-    pub create_only: bool,
+    /// On update, a blank `title` becomes the page slug (MCP `write_wiki_page`)
+    /// instead of keeping the current title (HTTP `PUT`, MCP `update_wiki_page`).
+    pub blank_title_is_slug: bool,
 }
 
-/// Resolve the target page and create or CAS-update it.
-pub async fn put_wiki_page(
-    store: &Store,
-    embedder: &Arc<dyn EmbeddingProvider>,
-    config: &Config,
-    command: WikiPutCommand,
-) -> Result<WikiWriteResult> {
-    let slug = command
-        .slug
-        .as_deref()
+fn non_blank_owned(value: Option<&str>) -> Option<String> {
+    value
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .or_else(|| command.uri.as_deref().and_then(wiki_slug_from_uri))
+}
+
+/// Resolve the target page and create or update it per `request.mode`.
+pub async fn write_page(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    request: WikiPageRequest,
+) -> Result<WikiWriteResult> {
+    let requested_id = non_blank_owned(request.id.as_deref());
+    let slug = non_blank_owned(request.slug.as_deref())
+        .or_else(|| request.uri.as_deref().and_then(wiki_slug_from_uri))
         .unwrap_or_default();
-    let slug = slug.trim();
+    let slug = slug.trim().to_string();
+    if request.mode == WikiWriteMode::Cas {
+        // Update by id, `wiki://slug` or bare slug of an existing page.
+        let key = requested_id
+            .clone()
+            .or_else(|| (!slug.is_empty()).then(|| slug.clone()))
+            .ok_or_else(|| AppError::invalid("slug, uri or id required"))?;
+        let existing = get_wiki_page(store, &key)?;
+        // Same id/slug consistency rule as Upsert: an id naming another page
+        // than the given slug is a CONFLICT, never a silent pick of the id.
+        if requested_id.is_some() && !slug.is_empty() {
+            let by_slug = get_wiki_page(store, &slug)?;
+            if by_slug.id != existing.id {
+                return Err(AppError::conflict(format!(
+                    "wiki document id '{}' belongs to '{}', not requested page '{slug}'",
+                    existing.id, existing.uri
+                )));
+            }
+        }
+        return update_existing(store, embedder, config, &existing, request).await;
+    }
     if slug.is_empty() {
         return Err(AppError::invalid("slug required (or uri=wiki://slug)"));
     }
-    let canonical_uri = format!("wiki://{}", shared_slugify(slug, SlugPolicy::WikiPage));
-    let requested_id = command
-        .id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty());
-    if command.create_only && (requested_id.is_some() || command.if_match_revision.is_some()) {
+    let create_only = request.mode == WikiWriteMode::Create;
+    let canonical_uri = format!("wiki://{}", shared_slugify(&slug, SlugPolicy::WikiPage));
+    if create_only && (requested_id.is_some() || request.if_match_revision.is_some()) {
         return Err(AppError::invalid(
             "creating a wiki page does not accept id or if_match",
         ));
     }
-    let existing = match requested_id {
+    let existing = match requested_id.as_deref() {
         Some(id) => {
             let document = get_wiki_page(store, id)?;
             if document.uri != canonical_uri {
@@ -67,49 +110,70 @@ pub async fn put_wiki_page(
             }
             Some(document)
         }
-        None => crate::util::blocking_section(|| store.find_by_uri(&canonical_uri))?,
+        None => crate::util::blocking_section(|| store.documents().find_by_uri(&canonical_uri))?,
     };
-    if command.create_only && existing.is_some() {
+    if create_only && existing.is_some() {
         return Err(AppError::conflict("wiki page URI is already in use"));
     }
     if let Some(existing) = existing {
-        return update_wiki_page_cas(
-            store,
-            embedder,
-            config,
-            WikiPageUpdate {
-                id_or_slug: &existing.id,
-                title: Some(&command.title),
-                content: &command.content,
-                kind: command.kind.as_deref(),
-                category: command.category.as_deref(),
-                summary: command.summary.as_deref(),
-                agent: command.agent.as_deref(),
-                if_match_revision: command.if_match_revision,
-            },
-        )
-        .await;
+        return update_existing(store, embedder, config, &existing, request).await;
     }
     let write = WikiWriteCommand {
-        slug: slug.to_string(),
-        title: command.title,
-        content: command.content,
-        wing: command.wing,
-        room: command.room,
-        kind: command
+        slug,
+        title: request.title,
+        content: request.content,
+        wing: request.wing,
+        room: request.room,
+        kind: request
             .kind
             .unwrap_or_else(|| crate::models::DocumentKind::Wiki.as_str().into()),
-        category: command.category,
-        summary: command.summary,
-        agent: command.agent,
+        category: request.category,
+        summary: request.summary,
+        agent: request.agent,
         options: WriteWikiOpts {
-            if_match_revision: command.if_match_revision,
+            if_match_revision: request.if_match_revision,
             ..Default::default()
         },
     };
-    if command.create_only {
+    if create_only {
         create_wiki_page_command(store, embedder, config, write).await
     } else {
         write_wiki_page_command(store, embedder, config, write).await
     }
+}
+
+/// CAS-update an existing page; blank title/kind keep the current values
+/// (a blank title becomes the slug when `blank_title_is_slug`).
+async fn update_existing(
+    store: &Store,
+    embedder: &Arc<dyn EmbeddingProvider>,
+    config: &Config,
+    existing: &Document,
+    request: WikiPageRequest,
+) -> Result<WikiWriteResult> {
+    let slug_title;
+    let title = if request.blank_title_is_slug && request.title.trim().is_empty() {
+        slug_title = wiki_slug_from_uri(&existing.uri).unwrap_or_else(|| existing.title.clone());
+        slug_title.as_str()
+    } else {
+        request.title.as_str()
+    };
+    update_wiki_page_cas(
+        store,
+        embedder,
+        config,
+        WikiPageUpdate {
+            id_or_slug: &existing.id,
+            title: Some(title),
+            content: &request.content,
+            kind: request.kind.as_deref(),
+            category: request.category.as_deref(),
+            summary: request.summary.as_deref(),
+            agent: request.agent.as_deref(),
+            wing: request.wing.as_deref(),
+            room: request.room.as_deref(),
+            if_match_revision: request.if_match_revision,
+        },
+    )
+    .await
 }

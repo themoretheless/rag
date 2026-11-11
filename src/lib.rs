@@ -14,26 +14,25 @@
 //! | [`llm`] | Optional local chat client (Ollama / OpenAI-compat) |
 //! | [`maintain`] | Corpus analyze / plan whitelist / organize / refresh (ops_log) |
 
+/// Code-intelligence layer, split into the `rag-code-intel` crate (Stage 8).
+pub use rag_code_intel::{analysis_tasks, calibration, code_index, external_db, gate};
+/// Domain and store layers, split into the `rag-store-duckdb` crate (Stage 8)
+/// and re-exported under their old paths.
+pub use rag_store_duckdb::{config, db, error, graph, models, search_pack, tool_spec, util};
+
 pub mod access;
 pub mod activity;
-pub mod analysis_tasks;
+pub mod app;
+pub mod background;
 pub mod bootstrap;
-pub mod calibration;
 pub mod chunking;
-pub mod code_index;
-pub mod config;
 pub mod context;
-pub mod db;
 pub mod diagnostics;
 pub mod diary;
 pub mod document_indexer;
 pub mod embeddings;
-pub mod error;
 pub mod eval;
-pub mod external_db;
 pub mod file_ingest;
-pub mod gate;
-pub mod graph;
 pub mod http_api;
 pub mod ingest;
 pub mod jobs;
@@ -41,7 +40,6 @@ pub mod llm;
 pub mod maintain;
 pub mod mcp;
 pub mod memory_lifecycle;
-pub mod models;
 pub mod ooxml;
 pub mod ops;
 pub mod query_transform;
@@ -50,14 +48,13 @@ pub mod retrieval;
 pub mod revisions;
 /// Wiki change proposals; persistence lives in [`db::review`].
 pub use db::review;
-pub mod search_pack;
 pub mod source_scan;
 pub mod source_sync;
 pub mod storage;
 pub mod telemetry;
-#[cfg(test)]
-pub(crate) mod testkit;
-pub mod util;
+/// Test fixtures; compiled only for tests or with the `testkit` feature.
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 pub mod watch;
 pub mod web_ingest;
 pub mod wiki;
@@ -80,12 +77,11 @@ pub use models::{
     TaxonomyRoom, TaxonomyWing, VacuumStoreReport, WakeUpSchemaSnippet, WikiIndexEntry, WingCount,
     PKB_CORE_REL_TYPES, PKB_NODE_KINDS, UI_GRAPH_EXPORT_MAX_NODES, WIKI_SEMANTIC_REL_TYPES,
 };
-pub use storage::{BackendKind, BackendMetadata, Storage, StorageCapability};
+pub use storage::{BackendKind, StorageCapability};
 
-// --- Graph (domain extract/resolve; DB CRUD lives on [`Store`] via `db::graph`) ---
-pub use graph::{
-    extract_links, rebuild_document_graph, ExtractedLink, REL_TAGGED, REL_TUNNEL, REL_WIKILINK,
-};
+// --- Graph (domain extract in `graph`; resolve and CRUD live in `db::graph`) ---
+pub use db::graph::resolve::rebuild_document_graph;
+pub use graph::{extract_links, ExtractedLink, REL_TAGGED, REL_TUNNEL, REL_WIKILINK};
 
 // --- FTS / hybrid substrate (owned by `db::fts`, re-exported at `db::`) ---
 pub use db::{
@@ -101,11 +97,11 @@ pub use util::{check_path_allowlist, content_hash, parse_ingest_roots};
 // --- Wiki compile layer ---
 pub use wiki::{
     apply_consolidate_proposal, consolidate, file_answer, find_stale_wiki, get_schema,
-    get_wiki_page, list_wiki_pages, refresh_stale_wiki, update_schema, update_wiki_page_cas,
-    write_wiki_page, write_wiki_page_command, ConsolidateOpts, ConsolidateRequest,
-    ConsolidateResult, FileAnswerCitation, FileAnswerRequest, RawIngest, RawRefreshTarget,
-    RefreshError, RefreshStaleWikiResult, SchemaDocumentView, StaleWikiItem, WikiPageUpdate,
-    WikiPageWrite, WikiWriteCommand, WikiWriteResult, LAYER_RAW, LAYER_SCHEMA, LAYER_WIKI,
+    get_wiki_page, list_wiki_pages, refresh_stale_wiki, update_schema, write_page, write_wiki_page,
+    write_wiki_page_command, ConsolidateOpts, ConsolidateRequest, ConsolidateResult,
+    FileAnswerCitation, FileAnswerRequest, RawIngest, RawRefreshTarget, RefreshError,
+    RefreshStaleWikiResult, SchemaDocumentView, StaleWikiItem, WikiPageRequest, WikiPageWrite,
+    WikiWriteCommand, WikiWriteMode, WikiWriteResult, LAYER_RAW, LAYER_SCHEMA, LAYER_WIKI,
     SCHEMA_URI,
 };
 
