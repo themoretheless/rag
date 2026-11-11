@@ -358,3 +358,123 @@ fn chunk_parent_backfill_mirrors_metadata_and_stays_lazy() {
     assert_eq!(backfill_chunk_parent_ids(&conn).expect("re-run"), 0);
     migrate(&conn).expect("migrate again");
 }
+
+/// Open time of a current-schema store (docs/refactor/BASELINE.md, Stage 5
+/// review). Ignored: run in release with `RAG_TIMING_DOCS` documents × 4
+/// chunks plus 4 graph nodes and edges per document.
+#[test]
+#[ignore = "timing baseline; run explicitly"]
+fn timing_open_current_store() {
+    let docs: usize = std::env::var("RAG_TIMING_DOCS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2000);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("open-timing.duckdb");
+    {
+        let store = crate::db::Store::open(&path).unwrap();
+        let conn = store.lock().unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO documents (id, uri, title, content, metadata_json, created_at, updated_at) \
+             SELECT 'd' || i, 'uri://' || i, 'title ' || i, 'body ' || i, '{{}}', now(), now() \
+             FROM range({docs}) t(i);
+             INSERT INTO chunks (id, document_id, chunk_index, content, embedding, char_start, \
+               char_end, created_at, metadata_json, parent_chunk_id, embedding_digest) \
+             SELECT 'd' || (i // 4) || '-' || (i % 4), 'd' || (i // 4), i % 4, 'chunk ' || i, \
+               list_transform(range(32), x -> CAST(random() AS FLOAT)), 0, 1, now(), \
+               CASE WHEN i % 4 = 0 THEN '{{}}' ELSE '{{\"parent_chunk_id\":\"d' || (i // 4) || '-0\"}}' END, \
+               CASE WHEN i % 4 = 0 THEN NULL ELSE 'd' || (i // 4) || '-0' END, i \
+             FROM range({chunks}) t(i);
+             INSERT INTO graph_nodes (id, kind, label, label_key, created_at, updated_at) \
+             SELECT 'n' || i, 'doc', 'Label ' || i, 'label ' || i, now(), now() FROM range({chunks}) t(i);
+             INSERT INTO graph_edges (id, source_id, target_id, rel_type, created_at, origin, edge_origin) \
+             SELECT 'e' || i, 'n' || i, 'n' || ((i + 1) % {chunks}), 'wikilink', now(), 'extract', 'derived' \
+             FROM range({chunks}) t(i);",
+            chunks = docs * 4
+        ))
+        .unwrap();
+    }
+    let mut samples = Vec::new();
+    for _ in 0..7 {
+        let started = std::time::Instant::now();
+        drop(crate::db::Store::open(&path).unwrap());
+        samples.push(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    println!(
+        "TIMING open_current_store docs={docs} median_ms={:.1} min_ms={:.1} max_ms={:.1}",
+        samples[samples.len() / 2],
+        samples[0],
+        samples[samples.len() - 1]
+    );
+}
+
+/// Repairs that used to run on every open still run on every open of a
+/// current-schema store, and a healthy store opens without core DDL.
+#[test]
+fn open_repairs_run_on_a_current_schema_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("repairs.duckdb");
+    {
+        let store = crate::db::Store::open(&path).unwrap();
+        let conn = store.lock().unwrap();
+        let membership = crate::models::STRUCTURAL_EDGE_CONTEXTS[0];
+        conn.execute_batch(&format!(
+            "INSERT INTO chunks (id, document_id, chunk_index, content, embedding, char_start, \
+               char_end, created_at, metadata_json, parent_chunk_id, embedding_digest) \
+             VALUES ('c1', 'd1', 1, 'x', [1.0, 0.0], 0, 1, now(), \
+               '{{\"parent_chunk_id\":\"c0\"}}', NULL, NULL);
+             INSERT INTO graph_nodes (id, kind, label, label_key, created_at, updated_at) \
+             VALUES ('n1', 'doc', 'Some Label', NULL, now(), now());
+             INSERT INTO graph_edges (id, source_id, target_id, rel_type, context, created_at, origin) \
+             VALUES ('e1', 'n1', 'n1', 'related', '{membership}', now(), 'explicit'),
+                    ('e2', 'n1', 'n1', 'wikilink', NULL, now(), NULL);"
+        ))
+        .unwrap();
+    }
+    let store = crate::db::Store::open(&path).unwrap();
+    let conn = store.lock().unwrap();
+    let parent: Option<String> = conn
+        .query_row("SELECT parent_chunk_id FROM chunks WHERE id = 'c1'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(parent.as_deref(), Some("c0"));
+    let digest: Option<i64> = conn
+        .query_row("SELECT embedding_digest FROM chunks WHERE id = 'c1'", [], |r| r.get(0))
+        .unwrap();
+    assert!(digest.is_some());
+    let key: Option<String> = conn
+        .query_row("SELECT label_key FROM graph_nodes WHERE id = 'n1'", [], |r| r.get(0))
+        .unwrap();
+    assert!(key.is_some());
+    let origins: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT id, origin FROM graph_edges ORDER BY id")
+            .unwrap();
+        crate::db::rows::query_vec(&mut stmt, [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    };
+    assert_eq!(
+        origins,
+        vec![
+            ("e1".to_owned(), "extract".to_owned()),
+            ("e2".to_owned(), "extract".to_owned())
+        ]
+    );
+    assert_eq!(
+        migrate_with(&conn, &registered_schema_extensions()).unwrap(),
+        MigrateOutcome {
+            core_ddl: false,
+            extension_ddl: 0,
+        }
+    );
+}
+
+#[test]
+fn stored_schema_version_is_none_without_a_ledger_and_reads_it_otherwise() {
+    let conn = open_mem();
+    assert_eq!(stored_schema_version(&conn).unwrap(), None);
+    migrate(&conn).unwrap();
+    assert_eq!(stored_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
+    conn.execute_batch("DROP TABLE schema_version; CREATE TABLE schema_version (version VARCHAR); INSERT INTO schema_version VALUES ('x')")
+        .unwrap();
+    assert!(stored_schema_version(&conn).is_err(), "a broken ledger is an error, not 'no ledger'");
+}

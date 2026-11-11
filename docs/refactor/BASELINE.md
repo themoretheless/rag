@@ -412,3 +412,27 @@ neither wins clearly, so the current setting stays.
 | hybrid search p50 / p95 (LTO off, 16 codegen units) | 95.9 / 105.9 ms | 89.4 / 100.1 ms |
 | hybrid search with neighbour context p50 | 111.3 ms | 94.7 ms |
 | document insert throughput (2 000 docs) | 93 docs/s | 86 docs/s |
+
+### Stage 5 review follow-up: repairs on every open
+
+The v26 change ran the cheap repairs (`backfill_chunk_parent_ids`, the
+`embedding_digest IS NULL` backfill, `backfill_graph_node_label_keys`,
+`backfill_graph_edge_origins` including the explicit → extract membership
+repair) only on a version change. They run again on every open of a
+current-schema store (`run_open_repairs`), each behind one `EXISTS` guard
+(previously `COUNT(*)`), writing only when a row needs it.
+`stored_schema_version` now propagates read errors and returns `None` only
+when the `schema_version` table does not exist.
+
+Open time of a current-schema store, `timing_open_current_store` in
+`src/db/schema/tests.rs` (release, LTO off, 16 codegen units,
+`RAG_TIMING_DOCS=10000`: 10 000 documents, 40 000 chunks, 40 000 graph nodes
+and edges; median of 7 opens per run):
+
+| metric | before (reads only) | after (guarded repairs) |
+|---|---:|---:|
+| `Store::open`, current schema, median | 16.8 ms (1 run) | 23.6 ms (median of 3 runs: 24.1 / 23.5 / 23.6) |
+
+About 7 ms per open at 40 000 chunks, dominated by the guard scans
+(`metadata_json LIKE '%parent_chunk_id%'`); kept, since opens are rare
+(one writer process) and the repairs protect rebuild correctness.

@@ -452,7 +452,7 @@ pub(crate) fn migrate_with(
     conn: &Connection,
     extensions: &[SchemaExtension],
 ) -> Result<MigrateOutcome> {
-    let current = stored_schema_version(conn);
+    let current = stored_schema_version(conn)?;
     let mut outcome = MigrateOutcome {
         core_ddl: false,
         extension_ddl: 0,
@@ -473,6 +473,8 @@ pub(crate) fn migrate_with(
     if current != Some(SCHEMA_VERSION) {
         migrate_core(conn)?;
         outcome.core_ddl = true;
+    } else {
+        run_open_repairs(conn)?;
     }
     for (name, digest) in pending_extensions {
         upsert_meta(conn, &extension_meta_key(name), &digest)?;
@@ -484,9 +486,57 @@ fn extension_meta_key(name: &str) -> String {
     format!("schema_extension:{name}")
 }
 
-/// The stored schema version, or `None` when there is no ledger yet.
-fn stored_schema_version(conn: &Connection) -> Option<i32> {
-    current_schema_version(conn).ok().flatten()
+/// The stored schema version, or `None` when there is no ledger yet. Any
+/// other read failure propagates.
+fn stored_schema_version(conn: &Connection) -> Result<Option<i32>> {
+    let ledger: i64 = conn.query_row(
+        "SELECT count(*) FROM duckdb_tables() \
+         WHERE table_name = 'schema_version' AND schema_name = current_schema()",
+        [],
+        |row| row.get(0),
+    )?;
+    if ledger == 0 {
+        return Ok(None);
+    }
+    current_schema_version(conn)
+}
+
+/// Repairs that are cheap to check and must hold on every open, not only
+/// after a version change: each is one guard query and writes only when it
+/// finds work (rows written by an older build after the upgrade, a repair
+/// that was interrupted, data imported out of band).
+fn run_open_repairs(conn: &Connection) -> Result<()> {
+    backfill_chunk_parent_ids(conn)?;
+    backfill_embedding_digests(conn)?;
+    backfill_graph_node_label_keys(conn)?;
+    backfill_graph_edge_origins(conn)?;
+    Ok(())
+}
+
+/// Fill `chunks.embedding_digest` for rows that have none (written before
+/// the column existed, or by a writer that skipped it). One `EXISTS` guard
+/// when nothing is missing.
+fn backfill_embedding_digests(conn: &Connection) -> Result<u64> {
+    let missing: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM chunks WHERE embedding_digest IS NULL)",
+        [],
+        |row| row.get(0),
+    )?;
+    if !missing {
+        return Ok(0);
+    }
+    let source = if column_exists(conn, "chunks", "embedding_json")? {
+        "embedding_json"
+    } else {
+        "embedding"
+    };
+    Ok(conn.execute(
+        &format!(
+            "UPDATE chunks SET embedding_digest = CAST(hash({source}) >> 1 AS BIGINT) \
+             WHERE embedding_digest IS NULL"
+        ),
+        [],
+    )? as u64)
 }
 
 fn read_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
@@ -595,15 +645,7 @@ fn migrate_core(conn: &Connection) -> Result<()> {
     // backfilled once.
     add_column_best_effort(conn, "chunks", "embedding_digest", "BIGINT")?;
     let legacy_embedding = column_exists(conn, "chunks", "embedding_json")?;
-    let digest_source = if legacy_embedding {
-        "embedding_json"
-    } else {
-        "embedding"
-    };
-    conn.execute_batch(&format!(
-        "UPDATE chunks SET embedding_digest = CAST(hash({digest_source}) >> 1 AS BIGINT) \
-         WHERE embedding_digest IS NULL"
-    ))?;
+    backfill_embedding_digests(conn)?;
     // Schema v26: embeddings are a native FLOAT[] column instead of JSON text.
     // Databases from before v26 gain the column (nullable: DuckDB cannot add
     // NOT NULL to an indexed table), are backfilled in batches and lose the
@@ -757,12 +799,13 @@ fn migrate_core(conn: &Connection) -> Result<()> {
 /// once and every later open costs one aggregate. Rows keep `label` untouched:
 /// `label_key` is the match key, `label` stays the display form (§1.2).
 pub fn backfill_graph_node_label_keys(conn: &Connection) -> Result<u64> {
-    const COUNT_MISSING: &str = "SELECT COUNT(*) FROM graph_nodes WHERE label_key IS NULL";
+    const COUNT_MISSING: &str =
+        "SELECT EXISTS (SELECT 1 FROM graph_nodes WHERE label_key IS NULL)";
     const PENDING: &str =
         "SELECT id, label FROM graph_nodes WHERE label_key IS NULL ORDER BY id ASC";
 
-    let missing: i64 = conn.query_row(COUNT_MISSING, [], |row| row.get(0))?;
-    if missing == 0 {
+    let missing: bool = conn.query_row(COUNT_MISSING, [], |row| row.get(0))?;
+    if !missing {
         return Ok(0);
     }
 
@@ -810,12 +853,12 @@ pub fn backfill_graph_edge_origins(conn: &Connection) -> Result<u64> {
     let membership = format!("rel_type = 'related' AND context IN ({structural_contexts})");
     let mut done = 0u64;
 
-    let missing: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM graph_edges WHERE origin IS NULL",
+    let missing: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM graph_edges WHERE origin IS NULL)",
         [],
         |row| row.get(0),
     )?;
-    if missing > 0 {
+    if missing {
         done += conn.execute(
             &format!(
                 "UPDATE graph_edges SET origin = 'extract' \
@@ -846,12 +889,14 @@ pub fn backfill_graph_edge_origins(conn: &Connection) -> Result<u64> {
     // Repair for databases that already ran the rel_type-only version of this
     // backfill: those membership rows are `explicit` and therefore invisible to
     // §1.6's delete predicate. Guarded so a healthy store pays one count.
-    let mislabeled: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM graph_edges WHERE origin = 'explicit' AND {membership}"),
+    let mislabeled: bool = conn.query_row(
+        &format!(
+            "SELECT EXISTS (SELECT 1 FROM graph_edges WHERE origin = 'explicit' AND {membership})"
+        ),
         [],
         |row| row.get(0),
     )?;
-    if mislabeled > 0 {
+    if mislabeled {
         done += conn.execute(
             &format!("UPDATE graph_edges SET origin = 'extract' WHERE origin = 'explicit' AND {membership}"),
             [],
@@ -865,13 +910,13 @@ pub fn backfill_graph_edge_origins(conn: &Connection) -> Result<u64> {
 /// so healthy stores pay one aggregate per open. Rows whose metadata carries
 /// no parent key stay NULL (lazy backfill on the next re-ingest).
 pub fn backfill_chunk_parent_ids(conn: &Connection) -> Result<u64> {
-    let missing: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM chunks \
-         WHERE parent_chunk_id IS NULL AND metadata_json LIKE '%parent_chunk_id%'",
+    let missing: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM chunks \
+         WHERE parent_chunk_id IS NULL AND metadata_json LIKE '%parent_chunk_id%')",
         [],
         |row| row.get(0),
     )?;
-    if missing == 0 {
+    if !missing {
         return Ok(0);
     }
     let updated = conn.execute(
