@@ -1846,6 +1846,84 @@ fn snapshot_skips_chunks_with_unusable_vectors_instead_of_failing() {
     assert_eq!(ids(&refreshed), vec!["a-3"]);
 }
 
+fn two_dim_chunk(doc: &str, index: i32, value: f32) -> Chunk {
+    Chunk {
+        id: format!("{doc}-{index}"),
+        document_id: doc.into(),
+        chunk_index: index,
+        content: format!("{doc} {index}"),
+        embedding: vec![value, 1.0 - value],
+        char_start: 0,
+        char_end: 1,
+        metadata_json: "{}".into(),
+    }
+}
+
+fn plain_document(store: &Store, id: &str) {
+    store
+        .documents()
+        .upsert_document(&Document {
+            id: id.into(),
+            uri: format!("uri://{id}"),
+            title: id.into(),
+            content: id.into(),
+            ..Default::default()
+        })
+        .unwrap();
+}
+
+#[test]
+fn change_log_refresh_compacts_the_document_table_after_mass_deletes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&dir.path().join("compact.duckdb")).expect("open");
+    let ids: Vec<String> = (0..100).map(|n| format!("doc{n:03}")).collect();
+    for (n, id) in ids.iter().enumerate() {
+        plain_document(&store, id);
+        store
+            .chunks()
+            .insert_chunks(&[two_dim_chunk(id, 0, n as f32 / 100.0)])
+            .unwrap();
+    }
+    let snapshot = |store: &Store| {
+        let conn = store.lock().unwrap();
+        let generation = fts::chunks_generation(&conn).unwrap();
+        build_vector_snapshot(&conn, generation).unwrap()
+    };
+    let mut previous = snapshot(&store);
+    assert_eq!(previous.documents.ids.len(), 100);
+    // A few deletes keep the table (still mostly live) ...
+    for id in &ids[..10] {
+        store.documents().delete_document(id).unwrap();
+    }
+    {
+        let conn = store.lock().unwrap();
+        let generation = fts::chunks_generation(&conn).unwrap();
+        previous = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
+    }
+    assert_eq!(previous.documents.ids.len(), 100, "below the threshold: kept");
+    // ... a mass delete compacts it.
+    for id in &ids[10..80] {
+        store.documents().delete_document(id).unwrap();
+    }
+    let conn = store.lock().unwrap();
+    let generation = fts::chunks_generation(&conn).unwrap();
+    assert!(fts::changed_documents_since(&conn, previous.generation, generation)
+        .unwrap()
+        .is_some());
+    let refreshed = refresh_vector_snapshot(&conn, &previous, generation, None).unwrap();
+    assert_eq!(refreshed.documents.ids.len(), 20);
+    assert_eq!(refreshed.documents.index.len(), 20);
+    let view = |snapshot: &VectorSnapshot| {
+        snapshot
+            .chunks
+            .iter()
+            .map(|c| (c.id.to_string(), snapshot.document_id(c).to_owned(), c.vector.to_vec()))
+            .collect::<Vec<_>>()
+    };
+    let rebuilt = build_vector_snapshot(&conn, generation).unwrap();
+    assert_eq!(view(&refreshed), view(&rebuilt));
+}
+
 fn parent_fixture_store() -> (tempfile::TempDir, Store) {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(&root.path().join("parent.duckdb")).unwrap();

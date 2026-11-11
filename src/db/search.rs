@@ -1227,12 +1227,51 @@ impl RawSnapshot {
                 merged
             }
         };
+        let (chunks, documents) = compact_documents(chunks, documents);
         Ok(VectorSnapshot {
             generation,
             chunks,
             documents,
         })
     }
+}
+
+/// Smallest interned table [`compact_documents`] considers.
+const COMPACT_MIN_DOCUMENTS: usize = 64;
+
+/// Rebuild the interned document table when more than half of its ids have
+/// no chunk left. A change-log refresh reuses (and only ever grows) the
+/// previous table, so deleted documents would otherwise accumulate for the
+/// life of the process.
+fn compact_documents(
+    mut chunks: Vec<VectorSnapshotChunk>,
+    documents: Arc<DocumentTable>,
+) -> (Vec<VectorSnapshotChunk>, Arc<DocumentTable>) {
+    if documents.ids.len() < COMPACT_MIN_DOCUMENTS {
+        return (chunks, documents);
+    }
+    let mut live = vec![false; documents.ids.len()];
+    for chunk in &chunks {
+        live[chunk.document as usize] = true;
+    }
+    let live_count = live.iter().filter(|live| **live).count();
+    if live_count * 2 >= documents.ids.len() {
+        return (chunks, documents);
+    }
+    let mut remap = vec![u32::MAX; documents.ids.len()];
+    let mut table = DocumentTable::default();
+    for (old, id) in documents.ids.iter().enumerate() {
+        if live[old] {
+            let index = table.ids.len() as u32;
+            table.index.insert(id.clone(), index);
+            table.ids.push(id.clone());
+            remap[old] = index;
+        }
+    }
+    for chunk in &mut chunks {
+        chunk.document = remap[chunk.document as usize];
+    }
+    (chunks, Arc::new(table))
 }
 
 fn normalize_stored(raw: &[f32]) -> Arc<[f32]> {
