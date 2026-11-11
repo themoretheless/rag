@@ -146,6 +146,11 @@ Embeddings: JSON float arrays; rank cosine in Rust (portable). Connection: singl
   fail-closed until complete uncapped `reembed_all`;
   `schema_version` records migrations; `source_manifest` supports incremental
   source preflight and parent/subdirectory root rebinding.
+- Schema downgrades are not supported. Schema v26 (native `FLOAT[]`
+  embeddings) is not openable by pre-v26 builds, which fail with an SQL error.
+  From v26 on, a build refuses a database whose stored version is newer than
+  its own: `database schema vN is newer than this build supports (vM)`, for
+  both `Store::open` and `Store::open_read_only`, before running any DDL.
 - Recovery bundle v2 serializes that canonical manifest with chunk vectors and
   validates it on import. Vector-bearing v1 can cross the gateway boundary only
   with explicit live-provider re-embedding; the offline CLI refuses it, while a

@@ -478,3 +478,26 @@ fn stored_schema_version_is_none_without_a_ledger_and_reads_it_otherwise() {
         .unwrap();
     assert!(stored_schema_version(&conn).is_err(), "a broken ledger is an error, not 'no ledger'");
 }
+
+#[test]
+fn a_newer_schema_is_refused_with_a_clear_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("newer.duckdb");
+    {
+        let conn = Connection::open(&path).unwrap();
+        migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, note) VALUES (?, CURRENT_TIMESTAMP, 'future')",
+            [SCHEMA_VERSION + 1],
+        )
+        .unwrap();
+    }
+    let expected = format!(
+        "database schema v{} is newer than this build supports (v{SCHEMA_VERSION})",
+        SCHEMA_VERSION + 1
+    );
+    let error = crate::db::Store::open(&path).err().expect("refused").to_string();
+    assert!(error.contains(&expected), "{error}");
+    let error = crate::db::Store::open_read_only(&path).err().expect("refused").to_string();
+    assert!(error.contains(&expected), "{error}");
+}

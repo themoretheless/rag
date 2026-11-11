@@ -278,6 +278,7 @@ impl Store {
                 path.display()
             ))
         })?;
+        schema::refuse_newer_schema(version)?;
         if version != Some(schema::SCHEMA_VERSION) {
             return Err(AppError::config(format!(
                 "DuckDB '{}' has incompatible schema version {}; expected {}. Upgrade a writable copy through the gateway before inspecting it",

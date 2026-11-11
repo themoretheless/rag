@@ -453,6 +453,7 @@ pub(crate) fn migrate_with(
     extensions: &[SchemaExtension],
 ) -> Result<MigrateOutcome> {
     let current = stored_schema_version(conn)?;
+    refuse_newer_schema(current)?;
     let mut outcome = MigrateOutcome {
         core_ddl: false,
         extension_ddl: 0,
@@ -480,6 +481,18 @@ pub(crate) fn migrate_with(
         upsert_meta(conn, &extension_meta_key(name), &digest)?;
     }
     Ok(outcome)
+}
+
+/// Refuse a database written by a newer build: running this build's DDL on
+/// it could damage data it does not understand. Pre-v26 builds have no such
+/// check and fail on a v26 database with an SQL error instead.
+pub(crate) fn refuse_newer_schema(stored: Option<i32>) -> Result<()> {
+    match stored {
+        Some(version) if version > SCHEMA_VERSION => Err(AppError::config(format!(
+            "database schema v{version} is newer than this build supports (v{SCHEMA_VERSION})"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 fn extension_meta_key(name: &str) -> String {
